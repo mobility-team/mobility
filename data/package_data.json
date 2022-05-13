@@ -1,0 +1,18 @@
+{
+	"package_name": "mobility",
+	"package_files": {
+		"cities_category.csv": "data/input/insee/",
+		"short_dist_trips.parquet": "data/input/sdes/entd_2008/",
+		"short_dist_trip_number.parquet": "data/input/sdes/entd_2008/",
+		"long_dist_trips.parquet": "data/input/sdes/entd_2008/",
+		"long_dist_trip_number.parquet": "data/input/sdes/entd_2008/",
+		"car_ownership_probability.parquet": "data/input/sdes/entd_2008/",
+		"modes_probability.parquet": "data/input/mobility/modes/",
+		"mode_ef.csv": "data/input/mobility/emission_factors/",
+		"entd_location_motive.xlsx": "data/input/sdes/entd_2008",
+		"entd_mode.xlsx": "data/input/sdes/entd_2008",
+		"work_home": "data/input/mobility",
+		"shops": "data/input/mobility",
+		"costs": "data/input/mobility"
+	}
+}

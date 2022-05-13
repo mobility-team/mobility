@@ -1,0 +1,12 @@
+*.pyc
+*.DS_Store
+*.db
+*.parquet
+*.csv
+*.xlsx
+*.xls
+*.zip
+*.gz
+*.7z
+*.sqlite
+data/input/arcep/
