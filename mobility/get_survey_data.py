@@ -21,6 +21,9 @@ def prepare_entd_2008():
     # Préparer la dataframe du nombre de voyages par année
     
     data_folder_path = Path(os.path.dirname(__file__)).parent / "data"
+    
+    # AF : importer K_mobilite pour pondki et avoir la pop par CSP
+    # AF : importer K_voyage pour avoir le nb de nuités pro/perso selon la CSP
 
     # Info about the individuals (CSP, city category...)
     indiv = pd.read_csv(
@@ -144,19 +147,22 @@ def prepare_entd_2008():
     travels = travels.groupby("travel_id").first()
     travels.set_index(["city_category", "cs1", "n_cars"])
     
-    # Population by csp in 2008 from https://www.insee.fr/fr/statistiques/2020064?sommaire=2020770&geo=METRO-1
-    # https://www.insee.fr/fr/statistiques/2016354?sommaire=2133806&geo=METRO-1#POP_T6
-    # https://www.insee.fr/fr/statistiques/3312958
-    csp_pop_2008 = pd.DataFrame({
-        "cs1": ["1", "2", "3", "4", "5", "6", "7", "8", "no_csp"],
-        "n_pop": [496113, 1612125, 4296719, 6956890, 8403034, 6910494, 5972538 + 7165321, 3158048 +	5576004, 6424325]
-    })
-    csp_pop_2008.set_index("cs1", inplace=True)
+    # Population by csp in 2008 from the weigths in the data base k_mobilite
+    # These weights have been computed to be representative of the french population (6 years old and older)
+    # 56.173e6
+    indiv_mob = pd.read_csv(
+        data_folder_path / "input/sdes/entd_2008/K_mobilite.csv",
+        encoding="latin-1",
+        sep=";",
+        dtype=str,
+        usecols=["IDENT_IND", "PONDKI"]
+    )
+    indiv_mob['PONDKI'] = indiv_mob['PONDKI'].astype(float)
     
-    # ENTD total population 
-    ref_pop = 56.173e6
-    
-    csp_pop_2008["n_pop"] = ref_pop*csp_pop_2008["n_pop"]/csp_pop_2008["n_pop"].sum()
+    indiv_mob = pd.merge(indiv_mob, indiv, on="IDENT_IND")
+    indiv_mob = indiv_mob.groupby('cs1')['PONDKI'].sum()
+    indiv_mob.name = 'n_pop'
+    csp_pop_2008 = pd.DataFrame(indiv_mob)
     
     # ------------------------------------------
     # Number of long distance trips in a 4 week period, given the CSP
@@ -193,7 +199,7 @@ def prepare_entd_2008():
     
     p_det_mode = p_det_mode/p_det_mode_tot
     p_det_mode.dropna(inplace=True)
-    
+    """
     # ------------------------------------------
     # Write datasets to parquet files
     df.to_parquet(data_folder_path / "input/sdes/entd_2008/short_dist_trips.parquet")
@@ -203,6 +209,7 @@ def prepare_entd_2008():
     n_travel_cs1.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/long_dist_travel_number.parquet")
     p_car.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/car_ownership_probability.parquet")
     p_det_mode.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/insee_modes_to_entd_modes.parquet")
+    """
     return
 
 prepare_entd_2008()
