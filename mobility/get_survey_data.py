@@ -22,7 +22,7 @@ def prepare_entd_2008():
     
     data_folder_path = Path(os.path.dirname(__file__)).parent / "data"
     
-    # AF : importer K_mobilite pour pondki et avoir la pop par CSP
+    # AF : utiliser K_mobilite pour avoir l'immobilité
     # AF : importer K_voyage pour avoir le nb de nuités pro/perso selon la CSP
 
     # Info about the individuals (CSP, city category...)
@@ -147,9 +147,9 @@ def prepare_entd_2008():
     travels = travels.groupby("travel_id").first()
     travels.set_index(["city_category", "cs1", "n_cars"])
     
+    # ------------------------------------------
     # Population by csp in 2008 from the weigths in the data base k_mobilite
-    # These weights have been computed to be representative of the french population (6 years old and older)
-    # 56.173e6
+    # These weights have been computed to be representative of the french population (6 years old and older) = 56.173e6 individuals
     indiv_mob = pd.read_csv(
         data_folder_path / "input/sdes/entd_2008/K_mobilite.csv",
         encoding="latin-1",
@@ -165,7 +165,27 @@ def prepare_entd_2008():
     csp_pop_2008 = pd.DataFrame(indiv_mob)
     
     # ------------------------------------------
+    # Travels dataset
+    travels = pd.read_csv(
+        data_folder_path / "input/sdes/entd_2008/K_voyage.csv",
+        encoding="latin-1",
+        sep=";",
+        dtype=str,
+        usecols=["IDENT_IND", "IDENT_VOY", "poids_annuel", "V2_OLDVMH", "V2_OLDMOTPR"]
+    )
+    travels["poids_annuel"] = travels["poids_annuel"].astype(float)
+    
+    # Merge with the data about individuals and households
+    travels = pd.merge(travels, indiv, on="IDENT_IND")
+    travels = pd.merge(travels, hh[["city_category", "IDENT_MEN"]], on="IDENT_MEN")    
+    
+    travels = travels[["IDENT_IND", "IDENT_VOY", "poids_annuel", "V2_OLDVMH", "V2_OLDMOTPR", "cs1", "city_category"]]
+    travels.columns = ["indiv_id", "travel_id", "poids_annuel", "nb_nights", "travel_mot_id", "cs1", "city_category"]
+    travels = travels.merge(indiv_pondki, on="indiv_id")
+    
+    # ------------------------------------------
     # Number of long distance trips in a 4 week period, given the CSP
+    # Remplacer pondki par poids_annuel ??
     travel_csp_pop = travels.groupby(["cs1"])["pondki"].sum()
     travel_csp_pop = pd.merge(travel_csp_pop, csp_pop_2008,  left_index=True, right_index=True)
     travel_csp_pop["n_travel_cs1"] = travel_csp_pop["pondki"]/travel_csp_pop["n_pop"]
@@ -199,7 +219,7 @@ def prepare_entd_2008():
     
     p_det_mode = p_det_mode/p_det_mode_tot
     p_det_mode.dropna(inplace=True)
-    """
+
     # ------------------------------------------
     # Write datasets to parquet files
     df.to_parquet(data_folder_path / "input/sdes/entd_2008/short_dist_trips.parquet")
@@ -209,7 +229,6 @@ def prepare_entd_2008():
     n_travel_cs1.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/long_dist_travel_number.parquet")
     p_car.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/car_ownership_probability.parquet")
     p_det_mode.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/insee_modes_to_entd_modes.parquet")
-    """
     return
 
 prepare_entd_2008()
