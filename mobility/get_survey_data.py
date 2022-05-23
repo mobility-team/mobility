@@ -154,15 +154,73 @@ def prepare_entd_2008():
         data_folder_path / "input/sdes/entd_2008/K_mobilite.csv",
         encoding="latin-1",
         sep=";",
-        dtype=str,
-        usecols=["IDENT_IND", "PONDKI"]
+        dtype={"IDENT_IND": str, 'V2_IMMODEP_A': bool, 'V2_IMMODEP_B': bool, 'V2_IMMODEP_B': bool, 'V2_IMMODEP_C': bool,
+               'V2_IMMODEP_D': bool, 'V2_IMMODEP_E': bool, 'V2_IMMODEP_F': bool, 'V2_IMMODEP_G': bool},
+        usecols=["IDENT_IND", "PONDKI",
+                 "V2_IMMODEP_A", "V2_IMMODEP_B", "V2_IMMODEP_C", "V2_IMMODEP_D", "V2_IMMODEP_E", "V2_IMMODEP_F", "V2_IMMODEP_G",
+                 "MDATENQ2V"]
     )
-    indiv_mob['PONDKI'] = indiv_mob['PONDKI'].astype(float)
-    
     indiv_mob = pd.merge(indiv_mob, indiv, on="IDENT_IND")
-    indiv_mob = indiv_mob.groupby('cs1')['PONDKI'].sum()
-    indiv_mob.name = 'n_pop'
-    csp_pop_2008 = pd.DataFrame(indiv_mob)
+    csp_pop_2008 = indiv_mob.groupby('cs1')['PONDKI'].sum()
+    csp_pop_2008.name = 'n_pop'
+    csp_pop_2008 = pd.DataFrame(csp_pop_2008)
+    
+    # ------------------------------------------
+    # Number of immobility days
+    indiv_mob['V2_IMMODEP_A'] = indiv_mob['V2_IMMODEP_A'] * indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_B'] = indiv_mob['V2_IMMODEP_B'] * indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_C'] = indiv_mob['V2_IMMODEP_C'] * indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_D'] = indiv_mob['V2_IMMODEP_D'] * indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_E'] = indiv_mob['V2_IMMODEP_E'] * indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_F'] = indiv_mob['V2_IMMODEP_F'] * indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_G'] = indiv_mob['V2_IMMODEP_G'] * indiv_mob['PONDKI']
+    
+    indiv_mob["MDATENQ2V"] =  pd.to_datetime(indiv_mob['MDATENQ2V'], format="%d/%m/%Y")
+    indiv_mob["V2_weekday"] = indiv_mob["MDATENQ2V"].apply(lambda x: x.weekday())
+    indiv_mob["weekday_A"] = np.where(indiv_mob["V2_weekday"]==0, 6, indiv_mob["V2_weekday"]-1)
+    indiv_mob["weekday_B"] = np.where(indiv_mob["weekday_A"]==0, 6, indiv_mob["weekday_A"]-1)
+    indiv_mob["weekday_C"] = np.where(indiv_mob["weekday_B"]==0, 6, indiv_mob["weekday_B"]-1)
+    indiv_mob["weekday_D"] = np.where(indiv_mob["weekday_C"]==0, 6, indiv_mob["weekday_C"]-1)
+    indiv_mob["weekday_E"] = np.where(indiv_mob["weekday_D"]==0, 6, indiv_mob["weekday_D"]-1)
+    indiv_mob["weekday_F"] = np.where(indiv_mob["weekday_E"]==0, 6, indiv_mob["weekday_E"]-1)
+    indiv_mob["weekday_G"] = np.where(indiv_mob["weekday_F"]==0, 6, indiv_mob["weekday_F"]-1)
+    
+    # immobility during the week
+    indiv_mob[["weekday_A", "weekday_B", "weekday_C", "weekday_D", "weekday_E", "weekday_F", "weekday_G"]] = indiv_mob[["weekday_A", "weekday_B", "weekday_C", "weekday_D", "weekday_E", "weekday_F", "weekday_G"]] < 5
+    indiv_mob["immobility_weekday"] = np.where(indiv_mob["weekday_A"],indiv_mob["V2_IMMODEP_A"],0)
+    indiv_mob["immobility_weekday"] += np.where(indiv_mob["weekday_B"],indiv_mob["V2_IMMODEP_B"],0)
+    indiv_mob["immobility_weekday"] += np.where(indiv_mob["weekday_C"],indiv_mob["V2_IMMODEP_C"],0)
+    indiv_mob["immobility_weekday"] += np.where(indiv_mob["weekday_D"],indiv_mob["V2_IMMODEP_D"],0)
+    indiv_mob["immobility_weekday"] += np.where(indiv_mob["weekday_E"],indiv_mob["V2_IMMODEP_E"],0)
+    indiv_mob["immobility_weekday"] += np.where(indiv_mob["weekday_F"],indiv_mob["V2_IMMODEP_F"],0)
+    indiv_mob["immobility_weekday"] += np.where(indiv_mob["weekday_G"],indiv_mob["V2_IMMODEP_G"],0)
+    
+    # immobility during the week-end
+    indiv_mob["immobility_weekend"] = np.where(indiv_mob["weekday_A"], 0, indiv_mob["V2_IMMODEP_A"])
+    indiv_mob["immobility_weekend"] += np.where(indiv_mob["weekday_B"], 0, indiv_mob["V2_IMMODEP_B"])
+    indiv_mob["immobility_weekend"] += np.where(indiv_mob["weekday_C"], 0, indiv_mob["V2_IMMODEP_C"])
+    indiv_mob["immobility_weekend"] += np.where(indiv_mob["weekday_D"], 0, indiv_mob["V2_IMMODEP_D"])
+    indiv_mob["immobility_weekend"] += np.where(indiv_mob["weekday_E"], 0, indiv_mob["V2_IMMODEP_E"])
+    indiv_mob["immobility_weekend"] += np.where(indiv_mob["weekday_F"], 0, indiv_mob["V2_IMMODEP_F"])
+    indiv_mob["immobility_weekend"] += np.where(indiv_mob["weekday_G"], 0, indiv_mob["V2_IMMODEP_G"])
+    
+    indiv_mob = indiv_mob.groupby('cs1').sum()
+    indiv_mob["immobility_weekday"] = indiv_mob["immobility_weekday"] / indiv_mob['PONDKI'] / 5
+    indiv_mob["immobility_weekend"] = indiv_mob["immobility_weekend"] / indiv_mob['PONDKI'] / 2
+    # immobility_weekday is the probability of being immobile during a weekday
+    p_immobility = indiv_mob[["immobility_weekday", "immobility_weekend"]]
+    
+    """ sans la distinction jour de semaine
+    indiv_mob = indiv_mob.groupby('cs1').sum()
+    indiv_mob['V2_IMMODEP_A'] = indiv_mob['V2_IMMODEP_A'] / indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_B'] = indiv_mob['V2_IMMODEP_B'] / indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_C'] = indiv_mob['V2_IMMODEP_C'] / indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_D'] = indiv_mob['V2_IMMODEP_D'] / indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_E'] = indiv_mob['V2_IMMODEP_E'] / indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_F'] = indiv_mob['V2_IMMODEP_F'] / indiv_mob['PONDKI']
+    indiv_mob['V2_IMMODEP_G'] = indiv_mob['V2_IMMODEP_G'] / indiv_mob['PONDKI']
+    p_immobility = indiv_mob[["V2_IMMODEP_A", "V2_IMMODEP_B", "V2_IMMODEP_C", "V2_IMMODEP_D", "V2_IMMODEP_E", "V2_IMMODEP_F", "V2_IMMODEP_G"]].sum(axis=1) / 7
+    """
     
     # ------------------------------------------
     # Travels dataset
@@ -219,16 +277,18 @@ def prepare_entd_2008():
     
     p_det_mode = p_det_mode/p_det_mode_tot
     p_det_mode.dropna(inplace=True)
-
+    
     # ------------------------------------------
     # Write datasets to parquet files
     df.to_parquet(data_folder_path / "input/sdes/entd_2008/short_dist_trips.parquet")
     days_trip.to_parquet(data_folder_path / "input/sdes/entd_2008/days_trip.parquet")
+    p_immobility.to_parquet(data_folder_path / "input/sdes/entd_2008/immobility_probability.parquet")
     df_long.to_parquet(data_folder_path / "input/sdes/entd_2008/long_dist_trips.parquet")
     travels.to_parquet(data_folder_path / "input/sdes/entd_2008/travels.parquet")
     n_travel_cs1.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/long_dist_travel_number.parquet")
     p_car.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/car_ownership_probability.parquet")
     p_det_mode.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/insee_modes_to_entd_modes.parquet")
+    
     return
 
 prepare_entd_2008()
