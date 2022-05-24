@@ -1,3 +1,66 @@
+import numpy as np
+import pandas as pd
+
+import os
+from pathlib import Path
+
+# A SUPPRIMER
+def get_survey_data(source="EMD-2018-2019"):
+    """
+    This function transforms raw survey data into dataframes needed for the sampling procedures.
+    
+    Args:
+        source (str) : The source of the travels and trips data ("ENTD-2008" or "EMD-2018-2019", the default).
+
+    Returns:
+        survey_data (dict) : a dict of dataframes.
+            "short_trips" (pd.DataFrame)
+            "days_trip" (pd.DataFrame)
+            "long_trips" (pd.DataFrame)
+            "travels" (pd.DataFrame)
+            "n_travels" (pd.DataFrame)
+            "p_immobility" (pd.DataFrame)
+            "car_ownership_probability" (pd.DataFrame)
+            "p_det_mode" (pd.DataFrame)
+    """
+    
+    # Tester si les fichiers parquet existent déjà pour la source demandée
+    # Si oui, charger les parquet dans un dict
+    # Si non, utiliser les fonctions de préparation pour les créer avant de les charger dans un dict
+    
+    data_folder_path = Path(os.path.dirname(__file__)).parent / "data"
+    
+    if source == "ENTD-2008" : path = data_folder_path / "input/sdes/entd_2008"
+    elif source == "EMD-2018-2019" : path = data_folder_path / "input/sdes/emp_2019"
+    else :
+        print("The source specified doesn't exist. The EMP 2019 is used by default")
+        source = "EMD-2018-2019"
+        path = data_folder_path / "input/sdes/emp_2019"
+    # Load the files into a dict
+    survey_data = {}
+
+    df = pd.read_parquet(path / "short_dist_trips.parquet")
+    days_trip = pd.read_parquet(path / "days_trip.parquet")
+    df_long = pd.read_parquet(path / "long_dist_trips.parquet")
+    travels = pd.read_parquet(path / "travels.parquet")
+    n_travel_cs1 = pd.read_parquet(path / "long_dist_travel_number.parquet")
+    p_immobility = pd.read_parquet(path / "immobility_probability.parquet")
+    p_car = pd.read_parquet(path / "car_ownership_probability.parquet")
+    p_det_mode = pd.read_parquet(path / "insee_modes_to_entd_modes.parquet")
+    
+    survey_data["short_trips"] = df
+    survey_data["days_trip"] = days_trip
+    survey_data["long_trips"] = df_long
+    survey_data["travels"] = travels
+    survey_data["n_travels"] = n_travel_cs1
+    survey_data["p_immobility"] = p_immobility
+    survey_data["p_car"] = p_car
+    survey_data["p_det_mode"] = p_det_mode
+    
+    return survey_data
+
+
+#survey_data = get_survey_data()
 
 class TripSampler2:
     
@@ -13,6 +76,16 @@ class TripSampler2:
         """
 
         # Charger les dataframes nécessaires pour l'échantillonage avec get_survey_data(source)
+                
+        survey_data = get_survey_data(source=source)
+        self.short_trips = survey_data["short_trips"]
+        self.days_trip = survey_data["days_trip"]
+        self.long_trips = survey_data["long_trips"]
+        self.travels = survey_data["travels"]
+        self.n_travels = survey_data["n_travels"]
+        self.p_immobility = survey_data["p_immobility"]
+        self.p_car = survey_data["p_car"]
+        self.p_det_mode = survey_data["p_det_mode"]
 
 
     def get_trips(socio_professional_category, n_cars, urban_unit_category, n_years=1):
@@ -49,7 +122,18 @@ class TripSampler2:
         # Echantilloner les déplacements courte distance
         # Calculer le nombre de jours de semaine passés au domicile (52*5 - n1)
         # Calculer le nombre de jours de weekends passés au domicile (52*2 - n2)
+        
+        # ---------------------------------------
+        # Create new filter databases according to the socio-pro category, the urban category and the motorization
+        """
+        pers_days_trip = self.days_trip.xs
+        pers_travels = self.travels.xs
+        pers_p_car = self.p_car.xs
+        pers_p_det_mode = self.p_det_mode.xs
+        
+        """
+        return
 
-
+ts = TripSampler2()
 
 
