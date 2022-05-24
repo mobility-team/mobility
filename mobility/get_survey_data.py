@@ -92,7 +92,7 @@ def prepare_entd_2008():
     days_trip.columns = ["day_id", "weekday", "city_category", "cs1", "n_cars", "pondki"]
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first()
-    days_trip.set_index(["weekday", "city_category", "cs1", "n_cars"], inplace=True)
+    days_trip.set_index(["city_category", "cs1", "n_cars", "weekday"], inplace=True)
     
     # Filter and format the columns
     df = df[["IDENT_IND", "IDENT_JOUR", "weekday", "city_category", "cs1", "n_cars", "V2_MMOTIFORI", "V2_MMOTIFDES", "V2_MTP", "V2_MDISTTOT", "n_trip_companions", "PONDKI"]]
@@ -130,16 +130,18 @@ def prepare_entd_2008():
     
     # Merge to get the weights of the individuals pondki
     df_long = pd.merge(df_long, indiv_pondki, left_index=True, right_index=True)
+    df_long.reset_index()
 
     # Travel data base : group the long distance trips by travel
-    travels = df_long.reset_index()[["indiv_id", "travel_id", "city_category", "cs1", "n_cars", "nb_nights", "dest_loc_mot_id", "pondki"]]
+    travels = df_long[["indiv_id", "travel_id", "city_category", "cs1", "n_cars", "nb_nights", "dest_loc_mot_id", "pondki"]]
     travels.columns = ["indiv_id", "travel_id", "city_category", "cs1", "n_cars", "nb_nights", "travel_mot_id", "pondki"]
     # Keep only the first trip of each travel to have one row per travel
     travels = travels.groupby("travel_id").first()
     travels.set_index(["city_category", "cs1", "n_cars"])
     
     df_long["ori_loc_mot_id"] = np.nan
-    df_long.drop("nb_nights", axis=1, inplace=True)
+    df_long.drop(["nb_nights", "indiv_id"], axis=1, inplace=True)
+    df_long.set_index("travel_id")
     
     # ------------------------------------------
     # Population by csp in 2008 from the weigths in the data base k_mobilite
@@ -237,7 +239,7 @@ def prepare_entd_2008():
     
     p_car["n_pers"] = np.where(p_car["n_pers"] < 3, p_car["n_pers"].astype(str), "3+")
     
-    p_car = p_car.groupby(["city_category", "cs1_ref_pers", "n_pers", "n_cars"])["n_cars"].count()
+    p_car = p_car.groupby(["city_category", "cs1_ref_pers", "n_cars", "n_pers"])["n_cars"].count()
     p_car = p_car/p_car.groupby(["city_category", "cs1_ref_pers", "n_pers"]).sum()
     
     # ------------------------------------------
@@ -415,15 +417,16 @@ def prepare_emd_2018_2019():
     df = pd.merge(df, hh[["city_category", "IDENT_MEN", "cs1_ref_pers"]], on="IDENT_MEN")
     df = pd.merge(df, cars, on="IDENT_MEN")
     
+    # Transform the deplacement id into a day id
+    df["IDENT_DEP"] = df["IDENT_DEP"].str.slice(0, 14)
+    
     # Data base of days trip : group the trips by days
     days_trip = df[["IDENT_DEP", "weekday", "city_category", "cs1", "n_cars", "POND_JOUR"]].copy()
     days_trip.columns = ["day_id", "weekday", "city_category", "cs1", "n_cars", "pond_jour"]
     
-    days_trip["day_id"] = days_trip["day_id"].str.slice(0, 14)
-    
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first()
-    days_trip.set_index(["weekday", "city_category", "cs1", "n_cars"], inplace=True)
+    days_trip.set_index(["city_category", "cs1", "n_cars", "weekday"], inplace=True)
     
     # Filter and format the columns
     df = df[["IDENT_IND", "IDENT_DEP", "weekday", "city_category", "cs1", "n_cars", "MOTPREC", "MMOTIFDES", "mtp", "MDISTTOT_fin", "n_trip_companions", "POND_JOUR"]]
@@ -471,9 +474,9 @@ def prepare_emd_2018_2019():
     travels = travels.groupby("travel_id").first()
     travels.set_index(["city_category", "cs1", "n_cars"])
     
-    df_long.set_index("indiv_id", inplace=True)
+    df_long.set_index("travel_id", inplace=True)
     df_long["ori_loc_mot_id"] = np.nan
-    df_long.drop("nb_nights", axis=1, inplace=True)
+    df_long.drop(["nb_nights", "indiv_id"], axis=1, inplace=True)
     
     # ------------------------------------------
     # Population by csp in 2019 from the weigths in the data base k_individu
@@ -580,7 +583,7 @@ def prepare_emd_2018_2019():
     
     p_car["n_pers"] = np.where(p_car["n_pers"] < 3, p_car["n_pers"].astype(str), "3+")
     
-    p_car = p_car.groupby(["city_category", "cs1_ref_pers", "n_pers", "n_cars"])["n_cars"].count()
+    p_car = p_car.groupby(["city_category", "cs1_ref_pers", "n_cars", "n_pers"])["n_cars"].count()
     p_car = p_car/p_car.groupby(["city_category", "cs1_ref_pers", "n_pers"]).sum()
     
     # ------------------------------------------
