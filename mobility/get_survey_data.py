@@ -88,7 +88,7 @@ def prepare_entd_2008():
     df = pd.merge(df, cars, on="IDENT_MEN")
         
     # Data base of days trip : group the trips by days
-    days_trip = df[["IDENT_JOUR", "weekday", "city_category", "cs1", "n_cars", "PONDKI"]]
+    days_trip = df[["IDENT_JOUR", "weekday", "city_category", "cs1", "n_cars", "PONDKI"]].copy()
     days_trip.columns = ["day_id", "weekday", "city_category", "cs1", "n_cars", "pondki"]
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first()
@@ -258,7 +258,7 @@ def prepare_entd_2008():
     
     p_det_mode = p_det_mode/p_det_mode_tot
     p_det_mode.dropna(inplace=True)
-    """
+    
     # ------------------------------------------
     # Write datasets to parquet files
     df.to_parquet(data_folder_path / "input/sdes/entd_2008/short_dist_trips.parquet")
@@ -269,7 +269,7 @@ def prepare_entd_2008():
     n_travel_cs1.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/long_dist_travel_number.parquet")
     p_car.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/car_ownership_probability.parquet")
     p_det_mode.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/insee_modes_to_entd_modes.parquet")
-    """
+    
     return
 
 def prepare_emd_2018_2019():
@@ -416,8 +416,11 @@ def prepare_emd_2018_2019():
     df = pd.merge(df, cars, on="IDENT_MEN")
     
     # Data base of days trip : group the trips by days
-    days_trip = df[["IDENT_DEP", "weekday", "city_category", "cs1", "n_cars", "POND_JOUR"]]
+    days_trip = df[["IDENT_DEP", "weekday", "city_category", "cs1", "n_cars", "POND_JOUR"]].copy()
     days_trip.columns = ["day_id", "weekday", "city_category", "cs1", "n_cars", "pond_jour"]
+    
+    days_trip["day_id"] = days_trip["day_id"].str.slice(0, 14)
+    
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first()
     days_trip.set_index(["weekday", "city_category", "cs1", "n_cars"], inplace=True)
@@ -598,7 +601,7 @@ def prepare_emd_2018_2019():
     
     p_det_mode = p_det_mode/p_det_mode_tot
     p_det_mode.dropna(inplace=True)
-    """
+    
     # ------------------------------------------
     # Write datasets to parquet files
     df.to_parquet(data_folder_path / "input/sdes/emp_2019/short_dist_trips.parquet")
@@ -609,13 +612,13 @@ def prepare_emd_2018_2019():
     n_travel_cs1.to_frame().to_parquet(data_folder_path / "input/sdes/emp_2019/long_dist_travel_number.parquet")
     p_car.to_frame().to_parquet(data_folder_path / "input/sdes/emp_2019/car_ownership_probability.parquet")
     p_det_mode.to_frame().to_parquet(data_folder_path / "input/sdes/emp_2019/insee_modes_to_entd_modes.parquet")
-    """
+    
     return 
 
 #prepare_entd_2008()
-prepare_emd_2018_2019()
+#prepare_emd_2018_2019()
 
-def get_survey_data(source):
+def get_survey_data(source="EMD-2018-2019"):
     """
     This function transforms raw survey data into dataframes needed for the sampling procedures.
     
@@ -625,11 +628,65 @@ def get_survey_data(source):
     Returns:
         survey_data (dict) : a dict of dataframes.
             "short_trips" (pd.DataFrame)
+            "days_trip" (pd.DataFrame)
+            "long_trips" (pd.DataFrame)
             "travels" (pd.DataFrame)
             "n_travels" (pd.DataFrame)
+            "p_immobility" (pd.DataFrame)
+            "car_ownership_probability" (pd.DataFrame)
+            "p_det_mode" (pd.DataFrame)
     """
     
     # Tester si les fichiers parquet existent déjà pour la source demandée
     # Si oui, charger les parquet dans un dict
     # Si non, utiliser les fonctions de préparation pour les créer avant de les charger dans un dict
-    return
+    
+    data_folder_path = Path(os.path.dirname(__file__)).parent / "data"
+    
+    if source == "ENTD-2008" : path = data_folder_path / "input/sdes/entd_2008"
+    elif source == "EMD-2018-2019" : path = data_folder_path / "input/sdes/emp_2019"
+    else :
+        print("The source specified doesn't exist. The EMP 2019 is used by default")
+        source = "EMD-2018-2019"
+        path = data_folder_path / "input/sdes/emp_2019"
+    
+    # Check if the parquet files already exist, if not writes them calling the corresponding funtion
+    check_files = (path / "short_dist_trips.parquet").exists()
+    check_files = check_files and (path / "days_trip.parquet").exists()
+    check_files = check_files and (path / "immobility_probability.parquet").exists()
+    check_files = check_files and (path / "long_dist_trips.parquet").exists()
+    check_files = check_files and (path / "travels.parquet").exists()
+    check_files = check_files and (path / "long_dist_travel_number.parquet").exists()
+    check_files = check_files and (path / "car_ownership_probability.parquet").exists()
+    check_files = check_files and (path / "insee_modes_to_entd_modes.parquet").exists()
+
+    if not(check_files) : # ie all the files are not here
+        print("Writing the parquet files")
+        if source == "ENTD-2008" : prepare_entd_2008()
+        else :
+            prepare_emd_2018_2019()
+    
+    # Load the files into a dict
+    survey_data = {}
+
+    df = pd.read_parquet(path / "short_dist_trips.parquet")
+    days_trip = pd.read_parquet(path / "days_trip.parquet")
+    df_long = pd.read_parquet(path / "long_dist_trips.parquet")
+    travels = pd.read_parquet(path / "travels.parquet")
+    n_travel_cs1 = pd.read_parquet(path / "long_dist_travel_number.parquet")
+    p_immobility = pd.read_parquet(path / "immobility_probability.parquet")
+    p_car = pd.read_parquet(path / "car_ownership_probability.parquet")
+    p_det_mode = pd.read_parquet(path / "insee_modes_to_entd_modes.parquet")
+    
+    survey_data["short_trips"] = df
+    survey_data["days_trip"] = days_trip
+    survey_data["long_trips"] = df_long
+    survey_data["travels"] = travels
+    survey_data["n_travels"] = n_travel_cs1
+    survey_data["p_immobility"] = p_immobility
+    survey_data["p_car"] = p_car
+    survey_data["p_det_mode"] = p_det_mode
+    
+    return survey_data
+
+survey = get_survey_data(source="EMD-2018-2019")
