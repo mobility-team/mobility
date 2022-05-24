@@ -130,7 +130,7 @@ def prepare_entd_2008():
     
     # Merge to get the weights of the individuals pondki
     df_long = pd.merge(df_long, indiv_pondki, left_index=True, right_index=True)
-    df_long.reset_index()
+    df_long.reset_index(inplace=True)
 
     # Travel data base : group the long distance trips by travel
     travels = df_long[["indiv_id", "travel_id", "city_category", "cs1", "n_cars", "nb_nights", "dest_loc_mot_id", "pondki"]]
@@ -692,4 +692,4 @@ def get_survey_data(source="EMD-2018-2019"):
     
     return survey_data
 
-survey = get_survey_data(source="EMD-2018-2019")
+survey = get_survey_data(source="ENTD-2008")
