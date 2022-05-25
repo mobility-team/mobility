@@ -91,7 +91,7 @@ def prepare_entd_2008():
     days_trip = df[["IDENT_JOUR", "weekday", "city_category", "cs1", "n_cars", "PONDKI"]].copy()
     days_trip.columns = ["day_id", "weekday", "city_category", "cs1", "n_cars", "pondki"]
     # Keep only the first trip of each day to have one row per day
-    days_trip = days_trip.groupby("day_id").first()
+    days_trip = days_trip.groupby("day_id").first() 
     days_trip.reset_index(inplace=True)
     days_trip.set_index(["city_category", "cs1", "n_cars", "weekday"], inplace=True)
     
@@ -151,8 +151,8 @@ def prepare_entd_2008():
         data_folder_path / "input/sdes/entd_2008/K_mobilite.csv",
         encoding="latin-1",
         sep=";",
-        dtype={"IDENT_IND": str, 'V2_IMMODEP_A': bool, 'V2_IMMODEP_B': bool, 'V2_IMMODEP_B': bool, 'V2_IMMODEP_C': bool,
-               'V2_IMMODEP_D': bool, 'V2_IMMODEP_E': bool, 'V2_IMMODEP_F': bool, 'V2_IMMODEP_G': bool},
+        dtype={"IDENT_IND": str, 'V2_IMMODEP_A': bool, 'V2_IMMODEP_B': bool, 'V2_IMMODEP_C': bool,
+               'V2_IMMODEP_D': bool, 'V2_IMMODEP_E': bool, 'V2_IMMODEP_F': bool, 'V2_IMMODEP_G': bool}, 
         usecols=["IDENT_IND", "PONDKI",
                  "V2_IMMODEP_A", "V2_IMMODEP_B", "V2_IMMODEP_C", "V2_IMMODEP_D", "V2_IMMODEP_E", "V2_IMMODEP_F", "V2_IMMODEP_G",
                  "MDATENQ2V"]
@@ -161,7 +161,7 @@ def prepare_entd_2008():
     csp_pop_2008 = indiv_mob.groupby('cs1')['PONDKI'].sum()
     csp_pop_2008.name = 'n_pop'
     csp_pop_2008 = pd.DataFrame(csp_pop_2008)
-    
+  
     # ------------------------------------------
     # Number of travels in a 4 week period, given the CSP
     travel_csp_pop = travels.groupby(["cs1"])["pondki"].sum()
@@ -695,4 +695,3 @@ def get_survey_data(source="EMD-2018-2019"):
     
     return survey_data
 
-survey = get_survey_data(source="ENTD-2008")
