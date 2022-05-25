@@ -92,6 +92,7 @@ def prepare_entd_2008():
     days_trip.columns = ["day_id", "weekday", "city_category", "cs1", "n_cars", "pondki"]
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first()
+    days_trip.reset_index(inplace=True)
     days_trip.set_index(["city_category", "cs1", "n_cars", "weekday"], inplace=True)
     
     # Filter and format the columns
@@ -133,15 +134,15 @@ def prepare_entd_2008():
     df_long.reset_index(inplace=True)
 
     # Travel data base : group the long distance trips by travel
-    travels = df_long[["indiv_id", "travel_id", "city_category", "cs1", "n_cars", "nb_nights", "dest_loc_mot_id", "pondki"]]
+    travels = df_long.loc[:, ["indiv_id", "travel_id", "city_category", "cs1", "n_cars", "nb_nights", "dest_loc_mot_id", "pondki"]].copy()
     travels.columns = ["indiv_id", "travel_id", "city_category", "cs1", "n_cars", "nb_nights", "travel_mot_id", "pondki"]
     # Keep only the first trip of each travel to have one row per travel
     travels = travels.groupby("travel_id").first()
-    travels.set_index(["city_category", "cs1", "n_cars"])
-    
+    travels.reset_index(inplace=True)
+    travels.set_index(["city_category", "cs1", "n_cars"], inplace=True)
     df_long["ori_loc_mot_id"] = np.nan
     df_long.drop(["nb_nights", "indiv_id"], axis=1, inplace=True)
-    df_long.set_index("travel_id")
+    df_long.set_index("travel_id", inplace=True)
     
     # ------------------------------------------
     # Population by csp in 2008 from the weigths in the data base k_mobilite
@@ -260,7 +261,7 @@ def prepare_entd_2008():
     
     p_det_mode = p_det_mode/p_det_mode_tot
     p_det_mode.dropna(inplace=True)
-    
+
     # ------------------------------------------
     # Write datasets to parquet files
     df.to_parquet(data_folder_path / "input/sdes/entd_2008/short_dist_trips.parquet")
@@ -426,6 +427,7 @@ def prepare_emd_2018_2019():
     
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first()
+    days_trip.reset_index(inplace=True)
     days_trip.set_index(["city_category", "cs1", "n_cars", "weekday"], inplace=True)
     
     # Filter and format the columns
@@ -472,7 +474,8 @@ def prepare_emd_2018_2019():
     travels.columns = ['travel_id', 'city_category', 'cs1', 'n_cars', 'nb_nights', 'travel_mot_id', 'pondki']
     # keep only the first trip of each travel to have one row per travel
     travels = travels.groupby("travel_id").first()
-    travels.set_index(["city_category", "cs1", "n_cars"])
+    travels.reset_index(inplace=True)
+    travels.set_index(["city_category", "cs1", "n_cars"], inplace=True)
     
     df_long.set_index("travel_id", inplace=True)
     df_long["ori_loc_mot_id"] = np.nan
@@ -604,7 +607,7 @@ def prepare_emd_2018_2019():
     
     p_det_mode = p_det_mode/p_det_mode_tot
     p_det_mode.dropna(inplace=True)
-    
+        
     # ------------------------------------------
     # Write datasets to parquet files
     df.to_parquet(data_folder_path / "input/sdes/emp_2019/short_dist_trips.parquet")
