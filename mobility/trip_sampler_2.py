@@ -1,4 +1,4 @@
-as np
+import numpy as np
 import pandas as pd
 
 import os
@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 
-''' A SUPPRIMER : à des fins de test uniquement
+# A SUPPRIMER : à des fins de test uniquement
 def get_survey_data(source="EMD-2018-2019"):
     """
     This function transforms raw survey data into dataframes needed for the sampling procedures.
@@ -60,7 +60,7 @@ def get_survey_data(source="EMD-2018-2019"):
     survey_data["p_det_mode"] = p_det_mode
     
     return survey_data
-'''
+
 
 
 class TripSampler2:
@@ -86,6 +86,8 @@ class TripSampler2:
         self.n_travels_db = survey_data["n_travels"]
         self.p_immobility = survey_data["p_immobility"]
         self.p_car = survey_data["p_car"]
+        
+        self.travels_db["nb_nights"] = self.travels_db["nb_nights"].astype(float)
 
 
     def get_trips(self, csp, csp_ref_pers, urban_unit_category, n_pers, n_cars=None, n_years=1):
@@ -138,13 +140,6 @@ class TripSampler2:
         if n_cars is None :
             n_cars = np.random.choice(pers_p_car.index.to_numpy(), 1, p=pers_p_car)[0]
         
-        
-        # A SUPPRIMER : je remets l'index comme il faut en attendant la version définitive de get_survey_data
-        self.travels_db.reset_index(inplace=True)
-        self.travels_db.set_index(["city_category", "cs1", "n_cars"], inplace=True)
-        self.travels_db["nb_nights"] = self.travels_db["nb_nights"].astype(float)
-        self.long_trips_db.set_index("travel_id", inplace=True)
-        
         # ---------------------------------------
         # Create new filter databases according to the socio-pro category, the urban category and the motorization
         pers_days_trip_db = self.days_trip_db.xs(urban_unit_category).xs(csp).xs(n_cars)
@@ -155,12 +150,13 @@ class TripSampler2:
         # === TRAVELS ===
         # 1/ ---------------------------------------
         # Compute the number of travels during n_years given the socio-pro category
-        n_travel = np.round(13 * self.n_travels_db.xs(csp)).squeeze().astype(int)
+        n_travel = n_years * np.round(13 * self.n_travels_db.xs(csp)).squeeze().astype(int)
         
                 
         # 2/ ---------------------------------------
         # Sample n_travel travels
-        pers_travels = pers_travels_db.reset_index().sample(n_travel, weights="pondki", replace=True)
+        pers_travels = pers_travels_db.reset_index().sample(
+            n_travel, weights="pondki", replace=True)
         
         # 3/ ---------------------------------------
         # Compute the number of days spent in travel, for professionnal reasons and personnal reasons
@@ -185,10 +181,12 @@ class TripSampler2:
         # to simulate the local mobility in travel
         
         # Sample n_days_travel_pro week days
-        pers_days_travel_pro = pers_days_trip_db.xs(True).reset_index(drop=True).sample(n_days_travel_pro, weights="pondki")
+        pers_days_travel_pro = pers_days_trip_db.xs(True).reset_index(drop=True).sample(
+            n_days_travel_pro, weights="pondki", replace=True)
         
         # Sample n_days_travel_perso week-end days
-        pers_days_travel_perso = pers_days_trip_db.xs(False).reset_index(drop=True).sample(n_days_travel_perso, weights="pondki")
+        pers_days_travel_perso = pers_days_trip_db.xs(False).reset_index(drop=True).sample(
+            n_days_travel_perso, weights="pondki", replace=True)
         
         # 6/ ---------------------------------------
         # Get the short trips corresponding to the days sampled
@@ -204,20 +202,22 @@ class TripSampler2:
         # Compute the number of immobility days during the week and during the week-end
         
         # Compute the number of days where there is no travel
-        n_week_day = n_year * (52*5 - pers_days_travel_pro)
-        n_weekend_day = n_year * (52*2 - pers_days_travel_perso)
+        n_week_day = n_years * (52*5 - n_days_travel_pro)
+        n_weekend_day = n_years * (52*2 - n_days_travel_perso)
         
         n_immobility_week_day = np.round(n_week_day * pers_p_immobility['immobility_weekday']).astype(int)
         n_immobility_weekend = np.round(n_weekend_day * pers_p_immobility['immobility_weekend']).astype(int)
         
         # Compute the number of days where the person is not in travel nor immobile
-        n_mob_week_day = n_year * (52*5 - pers_days_travel_pro - n_immobility_week_day)
-        n_mob_weekend = n_year * (52*2 - pers_days_travel_perso - n_immobility_weekend)
+        n_mob_week_day = n_years * (52*5 - n_days_travel_pro - n_immobility_week_day)
+        n_mob_weekend = n_years * (52*2 - n_days_travel_perso - n_immobility_weekend)
         
         # 8/ ---------------------------------------
         # Sample n_mob_week_day week days and n_mob_weekend week-end days
-        pers_week_days = pers_days_trip_db.xs(True).reset_index(drop=True).sample(n_mob_week_day, weights="pondki")
-        pers_weekend_days = pers_days_trip_db.xs(False).reset_index(drop=True).sample(n_mob_weekend, weights="pondki")
+        pers_week_days = pers_days_trip_db.xs(True).reset_index(drop=True).sample(
+            n_mob_week_day, weights="pondki", replace=True)
+        pers_weekend_days = pers_days_trip_db.xs(False).reset_index(drop=True).sample(
+            n_mob_weekend, weights="pondki", replace=True)
         
         # 9/ ---------------------------------------
         # Get the short trips corresponding to the days sampled
@@ -233,5 +233,5 @@ class TripSampler2:
         return all_trips
 
 ts = TripSampler2(source="ENTD-2008")
-pers_p_car = ts.get_trips("3", "3", "B", "2", n_cars=None, n_years=1)
+all_trips = ts.get_trips("3", "3", "B", "2", n_cars=None, n_years=1)
 
