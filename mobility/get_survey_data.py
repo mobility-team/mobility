@@ -32,7 +32,7 @@ def get_survey_data(source="EMP-2019"):
     data_folder_path = Path(os.path.dirname(__file__)).parent / "data"
     
     if source == "ENTD-2008":
-        path = data_folder_path / "surveys/entd_2008"
+        path = data_folder_path / "surveys/entd-2008"
     elif source == "EMP-2019":
         path = data_folder_path / "surveys/emp-2019" 
     else:

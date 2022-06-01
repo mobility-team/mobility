@@ -1,30 +1,38 @@
 import numpy as np
 import pandas as pd
-
 import os
 from pathlib import Path
+import requests
+import zipfile
 
-def prepare_entd_2008():
+def prepare_entd_2008(proxies={}):
     """
     This function loads the raw survey data from the survey ENTD 2008 stored in ../data/input/sdes/entd_2008
     filter the data we need and writes these data bases into parquet files
     """
-
-    # Préparer la dataframe des déplacements locaux
-    # On va essayer de changer de logique d'échantillonage :
-    # Au lieu d'échantilloner des déplacements, on va échantilloner des journées entières de déplacements
-    # On aura de cette manière plus d'informations sur les chaines de déplacements, qui sont déterminantes dans le choix de modes notamment
-    # On évite aussi d'avoir à calculer un nombre de déplacements par jour
-
-    # Préparer la dataframe des voyages
-
-    # Préparer la dataframe du nombre de voyages par année
     
-    data_folder_path = Path(os.path.dirname(__file__)).parent / "data"
+    data_folder_path = Path(os.path.dirname(__file__)).parents[1] / "data/surveys/entd-2008"
+    
+    # Download the raw survey data from data.gouv.fr if needed
+    path = data_folder_path / "entd-2008.zip"
+    if path.exists() is False:
+        
+        # Download the zip file
+        r = requests.get(
+            url="https://www.data.gouv.fr/fr/datasets/r/896647f1-35b3-4dbe-8967-5a956cb99b95",
+            proxies=proxies
+        )
+        with open(path, "wb") as file:
+            file.write(r.content)
+        
+        # Unzip the content
+        with zipfile.ZipFile(path, "r") as zip_ref:
+            zip_ref.extractall(data_folder_path)
+            
     
     # Info about the individuals (CSP, city category...)
     indiv = pd.read_csv(
-        data_folder_path / "input/sdes/entd_2008/Q_tcm_individu.csv",
+        data_folder_path / "Q_tcm_individu.csv",
         encoding="latin-1",
         sep=";",
         dtype=str,
@@ -35,7 +43,7 @@ def prepare_entd_2008():
     
     # Info about households
     hh = pd.read_csv(
-        data_folder_path / "input/sdes/entd_2008/Q_tcm_menage_0.csv",
+        data_folder_path / "Q_tcm_menage_0.csv",
         encoding="latin-1",
         sep=";",
         dtype=str,
@@ -48,7 +56,7 @@ def prepare_entd_2008():
     
     # Number of cars in each household
     cars = pd.read_csv(
-        data_folder_path / "input/sdes/entd_2008/Q_menage.csv",
+        data_folder_path / "Q_menage.csv",
         encoding="latin-1",
         sep=";",
         dtype=str,
@@ -63,7 +71,7 @@ def prepare_entd_2008():
     # ------------------------------------------
     # Trips dataset
     df = pd.read_csv(
-        data_folder_path / "input/sdes/entd_2008/K_deploc.csv",
+        data_folder_path / "K_deploc.csv",
         encoding="latin-1",
         sep=";",
         dtype=str,
@@ -105,7 +113,7 @@ def prepare_entd_2008():
     # ------------------------------------------
     # Long distance trips dataset
     df_long = pd.read_csv(
-        data_folder_path / "input/sdes/entd_2008/K_voydepdet.csv",
+        data_folder_path / "K_voydepdet.csv",
         encoding="latin-1",
         sep=";",
         dtype=str,
@@ -148,7 +156,7 @@ def prepare_entd_2008():
     # Population by csp in 2008 from the weigths in the data base k_mobilite
     # These weights have been computed to be representative of the french population (6 years old and older) = 56.173e6 individuals
     indiv_mob = pd.read_csv(
-        data_folder_path / "input/sdes/entd_2008/K_mobilite.csv",
+        data_folder_path / "K_mobilite.csv",
         encoding="latin-1",
         sep=";",
         dtype={"IDENT_IND": str, 'V2_IMMODEP_A': bool, 'V2_IMMODEP_B': bool, 'V2_IMMODEP_C': bool,
@@ -264,13 +272,13 @@ def prepare_entd_2008():
 
     # ------------------------------------------
     # Write datasets to parquet files
-    df.to_parquet(data_folder_path / "input/sdes/entd_2008/short_dist_trips.parquet")
-    days_trip.to_parquet(data_folder_path / "input/sdes/entd_2008/days_trip.parquet")
-    p_immobility.to_parquet(data_folder_path / "input/sdes/entd_2008/immobility_probability.parquet")
-    df_long.to_parquet(data_folder_path / "input/sdes/entd_2008/long_dist_trips.parquet")
-    travels.to_parquet(data_folder_path / "input/sdes/entd_2008/travels.parquet")
-    n_travel_cs1.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/long_dist_travel_number.parquet")
-    p_car.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/car_ownership_probability.parquet")
-    p_det_mode.to_frame().to_parquet(data_folder_path / "input/sdes/entd_2008/insee_modes_to_entd_modes.parquet")
+    df.to_parquet(data_folder_path / "short_dist_trips.parquet")
+    days_trip.to_parquet(data_folder_path / "days_trip.parquet")
+    p_immobility.to_parquet(data_folder_path / "immobility_probability.parquet")
+    df_long.to_parquet(data_folder_path / "long_dist_trips.parquet")
+    travels.to_parquet(data_folder_path / "travels.parquet")
+    n_travel_cs1.to_frame().to_parquet(data_folder_path / "long_dist_travel_number.parquet")
+    p_car.to_frame().to_parquet(data_folder_path / "car_ownership_probability.parquet")
+    p_det_mode.to_frame().to_parquet(data_folder_path / "insee_modes_to_entd_modes.parquet")
     
     return

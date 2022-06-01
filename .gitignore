@@ -151,5 +151,9 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# Input data files
 data/surveys/emp-2019/*
 !data/surveys/emp-2019/.gitkeep 
+
+data/surveys/entd-2008/*
+!data/surveys/entd-2008/.gitkeep 
