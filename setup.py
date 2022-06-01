@@ -11,6 +11,7 @@ setuptools.setup(
     python_requires='>=3.9',
     install_requires=[
         "numpy",
-        "pandas"
+        "pandas",
+        "requests"
     ]
 )
