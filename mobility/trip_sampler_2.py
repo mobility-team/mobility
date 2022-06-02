@@ -1,76 +1,16 @@
 import numpy as np
 import pandas as pd
 
-import os
-from pathlib import Path
-
-
-
-# A SUPPRIMER : à des fins de test uniquement
-def get_survey_data(source="EMD-2018-2019"):
-    """
-    This function transforms raw survey data into dataframes needed for the sampling procedures.
-    
-    Args:
-        source (str) : The source of the travels and trips data ("ENTD-2008" or "EMD-2018-2019", the default).
-
-    Returns:
-        survey_data (dict) : a dict of dataframes.
-            "short_trips" (pd.DataFrame)
-            "days_trip" (pd.DataFrame)
-            "long_trips" (pd.DataFrame)
-            "travels" (pd.DataFrame)
-            "n_travels" (pd.DataFrame)
-            "p_immobility" (pd.DataFrame)
-            "car_ownership_probability" (pd.DataFrame)
-            "p_det_mode" (pd.DataFrame)
-    """
-    
-    # Tester si les fichiers parquet existent déjà pour la source demandée
-    # Si oui, charger les parquet dans un dict
-    # Si non, utiliser les fonctions de préparation pour les créer avant de les charger dans un dict
-    
-    data_folder_path = Path(os.path.dirname(__file__)).parent / "data"
-    
-    if source == "ENTD-2008" : path = data_folder_path / "input/sdes/entd_2008"
-    elif source == "EMD-2018-2019" : path = data_folder_path / "input/sdes/emp_2019"
-    else :
-        print("The source specified doesn't exist. The EMP 2019 is used by default")
-        source = "EMD-2018-2019"
-        path = data_folder_path / "input/sdes/emp_2019"
-    # Load the files into a dict
-    survey_data = {}
-
-    df = pd.read_parquet(path / "short_dist_trips.parquet")
-    days_trip = pd.read_parquet(path / "days_trip.parquet")
-    df_long = pd.read_parquet(path / "long_dist_trips.parquet")
-    travels = pd.read_parquet(path / "travels.parquet")
-    n_travel_cs1 = pd.read_parquet(path / "long_dist_travel_number.parquet")
-    p_immobility = pd.read_parquet(path / "immobility_probability.parquet")
-    p_car = pd.read_parquet(path / "car_ownership_probability.parquet")
-    p_det_mode = pd.read_parquet(path / "insee_modes_to_entd_modes.parquet")
-    
-    survey_data["short_trips"] = df
-    survey_data["days_trip"] = days_trip
-    survey_data["long_trips"] = df_long
-    survey_data["travels"] = travels
-    survey_data["n_travels"] = n_travel_cs1
-    survey_data["p_immobility"] = p_immobility
-    survey_data["p_car"] = p_car
-    survey_data["p_det_mode"] = p_det_mode
-    
-    return survey_data
-
-
+from get_survey_data import get_survey_data
 
 class TripSampler2:
     
-    def __init__(self, source="EMD-2018-2019"):
+    def __init__(self, source="EMP-2019"):
         """
         Create a TripSampler object for a given survey.
         
         Args:
-            source (str) : The source of the travels and trips data ("ENTD-2008" or "EMD-2018-2019", the default).
+            source (str) : The source of the travels and trips data ("ENTD-2008" or "EMP-2019", the default).
 
         Returns:
             TripSampler2: the TripSampler object, ready for sampling.
@@ -102,7 +42,7 @@ class TripSampler2:
             n_cars (str): The number of cars of the household ("0", "1", or "2+").
             urban_unit_category (str): The urban unit category ("C", "B", "I", "R").
             n_years (int): The number of years of trips to sample (1 to N, defaults to 1).
-            source (str) : The source of the travels and trips data ("ENTD-2008" or "EMD-2018-2019", the default).
+            source (str) : The source of the travels and trips data ("ENTD-2008" or "EMP-2019", the default).
 
         Returns:
             pd.DataFrame: a dataframe with one row per sampled trip.
@@ -129,7 +69,7 @@ class TripSampler2:
         
         # ---------------------------------------
         # Create new filter databases according to the socio-pro category, the urban category
-        pers_p_car = self.p_car.xs(urban_unit_category).xs(csp_ref_pers).xs(n_pers).squeeze()
+        pers_p_car = self.p_car.xs(urban_unit_category).xs(csp_ref_pers).xs(n_pers).squeeze(axis=1)
         pers_p_immobility = self.p_immobility.xs(csp)
         
 
@@ -138,13 +78,15 @@ class TripSampler2:
         # Compute the number of cars based on the city category,
         # the CSP of the reference person and the number of persons in the household
         if n_cars is None :
-            n_cars = np.random.choice(pers_p_car.index.to_numpy(), 1, p=pers_p_car)[0]
-        
+            try :
+                n_cars = np.random.choice(pers_p_car.index.to_numpy(), 1, p=pers_p_car)[0]
+            except AttributeError :     # if pers_p_car has been squeezed to a float
+                pass
         # ---------------------------------------
         # Create new filter databases according to the socio-pro category, the urban category and the motorization
         pers_days_trip_db = self.days_trip_db.xs(urban_unit_category).xs(csp).xs(n_cars)
         pers_travels_db = self.travels_db.xs(urban_unit_category).xs(csp).xs(n_cars)
-        
+
         all_trips = []
         
         # === TRAVELS ===
@@ -155,9 +97,15 @@ class TripSampler2:
                 
         # 2/ ---------------------------------------
         # Sample n_travel travels
-        pers_travels = pers_travels_db.reset_index().sample(
-            n_travel, weights="pondki", replace=True)
-        
+        try :
+            pers_travels = pers_travels_db.reset_index().sample(
+                n_travel, weights="pondki", replace=True)
+        except KeyError :
+            # This part handles the case where pers_travels_db is pd.Series instead of a pd.DataFrame
+            pers_travels_db = pd.DataFrame([pers_travels_db])
+            pers_travels = pers_travels_db.reset_index().sample(
+                n_travel, weights="pondki", replace=True)
+
         # 3/ ---------------------------------------
         # Compute the number of days spent in travel, for professionnal reasons and personnal reasons
         travel_pro_bool = pers_travels['travel_mot_id'].str.slice(0,1)=='9'
@@ -209,8 +157,8 @@ class TripSampler2:
         n_immobility_weekend = np.round(n_weekend_day * pers_p_immobility['immobility_weekend']).astype(int)
         
         # Compute the number of days where the person is not in travel nor immobile
-        n_mob_week_day = n_years * (52*5 - n_days_travel_pro - n_immobility_week_day)
-        n_mob_weekend = n_years * (52*2 - n_days_travel_perso - n_immobility_weekend)
+        n_mob_week_day = max(0, n_years * (52*5 - n_days_travel_pro - n_immobility_week_day))
+        n_mob_weekend = max(0, n_years * (52*2 - n_days_travel_perso - n_immobility_weekend))
         
         # 8/ ---------------------------------------
         # Sample n_mob_week_day week days and n_mob_weekend week-end days
@@ -232,6 +180,7 @@ class TripSampler2:
         
         return all_trips
 
-ts = TripSampler2(source="ENTD-2008")
-all_trips = ts.get_trips("3", "3", "B", "2", n_cars=None, n_years=1)
+ts = TripSampler2(source="EMP-2019")
+csp="3"
+all_trips = ts.get_trips(csp, csp, "B", "2", n_cars=None, n_years=1)
 
