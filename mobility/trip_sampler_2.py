@@ -130,11 +130,11 @@ class TripSampler2:
         
         # Sample n_days_travel_pro week days
         pers_days_travel_pro = pers_days_trip_db.xs(True).reset_index(drop=True).sample(
-            n_days_travel_pro, weights="pondki", replace=True)
+            n_days_travel_pro, weights="pond_jour", replace=True, axis=0)
         
         # Sample n_days_travel_perso week-end days
         pers_days_travel_perso = pers_days_trip_db.xs(False).reset_index(drop=True).sample(
-            n_days_travel_perso, weights="pondki", replace=True)
+            n_days_travel_perso, weights="pond_jour", replace=True, axis=0)
         
         # 6/ ---------------------------------------
         # Get the short trips corresponding to the days sampled
@@ -163,9 +163,9 @@ class TripSampler2:
         # 8/ ---------------------------------------
         # Sample n_mob_week_day week days and n_mob_weekend week-end days
         pers_week_days = pers_days_trip_db.xs(True).reset_index(drop=True).sample(
-            n_mob_week_day, weights="pondki", replace=True)
+            n_mob_week_day, weights="pond_jour", replace=True)
         pers_weekend_days = pers_days_trip_db.xs(False).reset_index(drop=True).sample(
-            n_mob_weekend, weights="pondki", replace=True)
+            n_mob_weekend, weights="pond_jour", replace=True)
         
         # 9/ ---------------------------------------
         # Get the short trips corresponding to the days sampled
