@@ -42,12 +42,9 @@ def prepare_emp_2019(proxies={}):
     # the terminology of the entd is used to be consistent with the function prepare_entd_2008
     indiv.columns = ["IDENT_IND", "IDENT_MEN", "CS24"]
     
-    indiv["cs1"] = indiv["CS24"].str.slice(0, 1)
-    indiv.loc[indiv["cs1"].isnull(), "cs1"] = "no_csp"
-    
-    indiv["cs1"] = indiv["CS24"].str.slice(0, 1)
-    indiv.loc[indiv["cs1"].isnull(), "cs1"] = "no_csp"
-    indiv.loc[indiv["cs1"]=='0', "cs1"] = "no_csp"
+    indiv["csp"] = indiv["CS24"].str.slice(0, 1)
+    indiv.loc[indiv["csp"].isnull(), "csp"] = "no_csp"
+    indiv.loc[indiv["csp"]=='0', "csp"] = "no_csp"
         
     # Info about households
     hh = pd.read_csv(
@@ -57,13 +54,13 @@ def prepare_emp_2019(proxies={}):
         dtype=str,
         usecols=["ident_men", "STATUTCOM_UU_RES", "NPERS", "CS24PR"]
     )
-    hh.columns = ["IDENT_MEN", "n_pers", "cs1", "city_category"]
+    hh.columns = ["IDENT_MEN", "n_pers", "csp", "city_category"]
     
     # the R category of the ENTD correspond to the H category of the EMP 2019
     hh["city_category"].loc[hh["city_category"]=='H'] = 'R'
     
-    hh["cs1"] = hh["cs1"].str.slice(0, 1)
-    hh["cs1_ref_pers"] = hh["cs1"]
+    hh["csp"] = hh["csp"].str.slice(0, 1)
+    hh["csp_household"] = hh["csp"]
     hh["n_pers"] = hh["n_pers"].astype(int)
     
     # Number of cars in each household
@@ -109,7 +106,7 @@ def prepare_emp_2019(proxies={}):
     df["MDISTTOT_fin"] = df["MDISTTOT_fin"].astype(float)
     df.loc[df["MACCOMPM"].isnull() ,"MACCOMPM"] = 0
     df.loc[df["MACCOMPHM"].isnull() ,"MACCOMPHM"] = 0
-    df["n_trip_companions"] = df["MACCOMPM"].astype(int) + df["MACCOMPHM"].astype(int)
+    df["n_other_passengers"] = df["MACCOMPM"].astype(int) + df["MACCOMPHM"].astype(int)
     df["weekday"] = np.where(df["TYPEJOUR"] == "1", True, False)
         
     # the day weight is divided by 5 if it's a weekday and 2 otherwise in order to be consistent with the ENTD
@@ -162,24 +159,24 @@ def prepare_emp_2019(proxies={}):
     # Merge the trips dataframe with the data about individuals and household cars
     df = pd.merge(df, indiv, on="IDENT_IND")
     #df = pd.merge(df, k_indiv[["IDENT_IND", "pond_indC"]], on="IDENT_IND")
-    df = pd.merge(df, hh[["city_category", "IDENT_MEN", "cs1_ref_pers"]], on="IDENT_MEN")
+    df = pd.merge(df, hh[["city_category", "IDENT_MEN", "csp_household"]], on="IDENT_MEN")
     df = pd.merge(df, cars, on="IDENT_MEN")
     
     # Transform the deplacement id into a day id
     df["IDENT_DEP"] = df["IDENT_DEP"].str.slice(0, 14)
     
     # Data base of days trip : group the trips by days
-    days_trip = df[["IDENT_DEP", "weekday", "city_category", "cs1", "n_cars", "POND_JOUR"]].copy()
-    days_trip.columns = ["day_id", "weekday", "city_category", "cs1", "n_cars", "pond_jour"]
+    days_trip = df[["IDENT_DEP", "weekday", "city_category", "csp", "n_cars", "POND_JOUR"]].copy()
+    days_trip.columns = ["day_id", "weekday", "city_category", "csp", "n_cars", "pondki"]
     
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first()
     days_trip.reset_index(inplace=True)
-    days_trip.set_index(["city_category", "cs1", "n_cars", "weekday"], inplace=True)
+    days_trip.set_index(["city_category", "csp", "n_cars", "weekday"], inplace=True)
     
     # Filter and format the columns
-    df = df[["IDENT_IND", "IDENT_DEP", "weekday", "city_category", "cs1", "n_cars", "MOTPREC", "MMOTIFDES", "mtp", "MDISTTOT_fin", "n_trip_companions", "POND_JOUR"]]
-    df.columns = ["indiv_id", "day_id", "weekday", "city_category", "cs1", "n_cars", "ori_loc_mot_id", "dest_loc_mot_id", "mode_id", "dist", "n_trip_companions", "pond_jour"]
+    df = df[["IDENT_IND", "IDENT_DEP", "weekday", "city_category", "csp", "n_cars", "MOTPREC", "MMOTIFDES", "mtp", "MDISTTOT_fin", "n_other_passengers", "POND_JOUR"]]
+    df.columns = ["individual_id", "day_id", "weekday", "city_category", "csp", "n_cars", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers", "pondki"]
     df.set_index(["day_id"], inplace=True)
     
     # ------------------------------------------
@@ -192,8 +189,9 @@ def prepare_emp_2019(proxies={}):
         usecols=["IDENT_IND", "IDENT_VOY", "OLDVMH", "OLDMOT", "dvo_orides", "mtp", "nbaccomp"]
         )
     
+    df_long["OLDVMH"] = df_long["OLDVMH"].astype(float)
     df_long["dvo_orides"] = df_long["dvo_orides"].astype(float)
-    df_long["n_trip_companions"] = df_long["nbaccomp"].astype(int)
+    df_long["n_other_passengers"] = df_long["nbaccomp"].astype(int)
     
     # Convert the mode id from the EMP terminology to the ENTD one
     df_long = pd.merge(df_long, emp_modes_to_entd_modes, on="mtp")
@@ -209,45 +207,45 @@ def prepare_emp_2019(proxies={}):
     # Merge with the data about individuals and household cars
     df_long = pd.merge(df_long, indiv, on="IDENT_IND")
     df_long = pd.merge(df_long, k_indiv[["IDENT_IND", "pond_indC"]], on="IDENT_IND")
-    df_long = pd.merge(df_long, hh[["city_category", "IDENT_MEN", "cs1_ref_pers"]], on="IDENT_MEN")
+    df_long = pd.merge(df_long, hh[["city_category", "IDENT_MEN", "csp_household"]], on="IDENT_MEN")
     df_long = pd.merge(df_long, cars, on="IDENT_MEN")
     
     # Filter and format the columns
-    df_long = df_long[["IDENT_IND", "IDENT_VOY", "city_category", "cs1", "n_cars", "OLDVMH", "OLDMOT", "mtp", "dvo_orides", "n_trip_companions", "pond_indC"]]
-    df_long.columns = ["indiv_id", "travel_id", "city_category", "cs1", "n_cars", "nb_nights", "dest_loc_mot_id", "mode_id", "dist", "n_trip_companions", "pondki"]
+    df_long = df_long[["IDENT_IND", "IDENT_VOY", "city_category", "csp", "n_cars", "OLDVMH", "OLDMOT", "mtp", "dvo_orides", "n_other_passengers", "pond_indC"]]
+    df_long.columns = ["individual_id", "travel_id", "city_category", "csp", "n_cars", "n_nights", "motive", "mode_id", "distance", "n_other_passengers", "pondki"]
         
     # Travel data base : group the long distance trips by travel
-    travels = df_long[["travel_id", "city_category", "cs1", "n_cars", "nb_nights", "dest_loc_mot_id", "pondki"]]
-    travels.columns = ['travel_id', 'city_category', 'cs1', 'n_cars', 'nb_nights', 'travel_mot_id', 'pondki']
+    travels = df_long[["travel_id", "city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]]
+    travels.columns = ['travel_id', 'city_category', 'csp', 'n_cars', 'n_nights', 'motive', 'pondki']
     # keep only the first trip of each travel to have one row per travel
     travels = travels.groupby("travel_id").first()
     travels.reset_index(inplace=True)
-    travels.set_index(["city_category", "cs1", "n_cars"], inplace=True)
+    travels.set_index(["city_category", "csp", "n_cars"], inplace=True)
     
     df_long.set_index("travel_id", inplace=True)
-    df_long["ori_loc_mot_id"] = np.nan
-    df_long.drop(["nb_nights", "indiv_id"], axis=1, inplace=True)
+    df_long["previous_motive"] = np.nan
+    df_long.drop(["n_nights", "individual_id"], axis=1, inplace=True)
     
     # ------------------------------------------
     # Population by csp in 2019 from the weigths in the data base k_individu
     # These weights have been computed to be representative of the french population (6 years old and older) = 59.482e6 individuals
     k_indiv = pd.merge(k_indiv, indiv, on="IDENT_IND")
-    csp_pop_2019 = k_indiv.groupby('cs1')['pond_indC'].sum()
+    csp_pop_2019 = k_indiv.groupby('csp')['pond_indC'].sum()
     csp_pop_2019.name = 'n_pop'
     csp_pop_2019 = pd.DataFrame(csp_pop_2019)
     
     # ------------------------------------------
     # Number of travels in a 4 week period, given the CSP
-    travel_csp_pop = travels.groupby(["cs1"])["pondki"].sum()
+    travel_csp_pop = travels.groupby(["csp"])["pondki"].sum()
     travel_csp_pop = pd.merge(travel_csp_pop, csp_pop_2019,  left_index=True, right_index=True)
-    travel_csp_pop["n_travel_cs1"] = travel_csp_pop["pondki"]/travel_csp_pop["n_pop"]
-    n_travel_cs1 = travel_csp_pop["n_travel_cs1"]
+    travel_csp_pop["n_travel_by_csp"] = travel_csp_pop["pondki"]/travel_csp_pop["n_pop"]
+    n_travel_by_csp = travel_csp_pop["n_travel_by_csp"]
 
     # ------------------------------------------
     # Probability of being immobile during a weekday or a week-end day given the CSP
     
     indiv_mob = k_indiv.loc[:, ["IMMODEP_A", "IMMODEP_B", "IMMODEP_C", "IMMODEP_D",
-                         "IMMODEP_E", "IMMODEP_F", "IMMODEP_G", "pond_indC", "cs1", "MDATE_jour", "MDATE_delai"]]
+                         "IMMODEP_E", "IMMODEP_F", "IMMODEP_G", "pond_indC", "csp", "MDATE_jour", "MDATE_delai"]]
     
     indiv_mob["IMMODEP_A"] = indiv_mob["IMMODEP_A"] * indiv_mob["pond_indC"]
     indiv_mob["IMMODEP_B"] = indiv_mob["IMMODEP_B"] * indiv_mob["pond_indC"]
@@ -307,24 +305,12 @@ def prepare_emp_2019(proxies={}):
     indiv_mob["immobility_weekend"] += np.where(indiv_mob["weekday_G"], 0, indiv_mob["IMMODEP_G"])
     
     # Sum on all the indivuduals grouped by csp
-    indiv_mob = indiv_mob.groupby('cs1').sum()
+    indiv_mob = indiv_mob.groupby('csp').sum()
     
     # Compute the probability of being immobile during a weekday and a week-end day given the csp
     indiv_mob["immobility_weekday"] = indiv_mob["immobility_weekday"] / indiv_mob['pond_indC'] / 5
     indiv_mob["immobility_weekend"] = indiv_mob["immobility_weekend"] / indiv_mob['pond_indC'] / 2
     p_immobility = indiv_mob[["immobility_weekday", "immobility_weekend"]]
-    """
-    #sans la distinction jour de semaine / jour de weekend
-    indiv_mob = indiv_mob.groupby('cs1').sum()
-    indiv_mob['IMMODEP_A'] = indiv_mob['IMMODEP_A'] / indiv_mob['pond_indC']
-    indiv_mob['IMMODEP_B'] = indiv_mob['IMMODEP_B'] / indiv_mob['pond_indC']
-    indiv_mob['IMMODEP_C'] = indiv_mob['IMMODEP_C'] / indiv_mob['pond_indC']
-    indiv_mob['IMMODEP_D'] = indiv_mob['IMMODEP_D'] / indiv_mob['pond_indC']
-    indiv_mob['IMMODEP_E'] = indiv_mob['IMMODEP_E'] / indiv_mob['pond_indC']
-    indiv_mob['IMMODEP_F'] = indiv_mob['IMMODEP_F'] / indiv_mob['pond_indC']
-    indiv_mob['IMMODEP_G'] = indiv_mob['IMMODEP_G'] / indiv_mob['pond_indC']
-    p_immobility = indiv_mob[["IMMODEP_A", "IMMODEP_B", "IMMODEP_C", "IMMODEP_D", "IMMODEP_E", "IMMODEP_F", "IMMODEP_G"]].sum(axis=1) / 7
-    """
         
     # ------------------------------------------
     # Probability of owning a car given the city category, the CSP of the ref person
@@ -333,8 +319,8 @@ def prepare_emp_2019(proxies={}):
     
     p_car["n_pers"] = np.where(p_car["n_pers"] < 3, p_car["n_pers"].astype(str), "3+")
     
-    p_car = p_car.groupby(["city_category", "cs1_ref_pers", "n_cars", "n_pers"])["n_cars"].count()
-    p_car = p_car/p_car.groupby(["city_category", "cs1_ref_pers", "n_pers"]).sum()
+    p_car = p_car.groupby(["city_category", "csp_household", "n_cars", "n_pers"])["n_cars"].count()
+    p_car = p_car/p_car.groupby(["city_category", "csp_household", "n_pers"]).sum()
     
     # ------------------------------------------
     # Probability of detailed public transport modes and two wheels vehicles (bikes, motorcycles)
@@ -345,11 +331,11 @@ def prepare_emp_2019(proxies={}):
     p_det_mode["mode_group"] = "2"
     p_det_mode.loc[p_det_mode["mode_id"].isin(["5.50", "5.51", "5.52", "5.53", "5.54", "5.55", "5.56", "5.57", "5.58", "5.59"]), "mode_group"] = "5"
     
-    p_det_mode["dist_bin"] = pd.qcut(p_det_mode["dist"].values, 4)
+    p_det_mode["dist_bin"] = pd.qcut(p_det_mode["distance"].values, 4)
     p_det_mode["dist_bin_left"] = p_det_mode["dist_bin"].apply(lambda x: x.left)
     p_det_mode["dist_bin_right"] = p_det_mode["dist_bin"].apply(lambda x: x.right)
     
-    p_det_mode = p_det_mode.groupby(["city_category", "dist_bin_left", "dist_bin_right", "mode_group", "mode_id"])["pond_jour"].sum()
+    p_det_mode = p_det_mode.groupby(["city_category", "dist_bin_left", "dist_bin_right", "mode_group", "mode_id"])["pondki"].sum()
     p_det_mode_tot = p_det_mode.groupby(["city_category", "mode_group", "dist_bin_left", "dist_bin_right"]).sum()
     
     p_det_mode = p_det_mode/p_det_mode_tot
@@ -362,7 +348,7 @@ def prepare_emp_2019(proxies={}):
     p_immobility.to_parquet(data_folder_path / "immobility_probability.parquet")
     df_long.to_parquet(data_folder_path / "long_dist_trips.parquet")
     travels.to_parquet(data_folder_path / "travels.parquet")
-    n_travel_cs1.to_frame().to_parquet(data_folder_path / "long_dist_travel_number.parquet")
+    n_travel_by_csp.to_frame().to_parquet(data_folder_path / "long_dist_travel_number.parquet")
     p_car.to_frame().to_parquet(data_folder_path / "car_ownership_probability.parquet")
     p_det_mode.to_frame().to_parquet(data_folder_path / "insee_modes_to_entd_modes.parquet")
     
