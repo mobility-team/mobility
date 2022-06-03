@@ -101,7 +101,7 @@ def prepare_entd_2008(proxies={}):
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first() 
     days_trip.reset_index(inplace=True)
-    days_trip.set_index(["city_category", "csp", "n_cars", "weekday"], inplace=True)
+    days_trip.set_index(['csp', 'n_cars', 'weekday', 'city_category'], inplace=True)
     
     # Filter and format the columns
     df = df[["IDENT_IND", "IDENT_JOUR", "weekday", "city_category", "csp", "n_cars", "V2_MMOTIFORI", "V2_MMOTIFDES", "V2_MTP", "V2_MDISTTOT", "n_other_passengers", "PONDKI"]]
@@ -163,7 +163,7 @@ def prepare_entd_2008(proxies={}):
     # Keep only the first trip of each travel to have one row per travel
     travels = travels.groupby("travel_id").first()
     travels.reset_index(inplace=True)
-    travels.set_index(["city_category", "csp", "n_cars"], inplace=True)
+    travels.set_index(['csp', 'n_cars', 'city_category'], inplace=True)
     df_long["previous_motive"] = np.nan
     df_long.drop(["n_nights", "individual_id", "destination_city_category"], axis=1, inplace=True)
     df_long.set_index("travel_id", inplace=True)
