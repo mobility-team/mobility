@@ -186,12 +186,16 @@ def prepare_emp_2019(proxies={}):
         encoding="latin-1",
         sep=";",
         dtype=str,
-        usecols=["IDENT_IND", "IDENT_VOY", "OLDVMH", "OLDMOT", "dvo_orides", "mtp", "nbaccomp"]
+        usecols=["IDENT_IND", "IDENT_VOY", "OLDVMH", "OLDMOT", "dvo_orides", 
+                 "mtp", "nbaccomp", "STATUTCOM_UU_DES"]
         )
     
     df_long["OLDVMH"] = df_long["OLDVMH"].astype(float)
     df_long["dvo_orides"] = df_long["dvo_orides"].astype(float)
     df_long["n_other_passengers"] = df_long["nbaccomp"].astype(int)
+    
+    # the R category of the ENTD correspond to the H category of the EMP 2019
+    df_long.loc[df_long["STATUTCOM_UU_DES"]=='H', "STATUTCOM_UU_DES"] = 'R'
     
     # Convert the mode id from the EMP terminology to the ENTD one
     df_long = pd.merge(df_long, emp_modes_to_entd_modes, on="mtp")
@@ -210,13 +214,17 @@ def prepare_emp_2019(proxies={}):
     df_long = pd.merge(df_long, hh[["city_category", "IDENT_MEN", "csp_household"]], on="IDENT_MEN")
     df_long = pd.merge(df_long, cars, on="IDENT_MEN")
     
+    # If the city category of the destination is not available
+    # the home's city category is used
+    df_long.loc[df_long['STATUTCOM_UU_DES'].isna(), 'STATUTCOM_UU_DES'] = df_long.loc[df_long['STATUTCOM_UU_DES'].isna(), 'city_category']
+    
     # Filter and format the columns
-    df_long = df_long[["IDENT_IND", "IDENT_VOY", "city_category", "csp", "n_cars", "OLDVMH", "OLDMOT", "mtp", "dvo_orides", "n_other_passengers", "pond_indC"]]
-    df_long.columns = ["individual_id", "travel_id", "city_category", "csp", "n_cars", "n_nights", "motive", "mode_id", "distance", "n_other_passengers", "pondki"]
-        
+    df_long = df_long[["IDENT_IND", "IDENT_VOY", "city_category", "STATUTCOM_UU_DES", "csp", "n_cars", "OLDVMH", "OLDMOT", "mtp", "dvo_orides", "n_other_passengers", "pond_indC"]]
+    df_long.columns = ["individual_id", "travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "mode_id", "distance", "n_other_passengers", "pondki"]
+
     # Travel data base : group the long distance trips by travel
-    travels = df_long[["travel_id", "city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]]
-    travels.columns = ['travel_id', 'city_category', 'csp', 'n_cars', 'n_nights', 'motive', 'pondki']
+    travels = df_long[["travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]]
+    travels.columns = ['travel_id', 'city_category', "destination_city_category", 'csp', 'n_cars', 'n_nights', 'motive', 'pondki']
     # keep only the first trip of each travel to have one row per travel
     travels = travels.groupby("travel_id").first()
     travels.reset_index(inplace=True)
@@ -224,7 +232,7 @@ def prepare_emp_2019(proxies={}):
     
     df_long.set_index("travel_id", inplace=True)
     df_long["previous_motive"] = np.nan
-    df_long.drop(["n_nights", "individual_id"], axis=1, inplace=True)
+    df_long.drop(["n_nights", "individual_id", "destination_city_category"], axis=1, inplace=True)
     
     # ------------------------------------------
     # Population by csp in 2019 from the weigths in the data base k_individu

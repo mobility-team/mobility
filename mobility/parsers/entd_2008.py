@@ -119,7 +119,8 @@ def prepare_entd_2008(proxies={}):
         dtype=str,
         usecols=["IDENT_IND", "IDENT_VOY", "V2_OLDVMH", "V2_OLDMOT", "V2_DVO_ODV", 
                  "V2_OLDMTP", "V2_OLDPAX",
-                 "V2_OLDACPA01", "V2_OLDACPA02", "V2_OLDACPA03", "V2_OLDACPA04", "V2_OLDACPA05", "V2_OLDACPA06", "V2_OLDACPA07", "V2_OLDACPA08", "V2_OLDACPA09"]
+                 "V2_OLDACPA01", "V2_OLDACPA02", "V2_OLDACPA03", "V2_OLDACPA04", "V2_OLDACPA05", "V2_OLDACPA06", "V2_OLDACPA07", "V2_OLDACPA08", "V2_OLDACPA09",
+                 "V2_OLDARCOM_UUCat"]
     )
     df_long["V2_DVO_ODV"] = df_long["V2_DVO_ODV"].astype(float)
     df_long["n_other_passengers"] = df_long[["V2_OLDACPA01", "V2_OLDACPA02", "V2_OLDACPA03", "V2_OLDACPA04", "V2_OLDACPA05", "V2_OLDACPA06", "V2_OLDACPA07", "V2_OLDACPA08", "V2_OLDACPA09"]].count(axis=1)
@@ -128,14 +129,28 @@ def prepare_entd_2008(proxies={}):
     df_long["n_other_passengers"] = df_long["n_other_passengers"].astype(int)
     df_long["V2_OLDVMH"] = df_long["V2_OLDVMH"].astype(float)
     
+    # Convert the urban category of the destination to the {'C', 'B', 'I', 'R'} terminology
+    dict_urban_category = pd.DataFrame([['ville centre', 'C'],
+                                        ['banlieue', 'B'],
+                                        ['ville isolée', 'I'],
+                                        ['commune rurale', 'R'],
+                                        [np.nan, np.nan]],
+                                       columns=['labels', 'UU_id'])
+    dict_urban_category.columns = ['V2_OLDARCOM_UUCat', 'UU_id']
+    df_long = pd.merge(df_long, dict_urban_category, on="V2_OLDARCOM_UUCat")                                
+    
     # Merge with the data about individuals and household cars
     df_long = pd.merge(df_long, indiv, on="IDENT_IND")
     df_long = pd.merge(df_long, hh[["city_category", "IDENT_MEN", "csp_household"]], on="IDENT_MEN")
     df_long = pd.merge(df_long, cars, on="IDENT_MEN")
     
+    # If the city category of the destination is not available
+    # the home's city category is used
+    df_long.loc[df_long['UU_id'].isna(), 'UU_id'] = df_long.loc[df_long['UU_id'].isna(), 'city_category']
+    
     # Filter and format the columns
-    df_long = df_long[["IDENT_IND", "IDENT_VOY", "city_category", "csp", "n_cars", "V2_OLDVMH", "V2_OLDMOT", "V2_OLDMTP", "V2_DVO_ODV", "n_other_passengers"]]
-    df_long.columns = ["individual_id", "travel_id", "city_category", "csp", "n_cars", "n_nights", "motive", "mode_id", "distance", "n_other_passengers"]
+    df_long = df_long[["IDENT_IND", "IDENT_VOY", "city_category", "UU_id", "csp", "n_cars", "V2_OLDVMH", "V2_OLDMOT", "V2_OLDMTP", "V2_DVO_ODV", "n_other_passengers"]]
+    df_long.columns = ["individual_id", "travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "mode_id", "distance", "n_other_passengers"]
     df_long.set_index("individual_id", inplace=True)
     
     # Merge to get the weights of the individuals pondki
@@ -143,14 +158,14 @@ def prepare_entd_2008(proxies={}):
     df_long.reset_index(inplace=True)
 
     # Travel data base : group the long distance trips by travel
-    travels = df_long.loc[:, ["individual_id", "travel_id", "city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]].copy()
-    travels.columns = ["individual_id", "travel_id", "city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]
+    travels = df_long.loc[:, ["individual_id", "travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]].copy()
+    travels.columns = ["individual_id", "travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]
     # Keep only the first trip of each travel to have one row per travel
     travels = travels.groupby("travel_id").first()
     travels.reset_index(inplace=True)
     travels.set_index(["city_category", "csp", "n_cars"], inplace=True)
     df_long["previous_motive"] = np.nan
-    df_long.drop(["n_nights", "individual_id"], axis=1, inplace=True)
+    df_long.drop(["n_nights", "individual_id", "destination_city_category"], axis=1, inplace=True)
     df_long.set_index("travel_id", inplace=True)
     
     # ------------------------------------------
