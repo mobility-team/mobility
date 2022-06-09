@@ -2,44 +2,7 @@ import numpy as np
 import pandas as pd
 
 from get_survey_data import get_survey_data
-
-
-def safe_sample(data_base, n_sample, weights="pondki", minimum_sample_size=1, **kwargs):
-    """
-    Samples the data base filtered by kwargs
-    Handles the case where the sample size is too small
-    
-    Args:
-        data_base (pd.DataFrame): The database to sample from. Must be indexed (or muli-indexed) by the keys of kwargs.
-        n_sample (int): The number of samples to draw.
-        weights (str) : The name of columns of data_base containing the weights for the sampling.
-        minimum_sample_size (int) : The minimum size of the database to draw from.
-                                    If the kwargs make the database to small,
-                                    relax the criteria from last to first.
-        kwargs : the criteria to filter the database
-
-    Returns:
-        pd.DataFrame: a dataframe with n_sample rows.
-    
-    """
-    # Filter by the kwargs
-    for key in kwargs.keys():
-        if (data_base.index.get_level_values(key) == kwargs[key]).sum() < minimum_sample_size :
-            # Sample size too small -> Relax the current criteria
-            data_base.reset_index(level=key, inplace=True)
-            
-            print('The '+key+' criteria has been relaxed.')
-            
-        else :
-            data_base = data_base.xs(kwargs[key])
-    
-    if type(data_base)==pd.Series :
-        # The database to sample from is just one row
-        data_base = pd.DataFrame([data_base])
-    
-    return data_base.sample(n_sample, weights=weights, replace=True, axis=0)
-
-
+from safe_sample import safe_sample
 
 class TripSampler2:
     
@@ -64,7 +27,7 @@ class TripSampler2:
         self.n_travels_db = survey_data["n_travels"]
         self.p_immobility = survey_data["p_immobility"]
         self.p_car = survey_data["p_car"]
-
+        
     def get_trips(self, csp, csp_household, urban_unit_category, n_pers, n_cars=None, n_years=1):
         """
         Sample long distance trips and short distance trips from survey data (prepared with prepare_survey_data),
@@ -113,9 +76,6 @@ class TripSampler2:
         # the CSP of the reference person and the number of persons in the household
         if n_cars is None :
             n_cars = np.random.choice(filtered_p_car.index.to_numpy(), 1, p=filtered_p_car)[0]
-                
-        # A DETERMINER
-        MINIMUM_SAMPLE_SIZE = 2
 
         all_trips = []
         
@@ -128,8 +88,7 @@ class TripSampler2:
         # 2/ ---------------------------------------
         # Sample n_travel travels
         
-        sampled_travels = safe_sample(self.travels_db, n_travel,
-                                      weights="pondki", minimum_sample_size=MINIMUM_SAMPLE_SIZE,
+        sampled_travels = safe_sample(self.travels_db, n_travel, weights="pondki",
                                       csp=csp, n_cars=n_cars, city_category=urban_unit_category)
         
         # 3/ ---------------------------------------
@@ -171,8 +130,7 @@ class TripSampler2:
                 n_days_in_travel_pro = int(sampled_travels.iloc[i]['n_nights']+1)
                 destination_city_category = sampled_travels.iloc[i]['destination_city_category']
                 
-                sampled_days_in_travel_pro = safe_sample(self.days_trip_db, n_days_in_travel_pro,
-                                                          weights='pondki', minimum_sample_size=MINIMUM_SAMPLE_SIZE,
+                sampled_days_in_travel_pro = safe_sample(self.days_trip_db, n_days_in_travel_pro, weights='pondki', 
                                                           csp=csp, n_cars=n_cars, weekday=True, city_category=destination_city_category)
                 
                 days_id.append(sampled_days_in_travel_pro['day_id'])
@@ -182,8 +140,7 @@ class TripSampler2:
                 n_days_in_travel_perso = int(sampled_travels.iloc[i]['n_nights']+1)
                 destination_city_category = sampled_travels.iloc[i]['destination_city_category']
                 
-                sampled_days_in_travel_perso = safe_sample(self.days_trip_db, n_days_in_travel_perso,
-                                                          weights='pondki', minimum_sample_size=MINIMUM_SAMPLE_SIZE,
+                sampled_days_in_travel_perso = safe_sample(self.days_trip_db, n_days_in_travel_perso, weights='pondki',
                                                           csp=csp, n_cars=n_cars, weekday=False, city_category=destination_city_category)
                 
                 days_id.append(sampled_days_in_travel_perso['day_id'])
@@ -218,12 +175,10 @@ class TripSampler2:
         # 8/ ---------------------------------------
         # Sample n_mob_week_day week days and n_mob_weekend week-end days
         
-        sampled_week_days = safe_sample(self.days_trip_db, n_mobile_week_day,
-                                        weights='pondki', minimum_sample_size=MINIMUM_SAMPLE_SIZE,
+        sampled_week_days = safe_sample(self.days_trip_db, n_mobile_week_day, weights='pondki',
                                         csp=csp, n_cars=n_cars, weekday=True, city_category=urban_unit_category)
         
-        sampled_weekend_days = safe_sample(self.days_trip_db, n_mobile_weekend,
-                                           weights='pondki', minimum_sample_size=MINIMUM_SAMPLE_SIZE,
+        sampled_weekend_days = safe_sample(self.days_trip_db, n_mobile_weekend, weights='pondki',
                                            csp=csp, n_cars=n_cars, weekday=False, city_category=urban_unit_category)
         
         # 9/ ---------------------------------------
@@ -240,7 +195,7 @@ class TripSampler2:
         
         return all_trips
 
-ts = TripSampler2(source="EMP-2019")
-csp="1"
-all_trips = ts.get_trips(csp, csp, "B", "2", n_cars=None, n_years=1)
+#ts = TripSampler2(source="EMP-2019")
+#csp="1"
+#all_trips = ts.get_trips(csp, csp, "B", "2", n_cars=None, n_years=1)
 
