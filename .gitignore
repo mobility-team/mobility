@@ -152,8 +152,8 @@ cython_debug/
 #.idea/
 
 # Input data files
-data/surveys/emp-2019/*
-!data/surveys/emp-2019/.gitkeep 
+mobility/data/surveys/emp-2019/*
+!mobility/data/surveys/emp-2019/.gitkeep 
 
-data/surveys/entd-2008/*
-!data/surveys/entd-2008/.gitkeep 
+mobility/data/surveys/entd-2008/*
+!mobility/data/surveys/entd-2008/.gitkeep 

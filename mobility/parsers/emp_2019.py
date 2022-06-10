@@ -13,6 +13,9 @@ def prepare_emp_2019(proxies={}):
     """
     
     data_folder_path = Path(os.path.dirname(__file__)).parents[1] / "data/surveys/emp-2019"
+
+    if data_folder_path.exists() is False:
+        os.makedirs(data_folder_path)
     
     # Download the raw survey data from data.gouv.fr if needed
     path = data_folder_path / "emp-2019.zip"

@@ -1,7 +1,7 @@
 import setuptools
 
 setuptools.setup(
-    name="mobilite",
+    name="mobility-tools",
     version="0.0.1",
     author="Antoine Gauchot, Anne-Sophie Girot, Louise Gontier, Félix Pouchain",
     author_email="antoine.gauchot@arep.fr, a.girot@elioth.fr, l.gontier@elioth.fr, felix.pouchain@arep.fr",

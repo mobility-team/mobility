@@ -12,6 +12,9 @@ def prepare_entd_2008(proxies={}):
     """
     
     data_folder_path = Path(os.path.dirname(__file__)).parents[1] / "data/surveys/entd-2008"
+
+    if data_folder_path.exists() is False:
+        os.makedirs(data_folder_path)
     
     # Download the raw survey data from data.gouv.fr if needed
     path = data_folder_path / "entd-2008.zip"
