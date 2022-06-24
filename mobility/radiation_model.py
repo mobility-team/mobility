@@ -301,7 +301,7 @@ def iter_radiation_model(sources, sinks, costs, alpha=0, beta=1, max_iter=20, pl
 
     return total_flows, source_volume, sink_volume
 
-def plot_volume(volume_location, coordinates, n_locations=10):
+def plot_volume(volume_location, coordinates, n_locations=10, title=""):
     """
     Plot each location whose size is proportionnal to the volume at the location.
     Display also the label of the location for the biggest n_locations.
@@ -323,7 +323,7 @@ def plot_volume(volume_location, coordinates, n_locations=10):
             according to the volume from sources
     """
     plt.figure()
-    
+    plt.title(title)
     # Normalization
     volume_location['volume'] = 100*(volume_location['volume']-volume_location['volume'].min()) / volume_location['volume'].max()
     
@@ -341,7 +341,7 @@ def plot_volume(volume_location, coordinates, n_locations=10):
                  volume_location.loc[idx, 'NOM_COM'][0:14])
     return
 
-def plot_flow(flows, coordinates, sources=None, n_flows=100, n_locations=5, size=1):
+def plot_flow(flows, coordinates, sources=None, n_flows=100, n_locations=5, size=1, title=""):
     """
     Plot the flows between the locations. The bigger the flow is, the bigger the plot line
     will be. THe points are the locations. If sources=None, then the size of each location
@@ -387,7 +387,7 @@ def plot_flow(flows, coordinates, sources=None, n_flows=100, n_locations=5, size
     idx_show = flows.iloc[:n_flows].index
     
     plt.figure(figsize=(6*size, 4*size))
-    
+    plt.title(title, fontsize=5*size)
     # Plot the flows
     for idx in idx_show:
         plt.plot([flows.loc[idx, 'from_x'], flows.loc[idx, 'to_x']],
@@ -416,7 +416,7 @@ def plot_flow(flows, coordinates, sources=None, n_flows=100, n_locations=5, size
         
         # Plot the locations
         sources = pd.merge(sources, coordinates, left_index=True, right_index=True)
-        plt.scatter(sources['x'], sources['y'], s=sources['source_volume'])
+        plt.scatter(sources['x'], sources['y'], s=sources['source_volume'], zorder=1)
         
         # n_locations biggest location to display
         sources.sort_values(by='source_volume', inplace=True)

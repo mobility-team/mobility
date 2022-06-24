@@ -13,7 +13,6 @@ def get_insee_data():
     The INSEE data contains:
         - the repartition of the active population,
         - the repartion of jobs
-        - the repartion of malls
         - the repartion of shops
         - the repartion of schools
         - the repartion of administration facilities
@@ -61,7 +60,6 @@ def get_insee_data():
 
     jobs = pd.read_parquet(data_folder_path / "work/jobs.parquet")
     active_population = pd.read_parquet(data_folder_path / "work/active_population.parquet")
-    mall = pd.read_parquet(data_folder_path / "facilities/malls.parquet")
     shops = pd.read_parquet(data_folder_path / "facilities/shops.parquet")
     schools = pd.read_parquet (data_folder_path / "facilities/schools.parquet")
     admin = pd.read_parquet(data_folder_path / "facilities/admin_facilities.parquet")
@@ -73,7 +71,6 @@ def get_insee_data():
     
     insee_data["jobs"] = jobs
     insee_data["active_population"] = active_population
-    insee_data['mall'] = mall
     insee_data['shops'] = shops
     insee_data['schools'] = schools
     insee_data['admin'] = admin
@@ -84,5 +81,3 @@ def get_insee_data():
     insee_data['restaurant'] = restaurant
     
     return insee_data
-
-res = get_insee_data()
