@@ -12,7 +12,7 @@ def prepare_emp_2019(proxies={}):
     and then writes these dataframes into parquet files
     """
     
-    data_folder_path = Path(os.path.dirname(__file__)).parents[1] / "data/surveys/emp-2019"
+    data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/surveys/emp-2019"
 
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)

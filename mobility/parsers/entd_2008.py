@@ -7,11 +7,12 @@ import zipfile
 
 def prepare_entd_2008(proxies={}):
     """
-    This function loads the raw survey data from the survey ENTD 2008 stored in ../data/input/sdes/entd_2008
-    filter the data we need and writes these data bases into parquet files
+    This function downloads (if needed) the raw survey data from the survey EMP 2019,
+    then creates the dataframes needed for trip sampling,
+    and then writes these dataframes into parquet files
     """
     
-    data_folder_path = Path(os.path.dirname(__file__)).parents[1] / "data/surveys/entd-2008"
+    data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/surveys/entd-2008"
 
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
