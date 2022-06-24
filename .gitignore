@@ -5,6 +5,8 @@ __pycache__/
 
 # C extensions
 *.so
+# parquet_file (for insee test only)
+* .parquet
 
 # Distribution / packaging
 .Python

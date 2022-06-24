@@ -12,7 +12,7 @@ def prepare_emp_2019(proxies={}):
     and then writes these dataframes into parquet files
     """
     
-    data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/surveys/emp-2019"
+    data_folder_path = Path(os.path.dirname(__file__)).parents[1] / "data/surveys/emp-2019"
 
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
@@ -175,7 +175,7 @@ def prepare_emp_2019(proxies={}):
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first()
     days_trip.reset_index(inplace=True)
-    days_trip.set_index(['csp', 'n_cars', 'weekday', 'city_category'], inplace=True)
+    days_trip.set_index(["city_category", "csp", "n_cars", "weekday"], inplace=True)
     
     # Filter and format the columns
     df = df[["IDENT_IND", "IDENT_DEP", "weekday", "city_category", "csp", "n_cars", "MOTPREC", "MMOTIFDES", "mtp", "MDISTTOT_fin", "n_other_passengers", "POND_JOUR"]]
@@ -231,7 +231,7 @@ def prepare_emp_2019(proxies={}):
     # keep only the first trip of each travel to have one row per travel
     travels = travels.groupby("travel_id").first()
     travels.reset_index(inplace=True)
-    travels.set_index(['csp', 'n_cars', 'city_category'], inplace=True)
+    travels.set_index(["city_category", "csp", "n_cars"], inplace=True)
     
     df_long.set_index("travel_id", inplace=True)
     df_long["previous_motive"] = np.nan

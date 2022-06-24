@@ -7,12 +7,11 @@ import zipfile
 
 def prepare_entd_2008(proxies={}):
     """
-    This function downloads (if needed) the raw survey data from the survey EMP 2019,
-    then creates the dataframes needed for trip sampling,
-    and then writes these dataframes into parquet files
+    This function loads the raw survey data from the survey ENTD 2008 stored in ../data/input/sdes/entd_2008
+    filter the data we need and writes these data bases into parquet files
     """
     
-    data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/surveys/entd-2008"
+    data_folder_path = Path(os.path.dirname(__file__)).parents[1] / "data/surveys/entd-2008"
 
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
@@ -105,7 +104,7 @@ def prepare_entd_2008(proxies={}):
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first() 
     days_trip.reset_index(inplace=True)
-    days_trip.set_index(['csp', 'n_cars', 'weekday', 'city_category'], inplace=True)
+    days_trip.set_index(["city_category", "csp", "n_cars", "weekday"], inplace=True)
     
     # Filter and format the columns
     df = df[["IDENT_IND", "IDENT_JOUR", "weekday", "city_category", "csp", "n_cars", "V2_MMOTIFORI", "V2_MMOTIFDES", "V2_MTP", "V2_MDISTTOT", "n_other_passengers", "PONDKI"]]
@@ -167,7 +166,7 @@ def prepare_entd_2008(proxies={}):
     # Keep only the first trip of each travel to have one row per travel
     travels = travels.groupby("travel_id").first()
     travels.reset_index(inplace=True)
-    travels.set_index(['csp', 'n_cars', 'city_category'], inplace=True)
+    travels.set_index(["city_category", "csp", "n_cars"], inplace=True)
     df_long["previous_motive"] = np.nan
     df_long.drop(["n_nights", "individual_id", "destination_city_category"], axis=1, inplace=True)
     df_long.set_index("travel_id", inplace=True)
