@@ -105,8 +105,7 @@ def prepare_facilities(proxies={}):
         
         motive_db[mot] = motive_facilities
     
-    db_mall = motive_db['2.1']
-    db_shops = motive_db['2.2']
+    db_shops = motive_db['2']
     db_schools = motive_db['1.4']
     db_admin = motive_db['4.1']
     db_sport = motive_db['7.6']
@@ -117,7 +116,6 @@ def prepare_facilities(proxies={}):
     
     # ------------------------------------------
     # Write datasets to parquet files
-    db_mall.to_parquet(data_folder_path / "malls.parquet")
     db_shops.to_parquet(data_folder_path / "shops.parquet")
     db_schools.to_parquet(data_folder_path / "schools.parquet")
     db_admin.to_parquet(data_folder_path / "admin_facilities.parquet")
@@ -127,4 +125,4 @@ def prepare_facilities(proxies={}):
     db_museum.to_parquet(data_folder_path / "museum.parquet")
     db_restaurant.to_parquet(data_folder_path / "restaurants.parquet")
     
-    return None
+    return 
