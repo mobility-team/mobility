@@ -157,3 +157,7 @@ mobility/data/surveys/emp-2019/*
 
 mobility/data/surveys/entd-2008/*
 !mobility/data/surveys/entd-2008/.gitkeep 
+
+mobility/data/insee/work/*
+mobility/data/insee/facilities/*
+mobility/data/insee/esane/*
