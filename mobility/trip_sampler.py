@@ -84,7 +84,7 @@ class TripSampler:
         # 1/ ---------------------------------------
         # Compute the number of travels during n_years given the socio-pro category
         
-        n_travel = n_years * np.round(13 * self.n_travels_db.xs(csp)).squeeze().astype(int)
+        n_travel = n_years * self.n_travels_db.xs(csp).squeeze().astype(int)
         
         # 2/ ---------------------------------------
         # Sample n_travel travels
