@@ -189,12 +189,13 @@ def prepare_emp_2019(proxies={}):
         encoding="latin-1",
         sep=";",
         dtype=str,
-        usecols=["IDENT_IND", "IDENT_VOY", "OLDVMH", "OLDMOT", "dvo_orides", 
-                 "mtp", "nbaccomp", "STATUTCOM_UU_DES"]
+        usecols=["IDENT_IND", "IDENT_VOY", "OLDVMH", "OLDMOT", "OLDKM_fin", 
+                 "mtp", "nbaccomp", "STATUTCOM_UU_DES", "poids_annuel"]
         )
     
+    df_long["poids_annuel"] = df_long["poids_annuel"].astype(float)
     df_long["OLDVMH"] = df_long["OLDVMH"].astype(float)
-    df_long["dvo_orides"] = df_long["dvo_orides"].astype(float)
+    df_long["OLDKM_fin"] = df_long["OLDKM_fin"].astype(float)
     df_long["n_other_passengers"] = df_long["nbaccomp"].astype(int)
     
     # the R category of the ENTD correspond to the H category of the EMP 2019
@@ -222,7 +223,7 @@ def prepare_emp_2019(proxies={}):
     df_long.loc[df_long['STATUTCOM_UU_DES'].isna(), 'STATUTCOM_UU_DES'] = df_long.loc[df_long['STATUTCOM_UU_DES'].isna(), 'city_category']
     
     # Filter and format the columns
-    df_long = df_long[["IDENT_IND", "IDENT_VOY", "city_category", "STATUTCOM_UU_DES", "csp", "n_cars", "OLDVMH", "OLDMOT", "mtp", "dvo_orides", "n_other_passengers", "pond_indC"]]
+    df_long = df_long[["IDENT_IND", "IDENT_VOY", "city_category", "STATUTCOM_UU_DES", "csp", "n_cars", "OLDVMH", "OLDMOT", "mtp", "OLDKM_fin", "n_other_passengers", "poids_annuel"]]
     df_long.columns = ["individual_id", "travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "mode_id", "distance", "n_other_passengers", "pondki"]
 
     # Travel data base : group the long distance trips by travel
