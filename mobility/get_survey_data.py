@@ -29,7 +29,7 @@ def get_survey_data(source="EMP-2019"):
     # Si oui, charger les parquet dans un dict
     # Si non, utiliser les fonctions de préparation pour les créer avant de les charger dans un dict
     
-    data_folder_path = Path(os.path.dirname(__file__)).parent / "data"
+    data_folder_path = Path(os.path.dirname(__file__)) / "data"
     
     if source == "ENTD-2008":
         path = data_folder_path / "surveys/entd-2008"
