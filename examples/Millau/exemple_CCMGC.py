@@ -94,7 +94,7 @@ costs_millau['cost'].where(mask, other=costs_millau['distance_interne'], inplace
 #%% COMPUTE THE MODEL
 
 total_flows, source_rest_volume, sink_rest_volume = rm.iter_radiation_model(
-    sources_millau, sinks_millau, costs_millau, alpha=0, beta=1, plot=True)   
+    sources_millau, sinks_millau, costs_millau, alpha=0, beta=1, plot=False)   
 
 #%% PLOT THE SOURCES AND THE SINKS
 
@@ -109,7 +109,7 @@ rm.plot_volume(plot_sinks, coordonnees, n_locations=10, title="Volume d'emplois"
 plot_flows = total_flows.reset_index()
 plot_sources = sources_millau
 
-rm.plot_flow(plot_flows, coordonnees, sources=plot_sources, n_flows=500, n_locations=20,
+rm.plot_flow(plot_flows, coordonnees, sources=None, n_flows=500, n_locations=20,
              size=10, title="Flux domicile-travail générés par le modèle")
 
 #%% PLOT THE FLOWS FROM THE INSEE DATA
@@ -132,11 +132,21 @@ flowsRM = pd.DataFrame(total_flows)
 # Join on the couple origin destinations
 # how = 'inner' to keep only the couples that are in both dataframes
 flow_join = flowDT.join(flowsRM, how='inner', lsuffix='DT', rsuffix='RM')
+flow_join.reset_index(inplace=True)
    
 # Compare the total flow 
 print('The 2 dataframes have {} OD in common\n'.format(flow_join.shape[0]))
-print('Total flow of the INSEE data :\n   {:.0f}'.format(flow_join['flow_volumeDT'].sum()))
-print('Total flow of the model :\n   {:.0f}\n'.format(flow_join['flow_volumeRM'].sum()))
+
+sum_flow_DT = flow_join['flow_volumeDT'].sum()
+intra_flow_mask = flow_join['from']==flow_join['to']
+intra_flow_DT = flow_join.loc[intra_flow_mask, 'flow_volumeDT'].sum()
+print('Total flow of the INSEE data :\n   {:.0f} ({:.0f}% intra-city flow)'.format(
+    sum_flow_DT, 100*intra_flow_DT/sum_flow_DT))
+
+sum_flow_RM = flow_join['flow_volumeRM'].sum()
+intra_flow_RM = flow_join.loc[intra_flow_mask, 'flow_volumeRM'].sum()
+print('Total flow of the model :\n   {:.0f} ({:.0f}% intra-city flow)\n'.format(
+    sum_flow_RM, 100*intra_flow_RM/sum_flow_RM))
     
 # Compare the repartition between the ODs
 flow_join['repartitionDT'] = flow_join['flow_volumeDT'] / flow_join['flow_volumeDT'].sum()
@@ -145,8 +155,7 @@ flow_join['repartitionRM'] = flow_join['flow_volumeRM'] / flow_join['flow_volume
 error_repartition = np.abs(flow_join['repartitionDT'] - flow_join['repartitionRM'])
     
 print("The repartitions from the INSEE data and the data have {:.2f}% in common.".format(100 - 50*error_repartition.sum()))
-    
-flow_join.reset_index(inplace=True)
+
 plot_DT = pd.DataFrame(flow_join[['from', 'to', 'repartitionDT']])
 plot_DT.rename(columns={'repartitionDT': 'flow_volume'}, inplace=True)
 plot_RM = pd.DataFrame(flow_join[['from', 'to', 'repartitionRM']])
