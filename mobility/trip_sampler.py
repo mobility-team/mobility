@@ -69,7 +69,14 @@ class TripSampler:
         # Create new filtered databases according to the socio-pro category, the urban category
         # and the number of persons in the householde
         
-        filtered_p_car = self.p_car.xs(urban_unit_category).xs(csp_household).xs(n_pers).squeeze(axis=1)
+
+        try :        
+            filtered_p_car = self.p_car.xs(urban_unit_category).xs(csp_household).xs(n_pers).squeeze(axis=1)
+        except KeyError :
+            filtered_p_car = self.p_car.reset_index(level='n_pers', drop=True)
+            filtered_p_car = filtered_p_car.xs(urban_unit_category).xs(csp_household).squeeze(axis=1)
+            filtered_p_car /= filtered_p_car.sum()
+            
         filtered_p_immobility = self.p_immobility.xs(csp)
 
         # ---------------------------------------
