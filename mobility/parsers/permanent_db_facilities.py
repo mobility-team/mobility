@@ -25,9 +25,9 @@ def prepare_facilities(proxies={}):
         Index:
             DEPCOM (str): geographic code of the city
         Columns:
-            m_j (int): weight of the city in terms of the appropriate facilities
+            sink_volume (float): weight of the city in terms of the appropriate facilities
     
-    and writes these into parquet files
+    and writes these into parquet files.
     """
     
     data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/facilities"
@@ -35,9 +35,10 @@ def prepare_facilities(proxies={}):
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
     
-    # Download the raw survey data from insee.fr if needed
+    
     path = data_folder_path / "bpe20_ensemble_csv.zip"
     
+    # Download the raw survey data from the Insee "Base Permanente des équipements" if needed
     if path.exists() is False:
         # Download the zip file
         r = requests.get(
@@ -50,6 +51,7 @@ def prepare_facilities(proxies={}):
         # Unzip the content
         with zipfile.ZipFile(path, "r") as zip_ref:
             zip_ref.extractall(data_folder_path)
+            
     
     # Informations about jobs and active population for each city
     db_facilities = pd.read_csv(data_folder_path / "bpe20_ensemble.csv",
@@ -99,7 +101,7 @@ def prepare_facilities(proxies={}):
                 
         motive_facilities = pd.merge(db_facilities, motive_facilities, on='TYPEQU', how='inner')
 
-        motive_facilities['m_j'] = motive_facilities['weight']*motive_facilities['NB_EQUIP']
+        motive_facilities['sink_volume'] = motive_facilities['weight']*motive_facilities['NB_EQUIP']
         motive_facilities = motive_facilities.drop(columns=['weight', 'TYPEQU', 'NB_EQUIP'])
         motive_facilities = motive_facilities.groupby('DEPCOM').sum()
         

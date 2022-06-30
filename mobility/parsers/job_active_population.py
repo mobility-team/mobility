@@ -36,26 +36,44 @@ def prepare_job_active_population(proxies={}):
     
     # Informations about jobs and active population for each city
     db_job_active_pop = pd.read_csv(data_folder_path / "base-cc-emploi-pop-active-2018.csv",
-                                    sep=';', usecols=['CODGEO', 'C18_ACT1564_CS1', 'C18_ACT1564_CS2',
+                                    sep=';', usecols=['CODGEO',
+                                                      'P18_ACT15P',
+                                                      'C18_ACT1564_CS1', 'C18_ACT1564_CS2',
                                                       'C18_ACT1564_CS3', 'C18_ACT1564_CS4',
                                                       'C18_ACT1564_CS5', 'C18_ACT1564_CS6',
+                                                      'P18_EMPLT',
                                                       'C18_EMPLT_CS1', 'C18_EMPLT_CS2',
                                                       'C18_EMPLT_CS3', 'C18_EMPLT_CS4',
                                                       'C18_EMPLT_CS5', 'C18_EMPLT_CS6'],
                                     dtype={'CODGEO':str})
-    db_jobs = db_job_active_pop[['CODGEO', 'C18_EMPLT_CS1', 'C18_EMPLT_CS2', 'C18_EMPLT_CS3', 
-                                 'C18_EMPLT_CS4', 'C18_EMPLT_CS5', 'C18_EMPLT_CS6']]
-    db_jobs.set_index('CODGEO', inplace=True)
     
-    db_active_population = db_job_active_pop[['CODGEO', 'C18_ACT1564_CS1', 'C18_ACT1564_CS2',
-                                              'C18_ACT1564_CS3', 'C18_ACT1564_CS4',
-                                              'C18_ACT1564_CS5', 'C18_ACT1564_CS6']]
+    db_jobs = db_job_active_pop.loc[:, ['CODGEO', 'P18_EMPLT',
+                                        'C18_EMPLT_CS1', 'C18_EMPLT_CS2', 'C18_EMPLT_CS3', 
+                                        'C18_EMPLT_CS4', 'C18_EMPLT_CS5', 'C18_EMPLT_CS6']]
+    db_jobs.set_index('CODGEO', inplace=True)
+    db_jobs.rename(columns={'P18_EMPLT': 'n_jobs_total',
+                            'C18_EMPLT_CS1': 'n_jobs_CS1', 'C18_EMPLT_CS2': 'n_jobs_CS2',
+                            'C18_EMPLT_CS3': 'n_jobs_CS3', 'C18_EMPLT_CS4': 'n_jobs_CS4',
+                            'C18_EMPLT_CS5': 'n_jobs_CS5', 'C18_EMPLT_CS6': 'n_jobs_CS6'},
+                   inplace=True)
+    
+    db_active_population = db_job_active_pop.loc[:, ['CODGEO', 'P18_ACT15P',
+                                                     'C18_ACT1564_CS1', 'C18_ACT1564_CS2',
+                                                     'C18_ACT1564_CS3', 'C18_ACT1564_CS4',
+                                                     'C18_ACT1564_CS5', 'C18_ACT1564_CS6']]
     db_active_population.set_index('CODGEO', inplace=True)
+    db_active_population.rename(columns={'P18_ACT15P': 'active_pop',
+                                         'C18_ACT1564_CS1': 'active_pop_CS1',
+                                         'C18_ACT1564_CS2': 'active_pop_CS2',
+                                         'C18_ACT1564_CS3': 'active_pop_CS3',
+                                         'C18_ACT1564_CS4': 'active_pop_CS4',
+                                         'C18_ACT1564_CS5': 'active_pop_CS5',
+                                         'C18_ACT1564_CS6': 'active_pop_CS6'},
+                   inplace=True)
     
     # ------------------------------------------
     # Write datasets to parquet files
     db_jobs.to_parquet(data_folder_path / "jobs.parquet")
     db_active_population.to_parquet(data_folder_path / "active_population.parquet")
+    
     return db_jobs, db_active_population
-
-db_jobs, db_active_population = prepare_job_active_population()

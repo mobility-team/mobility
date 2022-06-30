@@ -197,15 +197,15 @@ def prepare_emp_2019(proxies={}):
     df_long["OLDVMH"] = df_long["OLDVMH"].astype(float)
     df_long["OLDKM_fin"] = df_long["OLDKM_fin"].astype(float)
     df_long["n_other_passengers"] = df_long["nbaccomp"].astype(int)
-    
+
     # the R category of the ENTD correspond to the H category of the EMP 2019
     df_long.loc[df_long["STATUTCOM_UU_DES"]=='H', "STATUTCOM_UU_DES"] = 'R'
-    
+
     # Convert the mode id from the EMP terminology to the ENTD one
     df_long = pd.merge(df_long, emp_modes_to_entd_modes, on="mtp")
     df_long.drop(columns="mtp", inplace=True)
     df_long.rename(columns={"entd_mode_id": "mtp"}, inplace=True)
-    
+
     # Convert the motive id from the EMP terminology to the ENTD one
     emp_motives_to_entd_motives.columns = ["OLDMOT", "entd_motive_id_des"]
     df_long = pd.merge(df_long, emp_motives_to_entd_motives, on="OLDMOT")
@@ -225,18 +225,51 @@ def prepare_emp_2019(proxies={}):
     # Filter and format the columns
     df_long = df_long[["IDENT_IND", "IDENT_VOY", "city_category", "STATUTCOM_UU_DES", "csp", "n_cars", "OLDVMH", "OLDMOT", "mtp", "OLDKM_fin", "n_other_passengers", "poids_annuel"]]
     df_long.columns = ["individual_id", "travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "mode_id", "distance", "n_other_passengers", "pondki"]
-
-    # Travel data base : group the long distance trips by travel
-    travels = df_long[["travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]]
-    travels.columns = ['travel_id', 'city_category', "destination_city_category", 'csp', 'n_cars', 'n_nights', 'motive', 'pondki']
-    # keep only the first trip of each travel to have one row per travel
-    travels = travels.groupby("travel_id").first()
-    travels.reset_index(inplace=True)
-    travels.set_index(['csp', 'n_cars', 'city_category'], inplace=True)
     
     df_long.set_index("travel_id", inplace=True)
     df_long["previous_motive"] = np.nan
     df_long.drop(["n_nights", "individual_id", "destination_city_category"], axis=1, inplace=True)
+    
+    # ------------------------------------------
+    # Travels dataset
+    travels = pd.read_csv(
+        data_folder_path / "k_voyage_public_V2.csv",
+        encoding="latin-1",
+        sep=";",
+        dtype=str,
+        usecols=["IDENT_IND", "IDENT_VOY", "OLDVMH", "OLDMOT", 
+                 "mtp", "STATUTCOM_UU_VOY_DES", "poids_annuel"]
+        )
+    
+    travels["poids_annuel"] = travels["poids_annuel"].astype(float)
+    travels["OLDVMH"] = travels["OLDVMH"].astype(float)
+    
+    # the R category of the ENTD correspond to the H category of the EMP 2019
+    travels.loc[travels["STATUTCOM_UU_VOY_DES"]=='H', "STATUTCOM_UU_VOY_DES"] = 'R'
+    
+    # Convert the mode id from the EMP terminology to the ENTD one
+    travels = pd.merge(travels, emp_modes_to_entd_modes, on="mtp")
+    travels.drop(columns="mtp", inplace=True)
+    travels.rename(columns={"entd_mode_id": "mtp"}, inplace=True)
+    
+    # Convert the motive id from the EMP terminology to the ENTD one
+    emp_motives_to_entd_motives.columns = ["OLDMOT", "entd_motive_id_des"]
+    travels = pd.merge(travels, emp_motives_to_entd_motives, on="OLDMOT")
+    travels.drop(columns="OLDMOT", inplace=True)
+    travels.rename(columns={"entd_motive_id_des": "OLDMOT"}, inplace=True)
+    
+    # Merge with the data about individuals and household cars
+    travels = pd.merge(travels, indiv, on="IDENT_IND")
+    travels = pd.merge(travels, k_indiv[["IDENT_IND", "pond_indC"]], on="IDENT_IND")
+    travels = pd.merge(travels, hh[["city_category", "IDENT_MEN", "csp_household"]], on="IDENT_MEN")
+    travels = pd.merge(travels, cars, on="IDENT_MEN")
+    
+    # If the city category of the destination is not available
+    # the home's city category is used
+    travels.loc[travels['STATUTCOM_UU_VOY_DES'].isna(), 'STATUTCOM_UU_VOY_DES'] = travels.loc[travels['STATUTCOM_UU_VOY_DES'].isna(), 'city_category']
+    travels = travels.loc[:, ["IDENT_VOY", "city_category", "STATUTCOM_UU_VOY_DES", "csp", "n_cars", "OLDVMH", "OLDMOT", "poids_annuel"]]
+    travels.columns = ["travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]
+    travels.set_index(['csp', 'n_cars', 'city_category'], inplace=True)
     
     # ------------------------------------------
     # Population by csp in 2019 from the weigths in the data base k_individu
@@ -364,4 +397,4 @@ def prepare_emp_2019(proxies={}):
     p_car.to_frame().to_parquet(data_folder_path / "car_ownership_probability.parquet")
     p_det_mode.to_frame().to_parquet(data_folder_path / "insee_modes_to_entd_modes.parquet")
     
-    return None
+    return

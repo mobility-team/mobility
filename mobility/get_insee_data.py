@@ -33,7 +33,7 @@ def get_insee_data():
                 Index:
                     DEPCOM (str): city geographic code
                 Columns:
-                    m_j (int): weight of the corresponding facilities
+                    sink_volume (int): weight of the corresponding facilities
     """
     data_folder_path = Path(os.path.dirname(__file__)) / "data/insee"
     
