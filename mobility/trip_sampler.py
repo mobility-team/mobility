@@ -105,6 +105,8 @@ class TripSampler:
         travel_pro_bool = sampled_travels['motive'].str.slice(0,1)=='9'
         travel_perso_bool = np.logical_not(travel_pro_bool)
         
+        sampled_travels['n_nights'] = sampled_travels['n_nights'].fillna(0)
+        
         # Number of days spent in travel = number of nights + one day per travel
         n_days_travel_pro = int(sampled_travels.loc[travel_pro_bool]['n_nights'].sum() + travel_pro_bool.sum())
         n_days_travel_perso = int(sampled_travels.loc[travel_perso_bool]['n_nights'].sum() + travel_perso_bool.sum())        
