@@ -7,11 +7,12 @@ import zipfile
 
 def prepare_entd_2008(proxies={}):
     """
-    This function loads the raw survey data from the survey ENTD 2008 stored in ../data/input/sdes/entd_2008
-    filter the data we need and writes these data bases into parquet files
+    This function downloads (if needed) the raw survey data from the survey EMP 2019,
+    then creates the dataframes needed for trip sampling,
+    and then writes these dataframes into parquet files
     """
     
-    data_folder_path = Path(os.path.dirname(__file__)).parents[1] / "data/surveys/entd-2008"
+    data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/surveys/entd-2008"
 
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
@@ -104,14 +105,12 @@ def prepare_entd_2008(proxies={}):
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first() 
     days_trip.reset_index(inplace=True)
-    days_trip.set_index(["city_category", "csp", "n_cars", "weekday"], inplace=True)
+    days_trip.set_index(['csp', 'n_cars', 'weekday', 'city_category'], inplace=True)
     
     # Filter and format the columns
     df = df[["IDENT_IND", "IDENT_JOUR", "weekday", "city_category", "csp", "n_cars", "V2_MMOTIFORI", "V2_MMOTIFDES", "V2_MTP", "V2_MDISTTOT", "n_other_passengers", "PONDKI"]]
     df.columns = ["individual_id", "day_id", "weekday", "city_category", "csp", "n_cars", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers", "pondki"]
     df.set_index(["day_id"], inplace=True)
-        
-    indiv_pondki = df.groupby("individual_id")["pondki"].first()
     
     # ------------------------------------------
     # Long distance trips dataset
@@ -123,15 +122,16 @@ def prepare_entd_2008(proxies={}):
         usecols=["IDENT_IND", "IDENT_VOY", "V2_OLDVMH", "V2_OLDMOT", "V2_DVO_ODV", 
                  "V2_OLDMTP", "V2_OLDPAX",
                  "V2_OLDACPA01", "V2_OLDACPA02", "V2_OLDACPA03", "V2_OLDACPA04", "V2_OLDACPA05", "V2_OLDACPA06", "V2_OLDACPA07", "V2_OLDACPA08", "V2_OLDACPA09",
-                 "V2_OLDARCOM_UUCat"]
+                 "V2_OLDARCOM_UUCat", "poids_annuel"]
     )
+    df_long["poids_annuel"] = df_long["poids_annuel"].astype(float)
     df_long["V2_DVO_ODV"] = df_long["V2_DVO_ODV"].astype(float)
     df_long["n_other_passengers"] = df_long[["V2_OLDACPA01", "V2_OLDACPA02", "V2_OLDACPA03", "V2_OLDACPA04", "V2_OLDACPA05", "V2_OLDACPA06", "V2_OLDACPA07", "V2_OLDACPA08", "V2_OLDACPA09"]].count(axis=1)
     df_long["n_other_passengers"] += df_long["V2_OLDPAX"].astype(float)
     df_long.loc[df_long["n_other_passengers"].isnull(), "n_other_passengers"] = 0.0
     df_long["n_other_passengers"] = df_long["n_other_passengers"].astype(int)
     df_long["V2_OLDVMH"] = df_long["V2_OLDVMH"].astype(float)
-    
+
     # Convert the urban category of the destination to the {'C', 'B', 'I', 'R'} terminology
     dict_urban_category = pd.DataFrame([['ville centre', 'C'],
                                         ['banlieue', 'B'],
@@ -152,24 +152,50 @@ def prepare_entd_2008(proxies={}):
     df_long.loc[df_long['UU_id'].isna(), 'UU_id'] = df_long.loc[df_long['UU_id'].isna(), 'city_category']
     
     # Filter and format the columns
-    df_long = df_long[["IDENT_IND", "IDENT_VOY", "city_category", "UU_id", "csp", "n_cars", "V2_OLDVMH", "V2_OLDMOT", "V2_OLDMTP", "V2_DVO_ODV", "n_other_passengers"]]
-    df_long.columns = ["individual_id", "travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "mode_id", "distance", "n_other_passengers"]
-    df_long.set_index("individual_id", inplace=True)
-    
-    # Merge to get the weights of the individuals pondki
-    df_long = pd.merge(df_long, indiv_pondki, left_index=True, right_index=True)
-    df_long.reset_index(inplace=True)
+    df_long = df_long[["IDENT_IND", "IDENT_VOY", "city_category", "UU_id", "csp", "n_cars", "V2_OLDVMH", "V2_OLDMOT", "V2_OLDMTP", "V2_DVO_ODV", "n_other_passengers", "poids_annuel"]]
+    df_long.columns = ["individual_id", "travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "mode_id", "distance", "n_other_passengers", "pondki"]
 
-    # Travel data base : group the long distance trips by travel
-    travels = df_long.loc[:, ["individual_id", "travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]].copy()
-    travels.columns = ["individual_id", "travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]
-    # Keep only the first trip of each travel to have one row per travel
-    travels = travels.groupby("travel_id").first()
-    travels.reset_index(inplace=True)
-    travels.set_index(["city_category", "csp", "n_cars"], inplace=True)
     df_long["previous_motive"] = np.nan
     df_long.drop(["n_nights", "individual_id", "destination_city_category"], axis=1, inplace=True)
     df_long.set_index("travel_id", inplace=True)
+    
+    # ------------------------------------------
+    # Travels dataset
+    travels = pd.read_csv(
+        data_folder_path / "K_voyage.csv",
+        encoding="latin-1",
+        sep=";",
+        dtype=str,
+        usecols=["IDENT_IND", "IDENT_VOY", "V2_OLDVMH", "V2_OLDMOTPR", 
+                 "V2_OLDMTPP", "V2_OLDVCOM_UUCat", "poids_annuel"]
+    )
+    
+    travels["poids_annuel"] = travels["poids_annuel"].astype(float)
+    travels["V2_OLDVMH"] = travels["V2_OLDVMH"].astype(float)
+    
+    # Convert the urban category of the destination to the {'C', 'B', 'I', 'R'} terminology
+    dict_urban_category = pd.DataFrame([['ville centre', 'C'],
+                                        ['banlieue', 'B'],
+                                        ['ville isolée', 'I'],
+                                        ['commune rurale', 'R'],
+                                        [np.nan, np.nan]],
+                                       columns=['labels', 'UU_id'])
+    dict_urban_category.columns = ['V2_OLDVCOM_UUCat', 'UU_id']
+    travels = pd.merge(travels, dict_urban_category, on="V2_OLDVCOM_UUCat")                                
+    
+    # Merge with the data about individuals and household cars
+    travels = pd.merge(travels, indiv, on="IDENT_IND")
+    travels = pd.merge(travels, hh[["city_category", "IDENT_MEN", "csp_household"]], on="IDENT_MEN")
+    travels = pd.merge(travels, cars, on="IDENT_MEN")
+    
+    # If the city category of the destination is not available
+    # the home's city category is used
+    travels.loc[travels['UU_id'].isna(), 'UU_id'] = travels.loc[travels['UU_id'].isna(), 'city_category']
+    
+    # Filter and format the columns
+    travels = travels[["IDENT_IND", "IDENT_VOY", "city_category", "UU_id", "csp", "n_cars", "V2_OLDVMH", "V2_OLDMOTPR", "poids_annuel"]]
+    travels.columns = ["individual_id", "travel_id", "city_category", "destination_city_category", "csp", "n_cars", "n_nights", "motive", "pondki"]
+    travels.set_index(['csp', 'n_cars', 'city_category'], inplace=True)
     
     # ------------------------------------------
     # Population by csp in 2008 from the weigths in the data base k_mobilite
@@ -195,6 +221,7 @@ def prepare_entd_2008(proxies={}):
     travel_csp_pop = pd.merge(travel_csp_pop, csp_pop_2008,  left_index=True, right_index=True)
     travel_csp_pop["n_travel_by_csp"] = travel_csp_pop["pondki"]/travel_csp_pop["n_pop"]
     n_travel_by_csp = travel_csp_pop["n_travel_by_csp"]
+    print( n_travel_by_csp)
     
     # ------------------------------------------
     # Probability of being immobile during a weekday or a week-end day given the CSP
@@ -289,3 +316,5 @@ def prepare_entd_2008(proxies={}):
     p_det_mode.to_frame().to_parquet(data_folder_path / "insee_modes_to_entd_modes.parquet")
     
     return
+
+prepare_entd_2008()

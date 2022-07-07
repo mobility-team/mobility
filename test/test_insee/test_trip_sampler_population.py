@@ -1,40 +1,55 @@
 #from mobility import trip_sampler as tp
 import sys
 sys.path.append("..")
-import trip_sampler2 as tp
+ 
+from trip_sampler import TripSampler
 import pandas as pd
 from pathlib import Path
 import os
 import numpy as np
-
+from get_survey_data import get_survey_data
 #import plotly_express as px
 
-t = tp.TripSampler()
-
-
 #%%
-# Load INSEE data
-data_folder_path = Path(os.path.dirname(__file__)) 
-indiv_insee = pd.read_parquet(data_folder_path/"data/pop2018.parquet")
+t=TripSampler()
 
-# Adapt INSEE data to fit with mobility trip sampler model
-indiv_insee.columns=["cantville","age","csp", "weight_indiv","n_cars_int","urban_unit_category"]
+data_folder_path = Path(os.path.dirname(__file__))
+
+#☻%%
+def load_data(year=2019):
     
-indiv_insee["n_cars"]=indiv_insee["n_cars_int"]
-indiv_insee.loc[indiv_insee["n_cars_int"].astype(int) > 1,"n_cars"] = "2+"
-indiv_insee= indiv_insee.drop("n_cars_int", axis=1)
+     
 
-indiv_insee["weight_indiv"]= indiv_insee["weight_indiv"].astype(dtype=np.float64)
+    if year >=2015 : 
+    
+        indiv_insee = pd.read_parquet(data_folder_path/"data/pop2018bis.parquet")
+        print ("données INSEE de 2019")
 
+    else : 
+        indiv_insee = pd.read_parquet(data_folder_path/"data/pop2011bis.parquet")  
+        print ("données INSEE de 2011")
 
-#%%
+    # Adapt INSEE data to fit with mobility trip sampler model
+    
+    indiv_insee= indiv_insee.drop(columns="GARL")
+    
+    indiv_insee.columns=["cantville","age","csp", "weight_indiv","n_pers","n_cars","urban_unit_category","csp_ref"]
+    
+    indiv_insee.loc[indiv_insee["n_cars"].astype(int) > 1,"n_cars"] = "2+"
+    
+    
+    if year >=2015 : 
+        indiv_insee["weight_indiv"]= indiv_insee["weight_indiv"].astype(dtype=np.float64)
+        
+    return (indiv_insee)
 
+indiv_insee=load_data(2012)
 
 
 
 #get the trips
     
-def get_indiv_trips(csp,urban_unit_category,n_cars):
+def get_indiv_trips(csp,urban_unit_category,n_cars=None, n_pers=None, csp_ref=None, year =2018):
     """
     
 
@@ -64,14 +79,23 @@ def get_indiv_trips(csp,urban_unit_category,n_cars):
     
     cs1 = csp
     uu = urban_unit_category
-    nc = n_cars
     
-    all_trips = t.get_trips(csp=cs1, csp_household="4", urban_unit_category=uu, n_pers="2", n_cars=nc, n_years=1)
+    if year <2015 : 
+        tutu = t.__init__(source="ENTD-2008")
+      
+    if n_cars!=None : 
+        
+        all_trips = t.get_trips(csp=cs1, csp_household="4", urban_unit_category=uu, n_pers="2", n_cars=n_cars, n_years=1)
+    elif n_pers!=None and csp_ref!= None:
+        all_trips = t.get_trips(csp=cs1, csp_household=csp_ref, urban_unit_category=uu, n_pers=n_pers, n_cars=None, n_years=1)
+    else: 
+        return ("missing data")
+    
     # all_trips = all_data[0]
     
     weekday_trips = all_trips.loc[all_trips["trip_type"]=="short_trips_week_day"].copy()
     weekend_trips = all_trips.loc[all_trips["trip_type"]=="short_trips_weekend"].copy()
-    long_trips = all_trips.loc[(all_trips["trip_type"]=="long_trips")& (all_trips["distance"].astype(float)>80)].copy()
+    long_trips = all_trips.loc[(all_trips["trip_type"]=="long_trips")].copy()
     travels=long_trips
     
    
@@ -121,24 +145,38 @@ def get_indiv_trips(csp,urban_unit_category,n_cars):
     return (n_trips_per_weekday,len_trips_weekday, n_trips_per_weekend_day,len_trips_weekend_day, tot_len_travel)
   
     
-n_trips_per_weekday,len_trips_weekday, n_trips_per_weekend_day,len_trips_weekend_day, tot_len_travel = get_indiv_trips(csp="7", urban_unit_category="B", n_cars ="0")
+#n_trips_per_weekday,len_trips_weekday, n_trips_per_weekend_day,len_trips_weekend_day, tot_len_travel = get_indiv_trips(csp="7", urban_unit_category="B", n_cars = None, n_pers="2",csp_ref="6")
 
 
- #%%
+#%%
 
-def sampled_indiv_data(n, indiv_data):
+def sampled_indiv_data(n, indiv_data, mode= "n_cars", year= 2018):
     
     sample = indiv_data.sample(n, weights="weight_indiv")
     
     output=[]
     
+    if year <2015 : 
+        
+        print ("using ENTD 2008 values to compute the trips")
+      
+        tutu = t.__init__(source="ENTD-2008")
+        
+    
     for i in range(len(sample)):
         csp=sample.iloc[i]["csp"]
         age=sample.iloc[i]["age"]
         urban_unit_category = sample.iloc[i]["urban_unit_category"]
-        n_cars=sample.iloc[i]["n_cars"]
         
-        total = get_indiv_trips(csp=csp, urban_unit_category=urban_unit_category, n_cars=n_cars)
+        if mode == "n_cars":
+        
+            n_cars=sample.iloc[i]["n_cars"]
+            
+            total = get_indiv_trips(csp=csp, urban_unit_category=urban_unit_category, n_cars=n_cars, year=year)
+        elif mode== "p_car" : 
+            n_pers = sample.iloc[i]["n_pers"]
+            csp_ref = sample.iloc[i]["csp_ref"]
+            total = get_indiv_trips(csp=csp, urban_unit_category=urban_unit_category, csp_ref=csp_ref, n_pers=n_pers, year=year)
         
         n_trips_per_weekday=total[0]
         len_trips_weekday=total[1]
@@ -156,14 +194,14 @@ def sampled_indiv_data(n, indiv_data):
             
     return (output)
     
+#test= sampled_indiv_data(3, indiv_insee, mode="n_cars", year=2012)
 
 
-#%% 
 
-def get_tables(n, indiv_insee, by ): 
+def get_tables(n, indiv_insee, by, mode, year = 2018): 
     
     disc=[]
-   
+    
     by=by
     
     if by=="CSP":
@@ -198,24 +236,25 @@ def get_tables(n, indiv_insee, by ):
         #--Create subtables to ensure every city_category is represented in the trips
         indiv_insee = indiv_insee.set_index("urban_unit_category")
         
-        #iiR=indiv_insee.xs("R")
+        iiR=indiv_insee.xs("R")
         iiB=indiv_insee.xs("B")
         iiC=indiv_insee.xs("C")
-        #iiI=indiv_insee.xs("I")
+        iiI=indiv_insee.xs("I")
         
-        #iiR.reset_index(level="urban_unit_category", inplace=True)
+        iiR.reset_index(level="urban_unit_category", inplace=True)
         iiB.reset_index(level="urban_unit_category", inplace=True)
         iiC.reset_index(level="urban_unit_category", inplace=True)
-        #iiI.reset_index(level="urban_unit_category", inplace=True)
+        iiI.reset_index(level="urban_unit_category", inplace=True)
         
-        #disc=[iiR,iiB,iiC,iiI]
-        disc=[iiB,iiC]
+        disc=[iiR,iiB,iiC,iiI]
+        #disc=[iiB,iiC]
   
    
     result=pd.DataFrame(index=['trips/day: weekday','dist/trips : weekday','trips/day : weekend','dist/trips : weekend','travel_dist/y'])
                       
     for i in disc :
-        cat = sampled_indiv_data(n,i)
+      
+        cat = sampled_indiv_data(n,i,mode=mode, year=year)
         cat = cat.drop(columns = ["urban_unit_category","age","CSP"])
         r=cat.sum()/n
         r=r.to_frame()
@@ -225,22 +264,33 @@ def get_tables(n, indiv_insee, by ):
         
        result.columns = ["csp 1","csp 2","csp 3","csp 4","csp 5","csp 6","csp 7","csp 8" ]
        
-       result.to_csv(data_folder_path/"output/compute_csp_18.csv", sep=";")
-    
-    else: 
-      #result.columns = ["R","B","C","I"]  
-      result.columns = ["B","C"]  
-   
-      result.to_csv(data_folder_path/"output/compute_city_category_18.csv", sep=";")
        
+       if year >=2015 :
+           print( " 2018 INSEE and 2018 EMP were used")
+           result.to_csv(data_folder_path/"output/compute_csp_18.csv", sep=";")
+           
+       else :  
+          print( " 2011 INSEE data and 2009 ENTD were used")
+          result.to_csv(data_folder_path/"output/compute_csp_09.csv", sep=";")
+    
+    elif by== "city_category": 
+      
+      result.columns = ["R","B","C","I"]  
+      #result.columns = ["B","C"]  
+      if year >=2015 :
+          
+          result.to_csv(data_folder_path/"output/compute_city_category_18.csv", sep=";")
+      else :
+          print( " 2011 INSEE data and 2009 ENTD were used")
+          result.to_csv(data_folder_path/"output/compute_city_category_09.csv", sep=";")
         
     
     return ()
         
         
         
-test= get_tables(100,indiv_insee, by="city_category")
+test= get_tables(100,indiv_insee, by="CSP", mode="p_car", year = 2012)
 
-#%%
+
 
 
