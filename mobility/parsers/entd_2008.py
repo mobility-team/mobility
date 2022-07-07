@@ -221,6 +221,7 @@ def prepare_entd_2008(proxies={}):
     travel_csp_pop = pd.merge(travel_csp_pop, csp_pop_2008,  left_index=True, right_index=True)
     travel_csp_pop["n_travel_by_csp"] = travel_csp_pop["pondki"]/travel_csp_pop["n_pop"]
     n_travel_by_csp = travel_csp_pop["n_travel_by_csp"]
+    print( n_travel_by_csp)
     
     # ------------------------------------------
     # Probability of being immobile during a weekday or a week-end day given the CSP
@@ -314,4 +315,6 @@ def prepare_entd_2008(proxies={}):
     p_car.to_frame().to_parquet(data_folder_path / "car_ownership_probability.parquet")
     p_det_mode.to_frame().to_parquet(data_folder_path / "insee_modes_to_entd_modes.parquet")
     
-    return 
+    return
+
+prepare_entd_2008()

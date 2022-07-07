@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from .get_survey_data import get_survey_data
-from .safe_sample import safe_sample
+from get_survey_data import get_survey_data
+from safe_sample import safe_sample
 
 class TripSampler:
     
@@ -92,17 +92,20 @@ class TripSampler:
         # Compute the number of travels during n_years given the socio-pro category
         
         n_travel = n_years * self.n_travels_db.xs(csp).squeeze().astype(int)
-        
+       
+    
         # 2/ ---------------------------------------
         # Sample n_travel travels
         
         sampled_travels = safe_sample(self.travels_db, n_travel, weights="pondki",
                                       csp=csp, n_cars=n_cars, city_category=urban_unit_category)
+       
         
         # 3/ ---------------------------------------
         # Compute the number of days spent in travel, for professionnal reasons and personnal reasons
         
         travel_pro_bool = sampled_travels['motive'].str.slice(0,1)=='9'
+        
         travel_perso_bool = np.logical_not(travel_pro_bool)
         
         sampled_travels['n_nights'] = sampled_travels['n_nights'].fillna(0)
@@ -121,6 +124,8 @@ class TripSampler:
         # Filter the columns
         sampled_long_trips = sampled_long_trips.loc[:, ["travel_id", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers"]]
         sampled_long_trips.rename({"travel_id": "trip_id"}, axis=1, inplace=True)
+        sampled_long_trips["trip_type"] = "long_trips"
+        sampled_long_trips["n_travel"] = n_days_travel_pro + n_days_travel_perso
         all_trips.append(sampled_long_trips)
         
         # 5/ ---------------------------------------
@@ -146,6 +151,7 @@ class TripSampler:
             # Travel for personal reasons
             else :
                 n_days_in_travel_perso = int(sampled_travels.iloc[i]['n_nights']+1)
+                
                 destination_city_category = sampled_travels.iloc[i]['destination_city_category']
                 sampled_days_in_travel_perso = safe_sample(self.days_trip_db, n_days_in_travel_perso, weights='pondki',
                                                           csp=csp, n_cars=n_cars, weekday=False, city_category=destination_city_category)
@@ -161,6 +167,8 @@ class TripSampler:
         # Filter the columns
         sampled_short_trips_in_travel = sampled_short_trips_in_travel.reset_index().loc[:, ["day_id", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers"]]
         sampled_short_trips_in_travel.rename({"day_id": "trip_id"}, axis=1, inplace=True)
+        sampled_short_trips_in_travel["trip_type"]="short_trips_travel"
+        sampled_short_trips_in_travel["n_travel"]=len(days_id)
         all_trips.append(sampled_short_trips_in_travel)
         
         # === DAILY MOBILITY ===
@@ -193,10 +201,17 @@ class TripSampler:
         days_id = pd.concat( [sampled_week_days['day_id'], sampled_weekend_days['day_id']] )
         sampled_short_trips = self.short_trips_db.loc[days_id]
         # Filter the columns
-        sampled_short_trips = sampled_short_trips.reset_index().loc[:, ["day_id", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers"]]
+        sampled_short_trips = sampled_short_trips.reset_index().loc[:, ["day_id", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers","weekday"]]
         sampled_short_trips.rename({"day_id": "trip_id"}, axis=1, inplace=True)
+        sampled_short_trips["trip_type"]="short_trips_week_day"
+        sampled_short_trips["n_travel"] = n_week_day
+        sampled_short_trips.loc[sampled_short_trips["weekday"]==False, "trip_type"] = "short_trips_weekend"
+        sampled_short_trips.loc[sampled_short_trips["weekday"]==False, "n_travel"] =  n_weekend_day
+        sampled_short_trips =sampled_short_trips.drop(columns="weekday")
         all_trips.append(sampled_short_trips)
         
         all_trips = pd.concat(all_trips)
         
         return all_trips
+
+t=TripSampler()
