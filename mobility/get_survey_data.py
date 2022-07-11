@@ -80,3 +80,4 @@ def get_survey_data(source="EMP-2019"):
     
     return survey_data
 
+t= get_survey_data()

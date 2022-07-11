@@ -69,21 +69,24 @@ class TripSampler:
         # Create new filtered databases according to the socio-pro category, the urban category
         # and the number of persons in the householde
         
-
-        try :        
-            filtered_p_car = self.p_car.xs(urban_unit_category).xs(csp_household).xs(n_pers).squeeze(axis=1)
-        except KeyError :
-            filtered_p_car = self.p_car.reset_index(level='n_pers', drop=True)
-            filtered_p_car = filtered_p_car.xs(urban_unit_category).xs(csp_household).squeeze(axis=1)
-            filtered_p_car /= filtered_p_car.sum()
+        if n_cars is None :
+                
+            try :        
+                filtered_p_car = self.p_car.xs(urban_unit_category).xs(csp_household).xs(n_pers).squeeze(axis=1)
+            except KeyError :
+                filtered_p_car = self.p_car.reset_index(level='n_pers', drop=True)
+                filtered_p_car = filtered_p_car.xs(urban_unit_category).xs(csp_household).squeeze(axis=1)
+                filtered_p_car /= filtered_p_car.sum()
+                
+            n_cars = np.random.choice(filtered_p_car.index.to_numpy(), 1, p=filtered_p_car)[0]
             
         filtered_p_immobility = self.p_immobility.xs(csp)
 
         # ---------------------------------------
         # Compute the number of cars based on the city category,
         # the CSP of the reference person and the number of persons in the household
-        if n_cars is None :
-            n_cars = np.random.choice(filtered_p_car.index.to_numpy(), 1, p=filtered_p_car)[0]
+      
+          
 
         all_trips = []
         

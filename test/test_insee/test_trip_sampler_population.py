@@ -16,36 +16,43 @@ t=TripSampler()
 data_folder_path = Path(os.path.dirname(__file__))
 
 #☻%%
-def load_data(year=2019):
+def load_data(year=2019, source="INSEE"):
     
-     
+    if source =="SDES":
+        
+        indiv_insee = pd.read_parquet(data_folder_path/"data/sdes_2019_pop.parquet")
+        indiv_insee= indiv_insee.drop(columns="distcom")
+        indiv_insee.columns=[ "weight_indiv","n_cars","n_pers","urban_unit_category","csp_ref","csp"]
 
-    if year >=2015 : 
-    
-        indiv_insee = pd.read_parquet(data_folder_path/"data/pop2018bis.parquet")
-        print ("données INSEE de 2019")
-
-    else : 
-        indiv_insee = pd.read_parquet(data_folder_path/"data/pop2011bis.parquet")  
-        print ("données INSEE de 2011")
-
-    # Adapt INSEE data to fit with mobility trip sampler model
-    
-    indiv_insee= indiv_insee.drop(columns="GARL")
-    
-    indiv_insee.columns=["cantville","age","csp", "weight_indiv","n_pers","n_cars","urban_unit_category","csp_ref"]
-    
-    indiv_insee.loc[indiv_insee["n_cars"].astype(int) > 1,"n_cars"] = "2+"
-    
-    
-    if year >=2015 : 
-        indiv_insee["weight_indiv"]= indiv_insee["weight_indiv"].astype(dtype=np.float64)
+    if source == "INSEE": 
+        
+        if year >=2015 : 
+        
+            indiv_insee = pd.read_parquet(data_folder_path/"data/pop2018bis.parquet")
+            print ("données INSEE de 2019")
+        
+        else : 
+            indiv_insee = pd.read_parquet(data_folder_path/"data/pop2011bis.parquet")  
+            print ("données INSEE de 2011")
+        
+        # Adapt INSEE data to fit with mobility trip sampler model
+        
+        indiv_insee= indiv_insee.drop(columns="GARL")
+        
+        indiv_insee.columns=["cantville","age","csp", "weight_indiv","n_pers","n_cars","urban_unit_category","csp_ref"]
+        
+        indiv_insee.loc[indiv_insee["n_cars"].astype(int) > 1,"n_cars"] = "2+"
+        
+        
+        if year >=2015 : 
+            
+            indiv_insee["weight_indiv"]= indiv_insee["weight_indiv"].astype(dtype=np.float64)
         
     return (indiv_insee)
 
-indiv_insee=load_data(2012)
+indiv_insee=load_data()
 
-
+#%%
 
 #get the trips
     
@@ -165,7 +172,7 @@ def sampled_indiv_data(n, indiv_data, mode= "n_cars", year= 2018):
     
     for i in range(len(sample)):
         csp=sample.iloc[i]["csp"]
-        age=sample.iloc[i]["age"]
+        
         urban_unit_category = sample.iloc[i]["urban_unit_category"]
         
         if mode == "n_cars":
@@ -176,7 +183,15 @@ def sampled_indiv_data(n, indiv_data, mode= "n_cars", year= 2018):
         elif mode== "p_car" : 
             n_pers = sample.iloc[i]["n_pers"]
             csp_ref = sample.iloc[i]["csp_ref"]
-            total = get_indiv_trips(csp=csp, urban_unit_category=urban_unit_category, csp_ref=csp_ref, n_pers=n_pers, year=year)
+            
+            if csp_ref=="no_csp":
+                
+                n_cars=sample.iloc[i]["n_cars"] 
+                total = get_indiv_trips(csp=csp, urban_unit_category=urban_unit_category, n_cars=n_cars, year=year)
+                
+            else:   
+                
+                total = get_indiv_trips(csp=csp, urban_unit_category=urban_unit_category, csp_ref=csp_ref, n_pers=n_pers, year=year)
         
         n_trips_per_weekday=total[0]
         len_trips_weekday=total[1]
@@ -184,7 +199,7 @@ def sampled_indiv_data(n, indiv_data, mode= "n_cars", year= 2018):
         len_trips_weekend_day=total[3]
         total_len_travel=total[4]
        
-        indiv={'urban_unit_category':[urban_unit_category],'age':[ age],'CSP':[csp],'trips/day: weekday':[n_trips_per_weekday], 'dist/trips : weekday':[len_trips_weekday],
+        indiv={'urban_unit_category':[urban_unit_category],'CSP':[csp],'trips/day: weekday':[n_trips_per_weekday], 'dist/trips : weekday':[len_trips_weekday],
                 'trips/day : weekend':[n_trips_per_weekend_day],'dist/trips : weekend':[len_trips_weekend_day],'travel_dist/y':[total_len_travel]}
         indiv= pd.DataFrame(indiv)
         
@@ -194,9 +209,9 @@ def sampled_indiv_data(n, indiv_data, mode= "n_cars", year= 2018):
             
     return (output)
     
-#test= sampled_indiv_data(3, indiv_insee, mode="n_cars", year=2012)
+test= sampled_indiv_data(3, indiv_insee, mode="n_cars")
 
-
+#%%
 
 def get_tables(n, indiv_insee, by, mode, year = 2018): 
     
@@ -210,8 +225,8 @@ def get_tables(n, indiv_insee, by, mode, year = 2018):
         indiv_insee = indiv_insee.set_index("csp")
         
 
-        ii1=indiv_insee.xs("1")
-        ii2=indiv_insee.xs("2")
+        #ii1=indiv_insee.xs("1")
+        #ii2=indiv_insee.xs("2")
         ii3=indiv_insee.xs("3")
         ii4=indiv_insee.xs("4")
         ii5=indiv_insee.xs("5")
@@ -219,8 +234,8 @@ def get_tables(n, indiv_insee, by, mode, year = 2018):
         ii7=indiv_insee.xs("7")
         ii8=indiv_insee.xs("8")
            
-        ii1.reset_index(level="csp", inplace=True)
-        ii2.reset_index(level="csp", inplace=True)
+        #ii1.reset_index(level="csp", inplace=True)
+        #ii2.reset_index(level="csp", inplace=True)
         ii3.reset_index(level="csp", inplace=True)
         ii4.reset_index(level="csp", inplace=True)
         ii5.reset_index(level="csp", inplace=True)
@@ -228,7 +243,7 @@ def get_tables(n, indiv_insee, by, mode, year = 2018):
         ii7.reset_index(level="csp", inplace=True)
         ii8.reset_index(level="csp", inplace=True)
     
-        disc=[ii1,ii2,ii3,ii4,ii5,ii6,ii7,ii8]
+        disc=[ii3,ii4,ii5,ii6,ii7,ii8]
         
     if by=="city_category":
         
@@ -255,14 +270,14 @@ def get_tables(n, indiv_insee, by, mode, year = 2018):
     for i in disc :
       
         cat = sampled_indiv_data(n,i,mode=mode, year=year)
-        cat = cat.drop(columns = ["urban_unit_category","age","CSP"])
+        cat = cat.drop(columns = ["urban_unit_category","CSP"])
         r=cat.sum()/n
         r=r.to_frame()
         result=result.merge(r, left_index=True, right_index=True)
         
     if by== "CSP" :
         
-       result.columns = ["csp 1","csp 2","csp 3","csp 4","csp 5","csp 6","csp 7","csp 8" ]
+       result.columns = ["csp 3","csp 4","csp 5","csp 6","csp 7","csp 8" ]
        
        
        if year >=2015 :
@@ -289,8 +304,10 @@ def get_tables(n, indiv_insee, by, mode, year = 2018):
         
         
         
-test= get_tables(100,indiv_insee, by="CSP", mode="p_car", year = 2012)
+test= get_tables(990,indiv_insee, by="CSP", mode="p_car")
 
 
+#%%
 
+number= indiv_insee.groupby("csp").count()
 

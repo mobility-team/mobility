@@ -398,3 +398,5 @@ def prepare_emp_2019(proxies={}):
     p_det_mode.to_frame().to_parquet(data_folder_path / "insee_modes_to_entd_modes.parquet")
     
     return
+
+uu= prepare_emp_2019(proxies={})
