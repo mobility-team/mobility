@@ -17,18 +17,17 @@ t=TripSampler()
 # Load INSEE data
 
 data_folder_path = Path(os.path.dirname(__file__)) 
-indiv_insee = pd.read_parquet(data_folder_path/"data/pop2018bis.parquet")
-
-indiv_insee=indiv_insee.drop(columns="GARL")
+indiv_insee = pd.read_parquet(data_folder_path/"data/sdes_2019_pop.parquet")
+#%%
+indiv_insee=indiv_insee.drop(columns="distcom")
 # Adapt INSEE data to fit with mobility trip sampler model
 
-indiv_insee.columns="cantville","age","csp","weight_indiv","n_pers","n_cars","urban_unit_category","csp_ref"
+indiv_insee.columns="weight_indiv","n_cars","n_pers","urban_unit_category","csp_ref", "csp"
 
-indiv_insee.loc[indiv_insee["n_cars"].astype(int) > 1,"n_cars"] = "2+"
 
 indiv_insee["weight_indiv"]= indiv_insee["weight_indiv"].astype(dtype=np.float64)
 
-spl = indiv_insee.sample(10, weights= "weight_indiv")
+
 
 
 
@@ -145,7 +144,7 @@ def sampled_indiv_data(n, indiv_data, mode= "n_cars"):
     
     for i in range(len(sample)):
         csp=sample.iloc[i]["csp"]
-        age=sample.iloc[i]["age"]
+        
         urban_unit_category = sample.iloc[i]["urban_unit_category"]
         
         if mode == "n_cars":
@@ -163,7 +162,7 @@ def sampled_indiv_data(n, indiv_data, mode= "n_cars"):
         len_trips_weekend_day=total[3]
         total_len_travel=total[4]
        
-        indiv={'urban_unit_category':[urban_unit_category],'age':[ age],'CSP':[csp],'trips/day: weekday':[n_trips_per_weekday], 'dist/trips : weekday':[len_trips_weekday],
+        indiv={'urban_unit_category':[urban_unit_category],'CSP':[csp],'trips/day: weekday':[n_trips_per_weekday], 'dist/trips : weekday':[len_trips_weekday],
                 'trips/day : weekend':[n_trips_per_weekend_day],'dist/trips : weekend':[len_trips_weekend_day],'travel_dist/y':[total_len_travel]}
         indiv= pd.DataFrame(indiv)
         
@@ -259,7 +258,7 @@ def get_tables(n, indiv_insee, by, mode):
         
         
         
-test= get_tables(1000,indiv_insee, by="city_category", mode="n_cars")
+test= get_tables(10,indiv_insee, by="city_category", mode="p_car")
 
 
 

@@ -200,5 +200,5 @@ class Test_ef_UUcat():
 
 #%%
 te=Test_ef_UUcat()     
-uu=te.__init__( test_type="parking spot")
-go=te.get_results(size=1000,test_type="parking spot")
+uu=te.__init__( test_type="PT offer")
+go=te.get_results(size=250,test_type="PT offer")

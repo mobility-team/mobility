@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import os
 from pathlib import Path
 
+import sys
+sys.path.append("..")
 from radiation_model import iter_radiation_model
 
 #%% Import data for testing

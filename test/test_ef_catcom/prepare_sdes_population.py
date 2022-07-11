@@ -4,10 +4,7 @@ Created on Tue Jul  5 18:04:39 2022
 
 @author: a.girot
 """
-import sys
-sys.path.append("..")
- 
-from trip_sampler1 import *
+
 import pandas as pd
 from pathlib import Path
 import os
@@ -18,7 +15,7 @@ data_folder_path = Path(os.path.dirname(__file__)).parent.parent
 print(data_folder_path )
 
 #%%
-t=TripSampler()
+
 
 data_folder_path = Path(os.path.dirname(__file__)).parent.parent
 get_data_path = data_folder_path/"mobility/data/surveys/EMP-2019"
