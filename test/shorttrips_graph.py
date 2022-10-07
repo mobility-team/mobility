@@ -726,7 +726,7 @@ def distances_quotidiennes_motif(csp="",city_category="",day=""):
     distance_totale = pd.merge(distance_totale, motive_group, on="motive", how='left')
     distance_totale = distance_totale.groupby(["motive_group","survey"], as_index=False).agg({"distance":['sum']})
     distance_totale.columns = ["motive_group", "survey", "distance"]
-    
+    distance_totale = distance_totale.sort_index(ascending=False)
     
     distance_totale["distance"]=round(distance_totale["distance"],1)
     
@@ -851,7 +851,7 @@ def distances_quotidiennes_mode(csp="",city_category="", day=""):
     distance_totale.loc[(distance_totale["mode_group"].isin(["Avion", "Bateau", "Train grande ligne ou TGV"])), "mode_group"] = "Autre"
     
 
-    
+    distance_totale = distance_totale.sort_index(ascending=False)
     distance_totale["distance"]=round(distance_totale["distance"],1)
     
 
@@ -966,10 +966,16 @@ def répartition_modes_par_motif (a) :
     short_trips_2019["individual_id"] = short_trips_2019["individual_id"] / nbre_trips
 
 
+    short_trips_2019["autre"] = short_trips_2019["mode_group"]
+    short_trips_2019.loc[short_trips_2019["individual_id"]<0.002, "autre"] = "Autre"
+    short_trips_2019 = short_trips_2019.groupby(["autre"], as_index=False).agg({"individual_id":['sum']})
+    short_trips_2019.columns = ["mode_group", "individual_id"]
+
+    
     short_trips_2019["individual_id"]=round(short_trips_2019["individual_id"], 3)
     
     fig = px.pie(short_trips_2019.loc[short_trips_2019["individual_id"]>0.0001], values="individual_id", names="mode_group", color="mode_group", title='Répartition des modes pour le motif : ' + a, color_discrete_map=color_mode)
-    
+
     fig.update_layout(
        
         template="simple_white",
