@@ -727,7 +727,6 @@ def distances_quotidiennes_motif(csp="",city_category="",day=""):
     distance_totale = distance_totale.groupby(["motive_group","survey"], as_index=False).agg({"distance":['sum']})
     distance_totale.columns = ["motive_group", "survey", "distance"]
     
-
     
     distance_totale["distance"]=round(distance_totale["distance"],1)
     
@@ -894,12 +893,14 @@ def émissions_dist_motifs():
     short_trips_2019 = pd.merge(short_trips_2019, motive_group, on="motive", how='left')
     short_trips_2019 = pd.merge(short_trips_2019, mode_transport, on="mode_id", how='left')
     short_trips_2019 = pd.merge(short_trips_2019, mode_ef, on="mode_id", how='left')
-    short_trips_2008 = survey_data_2008["short_trips"]
-    short_trips_2008 = pd.merge(short_trips_2008, motive_group, on="motive", how='left')    
-    short_trips_2008 = pd.merge(short_trips_2008, mode_transport, on="mode_id", how='left')
-    short_trips_2008 = pd.merge(short_trips_2008, mode_ef, on="mode_id", how='left')
+
     short_trips_2019["distance"] = short_trips_2019["distance"] * short_trips_2019["pondki"]
-    short_trips_2019["ef"] = short_trips_2019["ef"].astype(float) * short_trips_2019["distance"]
+    # Car emission factors are corrected to account for other passengers
+    #    (no need to do this for the other modes, their emission factors are already in kgCO2e/passenger.km)
+    k_ef_car = 1/(1 + short_trips_2019["n_other_passengers"])
+    short_trips_2019["k_ef"] = np.where(short_trips_2019["mode_id"].str.slice(0, 1) == "3", k_ef_car, 1.0)
+    
+    short_trips_2019["ef"] = short_trips_2019["ef"].astype(float) * short_trips_2019["distance"]* short_trips_2019["k_ef"]
     short_trips_2019 = short_trips_2019.groupby(["motive_group"], as_index=False).agg({"distance":['sum'], "ef":['sum'], "pondki":['sum']})
     short_trips_2019.columns = ["motive_group", "distance", "ef", "pondki"]
     short_trips_2019["distance"] = short_trips_2019["distance"] / short_trips_2019["pondki"]
