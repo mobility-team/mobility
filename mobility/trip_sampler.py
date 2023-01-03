@@ -121,6 +121,7 @@ class TripSampler:
         # Filter the columns
         sampled_long_trips = sampled_long_trips.loc[:, ["travel_id", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers"]]
         sampled_long_trips.rename({"travel_id": "trip_id"}, axis=1, inplace=True)
+        sampled_long_trips["trip_type"]="long"
         all_trips.append(sampled_long_trips)
         
         # 5/ ---------------------------------------
@@ -161,6 +162,7 @@ class TripSampler:
         # Filter the columns
         sampled_short_trips_in_travel = sampled_short_trips_in_travel.reset_index().loc[:, ["day_id", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers"]]
         sampled_short_trips_in_travel.rename({"day_id": "trip_id"}, axis=1, inplace=True)
+        sampled_short_trips_in_travel["trip_type"] = "short"
         all_trips.append(sampled_short_trips_in_travel)
         
         # === DAILY MOBILITY ===
@@ -195,6 +197,7 @@ class TripSampler:
         # Filter the columns
         sampled_short_trips = sampled_short_trips.reset_index().loc[:, ["day_id", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers"]]
         sampled_short_trips.rename({"day_id": "trip_id"}, axis=1, inplace=True)
+        sampled_short_trips["trip_type"] = "short"
         all_trips.append(sampled_short_trips)
         
         all_trips = pd.concat(all_trips)
