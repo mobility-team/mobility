@@ -66,20 +66,22 @@ def prepare_emp_2019(proxies={}):
     hh["csp_household"] = hh["csp"]
     hh["n_pers"] = hh["n_pers"].astype(int)
     
-    # Number of cars in each household
+    # Number of cars in each household and distance to public transport
     cars = pd.read_csv(
         data_folder_path / "q_menage_public_V2.csv",
         encoding="latin-1",
         sep=";",
         dtype=str,
-        usecols=["IDENT_MEN", "JNBVEH"]
+        usecols=["IDENT_MEN", "JNBVEH","BLOGDIST"]
     )
+    
+    
     
     cars["n_cars"] = "0"
     cars.loc[cars["JNBVEH"].astype(int) == 1, "n_cars"] = "1"
     cars.loc[cars["JNBVEH"].astype(int) > 1, "n_cars"] = "2+"
     
-    cars = cars[["IDENT_MEN", "n_cars"]]
+    cars = cars[["IDENT_MEN", "n_cars", "BLOGDIST"]]
     
     # Infos about the individuals (weights, immobility)
     k_indiv = pd.read_csv(
@@ -178,8 +180,8 @@ def prepare_emp_2019(proxies={}):
     days_trip.set_index(['csp', 'n_cars', 'weekday', 'city_category'], inplace=True)
     
     # Filter and format the columns
-    df = df[["IDENT_IND", "IDENT_DEP", "weekday", "city_category", "csp", "n_cars", "MOTPREC", "MMOTIFDES", "mtp", "MDISTTOT_fin", "n_other_passengers", "POND_JOUR"]]
-    df.columns = ["individual_id", "day_id", "weekday", "city_category", "csp", "n_cars", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers", "pondki"]
+    df = df[["IDENT_IND", "IDENT_DEP", "weekday", "city_category", "csp", "n_cars", "BLOGDIST", "MOTPREC", "MMOTIFDES", "mtp", "MDISTTOT_fin", "n_other_passengers", "POND_JOUR"]]
+    df.columns = ["individual_id", "day_id", "weekday", "city_category", "csp", "n_cars", "BLOGDIST","previous_motive", "motive", "mode_id", "distance", "n_other_passengers", "pondki"]
     df.set_index(["day_id"], inplace=True)
     
     # ------------------------------------------
