@@ -1,4 +1,5 @@
 from mobility.get_insee_data import get_insee_data
+from mobility.parsers import download_work_home_flows
 import mobility.radiation_model as rm
 import numpy as np
 import pandas as pd
@@ -28,9 +29,7 @@ Prerequisites :
 
 COMMUNES_COORDINATES_CSV = "donneesCommunesFrance.csv"
 COMMUNES_SURFACES_CSV = "donneesCommunesFrance.csv"
-WORK_HOME_FLUXES_CSV = "fluxDtNationaux2019.csv"
-# The last one is too big to be on Github, can be found on
-# https://www.insee.fr/fr/statistiques/6456056?sommaire=6456104
+WORK_HOME_FLUXES_CSV = download_work_home_flows()
 
 
 # FUNCTIONS
