@@ -8,7 +8,8 @@ import zipfile
 def prepare_facilities(proxies={}):
     """
     Downloads (if needed) the raw data from the INSEE Permanent database of facilities
-    (https://www.insee.fr/fr/statistiques/3568638?sommaire=3568656),
+    (hosted on data.gouv.fr by the mobility project at
+    https://www.data.gouv.fr/fr/datasets/r/581da5e3-7efd-4edf-926d-4adf5bfe757c),
     then creates one dataframe for 
         the malls
         the shops
@@ -36,13 +37,13 @@ def prepare_facilities(proxies={}):
         os.makedirs(data_folder_path)
     
     
-    path = data_folder_path / "bpe20_ensemble_csv.zip"
+    path = data_folder_path / "bpe21-ensemble-csv.zip"
     
     # Download the raw survey data from the Insee "Base Permanente des équipements" if needed
     if path.exists() is False:
         # Download the zip file
         r = requests.get(
-            url="https://www.insee.fr/fr/statistiques/fichier/3568629/bpe20_ensemble_csv.zip",
+            url="https://www.data.gouv.fr/fr/datasets/r/581da5e3-7efd-4edf-926d-4adf5bfe757c",
             proxies=proxies
         )
         with open(path, "wb") as file:
@@ -54,7 +55,7 @@ def prepare_facilities(proxies={}):
             
     
     # Informations about jobs and active population for each city
-    db_facilities = pd.read_csv(data_folder_path / "bpe20_ensemble.csv",
+    db_facilities = pd.read_csv(data_folder_path / "bpe21_ensemble.csv",
                                     sep=';', usecols=['DEPCOM', 'TYPEQU', 'NB_EQUIP'],
                                     dtype={'DEPCOM': str})
     
