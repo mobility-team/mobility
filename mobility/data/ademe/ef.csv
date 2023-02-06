@@ -1,0 +1,14 @@
+mobility_ef_name,ademe_id,ef,database
+motorcycle,27992,0.0763,ADEME - Base carbone
+car,27970,0.216,ADEME - Base carbone
+city_bus,21596,0.167,ADEME - Base carbone
+shuttle_boat,28259,0.0643,ADEME - Base carbone
+long_distance_bus,28006,0.0295,ADEME - Base carbone
+tramway,28148,0.00268,ADEME - Base carbone
+subway,28147,0.00274,ADEME - Base carbone
+urban_train,28149,0.00728,ADEME - Base carbone
+regional_train,28146,0.0296,ADEME - Base carbone
+high_speed_train,28145,0.00236,ADEME - Base carbone
+long_distance_train,28144,0.00592,ADEME - Base carbone
+airplane,28132,0.187,ADEME - Base carbone
+cruise_ship,21860,0.524,ADEME - Base carbone

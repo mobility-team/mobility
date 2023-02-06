@@ -1,11 +1,11 @@
-ef_name,name,ef_id,unit
+mobility_ef_name,ademe_ef_name,ademe_id,unit
 motorcycle,Moto =< 250 cm3 - Mixte,27992,kgCO2e/km
 car,Voiture - Motorisation moyenne,27970,kgCO2e/km
-city_bus,Autobus moyen - Agglomération de 100 000 à 250 000 habitants,21596,kgCO2e/passager.km
-shuttle_boat,Navette fluviale - Donnée 2009,28259,kgCO2e/passager.km
+city_bus,Autobus moyen - AgglomÃ©ration de 100 000 Ã  250 000 habitants,21596,kgCO2e/passager.km
+shuttle_boat,Navette fluviale - DonnÃ©e 2009,28259,kgCO2e/passager.km
 long_distance_bus,Autocar - Gazole,28006,kgCO2e/passager.km
 tramway,Tramway - 2019,28148,kgCO2e/passager.km
-subway,Métro - 2019,28147,kgCO2e/passager.km
+subway,MÃ©tro - 2019,28147,kgCO2e/passager.km
 urban_train,RER et transilien - 2019,28149,kgCO2e/passager.km
 regional_train,TER - 2019,28146,kgCO2e/passager.km
 high_speed_train,TGV - 2019,28145,kgCO2e/passager.km
