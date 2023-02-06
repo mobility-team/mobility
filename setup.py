@@ -8,10 +8,6 @@ setuptools.setup(
     description="A tool to simulate the mobility behaviours of the inhabitants of a given region.",
     url="https://github.com/mobility-team/mobility",
     packages=setuptools.find_packages(),
-    python_requires='>=3.9',
-    install_requires=[
-        "numpy",
-        "pandas",
-        "requests"
-    ]
+    python_requires=">=3.9",
+    install_requires=["numpy", "pandas", "requests"],
 )

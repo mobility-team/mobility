@@ -33,8 +33,9 @@ WORK_HOME_FLUXES_CSV = download_work_home_flows()
 
 
 # FUNCTIONS
-def compare_thresholds(predicted_flux, empirical_flux,
-                       thresholds=[400, 200, 100, 50, 25, 20, 15, 10, 5]):
+def compare_thresholds(
+    predicted_flux, empirical_flux, thresholds=[400, 200, 100, 50, 25, 20, 15, 10, 5]
+):
     """
     Shows the SSI for different thresholds.
     The SSI should be higher for high thresholds.
@@ -105,7 +106,7 @@ def compute_similarity_index(predicted_flux, empirical_flux, threshold=200):
                 if t_ij + t2_ij > 0:
                     ssi += 2 * min(t_ij, t2_ij) / (t_ij + t2_ij)
                     n += 1
-            except (KeyError):
+            except KeyError:
                 exc += 1
                 n += 1
                 pass
@@ -189,8 +190,7 @@ def optimise_parameters(
     return best_pair
 
 
-def compare_insee_and_model(predicted_flux, empirical_flux, coordonnees,
-                            plot_sources):
+def compare_insee_and_model(predicted_flux, empirical_flux, coordonnees, plot_sources):
     """
     Compares INSEE data and the model output, showing common share of the flow
 
@@ -229,16 +229,20 @@ def compare_insee_and_model(predicted_flux, empirical_flux, coordonnees,
     sum_flow_DT = flow_join["flow_volumeDT"].sum()
     intra_flow_mask = flow_join["from"] == flow_join["to"]
     intra_flow_DT = flow_join.loc[intra_flow_mask, "flow_volumeDT"].sum()
-    print("Total flow of the INSEE data :\n"
-          "   {:.0f} ({:.0f}% intra-city flow)".format(
-            sum_flow_DT, 100 * intra_flow_DT / sum_flow_DT))
+    print(
+        "Total flow of the INSEE data :\n"
+        "   {:.0f} ({:.0f}% intra-city flow)".format(
+            sum_flow_DT, 100 * intra_flow_DT / sum_flow_DT
+        )
+    )
 
     sum_flow_RM = flow_join["flow_volumeRM"].sum()
     intra_flow_RM = flow_join.loc[intra_flow_mask, "flow_volumeRM"].sum()
     intra_city_flow = 100 * intra_flow_RM / sum_flow_RM
-    print("Total flow of the model :\n"
-          "   {:.0f} ({:.0f}% intra-city flow)\n".format(sum_flow_RM,
-                                                         intra_city_flow))
+    print(
+        "Total flow of the model :\n"
+        "   {:.0f} ({:.0f}% intra-city flow)\n".format(sum_flow_RM, intra_city_flow)
+    )
 
     # Compare the repartition between the ODs
     flow_join["repartitionDT"] = (
@@ -248,11 +252,12 @@ def compare_insee_and_model(predicted_flux, empirical_flux, coordonnees,
         flow_join["flow_volumeRM"] / flow_join["flow_volumeRM"].sum()
     )
 
-    error_repartition = (np.abs(flow_join["repartitionDT"]
-                                - flow_join["repartitionRM"]))
+    error_repartition = np.abs(flow_join["repartitionDT"] - flow_join["repartitionRM"])
 
-    print("The repartitions from the INSEE data and the data"
-          "have {:.2f}% in common.".format(100 - 50 * error_repartition.sum()))
+    print(
+        "The repartitions from the INSEE data and the data"
+        "have {:.2f}% in common.".format(100 - 50 * error_repartition.sum())
+    )
 
     # similarity = compute_similarity_index(flowRM,flowDT)
     # print("Similarity between the model and the INSEE data is ", similarity)
@@ -421,8 +426,7 @@ def get_data_for_model(
     # Compute the distance between cities
     #    distance between i and j = (x_i - x_j)**2 + (y_i - y_j)**2
     lst_communes = sources_territory.index.to_numpy()
-    idx_from_to = np.array(np.meshgrid(lst_communes,
-                                       lst_communes)).T.reshape(-1, 2)
+    idx_from_to = np.array(np.meshgrid(lst_communes, lst_communes)).T.reshape(-1, 2)
     idx_from = idx_from_to[:, 0]
     idx_to = idx_from_to[:, 1]
     costs_territory = pd.DataFrame(
@@ -431,8 +435,7 @@ def get_data_for_model(
     costs_territory = pd.merge(
         costs_territory, coordonnees, left_on="from", right_index=True
     )
-    costs_territory.rename(columns={"x": "from_x", "y": "from_y"},
-                           inplace=True)
+    costs_territory.rename(columns={"x": "from_x", "y": "from_y"}, inplace=True)
     costs_territory = pd.merge(
         costs_territory, coordonnees, left_on="to", right_index=True
     )
@@ -443,10 +446,8 @@ def get_data_for_model(
     )
 
     costs_territory["cost"] = np.sqrt(
-        (costs_territory["from_x"] / 1000
-         - costs_territory["to_x"] / 1000) ** 2
-        + (costs_territory["from_y"] / 1000
-           - costs_territory["to_y"] / 1000) ** 2
+        (costs_territory["from_x"] / 1000 - costs_territory["to_x"] / 1000) ** 2
+        + (costs_territory["from_y"] / 1000 - costs_territory["to_y"] / 1000) ** 2
     )
 
     # distance if the origin and the destination is the same city
@@ -457,13 +458,24 @@ def get_data_for_model(
         mask, other=costs_territory["distance_interne"], inplace=True
     )
 
-    return (sources_territory, sinks_territory, costs_territory,
-            coordonnees, raw_flowDT)
+    return (
+        sources_territory,
+        sinks_territory,
+        costs_territory,
+        coordonnees,
+        raw_flowDT,
+    )
 
 
-def run_model_for_territory(sources_territory, sinks_territory,
-                            costs_territory, coordonnees, raw_flowDT,
-                            alpha=0, beta=1):
+def run_model_for_territory(
+    sources_territory,
+    sinks_territory,
+    costs_territory,
+    coordonnees,
+    raw_flowDT,
+    alpha=0,
+    beta=1,
+):
     """
     Runs the model and visualises output
 
@@ -504,8 +516,7 @@ def run_model_for_territory(sources_territory, sinks_territory,
     )
 
     # COMPUTE THE MODEL
-    (total_flows, source_rest_volume,
-     sink_rest_volume) = rm.iter_radiation_model(
+    (total_flows, source_rest_volume, sink_rest_volume) = rm.iter_radiation_model(
         sources_territory,
         sinks_territory,
         costs_territory,
@@ -516,14 +527,11 @@ def run_model_for_territory(sources_territory, sinks_territory,
 
     # PLOT THE SOURCES AND THE SINKS
 
-    plot_sources = sources_territory.rename(
-        columns={"source_volume": "volume"})
-    rm.plot_volume(plot_sources, coordonnees,
-                   n_locations=10, title="Volume d'actifs")
+    plot_sources = sources_territory.rename(columns={"source_volume": "volume"})
+    rm.plot_volume(plot_sources, coordonnees, n_locations=10, title="Volume d'actifs")
 
     plot_sinks = sinks_territory.rename(columns={"sink_volume": "volume"})
-    rm.plot_volume(plot_sinks, coordonnees,
-                   n_locations=10, title="Volume d'emplois")
+    rm.plot_volume(plot_sinks, coordonnees, n_locations=10, title="Volume d'emplois")
 
     # PLOT THE FLOWS COMPUTED BY THE MODEL
 
@@ -537,17 +545,17 @@ def run_model_for_territory(sources_territory, sinks_territory,
         n_flows=500,
         n_locations=20,
         size=10,
-        title=("(1) Flux domicile-travail générés par le modèle"
-               " - alpha = {} - beta = {}").format(alpha, beta)
+        title=(
+            "(1) Flux domicile-travail générés par le modèle"
+            " - alpha = {} - beta = {}"
+        ).format(alpha, beta),
     )
 
     # PLOT THE FLOWS FROM THE INSEE DATA
 
-    plot_flowDT = raw_flowDT.groupby(["COMMUNE", "DCLT"])["IPONDI"].sum() \
-        .reset_index()
+    plot_flowDT = raw_flowDT.groupby(["COMMUNE", "DCLT"])["IPONDI"].sum().reset_index()
     plot_flowDT.rename(
-        columns={"IPONDI": "flow_volume", "COMMUNE": "from", "DCLT": "to"},
-        inplace=True
+        columns={"IPONDI": "flow_volume", "COMMUNE": "from", "DCLT": "to"}, inplace=True
     )
 
     rm.plot_flow(
@@ -570,8 +578,7 @@ def run_model_for_territory(sources_territory, sinks_territory,
 
     flowsRM = pd.DataFrame(total_flows)
 
-    print("Model flow of {} and empirical flow of {}".format(len(flowsRM),
-                                                             len(flowDT)))
+    print("Model flow of {} and empirical flow of {}".format(len(flowsRM), len(flowDT)))
 
     return flowsRM, flowDT, coordonnees, plot_sources
 
@@ -580,15 +587,24 @@ if __name__ == "__main__":
     start_time = time.time()
 
     # CHOOSE DEPARTMENTS
-    lst_departments = ['12', '48', '34', '30', '81']
+    lst_departments = ["12", "48", "34", "30", "81"]
 
     # GET DATA
-    (sources_territory, sinks_territory, costs_territory, coordonnees,
-     raw_flowDT) = get_data_for_model(lst_departments)
+    (
+        sources_territory,
+        sinks_territory,
+        costs_territory,
+        coordonnees,
+        raw_flowDT,
+    ) = get_data_for_model(lst_departments)
 
     # FIRST RUN
-    (predicted_flux, empirical_flux, coordonnees,
-     plot_sources) = run_model_for_territory(
+    (
+        predicted_flux,
+        empirical_flux,
+        coordonnees,
+        plot_sources,
+    ) = run_model_for_territory(
         sources_territory.copy(),
         sinks_territory,
         costs_territory,
@@ -599,8 +615,7 @@ if __name__ == "__main__":
     )
 
     # COMPARE INSEE AND MODEL DATA
-    compare_insee_and_model(predicted_flux, empirical_flux,
-                            coordonnees, plot_sources)
+    compare_insee_and_model(predicted_flux, empirical_flux, coordonnees, plot_sources)
     compare_thresholds(predicted_flux, empirical_flux)
     compute_similarity_index(predicted_flux, empirical_flux, threshold=20)
 
