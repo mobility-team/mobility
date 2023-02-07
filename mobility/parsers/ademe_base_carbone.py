@@ -31,10 +31,11 @@ def prepare_emissions_factors():
     return None
 
 
-@RateLimiter(max_calls=10, period=1)
+@RateLimiter(max_calls=1, period=0.1)
 def get_emissions_factor(element_id: str, proxies: dict = {}) -> float:
     """
-        Query the ADEME API to get the emissions factor for one element.
+        Query the ADEME API to get the emissions factor for one element. The 
+        API call is throttled to respect the 10 req/s limit.
 
         Args:
             - element_id (str): the id of the element in the Base Carbone.
@@ -47,7 +48,7 @@ def get_emissions_factor(element_id: str, proxies: dict = {}) -> float:
     """
 
     print(
-        "Getting emissions factor from ADEME Base carbone for the element : "
+        "Getting emissions factor from ADEME Base carbone for the element with id : "
         + element_id
     )
 
