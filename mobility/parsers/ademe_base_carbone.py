@@ -3,7 +3,6 @@ import pandas as pd
 import pathlib
 import os
 import time
-from ratelimiter import RateLimiter
 
 def prepare_emissions_factors():
     """
@@ -31,7 +30,6 @@ def prepare_emissions_factors():
     return None
 
 
-@RateLimiter(max_calls=1, period=0.1)
 def get_emissions_factor(element_id: str, proxies: dict = {}) -> float:
     """
         Query the ADEME API to get the emissions factor for one element. The 
@@ -66,6 +64,7 @@ def get_emissions_factor(element_id: str, proxies: dict = {}) -> float:
     request_url += query
 
     r = requests.get(request_url, proxies=proxies).json()
+    time.sleep(0.1)
 
     emissions_factor = r["results"][0]["Total_poste_non_décomposé"]
     
