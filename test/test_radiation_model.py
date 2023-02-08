@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import os
 from pathlib import Path
 
-from radiation_model import iter_radiation_model
+from mobility.radiation_model import iter_radiation_model
 
 # %% Import data for testing
 
