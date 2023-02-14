@@ -1,5 +1,6 @@
-numpy
+matnumpy
 pandas
 requests
 pyarrow
 throttler
+openpyxl
