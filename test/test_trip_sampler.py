@@ -1,6 +1,9 @@
 import mobility
 from mobility.carbon_computation import carbon_computation
 
+import pytest
+
+
 def test_trip_sampler():
     # Create trip sampler
     ts = mobility.TripSampler()
@@ -15,3 +18,5 @@ def test_trip_sampler():
     )
     # Compute carbon emissions for each trip
     emissions = carbon_computation(trips, ademe_database="Base_Carbone_V22.0.csv")
+    assert emissions["carbon_emissions"].sum() < 50000
+    assert emissions["carbon_emissions"].sum() > 100
