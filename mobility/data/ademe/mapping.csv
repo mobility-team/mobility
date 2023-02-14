@@ -1,4 +1,4 @@
-mobility_ef_name,ademe_ef_name,ademe_id,unit
+ef_name,ademe_ef_name,ef_id,unit
 motorcycle,Moto =< 250 cm3 - Mixte,27992,kgCO2e/km
 car,Voiture - Motorisation moyenne,27970,kgCO2e/km
 city_bus,Autobus moyen - Agglomération de 100 000 à 250 000 habitants,21596,kgCO2e/passager.km
