@@ -13,6 +13,5 @@ def test_trip_sampler():
         n_cars="0",
         n_years=1,
     )
-
-# Compute carbon emissions for each trip
-emissions = carbon_computation(trips, ademe_database="Base_Carbone_V22.0.csv")
+    # Compute carbon emissions for each trip
+    emissions = carbon_computation(trips, ademe_database="Base_Carbone_V22.0.csv")
