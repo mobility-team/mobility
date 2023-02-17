@@ -8,13 +8,13 @@ from .safe_sample import safe_sample
 class TripSampler:
     def __init__(self, source="EMP-2019"):
         """
-        Create a TripSampler object for a given survey.
+        Creates a TripSampler object for a given survey.
+        Data for short trips, days trip, long trips, travels, number of travels
 
         Args:
-            source (str) : The source of the travels and trips data ("ENTD-2008" or "EMP-2019", the default).
+            source (str) : The source of the travels and trips data.
+            "ENTD-2008" and "EMP-2019" are available, and "EMP-2019" is the default.
 
-        Returns:
-            TripSampler2: the TripSampler object, ready for sampling.
         """
 
         # Charger les dataframes nécessaires pour l'échantillonage avec get_survey_data(source)
