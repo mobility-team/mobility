@@ -24,8 +24,8 @@ def prepare_entd_2008(proxies={}):
         * days_trips: first trips of each day, with the number of cars of the household, weekday (boolean), city category,
           day id and weigth coefficient (PONDKI).
         * immobility_probability: for each CSP, probabilities of being immobile during a week day and a week-end day
-        * long_dist_trips: list of long distance travels (from the dedicated file,
-                                                          not inclusing the trips >80 km in the file used in short trips).
+        * df_long / long_dist_trips: list of long distance travels (from the dedicated file,
+          not including the trips >80 km in the file used in short trips).
           Contains id of the travel, city category, CSP and number of cars of the household, motive of the travel, distance,
           number of other passengers,  weigth coefficient (PONDKI) and NaN for previous motives.
           If the city category of the destination is not available, the home's city category is used (potential bias?),
