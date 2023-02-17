@@ -34,8 +34,8 @@ def prepare_entd_2008(proxies={}):
           destination city category, number of nights, motive of the travel, and weigth coefficient (PONDKI).
           Relation with long distance trips is unclear.
         * n_travel_by_csp / long_dist_travel_number: number of long-distance travels in a 4-week period per CSP
-        * p_car / car_ownership_probability: probability of owning a car for a person per city category, CSP of the household,
-          number of persons and cars in the household
+        * p_car / car_ownership_probability: part of households having 0, 1 or 2+ cars given the city category,
+          CSP of the household, and number of persons in the household
         * p_det_mode / insee_modes_to_entd_modes: probability of each mode
           (only modes starting by 2 and 5 - ie cycles and local public transport)
           per distance category (4 quartiles)
