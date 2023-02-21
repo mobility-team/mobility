@@ -160,7 +160,7 @@ class TripSampler:
         sampled_short_trips_in_travel = self.short_trips_db.loc[days_id]
         
         # Filter the columns
-        sampled_short_trips_in_travel = sampled_short_trips_in_travel.reset_index().loc[:, ["day_id", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers"]]
+        sampled_short_trips_in_travel = sampled_short_trips_in_travel.reset_index().loc[:, ["day_id", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers", "BLOGDIST"]]
         sampled_short_trips_in_travel.rename({"day_id": "trip_id"}, axis=1, inplace=True)
         sampled_short_trips_in_travel["trip_type"] = "short"
         all_trips.append(sampled_short_trips_in_travel)
@@ -195,7 +195,7 @@ class TripSampler:
         days_id = pd.concat( [sampled_week_days['day_id'], sampled_weekend_days['day_id']] )
         sampled_short_trips = self.short_trips_db.loc[days_id]
         # Filter the columns
-        sampled_short_trips = sampled_short_trips.reset_index().loc[:, ["day_id", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers"]]
+        sampled_short_trips = sampled_short_trips.reset_index().loc[:, ["day_id", "previous_motive", "motive", "mode_id", "distance", "n_other_passengers", "BLOGDIST"]]
         sampled_short_trips.rename({"day_id": "trip_id"}, axis=1, inplace=True)
         sampled_short_trips["trip_type"] = "short"
         all_trips.append(sampled_short_trips)
