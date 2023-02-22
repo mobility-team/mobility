@@ -11,3 +11,11 @@ def test_trip_sampler():
         n_cars="0",
         n_years=1,
     )
+    ts2 = mobility.TripSampler()
+    trips2 = ts2.get_trips(
+        csp="1",
+        csp_household="1",
+        urban_unit_category="B",
+        n_pers="1",
+        n_years=1,
+    )

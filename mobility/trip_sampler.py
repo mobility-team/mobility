@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from .get_survey_data import get_survey_data
-from .safe_sample import safe_sample
+from mobility.get_survey_data import get_survey_data
+from mobility.safe_sample import safe_sample
 
 
 class TripSampler:
@@ -32,8 +32,30 @@ class TripSampler:
         self, csp, csp_household, urban_unit_category, n_pers, n_cars=None, n_years=1
     ):
         """
-        Sample long distance trips and short distance trips from survey data (prepared with prepare_survey_data),
-        for a specific person profile.
+        Samples long distance trips and short distance trips from survey data (prepared with prepare_survey_data),
+        for a specific person profile (CSP, urban unit category, number of persons and cars of the household)
+
+        Determines the number of cars using the repartition for this urban unit category, CSP and number of persons
+        If data is not sufficient for that triplet, only uses urban unit category and CSP
+
+        Computes the number of travels (n_travels) during the n_years thanks to the travels_db.
+        n_travels are sampled.
+        The long_trips associated to these travels are added to the data
+
+        Thanks to these travels, the number of professional and personal days of travel may be known.
+        Local trips made at the travel destination are not included in the source data, so they are estimated:
+        for each day at destination, local trips are produced (weekdays for professional travel, week-end days for personal)
+        The urban unit category of the destination is used, but the same number or cars is kept.
+
+        The number of days without travels is then deduced (using a 364 days year):
+            Week days without travel : 52*5 - number of days of professional travels
+            Week-end days without travel : 52*2 - number of days of personal travels
+            Doing that, we assume that all professonal trips are made during weekdays and all personal trips during week-ends.
+        This assumption is obviously incorrect, and can lead to negative values. This is a point to fix.
+
+        The number of days of immobility is computed using the number without travels and the probability of immobility.
+        For the days with mobility, short trips are sampled (separately for week and week-end days).
+
 
         Args:
             csp (str): The socio-professional category of the person ("1" to "8", or "no_csp").
@@ -46,6 +68,8 @@ class TripSampler:
 
         Returns:
             pd.DataFrame: a dataframe with one row per sampled trip.
+            Contains long trips (from travels), short trips made during the travels, and short trips.
+
                 Columns:
                     id (int): The unique id of the trip.
                     mode (str): The mode used for the trip.
@@ -69,7 +93,8 @@ class TripSampler:
 
         # ---------------------------------------
         # Create new filtered databases according to the socio-pro category, the urban category
-        # and the number of persons in the householde
+        # and the number of persons in the household
+        # If there is no data for this combination, [TO EXPLAIN]
 
         try:
             filtered_p_car = (
@@ -88,8 +113,8 @@ class TripSampler:
         filtered_p_immobility = self.p_immobility.xs(csp)
 
         # ---------------------------------------
-        # Compute the number of cars based on the city category,
-        # the CSP of the reference person and the number of persons in the household
+        # If the number of cars has not been specified, it is chosen respecting the probabilities
+        # associated to the city category, the CSP of the reference person and the number of persons in the household
         if n_cars is None:
             n_cars = np.random.choice(
                 filtered_p_car.index.to_numpy(), 1, p=filtered_p_car
@@ -116,7 +141,7 @@ class TripSampler:
         )
 
         # 3/ ---------------------------------------
-        # Compute the number of days spent in travel, for professionnal reasons and personnal reasons
+        # Compute the number of days spent in travel, for professional reasons and personal reasons
 
         travel_pro_bool = sampled_travels["motive"].str.slice(0, 1) == "9"
         travel_perso_bool = np.logical_not(travel_pro_bool)
@@ -165,7 +190,7 @@ class TripSampler:
 
         days_id = []
         for i in range(sampled_travels.shape[0]):
-            # Travel for professionnal reasons
+            # Travel for professional reasons
             if sampled_travels.iloc[i]["motive"] == "9":
                 n_days_in_travel_pro = int(sampled_travels.iloc[i]["n_nights"] + 1)
                 destination_city_category = sampled_travels.iloc[i][
