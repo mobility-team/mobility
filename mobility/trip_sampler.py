@@ -152,6 +152,7 @@ class TripSampler:
             ],
         ]
         sampled_long_trips.rename({"travel_id": "trip_id"}, axis=1, inplace=True)
+        sampled_long_trips["trip_type"]="long"
         all_trips.append(sampled_long_trips)
 
         # 5/ ---------------------------------------
@@ -222,6 +223,7 @@ class TripSampler:
         sampled_short_trips_in_travel.rename(
             {"day_id": "trip_id"}, axis=1, inplace=True
         )
+        sampled_short_trips_in_travel["trip_type"] = "short"
         all_trips.append(sampled_short_trips_in_travel)
 
         # === DAILY MOBILITY ===
@@ -290,6 +292,7 @@ class TripSampler:
             ],
         ]
         sampled_short_trips.rename({"day_id": "trip_id"}, axis=1, inplace=True)
+        sampled_short_trips["trip_type"] = "short"
         all_trips.append(sampled_short_trips)
 
         all_trips = pd.concat(all_trips)
