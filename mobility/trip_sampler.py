@@ -79,18 +79,6 @@ class TripSampler:
                     n_other_passengers (int): the number of passengers accompanying the person.
         """
 
-        # Echantilloner les voyages en fonction de la catégorie d'unité urbaine, la CSP et le nombre de voitures du ménage
-
-        # Les données des voyages n'incluent pas les déplacements une fois à destination, donc il faut les estimer
-        # Proposition :
-        #   1. Calculer le nombre de jours passés en voyage, pour le travail (n1) et pour raisons personnelles (n2).
-        #   2. Echantilloner n1 jours de semaine et n2 jours de weekend dans les données des déplacements courte distance
-        #      (en fonction de la catagorie d'unité urbaine de la destination, de la CSP et du nombre de voitures du ménage).
-
-        # Echantilloner les déplacements courte distance
-        # Calculer le nombre de jours de semaine passés au domicile (52*5 - n1)
-        # Calculer le nombre de jours de weekends passés au domicile (52*2 - n2)
-
         # ---------------------------------------
         # Create new filtered databases according to the socio-pro category, the urban category
         # and the number of persons in the household
