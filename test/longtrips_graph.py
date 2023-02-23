@@ -14,7 +14,11 @@ import plotly.graph_objects as go
 #            rename a
 
 
-# ---------------------
+
+# ------------------------
+# UTILS
+# ------------------------
+
 # Colors dict for charts
 color_mode = {
     "Piéton": "rgb(124, 179, 66)",
@@ -27,74 +31,71 @@ color_mode = {
     "Train grande ligne ou TGV": "rgb(207, 216, 220)",
     "Bateau": "rgb(240, 98, 146)",
 }
+color_motive = {
+    "Commerce": "rgb(236, 0, 141)",
+    "Domicile": "rgb(11, 28, 45)",
+    "Enseignement": "rgb(0, 164, 174)",
+    "Médical": "rgb(139, 180, 186)",
+    "Sport / loisirs / culture": "rgb(91, 134, 145)",
+    "Travail": "rgb(15, 96, 126)",
+    "Vacances": "rgb(159, 197, 54)",
+    "Visites extérieures": "rgb(240, 98, 146)",
+}
 color_survey = {
     "ENTD-2008":"rgb(236, 0, 141)",
     "EMP-2019": "rgb(11, 28, 45)"
     }
 variable_titles = {
-    "city_category": "des catégories urbaines",
-    "csp": "des csp",
-    "motive_group": "des motifs de déplacements",
-    "mode_group": "des modes de déplacements"
+    "city_category": "catégories urbaines",
+    "csp": "csp",
+    "motive_group": "motifs de déplacements",
+    "mode_group": "modes de déplacements"
     }
+survey_year = pd.DataFrame({
+    "survey": ["ENTD-2008", "EMP-2019"],
+    "year": [2008, 2019]
+    })
 
 
-# ---------------------
 # Load trips motives and modes
 # TODO : atm excel files in same folder => load from other source or put in other folder ?
 motive_group = pd.read_excel("./entd_location_motive_group.xlsx", engine='openpyxl', dtype=str)
 motive_group.columns = ["motive_group", "motive", "location", "motive_explication"]
-
 mode_transport = pd.read_excel("./entd_mode.xlsx", engine='openpyxl', dtype=str)
 
-# Load long trips in each database
-survey_data_2019 = get_survey_data("EMP-2019")
-long_trips_2019 = survey_data_2019["long_trips"]
-
-survey_data_2008 = get_survey_data("ENTD-2008")
-long_trips_2008 = survey_data_2008["long_trips"]
-
-# # Load long trips for each database
-# long_trips_2019 = survey_data_2019["long_trips"]
-# long_trips_2008 = survey_data_2008["long_trips"]
-# Add survey
-long_trips_2019["survey"] = "EMP-2019"
-long_trips_2008["survey"] = "ENTD-2008"
-# Concat dataframes
-long_trips = pd.concat([
-    long_trips_2019,
-    long_trips_2008
-    ])
 
 
+# ------------------------
+# FUNCTIONS
+# ------------------------
 
-# ---------------------
-def trips_share(long_trips):
+def trips_share(trips, var="trip_id"):
     """
-    Trips share by either :
-    - urban categories,
-    - social categories (csp),
-    - motives,
-    - transportation modes
+    
 
     Parameters
     ----------
-    a : str
-        DESCRIPTION. "urban_categories", "csp", "motives", ou "mode"
-
+    trips : DataFrame
+        Concat trips dataframe of different surveys
+    var : str, optional
+        Show data by number of trips in the database ("trip_id") or weighted ("pondki"). 
+        The default is "trip_id".
 
     Returns
     -------
-    None. Create several graphs to compare 2008 and 2019 db.
+    None.
+    Display graphics showing 
+    trips share (by trips or distance) 
+    depending on modes, motives, csp, urban category
 
     """
 
     
     # Add motive and mode groups 
-    long_trips = pd.merge(long_trips, motive_group, on="motive", how='left')
-    long_trips = pd.merge(long_trips, mode_transport, on="mode_id", how='left')
-    long_trips["trip_id"] = "1"
-    long_trips_source = long_trips.copy()
+    trips = pd.merge(trips, motive_group, on="motive", how='left')
+    trips = pd.merge(trips, mode_transport, on="mode_id", how='left')
+    trips["trip_id"] = "1"
+    trips_source = trips.copy()
     
 
     # For each variable, create graphs to show
@@ -102,41 +103,55 @@ def trips_share(long_trips):
     # 2. Number of trips depending on variable
     # 3. Average distance per trip
     for variable in ["city_category", "csp", "motive_group", "mode_group"]:
-        long_trips = long_trips_source.groupby(["survey", variable], as_index=False).agg(
-            {"distance": ['sum'], "trip_id": ["count"]})
-        long_trips.columns = ["survey", variable, "distance", "n_trips"]
-        long_trips["distance_per_trip"] = long_trips["distance"] / long_trips["n_trips"]
-        long_trips = pd.merge(long_trips,
-                              long_trips.groupby(["survey"], as_index=False)["n_trips"].sum().rename(columns={"n_trips":"n_trips_tot"}),
-                              on="survey",
-                              how="left")
-        long_trips["ratio"] = long_trips["n_trips"] / long_trips["n_trips_tot"]
-        
+        trips = trips_source.copy()
+        if var =="trip_id":
+            action = "count"
+            add_str = ""
+        elif var == "pondki":
+            trips["distance"] = trips["distance"] * trips["pondki"]
+            action = "sum"
+            add_str = " -avec pondération"
+        trips = trips.groupby(["survey", variable], as_index=False).agg(
+            {"distance": ['sum'], var: [action]})
+        trips.columns = ["survey", variable, "distance", "n_trips"]
+        trips["distance_per_trip"] = trips["distance"] / trips["n_trips"]
+        for i in trips["survey"].unique().tolist():
+            average_dist = trips.loc[trips["survey"]==i, "distance"].sum()/trips.loc[trips["survey"]==i, "n_trips"].sum()
+            print("La distance moyenne dans la bdd " + i + " est de " + str(int(average_dist)) + " km." + add_str)
+        trips = pd.merge(trips,
+                         trips.groupby(["survey"], as_index=False)["n_trips"].sum().rename(columns={"n_trips":"n_trips_tot"}),
+                         on="survey",
+                         how="left")
+        trips["ratio"] = trips["n_trips"] / trips["n_trips_tot"]
+        # Sort values by survey year
+        trips = pd.merge(trips, survey_year,
+                         on="survey", how="left")
+        trips = trips.sort_values(by=["year", variable])
         
         # Components for charts
         fig_list = []
         fig_list_2 = []
         fig_list_3 = []
         n = 0
-        for i in long_trips["survey"].unique().tolist():
+        for i in trips["survey"].unique().tolist():
             fig_list.append(
                 go.Bar(name=i, 
-                       x=long_trips.loc[long_trips["survey"]==i, variable].tolist(),
-                       y=long_trips.loc[long_trips["survey"]==i, "ratio"].tolist(),
+                       x=trips.loc[trips["survey"]==i, variable].tolist(),
+                       y=trips.loc[trips["survey"]==i, "ratio"].tolist(),
                        yaxis='y', offsetgroup=n,
                        marker=dict(color=color_survey[i]))
                 )
             fig_list_2.append(
                 go.Bar(name=i,
-                       x=long_trips.loc[long_trips["survey"]==i, variable].tolist(),
-                       y=long_trips.loc[long_trips["survey"]==i, "n_trips"].tolist(), 
+                       x=trips.loc[trips["survey"]==i, variable].tolist(),
+                       y=trips.loc[trips["survey"]==i, "n_trips"].tolist(), 
                        yaxis='y', offsetgroup=n,
                        marker=dict(color=color_survey[i]))
                 )
             fig_list_3.append(
                 go.Bar(name=i, 
-                       x=long_trips.loc[long_trips["survey"]==i, variable].tolist(),
-                       y=long_trips.loc[long_trips["survey"]==i, "distance_per_trip"].tolist(),
+                       x=trips.loc[trips["survey"]==i, variable].tolist(),
+                       y=trips.loc[trips["survey"]==i, "distance_per_trip"].tolist(),
                        yaxis='y', offsetgroup=n,
                        marker=dict(color=color_survey[i]))
                 )
@@ -144,7 +159,7 @@ def trips_share(long_trips):
         
         
         # FIGURE 1
-        # Trips share depending on urban category
+        # Trips share depending on variable
         fig = go.Figure(
 
             data=fig_list,
@@ -154,7 +169,7 @@ def trips_share(long_trips):
 
             template="simple_white",
             font=dict(family="Gilroy Light", size=12),
-            title_text="Répartition des trajets en fonction " + variable_titles[variable], 
+            title_text="Répartition des trajets en fonction des " + variable_titles[variable] + add_str, 
             title_x=0.5,
             yaxis_title ="",
         )
@@ -163,7 +178,7 @@ def trips_share(long_trips):
         fig.show(renderer="png")
         
         # FIGURE 2
-        # Number of trips depending on urban category
+        # Number of trips depending on variable
         fig = go.Figure(
 
             data=fig_list_2,
@@ -173,7 +188,7 @@ def trips_share(long_trips):
 
             template="simple_white",
             font=dict(family="Gilroy Light", size=12),
-            title_text="Nombre de trajets en fonction " + variable_titles[variable], 
+            title_text="Nombre de trajets en fonction des " + variable_titles[variable] + add_str, 
             title_x=0.5,
             yaxis_title="",
         )
@@ -182,7 +197,7 @@ def trips_share(long_trips):
         fig.show(renderer="png")
         
         # FIGURE 3
-        # Average distance per trip
+        # Average distance per trip depending on variable
         fig = go.Figure(
 
             data=fig_list_3,
@@ -192,7 +207,7 @@ def trips_share(long_trips):
 
             template="simple_white",
             font=dict(family="Gilroy Light", size=12),
-            title_text="Distance par trajet en fonction " + variable_titles[variable], 
+            title_text="Distance par trajet en fonction des " + variable_titles[variable] + add_str, 
             title_x=0.5,
             yaxis_title="Distance (km)"
         )
@@ -200,206 +215,253 @@ def trips_share(long_trips):
         fig.update_layout(barmode='group')
         fig.show(renderer="png")
         
-       
-# TODO : reprendre ICI !
-
-def taux_remplissage(long_trips):
-    """
-    Taux de remplissage moyen des voitures en fonction des motifs de déplacement
-
-    Returns
-    -------
-    None.
-
-    """
-
-    long_trips_2019 = survey_data_2019["long_trips"]
-    long_trips_2019["individual_id"] = "1"
-    long_trips_2019 = pd.merge(long_trips_2019, motive_group, on="motive", how='left')
-    long_trips_2008 = survey_data_2008["long_trips"]
-    long_trips_2008["individual_id"] = "1"
-    long_trips_2008 = pd.merge(long_trips_2008, motive_group, on="motive", how='left')
-
-    # on regarde uniquement les individus possédant une voiture
-    long_trips_2019 = long_trips_2019.loc[long_trips_2019["n_cars"] != "0"]
-    long_trips_2008 = long_trips_2008.loc[long_trips_2008["n_cars"] != "0"]
-
-    # on regarde uniquement les trajets en voiture
-    long_trips_2019 = long_trips_2019.loc[long_trips_2019["mode_id"].isin(["3.30", "3.31", "3.32", "3.33", "3.39"])]
-    long_trips_2008 = long_trips_2008.loc[long_trips_2008["mode_id"].isin(["3.30", "3.31", "3.32", "3.33", "3.39"])]
-
-    long_trips_2019["n_other_passengers"] = long_trips_2019["n_other_passengers"].astype(int) + 1
-    long_trips_2019["n_other_passengers"] = long_trips_2019["n_other_passengers"] * long_trips_2019["pondki"]
-    long_trips_2019 = long_trips_2019.groupby(["motive_group"], as_index=False).agg(
-        {"n_other_passengers": ['sum'], "pondki": ['sum'], "individual_id": ["count"]})
-    long_trips_2019["n_other_passengers"] = long_trips_2019["n_other_passengers"] / long_trips_2019["pondki"]
-    long_trips_2019["survey"] = "EMP-2019"
-    long_trips_2019.columns = ["motive_group", "n_other_passengers", "pondki", "individual_id", "survey"]
-
-    long_trips_2008["n_other_passengers"] = long_trips_2008["n_other_passengers"].astype(int) + 1
-    long_trips_2008["n_other_passengers"] = long_trips_2008["n_other_passengers"] * long_trips_2008["pondki"]
-    long_trips_2008 = long_trips_2008.groupby(["motive_group"], as_index=False).agg(
-        {"n_other_passengers": ['sum'], "pondki": ['sum'], "individual_id": ["count"]})
-    long_trips_2008["n_other_passengers"] = long_trips_2008["n_other_passengers"] / long_trips_2008["pondki"]
-    long_trips_2008["survey"] = "ENTD-2008"
-    long_trips_2008.columns = ["motive_group", "n_other_passengers", "pondki", "individual_id", "survey"]
-
-    long_trips = pd.concat([long_trips_2008, long_trips_2019])
-
-    fig = go.Figure(
-
-        data=[
-            go.Bar(name='ENTD-2008', x=long_trips_2008["motive_group"].tolist(),
-                   y=long_trips_2008["n_other_passengers"].tolist(), yaxis='y', offsetgroup=1,
-                   marker=dict(color="rgb(236, 0, 141)")),
-            go.Bar(name='EMP-2019', x=long_trips_2019["motive_group"].tolist(),
-                   y=long_trips_2019["n_other_passengers"].tolist(), yaxis='y', offsetgroup=2,
-                   marker=dict(color="rgb(11, 28, 45)"))
-        ],
-
-        layout={
-            'yaxis': {'title': '(nombre de personnes / voiture)'}
-
-        }
-    )
-    fig.update_layout(
-
-        template="simple_white",
-        font=dict(family="Gilroy Light", size=12),
-        title_text="taux de remplissage moyen des voitures par motifs de déplacement", title_x=0.5
-    )
-
-    fig.update_layout(barmode='group')
-    fig.show(renderer="png")
 
 
-def mode_trajet():
+def car_occupancy_rate(trips):
     """
     
 
+    Parameters
+    ----------
+    trips : DataFrame
+        Concat trips dataframe of different surveys
+
     Returns
     -------
     None.
+    Display graphics showing 
+    cars passengers numbers 
+    depending on modes, motives, csp, urban category
 
     """
 
-    long_trips_2019 = survey_data_2019["long_trips"]
-    long_trips_2019["individual_id"] = "1"
-    long_trips_2019 = pd.merge(long_trips_2019, motive_group, on="motive", how='left')
-    long_trips_2019 = pd.merge(long_trips_2019, mode_transport, on="mode_id", how='left')
-    long_trips_2008 = survey_data_2008["long_trips"]
-    long_trips_2008["individual_id"] = "1"
-    long_trips_2008 = pd.merge(long_trips_2008, motive_group, on="motive", how='left')
-    long_trips_2008 = pd.merge(long_trips_2008, mode_transport, on="mode_id", how='left')
 
-    distance_totale_2019 = long_trips_2019.copy()
-    distance_totale_2019["distance"] = distance_totale_2019["distance"] * distance_totale_2019["pondki"]
-    distance_totale_2019 = distance_totale_2019.groupby(["individual_id"], as_index=False).agg({"distance": ["sum"]})
-    distance_totale_2019.columns = ["individual_id", "distance"]
-    distance_totale_2019 = distance_totale_2019["distance"].values[0]
-    distance_totale_2008 = long_trips_2008.copy()
-    distance_totale_2008["distance"] = distance_totale_2008["distance"] * distance_totale_2008["pondki"]
-    distance_totale_2008 = distance_totale_2008.groupby(["individual_id"], as_index=False).agg({"distance": ["sum"]})
-    distance_totale_2008.columns = ["individual_id", "distance"]
-    distance_totale_2008 = distance_totale_2008["distance"].values[0]
+    # Add motive and mode groups 
+    trips = pd.merge(trips, motive_group, on="motive", how='left')
+    trips = pd.merge(trips, mode_transport, on="mode_id", how='left')
+    trips["trip_id"] = "1"
+    
 
-    mode = long_trips_2008["mode_id"].unique().tolist()
-    mode_df = pd.DataFrame(mode, columns=['mode_id'])
+    # Keep only trips in cars
+    trips = trips.loc[trips["mode_id"].isin(["3.30", "3.31", "3.32", "3.33", "3.39"])]
+    
+    trips_source = trips.copy()
+    for variable in ["city_category", "csp", "motive_group"]:
+        trips = trips_source.copy()
+        # Compute average number of passengers per trip
+        trips["n_other_passengers"] = trips["n_other_passengers"].astype(int)
+        trips = trips.loc[trips["n_other_passengers"]<10]
+        trips["n_passengers"] = trips["n_other_passengers"].astype(int) + 1
+        trips["n_passengers"] = trips["n_passengers"] * trips["pondki"]
+        trips = trips.groupby(["survey", variable], as_index=False).agg(
+            {"n_passengers": ['sum'], "pondki": ['sum'], "trip_id": ["count"]})
+        trips["n_passengers"] = trips["n_passengers"] / trips["pondki"]
+        trips.columns = ["survey", variable, "n_passengers", "pondki", "trip_id"]
+        
+        # Sort values by survey year
+        trips = pd.merge(trips, survey_year,
+                          on="survey", how="left")
+        trips = trips.sort_values(by=["year", variable])
+        
+        # Components for charts
+        fig_list = []
+        n = 0
+        for i in trips["survey"].unique().tolist():
+            fig_list.append(
+                go.Bar(name=i, 
+                       x=trips.loc[trips["survey"]==i, variable].tolist(),
+                       y=trips.loc[trips["survey"]==i, "n_passengers"].tolist(),
+                       yaxis='y', offsetgroup=n,
+                       marker=dict(color=color_survey[i]))
+                )
+            n +=1
+        
+        # FIGURE
+        # Average passengers by variable
+        fig = go.Figure(
+    
+            data=fig_list,
+            
+        )
+        fig.update_layout(
+    
+            template="simple_white",
+            font=dict(family="Gilroy Light", size=12),
+            title_text="Taux de remplissage moyen des voitures par "+ variable_titles[variable], 
+            title_x=0.5,
+            yaxis_title = 'Nb personnes par voiture'
+        )
+    
+        fig.update_layout(barmode='group')
+        fig.show(renderer="png")
+    
 
-    distance_2019 = []
 
-    long_trips = long_trips_2019.copy()
+def distance_trip_share(trips):
+    """
+    
 
-    for k in mode:
-        long_trips = long_trips.loc[long_trips["mode_id"] == k]
-        long_trips["distance"] = long_trips["distance"] * long_trips["pondki"]
-        distance = long_trips["distance"].sum()
-        distance_2019.append(distance)
-        long_trips = long_trips_2019.copy()
+    Parameters
+    ----------
+    trips : DataFrame
+        Concat trips dataframe of different surveys
 
-    distance_2019 = pd.DataFrame(distance_2019, columns=['distance'])
-    distance_2019["mode_id"] = mode_df["mode_id"]
-    distance_2019["distance"] = distance_2019["distance"] / distance_totale_2019
+    Returns
+    -------
+    None.
+    Display graphics showing :
+        trips share by distance
+        trips share by number of trips
+    depending on modes and motives
 
-    distance_2008 = []
-    long_trips = long_trips_2008.copy()
+    """
 
-    for k in mode:
-        long_trips = long_trips.loc[long_trips["mode_id"] == k]
-        long_trips["distance"] = long_trips["distance"] * long_trips["pondki"]
-        distance = long_trips["distance"].sum()
-        distance_2008.append(distance)
-        long_trips = long_trips_2008.copy()
+    # Add motive and mode groups 
+    trips = pd.merge(trips, motive_group, on="motive", how='left')
+    trips = pd.merge(trips, mode_transport, on="mode_id", how='left')
+    trips["trip_id"] = "1"
+    
+    for variable in ["motive_group", "mode_group"]: 
+        # Compute total weighted distance by mode
+        distance = trips.copy()
+        distance["distance"] = distance["distance"] * distance["pondki"]
+        distance = pd.merge(
+            distance.groupby(["survey", variable], as_index=False)["distance", "pondki"].sum(),
+            distance.groupby(["survey"], as_index=False)["distance", "pondki"].sum().rename(columns={"distance":"total_distance", "pondki": "total_pondki"}),
+            how="left", on="survey"
+            )
+        # Compute share by mode (in distance)
+        distance["p_distance"] = distance["distance"] / distance["total_distance"] 
+        distance["p_distance"] = round(distance["p_distance"], 2)
+        # Compute share by modes (in trips number)
+        distance["p_trip"] = distance["pondki"] / distance["total_pondki"]
+        distance["p_trip"] = round(distance["p_trip"], 2)
+        
+        # Sort values by survey year
+        distance = pd.merge(distance, survey_year,
+                          on="survey", how="left")
+        distance = distance.sort_values(by=["year", variable])
+        
+        # Color palette
+        if variable == "mode_group":
+            color_graph = color_mode
+        elif variable == "motive_group":
+            color_graph = color_motive
+    
+        # FIGURE 1
+        # Trips share by distance depending on variable
+        fig = px.bar(
+            distance,
+            x="survey",
+            y="p_distance", 
+            color=variable,
+            text_auto=True,
+            color_discrete_map=color_graph
+        )
+        fig.update_layout(
+            uniformtext_minsize=10,
+            uniformtext_mode='hide',
+            template="simple_white",
+            font=dict(family="Gilroy Light", size=12),
+            title="Répartition des distances parcourues en fonction des "+ variable_titles[variable],
+            xaxis={'title': ''},
+            yaxis={'title': ''},
+            legend={'title': '', 'traceorder': 'reversed'},
+    
+        )
+        fig.show(renderer="png")
+        
+        # FIGURE 2
+        # Trips share by number of trips depending on variable
+        fig = px.bar(
+            distance, 
+            x="survey",
+            y="p_trip",
+            color=variable, 
+            text_auto=True,
+            color_discrete_map=color_graph
+        )
+        fig.update_layout(
+    
+            font_family="Arial",
+            uniformtext_minsize=10,
+            uniformtext_mode='hide',
+            template="simple_white",
+            font=dict(family="Gilroy Light", size=12),
+            title={
+                'text': "Répartition des trajets en fonction des "+ variable_titles[variable],
+                'y': 0.95,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top'},
+            xaxis={'title': ''},
+            yaxis={'title': ''},
+            legend={'title': '', 'traceorder': 'reversed'},
+    
+        )
+    
+        fig.show(renderer="png")
 
-    distance_2008 = pd.DataFrame(distance_2008, columns=['distance'])
-    distance_2008["mode_id"] = mode_df["mode_id"]
-    distance_2008["distance"] = distance_2008["distance"] / distance_totale_2008
 
-    distance_2008["survey"] = "ENTD-2008"
-    distance_2019["survey"] = "EMP-2019"
-    distance_totale = pd.concat([distance_2008, distance_2019])
+def get_ls_trips(survey):
+    """
+    
 
-    distance_totale = pd.merge(distance_totale, mode_transport, on="mode_id", how='left')
-    distance_totale = distance_totale.groupby(["mode_group", "survey"], as_index=False).agg({"distance": ['sum']})
-    distance_totale.columns = ["mode_group", "survey", "distance"]
+    Parameters
+    ----------
+    survey : str
+        Survey name
+        possibilities : [ENTD-2008; EMP-2019].
 
-    distance_totale["distance"] = round(distance_totale["distance"], 2)
+    Returns
+    -------
+    st : DataFrame
+        short trips database
+    lt : DataFrame
+        long trips database
 
-    fig = px.bar(distance_totale, x="survey", y="distance", color='mode_group', text_auto=True,
-                 color_discrete_map=color_mode)
-    fig.update_layout(
-        uniformtext_minsize=10,
-        uniformtext_mode='hide',
-        template="simple_white",
-        title_font=dict(size=15),
-        title_font_family="Gill Sans MT",
-        title="Répartition des distances parcourues en fonction des modes de déplacement",
-        xaxis={'title': ''},
-        yaxis={'title': ''},
-        legend={'title': ''}
+    """
+    # Load long and short trips
+    data = get_survey_data(survey)
+    lt = data["long_trips"]
+    st = data["short_trips"]
+    
+    # Add survey name in a column
+    lt["survey"] = survey
+    st["survey"] = survey
+    return st, lt
 
-    )
-    fig.show(renderer="png")
 
-    long_trips_2019 = long_trips_2019.groupby(["mode_group"], as_index=False).agg({"pondki": ["sum"]})
-    long_trips_2019.columns = ["mode_group", "nbre_trajets"]
-    nbre_trajets_tot = long_trips_2019["nbre_trajets"].sum()
-    long_trips_2019["ratio"] = long_trips_2019["nbre_trajets"] / nbre_trajets_tot
 
-    long_trips_2008 = long_trips_2008.groupby(["mode_group"], as_index=False).agg({"pondki": ["sum"]})
-    long_trips_2008.columns = ["mode_group", "nbre_trajets"]
-    nbre_trajets_tot = long_trips_2008["nbre_trajets"].sum()
-    long_trips_2008["ratio"] = long_trips_2008["nbre_trajets"] / nbre_trajets_tot
 
-    long_trips_2019["survey"] = "EMP-2019"
-    long_trips_2008["survey"] = "ENTD-2008"
-    long_trips = pd.concat([long_trips_2008, long_trips_2019])
+# ------------------------
+# MAIN
+# ------------------------
 
-    long_trips["ratio"] = round(long_trips["ratio"], 2)
 
-    fig = px.bar(long_trips, x="survey", y="ratio", color='mode_group', text_auto=True, color_discrete_map=color_mode)
-    fig.update_layout(
+# Load trips in each database
+short_trips_2008, long_trips_2008 = get_ls_trips("ENTD-2008")
+short_trips_2019, long_trips_2019 = get_ls_trips("EMP-2019")
 
-        font_family="Arial",
-        uniformtext_minsize=10,
-        uniformtext_mode='hide',
-        template="simple_white",
-        title={
-            'text': "Répartition des trajets en fonction des modes de transports",
-            'y': 0.95,
-            'x': 0.5,
-            'xanchor': 'center',
-            'yanchor': 'top'},
-        title_font=dict(size=15),
+# Long trips
+long_trips = pd.concat([
+    long_trips_2008,
+    long_trips_2019,
+    ])
 
-        xaxis={'title': ''},
-        yaxis={'title': 'distance (km)'},
-        legend={'title': ''}
+# Run functions
+trips_share(long_trips)
+trips_share(long_trips, var="pondki")
+car_occupancy_rate(long_trips)
+distance_trip_share(long_trips)
 
-    )
+# Short trips
+short_trips = pd.concat([
+    short_trips_2008,
+    short_trips_2019,
+    ])
 
-    fig.show(renderer="png")
-
-    fig.update_layout(
-
-    )
+# Run functions
+trips_share(short_trips)
+car_occupancy_rate(short_trips)
+distance_trip_share(short_trips)
