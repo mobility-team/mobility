@@ -571,196 +571,196 @@ def distance_quotidienne(a):
         fig.show(renderer="png")
 
 
-def taux_remplissage():
-    """
-    Taux de remplissage moyen des voitures en fonction des motifs de déplacement
+# def taux_remplissage():
+#     # """
+#     # Taux de remplissage moyen des voitures en fonction des motifs de déplacement
 
-    Returns
-    -------
-    None.
+#     # Returns
+#     # -------
+#     # None.
 
-    """
+#     # """
 
-    short_trips_2019 = survey_data_2019["short_trips"]
-    short_trips_2019["day_id"] = short_trips_2019.index
-    short_trips_2019 = pd.merge(short_trips_2019, motive_group, on="motive", how='left')
-    short_trips_2008 = survey_data_2008["short_trips"]
-    short_trips_2008["day_id"] = short_trips_2008.index
-    short_trips_2008 = pd.merge(short_trips_2008, motive_group, on="motive", how='left')
+#     # short_trips_2019 = survey_data_2019["short_trips"]
+#     # short_trips_2019["day_id"] = short_trips_2019.index
+#     # short_trips_2019 = pd.merge(short_trips_2019, motive_group, on="motive", how='left')
+#     # short_trips_2008 = survey_data_2008["short_trips"]
+#     # short_trips_2008["day_id"] = short_trips_2008.index
+#     # short_trips_2008 = pd.merge(short_trips_2008, motive_group, on="motive", how='left')
 
-    # on regarde uniquement les individus possédant une voiture
-    short_trips_2019 = short_trips_2019.loc[short_trips_2019["n_cars"] != "0"]
-    short_trips_2008 = short_trips_2008.loc[short_trips_2008["n_cars"] != "0"]
+#     # # on regarde uniquement les individus possédant une voiture
+#     # short_trips_2019 = short_trips_2019.loc[short_trips_2019["n_cars"] != "0"]
+#     # short_trips_2008 = short_trips_2008.loc[short_trips_2008["n_cars"] != "0"]
 
-    # on regarde uniquement les trajets en voiture
-    short_trips_2019 = short_trips_2019.loc[short_trips_2019["mode_id"].isin(["3.30", "3.31", "3.32", "3.33", "3.39"])]
-    short_trips_2008 = short_trips_2008.loc[short_trips_2008["mode_id"].isin(["3.30", "3.31", "3.32", "3.33", "3.39"])]
+#     # # on regarde uniquement les trajets en voiture
+#     # short_trips_2019 = short_trips_2019.loc[short_trips_2019["mode_id"].isin(["3.30", "3.31", "3.32", "3.33", "3.39"])]
+#     # short_trips_2008 = short_trips_2008.loc[short_trips_2008["mode_id"].isin(["3.30", "3.31", "3.32", "3.33", "3.39"])]
 
-    short_trips_2019["n_other_passengers"] = short_trips_2019["n_other_passengers"].astype(int) + 1
-    short_trips_2019["n_other_passengers"] = short_trips_2019["n_other_passengers"] * short_trips_2019["pondki"]
-    short_trips_2019 = short_trips_2019.groupby(["motive_group"], as_index=False).agg(
-        {"n_other_passengers": ['sum'], "pondki": ['sum'], "individual_id": ["count"]})
-    short_trips_2019["n_other_passengers"] = short_trips_2019["n_other_passengers"] / short_trips_2019["pondki"]
-    short_trips_2019["survey"] = "EMP-2019"
-    short_trips_2019.columns = ["motive_group", "n_other_passengers", "pondki", "individual_id", "survey"]
+#     # short_trips_2019["n_other_passengers"] = short_trips_2019["n_other_passengers"].astype(int) + 1
+#     # short_trips_2019["n_other_passengers"] = short_trips_2019["n_other_passengers"] * short_trips_2019["pondki"]
+#     # short_trips_2019 = short_trips_2019.groupby(["motive_group"], as_index=False).agg(
+#     #     {"n_other_passengers": ['sum'], "pondki": ['sum'], "individual_id": ["count"]})
+#     # short_trips_2019["n_other_passengers"] = short_trips_2019["n_other_passengers"] / short_trips_2019["pondki"]
+#     # short_trips_2019["survey"] = "EMP-2019"
+#     # short_trips_2019.columns = ["motive_group", "n_other_passengers", "pondki", "individual_id", "survey"]
 
-    short_trips_2008["n_other_passengers"] = short_trips_2008["n_other_passengers"].astype(int) + 1
-    short_trips_2008["n_other_passengers"] = short_trips_2008["n_other_passengers"] * short_trips_2008["pondki"]
-    short_trips_2008 = short_trips_2008.groupby(["motive_group"], as_index=False).agg(
-        {"n_other_passengers": ['sum'], "pondki": ['sum'], "individual_id": ["count"]})
-    short_trips_2008["n_other_passengers"] = short_trips_2008["n_other_passengers"] / short_trips_2008["pondki"]
-    short_trips_2008["survey"] = "ENTD-2008"
-    short_trips_2008.columns = ["motive_group", "n_other_passengers", "pondki", "individual_id", "survey"]
+#     # short_trips_2008["n_other_passengers"] = short_trips_2008["n_other_passengers"].astype(int) + 1
+#     # short_trips_2008["n_other_passengers"] = short_trips_2008["n_other_passengers"] * short_trips_2008["pondki"]
+#     # short_trips_2008 = short_trips_2008.groupby(["motive_group"], as_index=False).agg(
+#     #     {"n_other_passengers": ['sum'], "pondki": ['sum'], "individual_id": ["count"]})
+#     # short_trips_2008["n_other_passengers"] = short_trips_2008["n_other_passengers"] / short_trips_2008["pondki"]
+#     # short_trips_2008["survey"] = "ENTD-2008"
+#     # short_trips_2008.columns = ["motive_group", "n_other_passengers", "pondki", "individual_id", "survey"]
 
-    short_trips = pd.concat([short_trips_2008, short_trips_2019])
+#     # short_trips = pd.concat([short_trips_2008, short_trips_2019])
 
-    print(short_trips_2008["n_other_passengers"].sum() / short_trips_2008["n_other_passengers"].count())
-    print(short_trips_2019["n_other_passengers"].sum() / short_trips_2019["n_other_passengers"].count())
+#     # print(short_trips_2008["n_other_passengers"].sum() / short_trips_2008["n_other_passengers"].count())
+#     # print(short_trips_2019["n_other_passengers"].sum() / short_trips_2019["n_other_passengers"].count())
 
-    fig = go.Figure(
+#     # fig = go.Figure(
 
-        data=[
-            go.Bar(name='ENTD-2008', x=short_trips_2008["motive_group"].tolist(),
-                   y=short_trips_2008["n_other_passengers"].tolist(), yaxis='y', offsetgroup=1,
-                   marker=dict(color="rgb(236, 0, 141)")),
-            go.Bar(name='EMP-2019', x=short_trips_2019["motive_group"].tolist(),
-                   y=short_trips_2019["n_other_passengers"].tolist(), yaxis='y', offsetgroup=2,
-                   marker=dict(color="rgb(11, 28, 45)"))
-        ],
+#     #     data=[
+#     #         go.Bar(name='ENTD-2008', x=short_trips_2008["motive_group"].tolist(),
+#     #                y=short_trips_2008["n_other_passengers"].tolist(), yaxis='y', offsetgroup=1,
+#     #                marker=dict(color="rgb(236, 0, 141)")),
+#     #         go.Bar(name='EMP-2019', x=short_trips_2019["motive_group"].tolist(),
+#     #                y=short_trips_2019["n_other_passengers"].tolist(), yaxis='y', offsetgroup=2,
+#     #                marker=dict(color="rgb(11, 28, 45)"))
+#     #     ],
 
-        layout={
-            'yaxis': {'title': '(nombre de personnes / voiture)'}
+#     #     layout={
+#     #         'yaxis': {'title': '(nombre de personnes / voiture)'}
 
-        }
-    )
-    fig.update_layout(
+#     #     }
+#     # )
+#     # fig.update_layout(
 
-        template="simple_white",
-        font=dict(family="Gilroy Light", size=12),
-        title_text="Taux de remplissage moyen des voitures par motifs de déplacement", title_x=0.5
-    )
+#     #     template="simple_white",
+#     #     font=dict(family="Gilroy Light", size=12),
+#     #     title_text="Taux de remplissage moyen des voitures par motifs de déplacement", title_x=0.5
+#     # )
 
-    fig.update_layout(barmode='group')
-    fig.show(renderer="png")
+#     # fig.update_layout(barmode='group')
+#     # fig.show(renderer="png")
 
 
-def distances_quotidiennes_motif(csp="", city_category="", day=""):
-    """
-    Distances quotidiennes par motif
+# def distances_quotidiennes_motif(csp="", city_category="", day=""):
+#     """
+#     Distances quotidiennes par motif
 
-    Parameters
-    ----------
-    csp : str
-        "1", "2", "3", "4", "5", "6", "7", "8", "no_csp"
-        permet de filtrer la base à une certaine csp
+#     Parameters
+#     ----------
+#     csp : str
+#         "1", "2", "3", "4", "5", "6", "7", "8", "no_csp"
+#         permet de filtrer la base à une certaine csp
         
-    city_category : str
-        "R", "B", "C", "I"
-        permet de filtrer la base à une certaine catégorie urbaine
-    day : str
-        "weekday", "weekend"
-        permet de filtrer la base aux jours de la semaine ou du weekend
+#     city_category : str
+#         "R", "B", "C", "I"
+#         permet de filtrer la base à une certaine catégorie urbaine
+#     day : str
+#         "weekday", "weekend"
+#         permet de filtrer la base aux jours de la semaine ou du weekend
 
-    Returns
-    -------
-    None.
+#     Returns
+#     -------
+#     None.
 
-    """
+#     """
 
-    short_trips_2019 = survey_data_2019["short_trips"]
-    short_trips_2019["day_id"] = short_trips_2019.index
-    short_trips_2008 = survey_data_2008["short_trips"]
-    short_trips_2008["day_id"] = short_trips_2008.index
+#     short_trips_2019 = survey_data_2019["short_trips"]
+#     short_trips_2019["day_id"] = short_trips_2019.index
+#     short_trips_2008 = survey_data_2008["short_trips"]
+#     short_trips_2008["day_id"] = short_trips_2008.index
 
-    if city_category != "":
-        short_trips_2008 = short_trips_2008.loc[short_trips_2008["city_category"] == city_category]
-        short_trips_2019 = short_trips_2019.loc[short_trips_2019["city_category"] == city_category]
+#     if city_category != "":
+#         short_trips_2008 = short_trips_2008.loc[short_trips_2008["city_category"] == city_category]
+#         short_trips_2019 = short_trips_2019.loc[short_trips_2019["city_category"] == city_category]
 
-    if csp != "":
-        short_trips_2008 = short_trips_2008.loc[short_trips_2008["csp"] == csp]
-        short_trips_2019 = short_trips_2019.loc[short_trips_2019["csp"] == csp]
+#     if csp != "":
+#         short_trips_2008 = short_trips_2008.loc[short_trips_2008["csp"] == csp]
+#         short_trips_2019 = short_trips_2019.loc[short_trips_2019["csp"] == csp]
 
-    if day == "weekday":
-        short_trips_2008 = short_trips_2008.loc[short_trips_2008["weekday"] == True]
-        short_trips_2019 = short_trips_2019.loc[short_trips_2019["weekday"] == True]
+#     if day == "weekday":
+#         short_trips_2008 = short_trips_2008.loc[short_trips_2008["weekday"] == True]
+#         short_trips_2019 = short_trips_2019.loc[short_trips_2019["weekday"] == True]
 
-    if day == "weekend":
-        short_trips_2008 = short_trips_2008.loc[short_trips_2008["weekday"] == False]
-        short_trips_2019 = short_trips_2019.loc[short_trips_2019["weekday"] == False]
+#     if day == "weekend":
+#         short_trips_2008 = short_trips_2008.loc[short_trips_2008["weekday"] == False]
+#         short_trips_2019 = short_trips_2019.loc[short_trips_2019["weekday"] == False]
 
-    motive = short_trips_2008["motive"].unique().tolist()
-    motive_df = pd.DataFrame(motive, columns=['motive'])
+#     motive = short_trips_2008["motive"].unique().tolist()
+#     motive_df = pd.DataFrame(motive, columns=['motive'])
 
-    distance_totale_2019 = []
-    short_trips = short_trips_2019.copy()
+#     distance_totale_2019 = []
+#     short_trips = short_trips_2019.copy()
 
-    for k in motive:
-        short_trips = short_trips.loc[short_trips["motive"] == k]
-        short_trips["distance"] = short_trips["distance"] * short_trips["pondki"]
-        distance = short_trips["distance"].sum()
-        distance_totale_2019.append(distance)
-        short_trips = short_trips_2019.copy()
+#     for k in motive:
+#         short_trips = short_trips.loc[short_trips["motive"] == k]
+#         short_trips["distance"] = short_trips["distance"] * short_trips["pondki"]
+#         distance = short_trips["distance"].sum()
+#         distance_totale_2019.append(distance)
+#         short_trips = short_trips_2019.copy()
 
-    short_trips_2019 = short_trips_2019.groupby(["individual_id", "pondki"], as_index=False).agg(
-        {"day_id": ["nunique"]})
-    short_trips_2019.columns = ["individual_id", "pondki", "day_id"]
-    short_trips_2019["pondki"] = short_trips_2019["pondki"] * short_trips_2019["day_id"]
-    nbre_individus = short_trips_2019["pondki"].sum()
-    distance_totale_2019 = distance_totale_2019 / nbre_individus
-    distance_totale_2019 = pd.DataFrame(distance_totale_2019, columns=['distance'])
-    distance_totale_2019["motive"] = motive_df["motive"]
+#     short_trips_2019 = short_trips_2019.groupby(["individual_id", "pondki"], as_index=False).agg(
+#         {"day_id": ["nunique"]})
+#     short_trips_2019.columns = ["individual_id", "pondki", "day_id"]
+#     short_trips_2019["pondki"] = short_trips_2019["pondki"] * short_trips_2019["day_id"]
+#     nbre_individus = short_trips_2019["pondki"].sum()
+#     distance_totale_2019 = distance_totale_2019 / nbre_individus
+#     distance_totale_2019 = pd.DataFrame(distance_totale_2019, columns=['distance'])
+#     distance_totale_2019["motive"] = motive_df["motive"]
 
-    distance_totale_2008 = []
-    short_trips = short_trips_2008.copy()
+#     distance_totale_2008 = []
+#     short_trips = short_trips_2008.copy()
 
-    for k in motive:
-        short_trips = short_trips.loc[short_trips["motive"] == k]
-        short_trips["distance"] = short_trips["distance"] * short_trips["pondki"]
-        distance = short_trips["distance"].sum()
-        distance_totale_2008.append(distance)
-        short_trips = short_trips_2008.copy()
+#     for k in motive:
+#         short_trips = short_trips.loc[short_trips["motive"] == k]
+#         short_trips["distance"] = short_trips["distance"] * short_trips["pondki"]
+#         distance = short_trips["distance"].sum()
+#         distance_totale_2008.append(distance)
+#         short_trips = short_trips_2008.copy()
 
-    short_trips_2008 = short_trips_2008.groupby(["individual_id", "pondki"], as_index=False).agg(
-        {"day_id": ["nunique"]})
-    short_trips_2008.columns = ["individual_id", "pondki", "day_id"]
-    short_trips_2008["pondki"] = short_trips_2008["pondki"] * short_trips_2008["day_id"]
-    nbre_individus = short_trips_2008["pondki"].sum()
-    distance_totale_2008 = distance_totale_2008 / nbre_individus
-    distance_totale_2008 = pd.DataFrame(distance_totale_2008, columns=['distance'])
-    distance_totale_2008["motive"] = motive_df["motive"]
+#     short_trips_2008 = short_trips_2008.groupby(["individual_id", "pondki"], as_index=False).agg(
+#         {"day_id": ["nunique"]})
+#     short_trips_2008.columns = ["individual_id", "pondki", "day_id"]
+#     short_trips_2008["pondki"] = short_trips_2008["pondki"] * short_trips_2008["day_id"]
+#     nbre_individus = short_trips_2008["pondki"].sum()
+#     distance_totale_2008 = distance_totale_2008 / nbre_individus
+#     distance_totale_2008 = pd.DataFrame(distance_totale_2008, columns=['distance'])
+#     distance_totale_2008["motive"] = motive_df["motive"]
 
-    distance_totale_2008["survey"] = "ENTD-2008"
-    distance_totale_2019["survey"] = "EMP-2019"
+#     distance_totale_2008["survey"] = "ENTD-2008"
+#     distance_totale_2019["survey"] = "EMP-2019"
 
-    distance_totale = pd.concat([distance_totale_2008, distance_totale_2019])
+#     distance_totale = pd.concat([distance_totale_2008, distance_totale_2019])
 
-    distance_totale = pd.merge(distance_totale, motive_group, on="motive", how='left')
-    distance_totale = distance_totale.groupby(["motive_group", "survey"], as_index=False).agg({"distance": ['sum']})
-    distance_totale.columns = ["motive_group", "survey", "distance"]
+#     distance_totale = pd.merge(distance_totale, motive_group, on="motive", how='left')
+#     distance_totale = distance_totale.groupby(["motive_group", "survey"], as_index=False).agg({"distance": ['sum']})
+#     distance_totale.columns = ["motive_group", "survey", "distance"]
 
-    distance_totale = distance_totale.sort_index(ascending=False)
+#     distance_totale = distance_totale.sort_index(ascending=False)
 
-    distance_totale["distance"] = round(distance_totale["distance"], 1)
-    fig = px.bar(distance_totale, x="survey", y="distance", color='motive_group', text_auto=True,
-                 color_discrete_map=color_motive)
-    fig.update_layout(
-        uniformtext_minsize=10,
-        uniformtext_mode='hide',
-        template="simple_white",
-        title={
-            'text': "Distance moyenne journalière en fonction des motifs de déplacement",
-            'y': 0.95,
-            'x': 0.5,
-            'xanchor': 'center',
-            'yanchor': 'top'},
-        title_font=dict(size=15),
-        font_family="Arial",
-        xaxis={'title': ''},
-        yaxis={'title': 'distance (km)'},
-        legend={'title': ''}
+#     distance_totale["distance"] = round(distance_totale["distance"], 1)
+#     fig = px.bar(distance_totale, x="survey", y="distance", color='motive_group', text_auto=True,
+#                  color_discrete_map=color_motive)
+#     fig.update_layout(
+#         uniformtext_minsize=10,
+#         uniformtext_mode='hide',
+#         template="simple_white",
+#         title={
+#             'text': "Distance moyenne journalière en fonction des motifs de déplacement",
+#             'y': 0.95,
+#             'x': 0.5,
+#             'xanchor': 'center',
+#             'yanchor': 'top'},
+#         title_font=dict(size=15),
+#         font_family="Arial",
+#         xaxis={'title': ''},
+#         yaxis={'title': 'distance (km)'},
+#         legend={'title': ''}
 
-    )
-    fig.show(renderer="png")
+#     )
+#     fig.show(renderer="png")
 
 
 def distances_quotidiennes_mode(csp="", city_category="", day=""):
