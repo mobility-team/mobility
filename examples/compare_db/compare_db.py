@@ -62,22 +62,20 @@ mode_transport = pd.read_excel("./entd_mode.xlsx", engine='openpyxl', dtype=str)
 
 def trips_share(trips, var="trip_id"):
     """
-    
+    Displays graphics showing trips share (by trips or distance)
+    depending on modes, motives, csp, urban category
 
     Parameters
     ----------
     trips : DataFrame
         Concat trips dataframe of different surveys
     var : str, optional
-        Show data by number of trips in the database ("trip_id") or weighted ("pondki"). 
+        Show data by number of trips in the database ("trip_id") or weighted ("pondki").
         The default is "trip_id".
 
     Returns
     -------
     None.
-    Display graphics showing 
-    trips share (by trips or distance) 
-    depending on modes, motives, csp, urban category
 
     """
 
@@ -214,7 +212,8 @@ def trips_share(trips, var="trip_id"):
 
 def car_occupancy_rate(trips):
     """
-    
+    Displays graphics showing cars passengers numbers
+    depending on modes, motives, csp, urban category
 
     Parameters
     ----------
@@ -224,10 +223,6 @@ def car_occupancy_rate(trips):
     Returns
     -------
     None.
-    Display graphics showing 
-    cars passengers numbers 
-    depending on modes, motives, csp, urban category
-
     """
 
     # Add motive and mode groups
@@ -291,7 +286,10 @@ def car_occupancy_rate(trips):
 
 def distance_trip_share(trips):
     """
-    
+    Displays graphics showing :
+        trips share by distance
+        trips share by number of trips
+    depending on modes and motives
 
     Parameters
     ----------
@@ -301,14 +299,9 @@ def distance_trip_share(trips):
     Returns
     -------
     None.
-    Display graphics showing :
-        trips share by distance
-        trips share by number of trips
-    depending on modes and motives
-
     """
 
-    # Add motive and mode groups 
+    # Add motive and mode groups
     trips = pd.merge(trips, motive_group, on="motive", how='left')
     trips = pd.merge(trips, mode_transport, on="mode_id", how='left')
     trips["trip_id"] = "1"
@@ -318,8 +311,8 @@ def distance_trip_share(trips):
         distance = trips.copy()
         distance["distance"] = distance["distance"] * distance["pondki"]
         distance = pd.merge(
-            distance.groupby(["survey", variable], as_index=False)["distance", "pondki"].sum(),
-            distance.groupby(["survey"], as_index=False)["distance", "pondki"].sum().rename(
+            distance.groupby(["survey", variable], as_index=False)[["distance", "pondki"]].sum(),
+            distance.groupby(["survey"], as_index=False)[["distance", "pondki"]].sum().rename(
                 columns={"distance": "total_distance", "pondki": "total_pondki"}),
             how="left", on="survey"
         )
@@ -398,7 +391,10 @@ def distance_trip_share(trips):
 
 def daily_distance(trips, filter_db=None):
     """
-    
+    Displays graphics showing :
+        daily distance by csp, city category and day type
+        daily distance by mode and motives
+        for a day, a weekday, a week-end day
 
     Parameters
     ----------
@@ -406,22 +402,17 @@ def daily_distance(trips, filter_db=None):
         Concat trips dataframe of different surveys
         for SHORT TRIPS only
     filter_db : dict, optionnal
-        None by default (No filter)    
+        None by default (No filter)
         Contains filter on variables (csp, city_category ..)
         ex : {"city_category":"R"}
 
     Returns
     -------
     None.
-    Display graphics showing :
-        daily distance by csp, city category and day type
-        daily distance by mode and motives
-        for a day, a weekday, a weekend
-
     """
 
     if "weekday" in trips.columns:
-        # Add motive and mode groups 
+        # Add motive and mode groups
         trips["day_id"] = trips.index
         trips = pd.merge(trips, motive_group, on="motive", how='left')
         trips = pd.merge(trips, mode_transport, on="mode_id", how='left')
@@ -487,7 +478,7 @@ def daily_distance(trips, filter_db=None):
             fig.show()
 
         # Chart showing repartition of daily distance (in modes or motives)
-        # for all surveys 
+        # for all surveys
         # for all days, for week day and for weekend
         for day_type in ["all", "weekday", "weekend"]:
             if day_type == "all":
@@ -558,7 +549,9 @@ def daily_distance(trips, filter_db=None):
 
 def modes_by_motive(trips):
     """
-    
+    Displays graphics showing :
+        transportation modes by motives
+        in trips number and in distance
 
     Parameters
     ----------
@@ -568,19 +561,15 @@ def modes_by_motive(trips):
     Returns
     -------
     None.
-    Display graphics showing :
-        transportation modes by motives 
-        in trips number and in distance
-
     """
-    # Add motive and mode groups 
+    # Add motive and mode groups
     trips = pd.merge(trips, motive_group, on="motive", how='left')
     trips = pd.merge(trips, mode_transport, on="mode_id", how='left')
     trips["trip_id"] = 1
 
     for motive in trips["motive_group"].unique().tolist():
         df = trips.loc[trips["motive_group"] == motive]
-        df = df.groupby(["survey", "mode_group"], as_index=False)["trip_id", "distance"].sum()
+        df = df.groupby(["survey", "mode_group"], as_index=False)[["trip_id", "distance"]].sum()
         df.columns = ["survey", "mode_group", "n_trips", "distance"]
 
         for survey in df["survey"].unique().tolist():
@@ -625,7 +614,8 @@ def modes_by_motive(trips):
 
 def carbon_and_distance(trips):
     """
-    
+    Displays graphic showing :
+        average distance and CO2e emissions of a trip by motive
 
     Parameters
     ----------
@@ -635,12 +625,8 @@ def carbon_and_distance(trips):
     Returns
     -------
     None.
-    Display graphic showing :
-        average distance and CO2e emissions
-        of a trip by motive
-
     """
-    # Add motive and mode groups 
+    # Add motive and mode groups
     trips = pd.merge(trips, motive_group, on="motive", how='left')
     trips = pd.merge(trips, mode_transport, on="mode_id", how='left')
     trips["trip_id"] = 1
@@ -649,7 +635,7 @@ def carbon_and_distance(trips):
 
     # ------------
     # TODO : change for carbon function when pushed to main
-    # Add ef by mode 
+    # Add ef by mode
     import numpy as np
     mode_ef = pd.read_csv("./mode_ef.csv", dtype=str)
     trips = pd.merge(trips, mode_ef, on="mode_id", how='left')
@@ -710,7 +696,7 @@ def carbon_and_distance(trips):
 
 def get_ls_trips(survey):
     """
-    
+
 
     Parameters
     ----------
@@ -767,6 +753,9 @@ short_trips = pd.concat([
 ])
 
 # Run functions
+# Be careful : running all these functions may create >100 figures. Ensure you have sufficient memory on your computer
+# Depending on your Python configuration, figures may not show. Try to replace fig.show() by fig.show(renderer="png")
+# You can also try fig.show(renderer="browser") but it will open >100 tabs on your browser
 trips_share(short_trips)
 car_occupancy_rate(short_trips)
 distance_trip_share(short_trips)
