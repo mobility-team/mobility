@@ -2,10 +2,9 @@ import numpy as np
 import pandas as pd
 
 import os
-from pathlib import Path
+from pathlib import Path            
 
 from mobility.parsers import prepare_entd_2008, prepare_emp_2019
-
 
 def get_survey_data(source="EMP-2019"):
     """

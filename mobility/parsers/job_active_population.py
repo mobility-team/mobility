@@ -19,7 +19,6 @@ def prepare_job_active_population(proxies={}):
 
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
-
     # Download the raw survey data from insee.fr if needed
     path = data_folder_path / "base-ccc-emploi-pop-active-2019.zip"
 
@@ -31,11 +30,9 @@ def prepare_job_active_population(proxies={}):
         )
         with open(path, "wb") as file:
             file.write(r.content)
-
         # Unzip the content
         with zipfile.ZipFile(path, "r") as zip_ref:
             zip_ref.extractall(data_folder_path)
-
     # Informations about jobs and active population for each city
     db_job_active_pop = pd.read_csv(
         data_folder_path / "base-cc-emploi-pop-active-2019.csv",
