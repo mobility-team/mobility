@@ -40,9 +40,9 @@ def compare_thresholds(
     Shows the SSI for different thresholds.
     The SSI should be higher for high thresholds.
     INSEE says:
-    « Les effectifs inférieurs à 200 doivent être maniés avec précaution car,
-    en raison de l'imprécision liée au sondage,
-    ils peuvent ne pas être significatifs ».
+    « The sample sizes below 200 must be handled with caution because,
+    due to the imprecision associated with sampling,
+    they may not be significant ».
     https://www.insee.fr/fr/information/2383290
 
     Parameters
@@ -80,10 +80,10 @@ def compute_similarity_index(predicted_flux, empirical_flux, threshold=200):
     ----------
     predicted_flux : pd.DataFrame with a flow_volume column
                      and a MultiIndex with two INSEE codes
-        Contains all the fluxes computed by the model
+                     Contains all the fluxes computed by the model
     empirical_flux : pd.DataFrame with a flow_volume column
                      and a MultiIndex with two INSEE codes
-        Contains all the empirical fluxes.
+                     Contains all the empirical fluxes.
     threshold : int
         Under this threshold, the fluxes won't be considered for the index.
         This reflects that under 200, INSEE data is less precise.
