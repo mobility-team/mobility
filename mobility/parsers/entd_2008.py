@@ -266,7 +266,7 @@ def prepare_entd_2008(proxies={}):
         ],
         columns=["V2_OLDARCOM_UUCat", "UU_id"],
     )
-    #dict_urban_category.columns = ["V2_OLDARCOM_UUCat", "UU_id"]
+    
     df_long = pd.merge(df_long, dict_urban_category, on="V2_OLDARCOM_UUCat")
 
     # Merge with the data about individuals and household cars
@@ -343,17 +343,7 @@ def prepare_entd_2008(proxies={}):
     travels["V2_OLDVMH"] = travels["V2_OLDVMH"].astype(float)
 
     # Convert the urban category of the destination to the {'C', 'B', 'I', 'R'} terminology
-    dict_urban_category = pd.DataFrame(
-        [
-            ["ville centre", "C"],
-            ["banlieue", "B"],
-            ["ville isolée", "I"],
-            ["commune rurale", "R"],
-            [np.nan, np.nan],
-        ],
-        columns=["labels", "UU_id"],
-    )
-    dict_urban_category.columns = ["V2_OLDVCOM_UUCat", "UU_id"]
+
     travels = pd.merge(travels, dict_urban_category, on="V2_OLDVCOM_UUCat")
 
     # Merge with the data about individuals and household cars
