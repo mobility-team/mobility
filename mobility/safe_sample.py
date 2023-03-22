@@ -5,7 +5,7 @@ import pandas as pd
 
 def safe_sample(
     data_base, n_sample, weights="pondki", minimum_sample_size=10, **kwargs
-):   
+):
     """
     Samples the data base filtered by kwargs
     Handles the case where the sample size is lesser than minimum_sample_size by withdrawing the filters
