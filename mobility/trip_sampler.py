@@ -17,7 +17,7 @@ class TripSampler:
 
         """
 
-        # Load necessary dataframes to sample with get_survey_data(source)
+        # Load necessary dataframes to sample with get_survey_data(source) M
 
         survey_data = get_survey_data(source=source)
         self.short_trips_db = survey_data["short_trips"]
