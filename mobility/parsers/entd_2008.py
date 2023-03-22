@@ -269,6 +269,8 @@ def prepare_entd_2008(proxies={}):
     dict_urban_category.columns = ["V2_OLDARCOM_UUCat", "UU_id"]
     
     df_long = pd.merge(df_long, dict_urban_category, on="V2_OLDARCOM_UUCat")
+    
+   
 
     # Merge with the data about individuals and household cars
     df_long = pd.merge(df_long, indiv, on="IDENT_IND")
@@ -345,7 +347,10 @@ def prepare_entd_2008(proxies={}):
 
     # Convert the urban category of the destination to the {'C', 'B', 'I', 'R'} terminology
 
+    dict_urban_category.columns = ["V2_OLDVCOM_UUCat", "UU_id"]
     travels = pd.merge(travels, dict_urban_category, on="V2_OLDVCOM_UUCat")
+    
+     
 
     # Merge with the data about individuals and household cars
     travels = pd.merge(travels, indiv, on="IDENT_IND")
