@@ -15,7 +15,7 @@ def safe_sample(
         n_sample (int): The number of samples to draw.
         weights (str) : The name of columns of data_base containing the weights for the sampling.
         minimum_sample_size (int) : The minimum size of the database to draw from.
-                                    If the kwargs make the database too small,
+                                    If the kwargs make the database to small,
                                     relax the criteria from last to first.
         kwargs : the criteria to filter the database
     Returns:
