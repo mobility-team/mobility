@@ -264,8 +264,9 @@ def prepare_entd_2008(proxies={}):
             ["commune rurale", "R"],
             [np.nan, np.nan],
         ],
-        columns=["V2_OLDARCOM_UUCat", "UU_id"],
+        columns=["labels", "UU_id"],
     )
+    dict_urban_category.columns = ["V2_OLDARCOM_UUCat", "UU_id"]
     
     df_long = pd.merge(df_long, dict_urban_category, on="V2_OLDARCOM_UUCat")
 
