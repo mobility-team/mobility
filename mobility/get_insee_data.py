@@ -20,7 +20,7 @@ def get_insee_data():
         - the repartion of sport facilities
         - the repartion of care facilities
         - the repartion of show facilities
-        - the repartion of 
+        - the repartion of museum
         - the repartion of restaurants
 
     Returns
