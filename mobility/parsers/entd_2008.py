@@ -50,6 +50,7 @@ def prepare_entd_2008(proxies={}):
         * indiv_mob: manipulation of the weight coefficient, first to determine csp_pop_2008 and n_travel_by_csp,
           then to determine immobility_probability
         * csp_pop_2008: weight coefficient sum for each CSP
+        * dict_urban_category : Convert the urban category of the destination (in french) to the {C,B,I,R} terminology
     """
 
     data_folder_path = (
