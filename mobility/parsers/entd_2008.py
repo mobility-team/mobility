@@ -9,8 +9,8 @@ import zipfile
 def prepare_entd_2008(proxies={}):
     """
     This function downloads (if needed) the raw survey data from the survey ENTD 2008,
-    then creates the dataframes needed for trip sampling,
-    and then writes these dataframes into parquet files
+    then creates the dataframes needed for trip sampling,and then writes these dataframes
+    into parquet files.
 
     8 datasets are created and saved:
 
@@ -50,8 +50,12 @@ def prepare_entd_2008(proxies={}):
         * indiv_mob: manipulation of the weight coefficient, first to determine csp_pop_2008 and n_travel_by_csp,
           then to determine immobility_probability
         * csp_pop_2008: weight coefficient sum for each CSP
+        * dict_urban_category : Convert the urban category of the destination (in french) to the {C,B,I,R} terminology
+        
+    To understand the meaning of the variables used in this function, it is necessary 
+    to read the readme file located in Mobility/data/surveys directory.
     """
-
+    # The directory path where dataFrames/ Parquets are stored
     data_folder_path = (
         Path(os.path.dirname(__file__)).parents[0] / "data/surveys/entd-2008"
     )
@@ -346,11 +350,9 @@ def prepare_entd_2008(proxies={}):
     travels["V2_OLDVMH"] = travels["V2_OLDVMH"].astype(float)
 
     # Convert the urban category of the destination to the {'C', 'B', 'I', 'R'} terminology
-
     dict_urban_category.columns = ["V2_OLDVCOM_UUCat", "UU_id"]
     travels = pd.merge(travels, dict_urban_category, on="V2_OLDVCOM_UUCat")
     
-     
 
     # Merge with the data about individuals and household cars
     travels = pd.merge(travels, indiv, on="IDENT_IND")
