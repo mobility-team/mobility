@@ -17,7 +17,7 @@ class TripSampler:
 
         """
 
-        # Load necessary dataframes to sample with get_survey_data(source) MM
+        # Load necessary dataframes to sample with get_survey_data(source)
 
         survey_data = get_survey_data(source=source)
         self.short_trips_db = survey_data["short_trips"]
@@ -33,7 +33,7 @@ class TripSampler:
     ):
         """
         Samples long distance trips and short distance trips from survey data (prepared with prepare_survey_data),
-        for a specific person profile (CSP, urban unit category, number of persons and cars of the household).
+        for a specific person's profile (CSP, urban unit category, number of persons and cars of the household).
 
         Determines the number of cars using the repartition for this urban unit category, CSP and number of persons.
         If data is not sufficient for that triplet, only uses urban unit category and CSP.
@@ -120,8 +120,8 @@ class TripSampler:
         # Sample n_travel travels.
 
         sampled_travels = safe_sample(
-            self.travels_db,
-            n_travel,
+            self.travels_db, 
+            n_travel, 
             weights="pondki",
             csp=csp,
             n_cars=n_cars,
