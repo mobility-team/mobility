@@ -61,8 +61,6 @@ individuals_list = individuals.to_dict(orient="records")
 # FIND CITY CATEGORY
 
 # Associate a city category depending on codgeo
-# TODO removeeeeeee
-# cities_category = pd.read_csv("D:/data/l.gontier.egis/projets/mobility_ademe/version_carbone/mobility/examples/Empreinte carbone/cities_category.csv", dtype=str)
 cities_category = pd.read_csv("./cities_category.csv", dtype=str)
 cities_category.set_index("codgeo", inplace=True)
 # Avoid problems due to arrondissement in Paris, Lyon, Marseille
@@ -90,7 +88,7 @@ for person in individuals_list:
       csp_household=person["csp_ref_pers"],
       urban_unit_category=city_category,
       n_pers=person["n_persons"],
-      n_cars=person["n_cars"],  # TODO update
+      n_cars=person["n_cars"],
       n_years=1
     )
     trips["individual_id"] = person["individual_id"]
@@ -108,6 +106,4 @@ average_fp = emissions.groupby(["individual_id"], as_index=False)["carbon_emissi
 print("Average annual carbon footprint :", round(average_fp["carbon_emissions"].mean()/1000,2), "tCO2e/pers.yr")
 print("Maximal annual carbon footprint :", round(average_fp["carbon_emissions"].max()/1000,2), "tCO2e/pers.yr")
 print("Minimal annual carbon footprint :", round(average_fp["carbon_emissions"].min()/1000,2), "tCO2e/pers.yr")
-
-test = emissions.loc[emissions["individual_id"]==276]
 
