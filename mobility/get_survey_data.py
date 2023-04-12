@@ -38,7 +38,7 @@ def get_survey_data(source="EMP-2019"):
         path = data_folder_path / "surveys/emp-2019"
     else:
         print("The source specified doesn't exist. The EMP 2019 is used by default")
-        source = "EMD-2018-2019"
+        source = "EMP-2019"
         path = data_folder_path / "surveys/emp-2019"
 
     # Check if the parquet files already exist, if not writes them calling the corresponding funtion
@@ -55,8 +55,10 @@ def get_survey_data(source="EMP-2019"):
         print("Writing the parquet files")
         if source == "ENTD-2008":
             prepare_entd_2008()
-        else:
+        elif source == "EMP-2019":
             prepare_emp_2019()
+        else:
+            raise NotImplementedError("We do not have data for that source")
 
     # Load the files into a dict
     survey_data = {}

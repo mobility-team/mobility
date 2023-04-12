@@ -20,3 +20,12 @@ def test_trip_sampler():
     emissions = carbon_computation(trips, ademe_database="Base_Carbone_V22.0.csv")
     assert emissions["carbon_emissions"].sum() < 50000
     assert emissions["carbon_emissions"].sum() > 100
+
+    ts2 = mobility.TripSampler()
+    trips2 = ts2.get_trips(
+        csp="1",
+        csp_household="1",
+        urban_unit_category="B",
+        n_pers="1",
+        n_years=1,
+    )

@@ -11,6 +11,46 @@ def prepare_emp_2019(proxies={}):
     This function downloads (if needed) the raw survey data from the survey EMP 2019,
     then creates the dataframes needed for trip sampling,
     and then writes these dataframes into parquet files
+
+    8 datasets are created and saved:
+
+        * df / short_trips: list of all short trips (<80 km as the crow flies).
+          Trips with unknown length, zero length or a length > 80 km are removed.
+          Contains ids of the trip and the individual, weekday (boolean), city category (B/C/I/R),
+          CSP (divided in 8 categories (1-8) and "no_csp"), number of cars of the household (0, 1 or 2+),
+          motive of the previous trip, motive of the current trip, mode id, distance in km of the trip,
+          number of persons (from the household or not) accomplishing the trip with the individual,
+          and weigth coefficient (ponderation of the day).
+        * days_trips: first trips of each day, with the number of cars of the household, weekday (boolean), city category,
+          day id and weigth coefficient (ponderation of the day).
+        * immobility_probability: for each CSP, probabilities of being immobile during a week day and a week-end day
+        * df_long / long_dist_trips: list of long distance travels (from the dedicated file,
+          not including the trips >80 km in the file used in short trips).
+          Contains id of the travel, city category, CSP and number of cars of the household, motive of the travel, distance,
+          number of other passengers,  weigth coefficient (PONDKI) and NaN for previous motives.
+          If the city category of the destination is not available, the home's city category is used (potential bias?),
+          however the column is dropped and finally not used
+        * travels: CSP, number of cars and city category as indexes, contains id of the travel,
+          destination city category, number of nights, motive of the travel, and weigth coefficient.
+          Relation with long distance trips is unclear.
+        * n_travel_by_csp / long_dist_travel_number: number of long-distance travels in a 4-week period per CSP
+        * p_car / car_ownership_probability: part of households having 0, 1 or 2+ cars given the city category,
+          CSP of the household, and number of persons in the household
+        * p_det_mode / insee_modes_to_entd_modes: probability of each mode
+          (only modes starting by 2 and 5 - ie cycles and local public transport)
+          per distance category (4 quartiles)
+          within its mode category (ie probably for each cycle mode knowing the mode is cycle)
+
+
+    For that purpose, intermediate dataframes are used:
+
+        * indiv: Individuals, id of their household and socio-professional category (catégorie socio-professionelle/CSP)
+        * hh: Households (ménages), CSP of the reference person within the household, category of the city
+        * cars: id of the household, number of cars: 0, 1 or 2+
+        * indiv_mob: manipulation of the weight coefficient, first to determine csp_pop_2008 and n_travel_by_csp,
+          then to determine immobility_probability
+        * csp_pop_2019: weight coefficient sum for each CSP
+              
     """
 
     data_folder_path = (
@@ -320,6 +360,7 @@ def prepare_emp_2019(proxies={}):
     ]
     df.set_index(["day_id"], inplace=True)
 
+
     # ------------------------------------------
     # Long distance trips dataset
     df_long = pd.read_csv(
@@ -345,7 +386,7 @@ def prepare_emp_2019(proxies={}):
     df_long["OLDKM_fin"] = df_long["OLDKM_fin"].astype(float)
     df_long["n_other_passengers"] = df_long["nbaccomp"].astype(int)
 
-    # the R category of the ENTD correspond to the H category of the EMP 2019
+    # the R category of the ENTD corresponds to the H category of the EMP 2019
     df_long.loc[df_long["STATUTCOM_UU_DES"] == "H", "STATUTCOM_UU_DES"] = "R"
 
     # Convert the mode id from the EMP terminology to the ENTD one
@@ -483,6 +524,7 @@ def prepare_emp_2019(proxies={}):
         "pondki",
     ]
     travels.set_index(["csp", "n_cars", "city_category"], inplace=True)
+    print(travels)
 
     # ------------------------------------------
     # Population by csp in 2019 from the weigths in the data base k_individu
@@ -693,6 +735,7 @@ def prepare_emp_2019(proxies={}):
         "n_cars"
     ].count()
     p_car = p_car / p_car.groupby(["city_category", "csp_household", "n_pers"]).sum()
+    print(p_car)
 
     # ------------------------------------------
     # Probability of detailed public transport modes and two wheels vehicles (bikes, motorcycles)

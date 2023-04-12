@@ -8,8 +8,7 @@ def safe_sample(
 ):
     """
     Samples the data base filtered by kwargs
-    Handles the case where the sample size is lesser than minimum_sample_size
-    by withdrawing the filters
+    Handles the case where the sample size is lesser than minimum_sample_size by withdrawing the filters
 
     Args:
         data_base (pd.DataFrame): The database to sample from. Must be indexed (or muli-indexed) by the keys of kwargs.
@@ -27,12 +26,10 @@ def safe_sample(
     """
     # Filter by the kwargs
     for key in kwargs.keys():
-        if (
-            data_base.index.get_level_values(key) == kwargs[key]
-        ).sum() < minimum_sample_size:
+        sample_size = (data_base.index.get_level_values(key) == kwargs[key]).sum()
+        if sample_size < minimum_sample_size:
             # Sample size too small -> Relax the current criteria
             data_base.reset_index(level=key, inplace=True)
-
             # print('The '+key+' criteria has been relaxed.')
 
         else :
@@ -41,7 +38,9 @@ def safe_sample(
                 
             else:
                 data_base = data_base.xs(kwargs[key])
-
+        else:
+            # Sample size is sufficient
+            data_base = data_base.xs(kwargs[key])
 
     if type(data_base) == pd.Series:
         # The database to sample from is just one row
