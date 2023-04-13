@@ -9,7 +9,6 @@ setuptools==65.6.3
 streamlit==1.20.0
 streamlit_lottie==0.0.3
 streamlit_option_menu==0.3.2
-streamlit==1.14.0
 requests
 pyarrow
 openpyxl
