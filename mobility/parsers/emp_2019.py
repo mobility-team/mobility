@@ -114,14 +114,14 @@ def prepare_emp_2019(proxies={}):
         encoding="latin-1",
         sep=";",
         dtype=str,
-        usecols=["IDENT_MEN", "JNBVEH"],
+        usecols=["IDENT_MEN", "JNBVEH","BLOGDIST"],
     )
 
     cars["n_cars"] = "0"
     cars.loc[cars["JNBVEH"].astype(int) == 1, "n_cars"] = "1"
     cars.loc[cars["JNBVEH"].astype(int) > 1, "n_cars"] = "2+"
 
-    cars = cars[["IDENT_MEN", "n_cars"]]
+    cars = cars[["IDENT_MEN", "n_cars", "BLOGDIST"]]
 
     # Infos about the individuals (weights, immobility)
     k_indiv = pd.read_csv(
@@ -226,7 +226,7 @@ def prepare_emp_2019(proxies={}):
             ["6.2", "6.61"],
             ["6.3", "6.62"],
             ["6.4", "6.63"],
-            ["6.5", "6.64"],
+            ["6.5", "6.69"],
             ["7.1", "7.70"],
             ["7.2", "7.70"],
             ["7.3", "7.70"],
@@ -335,6 +335,7 @@ def prepare_emp_2019(proxies={}):
             "city_category",
             "csp",
             "n_cars",
+            "BLOGDIST",
             "MOTPREC",
             "MMOTIFDES",
             "mtp",
@@ -350,6 +351,7 @@ def prepare_emp_2019(proxies={}):
         "city_category",
         "csp",
         "n_cars",
+        "BLOGDIST",
         "previous_motive",
         "motive",
         "mode_id",
