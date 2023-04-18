@@ -21,7 +21,7 @@ def get_ademe_factors(file_path):
     """
     ademe = pd.read_csv(
         file_path,
-        error_bad_lines=False,
+        on_bad_lines='skip',
         encoding="latin-1",
         sep=";",
         dtype=str,
