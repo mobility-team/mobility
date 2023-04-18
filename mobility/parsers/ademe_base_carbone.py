@@ -51,7 +51,7 @@ def get_emissions_factor(element_id: str, proxies: dict = {}) -> float:
     )
 
     request_url = (
-        "https://data.ademe.fr/data-fair/api/v1/datasets/base-carbone(r)/"
+        "https://data.ademe.fr/data-fair/api/v1/datasets/base-carboner/"
         "lines?page=1&after=1&size=12&sort=&select=&highlight=&format=json&"
         "html=false&q_mode=simple&qs="
     )
