@@ -9,6 +9,7 @@ Les variables sont décrites dans [PROGEDO](https://data.progedo.fr/studies/doi/
 ### Conservation
 L'équipe Mobility conserve les données détaillées de l'enquête sur [data.gouv.fr](https://www.data.gouv.fr/fr/datasets/donnees-detaillees-de-lenquete-national-transports-et-deplacements-2008/).
 C'est ce lien qui est utilisé par le code de Mobility pour récupérer automatiquement les données si elles ne sont pas déjà présentes localement.
+Les données sont disponibles sous Licence Ouverte.
 
 ### Traitement des données
 Les étapes successives de traitement des données sont documentées dans le code.
@@ -21,3 +22,17 @@ Contrairement à l'ENTD 2008, un [document d'accompagnement est disponible](http
 
 ### Conservation
 Les données sont également conservées sur [data.gouv.fr](https://www.data.gouv.fr/fr/datasets/donnees-detaillees-de-lenquete-mobilite-des-personnes-2018-2019/).
+Les données sont disponibles sous Licence Ouverte.
+
+## Base Carbone
+### Description
+La Base Carbone de l'ADEME recense les facteurs d'émissions en France, et est la base de données de référence. Au moment où cette documentation a été mise à jour (avril 2023), c'est la V22 de la Base Carbone qui est utilisée, et nous développons une requête automatique des données à l'aide de l'[API Base Carbone](https://api.gouv.fr/les-api/api_base_carbone). 
+
+### Variables
+Un fichier de mapping permet de faire le lien entre les modes utilisés dans les enquêtes de mobilité et ceux dont les facteurs d'émission sont répertoriés dans la base.
+
+### Licence
+La base est [publiée par l'ADEME](https://www.data.gouv.fr/fr/datasets/base-carbone-r-1/) sous Licence Ouverte.
+
+## cities_category.csv
+Ce fichier permet de faire le lien entre une commune et sa catégorie au sens INSEE. Documentation à compléter !
