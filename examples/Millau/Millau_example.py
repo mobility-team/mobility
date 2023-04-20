@@ -19,8 +19,8 @@ However, it is possible to use it on any set of contiguous departments
 by changing the list of departments.
 
 Prerequisites :
-    * a CSV with all x,y coordinates (the coordinates are in the Lambert-93 projection) 
-      of the communes (COMMUNES_COORDINATES_CSV), 
+    * a CSV with all x,y coordinates (the coordinates are in the Lambert-93 projection)
+      of the communes (COMMUNES_COORDINATES_CSV),
     * a XLSX with home-work flows between communes of the territory
       (work_home_fluxes_xlsx)
     * a CSV with all internal distances of the communes - based on superficies
@@ -386,6 +386,7 @@ def get_data_for_model(
     data_folder_path = Path(os.path.dirname(__file__))
 
     # Import the INSEE data on the work-home mobility on Millau
+    print("data folder path:", data_folder_path, "csv:", work_home_fluxes_csv)
     file_path = os.path.join(data_folder_path, work_home_fluxes_csv)
     raw_flowDT = pd.read_csv(
         file_path,
