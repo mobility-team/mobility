@@ -52,6 +52,6 @@ For this example the motive **jobs** is chosen for the following departements : 
 ## Authors
 * Anas Lahmar
 * Ayoub Foundou
-* Charle Pequign﻿ot
+* Charles Pequign﻿ot
 * Lyes Kaya 
 * Zakariaa El Mhassani

@@ -18,10 +18,11 @@ Pour l'instant, la solution est centrée sur les territoires et les données fra
 <!-- Plus d'infos sur [le site web](https://mobility-team.github.io/) ! -->
 
 # Contributeur·ices
-| Entreprise  | Participant·es |
+| Entreprise/école  | Participant·es |
 | :------------- | :------------- |
 | AREP  | Capucine-Marin Dubroca-Voisin <br> Antoine Gauchot <br> Félix Pouchain |
 | Elioth  | Louise Gontier  |
+| École Centrale de Lyon | Anas Lahmar <br> Ayoub Foundou <br> Charles Pequign﻿ot <br> Lyes Kaya  <br> Zakariaa El Mhassani |
 
 # Utilisations
 | Utilisateur  | Date | Projet |
@@ -30,3 +31,4 @@ Pour l'instant, la solution est centrée sur les territoires et les données fra
 | AREP | En cours (2022) | Étude pour le [Grand Annecy]([url](https://www.arep.fr/nos-projets/grand-annecy/)) |
 
 # Comment utiliser Mobility ?
+_En cours de rédaction_
