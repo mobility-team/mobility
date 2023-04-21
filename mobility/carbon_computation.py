@@ -6,12 +6,12 @@ import os
 
 def get_ademe_factors(file_path):
     """
-    Get ADEME carbon factors from the last database
+    Gets ADEME carbon factors from the database indicated as a parameter
 
     Parameters
     ----------
     file_path : WindowsPath (pathlib module)
-        path to the last ADEME carbon factors database
+        path to the last ADEME carbon factors database or the database you want to use
 
     Returns
     -------
@@ -54,7 +54,7 @@ def get_ademe_factors(file_path):
 
 def carbon_computation(trips, ademe_database="Base_Carbone_V22.0.csv"):
     """
-
+    Computes carbon emissions (kgCO2e) for the given trips
 
     Parameters
     ----------
