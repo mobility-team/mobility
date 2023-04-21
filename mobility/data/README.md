@@ -47,3 +47,6 @@ Le code R (rural) est devenu H (Hors unité urbaine) dans les dernières donnée
 
 ![image](https://user-images.githubusercontent.com/105421514/233382976-7c4f9bb8-f773-4532-9942-01122c399586.png)
 ![image](https://user-images.githubusercontent.com/105421514/233383016-068a3f15-aad3-4408-a633-c05768ec04a1.png)
+
+# Voir aussi
+* [Principes de gestion des données](https://github.com/mobility-team/mobility/tree/main/mobility#gestion-des-données-externes)

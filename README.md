@@ -21,7 +21,7 @@ Pour l'instant, la solution est centrée sur les territoires et les données fra
 | Entreprise  | Participant·es |
 | :------------- | :------------- |
 | AREP  | Capucine-Marin Dubroca-Voisin <br> Antoine Gauchot <br> Félix Pouchain |
-| Elioth  | Louise Gontier  |
+| Elioth  | Louise Gontier <br> Arthur Haulon  |
 
 # Utilisations
 | Utilisateur  | Date | Projet |
@@ -31,3 +31,9 @@ Pour l'instant, la solution est centrée sur les territoires et les données fra
 
 # Comment utiliser Mobility ?
 _En cours de rédaction_
+
+# Comment contribuer ?
+* Vous pouvez regarder nos [issues](https://github.com/mobility-team/mobility/issues), particulièrement celles marquées comme [good-first-issue](https://github.com/mobility-team/mobility/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), et proposer d'y contribuer.
+* Tester l'outil et nous indiquer là où la documentation peut être améliorée est très utile ! Que ce soit pour une suggestion ou une issue, n'hésitez pas à [ouvrir une issue](https://github.com/mobility-team/mobility/issues/new).
+* Nous espérons que vous pourrez utiliser Mobility pour vos travaux de recherche et de conseil ! Nous comptons sur vous pour partager le code que vous avez utilisé.
+* Nous suivons PEP8 pour notre code Python. Pour d'autres bonnes pratiques, [suivez le guide](https://github.com/mobility-team/mobility/tree/main/mobility) !
