@@ -10,7 +10,10 @@ from r5py import TransportNetwork
 
 # Load Limousin cities from IGN admin express data
 # available at https://data.cquest.org/ign/adminexpress/
-cities = gpd.read_file("D:/data/ign/admin_express/ADMIN-EXPRESS-COG_3-0__SHP__FRA_L93_2021-05-19/ADMIN-EXPRESS-COG_3-0__SHP__FRA_2021-05-19/ADMIN-EXPRESS-COG/1_DONNEES_LIVRAISON_2021-05-19\ADECOG_3-0_SHP_LAMB93_FR/COMMUNE.shp")
+cities = gpd.read_file(
+    "D:/data/ign/admin_express/ADMIN-EXPRESS-COG_3-0__SHP__FRA_L93_2021-05-19/ADMIN-EXPRESS-COG_3-0__SHP__FRA_2021-05-19/"
+    "ADMIN-EXPRESS-COG/1_DONNEES_LIVRAISON_2021-05-19\ADECOG_3-0_SHP_LAMB93_FR/COMMUNE.shp"
+)
 cities = cities[cities["INSEE_DEP"].isin(["19", "23", "87"])].copy()
 cities["id"] = cities["INSEE_COM"]
 cities_poly = cities.copy()
@@ -37,28 +40,29 @@ transport_network = TransportNetwork(
 # (chunk the request to 50-to-all cities, the request might be too large otherwise)
 travel_times = []
 
+
 def chunks(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
+
 for i, ids in enumerate(chunks(range(cities.shape[0]), 50)):
-    
     print("Computing travel times for chunk : ", i)
-    
+
     origins = cities.iloc[ids].copy()
     destinations = cities.copy()
-    
+
     travel_time_matrix_computer = TravelTimeMatrixComputer(
         transport_network,
         origins=origins,
         destinations=destinations,
-        departure=datetime.datetime(2023,4,25,8,0),
+        departure=datetime.datetime(2023, 4, 25, 8, 0),
         transport_modes=[TransportMode.CAR],
         max_time=datetime.timedelta(hours=10)
     )
-    
+
     tt = travel_time_matrix_computer.compute_travel_times()
-    
+
     travel_times.append(tt)
 
 travel_times = pd.concat(travel_times)
@@ -141,7 +145,7 @@ rm.plot_flow(flows, coordinates, n_flows=1000, n_locations=20)
 
 
 # Plot the distribution of travel times
-dist = pd.merge(flows, travel_times, left_on=["from" ,"to"], right_on=["from_id", "to_id"])
+dist = pd.merge(flows, travel_times, left_on=["from", "to"], right_on=["from_id", "to_id"])
 dist["travel_time"].sample(n=100000, weights=dist["flow_volume"], replace=True).hist()
 dist["travel_time"].sample(n=10000, weights=dist["flow_volume"], replace=True).describe()
 
@@ -159,7 +163,7 @@ flows = flows.reset_index()
 
 rm.plot_flow(flows, coordinates, n_flows=1000, n_locations=20)
 
-dist = pd.merge(flows, travel_times, left_on=["from" ,"to"], right_on=["from_id", "to_id"])
+dist = pd.merge(flows, travel_times, left_on=["from", "to"], right_on=["from_id", "to_id"])
 dist["travel_time"].sample(n=10000, weights=dist["flow_volume"], replace=True).describe()
 
 
@@ -173,5 +177,5 @@ flows = flows.reset_index()
 
 rm.plot_flow(flows, coordinates, n_flows=1000, n_locations=20)
 
-dist = pd.merge(flows, travel_times, left_on=["from" ,"to"], right_on=["from_id", "to_id"])
+dist = pd.merge(flows, travel_times, left_on=["from", "to"], right_on=["from_id", "to_id"])
 dist["travel_time"].sample(n=10000, weights=dist["flow_volume"], replace=True).describe()
