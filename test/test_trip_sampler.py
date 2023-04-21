@@ -1,8 +1,13 @@
 import mobility
+from mobility.carbon_computation import carbon_computation
+
+import pytest
 
 
 def test_trip_sampler():
+    # Create trip sampler
     ts = mobility.TripSampler()
+    # Get annual trips of an individual of csp=3, living in a city center with another person
     trips = ts.get_trips(
         csp="3",
         csp_household="3",
@@ -11,6 +16,11 @@ def test_trip_sampler():
         n_cars="0",
         n_years=1,
     )
+    # Compute carbon emissions for each trip
+    emissions = carbon_computation(trips, ademe_database="Base_Carbone_V22.0.csv")
+    assert emissions["carbon_emissions"].sum() < 50000
+    assert emissions["carbon_emissions"].sum() > 100
+
     ts2 = mobility.TripSampler()
     trips2 = ts2.get_trips(
         csp="1",

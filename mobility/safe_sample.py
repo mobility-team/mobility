@@ -30,9 +30,14 @@ def safe_sample(
         if sample_size < minimum_sample_size:
             # Sample size too small -> Relax the current criteria
             data_base.reset_index(level=key, inplace=True)
+            # print('The '+key+' criteria has been relaxed.')
+
         else:
-            # Sample size is sufficient
-            data_base = data_base.xs(kwargs[key])
+            if isinstance(data_base.index, pd.MultiIndex):
+                data_base = data_base.xs(kwargs[key], level = key)
+                
+            else:
+                data_base = data_base.xs(kwargs[key])
 
     if type(data_base) == pd.Series:
         # The database to sample from is just one row

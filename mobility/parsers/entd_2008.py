@@ -554,7 +554,7 @@ def prepare_entd_2008(proxies={}):
     )
 
     # Sum on all the indivuduals grouped by csp
-    indiv_mob = indiv_mob.groupby("csp").sum()
+    indiv_mob = indiv_mob.groupby("csp").sum(numeric_only=True)
     indiv_mob["immobility_weekday"] = (
         indiv_mob["immobility_weekday"] / indiv_mob["PONDKI"] / 5
     )

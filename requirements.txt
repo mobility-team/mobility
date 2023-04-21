@@ -4,9 +4,8 @@ openpyxl
 pandas
 pyarrow
 pyproj
+requests
 streamlit
 streamlit_lottie
 streamlit_option_menu
-requests
-pyarrow
-openpyxl
+throttler

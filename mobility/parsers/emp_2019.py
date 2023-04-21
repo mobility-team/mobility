@@ -191,6 +191,7 @@ def prepare_emp_2019(proxies={}):
     df = df[(df["MDISTTOT_fin"] > 0.0) | (~df["MDISTTOT_fin"].isnull())]
 
     # Convert the mode id from the EMP terminology to the ENTD one
+
     data = np.array(
         [
             ["1.1", "1.10"],
