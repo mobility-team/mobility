@@ -1,4 +1,5 @@
 # Configuration file for the Sphinx documentation builder.
+import myst_parser
 
 # -- Project information
 
