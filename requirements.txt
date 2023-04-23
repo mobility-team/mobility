@@ -1,4 +1,5 @@
 matplotlib
+myst_parser
 numpy
 pandas
 pyarrow
