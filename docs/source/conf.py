@@ -1,8 +1,8 @@
+# Configuration file for the Sphinx documentation builder.
+import pathlib
 import sys
 
-# Configuration file for the Sphinx documentation builder.
-
-sys.path.append('/mobility')
+sys.path.insert(0, pathlib.Path(__file__).parents[2].resolve().as_posix())
 
 # -- Project information
 
