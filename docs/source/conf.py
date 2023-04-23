@@ -12,10 +12,5 @@ version = '0.1'
 # -- General configuration
 
 extensions = [
-    'myst_parser',
-    'sphinx.ext.duration',
-    'sphinx.ext.doctest',
-    'sphinx.ext.autodoc',
-    'sphinx.ext.autosummary',
-    'sphinx.ext.intersphinx',
+    "myst_parser",
 ]
