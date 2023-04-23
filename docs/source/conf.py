@@ -3,12 +3,13 @@ import pathlib
 import sys
 
 sys.path.insert(0, pathlib.Path(__file__).parents[2].resolve().as_posix())
+sys.path.append('/mobility')
 
 # -- Project information
 
 project = 'Mobility'
 copyright = '2023, MIT Licence'
-author = 'Mutliple authors'
+author = 'Multiple authors'
 
 release = '0.1'
 version = '0.1'
