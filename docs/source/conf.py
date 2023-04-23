@@ -1,5 +1,4 @@
 # Configuration file for the Sphinx documentation builder.
-import myst_parser
 
 # -- Project information
 
@@ -14,4 +13,9 @@ version = '0.1'
 
 extensions = [
     "myst_parser",
+    'sphinx.ext.duration',
+    'sphinx.ext.doctest',
+    'sphinx.ext.autodoc',
+    'sphinx.ext.autosummary',
+    'sphinx.ext.intersphinx',
 ]
