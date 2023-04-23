@@ -19,12 +19,12 @@ However, it is possible to use it on any set of contiguous departments
 by changing the list of departments.
 
 Prerequisites :
-    * a CSV with all x,y coordinates of the communes
-      (COMMUNES_COORDINATES_CSV)
+    * a CSV with all x,y coordinates (the coordinates are in the Lambert-93 projection)
+      of the communes (COMMUNES_COORDINATES_CSV),
     * a XLSX with home-work flows between communes of the territory
       (work_home_fluxes_xlsx)
     * a CSV with all internal distances of the communes - based on superficies
-    (communes_surfaces_csv)
+      (communes_surfaces_csv)
 """
 
 COMMUNES_COORDINATES_CSV = "donneesCommunesFrance.csv"
@@ -40,9 +40,9 @@ def compare_thresholds(
     Shows the SSI for different thresholds.
     The SSI should be higher for high thresholds.
     INSEE says:
-    « Les effectifs inférieurs à 200 doivent être maniés avec précaution car,
-    en raison de l'imprécision liée au sondage,
-    ils peuvent ne pas être significatifs ».
+    « The sample sizes below 200 must be handled with caution because,
+    due to the imprecision associated with sampling,
+    they may not be significant ».
     https://www.insee.fr/fr/information/2383290
 
     Parameters
@@ -80,10 +80,10 @@ def compute_similarity_index(predicted_flux, empirical_flux, threshold=200):
     ----------
     predicted_flux : pd.DataFrame with a flow_volume column
                      and a MultiIndex with two INSEE codes
-        Contains all the fluxes computed by the model
+                     Contains all the fluxes computed by the model
     empirical_flux : pd.DataFrame with a flow_volume column
                      and a MultiIndex with two INSEE codes
-        Contains all the empirical fluxes.
+                     Contains all the empirical fluxes.
     threshold : int
         Under this threshold, the fluxes won't be considered for the index.
         This reflects that under 200, INSEE data is less precise.
@@ -134,7 +134,7 @@ def optimise_parameters(
     sources_territory,
     sinks_territory,
     costs_territory,
-    coordonnees,
+    coordinates,
     raw_flowDT,
     coef=1,
     threshold=20,
@@ -168,13 +168,13 @@ def optimise_parameters(
                 (
                     predicted_flux,
                     empirical_flux,
-                    coordonnees,
+                    coordinates,
                     plot_sources,
                 ) = run_model_for_territory(
                     sources_territory.copy(),
                     sinks_territory,
                     costs_territory,
-                    coordonnees,
+                    coordinates,
                     raw_flowDT,
                     alpha=alpha,
                     beta=beta,
@@ -190,7 +190,7 @@ def optimise_parameters(
     return best_pair
 
 
-def compare_insee_and_model(predicted_flux, empirical_flux, coordonnees, plot_sources):
+def compare_insee_and_model(predicted_flux, empirical_flux, coordinates, plot_sources):
     """
     Compares INSEE data and the model output, showing common share of the flow
 
@@ -204,7 +204,7 @@ def compare_insee_and_model(predicted_flux, empirical_flux, coordonnees, plot_so
     empirical_flux : pd.DataFrame with a flow_volume column
                      and a MultiIndex with two INSEE codes
         Contains all the empirical fluxes.
-    coordonnees : pd.DataFrame with x,y coordinates of each territory
+    coordinates : pd.DataFrame with x,y coordinates of each territory
     plot_sources : pd.DataFrame with the source volume of each territory
 
     Returns
@@ -269,7 +269,7 @@ def compare_insee_and_model(predicted_flux, empirical_flux, coordonnees, plot_so
 
     rm.plot_flow(
         plot_DT,
-        coordonnees,
+        coordinates,
         sources=plot_sources,
         n_flows=500,
         size=10,
@@ -278,7 +278,7 @@ def compare_insee_and_model(predicted_flux, empirical_flux, coordonnees, plot_so
     )
     rm.plot_flow(
         plot_RM,
-        coordonnees,
+        coordinates,
         sources=plot_sources,
         n_flows=500,
         size=10,
@@ -327,7 +327,7 @@ def get_data_for_model(
         The default is 1.
 
     Returns sources_territory, sinks_territory, costs_territory,
-            coordonnees, raw_flowDT
+            coordinates, raw_flowDT
             (all of them are pandas dataframes)
 
     """
@@ -386,6 +386,7 @@ def get_data_for_model(
     data_folder_path = Path(os.path.dirname(__file__))
 
     # Import the INSEE data on the work-home mobility on Millau
+    print("data folder path:", data_folder_path, "csv:", work_home_fluxes_csv)
     file_path = os.path.join(data_folder_path, work_home_fluxes_csv)
     raw_flowDT = pd.read_csv(
         file_path,
@@ -405,15 +406,16 @@ def get_data_for_model(
 
     # Import the geographic data on the work-home mobility on Millau
 
-    coordonnees = pd.read_csv(
+    coordinates = pd.read_csv(
         data_folder_path / communes_coordinates_csv,
         sep=",",
         usecols=["NOM_COM", "INSEE_COM", "x", "y"],
         dtype={"INSEE_COM": str},
     )
-    coordonnees.set_index("INSEE_COM", inplace=True)
-    coordonnees["x"] = coordonnees["x"] * 1000
-    coordonnees["y"] = coordonnees["y"] * 1000
+    coordinates.set_index("INSEE_COM", inplace=True)
+    # The multiplication by 1000 is only for visualization purposes
+    coordinates["x"] = coordinates["x"] * 1000
+    coordinates["y"] = coordinates["y"] * 1000
 
     surfaces = pd.read_csv(
         data_folder_path / communes_surfaces_csv,
@@ -433,11 +435,11 @@ def get_data_for_model(
         {"from": idx_from, "to": idx_to, "cost": np.zeros(idx_to.shape[0])}
     )
     costs_territory = pd.merge(
-        costs_territory, coordonnees, left_on="from", right_index=True
+        costs_territory, coordinates, left_on="from", right_index=True
     )
     costs_territory.rename(columns={"x": "from_x", "y": "from_y"}, inplace=True)
     costs_territory = pd.merge(
-        costs_territory, coordonnees, left_on="to", right_index=True
+        costs_territory, coordinates, left_on="to", right_index=True
     )
     costs_territory.rename(columns={"x": "to_x", "y": "to_y"}, inplace=True)
 
@@ -462,7 +464,7 @@ def get_data_for_model(
         sources_territory,
         sinks_territory,
         costs_territory,
-        coordonnees,
+        coordinates,
         raw_flowDT,
     )
 
@@ -471,7 +473,7 @@ def run_model_for_territory(
     sources_territory,
     sinks_territory,
     costs_territory,
-    coordonnees,
+    coordinates,
     raw_flowDT,
     alpha=0,
     beta=1,
@@ -489,7 +491,7 @@ def run_model_for_territory(
     Parameters
     ----------
     sources_territory, sinks_territory, costs_territory,
-        coordonnees, raw_flowDT
+        coordinates, raw_flowDT
         all of them are pandas dataframes defined in the get_data function
     alpha : float, optional
         The default is 0.
@@ -502,7 +504,7 @@ def run_model_for_territory(
         Flows between communes produced by the radiation model.
     flowDT : pandas dataframe
         Flows between communes estimated by INSEE.
-    coordonnees : pandas dataframe
+    coordinates : pandas dataframe
         Coordinates of the communes.
     plot_sources : pandas dataframe
         Modified version of the sources dataframe.
@@ -528,10 +530,10 @@ def run_model_for_territory(
     # PLOT THE SOURCES AND THE SINKS
 
     plot_sources = sources_territory.rename(columns={"source_volume": "volume"})
-    rm.plot_volume(plot_sources, coordonnees, n_locations=10, title="Volume d'actifs")
+    rm.plot_volume(plot_sources, coordinates, n_locations=10, title="Volume d'actifs")
 
     plot_sinks = sinks_territory.rename(columns={"sink_volume": "volume"})
-    rm.plot_volume(plot_sinks, coordonnees, n_locations=10, title="Volume d'emplois")
+    rm.plot_volume(plot_sinks, coordinates, n_locations=10, title="Volume d'emplois")
 
     # PLOT THE FLOWS COMPUTED BY THE MODEL
 
@@ -540,7 +542,7 @@ def run_model_for_territory(
 
     rm.plot_flow(
         plot_flows,
-        coordonnees,
+        coordinates,
         sources=None,
         n_flows=500,
         n_locations=20,
@@ -560,7 +562,7 @@ def run_model_for_territory(
 
     rm.plot_flow(
         plot_flowDT,
-        coordonnees,
+        coordinates,
         sources=plot_sources,
         n_flows=500,
         n_locations=20,
@@ -580,7 +582,7 @@ def run_model_for_territory(
 
     print("Model flow of {} and empirical flow of {}".format(len(flowsRM), len(flowDT)))
 
-    return flowsRM, flowDT, coordonnees, plot_sources
+    return flowsRM, flowDT, coordinates, plot_sources
 
 
 if __name__ == "__main__":
@@ -594,7 +596,7 @@ if __name__ == "__main__":
         sources_territory,
         sinks_territory,
         costs_territory,
-        coordonnees,
+        coordinates,
         raw_flowDT,
     ) = get_data_for_model(lst_departments)
 
@@ -602,20 +604,20 @@ if __name__ == "__main__":
     (
         predicted_flux,
         empirical_flux,
-        coordonnees,
+        coordinates,
         plot_sources,
     ) = run_model_for_territory(
         sources_territory.copy(),
         sinks_territory,
         costs_territory,
-        coordonnees,
+        coordinates,
         raw_flowDT,
         alpha=0,
         beta=1,
     )
 
     # COMPARE INSEE AND MODEL DATA
-    compare_insee_and_model(predicted_flux, empirical_flux, coordonnees, plot_sources)
+    compare_insee_and_model(predicted_flux, empirical_flux, coordinates, plot_sources)
     compare_thresholds(predicted_flux, empirical_flux)
     compute_similarity_index(predicted_flux, empirical_flux, threshold=20)
 
@@ -630,7 +632,7 @@ if __name__ == "__main__":
         print(f"c= {c:.1f}")
         predicted_flux_times = predicted_flux * c
         compare_insee_and_model(predicted_flux_times, empirical_flux,
-                                coordonnees, plot_sources)
+                                coordinates, plot_sources)
         compare_thresholds(predicted_flux_times, empirical_flux)"""
 
     # OPTIMISATION #2 : BEST α & β VALUES
@@ -643,7 +645,7 @@ if __name__ == "__main__":
     Best pair found is [0.2, 0.8] for La Rochelle (department 17 only)
 
     best_parameters=optimise_parameters(sources_territory, sinks_territory,
-                                        costs_territory, coordonnees,
+                                        costs_territory, coordinates,
                                         raw_flowDT, coef=1.3)"""
 
     # EXECUTION TIME
