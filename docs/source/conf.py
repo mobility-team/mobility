@@ -1,5 +1,7 @@
 # Configuration file for the Sphinx documentation builder.
 
+sys.path.append('/mobility')
+
 # -- Project information
 
 project = 'Mobility'
