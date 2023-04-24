@@ -6,14 +6,12 @@ name: Python package
 on:
   push:
     branches: [ "main" ]
-    path-ignore:
+    paths:
       - 'mobility/parsers/**'
-      - '**.md'
   pull_request:
     branches: [ "main" ]
-    path-ignore:
+    paths:
       - 'mobility/parsers/**'
-      - '**.md'
 
 jobs:
   build:
@@ -44,6 +42,6 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
-        pytest --cov  --ignore-glob='*test_parsers.py'
+        pytest --cov
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v3
