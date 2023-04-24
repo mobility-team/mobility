@@ -5,4 +5,5 @@ pandas
 pyarrow
 openpyxl
 requests
+sphinxcontrib-napoleon
 throttler
