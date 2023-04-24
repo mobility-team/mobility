@@ -9,5 +9,5 @@ you can reproduce spatially the mobility flows linked to a purpose
 
 You can find an example of this model in <https://github.com/mobility-team/mobility/tree/main/examples/Millau>.
 
- .. automodule:: radiation_model
+ .. automodule:: mobility.radiation_model
     :members:
