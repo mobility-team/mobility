@@ -8,9 +8,9 @@ import zipfile
 
 def prepare_entd_2008(proxies={}):
     """
-    This function downloads (if needed) the raw survey data from the survey EMP 2019,
-    then creates the dataframes needed for trip sampling,
-    and then writes these dataframes into parquet files
+    This function downloads (if needed) the raw survey data from the survey ENTD 2008,
+    then creates the dataframes needed for trip sampling,and then writes these dataframes
+    into parquet files.
 
     8 datasets are created and saved:
 
@@ -24,8 +24,8 @@ def prepare_entd_2008(proxies={}):
         * days_trips: first trips of each day, with the number of cars of the household, weekday (boolean), city category,
           day id and weigth coefficient (PONDKI).
         * immobility_probability: for each CSP, probabilities of being immobile during a week day and a week-end day
-        * df_long / long_dist_trips: list of long distance travels (from the dedicated file,
-          not including the trips >80 km in the file used in short trips).
+        * df_long / long_dist_trips: list of long distance travels (from the dedicated file, not including the trips >80 km 
+          in the file used in short trips).
           Contains id of the travel, city category, CSP and number of cars of the household, motive of the travel, distance,
           number of other passengers,  weigth coefficient (PONDKI) and NaN for previous motives.
           If the city category of the destination is not available, the home's city category is used (potential bias?),
@@ -44,14 +44,18 @@ def prepare_entd_2008(proxies={}):
 
     For that purpose, intermediate dataframes are used:
 
-        * indiv: Individuals, id of their household and socio-professional category (catégorie socio-professionelle/CSP)
-        * hh: Households (ménages), CSP of the reference person within the household, category of the city
+        * indiv: Individuals, id of their household and socio-professional category (CSP)
+        * hh: Households, CSP of the reference person within the household, category of the city
         * cars: id of the household, number of cars: 0, 1 or 2+
         * indiv_mob: manipulation of the weight coefficient, first to determine csp_pop_2008 and n_travel_by_csp,
           then to determine immobility_probability
         * csp_pop_2008: weight coefficient sum for each CSP
+        * dict_urban_category : Convert the urban category of the destination (in french) to the {C,B,I,R} terminology
+        
+    To understand the meaning of the variables used in this function, it is necessary 
+    to read the readme file located in Mobility/data/surveys directory.
     """
-
+    # The directory path where dataFrames/ Parquets are stored
     data_folder_path = (
         Path(os.path.dirname(__file__)).parents[0] / "data/surveys/entd-2008"
     )
@@ -168,7 +172,8 @@ def prepare_entd_2008(proxies={}):
     # Keep only the first trip of each day to have one row per day
     days_trip = days_trip.groupby("day_id").first()
     days_trip.reset_index(inplace=True)
-    days_trip.set_index(["csp", "n_cars", "weekday", "city_category"], inplace=True)
+    days_trip.set_index(["csp", "n_cars", "weekday",
+                        "city_category"], inplace=True)
 
     # Filter and format the columns
     df = df[
@@ -201,6 +206,7 @@ def prepare_entd_2008(proxies={}):
         "n_other_passengers",
         "pondki",
     ]
+    #setting the index to "day_id"
     df.set_index(["day_id"], inplace=True)
 
     # ------------------------------------------
@@ -232,6 +238,7 @@ def prepare_entd_2008(proxies={}):
         ],
     )
     df_long["poids_annuel"] = df_long["poids_annuel"].astype(float)
+    # df_long.rename(columns={"poids_annuel": "annual weight"}, inplace=True)  
     df_long["V2_DVO_ODV"] = df_long["V2_DVO_ODV"].astype(float)
     df_long["n_other_passengers"] = df_long[
         [
@@ -247,7 +254,8 @@ def prepare_entd_2008(proxies={}):
         ]
     ].count(axis=1)
     df_long["n_other_passengers"] += df_long["V2_OLDPAX"].astype(float)
-    df_long.loc[df_long["n_other_passengers"].isnull(), "n_other_passengers"] = 0.0
+    df_long.loc[df_long["n_other_passengers"].isnull(),
+                "n_other_passengers"] = 0.0
     df_long["n_other_passengers"] = df_long["n_other_passengers"].astype(int)
     df_long["V2_OLDVMH"] = df_long["V2_OLDVMH"].astype(float)
 
@@ -263,12 +271,16 @@ def prepare_entd_2008(proxies={}):
         columns=["labels", "UU_id"],
     )
     dict_urban_category.columns = ["V2_OLDARCOM_UUCat", "UU_id"]
+    
     df_long = pd.merge(df_long, dict_urban_category, on="V2_OLDARCOM_UUCat")
+    
+   
 
     # Merge with the data about individuals and household cars
     df_long = pd.merge(df_long, indiv, on="IDENT_IND")
     df_long = pd.merge(
-        df_long, hh[["city_category", "IDENT_MEN", "csp_household"]], on="IDENT_MEN"
+        df_long, hh[["city_category", "IDENT_MEN",
+                     "csp_household"]], on="IDENT_MEN"
     )
     df_long = pd.merge(df_long, cars, on="IDENT_MEN")
 
@@ -338,23 +350,15 @@ def prepare_entd_2008(proxies={}):
     travels["V2_OLDVMH"] = travels["V2_OLDVMH"].astype(float)
 
     # Convert the urban category of the destination to the {'C', 'B', 'I', 'R'} terminology
-    dict_urban_category = pd.DataFrame(
-        [
-            ["ville centre", "C"],
-            ["banlieue", "B"],
-            ["ville isolée", "I"],
-            ["commune rurale", "R"],
-            [np.nan, np.nan],
-        ],
-        columns=["labels", "UU_id"],
-    )
     dict_urban_category.columns = ["V2_OLDVCOM_UUCat", "UU_id"]
     travels = pd.merge(travels, dict_urban_category, on="V2_OLDVCOM_UUCat")
+    
 
     # Merge with the data about individuals and household cars
     travels = pd.merge(travels, indiv, on="IDENT_IND")
     travels = pd.merge(
-        travels, hh[["city_category", "IDENT_MEN", "csp_household"]], on="IDENT_MEN"
+        travels, hh[["city_category", "IDENT_MEN",
+                     "csp_household"]], on="IDENT_MEN"
     )
     travels = pd.merge(travels, cars, on="IDENT_MEN")
 
@@ -451,8 +455,10 @@ def prepare_entd_2008(proxies={}):
     # Determine the day of the week (from 0 to 6 corresponding to monday to sunday)
     # for each surveyed day : day A (one day before the visit), day B (2 days before the visit),
     # ... day G (7 days before the visit)
-    indiv_mob["MDATENQ2V"] = pd.to_datetime(indiv_mob["MDATENQ2V"], format="%d/%m/%Y")
-    indiv_mob["V2_weekday"] = indiv_mob["MDATENQ2V"].apply(lambda x: x.weekday())
+    indiv_mob["MDATENQ2V"] = pd.to_datetime(
+        indiv_mob["MDATENQ2V"], format="%d/%m/%Y")
+    indiv_mob["V2_weekday"] = indiv_mob["MDATENQ2V"].apply(
+        lambda x: x.weekday())
     indiv_mob["weekday_A"] = np.where(
         indiv_mob["V2_weekday"] == 0, 6, indiv_mob["V2_weekday"] - 1
     )
@@ -563,12 +569,14 @@ def prepare_entd_2008(proxies={}):
     # and the number of persons in the household
     p_car = pd.merge(hh, cars, on="IDENT_MEN")
 
-    p_car["n_pers"] = np.where(p_car["n_pers"] < 3, p_car["n_pers"].astype(str), "3+")
+    p_car["n_pers"] = np.where(
+        p_car["n_pers"] < 3, p_car["n_pers"].astype(str), "3+")
 
     p_car = p_car.groupby(["city_category", "csp_household", "n_cars", "n_pers"])[
         "n_cars"
     ].count()
-    p_car = p_car / p_car.groupby(["city_category", "csp_household", "n_pers"]).sum()
+    p_car = p_car / \
+        p_car.groupby(["city_category", "csp_household", "n_pers"]).sum()
 
     # ------------------------------------------
     # Probability of detailed public transport modes and two wheels vehicles (bikes, motorcycles)
@@ -617,8 +625,10 @@ def prepare_entd_2008(proxies={}):
     ] = "5"
 
     p_det_mode["dist_bin"] = pd.qcut(p_det_mode["distance"].values, 4)
-    p_det_mode["dist_bin_left"] = p_det_mode["dist_bin"].apply(lambda x: x.left)
-    p_det_mode["dist_bin_right"] = p_det_mode["dist_bin"].apply(lambda x: x.right)
+    p_det_mode["dist_bin_left"] = p_det_mode["dist_bin"].apply(
+        lambda x: x.left)
+    p_det_mode["dist_bin_right"] = p_det_mode["dist_bin"].apply(
+        lambda x: x.right)
 
     p_det_mode = p_det_mode.groupby(
         ["city_category", "dist_bin_left", "dist_bin_right", "mode_group", "mode_id"]
@@ -634,7 +644,8 @@ def prepare_entd_2008(proxies={}):
     # Write datasets to parquet files
     df.to_parquet(data_folder_path / "short_dist_trips.parquet")
     days_trip.to_parquet(data_folder_path / "days_trip.parquet")
-    p_immobility.to_parquet(data_folder_path / "immobility_probability.parquet")
+    p_immobility.to_parquet(
+        data_folder_path / "immobility_probability.parquet")
     df_long.to_parquet(data_folder_path / "long_dist_trips.parquet")
     travels.to_parquet(data_folder_path / "travels.parquet")
     n_travel_by_csp.to_frame().to_parquet(

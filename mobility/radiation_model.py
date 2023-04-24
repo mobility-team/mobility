@@ -60,51 +60,7 @@ def radiation_model(sources, sinks, costs, alpha=0, beta=1):
                 sink_volume (float): rest of the volume of oopportunities of the transport zone.
     """
 
-    # Pseudo code
-    # Calculer la probabilité des déplacements entre sources et puits,
-    # en fonction des coûts/bénéfices de transport entre sources et puits,
-    # d'après le modèle de radiation
-
-    # Fusionner costs et sources
-    # Fusionner le résultat avec sinks
-    # -> dataframe from, to, cost, source_volume, sink_volume
-
-    # Classer la dataframe selon l'origin et le cout par ordre croissant
-    # Calculer les opportunités cumulées (intervening_opportunities) pour chaque origine,
-    # en partant du cout le plus faible
-
-    # Calculer la probabilité de déplacement donnée par le modèle de radiation
-    # p_ij = source_volume*sink_volume/(source_volume + intervening_opportunities)/(source_volume + sink_volume + intervening_opportunities)
-
-    # Normaliser les probabilités pour que la somme par origine soit égale à 1.
-
-    # Calculer les flux résultants (flow_volume = source_volume*p_ij)
-
-    # Calculer la part des flux à "renvoyer" à la source parce que le puits est saturé
-    # pour chaque puits, overflow = sum(flow_volume) - sink_volume
-    # cet overflow est réparti par source en fonction de sa contribution aux flux global
-    # pour chaque source, backflow = overflow*flow_volume/sum(flow_volume)
-
-    # Corriger les flux avec le backflow
-    # flow_volume = flow_volume - backflow
-
-    # Calculer les sources et les puits non attribués
-    # pour chaque source, source_volume - sum(flow_volume)
-    # pour chaque puits, sink_volume - sum(flow_volume)
-
-    # Stocker la dataframe des flux dans une liste
-
-    # Itération de la procédure avec les sources et puits non attribués, jusqu'à convergence :
-    # les puits sont saturés (somme des volumes non attribués des puits < tolerance)
-    # ou les sources sont vides (somme des sources non attribuées < tolerance)
-
-    # Informer l'utilisateur sur l'équilibrage ou non du système :
-    # Résidu de volumes de puits non attribués
-    # Résidu de volumes de sources non attribués
-    # Exemple pour le motif domicile travail :
-    # Emplois non pourvus / Actifs sans emploi
-
-    # Concatener puis retourner la dataframe des flux.
+    # The pseudo-code is in the documentation. 
 
     # Epsilon value under which values are set to 0 in order to avoid numerical errors
     # during the successive iterations
@@ -170,8 +126,7 @@ def radiation_model(sources, sinks, costs, alpha=0, beta=1):
         matrix_origin_destinations["source_volume"] * matrix_origin_destinations["p_ij"]
     )
 
-    # Possibilité de jouer directement sur les p_ij pour ajuster les flux avec les puits plutôt
-    # que de faire un processus itératif par la suite ?
+    # Possibility to directly modifity the p_ij to adjust the flow according to the sinks rather than having an iterative process?
 
     # Set to 0 the small flow volume in order to avoid numerical errors
     # during the next iterations
@@ -371,7 +326,7 @@ def iter_radiation_model(
 
 def plot_volume(volume_location, coordinates, n_locations=10, title=""):
     """
-    Plot each location whose size is proportionnal to the volume at the location.
+    Plot each location whose size is proportional to the volume at the location.
     Display also the label of the location for the biggest n_locations.
 
     Args:
