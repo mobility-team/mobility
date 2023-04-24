@@ -1,4 +1,6 @@
-from mobility.radiation_departments import *
+from mobility.radiation_departments import (get_data_for_model, run_model_for_territory, compare_insee_and_model,
+                                            compare_thresholds, optimise_parameters)
+
 
 def test_radiation_model():
     lst_departments = ["90"]
@@ -10,7 +12,7 @@ def test_radiation_model():
         costs_territory,
         coordinates,
         raw_flowDT,
-    ) = get_data_for_model(lst_departments)
+    ) = get_data_for_model(lst_departments, test=True)
 
     # FIRST RUN
     (

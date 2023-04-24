@@ -21,6 +21,7 @@ def get_data_for_model(
     communes_surfaces_csv=COMMUNES_SURFACES_CSV,
     alpha=0,
     beta=1,
+    test=False,
 ):
     """
     Gets data for the given departments.
@@ -61,7 +62,7 @@ def get_data_for_model(
     # IMPORT AND PROCESS THE DATA
 
     # Import the data (active population and jobs)
-    insee_data = get_insee_data()
+    insee_data = get_insee_data(test=test)
     db_actifs = insee_data["active_population"]
     db_emplois = insee_data["jobs"]
 
