@@ -12,8 +12,9 @@ class TripSampler:
         Data for short trips, days trip, long trips, travels, number of travels.
 
         Args:
-            source (str) : The source of the travels and trips data.
-            "ENTD-2008" and "EMP-2019" are available, and "EMP-2019" is the default.
+            source (str) :
+                The source of the travels and trips data.
+                "ENTD-2008" and "EMP-2019" are available, and "EMP-2019" is the default.
 
         """
 
@@ -58,25 +59,38 @@ class TripSampler:
 
 
         Args:
-            csp (str): The socio-professional category of the person ("1" to "8", or "no_csp").
-            csp_household (str): The socio-professional category of the household ("1" to "8", or "no_csp").
-            n_pers (str) : The number of persons of the household ("1", "2" or "3+").
-            n_cars (str): The number of cars of the household ("0", "1", or "2+").
-            urban_unit_category (str): The urban unit category ("C", "B", "I", "R").
-            n_years (int): The number of years of trips to sample (1 to N, defaults to 1).
-            source (str) : The source of the travels and trips data ("ENTD-2008" or "EMP-2019", the default).
+            csp (str):
+                The socio-professional category of the person ("1" to "8", or "no_csp").
+            csp_household (str):
+                The socio-professional category of the household ("1" to "8", or "no_csp").
+            n_pers (str) :
+                The number of persons of the household ("1", "2" or "3+")
+            n_cars (str):
+                The number of cars of the household ("0", "1", or "2+").
+            urban_unit_category (str):
+                The urban unit category ("C", "B", "I", "R").
+            n_years (int):
+                The number of years of trips to sample (1 to N, defaults to 1).
+            source (str) :
+                The source of the travels and trips data ("ENTD-2008" or "EMP-2019", the default).
 
         Returns:
             pd.DataFrame: a dataframe with one row per sampled trip.
             Contains long trips (from travels), short trips made during the travels, and short trips.
 
                 Columns:
-                    id (int): The unique id of the trip.
-                    mode (str): The mode used for the trip.
-                    previous_motive (str): the motive of the previous trip.
-                    motive (str): the motive for the trip.
-                    distance (float): the distance travelled, in km.
-                    n_other_passengers (int): the number of passengers accompanying the person.
+                    id (int):
+                        The unique id of the trip.
+                    mode (str):
+                        The mode used for the trip.
+                    previous_motive (str):
+                        the motive of the previous trip.
+                    motive (str):
+                        the motive for the trip.
+                    distance (float):
+                        the distance travelled, in km.
+                    n_other_passengers (int):
+                        the number of passengers accompanying the person.
         """
 
         # ---------------------------------------

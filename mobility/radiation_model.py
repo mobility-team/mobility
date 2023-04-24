@@ -197,7 +197,8 @@ def iter_radiation_model(
     sources, sinks, costs, alpha=0, beta=1, max_iter=20, plot=False
 ):
     """
-    This function iterates the radiation model between source and sink nodes.
+    Iterates the radiation model between source and sink nodes.
+
     At each iteration, the flows between the sources and the sinks are computed
     as well as the rest of the volume of demand and opportunities,
     according to the radiation model. The next iteration, the rest of the volume
@@ -239,6 +240,7 @@ def iter_radiation_model(
         plot (boolean):
             Indicates whether the evolution of the demand volume and opportunities volume
             should be plotted.
+
     Returns:
         total_flows (pd.Series):
             Index:
@@ -376,10 +378,12 @@ def plot_flow(
     flows, coordinates, sources=None, n_flows=100, n_locations=5, size=1, title=""
 ):
     """
-    Plot the flows between the locations. The bigger the flow is, the bigger the plot line
-    will be. The points are the locations. If sources=None, then the size of each location
-    is proportional to the internal flow within the location. Otherwise, the size of the
-    location is proportional to the source volume from sources.
+    Plots the flows between the locations.
+
+    The bigger the flow is, the bigger the plot line
+    will be. THe points are the locations. If sources=None, then the size of each location
+    is proportionnal to the internal flow within the location. Otherwise, the size of the
+    location is proportionnal to the source volume from sources.
 
     Args:
         flows (pd.DataFrame): a dataframe with one row per couple origin/destination

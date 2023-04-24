@@ -7,17 +7,23 @@ def safe_sample(
     data_base, n_sample, weights="pondki", minimum_sample_size=10, **kwargs
 ):
     """
-    Samples the data base filtered by kwargs
+    Samples the data base filtered by kwargs.
+
     Handles the case where the sample size is lesser than minimum_sample_size by withdrawing the filters
 
     Args:
-        data_base (pd.DataFrame): The database to sample from. Must be indexed (or muli-indexed) by the keys of kwargs.
-        n_sample (int): The number of samples to draw.
-        weights (str) : The name of columns of data_base containing the weights for the sampling.
-        minimum_sample_size (int) : The minimum size of the database to draw from.
-                                    If the kwargs make the database too small,
-                                    relax the criteria from last to first.
-        kwargs : the criteria to filter the database
+        data_base (pd.DataFrame):
+            The database to sample from. Must be indexed (or muli-indexed) by the keys of kwargs.
+        n_sample (int):
+            The number of samples to draw.
+        weights (str) :
+            The name of columns of data_base containing the weights for the sampling.
+        minimum_sample_size (int) :
+            The minimum size of the database to draw from.
+            If the kwargs make the database to small, relax the criteria from last to first.
+        kwargs :
+            the criteria to filter the database
+
     Returns:
         pd.DataFrame: a dataframe with n_sample rows.
 
@@ -34,8 +40,8 @@ def safe_sample(
 
         else:
             if isinstance(data_base.index, pd.MultiIndex):
-                data_base = data_base.xs(kwargs[key], level = key)
-                
+                data_base = data_base.xs(kwargs[key], level=key)
+
             else:
                 data_base = data_base.xs(kwargs[key])
 
