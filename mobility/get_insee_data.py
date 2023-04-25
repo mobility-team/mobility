@@ -7,7 +7,7 @@ from mobility.parsers.job_active_population import prepare_job_active_population
 from mobility.parsers.permanent_db_facilities import prepare_facilities
 
 
-def get_insee_data():
+def get_insee_data(test=False):
     """
     Loads the parquet files corresponding to the INSEE data
     (downloads and writes them first if needed).
@@ -77,7 +77,7 @@ def get_insee_data():
 
     if not (check_files):  # ie all the files are not here
         print("Writing the INSEE parquet files.")
-        prepare_job_active_population()
+        prepare_job_active_population(test=test)
         prepare_facilities()
 
     # Load the dataframes into a dict

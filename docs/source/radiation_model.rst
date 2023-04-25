@@ -7,7 +7,11 @@ With the implementation of the radiation model developed in
 you can reproduce spatially the mobility flows linked to a purpose
 (such as home-work trips).
 
+ .. automodule:: mobility.radiation_model
+    :members:
+
+This radiation model can be used for any contiguous subset of French departments.
 You can find an example of this model in <https://github.com/mobility-team/mobility/tree/main/examples/Millau>.
 
- .. automodule:: mobility.radiation_model
+ .. automodule:: mobility.radiation_departments
     :members:
