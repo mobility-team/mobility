@@ -1,4 +1,7 @@
 [![codecov](https://codecov.io/github/mobility-team/mobility/branch/main/graph/badge.svg?token=D31X32AZ43)](https://codecov.io/github/mobility-team/mobility)
+[![Python package](https://github.com/mobility-team/mobility/actions/workflows/python-package.yml/badge.svg?branch=main)](https://github.com/mobility-team/mobility/actions/workflows/python-package.yml)
+[![Code style: black][black-badge]][black-link]
+[![Documentation Status][rtd-badge]][rtd-link]
 
 # Mobility, an open-source library for mobility modelisation
 Mobility is an open-source solution to compute the carbon emissions due to the mobility of a local population.
@@ -38,3 +41,8 @@ _En cours de rédaction_
 * Tester l'outil et nous indiquer là où la documentation peut être améliorée est très utile ! Que ce soit pour une suggestion ou une issue, n'hésitez pas à [ouvrir une issue](https://github.com/mobility-team/mobility/issues/new).
 * Nous espérons que vous pourrez utiliser Mobility pour vos travaux de recherche et de conseil ! Nous comptons sur vous pour partager le code que vous avez utilisé.
 * Nous suivons PEP8 pour notre code Python. Pour d'autres bonnes pratiques, [suivez le guide](https://github.com/mobility-team/mobility/tree/main/mobility) !
+
+[rtd-badge]: https://readthedocs.org/projects/mobility/badge/?version=latest
+[rtd-link]: https://mobility.readthedocs.io/en/latest/?badge=latest
+[black-badge]: https://img.shields.io/badge/code%20style-black-000000.svg
+[black-link]: https://github.com/ambv/black
