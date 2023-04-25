@@ -11,3 +11,5 @@ For now, it is mainly focused on French territories.
    radiation_model
    carbon
    data
+   presentation
+   quickstart/quickstart
