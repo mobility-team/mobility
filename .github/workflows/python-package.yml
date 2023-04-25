@@ -1,18 +1,16 @@
 # This workflow will install Python dependencies, run tests and lint with a variety of Python versions
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
 
-name: Python package
+name: Python package (without parsers)
 
 on:
   push:
     branches: [ "main" ]
     path-ignore:
-      - 'mobility/parsers/**'
       - '**.md'
   pull_request:
     branches: [ "main" ]
     path-ignore:
-      - 'mobility/parsers/**'
       - '**.md'
 
 jobs:
@@ -44,6 +42,6 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
-        pytest --cov  --ignore-glob='*test_parsers.py'
+        pytest --cov
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v3
