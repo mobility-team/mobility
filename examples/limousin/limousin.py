@@ -3,10 +3,13 @@ import geopandas as gpd
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 from mobility.get_insee_data import get_insee_data
 import mobility.radiation_model as rm
 from r5py import TravelTimeMatrixComputer, TransportMode
 from r5py import TransportNetwork
+
+# sns.set_theme(style="whitegrid")
 
 # Load Limousin cities from IGN admin express data
 # available at https://data.cquest.org/ign/adminexpress/
@@ -150,8 +153,8 @@ dist["travel_time"].sample(n=100000, weights=dist["flow_volume"], replace=True).
 dist["travel_time"].sample(n=10000, weights=dist["flow_volume"], replace=True).describe()
 
 
-# Make Limoges so attractive that people are willing to take 30 more min to get there
-# (with time cost of 10 €/h, equivalent to removing 5 € to the total cost)
+# Make Tulle so attractive that people are willing to take 30 more min to get there
+# (with a time cost of 10 €/h, equivalent to removing 5 € to the total cost)
 # and create 5000 jobs in the city
 mod_costs = costs.copy()
 mod_costs.loc[costs["to"] == "19272", "cost"] = mod_costs.loc[costs["to"] == "19272", "cost"] - 5
@@ -179,3 +182,14 @@ rm.plot_flow(flows, coordinates, n_flows=1000, n_locations=20)
 
 dist = pd.merge(flows, travel_times, left_on=["from", "to"], right_on=["from_id", "to_id"])
 dist["travel_time"].sample(n=10000, weights=dist["flow_volume"], replace=True).describe()
+
+dist["travel_time"].sample(n=10000, weights=dist["flow_volume"], replace=True).sort_values()
+
+dist_sample = dist.sample(n=1000, weights=dist["flow_volume"], replace=True)
+dist_sample = dist_sample.sort_values("travel_time")
+dist_sample["rank"] = np.arange(0, dist_sample.shape[0])
+
+
+f, ax = plt.subplots(figsize=(8, 6))
+
+sns.lineplot(x="rank", y="travel_time", data=dist_sample)
