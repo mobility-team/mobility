@@ -52,15 +52,17 @@ _En cours de rédaction_
 [black-link]: https://github.com/ambv/black
 
 ## Setting up a development environment with Docker
-* Make sure you have Docker installed on your machine.
+* Make sure you have [Docker installed](https://docs.docker.com/get-docker/) on your machine.
 * Clone the repository to your local machine using Git. For example, you can run the following command in your terminal: 
 `git clone https://github.com/mobility-team/mobility.git`
 * Navigate to the project directory:
 `cd mobility`
 * Create a Docker container:
-`docker run -t -i --name mobility-dev -v /opt/mobility -v /C:/Users/YourUserName/mobility:/opt python:3.9 bash`
-* Navigate to the project directory in the Docker contianer:
-`cd opt`
+* For Windows:
+`CMD: docker run -it --name mobility-dev -w /opt -v %cd%:/opt python:3.9 bash`
+`PoweShell: docker run -it --name mobility-dev -w /opt -v ${PWD}:/opt python:3.9 bash`
+* For Linux:
+`docker run -it --name mobility-dev -w /opt -v $(PWD):/opt python:3.9 bash`
 * Install the required dependencies:
 `pip install -r requirements.txt && pip install -e .`
 * Install the pytest package:
