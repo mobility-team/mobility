@@ -1,6 +1,6 @@
 from mobility.radiation_departments import (get_data_for_model, run_model_for_territory, compare_insee_and_model,
                                             compare_thresholds, optimise_parameters)
-from mobility.radiation_FR-CH import get_franco_swiss_data_for_model
+from mobility.radiation_FR_CH import get_franco_swiss_data_for_model
 
 
 def test_radiation_model():
