@@ -285,9 +285,9 @@ def run_model_for_territory(
     )
 
     # PLOT SUBSET FLOWS
-    
-    if subset != None:
-        print("Visualisation for the chosen subset of {} communes".format(len(subset))
+
+    if subset is not None:
+        print("Visualisation for the chosen subset of {} communes".format(len(subset)))
         mask = plot_flows["from"].apply(lambda x: x in subset)
         plot_subset_flows = plot_flows.loc[mask]
         rm.plot_flow(
@@ -301,7 +301,7 @@ def run_model_for_territory(
                 "(1) Flux domicile-travail générés par le modèle dans l'échantillon"
                 " - alpha = {} - beta = {}"
             ).format(alpha, beta),
-        )        
+        )
 
     # PLOT THE FLOWS FROM THE INSEE DATA
 
