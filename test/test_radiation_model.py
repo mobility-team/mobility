@@ -42,14 +42,14 @@ def test_radiation_model():
     optimise_parameters(sources_territory, sinks_territory, costs_territory, coordinates, raw_flowDT, test=True)
 
 def test_FR_CH_model():
-    terr  =["25","NE"]
+    terr  =["90","NE"]
     (
         sources_territory,
         sinks_territory,
         costs_territory,
         coordinates,
         raw_flowDT,
-    ) = get_franco_swiss_data_for_model(terr)
+    ) = get_franco_swiss_data_for_model(terr, test=True)
 
 
 
