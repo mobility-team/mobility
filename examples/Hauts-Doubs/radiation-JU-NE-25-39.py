@@ -1,5 +1,5 @@
 from mobility.radiation_departments import run_model_for_territory
-from mobility.radiation_FR-CH import get_franco_swiss_data_for_model
+from mobility.radiation_FR_CH import get_franco_swiss_data_for_model
 
 terr = ["25", "39", "NE", "VD"]
 # terr  =["25","39"]
