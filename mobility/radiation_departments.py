@@ -287,7 +287,7 @@ def run_model_for_territory(
     # PLOT SUBSET FLOWS
 
     if subset is not None:
-        print("Visualisation for the chosen subset of {} communes".format(len(subset)))
+        print("Visualisation for the chosen subset")
         mask = plot_flows["from"].apply(lambda x: x in subset)
         plot_subset_flows = plot_flows.loc[mask]
         rm.plot_flow(
