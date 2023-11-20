@@ -8,11 +8,7 @@ import zipfile
 def prepare_job_active_population(proxies={}, test=False):
     """
     Downloads (if needed) the raw INSEE census data
-    (hosted on data.gouv.fr by the mobility project at
-    https://www.data.gouv.fr/fr/datasets/emploi-population-active-en-2019/),
-    then creates one dataframe for the number of job per city
-    and one for the active population per city
-    and writes these into parquet files
+    and writes it into parquet files
     """
 
     data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/work"
