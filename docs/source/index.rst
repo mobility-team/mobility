@@ -12,3 +12,4 @@ For now, it is mainly focused on French territories.
    carbon
    data
    presentation
+   quickstart/quickstart
