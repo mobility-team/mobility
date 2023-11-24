@@ -7,9 +7,10 @@ import numpy as np
 
 from mobility.parsers.ign import prepare_ign
 from mobility.parsers.urban_units import prepare_urban_units
+from mobility.parsers.get_osm import get_osm
 
     
-def get_transport_zones(insee_city_id, method="epci_rings", radius=None):
+def get_transport_zones(insee_city_id, method="epci_rings", radius=40):
     """
     Returns a geodataframe of transport zones around a city of interest.
 
@@ -18,10 +19,12 @@ def get_transport_zones(insee_city_id, method="epci_rings", radius=None):
         method (str): method used to select cities around the city of interest.
             Can be one of the two methods :
             - epci_rings : all cities of the EPCIs that  are adjacent to the EPCI
-            of the city (first hop) or adjacent to the neighbor EPCIs (second hop)).
+            of the city (first hop) or adjacent to the neighbor EPCIs (second hop).
             - radius (all cities within a X km 
             radius around the centroid of the city)
-        radius (float): radius in km around the city to use for the "radius" selection method.
+        n_hops (int): number 
+        radius (float): radius in km around the city to select cities, for the 
+            "radius" selection method.
         
     Returns:
         geopandas.geodataframe: a geopandas geodataframe containing the following columns :
@@ -142,3 +145,8 @@ def __rgb_set_fixed__(self, instance, value):
             __old_rgb_set__(self, instance, WHITE)
 RGB.__set__ = __rgb_set_fixed__
 
+
+# Small test
+z = get_transport_zones("75056", method="radius", radius=40)
+transport_zones_boundary = z.to_crs(4326).unary_union
+osm_file_path = get_osm(transport_zones_boundary, verify="C:/Users/pouchaif/Documents/dev/forcepoint.pem")
