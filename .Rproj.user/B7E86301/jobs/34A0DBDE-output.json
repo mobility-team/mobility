@@ -1,0 +1,8 @@
+[1,"** Installing R Packages: 'dodgr', 'log4r', 'osmdata'\r\n"]
+[1,"\r\n"]
+[1,"\r\n"]
+[1,"\r\n"]
+[1,"[1/10] Installing curl...\r\n"]
+[1,"\r\n"]
+[2,"Installation du package dans 'C:/Users/pouchaif/AppData/Local/R/win-library/4.3'\r\n(car 'lib' n'est pas spécifié)\r\n"]
+[2,"Avis : impossible d'accéder à l'index de l'entrepôt http://cran.rstudio.com/src/contrib:\r\n  le téléchargement de 'http://cran.rstudio.com/src/contrib/PACKAGES' a échoué\r\n"]
