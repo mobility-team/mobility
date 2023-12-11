@@ -13,7 +13,7 @@ Mobility permet de générer des échantillons de déplacements en fonction de p
 - Taille du ménage.
 - Nombre de voitures du ménage.
 
-Pour générer un an de déplacements d'un usager, il est nécessaire auparavant de créer un `TripSampler`, puis d'utiliser sa méthode `get_trips`, pour récuperer une dataframe pandas contenant les déplacements échantillonés. Par exemple pour un retraité vivant seul, dans une ville centre, sans voiture :
+Pour générer un an de déplacements d'un usager, il est nécessaire auparavant de créer un `TripSampler`, puis d'utiliser sa méthode `get_trips`, pour récuperer une dataframe pandas contenant les déplacements échantillonnés. Par exemple pour un retraité vivant seul, dans une ville centre, sans voiture :
 
 ```python
 import mobility
@@ -30,7 +30,7 @@ retiree_trips = trip_sampler.get_trips(
 )
 ```
 
-Pour un ouvrier vivant avec une employée an banlieue, avec deux voitures :
+Pour un ouvrier vivant avec une employée en banlieue, avec deux voitures :
 
 ```python
 worker_trips = trip_sampler.get_trips(
@@ -44,7 +44,7 @@ worker_trips = trip_sampler.get_trips(
 ```
 
 ## Générer un échantillon de déplacements pour un groupe d'usagers
-Etant donné que Mobility procède par échantillonnage, les déplacements de chaque profil vont varier à chaque exécution du code. Il convient donc de générer un nombre suffisant de profils avant de pour comparer deux profils ou deux populations, en vérifiant la convergence des indicateurs étudiés : nombre total de déplacements, distance totale parcourue, détail par mode, par motif...
+Étant donné que Mobility procède par échantillonnage, les déplacements de chaque profil vont varier à chaque exécution du code. Il convient donc de générer un nombre suffisant de profils avant de pour comparer deux profils ou deux populations, en vérifiant la convergence des indicateurs étudiés : nombre total de déplacements, distance totale parcourue, détail par mode, par motif...
 
 Reprenons nos deux profils précédents, en échantillonnant cette fois (de manière arbitraire) 100 personnes de chaque profil :
 
