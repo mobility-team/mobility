@@ -1,5 +1,6 @@
 from mobility.radiation_departments import (get_data_for_model, run_model_for_territory, compare_insee_and_model,
                                             compare_thresholds, optimise_parameters)
+from mobility.radiation_FR_CH import get_franco_swiss_data_for_model
 
 
 def test_radiation_model():
@@ -28,6 +29,7 @@ def test_radiation_model():
         raw_flowDT,
         alpha=0,
         beta=1,
+        subset=["90001"]
     )
 
     # COMPARE INSEE AND MODEL DATA
@@ -38,3 +40,16 @@ def test_radiation_model():
     assert ct[20] == 0.60780983183857
 
     optimise_parameters(sources_territory, sinks_territory, costs_territory, coordinates, raw_flowDT, test=True)
+
+def test_FR_CH_model():
+    terr  =["90","NE"]
+    (
+        sources_territory,
+        sinks_territory,
+        costs_territory,
+        coordinates,
+        raw_flowDT,
+    ) = get_franco_swiss_data_for_model(terr, test=True)
+
+
+
