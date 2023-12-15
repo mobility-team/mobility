@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 
+
 COMMUNES_COORDINATES_CSV = "donneesCommunesFrance.csv"
 COMMUNES_SURFACES_CSV = "donneesCommunesFrance.csv"
 WORK_HOME_FLUXES_CSV = download_work_home_flows()
@@ -260,7 +261,6 @@ def run_model_for_territory(
 
     # PLOT THE SOURCES AND THE SINKS
     plot_sources = sources_territory.rename(columns={"source_volume": "volume"})
-    print(plot_sources)
     rm.plot_volume(plot_sources, coordinates, n_locations=10, title="Volume d'actifs")
 
     plot_sinks = sinks_territory.rename(columns={"sink_volume": "volume"})
