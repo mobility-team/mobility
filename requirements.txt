@@ -1,11 +1,13 @@
+numpy
+pandas
+py7zr
+rich
+geojson
 matplotlib
 myst_parser
-numpy
 openpyxl
-pandas
 pyarrow
 pyproj
-requests
 sphinxcontrib-napoleon
 sphinx_rtd_theme
 streamlit
