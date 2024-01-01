@@ -1,4 +1,5 @@
 import os
+import sys
 import pathlib
 import logging
 
@@ -13,6 +14,12 @@ def setup_mobility(
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
+    
+    # Set up the mobility environment path variable, which will be used by R 
+    # to install packages in the right location
+    os.environ["MOBILITY_ENV_PATH"] = str(pathlib.Path(sys.executable).parent)
+        
+    
     if package_data_folder_path is not None:
         
         os.environ["MOBILITY_PACKAGE_DATA_FOLDER"] = package_data_folder_path
@@ -24,8 +31,8 @@ def setup_mobility(
         
         if default_path.exists() is False:
             
-            print("Mobility needs a folder to store common datasets, that will be used for every project.")
-            print("You did not provide the package_data_folder_path argument, so we'll use a default folder : " + str(default_path))
+            logging.log("Mobility needs a folder to store common datasets, that will be used for every project.")
+            logging.log("You did not provide the package_data_folder_path argument, so we'll use a default folder : " + str(default_path))
             
             inp = input("Is this location OK for you ? Yes / No\n")
             inp = inp.lower()
@@ -46,8 +53,8 @@ def setup_mobility(
         
         if default_path.exists() is False:
             
-            print("Mobility needs a folder to cache datasets that are specific to projects.")
-            print("You did not provide the project_data_folder_path argument, so we'll use a default folder : " + str(default_path))
+            logging.log("Mobility needs a folder to cache datasets that are specific to projects.")
+            logging.log("You did not provide the project_data_folder_path argument, so we'll use a default folder : " + str(default_path))
             
             inp = input("Is this location OK for you ? Yes / No\n")
             inp = inp.lower()
