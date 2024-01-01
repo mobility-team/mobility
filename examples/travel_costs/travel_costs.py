@@ -3,7 +3,7 @@ import dotenv
 
 from mobility.setup_mobility import setup_mobility
 from mobility.transport_zones import get_transport_zones
-from mobility.dodgr import prepare_dodgr_graph
+from mobility.dodgr import compute_travel_costs
 
 dotenv.load_dotenv()
 
@@ -15,5 +15,6 @@ setup_mobility(
     https_proxy_url=os.environ["HTTPS_PROXY"]
 )
 
-transport_zones = get_transport_zones("77468", method="radius", radius=10)
-graph = prepare_dodgr_graph(transport_zones, mode="car", force=True)
+transport_zones = get_transport_zones("42139", method="radius", radius=20)
+travel_costs = compute_travel_costs(transport_zones, "car")
+
