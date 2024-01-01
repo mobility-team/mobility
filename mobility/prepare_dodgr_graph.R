@@ -1,10 +1,8 @@
-library(dodgr)
-library(osmdata)
-library(sf)
-library(log4r)
-library(optparse)
+source("mobility/load_packages.R")
+packages <- c("dodgr", "osmdata", "log4r", "optparse", "sf", "geodist", "dplyr")
+load_packages(packages)
 
-logger <- logger()
+logger <- logger(appenders = console_appender())
 
 option_list = list(
   make_option(c("-t", "--tz-file-path"), type = "character"),
