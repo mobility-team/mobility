@@ -1,25 +1,25 @@
-source("mobility/load_packages.R")
-packages <- c("dodgr", "log4r", "optparse", "sf", "sfheaders", "nngeo", "data.table", "reshape2", "arrow")
-load_packages(packages)
+library(dodgr)
+library(log4r)
+library(sfheaders)
+library(nngeo)
+library(data.table)
+library(reshape2)
+library(arrow)
+
+args <- commandArgs(trailingOnly = TRUE)
+
+tz_file_path <- args[1]
+graph_file_path <- args[2]
+output_file_path <- args[3]
 
 logger <- logger(appenders = console_appender())
 
-option_list = list(
-  make_option(c("-t", "--tz-file-path"), type = "character"),
-  make_option(c("-g", "--dodgr-graph-file-path"), type = "character"),
-  make_option(c("-o", "--output-file-path"), type = "character")
-)
-
-opt_parser = OptionParser(option_list = option_list)
-opt = parse_args(opt_parser)
-
-
-transport_zones <- st_read(opt[["tz-file-path"]])
+transport_zones <- st_read(tz_file_path)
 
 transport_zones_boundary <- st_union(st_geometry(transport_zones))
 transport_zones_boundary <- nngeo::st_remove_holes(transport_zones_boundary)
 
-graph <- readRDS(opt[["dodgr-graph-file-path"]])
+graph <- readRDS(graph_file_path)
   
 graph$d_weighted <- graph$time_weighted
 vertices <- dodgr_vertices(graph)
@@ -179,4 +179,4 @@ travel_costs <- travel_costs[,
 
 setnames(travel_costs, c("from", "to", "distance", "time"))
 
-write_parquet(travel_costs, opt[["output-file-path"]])
+write_parquet(travel_costs, output_file_path)
