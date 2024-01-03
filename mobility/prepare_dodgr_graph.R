@@ -1,32 +1,30 @@
-source("mobility/load_packages.R")
-packages <- c("dodgr", "osmdata", "log4r", "optparse", "sf", "geodist", "dplyr")
-load_packages(packages)
+library(dodgr)
+library(osmdata)
+library(log4r)
+library(sf)
+
+args <- commandArgs(trailingOnly = TRUE)
+
+tz_file_path <- args[1]
+osm_file_path <- args[2]
+mode <- args[3]
+output_file_path <- args[4]
 
 logger <- logger(appenders = console_appender())
 
-option_list = list(
-  make_option(c("-t", "--tz-file-path"), type = "character"),
-  make_option(c("-n", "--osm-file-path"), type = "character"),
-  make_option(c("-m", "--mode"), type = "character"),
-  make_option(c("-o", "--output-file-path"), type = "character")
-)
-
-opt_parser = OptionParser(option_list = option_list)
-opt = parse_args(opt_parser)
-
-transport_zones <- st_read(opt[["tz-file-path"]], quiet = TRUE)
+transport_zones <- st_read(tz_file_path, quiet = TRUE)
 transport_zones <- st_transform(transport_zones, 4326)
 bbox <- st_bbox(transport_zones)
 
 info(logger, "Parsing OSM data...")
 
-osm_data <- osmdata_sc(q = opq(bbox), doc = opt[["osm-file-path"]])
+osm_data <- osmdata_sc(q = opq(bbox), doc = osm_file_path)
 
 info(logger, "Building dodgr graph...")
 
 graph <- weight_streetnet(
   osm_data,
-  wt_profile = opt[["mode"]],
+  wt_profile = mode,
   turn_penalty = FALSE
 )
 
@@ -37,5 +35,5 @@ graph <- graph[graph$component == 1, ]
 
 info(logger, "Saving dodgr graph...")
 
-saveRDS(graph, opt[["output-file-path"]])
+saveRDS(graph, output_file_path)
 
