@@ -1,9 +1,13 @@
 # Premiers pas
 ## Installer Mobility
-Utilisez pypi pour installer le package dans votre environnement de travail :
-```shell
-pip install mobility-tools
-```
+Mobility nécessite d'utiliser un gestionnaire d'environnements et de packages, pour deux raisons :
+- Pas de risque de conflit : le gestionnaire créera un environnement complètement indépendent des versions de Python et de R que vous pourriez déjà avoir installées.
+- Pas d'installation manuelle de packages : le gestionnaire s'occupera d'installer automatiquement les packages Python et R externes utilisés par Mobility.
+
+La procédure d'installation recommandée est la suivante :
+- Installer [mamba](https://github.com/conda-forge/miniforge).
+- Ouvrir la console "Miniforge Prompt" (sur Windows, tapez "Miniforge Prompt" dans la barre de recherche de la barre des tâches).
+- Tapez `mamba create -n mobility -f environment.yml` pour créer l'environnement et installer mobility.
 
 ## Générer un échantillon de déplacements pour un usager
 Mobility permet de générer des échantillons de déplacements en fonction de plusieurs informations sur les usagers :
