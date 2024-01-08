@@ -7,7 +7,7 @@ Mobility nécessite d'utiliser un gestionnaire d'environnements et de packages, 
 La procédure d'installation recommandée est la suivante :
 - Installer [mamba](https://github.com/conda-forge/miniforge).
 - Ouvrir la console "Miniforge Prompt" (sur Windows, tapez "Miniforge Prompt" dans la barre de recherche de la barre des tâches).
-- Tapez `mamba create -n mobility -f environment.yml` pour créer l'environnement et installer mobility.
+- Tapez `mamba env create -n mobility -f environment.yml` pour créer l'environnement et installer mobility.
 
 ## Générer un échantillon de déplacements pour un usager
 Mobility permet de générer des échantillons de déplacements en fonction de plusieurs informations sur les usagers :
@@ -121,7 +121,7 @@ total_distance_by_motive = trips.groupby(["group", "motive_group", "individual_i
 sns.catplot(data=total_distance_by_motive, x="motive_group", y="distance", hue="group", kind="box")
 ```
 
-Dans notre premier profil de retraité, la plupart des personnes parcourraient environ 6000 km/an, contre 17 000 km/an pour notre second profil de 17 000 km/an. Certains retraités se déplaceraient cependant plus de 20 000 km/an, plus que la plupart des ouvriers !
+Dans notre premier profil de retraité, la plupart des personnes parcourraient environ 6000 km/an, contre 17 000 km/an pour notre second profil d'ouvrier. Certains retraités se déplaceraient cependant plus de 20 000 km/an, plus que la plupart des ouvriers !
 
 La plus grosse différence vient de l'utilisation de la voiture (mode 3) : 2000 km/an pour le premier profil, 13 000 km/an pour le second. Et sans surprise ce sont les déplacements liés au travail (motif 9 "professionnels") qui font la différence : 8 000 km/an pour les ouvriers.
 
