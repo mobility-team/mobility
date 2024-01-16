@@ -15,6 +15,8 @@ version = '0.1'
 
 # -- General configuration
 
+html_theme = "sphinx_rtd_theme"
+
 extensions = [
     'myst_parser',
     'sphinx.ext.duration',
@@ -23,4 +25,5 @@ extensions = [
     'sphinx.ext.autosummary',
     'sphinx.ext.intersphinx',
     'sphinxcontrib.napoleon',
+    'sphinx_rtd_theme',
 ]
