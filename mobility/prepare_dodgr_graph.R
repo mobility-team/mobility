@@ -16,7 +16,7 @@ transport_zones <- st_read(tz_file_path, quiet = TRUE)
 transport_zones <- st_transform(transport_zones, 4326)
 bbox <- st_bbox(transport_zones)
 
-info(logger, "Parsing OSM data...")
+info(logger, "Parsing OSM data, this might also take a while...")
 
 osm_data <- osmdata_sc(q = opq(bbox), doc = osm_file_path)
 
