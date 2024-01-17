@@ -1,4 +1,4 @@
-from mobility.get_survey_data import get_survey_data
+from mobility-tools.get_survey_data import get_survey_data
 
 
 def test_parser_emp_2019():
