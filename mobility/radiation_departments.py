@@ -204,6 +204,7 @@ def run_model_for_territory(
     raw_flowDT,
     alpha=0,
     beta=1,
+    subset=None,
 ):
     """
     Runs the model and visualises output
@@ -224,6 +225,10 @@ def run_model_for_territory(
         The default is 0.
     beta : float, optional
         The default is 1.
+    subset:
+        List of communal codes.
+        Flows originating from these communes will be plotted in a separate figure
+        Default is None
 
     Returns
     -------
@@ -255,7 +260,6 @@ def run_model_for_territory(
     )
 
     # PLOT THE SOURCES AND THE SINKS
-
     plot_sources = sources_territory.rename(columns={"source_volume": "volume"})
     rm.plot_volume(plot_sources, coordinates, n_locations=10, title="Volume d'actifs")
 
@@ -279,6 +283,25 @@ def run_model_for_territory(
             " - alpha = {} - beta = {}"
         ).format(alpha, beta),
     )
+
+    # PLOT SUBSET FLOWS
+
+    if subset is not None:
+        print("Visualisation for the chosen subset")
+        mask = plot_flows["from"].apply(lambda x: x in subset)
+        plot_subset_flows = plot_flows.loc[mask]
+        rm.plot_flow(
+            plot_subset_flows,
+            coordinates,
+            sources=None,
+            n_flows=500,
+            n_locations=len(subset)//5,
+            size=10,
+            title=(
+                "(1) Flux domicile-travail générés par le modèle dans l'échantillon"
+                " - alpha = {} - beta = {}"
+            ).format(alpha, beta),
+        )
 
     # PLOT THE FLOWS FROM THE INSEE DATA
 

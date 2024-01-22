@@ -10,6 +10,7 @@ from mobility.parsers.osm import OSMData
 from mobility.asset import Asset
 from mobility.r_script import RScript
 
+
 class TravelCosts(Asset):
     """
     A class for managing travel cost calculations using OpenStreetMap (OSM) data, inheriting from the Asset class.
@@ -29,7 +30,7 @@ class TravelCosts(Asset):
         run_r_script: Run an R script with specified arguments.
         print_output: Print the output of a subprocess.
     """
-    
+
     def __init__(self, transport_zones: gpd.GeoDataFrame, mode: str):
         """
         Initializes a TravelCosts object with the given transport zones and travel mode.
@@ -38,27 +39,18 @@ class TravelCosts(Asset):
             transport_zones (gpd.GeoDataFrame): GeoDataFrame defining the transport zones.
             mode (str): Mode of transportation for calculating travel costs.
         """
-        
-        self.dodgr_modes = {
-            "car": "motorcar",
-            "bicycle": "bicycle",
-            "walk": "foot"
-        }
-        
+
+        self.dodgr_modes = {"car": "motorcar", "bicycle": "bicycle", "walk": "foot"}
+
         osm = OSMData(transport_zones, list(self.dodgr_modes.values()))
-        
-        inputs = {
-            "transport_zones": transport_zones,
-            "osm": osm,
-            "mode": mode
-        }
-        
+
+        inputs = {"transport_zones": transport_zones, "osm": osm, "mode": mode}
+
         file_name = "dodgr_travel_costs_" + mode + ".parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
-        
+
         super().__init__(inputs, cache_path)
-    
-    
+
     def get_cached_asset(self) -> pd.DataFrame:
         """
         Retrieves the travel costs DataFrame from the cache.
@@ -66,12 +58,12 @@ class TravelCosts(Asset):
         Returns:
             pd.DataFrame: The cached DataFrame of travel costs.
         """
-        
+
         logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
         costs = pd.read_parquet(self.cache_path)
-        
+
         return costs
-    
+
     def create_and_get_asset(self) -> pd.DataFrame:
         """
         Creates and retrieves travel costs based on the current inputs.
@@ -82,13 +74,12 @@ class TravelCosts(Asset):
         transport_zones = self.inputs["transport_zones"]
         osm = self.inputs["osm"]
         mode = self.inputs["mode"]
-        
+
         graph = self.dodgr_graph(transport_zones, osm, mode)
         costs = self.dodgr_costs(transport_zones, mode, graph)
-        
+
         return costs
-    
-    
+
     def dodgr_graph(self, transport_zones: gpd.GeoDataFrame, osm: str, mode: str) -> str:
         """
         Creates a routable graph for the specified mode of transportation using dodgr.
@@ -101,28 +92,20 @@ class TravelCosts(Asset):
         Returns:
             str: The file path to the saved routable graph.
         """
-        
+
         dodgr_mode = self.dodgr_modes[mode]
-        
+
         output_file_name = "dodgr_graph_" + dodgr_mode + ".rds"
         output_file_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / output_file_name
-        
+
         logging.info("Creating a routable graph with dodgr, this might take a while...")
-        
+
         script = RScript(pathlib.Path(__file__).parent / "prepare_dodgr_graph.R")
-        
-        script.run(
-            args=[
-                str(transport_zones.cache_path),
-                str(osm.cache_path),
-                dodgr_mode,
-                output_file_path
-            ]
-        )
-        
+
+        script.run(args=[str(transport_zones.cache_path), str(osm.cache_path), dodgr_mode, output_file_path])
+
         return output_file_path
-                            
-    
+
     def dodgr_costs(self, transport_zones: gpd.GeoDataFrame, mode: str, graph: str) -> str:
         """
         Calculates travel costs for the specified mode of transportation using the created graph.
@@ -135,20 +118,13 @@ class TravelCosts(Asset):
         Returns:
             pd.DataFrame: A DataFrame containing calculated travel costs.
         """
-        
+
         logging.info("Computing travel costs...")
-        
+
         script = RScript(pathlib.Path(__file__).parent / "prepare_travel_costs.R")
-        
-        script.run(
-            args=[
-                str(transport_zones.cache_path),
-                graph,
-                str(self.cache_path)
-            ]
-        )
-    
+
+        script.run(args=[str(transport_zones.cache_path), graph, str(self.cache_path)])
+
         costs = pd.read_parquet(self.cache_path)
-    
+
         return costs
-    
