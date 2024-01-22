@@ -20,6 +20,7 @@ class RScript:
     def print_output(self, stream):
         for line in iter(stream.readline, b""):
             msg = line.decode()
+            print(msg)
             if "INFO" in msg:
                 msg = msg.split("]")[1]
                 msg = msg.strip()
