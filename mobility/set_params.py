@@ -148,7 +148,10 @@ def install_r_packages():
             "arrow",
             "stringr",
             "pbapply",
-            "hms"
+            "hms",
+            "lubridate",
+            "readxl",
+            "pbapply"
         ]
     )
 
