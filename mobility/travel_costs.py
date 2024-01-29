@@ -7,7 +7,6 @@ import geopandas as gpd
 from mobility.parsers.osm import OSMData
 from mobility.asset import Asset
 from mobility.r_script import RScript
-from mobility.gtfs import GTFS
 
 class TravelCosts(Asset):
     """
@@ -28,7 +27,7 @@ class TravelCosts(Asset):
         dodgr_costs: Calculate travel costs using the generated graph.
     """
 
-    def __init__(self, transport_zones: gpd.GeoDataFrame, mode: str, gtfs: GTFS = None):
+    def __init__(self, transport_zones: gpd.GeoDataFrame, mode: str):
         """
         Initializes a TravelCosts object with the given transport zones and travel mode.
 
@@ -37,7 +36,7 @@ class TravelCosts(Asset):
             mode (str): Mode of transportation for calculating travel costs.
         """
 
-        self.dodgr_modes = {"car": "motorcar", "bicycle": "bicycle", "walk": "foot", "public_transport": "public_transport"}
+        self.dodgr_modes = {"car": "motorcar", "bicycle": "bicycle", "walk": "foot"}
         
         available_modes = list(self.dodgr_modes.keys())
         if mode not in available_modes:
@@ -46,11 +45,8 @@ class TravelCosts(Asset):
                 + ", ".join(available_modes) + "."
             )
 
-        if mode in ["car", "walk", "bicycle"]:
-            osm = OSMData(transport_zones, list(self.dodgr_modes.values()))
-            inputs = {"transport_zones": transport_zones, "osm": osm, "mode": mode}
-        else:
-            inputs = {"transport_zones": transport_zones, "mode": mode, "gtfs": str(gtfs.files[0].resolve())}
+        osm = OSMData(transport_zones, list(self.dodgr_modes.values()))
+        inputs = {"transport_zones": transport_zones, "osm": osm, "mode": mode}
 
         file_name = "dodgr_travel_costs_" + mode + ".parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
@@ -80,13 +76,9 @@ class TravelCosts(Asset):
         transport_zones = self.inputs["transport_zones"]
         mode = self.inputs["mode"]
         
-        if mode in ["car", "walk", "bicycle"]:
-            osm = self.inputs["osm"]
-            graph = self.dodgr_graph(transport_zones, osm, mode)
-            costs = self.dodgr_costs(transport_zones, graph)
-        else:
-            gtfs = self.inputs["gtfs"]
-            costs = self.gtfs_router_costs(transport_zones, gtfs)
+        osm = self.inputs["osm"]
+        graph = self.dodgr_graph(transport_zones, osm, mode)
+        costs = self.dodgr_costs(transport_zones, graph)
 
         return costs
 
@@ -133,28 +125,6 @@ class TravelCosts(Asset):
         script = RScript(pathlib.Path(__file__).parent / "prepare_dodgr_costs.R")
 
         script.run(args=[str(transport_zones.cache_path), graph, str(self.cache_path)])
-
-        costs = pd.read_parquet(self.cache_path)
-
-        return costs
-    
-    def gtfs_router_costs(self, transport_zones: gpd.GeoDataFrame, gtfs: GTFS) -> pd.DataFrame:
-        """
-        Calculates travel costs for public transport between transport zones.
-
-        Args:
-            transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
-            gtfs (GTFS): GTFS object containing data about public transport routes and schedules.
-
-        Returns:
-            pd.DataFrame: A DataFrame containing calculated public transport travel costs.
-        """
-
-        logging.info("Computing travel costs...")
-
-        script = RScript(pathlib.Path(__file__).parent / "prepare_public_transport_costs.R")
-
-        script.run(args=[str(transport_zones.cache_path), gtfs, str(self.cache_path)])
 
         costs = pd.read_parquet(self.cache_path)
 
