@@ -1,6 +1,6 @@
 import sys
 
-sys.path.insert(0, '../..')
+sys.path.insert(0, '..')
 
 from mobility.get_survey_data import get_survey_data
 
