@@ -80,10 +80,16 @@ class OSMData(Asset):
         logging.info("Downloading and pre-processing OSM data.")
         
         transport_zones = self.inputs["transport_zones"].get()
+        
+        osm_tags = [
+            "primary", "secondary", "tertiary", "unclassified", "residential",
+            "service", "track", "cycleway", "path", "steps", "ferry",
+            "living_street", "bridleway", "footway", "pedestrian",
+            "primary_link", "secondary_link", "tertiary_link"
+        ]
     
         tz_boundary, tz_boundary_path = self.create_transport_zones_boundary(transport_zones)
         regions_paths = self.get_osm_regions(tz_boundary)
-        osm_tags = self.get_dodgr_modes_osm_tags(self.inputs["dodgr_modes"])
         
         filtered_regions_paths = []
         
@@ -219,46 +225,3 @@ class OSMData(Asset):
         command = f"osmium merge {filtered_regions_paths} --overwrite -o {self.cache_path}"
         subprocess.run(command, shell=True)
     
-    
-    def get_dodgr_modes_osm_tags(self, dodgr_modes: list) -> list:
-        """
-        Retrieves the OSM tags relevant to the specified dodgr modes for routing.
-
-        Args:
-            dodgr_modes (list): A list of modes used for routing in the dodgr package.
-
-        Returns:
-            list: A list of OSM tags related to the specified dodgr modes.
-        """
-        
-        osm_tags = []
-        for dodgr_mode in dodgr_modes:
-            tags = self.get_dodgr_mode_osm_tags(dodgr_mode)
-            tags = tags.split(",")
-            osm_tags.extend(tags)
-        osm_tags = list(set(osm_tags))
-        
-        return osm_tags
-
-
-    def get_dodgr_mode_osm_tags(self, dodgr_mode: str) -> list:
-        """
-        Retrieves OSM tags relevant to a specific dodgr mode.
-
-        Args:
-            dodgr_mode (str): A mode used for routing in the dodgr package.
-
-        Returns:
-            list: A list of OSM tags associated with the specified dodgr mode.
-        """
-        
-        # Get OSM highway tags that are valid for the given mode
-        # (= tags of ways that dodgr uses for routing for this mode)
-        path_to_r_script = pathlib.Path(__file__).parents[1] / "get_dodgr_osm_tags.R"
-        cmd = ["Rscript", path_to_r_script, pathlib.Path(__file__).parents[1], dodgr_mode]
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output, error = process.communicate()
-        
-        osm_tags = output.decode().strip()
-        
-        return osm_tags
