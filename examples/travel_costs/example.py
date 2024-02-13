@@ -9,10 +9,10 @@ mobility.set_params(
     project_data_folder_path=os.environ["MOBILITY_PROJECT_DATA_FOLDER"]
 )
 
-transport_zones = mobility.TransportZones("87085", method="radius", radius=40)
+transport_zones = mobility.TransportZones("69123", method="radius", radius=30.0)
 
-# car_travel_costs = mobility.TravelCosts(transport_zones, "car")
-# walk_travel_costs = mobility.TravelCosts(transport_zones, "walk")
-# bicycle_travel_costs = mobility.TravelCosts(transport_zones, "bicycle")
+car_travel_costs = mobility.TravelCosts(transport_zones, "car")
+walk_travel_costs = mobility.TravelCosts(transport_zones, "walk")
+bicycle_travel_costs = mobility.TravelCosts(transport_zones, "bicycle")
 
 pub_trans_travel_costs = mobility.PublicTransportTravelCosts(transport_zones)
