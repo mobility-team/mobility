@@ -222,5 +222,8 @@ travel_costs <- gtfs_travel_costs(
   route_modes = route_modes
 )
 
+travel_costs[, distance := distance/1000]
+travel_costs[,  time := time/3600]
+
 write_parquet(travel_costs, output_file_path)
 
