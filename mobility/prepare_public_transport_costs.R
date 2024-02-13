@@ -5,6 +5,8 @@ library(data.table)
 library(arrow)
 library(lubridate)
 library(readxl)
+library(parallel)
+library(pbapply)
 
 args <- commandArgs(trailingOnly = TRUE)
 
@@ -27,12 +29,6 @@ transport_zones <- st_transform(transport_zones, 4326)
 
 gtfs <- readRDS(gtfs_file_path)
 
-info(logger, "Preparing the timetable for one day (tuesday)...")
-
-gtfs_tt <- gtfs_timetable(gtfs, day = "tuesday")
-gtfs_tt$timetable <- gtfs_tt$timetable[order(departure_time)]
-
-
 # Cluster stops in each transport zone to limit the number of origin - destinations
 info(logger, "Clustering stops...")
 
@@ -49,7 +45,7 @@ stops <- stops[!duplicated(stops[, list(X, Y)])]
 stops[,
       cluster := kmeans(
         cbind(X, Y),
-        centers = ifelse(.N == 1, 1, min(.N-1, ceiling(.N*0.1)))
+        centers = ifelse(.N == 1, 1, min(.N-1, ceiling(.N*0.05)))
       )$cluster,
       by = transport_zone_id
 ]
@@ -64,32 +60,6 @@ stops_cluster <- stops[cluster_center == TRUE]
 stops_cluster <- stops_cluster[!duplicated(stops_cluster[, list(X_mean, Y_mean)])]
 
 
-info(logger, "Finding fastest routes between accessible stop clusters at 8 AM (this can take a while)...")
-
-travel_times <- stops_cluster[,
-    gtfs_traveltimes(
-      gtfs_tt,
-      from = stop_id,
-      from_is_id = TRUE,
-      start_time_limits = c(7.5, 8.5)*3600,
-      max_traveltime = 1*3600,
-      minimise_transfers = FALSE,
-      day = "tuesday"
-    ),
-    by = list(transport_zone_id, cluster, stop_id)
-]
-
-travel_times <- travel_times[, c(1, 2, 3, 4, 5, 6, 7)]
-setnames(travel_times, c("transport_zone_id", "cluster", "from_stop_id", "start_time", "duration", "ntransfers", "to_stop_id"))
-
-# Remove all stops which are not cluster centers
-# travel_times <- travel_times[to_stop_id %in% stops_cluster$stop_id]
-
-info(logger, "Identifying public transport modes used for each route...")
-
-# Remove loops
-travel_times <- travel_times[from_stop_id != to_stop_id]
-
 # Add the mode
 route_types <- as.data.table(read_excel(gtfs_route_types_path))
 route_types <- route_types[, list(route_type, route_type_label)]
@@ -101,42 +71,156 @@ route_modes <- merge(route_modes, gtfs$routes[, list(route_id, route_type)], by 
 route_modes <- merge(route_modes, route_types, by = "route_type", all.x = TRUE)
 route_modes <- route_modes[, list(route_type_label = route_type_label[1]), by = list(stop_id)]
 
-travel_times <- merge(travel_times, route_modes, by.x = "from_stop_id", by.y = "stop_id", all.x = TRUE)
-travel_times <- merge(travel_times, route_modes, by.x = "to_stop_id", by.y = "stop_id", all.x = TRUE, suffixes = c("_from", "_to"))
 
-travel_times[, route_type := paste0(route_type_label_from, "+", route_type_label_to)]
+info(logger, "Finding fastest routes between accessible stop clusters at 8 AM (this can take a while)...")
 
 
-# Compute the median time of travel between transport zones
-info(logger, "Computing median travel times and distances between accessible stop clusters...")
+gtfs_travel_costs_parallel <- function(gtfs, transport_zone_ids, stop_ids, stops, route_modes, n_parallel, ...) {
+  
+  env <- new.env()
+  env$gtfs <- gtfs
+  env$route_modes <- route_modes
+  env$stops <- stops
+  env$transport_zone_ids <- transport_zone_ids
+  
+  cl <- makeCluster(n_parallel)
+  
+  clusterExport(cl, varlist = c("gtfs", "route_modes", "stops", "stop_ids", "transport_zone_ids"), envir = env)
+  clusterEvalQ(cl, library(data.table))
+  clusterEvalQ(cl, library(gtfsrouter))
+  
+  travel_costs <- pblapply(seq(length(stop_ids)), function(i) {
+    tt <- gtfs_traveltimes(
+      gtfs = gtfs,
+      from = stop_ids[i],
+      ...
+    )
+    
+    tt <- as.data.table(tt)
+    
+    tt[, from_transport_zone_id := transport_zone_ids[i]]
+    tt[, from_stop_id := stop_ids[i]]
+    
+    tt[, start_time := as.numeric(start_time)]
+    tt[, duration := as.numeric(duration)]
+    setnames(tt, "stop_id", "to_stop_id")
+    tt <- tt[, list(from_transport_zone_id, from_stop_id, to_stop_id, duration)]
+    
+    tt <- merge(tt, stops[, list(stop_id, X, Y)], by.x = "from_stop_id", by.y = "stop_id")
+    tt <- merge(tt, stops[, list(stop_id, to_transport_zone_id = transport_zone_id, cluster, X, Y)], by.x = "to_stop_id", by.y = "stop_id")
+    
+    tt[, distance := sqrt((X.x - X.y)^2 + (Y.x - Y.y)^2)]
+    tt[, distance := distance*(1.1+0.3*exp(-distance/20))]
+    
+    tt <- merge(tt, route_modes, by.x = "from_stop_id", by.y = "stop_id", all.x = TRUE)
+    tt <- merge(tt, route_modes, by.x = "to_stop_id", by.y = "stop_id", all.x = TRUE, suffixes = c("_from", "_to"))
+    tt[, route_type := paste0(route_type_label_from, "+", route_type_label_to)]
+    
+    tt <- tt[,
+       list(
+         distance = distance[which.min(abs(median(duration) - duration))][1],
+         time = median(duration),
+         mode = route_type[which.min(abs(median(duration) - duration))][1]
+       ),
+       by = list(from = from_transport_zone_id, to = to_transport_zone_id)
+    ]
+    
+    
+    return(tt)
+  }, cl = cl)
+  
+  stopCluster(cl)
+  
+  travel_costs <- rbindlist(travel_costs)
+  
+  return(travel_costs)
+  
+}
 
 
-travel_times <- merge(travel_times, stops[, list(stop_id, X, Y)], by.x = "from_stop_id", by.y = "stop_id")
-travel_times <- merge(travel_times, stops[, list(stop_id, transport_zone_id, cluster, X, Y)], by.x = "to_stop_id", by.y = "stop_id")
+gtfs_travel_costs <- function(gtfs, transport_zone_ids, stop_ids, stops, route_modes, ...) {
+  
+  travel_costs <- lapply(seq(length(stop_ids)), function(i) {
+    
+    tt <- gtfs_traveltimes(
+      gtfs = gtfs,
+      from = stop_ids[i],
+      ...
+    )
+    
+    tt <- gtfs_traveltimes(
+      gtfs = gtfs,
+      from = stop_ids[i],
+      from_is_id = TRUE,
+      start_time_limits = c(7.5, 8.5)*3600,
+      max_traveltime = 1*3600,
+      minimise_transfers = FALSE,
+    )
+    
+    tt <- as.data.table(tt)
+    
+    tt[, from_transport_zone_id := transport_zone_ids[i]]
+    tt[, from_stop_id := stop_ids[i]]
+    
+    tt[, start_time := as.numeric(start_time)]
+    tt[, duration := as.numeric(duration)]
+    setnames(tt, "stop_id", "to_stop_id")
+    tt <- tt[, list(from_transport_zone_id, from_stop_id, to_stop_id, duration)]
+    
+    tt <- merge(tt, stops[, list(stop_id, X, Y)], by.x = "from_stop_id", by.y = "stop_id")
+    tt <- merge(tt, stops[, list(stop_id, to_transport_zone_id = transport_zone_id, cluster, X, Y)], by.x = "to_stop_id", by.y = "stop_id")
+    
+    tt[, distance := sqrt((X.x - X.y)^2 + (Y.x - Y.y)^2)]
+    tt[, distance := distance*(1.1+0.3*exp(-distance/20))]
+    
+    tt <- merge(tt, route_modes, by.x = "from_stop_id", by.y = "stop_id", all.x = TRUE)
+    tt <- merge(tt, route_modes, by.x = "to_stop_id", by.y = "stop_id", all.x = TRUE, suffixes = c("_from", "_to"))
+    tt[, route_type := paste0(route_type_label_from, "+", route_type_label_to)]
+    
+    tt <- tt[,
+             list(
+               distance = distance[which.min(abs(median(duration) - duration))][1],
+               time = median(duration),
+               mode = route_type[which.min(abs(median(duration) - duration))][1]
+             ),
+             by = list(from = from_transport_zone_id, to = to_transport_zone_id)
+    ]
+    
+    
+    return(tt)
+  })
+  
+  travel_costs <- rbindlist(travel_costs)
+  
+  return(travel_costs)
+  
+}
 
-travel_times[, duration := as.numeric(duration)]
-travel_times[, distance := sqrt((X.x - X.y)^2 + (Y.x - Y.y)^2)]
-travel_times[, distance := distance*(1.1+0.3*exp(-distance/20))]
+# travel_costs <- gtfs_travel_costs_parallel(
+#   gtfs = gtfs,
+#   transport_zone_ids = stops_cluster$transport_zone_id[1:10],
+#   stop_ids = stops_cluster$stop_id[1:10],
+#   from_is_id = TRUE,
+#   start_time_limits = c(7.5, 8.5)*3600,
+#   max_traveltime = 1*3600,
+#   minimise_transfers = FALSE,
+#   day = "tuesday",
+#   stops = stops,
+#   route_modes = route_modes,
+#   n_parallel = 4
+# )
 
-
-setnames(travel_times, c("transport_zone_id.x", "transport_zone_id.y"), c("from", "to"))
-travel_times <- travel_times[!is.na(to)]
-
-travel_times[, duration := duration/3600]
-travel_times[, distance := distance/1000]
-
-
-# For each transport zone to transport zone link, take the trip with the median time of travel
-travel_costs <- travel_times[,
-   list(
-     distance = distance[which.min(abs(median(duration) - duration))][1],
-     time = median(duration),
-     mode = route_type[which.min(abs(median(duration) - duration))][1]
-   ),
-   by = list(from, to)
-]
-
-
+travel_costs <- gtfs_travel_costs(
+  gtfs = gtfs,
+  transport_zone_ids = stops_cluster$transport_zone_id,
+  stop_ids = stops_cluster$stop_id,
+  from_is_id = TRUE,
+  start_time_limits = c(7.5, 8.5)*3600,
+  max_traveltime = 1*3600,
+  minimise_transfers = FALSE,
+  stops = stops,
+  route_modes = route_modes
+)
 
 write_parquet(travel_costs, output_file_path)
 
