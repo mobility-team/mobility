@@ -119,7 +119,7 @@ class TripSampler:
         # associated to the city category, the CSP of the reference person and the number of persons in the household.
         if n_cars is None:
             # normalisation, see https://stackoverflow.com/questions/46539431/np-random-choice-probabilities-do-not-sum-to-1
-            filtered_p_car_normalised = filtered_p_car /= filtered_p_car.sum()
+            filtered_p_car_normalised = filtered_p_car / filtered_p_car.sum()
             n_cars = np.random.choice(
                 filtered_p_car.index.to_numpy(), 1, p=filtered_p_car_normalised
             )[0]
