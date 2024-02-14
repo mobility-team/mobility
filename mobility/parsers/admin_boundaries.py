@@ -86,8 +86,12 @@ def prepare_french_admin_boundaries():
     arrond = gpd.read_parquet(pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express" / "ARRONDISSEMENT_MUNICIPAL.parquet")
     cities = gpd.read_parquet(pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express" / "COMMUNE.parquet")
     
-    cities = cities[["INSEE_COM", "NOM", "SIREN_EPCI", "geometry"]]
-    arrond = arrond[["INSEE_COM", "INSEE_ARM", "NOM", "geometry"]]
+    cities.loc[cities["INSEE_CAN"] == "NR", "INSEE_CAN"] = "ZZ"
+    cities["INSEE_CAN"] = cities["INSEE_DEP"] + cities["INSEE_CAN"]
+    arrond["INSEE_CAN"] = arrond["INSEE_ARM"].str[0:2] + "ZZ"
+    
+    cities = cities[["INSEE_COM", "INSEE_CAN", "NOM", "SIREN_EPCI", "geometry"]]
+    arrond = arrond[["INSEE_COM", "INSEE_CAN", "INSEE_ARM", "NOM", "geometry"]]
     
     arrond = pd.merge(
         arrond,
@@ -101,7 +105,7 @@ def prepare_french_admin_boundaries():
     
     cities = pd.concat([
         cities,
-        arrond[["INSEE_COM", "NOM", "SIREN_EPCI", "geometry"]]
+        arrond[["INSEE_COM", "INSEE_CAN", "NOM", "SIREN_EPCI", "geometry"]]
     ])
     
     cities.to_parquet(pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express" / "COMMUNE_mod.parquet")
@@ -115,7 +119,7 @@ def get_french_cities_boundaries():
     if path.exists() is False:
         prepare_french_admin_boundaries()
     
-    cities = gpd.read_parquet(path, columns=["INSEE_COM", "SIREN_EPCI", "NOM", "geometry"])
+    cities = gpd.read_parquet(path, columns=["INSEE_COM", "INSEE_CAN", "SIREN_EPCI", "NOM", "geometry"])
     
     # Fix the Grand Paris EPCI ids
     cities.loc[cities["SIREN_EPCI"].str[0:9] == "200054781", "SIREN_EPCI"] = "200054781"
@@ -133,3 +137,19 @@ def get_french_epci_boundaries():
     epci = gpd.read_parquet(path)
     
     return epci
+
+
+def get_french_regions_boundaries():
+    
+    path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express/REGION.parquet"
+    
+    if path.exists() is False:
+        prepare_french_admin_boundaries()
+    
+    regions = gpd.read_parquet(path)
+    
+    return regions
+
+
+
+    
