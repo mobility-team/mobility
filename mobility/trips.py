@@ -2,6 +2,7 @@ import os
 import pathlib
 import logging
 import pandas as pd
+import geopandas as gpd
 import numpy as np
 
 from rich.progress import Progress
@@ -9,6 +10,8 @@ from mobility.asset import Asset
 
 from mobility.get_survey_data import get_survey_data
 from mobility.safe_sample import safe_sample
+from mobility.travel_costs import TravelCosts
+from mobility.public_transport_travel_costs import PublicTransportTravelCosts
 
 class Trips(Asset):
     
@@ -38,40 +41,13 @@ class Trips(Asset):
         source = self.inputs["source"]
         localize = self.inputs["localize"]
         
-        population = pd.merge(
-            population,
-            transport_zones[["transport_zone_id", "urban_unit_category"]],
-            on="transport_zone_id",
-            how="left"
-        )
-        
         self.prepare_survey_data(source)
         
-        individuals = population.to_dict(orient="records")
-        all_trips = []
+        trips = self.get_population_trips(population, transport_zones)
         
-        with Progress() as progress:
-            
-            task = progress.add_task("[green]Generating trips...", total=len(individuals))
-        
-            for individual in individuals:
-                
-                trips = self.get_trips(
-                    csp=individual["socio_pro_category"],
-                    csp_household=individual["ref_pers_socio_pro_category"],
-                    urban_unit_category=individual["urban_unit_category"],
-                    n_pers=individual["n_pers_household"],
-                    n_cars=individual["n_cars"]
-                )
-                
-                trips["individual_id"] = individual["individual_id"]
-                
-                all_trips.append(trips)
-                
-                progress.update(task, advance=1)
-            
-        trips = pd.concat(all_trips)
-        
+        if localize:
+            trips = self.localize_trips(trips)
+
         trips.to_parquet(self.cache_path)
 
         return trips
@@ -87,7 +63,45 @@ class Trips(Asset):
         self.p_immobility = survey_data["p_immobility"]
         self.p_car = survey_data["p_car"]
         
-    def get_trips(
+        
+    def get_population_trips(self, population: pd.DataFrame, transport_zones: gpd.GeoDataFrame):
+        
+        population = pd.merge(
+            population,
+            transport_zones[["transport_zone_id", "urban_unit_category"]],
+            on="transport_zone_id",
+            how="left"
+        )
+        
+        individuals = population.to_dict(orient="records")
+        all_trips = []
+        
+        with Progress() as progress:
+            
+            task = progress.add_task("[green]Generating trips...", total=len(individuals))
+        
+            for individual in individuals:
+                
+                trips = self.get_individual_trips(
+                    csp=individual["socio_pro_category"],
+                    csp_household=individual["ref_pers_socio_pro_category"],
+                    urban_unit_category=individual["urban_unit_category"],
+                    n_pers=individual["n_pers_household"],
+                    n_cars=individual["n_cars"]
+                )
+                
+                trips["individual_id"] = individual["individual_id"]
+                
+                all_trips.append(trips)
+                
+                progress.update(task, advance=1)
+            
+        trips = pd.concat(all_trips)
+        
+        return trips
+        
+        
+    def get_individual_trips(
         self, csp, csp_household, urban_unit_category, n_pers, n_cars, n_years=1
     ):
         """
@@ -361,3 +375,30 @@ class Trips(Asset):
         all_trips = pd.concat(all_trips)
 
         return all_trips
+    
+    
+    def localize_trips(self, transport_zones: gpd.GeoDataFrame):
+        
+        car_travel_costs = TravelCosts(transport_zones, "car")
+        walk_travel_costs = TravelCosts(transport_zones, "walk")
+        bicycle_travel_costs = TravelCosts(transport_zones, "bicycle")
+        pub_trans_travel_costs = PublicTransportTravelCosts(transport_zones)
+        
+        costs = pd.concat([
+            car_travel_costs,
+            walk_travel_costs,
+            bicycle_travel_costs,
+            pub_trans_travel_costs
+        ])
+        
+        # Compute the average cost of travel between transport zones, weighted by mode probability given the utility model
+        # Compute the origin - destination flow matrix of active pop - jobs based on sources, sinks and costs of transport
+        # Compute the probability of destination tz given any origin tz
+        
+        # Set the location of home to the tz of the individual
+        # Sample one workplace for each person that goes to work
+        # Sample one mode used to go to work for each person
+        # Replace the survey distance and mode by the sampled distance and mode
+        
+        
+        
