@@ -38,6 +38,13 @@ class Trips(Asset):
         source = self.inputs["source"]
         localize = self.inputs["localize"]
         
+        population = pd.merge(
+            population,
+            transport_zones[["transport_zone_id", "urban_unit_category"]],
+            on="transport_zone_id",
+            how="left"
+        )
+        
         self.prepare_survey_data(source)
         
         individuals = population.to_dict(orient="records")
@@ -52,7 +59,7 @@ class Trips(Asset):
                 trips = self.get_trips(
                     csp=individual["socio_pro_category"],
                     csp_household=individual["ref_pers_socio_pro_category"],
-                    urban_unit_category="C",
+                    urban_unit_category=individual["urban_unit_category"],
                     n_pers=individual["n_pers_household"],
                     n_cars=individual["n_cars"]
                 )
@@ -81,7 +88,7 @@ class Trips(Asset):
         self.p_car = survey_data["p_car"]
         
     def get_trips(
-        self, csp, csp_household, urban_unit_category, n_pers, n_cars=None, n_years=1
+        self, csp, csp_household, urban_unit_category, n_pers, n_cars, n_years=1
     ):
         """
         Samples long distance trips and short distance trips from survey data (prepared with prepare_survey_data),
@@ -149,31 +156,7 @@ class Trips(Asset):
         # and the number of persons in the household.
         # If there is no data for this combination, only urban unit category and CSP are used.
 
-        try:
-            filtered_p_car = (
-                self.p_car.xs(urban_unit_category)
-                .xs(csp_household)
-                .xs(n_pers)
-                .squeeze(axis=1)
-            )
-        except KeyError:
-            filtered_p_car = self.p_car.reset_index(level="n_pers", drop=True)
-            filtered_p_car = (
-                filtered_p_car.xs(urban_unit_category).xs(csp_household).squeeze(axis=1)
-            )
-            filtered_p_car /= filtered_p_car.sum()
-
         filtered_p_immobility = self.p_immobility.xs(csp)
-
-        # ---------------------------------------
-        # If the number of cars has not been specified, it is chosen respecting the probabilities
-        # associated to the city category, the CSP of the reference person and the number of persons in the household.
-        if n_cars is None:
-            # normalisation, see https://stackoverflow.com/questions/46539431/np-random-choice-probabilities-do-not-sum-to-1
-            filtered_p_car_normalised = filtered_p_car / filtered_p_car.sum()
-            n_cars = np.random.choice(
-                filtered_p_car.index.to_numpy(), 1, p=filtered_p_car_normalised
-            )[0]
 
         all_trips = []
 
