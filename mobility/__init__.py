@@ -4,5 +4,4 @@ from .transport_zones import TransportZones
 from .travel_costs import TravelCosts
 from .public_transport_travel_costs import PublicTransportTravelCosts
 from .population import Population
-from mobility.parsers.city_legal_population import CityLegalPopulation
-from mobility.parsers.census_localized_individuals import CensusLocalizedIndividuals
+from .trips import Trips
