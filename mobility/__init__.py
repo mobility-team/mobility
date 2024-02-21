@@ -5,3 +5,4 @@ from .travel_costs import TravelCosts
 from .public_transport_travel_costs import PublicTransportTravelCosts
 from .population import Population
 from .trips import Trips
+from .localized_trips import LocalizedTrips

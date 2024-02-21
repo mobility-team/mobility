@@ -5,6 +5,7 @@ import shortuuid
 import pandas as pd
 import numpy as np
 import geopandas as gpd
+import concurrent.futures
 
 from rich.progress import Progress
 
@@ -72,10 +73,14 @@ class Population(Asset):
             population["legal_population"].fillna(0, inplace=True)
             
         
-        population["n_persons"] = sample_size*population["legal_population"]/population["legal_population"].sum()
+        population["n_persons"] = sample_size*population["legal_population"].pow(0.5)/population["legal_population"].pow(0.5).sum()
         population["n_persons"] = np.ceil(population["n_persons"])
         population["n_persons"] = population["n_persons"].astype(int)
         population["n_persons"] = np.maximum(population["n_persons"], 1)
+        
+        sampling_rate = population["n_persons"].sum()/population["legal_population"].sum()
+        
+        logging.info("Global sampling rate : " + str(round(100*sampling_rate)/100) + " %.")
         
         return population
     
@@ -108,8 +113,9 @@ class Population(Asset):
         logging.info("Sampling census data in each transport zone...")
         
         cities = sample_sizes.to_dict(orient="records")
-        individuals = []
         
+        individuals = []
+
         with Progress() as progress:
             
             task = progress.add_task("[green]Sampling individuals...", total=len(cities))
@@ -131,4 +137,5 @@ class Population(Asset):
         
         return individuals
     
+
     
