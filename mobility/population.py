@@ -80,7 +80,7 @@ class Population(Asset):
         
         sampling_rate = population["n_persons"].sum()/population["legal_population"].sum()
         
-        logging.info("Global sampling rate : " + str(round(100*sampling_rate)/100) + " %.")
+        logging.info("Global sampling rate : " + str(round(10000*sampling_rate)/10000) + " %.")
         
         return population
     

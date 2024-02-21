@@ -88,7 +88,10 @@ def prepare_french_admin_boundaries():
     
     cities.loc[cities["INSEE_CAN"] == "NR", "INSEE_CAN"] = "ZZ"
     cities["INSEE_CAN"] = cities["INSEE_DEP"] + cities["INSEE_CAN"]
+    
+    # Lyon : 69ZZ, Paris : 75ZZ, Marseille : 1398
     arrond["INSEE_CAN"] = arrond["INSEE_ARM"].str[0:2] + "ZZ"
+    arrond.loc[arrond["INSEE_ARM"].str[0:2] == "13", "INSEE_CAN"] = "1398"
     
     cities = cities[["INSEE_COM", "INSEE_CAN", "NOM", "SIREN_EPCI", "geometry"]]
     arrond = arrond[["INSEE_COM", "INSEE_CAN", "INSEE_ARM", "NOM", "geometry"]]

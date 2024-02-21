@@ -76,6 +76,21 @@ class LocalizedTrips(Asset):
             trips: pd.DataFrame
         ):
         
+        costs = self.prepare_costs(car, walk, bicycle, pub_trans)
+        trips = self.sample_origins_destinations(trips, transport_zones, population, costs)
+        trips = self.sample_modes(trips, costs)
+        trips = self.replace_distances(trips, costs)
+
+        return trips
+    
+    
+    def prepare_costs(
+            self, car: pd.DataFrame, walk: pd.DataFrame, 
+            bicycle: pd.DataFrame, pub_trans: pd.DataFrame
+        ):
+        
+        logging.info("Aggregating travel costs between transport zones...")
+        
         car["mode"] = "car"
         walk["mode"] = "walk"
         bicycle["mode"] = "bicycle"
@@ -110,42 +125,16 @@ class LocalizedTrips(Asset):
         
         costs["average_utility"] = costs["prob"]*costs["utility"]
         
-        average_utilities = costs.groupby(["from", "to"])["average_utility"].sum()
-        average_utilities = average_utilities.reset_index()
-        average_utilities.columns = ["from", "to", "cost"]
-        
-        # Work destination choice model
-        logging.info("Preparing the work destination choice model...")
+        return costs
     
-        insee_data = get_insee_data()
-        active_population = insee_data["active_population"]
-        jobs = insee_data["jobs"]
+
+    
+    
+    def sample_origins_destinations(self, trips, transport_zones, population, costs):
         
-        active_population = active_population.loc[transport_zones["admin_id"]].sum(axis=1).reset_index()
-        jobs = jobs.loc[transport_zones["admin_id"]].sum(axis=1).reset_index()
+        work_prob = self.prepare_work_destination_choice_model(transport_zones, costs)
         
-        active_population = pd.merge(active_population, transport_zones[["admin_id", "transport_zone_id"]], left_on="CODGEO", right_on="admin_id")
-        jobs = pd.merge(jobs, transport_zones[["admin_id", "transport_zone_id"]], left_on="CODGEO", right_on="admin_id")
-        
-        active_population = active_population[["transport_zone_id", 0]]
-        active_population.columns = ["transport_zone_id", "source_volume"]
-        active_population.set_index("transport_zone_id", inplace=True)
-        
-        jobs = jobs[["transport_zone_id", 0]]
-        jobs.columns = ["transport_zone_id", "sink_volume"]
-        jobs.set_index("transport_zone_id", inplace=True)
-        
-        flows, _, _ = radiation_model.iter_radiation_model(
-            sources=active_population,
-            sinks=jobs,
-            costs=average_utilities,
-            alpha=0.0,
-            beta=1.0
-        )
-        
-        work_prob = flows/flows.groupby("from").sum()
-        
-        logging.info("Localizing origins and destinations by applying the choice models...")
+        logging.info("Sampling origins and destinations by applying the choice models...")
         
         # Individual -> home mapping
         home = population[["individual_id", "transport_zone_id"]].copy()
@@ -194,10 +183,52 @@ class LocalizedTrips(Asset):
         
         trips = trips.drop(["p_from", "p_to", "p"], axis=1)
         
+        return trips
+    
+    
+    def prepare_work_destination_choice_model(self, transport_zones, costs):
+        
+        logging.info("Preparing the work destination choice model...")
+    
+        insee_data = get_insee_data()
+        active_population = insee_data["active_population"]
+        jobs = insee_data["jobs"]
+        
+        active_population = active_population.loc[transport_zones["admin_id"]].sum(axis=1).reset_index()
+        jobs = jobs.loc[transport_zones["admin_id"]].sum(axis=1).reset_index()
+        
+        active_population = pd.merge(active_population, transport_zones[["admin_id", "transport_zone_id"]], left_on="CODGEO", right_on="admin_id")
+        jobs = pd.merge(jobs, transport_zones[["admin_id", "transport_zone_id"]], left_on="CODGEO", right_on="admin_id")
+        
+        active_population = active_population[["transport_zone_id", 0]]
+        active_population.columns = ["transport_zone_id", "source_volume"]
+        active_population.set_index("transport_zone_id", inplace=True)
+        
+        jobs = jobs[["transport_zone_id", 0]]
+        jobs.columns = ["transport_zone_id", "sink_volume"]
+        jobs.set_index("transport_zone_id", inplace=True)
+        
+        average_utilities = costs.groupby(["from", "to"])["average_utility"].sum()
+        average_utilities = average_utilities.reset_index()
+        average_utilities.columns = ["from", "to", "cost"]
+        
+        flows, _, _ = radiation_model.iter_radiation_model(
+            sources=active_population,
+            sinks=jobs,
+            costs=average_utilities,
+            alpha=0.0,
+            beta=1.0
+        )
+        
+        work_prob = flows/flows.groupby("from").sum()
+        
+        return work_prob
+    
+    
+    def sample_modes(self, trips, costs):
         
         # Individual -> origin, destination, mode mapping
         logging.info("Replacing modes for localized trips...")
-        
         
         modes = costs.reset_index()[["from", "to", "mode", "prob"]]
         modes.columns = ["from_transport_zone_id", "to_transport_zone_id", "mode", "p"]
@@ -230,6 +261,10 @@ class LocalizedTrips(Asset):
         trips = pd.merge(trips, trip_routes, on="trip_id", how="left")
         trips["mode_id"] = np.where(trips["mode_id_y"].isnull(), trips["mode_id_x"], trips["mode_id_y"])
         
+        return trips
+    
+    
+    def replace_distances(self, trips, costs):
         
         logging.info("Replacing distances for localized trips...")
         
@@ -239,9 +274,7 @@ class LocalizedTrips(Asset):
         trips = pd.merge(trips, distances, on=["from_transport_zone_id", "to_transport_zone_id", "mode_id"], how="left")
         trips["distance"] = np.where(trips["distance_y"].isnull(), trips["distance_x"], trips["distance_y"])
 
-        
         trips = trips.drop(["distance_x", "distance_y", "mode_id_x", "mode_id_y"], axis=1)
-
-
+        
         return trips
             
