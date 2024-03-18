@@ -19,7 +19,11 @@ class RScript:
 
     def print_output(self, stream):
         for line in iter(stream.readline, b""):
-            msg = line.decode()
+            try:
+                msg = line.decode('utf-8')
+            except UnicodeDecodeError:
+                print(msg)
+                msg = line.decode('latin1')
             if "INFO" in msg:
                 msg = msg.split("]")[1]
                 msg = msg.strip()
