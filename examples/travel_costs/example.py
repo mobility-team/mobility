@@ -9,9 +9,9 @@ mobility.set_params(
     project_data_folder_path="D:/data/mobility/projects/lyon"
 )
 
-transport_zones = mobility.TransportZones("69383", method="radius", radius=10.0)
+transport_zones = mobility.TransportZones("64256", method="radius", radius=10.0)
 
-# car_travel_costs = mobility.TravelCosts(transport_zones, "car")
-# walk_travel_costs = mobility.TravelCosts(transport_zones, "walk")
-# bicycle_travel_costs = mobility.TravelCosts(transport_zones, "bicycle")
-# pub_trans_travel_costs = mobility.PublicTransportTravelCosts(transport_zones)
+car_travel_costs = mobility.TravelCosts(transport_zones, "car")
+walk_travel_costs = mobility.TravelCosts(transport_zones, "walk")
+bicycle_travel_costs = mobility.TravelCosts(transport_zones, "bicycle")
+pub_trans_travel_costs = mobility.PublicTransportTravelCosts(transport_zones)
