@@ -19,7 +19,7 @@ transport_zones <- st_read(tz_file_path)
 transport_zones_boundary <- st_union(st_geometry(transport_zones))
 transport_zones_boundary <- nngeo::st_remove_holes(transport_zones_boundary)
 
-transport_zones_buffer <- st_union(st_buffer(st_geometry(transport_zones), 20e3))
+transport_zones_buffer <- st_union(st_buffer(st_geometry(transport_zones), 10e3))
 transport_zones_buffer <- st_transform(transport_zones_buffer, 4326)
 transport_zones <- st_transform(transport_zones, 4326)
 
@@ -40,14 +40,14 @@ gtfs_file_paths <- lapply(1:length(gtfs_file_paths), function(i) {
 
 gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
   
-  message(paste0("Loading GTFS file : ", dataset$file))
+  info(logger, paste0("Loading GTFS file : ", dataset$file))
   
   gtfs <- NULL
   
   # Load the GTFS data
   tryCatch({
     
-    gtfs <- extract_gtfs(dataset$file)
+    gtfs <- extract_gtfs(dataset$file, quiet = TRUE)
     
     # Keep only stops within the region
     stops <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
@@ -57,6 +57,11 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
     gtfs$stops <- gtfs$stops[stop_id %in% stops$stop_id]
     gtfs$stop_times <- gtfs$stop_times[stop_id %in% stops$stop_id]
     gtfs$stop_times <- gtfs$stop_times[order(trip_id, arrival_time)]
+    
+    gtfs$trips <- gtfs$trips[trip_id %in% gtfs$stop_times$trip_id]
+    gtfs$routes <- gtfs$routes[route_id %in% gtfs$trips$route_id]
+    gtfs$calendar <- gtfs$calendar[service_id %in% gtfs$trips$service_id]
+    gtfs$calendar_dates <- gtfs$calendar_dates[service_id %in% gtfs$trips$service_id]
     
     # Make all ids unique
     columns <- c("service_id", "stop_id", "agency_id", "trip_id", "route_id", "from_stop_id", "to_stop_id")
@@ -70,21 +75,30 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
     
     # Remove calendar data that does not respect the GTFS format
     # (some feed erroneously copy their calendar_dates data in the calendar data)
-    calendar_cols <- c(
-      "service_id", "monday", "tuesday", "wednesday", "thursday", "friday", 
-      "saturday", "sunday", "start_date", "end_date"
-    )
-    
-    if (sum(colnames(gtfs$calendar) %in% calendar_cols) != 10) {
-      gtfs$calendar <- NULL  
+    if ("calendar" %in% names(gtfs)) {
+      calendar_cols <- c(
+        "service_id", "monday", "tuesday", "wednesday", "thursday", "friday", 
+        "saturday", "sunday", "start_date", "end_date"
+      )
+      
+      if (sum(colnames(gtfs$calendar) %in% calendar_cols) != 10) {
+        gtfs$calendar <- NULL  
+      }
     }
     
+    if ("calendar_dates" %in% names(gtfs)) {
+      calendar_dates_cols <- c(
+        "service_id", "date", "exception_type"
+      )
+      
+      if (sum(colnames(gtfs$calendar_dates) %in% calendar_dates_cols) != 3) {
+        gtfs$calendar_dates <- NULL  
+      }
+    }
+
     # Remove stops that are not in any trip 
     gtfs$stops <- gtfs$stops[stop_id %in% gtfs$stop_times$stop_id]
     
-    
-  }, warning = function(w) {
-    info(logger, w$message)
   }, error = function(e) {
     info(logger, "There was an error loading data from the zip file (possibly a corrupted archive).")
   })
@@ -105,6 +119,8 @@ for (table in c("agency", "calendar", "calendar_dates", "routes", "stops", "stop
   )
   gtfs[[table]] <- df[!duplicated(df), ]
 }
+
+gtfs <- Filter(function(x) {nrow(x) > 0}, gtfs)
 
 attr(gtfs, "filtered") <- FALSE
 
@@ -225,9 +241,97 @@ fix_stop_times <- function(gtfs) {
 gtfs <- fix_stop_times(gtfs)
 
 
-info(logger, "Preparing the timetable for one day (tuesday)...")
+info(logger, "Preparing the timetable for one day (tuesday with a maximum of running services)...")
 
-gtfs <- gtfs_timetable(gtfs, day = "tuesday")
+# Find the date with the maximum number of services running
+# Taking into account both calendar and calendar dates info
+
+# Prepare the data
+if ("calendar" %in% names(gtfs)) {
+  
+  cal <- copy(gtfs$calendar)
+  cal[, start_date := ymd(start_date)]
+  cal[, end_date := ymd(end_date)]
+  cal <- cal[tuesday > 0]
+  
+} else {
+  
+  cal <- data.table(
+    service_id = "dummy-service",
+    start_date = Date(1),
+    end_date = Date(1)
+  )
+  
+  gtfs$calendar <- data.table(
+    service_id = "dummy-service",
+    monday = 1,
+    tuesday = 1,
+    wednesday = 1,
+    thursday = 1,
+    friday = 1,
+    saturday = 1,
+    sunday = 1,
+    start_date = 20000101,
+    end_date = 21001231
+  )
+  
+}
+
+if ("calendar_dates" %in% names(gtfs)) {
+  
+  cal_dates <- copy(gtfs$calendar_dates)
+  cal_dates[, date := ymd(date)]
+  cal_dates <- cal_dates[wday(date) == 2]
+  cal_dates[, n_services := ifelse(exception_type == 1, 1, -1)]
+  
+} else {
+  
+  cal_dates <- data.table(
+    date = Date(),
+    n_services = numeric()
+  )
+  
+}
+
+
+# Create the list of tuesdays covering all dates in the GTFS
+end_date <- max(c(cal$end_date, cal_dates$date), na.rm = TRUE)
+
+start_date <- min(c(cal$start_date, cal_dates$date), na.rm = TRUE)
+
+adjust_to_tuesday <- function(date) {
+  while(wday(date) != 2) {
+    date <- date + days(1)
+  }
+  return(date)
+}
+
+start_date <- adjust_to_tuesday(start_date)
+
+tuesdays <- data.table(date = seq(from = start_date, to = end_date, by = "1 week"))
+
+# Compute the number of services running at each date in the calendar table
+n_services <- tuesdays[cal, list(n = .N), on = list(date >= start_date, date <= end_date), by = date]
+
+# Compute the number of services added or cancelled in the calendar_dates table
+delta_n_services <- cal_dates[, list(delta_n = sum(n_services)), by = date]
+
+# Compute the actual number of services for each date
+n_services <- merge(n_services, delta_n_services, by = "date", all = TRUE)
+n_services[is.na(n), n := 0]
+n_services[is.na(delta_n), delta_n := 0]
+n_services[, n := n + delta_n]
+
+# Select the month with the most services on average
+n_services[, n_month_average := mean(n), by = list(year(date), month(date))]
+n_services <- n_services[n_month_average == max(n_month_average)]
+
+# Select the day with the most services
+max_services_date <- n_services[n == max(n), date]
+max_services_date <- as.integer(format(max_services_date, "%Y%m%d"))
+
+# Create the GTFS timetable
+gtfs <- gtfs_timetable(gtfs, date = max_services_date)
 
 
 saveRDS(gtfs, output_file_path)

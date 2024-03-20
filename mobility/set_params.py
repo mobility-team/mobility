@@ -2,9 +2,8 @@ import os
 import sys
 import pathlib
 import logging
-import subprocess
 
-from importlib.resources import files
+from importlib import resources
 from mobility.r_script import RScript
 
 
@@ -76,7 +75,10 @@ def setup_package_data_folder_path(package_data_folder_path):
     """
 
     if package_data_folder_path is not None:
-
+        
+        if not pathlib.Path(package_data_folder_path).exists():
+            os.makedirs(package_data_folder_path)
+            
         os.environ["MOBILITY_PACKAGE_DATA_FOLDER"] = package_data_folder_path
 
     else:
@@ -108,6 +110,10 @@ def setup_project_data_folder_path(project_data_folder_path):
     """
 
     if project_data_folder_path is not None:
+        
+        if not pathlib.Path(project_data_folder_path).exists():
+            os.makedirs(project_data_folder_path)
+            
         os.environ["MOBILITY_PROJECT_DATA_FOLDER"] = project_data_folder_path
 
     else:
@@ -131,8 +137,8 @@ def setup_project_data_folder_path(project_data_folder_path):
 def install_r_packages():
 
     os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
-
-    script = RScript(pathlib.Path(__file__).parent / "install_packages_from_cran.R")
+        
+    script = RScript(resources.files('mobility.R').joinpath('install_packages_from_cran.R'))
 
     script.run(
         args=[
@@ -154,13 +160,11 @@ def install_r_packages():
             "pbapply"
         ]
     )
-
-    osmdata_binary_path = files('mobility.ressources').joinpath("osmdata_0.2.5.005.zip")
-
-    script = RScript(pathlib.Path(__file__).parent / "install_packages_from_binaries.R")
-
+    
+    script = RScript(resources.files('mobility.R').joinpath('install_packages_from_binaries.R'))
+    
     script.run(
         args=[
-            str(osmdata_binary_path)
+            str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip'))
         ]
     )
