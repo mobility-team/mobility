@@ -6,5 +6,6 @@ dependencies:
   - r-base
   - geopandas
   - osmium-tool
+  - spyder
   # - pip:
   #     - mobility-tools
