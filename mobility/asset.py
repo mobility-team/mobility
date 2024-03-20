@@ -35,9 +35,13 @@ class Asset(ABC):
             cache_path (pathlib.Path): The path where the Asset is cached.
         """
         self.inputs = inputs
-        self.cache_path = cache_path
-        self.hash_path = cache_path.with_suffix(".inputs-hash")
         self.inputs_hash = self.compute_inputs_hash()
+        
+        cache_path = pathlib.Path(cache_path)
+        filename = self.inputs_hash + "-" + cache_path.name
+        cache_path = cache_path.parent / filename
+        self.cache_path = cache_path.parent / filename
+        self.hash_path = cache_path.with_suffix(".inputs-hash")
         self.get()
 
     @abstractmethod
@@ -89,12 +93,15 @@ class Asset(ABC):
 
     def is_update_needed(self) -> bool:
         """
-        Checks if an update to the Asset is needed based on the current inputs hash.
+        Checks if an update to the Asset is needed based on the current inputs hash,
+        or the non existence of the output file.
 
         Returns:
             True if an update is needed, False otherwise.
         """
-        return self.get_cached_hash() != self.inputs_hash
+        same_hashes = self.get_cached_hash() == self.inputs_hash
+        file_exists = self.cache_path.exists()
+        return same_hashes is False or file_exists is False
         
     def get_cached_hash(self) -> str:
         """
