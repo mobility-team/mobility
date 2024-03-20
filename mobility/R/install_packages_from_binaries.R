@@ -15,6 +15,7 @@ if (any(installed_packages == FALSE)) {
   install.packages(
     binary_paths[!installed_packages],
     repos = NULL,
+    type = "binary",
     quiet = TRUE
   )
 }

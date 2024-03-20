@@ -1,11 +1,20 @@
 import logging
 import subprocess
 import threading
-
+import contextlib
+import pathlib
 
 class RScript:
-    def __init__(self, script_path: str):
-        self.script_path = script_path
+    def __init__(self, script_path: str | contextlib._GeneratorContextManager):
+        if isinstance(script_path, contextlib._GeneratorContextManager):
+            with script_path as p:
+                self.script_path = p
+        elif isinstance(script_path, pathlib.Path):
+            self.script_path = str(script_path)
+        elif isinstance(script_path, str):
+            self.script_path = script_path
+        else:
+            raise ValueError("R script path should be provided as str, pathlib.Path or contextlib._GeneratorContextManager")
 
     def run(self, args: list) -> None:
         cmd = ["Rscript", self.script_path] + args
@@ -19,11 +28,7 @@ class RScript:
 
     def print_output(self, stream):
         for line in iter(stream.readline, b""):
-            try:
-                msg = line.decode('utf-8')
-            except UnicodeDecodeError:
-                print(msg)
-                msg = line.decode('latin1')
+            msg = line.decode("utf-8", errors="replace")
             if "INFO" in msg:
                 msg = msg.split("]")[1]
                 msg = msg.strip()

@@ -4,6 +4,7 @@ import logging
 import pandas as pd
 import geopandas as gpd
 
+from importlib import resources
 from mobility.parsers.osm import OSMData
 from mobility.asset import Asset
 from mobility.r_script import RScript
@@ -103,9 +104,8 @@ class TravelCosts(Asset):
         output_file_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / output_file_name
 
         logging.info("Creating a routable graph with dodgr, this might take a while...")
-
-        script = RScript(pathlib.Path(__file__).parent / "prepare_dodgr_graph.R")
-
+         
+        script = RScript(resources.files('mobility.R').joinpath('prepare_dodgr_graph.R'))
         script.run(args=[str(transport_zones.cache_path), str(osm.cache_path), dodgr_mode, output_file_path])
 
         return output_file_path
@@ -123,8 +123,8 @@ class TravelCosts(Asset):
         """
 
         logging.info("Computing travel costs...")
-
-        script = RScript(pathlib.Path(__file__).parent / "prepare_dodgr_costs.R")
+        
+        script = RScript(resources.files('mobility.R').joinpath('prepare_dodgr_costs.R'))
 
         script.run(args=[str(transport_zones.cache_path), graph, str(self.cache_path)])
 
