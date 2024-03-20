@@ -22,9 +22,9 @@ def prepare_school_attendance(proxies={}, test=False):
     and writes this into parquet file
     """
 
-    #data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/school"
+    data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/school"
     
-    data_folder_path=Path("C:/Users/Formation/Documents/GitHub/mobility/mobility/data/insee/schools")
+    #data_folder_path=Path("C:/Users/Formation/Documents/GitHub/mobility/mobility/data/insee/schools")
 
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
@@ -60,7 +60,8 @@ def prepare_school_attendance(proxies={}, test=False):
             "Type_etablissement",
             "code_nature",
             "Nombre_d_eleves",
-        ]
+        ],
+        dtype={"Code_commune": str},
         )
     
     db_schools["code_nature_simp"]=db_schools["code_nature"]//100
@@ -78,66 +79,10 @@ def prepare_school_attendance(proxies={}, test=False):
     db_schools_group.set_index("Code_commune", inplace=True)
     
     
-    #     dtype={"CODGEO": str},
-    # )
-
-    # db_schools = db_school_attendance.loc[
-    #     :,
-    #     [
-    #         "CODGEO",
-    #         "P19_EMPLT",
-    #         "C19_EMPLT_CS1",
-    #         "C19_EMPLT_CS2",
-    #         "C19_EMPLT_CS3",
-    #         "C19_EMPLT_CS4",
-    #         "C19_EMPLT_CS5",
-    #         "C19_EMPLT_CS6",
-    #     ],
-    # ]
-    # db_.set_index("CODGEO", inplace=True)
-    # db_jobs.rename(
-    #     columns={
-    #         "P19_EMPLT": "n_jobs_total",
-    #         "C19_EMPLT_CS1": "n_jobs_CS1",
-    #         "C19_EMPLT_CS2": "n_jobs_CS2",
-    #         "C19_EMPLT_CS3": "n_jobs_CS3",
-    #         "C19_EMPLT_CS4": "n_jobs_CS4",
-    #         "C19_EMPLT_CS5": "n_jobs_CS5",
-    #         "C19_EMPLT_CS6": "n_jobs_CS6",
-    #     },
-    #     inplace=True,
-    # )
-
-    # db_active_population = db_job_active_pop.loc[
-    #     :,
-    #     [
-    #         "CODGEO",
-    #         "P19_ACT15P",
-    #         "C19_ACT1564_CS1",
-    #         "C19_ACT1564_CS2",
-    #         "C19_ACT1564_CS3",
-    #         "C19_ACT1564_CS4",
-    #         "C19_ACT1564_CS5",
-    #         "C19_ACT1564_CS6",
-    #     ],
-    # ]
-    # db_active_population.set_index("CODGEO", inplace=True)
-    # db_active_population.rename(
-    #     columns={
-    #         "P19_ACT15P": "active_pop",
-    #         "C19_ACT1564_CS1": "active_pop_CS1",
-    #         "C19_ACT1564_CS2": "active_pop_CS2",
-    #         "C19_ACT1564_CS3": "active_pop_CS3",
-    #         "C19_ACT1564_CS4": "active_pop_CS4",
-    #         "C19_ACT1564_CS5": "active_pop_CS5",
-    #         "C19_ACT1564_CS6": "active_pop_CS6",
-    #     },
-    #     inplace=True,
-    # )
-
+   
     # ------------------------------------------
     # Write datasets to parquet files
     db_schools_group.to_parquet(data_folder_path / "schools.parquet")
-    # db_active_population.to_parquet(data_folder_path / "active_population.parquet")
+   
 
     return db_schools
