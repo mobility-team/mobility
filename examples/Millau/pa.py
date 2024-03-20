@@ -1,6 +1,10 @@
+import sys
+
+sys.path.insert(0,"../..")
+
 from mobility.radiation_departments import *
 
-dep =["64"]
+dep =["20"]
 
 (
     sources_territory,
