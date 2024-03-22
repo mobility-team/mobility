@@ -27,9 +27,6 @@ jobs:
       with:
         micromamba-version: '1.5.6-0'
         environment-file: environment.yml
-        init-shell: >-
-          bash
-          powershell
         cache-environment: true
         post-cleanup: 'all'
     - name: Install pip dependencies
@@ -40,7 +37,7 @@ jobs:
         python -m flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         python -m flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
-      run: |
-        python -m pytest --cov
+      run: python -m pytest --cov
+      shell: micromamba-shell {0}
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v3
