@@ -24,6 +24,7 @@ dependencies = [
   "streamlit_lottie",
   "streamlit_option_menu"
 ]
+
 requires-python = ">=3.11"
 authors = [
     { name = "Louise Gontier", email = "l.gontier@elioth.fr" },
@@ -39,6 +40,13 @@ keywords = ["mobility", "transport systems"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python"
+]
+
+[project.optional-dependencies]
+dev = [
+    "flake8",
+    "pytest",
+    "pytest-cov"
 ]
 
 [project.urls]
