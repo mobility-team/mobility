@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -48,9 +48,6 @@ Repository = "https://github.com/mobility-team/mobility"
 Issues = "https://github.com/mobility-team/mobility/issues"
 Changelog = "https://github.com/mobility-team/mobility/releases"
 
-[tool.setuptools.packages.find]
-where = ["mobility/ressources"]
-
 [tool.setuptools.package-data]
-mobility = ["osmdata_0.2.5.005.zip"]
+mobility = ["ressources/osmdata_0.2.5.005.zip"]
 
