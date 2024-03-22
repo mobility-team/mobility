@@ -151,6 +151,56 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# History files
+.Rhistory
+.Rapp.history
+
+# Session Data files
+.RData
+.RDataTmp
+
+# User-specific files
+.Ruserdata
+
+# Example code in package build process
+*-Ex.R
+
+# Output files from R CMD build
+/*.tar.gz
+
+# Output files from R CMD check
+/*.Rcheck/
+
+# RStudio files
+.Rproj.user/
+
+# produced vignettes
+vignettes/*.html
+vignettes/*.pdf
+
+# OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
+.httr-oauth
+
+# knitr and R markdown default cache directories
+*_cache/
+/cache/
+
+# Temporary files created by R markdown
+*.utf8.md
+*.knit.md
+
+# R Environment Variables
+.Renviron
+
+# pkgdown site
+docs/
+
+# translation temp files
+po/*~
+
+# RStudio Connect folder
+rsconnect/
+
 # Input data files
 mobility/data/surveys/emp-2019/*
 !mobility/data/surveys/emp-2019/.gitkeep 
@@ -162,3 +212,10 @@ mobility/data/insee/work/*
 mobility/data/insee/facilities/*
 mobility/data/insee/esane/*
 mobility/data/insee/work_home_flows/*
+
+mobility/data/ign/admin-express/*
+mobility/data/insee/territories/UU2020_au_01-01-2023.xlsx
+.Rproj.user
+
+
+**/.env
