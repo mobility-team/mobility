@@ -212,7 +212,6 @@ mobility/data/insee/work/*
 mobility/data/insee/facilities/*
 mobility/data/insee/esane/*
 mobility/data/insee/work_home_flows/*
-mobility/data/insee/schools/*
 
 mobility/data/ign/admin-express/*
 mobility/data/insee/territories/UU2020_au_01-01-2023.xlsx
