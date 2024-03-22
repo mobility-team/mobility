@@ -99,9 +99,6 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
     # Remove stops that are not in any trip 
     gtfs$stops <- gtfs$stops[stop_id %in% gtfs$stop_times$stop_id]
     
-    print(gtfs$stops)
-    
-    
   }, error = function(e) {
     info(logger, "There was an error loading data from the zip file (possibly a corrupted archive).")
   })

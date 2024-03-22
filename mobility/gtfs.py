@@ -82,8 +82,6 @@ class GTFS(Asset):
             
         stops = gpd.sjoin(stops, transport_zones, how="inner", op='within')
         
-        stops.to_file("C:/Users/pouchaif/Desktop/test.gpkg")
-        
         return stops
     
     
