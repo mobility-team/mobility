@@ -130,8 +130,8 @@ def setup_project_data_folder_path(project_data_folder_path):
 def install_r_packages():
 
     os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
-
-    script = RScript(pathlib.Path(__file__).parent / "install_packages_from_cran.R")
+        
+    script = RScript(resources.path('mobility.R', 'install_packages_from_cran.R'))
 
     script.run(
         args=[
@@ -153,13 +153,13 @@ def install_r_packages():
             "pbapply"
         ]
     )
-
-    osmdata_binary_path = resources.path('mobility.resources', 'osmdata_0.2.5.005.zip')
-
-    script = RScript(pathlib.Path(__file__).parent / "install_packages_from_binaries.R")
-
-    script.run(
-        args=[
-            str(osmdata_binary_path)
-        ]
-    )
+    
+    script = RScript(resources.path('mobility.R', 'install_packages_from_binaries.R'))
+    
+    with resources.path('mobility.resources', 'osmdata_0.2.5.005.zip') as osmdata_binary_path:
+    
+        script.run(
+            args=[
+                str(osmdata_binary_path)
+            ]
+        )

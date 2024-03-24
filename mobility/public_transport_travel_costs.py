@@ -4,6 +4,7 @@ import logging
 import pandas as pd
 import geopandas as gpd
 
+from importlib import resources
 from mobility.asset import Asset
 from mobility.r_script import RScript
 from mobility.gtfs import GTFS
@@ -51,8 +52,8 @@ class PublicTransportTravelCosts(Asset):
         """
 
         logging.info("Computing travel costs...")
-
-        script = RScript(pathlib.Path(__file__).parent / "prepare_public_transport_costs.R")
+        
+        script = RScript(resources.path('mobility.R', 'prepare_public_transport_costs.R'))
         
         gtfs_router = gtfs.get()
         gtfs_route_types_path = pathlib.Path(__file__).parent / "data/gtfs/gtfs_route_types.xlsx"

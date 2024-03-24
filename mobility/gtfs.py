@@ -7,6 +7,7 @@ import zipfile
 import pandas as pd
 import geopandas as gpd
 
+from importlib import resources
 from mobility.asset import Asset
 from mobility.transport_zones import TransportZones
 from mobility.r_script import RScript
@@ -89,9 +90,9 @@ class GTFS(Asset):
         
         gtfs_files = ",".join(gtfs_files)
         
-        script = RScript(pathlib.Path(__file__).parent / "prepare_gtfs_router.R")
+        script = RScript(resources.path('mobility.R', 'prepare_gtfs_router.R'))
         script.run(args=[str(transport_zones.cache_path), gtfs_files, str(self.cache_path)])
-        
+            
         return self.cache_path
     
     
