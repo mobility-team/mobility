@@ -64,6 +64,7 @@ def prepare_school_attendance(proxies={}, test=False):
         ],
         dtype={
             "Code_commune": str, 
+            "Code_departement": str,
             "Identifiant_de_l_etablissement": str
             },
         )
@@ -75,6 +76,7 @@ def prepare_school_attendance(proxies={}, test=False):
 
     db_schools_group = db_schools_filtered.groupby([
         "Code_commune", 
+        "Code_departement",
         "code_nature_simp"
         ]).agg({
             "Nombre_d_eleves": "sum",
@@ -85,7 +87,7 @@ def prepare_school_attendance(proxies={}, test=False):
    
     # ------------------------------------------
     # Write datasets to parquet files
-    db_schools_group.to_parquet(data_folder_path / "schools.parquet")
-   
+    db_schools_group.to_parquet(data_folder_path / "schools.parquet") 
 
     return db_schools_group
+db_schools_group = prepare_school_attendance(proxies={}, test=True)
