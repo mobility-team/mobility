@@ -2,7 +2,7 @@
 """
 Created on Wed Mar 20 11:32:26 2024
 
-@author: Formation
+@author: @martaducamp
 """
 
 import pandas as pd
@@ -60,24 +60,27 @@ def prepare_school_attendance(proxies={}, test=False):
             "Type_etablissement",
             "code_nature",
             "Nombre_d_eleves",
+            "Identifiant_de_l_etablissement",
         ],
-        dtype={"Code_commune": str},
+        dtype={
+            "Code_commune": str, 
+            "Identifiant_de_l_etablissement": str
+            },
         )
     
     db_schools["code_nature_simp"]=db_schools["code_nature"]//100
     
     db_schools_filtered = db_schools.query("code_nature_simp != 8")
 
-    db_schools_group = db_schools_filtered.loc[
-        :, 
-        [
-            "Code_commune",
-            "Nombre_d_eleves",
-            "code_nature_simp",
-        ],
-        ].groupby(["Code_commune", "code_nature_simp"]).sum().reset_index()
-    db_schools_group.set_index("Code_commune", inplace=True)
-    
+
+    db_schools_group = db_schools_filtered.groupby([
+        "Code_commune", 
+        "code_nature_simp"
+        ]).agg({
+            "Nombre_d_eleves": "sum",
+            "Identifiant_de_l_etablissement": lambda x: list(x) 
+            }).reset_index()
+
     
    
     # ------------------------------------------
@@ -85,4 +88,4 @@ def prepare_school_attendance(proxies={}, test=False):
     db_schools_group.to_parquet(data_folder_path / "schools.parquet")
    
 
-    return db_schools
+    return db_schools_group
