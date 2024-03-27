@@ -20,9 +20,9 @@ def prepare_school_mapping(proxies={}, test=False):
     then creates a dataframe with addresses associated with each school
     """
 
-    # data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/schools"
+    data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/schools"
     
-    data_folder_path=Path("C:/Users/Formation/Documents/GitHub/mobility/mobility/data/insee/schools")
+    #data_folder_path=Path("C:/Users/Formation/Documents/GitHub/mobility/mobility/data/insee/schools")
 
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
