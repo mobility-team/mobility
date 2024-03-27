@@ -53,11 +53,13 @@ def prepare_school_mapping(proxies={}, test=False):
         sep=";",
         usecols=[
             "code_insee",
+            "code_departement",
             "Code_RNE",
             "Secteur_unique",
         ],
         dtype={
             "Code_RNE": str, 
+            "code_departement": str,
             "code_insee": str
             },
         )
@@ -65,8 +67,6 @@ def prepare_school_mapping(proxies={}, test=False):
     db_schools_map["Secteur_unique"]=db_schools_map["Secteur_unique"].map({"O": True, "N": False})
     
 
-
-    
    
     # ------------------------------------------
     # Write datasets to parquet files
