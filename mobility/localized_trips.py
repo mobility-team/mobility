@@ -57,7 +57,7 @@ class LocalizedTrips(Asset):
         trips = trips_asset.get()
         
         car_travel_costs = self.inputs["car_travel_costs"].get()
-        walk_travel_costs = self.inputs["car_travel_costs"].get()
+        walk_travel_costs = self.inputs["walk_travel_costs"].get()
         bicycle_travel_costs = self.inputs["bicycle_travel_costs"].get()
         pub_trans_travel_costs = self.inputs["pub_trans_travel_costs"].get()
         alpha = self.inputs["alpha"]
@@ -113,27 +113,24 @@ class LocalizedTrips(Asset):
             pub_trans
         ])
         
-        # Remove null costs that might occur
+        # Remove null and very low costs that might occur
         # (bug that should be fixed in TravelCosts !)
         costs = costs[(~costs["time"].isnull()) & (~costs["distance"].isnull())]
+        costs = costs[(costs["time"] > 1/60) & (costs["distance"] > 0.1)]
         
         costs["from"] = costs["from"].astype(int)
         costs["to"] = costs["to"].astype(int)
-             
         
         # Basic utility function : U = ct*time
         # Cost of time (ct) : 20 €/h
         costs["utility"] = -20*costs["time"]
-
-        costs["prob"] = np.exp(costs["utility"])
-        
-        #costs["prob"] = costs["prob"].where((costs["prob"]>0.5) | (costs["mode"]!="walk"),other=0.0, inplace=True)
-        costs["prob"] = costs["prob"].where((costs["prob"]>0.5) | (costs["mode"]!="walk"),other=0.000001)
-
+        costs["exp_utility"] = np.exp(costs["utility"])
 
         costs.set_index(["from", "to", "mode"], inplace=True)
-
-
+        costs["prob"] = costs["exp_utility"]/costs.groupby(["from", "to"])["exp_utility"].sum()
+        
+        # Filter out probabilities < 0.1 %
+        costs = costs[costs["prob"] > 1e-3].copy()
         costs["prob"] = costs["prob"]/costs.groupby(["from", "to"])["prob"].sum()
                 
         costs["average_utility"] = costs["prob"]*costs["utility"]
@@ -167,34 +164,39 @@ class LocalizedTrips(Asset):
         # Concat all mappings
         motive_mappings = pd.concat([home, work])
         
+        # Separate trips we can and cannot localize
+        loc_motives = ["1.1", "9.91"]
+        loc_trips = trips[(trips["previous_motive"].isin(loc_motives)) & (trips["motive"].isin(loc_motives))]
+        non_loc_trips = trips[(~trips["previous_motive"].isin(loc_motives)) | (~trips["motive"].isin(loc_motives))]
+        
         # Localize trips origins and destinations
-        trips = pd.merge(
-            trips,
+        loc_trips = pd.merge(
+            loc_trips,
             motive_mappings.rename({
                 "motive": "previous_motive",
                 "transport_zone_id": "from_transport_zone_id",
                 "p": "p_from"
             }, axis=1),
-            on=["individual_id", "previous_motive"],
-            how="left"
+            on=["individual_id", "previous_motive"]
         )
         
-        trips = pd.merge(
-            trips,
+        loc_trips = pd.merge(
+            loc_trips,
             motive_mappings.rename({
                 "transport_zone_id": "to_transport_zone_id",
                 "p": "p_to"
             }, axis=1),
-            on=["individual_id", "motive"],
-            how="left"
+            on=["individual_id", "motive"]
         )
         
-        trips["p"] = trips["p_from"]*trips["p_to"]
-        trips["p"].fillna(1.0, inplace=True)
+        loc_trips["p"] = loc_trips["p_from"]*loc_trips["p_to"]
+        loc_trips["p"].fillna(1.0, inplace=True)
         
-        trips = trips.sample(frac=1.0, weights="p").groupby("trip_id", as_index=False).head(1)
+        loc_trips = loc_trips.sample(frac=1.0, weights="p").groupby("trip_id", as_index=False).head(1)
         
-        trips = trips.drop(["p_from", "p_to", "p"], axis=1)
+        loc_trips = loc_trips.drop(["p_from", "p_to", "p"], axis=1)
+        
+        trips = pd.concat([loc_trips, non_loc_trips])
 
         return trips
     
@@ -222,14 +224,15 @@ class LocalizedTrips(Asset):
         jobs.set_index("transport_zone_id", inplace=True)
 
         average_utilities = costs.groupby(["from", "to"])["average_utility"].sum()
-        average_utilities = 0 - average_utilities
-        average_utilities = average_utilities.reset_index()
-        average_utilities.columns = ["from", "to", "cost"]
+        
+        average_costs = 0 - average_utilities
+        average_costs = average_costs.reset_index()
+        average_costs.columns = ["from", "to", "cost"]
         
         flows, _, _ = radiation_model.iter_radiation_model(
             sources=active_population,
             sinks=jobs,
-            costs=average_utilities,
+            costs=average_costs,
             alpha=alpha,
             beta=beta
         )
@@ -253,10 +256,6 @@ class LocalizedTrips(Asset):
         localized_trips = localized_trips.melt(["individual_id", "trip_id"])
         localized_trips["value"] = localized_trips["value"].astype(int).astype(str)
         localized_trips = localized_trips.sort_values("value")
-
-
-        
-        # localized_trips = localized_trips.set_index(["individual_id", "trip_id"])
         
         trip_routes = localized_trips.groupby(["individual_id", "trip_id"], as_index=False)["value"].apply("-".join)
         

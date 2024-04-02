@@ -129,85 +129,106 @@ transport_zones_df = transport_zones.get()
 population_df = population.get()
 trips_df = trips.get()
 loc_trips_df = loc_trips.get()
-car_inputs = loc_trips.inputs["car_travel_costs"].get()
-walk_inputs = loc_trips.inputs["walk_travel_costs"].get()
-                
 
-predicted_flow = loc_trips_df.groupby(["from_transport_zone_id","to_transport_zone_id"])["distance"].count()
-predicted_flow = predicted_flow.reset_index()
-predicted_flow["from_transport_zone_id"] = predicted_flow["from_transport_zone_id"].astype("int")
-predicted_flow["to_transport_zone_id"] = predicted_flow["to_transport_zone_id"].astype("int")
-predicted_flow = predicted_flow.merge(transport_zones_df[["transport_zone_id", "admin_id", "name"]], left_on="from_transport_zone_id",
-                                      right_on="transport_zone_id") 
-predicted_flow = predicted_flow.merge(transport_zones_df[["transport_zone_id", "admin_id", "name"]], left_on="to_transport_zone_id",
-                                      right_on="transport_zone_id", suffixes=["_from","_to"])
-predicted_flow = predicted_flow.rename(columns={"distance": "flow_volume"})
-predicted_flow = predicted_flow.set_index(["admin_id_from","admin_id_to"])
+# car_inputs = loc_trips.inputs["car_travel_costs"].get()
+# walk_inputs = loc_trips.inputs["walk_travel_costs"].get()
+             
+
+
+
+
+
+# predicted_flow = loc_trips_df.groupby(["from_transport_zone_id","to_transport_zone_id"])["distance"].count()
+# predicted_flow = predicted_flow.reset_index()
+# predicted_flow["from_transport_zone_id"] = predicted_flow["from_transport_zone_id"].astype("int")
+# predicted_flow["to_transport_zone_id"] = predicted_flow["to_transport_zone_id"].astype("int")
+# predicted_flow = predicted_flow.merge(transport_zones_df[["transport_zone_id", "admin_id", "name"]], left_on="from_transport_zone_id",
+#                                       right_on="transport_zone_id") 
+# predicted_flow = predicted_flow.merge(transport_zones_df[["transport_zone_id", "admin_id", "name"]], left_on="to_transport_zone_id",
+#                                       right_on="transport_zone_id", suffixes=["_from","_to"])
+# predicted_flow = predicted_flow.rename(columns={"distance": "flow_volume"})
+# predicted_flow = predicted_flow.set_index(["admin_id_from","admin_id_to"])
 
     
 
-# Modal choice by distance
-loc_trips_df["int_distance"] = loc_trips_df["distance"].astype("int")
-mode_by_distance = loc_trips_df.groupby(["int_distance","mode_id"])["distance"].count()
-print(mode_by_distance)
-mode_by_distance.to_clipboard()
+# # Modal choice by distance
+# loc_trips_df["int_distance"] = loc_trips_df["distance"].astype("int")
+# mode_by_distance = loc_trips_df.groupby(["int_distance","mode_id"])["distance"].count()
+# print(mode_by_distance)
+# mode_by_distance.to_clipboard()
 
 
-trips_from_center_city = loc_trips_df.groupby(["from_transport_zone_id","mode_id"],as_index=False)["distance"].count()
-trips_from_center_city["from_transport_zone_id"] = trips_from_center_city["from_transport_zone_id"].astype('int').astype('str')
-print(trips_from_center_city)
-trips_from_center_city = trips_from_center_city.set_index(["from_transport_zone_id","mode_id"]).loc["0"]
-print(trips_from_center_city)
+# trips_from_center_city = loc_trips_df.groupby(["from_transport_zone_id","mode_id"],as_index=False)["distance"].count()
+# trips_from_center_city["from_transport_zone_id"] = trips_from_center_city["from_transport_zone_id"].astype('int').astype('str')
+# print(trips_from_center_city)
+# trips_from_center_city = trips_from_center_city.set_index(["from_transport_zone_id","mode_id"]).loc["0"]
+# print(trips_from_center_city)
 
 
-mode_sum = trips_from_center_city.loc["bicycle"] + trips_from_center_city.loc["bus+bus"] + trips_from_center_city.loc["car"] + trips_from_center_city.loc["walk"]
+# mode_sum = trips_from_center_city.loc["bicycle"] + trips_from_center_city.loc["bus+bus"] + trips_from_center_city.loc["car"] + trips_from_center_city.loc["walk"]
 
-print(int(mode_sum))
+# print(int(mode_sum))
 
-results = [[]]
-res_list=[]
-for mode in ["bicycle","bus+bus", "car", "walk"]:    
-    modal_share = float(trips_from_center_city.loc[mode] / mode_sum)
-    res_list+=[modal_share]
-    print (mode, "modal share:", modal_share)
+# results = [[]]
+# res_list=[]
+# for mode in ["bicycle","bus+bus", "car", "walk"]:    
+#     modal_share = float(trips_from_center_city.loc[mode] / mode_sum)
+#     res_list+=[modal_share]
+#     print (mode, "modal share:", modal_share)
 
-results += [res_list]
+# results += [res_list]
     
 
 
-print(results)
+# print(results)
 
 
-trips_by_mode = loc_trips_df.groupby("mode_id")["distance"].count()
-print(trips_by_mode)
+# trips_by_mode = loc_trips_df.groupby("mode_id")["distance"].count()
+# print(trips_by_mode)
 
-# Compute the localized and non-localized total travelled distance by each individual
-trips_df = trips_df.groupby("individual_id", as_index=False)["distance"].sum()
-loc_trips_df = loc_trips_df.groupby("individual_id", as_index=False)["distance"].sum()
+# # Compute the localized and non-localized total travelled distance by each individual
+# trips_df = trips_df.groupby("individual_id", as_index=False)["distance"].sum()
+# loc_trips_df = loc_trips_df.groupby("individual_id", as_index=False)["distance"].sum()
 
 
 
-# Compare the two total distances
-comparison = pd.merge(trips_df, loc_trips_df, on="individual_id", suffixes=["", "_localized"])
-comparison["variation"] = comparison["distance_localized"]/comparison["distance"] - 1.0
-comparison["variation"].describe()
-comparison["variation"].hist(bins=30)
+# # Compare the two total distances
+# comparison = pd.merge(trips_df, loc_trips_df, on="individual_id", suffixes=["", "_localized"])
+# comparison["variation"] = comparison["distance_localized"]/comparison["distance"] - 1.0
+# comparison["variation"].describe()
+# comparison["variation"].hist(bins=30)
 
-# Plot the average distance by transport zone
-trips_df = pd.merge(trips_df, population_df, on="individual_id")
-distance_by_tz = trips_df.groupby("transport_zone_id", as_index=False)["distance"].mean()
+# # Plot the average distance by transport zone
+# trips_df = pd.merge(trips_df, population_df, on="individual_id")
+# distance_by_tz = trips_df.groupby("transport_zone_id", as_index=False)["distance"].mean()
 
-loc_trips_df = pd.merge(loc_trips_df, population_df, on="individual_id")
-loc_distance_by_tz = loc_trips_df.groupby("transport_zone_id", as_index=False)["distance"].mean()
+# loc_trips_df = pd.merge(loc_trips_df, population_df, on="individual_id")
+# loc_distance_by_tz = loc_trips_df.groupby("transport_zone_id", as_index=False)["distance"].mean()
 
-distance_map = pd.merge(transport_zones_df, distance_by_tz, on="transport_zone_id")
-distance_map.plot("distance", legend=True)
+# distance_map = pd.merge(transport_zones_df, distance_by_tz, on="transport_zone_id")
+# distance_map.plot("distance", legend=True)
 
-loc_distance_map = pd.merge(transport_zones_df, loc_distance_by_tz, on="transport_zone_id")
-loc_distance_map.plot("distance", legend=True)
+# loc_distance_map = pd.merge(transport_zones_df, loc_distance_by_tz, on="transport_zone_id")
+# loc_distance_map.plot("distance", legend=True)
 
-comparison = pd.merge(comparison, population_df, on="individual_id")
-comparison = comparison.groupby("transport_zone_id")["distance_localized"].sum()/comparison.groupby("transport_zone_id")["distance"].sum()
-comparison = comparison.reset_index()
-comparison_map = pd.merge(transport_zones_df, comparison, on="transport_zone_id")
-comparison_map.plot(0, legend=True)
+# comparison = pd.merge(comparison, population_df, on="individual_id")
+# comparison = comparison.groupby("transport_zone_id")["distance_localized"].sum()/comparison.groupby("transport_zone_id")["distance"].sum()
+# comparison = comparison.reset_index()
+# comparison_map = pd.merge(transport_zones_df, comparison, on="transport_zone_id")
+# comparison_map.plot(0, legend=True)
+
+
+
+# Compute the modal share of each OD
+modal_share = loc_trips_df.groupby(["from_transport_zone_id", "to_transport_zone_id", "mode_id"])["trip_id"].count()
+modal_share = modal_share/modal_share.groupby(["from_transport_zone_id", "to_transport_zone_id"]).sum()
+modal_share.name = "modal_share"
+
+modal_share_biarritz = pd.merge(
+    transport_zones_df,
+    modal_share.xs(0).xs("walk", level=1).reset_index(),
+    left_on="transport_zone_id",
+    right_on="to_transport_zone_id"
+)
+
+modal_share_biarritz.plot("modal_share", legend=True)
