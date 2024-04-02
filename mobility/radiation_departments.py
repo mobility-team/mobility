@@ -409,7 +409,6 @@ def compute_similarity_index(predicted_flux, empirical_flux, threshold=200):
                     n += 1
             except KeyError:
                 exc += 1
-                n += 1
                 pass
         else:
             under_threshold += 1
@@ -466,8 +465,8 @@ def optimise_parameters(
     for alpha in np.arange(0, 1.1, 0.1):
         for beta in np.arange(0, 1.1, 0.1):
             if alpha + beta < 1.05:
-                print(f"\n\nα = {alpha:.1f}, β ={beta:.1f}")
                 if not test:
+                    print(f"\n\nα = {alpha:.1f}, β ={beta:.1f}")
                     (
                         predicted_flux,
                         empirical_flux,
