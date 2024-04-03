@@ -2,7 +2,7 @@
 """
 Created on Wed Mar 20 11:32:26 2024
 
-@author: Formation
+@author: @martaducamp
 """
 
 import pandas as pd
@@ -60,8 +60,13 @@ def prepare_school_attendance(proxies={}, test=False):
             "Type_etablissement",
             "code_nature",
             "Nombre_d_eleves",
+            "Identifiant_de_l_etablissement",
         ],
-        dtype={"Code_commune": str},
+        dtype={
+            "Code_commune": str, 
+            "Code_departement": str,
+            "Identifiant_de_l_etablissement": str
+            },
         )
     
     db_schools["code_nature_simp"]=db_schools["code_nature"]//100
@@ -84,5 +89,4 @@ def prepare_school_attendance(proxies={}, test=False):
     # Write datasets to parquet files
     db_schools.to_parquet(data_folder_path / "schools.parquet")
    
-
-    return db_schools
+    return db_schools_group

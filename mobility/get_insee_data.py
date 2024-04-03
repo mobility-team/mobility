@@ -52,7 +52,10 @@ def get_insee_data(test=False):
         check_files and (data_folder_path / "facilities/shops.parquet").exists()
     )
     check_files = (
-        check_files and (data_folder_path / "facilities/schools.parquet").exists()
+        check_files and (data_folder_path / "schools/schools.parquet").exists()
+    )
+    check_files = (
+        check_files and (data_folder_path / "schools/schools_map.parquet").exists()
     )
     check_files = (
         check_files
@@ -92,6 +95,7 @@ def get_insee_data(test=False):
     )
     
     schools = pd.read_parquet(data_folder_path / "schools/schools.parquet")
+    students = pd.read_parquet(data_folder_path / "schools/students.parquet")
     
     shops = pd.read_parquet(data_folder_path / "facilities/shops.parquet")
     admin = pd.read_parquet(data_folder_path / "facilities/admin_facilities.parquet")
@@ -105,6 +109,7 @@ def get_insee_data(test=False):
     insee_data["active_population"] = active_population
     insee_data["shops"] = shops
     insee_data["schools"] = schools
+    insee_data["schools_map"] = schools_map
     insee_data["admin"] = admin
     insee_data["sport"] = sport
     insee_data["care"] = care
