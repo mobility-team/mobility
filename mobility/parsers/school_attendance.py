@@ -22,8 +22,8 @@ def prepare_school_attendance(proxies={}, test=False):
     and writes this into parquet file
     """
 
-    data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/schools"
-    
+    # data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/schools"
+    data_folder_path =Path("C:/Users/bapti/OneDrive/Documents/GitHub/mobility/mobility/data/insee/schools")    
     #data_folder_path=Path("C:/Users/Formation/Documents/GitHub/mobility/mobility/data/insee/schools")
 
     if data_folder_path.exists() is False:
@@ -66,9 +66,9 @@ def prepare_school_attendance(proxies={}, test=False):
     
     db_schools["code_nature_simp"]=db_schools["code_nature"]//100
     
-    db_schools_filtered = db_schools.query("code_nature_simp != 8")
+    db_schools = db_schools.query("code_nature_simp != 8 and code_nature_simp != 4")
 
-    db_schools_group = db_schools_filtered.loc[
+    db_schools = db_schools.loc[
         :, 
         [
             "Code_commune",
@@ -76,13 +76,13 @@ def prepare_school_attendance(proxies={}, test=False):
             "code_nature_simp",
         ],
         ].groupby(["Code_commune", "code_nature_simp"]).sum().reset_index()
-    db_schools_group.set_index("Code_commune", inplace=True)
+    db_schools.set_index("Code_commune", inplace=True)
     
     
    
     # ------------------------------------------
     # Write datasets to parquet files
-    db_schools_group.to_parquet(data_folder_path / "schools.parquet")
+    db_schools.to_parquet(data_folder_path / "schools.parquet")
    
 
     return db_schools

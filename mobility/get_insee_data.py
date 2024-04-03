@@ -37,7 +37,8 @@ def get_insee_data(test=False):
                 Columns:
                     sink_volume (int): weight of the corresponding facilities
     """
-    data_folder_path = Path(os.path.dirname(__file__)) / "data/insee"
+    #data_folder_path = Path(os.path.dirname(__file__)) / "data/insee"
+    data_folder_path =Path("C:/Users/bapti/OneDrive/Documents/GitHub/mobility/mobility/data/insee")
 
     # Check if the parquet files already exist, if not writes them calling the corresponding funtion
     check_files = (data_folder_path / "work/jobs.parquet").exists()
@@ -89,8 +90,10 @@ def get_insee_data(test=False):
     active_population = pd.read_parquet(
         data_folder_path / "work/active_population.parquet"
     )
+    
+    schools = pd.read_parquet(data_folder_path / "schools/schools.parquet")
+    
     shops = pd.read_parquet(data_folder_path / "facilities/shops.parquet")
-    schools = pd.read_parquet(data_folder_path / "facilities/schools.parquet")
     admin = pd.read_parquet(data_folder_path / "facilities/admin_facilities.parquet")
     sport = pd.read_parquet(data_folder_path / "facilities/sport_facilities.parquet")
     care = pd.read_parquet(data_folder_path / "facilities/care_facilities.parquet")
