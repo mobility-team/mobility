@@ -10,4 +10,5 @@ For now, it is mainly focused on French territories.
    trip_sampler
    radiation_model
    carbon
+   motives
    data
