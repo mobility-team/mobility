@@ -53,7 +53,7 @@ class PublicTransportTravelCosts(Asset):
 
         logging.info("Computing travel costs...")
         
-        script = RScript(resources.path('mobility.R', 'prepare_public_transport_costs.R'))
+        script = RScript(resources.files('mobility.R').joinpath('prepare_public_transport_costs.R'))
         
         gtfs_router = gtfs.get()
         gtfs_route_types_path = pathlib.Path(__file__).parent / "data/gtfs/gtfs_route_types.xlsx"

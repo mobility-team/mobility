@@ -9,14 +9,16 @@ import numpy as np
 from rich.progress import Progress
 from mobility.asset import Asset
 
-from mobility.get_survey_data import get_survey_data
 from mobility.safe_sample import safe_sample
+from mobility.parsers import MobilitySurvey
 
 class Trips(Asset):
     
     def __init__(self, population: Asset, source: str = "EMP-2019"):
         
-        inputs = {"population": population, "source": source}
+        mobility_survey = MobilitySurvey(source)
+        
+        inputs = {"population": population, "mobility_survey": mobility_survey}
 
         file_name = "trips.parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
@@ -37,9 +39,8 @@ class Trips(Asset):
 
         transport_zones = self.inputs["population"].inputs["transport_zones"].get()
         population = self.inputs["population"].get()
-        source = self.inputs["source"]
         
-        self.prepare_survey_data(source)
+        self.prepare_survey_data()
         
         trips = self.get_population_trips(population, transport_zones)
 
@@ -47,16 +48,16 @@ class Trips(Asset):
 
         return trips
     
-    def prepare_survey_data(self, source: str):
+    def prepare_survey_data(self):
         
-        survey_data = get_survey_data(source=source)
-        self.short_trips_db = survey_data["short_trips"]
-        self.days_trip_db = survey_data["days_trip"]
-        self.long_trips_db = survey_data["long_trips"]
-        self.travels_db = survey_data["travels"]
-        self.n_travels_db = survey_data["n_travels"]
-        self.p_immobility = survey_data["p_immobility"]
-        self.p_car = survey_data["p_car"]
+        mobility_survey = self.inputs["mobility_survey"].get()
+        self.short_trips_db = mobility_survey["short_trips"]
+        self.days_trip_db = mobility_survey["days_trip"]
+        self.long_trips_db = mobility_survey["long_trips"]
+        self.travels_db = mobility_survey["travels"]
+        self.n_travels_db = mobility_survey["n_travels"]
+        self.p_immobility = mobility_survey["p_immobility"]
+        self.p_car = mobility_survey["p_car"]
         
         
     def get_population_trips(self, population: pd.DataFrame, transport_zones: gpd.GeoDataFrame):

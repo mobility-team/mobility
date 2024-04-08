@@ -105,7 +105,7 @@ class TravelCosts(Asset):
 
         logging.info("Creating a routable graph with dodgr, this might take a while...")
          
-        script = RScript(resources.path('mobility.R', 'prepare_dodgr_graph.R'))
+        script = RScript(resources.files('mobility.R').joinpath('prepare_dodgr_graph.R'))
         script.run(args=[str(transport_zones.cache_path), str(osm.cache_path), dodgr_mode, output_file_path])
 
         return output_file_path
@@ -124,7 +124,7 @@ class TravelCosts(Asset):
 
         logging.info("Computing travel costs...")
         
-        script = RScript(resources.path('mobility.R', 'prepare_dodgr_costs.R'))
+        script = RScript(resources.files('mobility.R').joinpath('prepare_dodgr_costs.R'))
 
         script.run(args=[str(transport_zones.cache_path), graph, str(self.cache_path)])
 

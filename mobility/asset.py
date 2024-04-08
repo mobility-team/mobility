@@ -26,7 +26,7 @@ class Asset(ABC):
         update_hash: Updates the cached hash with a new hash value.
     """
     
-    def __init__(self, inputs: dict, cache_path: pathlib.Path):
+    def __init__(self, inputs: dict, cache_path: pathlib.Path | dict[str, pathlib.Path]):
         """
         Initializes the Asset instance with given inputs and cache path.
 
@@ -37,11 +37,16 @@ class Asset(ABC):
         self.inputs = inputs
         self.inputs_hash = self.compute_inputs_hash()
         
-        cache_path = pathlib.Path(cache_path)
-        filename = self.inputs_hash + "-" + cache_path.name
-        cache_path = cache_path.parent / filename
-        self.cache_path = cache_path.parent / filename
-        self.hash_path = cache_path.with_suffix(".inputs-hash")
+        if isinstance(cache_path, dict):
+            self.cache_path = {k: cp.parent / (self.inputs_hash + "-" + cp.name) for k, cp in cache_path.items()}
+            self.hash_path = self.cache_path[list(self.cache_path.keys())[0]].with_suffix(".inputs-hash")
+        else:
+            cache_path = pathlib.Path(cache_path)
+            filename = self.inputs_hash + "-" + cache_path.name
+            cache_path = cache_path.parent / filename
+            self.cache_path = cache_path.parent / filename
+            self.hash_path = cache_path.with_suffix(".inputs-hash")
+        
         self.get()
 
     @abstractmethod
@@ -100,7 +105,10 @@ class Asset(ABC):
             True if an update is needed, False otherwise.
         """
         same_hashes = self.get_cached_hash() == self.inputs_hash
-        file_exists = self.cache_path.exists()
+        if isinstance(self.cache_path, dict):
+            file_exists = all([cp.exists() for cp in self.cache_path.values()])
+        else:
+            file_exists = self.cache_path.exists()
         return same_hashes is False or file_exists is False
         
     def get_cached_hash(self) -> str:
