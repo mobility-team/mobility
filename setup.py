@@ -9,5 +9,5 @@ setuptools.setup(
     url="https://github.com/mobility-team/mobility",
     packages=setuptools.find_packages(),
     python_requires=">=3.9",
-    install_requires=["numpy", "pandas", "requests", "pyarrow"],
+    install_requires=["numpy", "pandas", "requests", "pyarrow", "openpyxl"],
 )
