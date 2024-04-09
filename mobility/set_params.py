@@ -2,6 +2,7 @@ import os
 import sys
 import pathlib
 import logging
+import platform
 
 from importlib import resources
 from mobility.r_script import RScript
@@ -135,6 +136,33 @@ def setup_project_data_folder_path(project_data_folder_path):
 
 
 def install_r_packages():
+    
+    packages_from_cran = [
+        "dodgr",
+        "gtfsrouter",
+        "sf",
+        "geodist",
+        "dplyr",
+        "sfheaders",
+        "nngeo",
+        "data.table",
+        "reshape2",
+        "arrow",
+        "stringr",
+        "pbapply",
+        "hms",
+        "lubridate",
+        "readxl",
+        "pbapply"
+    ]
+    
+    packages_from_binaries = [ ]
+    
+    if platform.system() == "Windows":
+        packages_from_binaries.append(str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip')))
+    else:
+        packages_from_cran.append("osmdata")
+        
 
     os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
         
