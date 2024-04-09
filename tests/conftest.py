@@ -51,7 +51,7 @@ def setup_mobility(local, clear_inputs, clear_results):
 @pytest.fixture
 def test_data():
     return {
-        "transport_zones_insee_city_id": "87085",
+        "transport_zones_insee_city_id": "12202",
         "transport_zones_radius": 10.0,
         "population_sample_size": 100
     }
