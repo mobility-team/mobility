@@ -156,43 +156,17 @@ def install_r_packages():
         "pbapply"
     ]
     
-    packages_from_binaries = [ ]
+    packages_from_binaries = []
     
     if platform.system() == "Windows":
         packages_from_binaries.append(str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip')))
     else:
         packages_from_cran.append("osmdata")
-        
 
     os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
         
     script = RScript(resources.files('mobility.R').joinpath('install_packages_from_cran.R'))
-
-    script.run(
-        args=[
-            "dodgr",
-            "gtfsrouter",
-            "sf",
-            "geodist",
-            "dplyr",
-            "sfheaders",
-            "nngeo",
-            "data.table",
-            "reshape2",
-            "arrow",
-            "stringr",
-            "pbapply",
-            "hms",
-            "lubridate",
-            "readxl",
-            "pbapply"
-        ]
-    )
+    script.run(args=packages_from_binaries)
     
     script = RScript(resources.files('mobility.R').joinpath('install_packages_from_binaries.R'))
-    
-    script.run(
-        args=[
-            str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip'))
-        ]
-    )
+    script.run(args=packages_from_binaries)
