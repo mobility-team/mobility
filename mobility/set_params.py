@@ -79,7 +79,7 @@ def setup_package_data_folder_path(package_data_folder_path):
         if not pathlib.Path(package_data_folder_path).exists():
             os.makedirs(package_data_folder_path)
             
-        os.environ["MOBILITY_PACKAGE_DATA_FOLDER"] = package_data_folder_path
+        os.environ["MOBILITY_PACKAGE_DATA_FOLDER"] = str(package_data_folder_path)
 
     else:
         default_path = pathlib.Path.home() / ".mobility/data"
@@ -114,7 +114,7 @@ def setup_project_data_folder_path(project_data_folder_path):
         if not pathlib.Path(project_data_folder_path).exists():
             os.makedirs(project_data_folder_path)
             
-        os.environ["MOBILITY_PROJECT_DATA_FOLDER"] = project_data_folder_path
+        os.environ["MOBILITY_PROJECT_DATA_FOLDER"] = str(project_data_folder_path)
 
     else:
         default_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "projects"
