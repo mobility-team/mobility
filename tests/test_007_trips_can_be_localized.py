@@ -2,10 +2,10 @@ import mobility
 import pytest
 
 @pytest.mark.dependency(
-    depends=["tests/test_002_population_sample_can_be_created.py::test_002_population_sample_can_be_created"],
+    depends=["tests/test_006_trips_can_be_sampled.py::test_006_trips_can_be_sampled"],
     scope="session"
  )
-def test_005_trips_can_be_sampled(test_data):
+def test_007_trips_can_be_localized(test_data):
     
     transport_zones = mobility.TransportZones(
         insee_city_id=test_data["transport_zones_insee_city_id"],
@@ -19,6 +19,8 @@ def test_005_trips_can_be_sampled(test_data):
     )
     
     trips = mobility.Trips(population)
-    trips = trips.get()
     
-    assert trips.shape[0] > 0
+    loc_trips = mobility.LocalizedTrips(trips)
+    loc_trips = loc_trips.get()
+    
+    assert loc_trips.shape[0] > 0

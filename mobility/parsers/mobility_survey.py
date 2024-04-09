@@ -9,6 +9,21 @@ from mobility.asset import Asset
 from mobility.parsers.download_file import download_file
 
 class MobilitySurvey(Asset):
+    """
+    A class for managing and processing mobility survey data for the EMP-2019 and ENTD-2008 surveys.
+    
+    Attributes:
+        source (str): The source of the mobility survey data (e.g., "EMP-2019" or "ENTD-2008").
+        cache_path (dict): A dictionary mapping data identifiers to their file paths in the cache.
+    
+    Methods:
+        get_cached_asset: Returns the cached asset data as a dictionary of pandas DataFrames.
+        create_and_get_asset: Prepares mobility survey data from scratch, caches it, and returns it.
+        download_survey_data: Downloads survey data zip files from specified URLs.
+        prepare_survey_data: Prepares survey data by calling specific methods based on the source.
+        prepare_survey_data_ENTD_2008: Processes and formats ENTD-2008 survey data.
+        prepare_survey_data_EMP_2019: Processes and formats EMP-2019 survey data.
+    """
     
     def __init__(self, source: str = "EMP-2019"):
         
@@ -31,10 +46,22 @@ class MobilitySurvey(Asset):
 
         super().__init__(inputs, cache_path)
         
-    def get_cached_asset(self):
+    def get_cached_asset(self) -> dict[str, pd.DataFrame]:
+        """
+        Fetches the cached survey data.
+        
+        Returns:
+            dict: A dictionary where keys are data identifiers and values are pandas DataFrames of the cached data.
+        """
         return {k: pd.read_parquet(path) for k, path in self.cache_path.items()}
     
-    def create_and_get_asset(self):
+    def create_and_get_asset(self) -> dict[str, pd.DataFrame]:
+        """
+        Prepares mobility survey data by downloading, processing, and caching it, then returns the cached data.
+        
+        Returns:
+            dict: A dictionary where keys are data identifiers and values are pandas DataFrames of the prepared and cached data.
+        """
         
         logging.info("Preparing mobility survey data...")
         
@@ -46,7 +73,16 @@ class MobilitySurvey(Asset):
         return self.get_cached_asset()
         
     
-    def download_survey_data(self, source):
+    def download_survey_data(self, source) -> None:
+        """
+        Downloads the survey data zip file from a specified URL and extracts it to a designated folder.
+        
+        Args:
+            source (str): The source identifier of the mobility survey data (e.g., "EMP-2019" or "ENTD-2008").
+        
+        Returns:
+            None
+        """
         
         resources = {
             "ENTD-2008": {
@@ -71,7 +107,16 @@ class MobilitySurvey(Asset):
         return None
                 
                 
-    def prepare_survey_data(self, source):
+    def prepare_survey_data(self, source) -> None:
+        """
+        Determines the survey source and calls the corresponding method to process and format the survey data.
+        
+        Args:
+            source (str): The source identifier of the mobility survey data to prepare.
+        
+        Returns:
+            None
+        """
         
         data_folder_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "mobility_surveys" / source
         
@@ -83,7 +128,16 @@ class MobilitySurvey(Asset):
         return None
             
             
-    def prepare_survey_data_ENTD_2008(self, data_folder_path):
+    def prepare_survey_data_ENTD_2008(self, data_folder_path) -> None:
+        """
+        Processes and formats the ENTD-2008 mobility survey data, then saves the data to parquet files in the cache directory.
+        
+        Args:
+            data_folder_path (pathlib.Path): The path to the folder containing the extracted ENTD-2008 survey data files.
+        
+        Returns:
+            None
+        """
         
         # Info about the individuals (CSP, city category...)
         indiv = pd.read_csv(
@@ -667,7 +721,16 @@ class MobilitySurvey(Asset):
         return None
     
     
-    def prepare_survey_data_EMP_2019(self, data_folder_path):
+    def prepare_survey_data_EMP_2019(self, data_folder_path) -> None:
+        """
+        Processes and formats the EMP-2019 mobility survey data, then saves the data to parquet files in the cache directory.
+        
+        Args:
+            data_folder_path (pathlib.Path): The path to the folder containing the extracted EMP-2019 survey data files.
+        
+        Returns:
+            None
+        """
         
         # Info about the individuals (CSP, city category...)
         indiv = pd.read_csv(
