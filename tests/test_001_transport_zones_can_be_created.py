@@ -1,5 +1,6 @@
 import mobility
 import pytest
+from importlib import resources
 
 @pytest.mark.dependency()
 def test_001_transport_zones_can_be_created(test_data):

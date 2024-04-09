@@ -2,6 +2,7 @@ import os
 import sys
 import pathlib
 import logging
+import platform
 
 from importlib import resources
 from mobility.r_script import RScript
@@ -9,7 +10,8 @@ from mobility.r_script import RScript
 
 def set_params(
     package_data_folder_path=None, project_data_folder_path=None,
-    path_to_pem_file=None, http_proxy_url=None, https_proxy_url=None
+    path_to_pem_file=None, http_proxy_url=None, https_proxy_url=None,
+    r_packages=True
 ):
     """
     Sets up the necessary environment for the Mobility package.
@@ -23,6 +25,7 @@ def set_params(
     path_to_pem_file (str, optional): The file path to the PEM file for SSL certification.
     http_proxy_url (str, optional): The URL for the HTTP proxy.
     https_proxy_url (str, optional): The URL for the HTTPS proxy.
+    r_packages (boolean, optional): wether to install R packages or not by running RScript (does not work for github actions so is handled by a separate r-lib github action)
     """
 
     setup_logging()
@@ -35,7 +38,7 @@ def set_params(
     setup_package_data_folder_path(package_data_folder_path)
     setup_project_data_folder_path(project_data_folder_path)
 
-    install_r_packages()
+    install_r_packages(r_packages)
 
 
 def set_env_variable(key, value):
@@ -79,7 +82,7 @@ def setup_package_data_folder_path(package_data_folder_path):
         if not pathlib.Path(package_data_folder_path).exists():
             os.makedirs(package_data_folder_path)
             
-        os.environ["MOBILITY_PACKAGE_DATA_FOLDER"] = package_data_folder_path
+        os.environ["MOBILITY_PACKAGE_DATA_FOLDER"] = str(package_data_folder_path)
 
     else:
         default_path = pathlib.Path.home() / ".mobility/data"
@@ -114,7 +117,7 @@ def setup_project_data_folder_path(project_data_folder_path):
         if not pathlib.Path(project_data_folder_path).exists():
             os.makedirs(project_data_folder_path)
             
-        os.environ["MOBILITY_PROJECT_DATA_FOLDER"] = project_data_folder_path
+        os.environ["MOBILITY_PROJECT_DATA_FOLDER"] = str(project_data_folder_path)
 
     else:
         default_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "projects"
@@ -134,14 +137,11 @@ def setup_project_data_folder_path(project_data_folder_path):
                 raise ValueError("Please re run setup_mobility with the project_data_folder_path pointed to your desired location.")
 
 
-def install_r_packages():
+def install_r_packages(r_packages):
 
-    os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
-        
-    script = RScript(resources.files('mobility.R').joinpath('install_packages_from_cran.R'))
-
-    script.run(
-        args=[
+    if r_packages is True:
+    
+        packages_from_cran = [
             "dodgr",
             "gtfsrouter",
             "sf",
@@ -159,12 +159,18 @@ def install_r_packages():
             "readxl",
             "pbapply"
         ]
-    )
-    
-    script = RScript(resources.files('mobility.R').joinpath('install_packages_from_binaries.R'))
-    
-    script.run(
-        args=[
-            str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip'))
-        ]
-    )
+        
+        packages_from_binaries = []
+        
+        if platform.system() == "Windows":
+            packages_from_binaries.append(str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip')))
+        else:
+            packages_from_cran.append("osmdata")
+
+        os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
+            
+        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_cran.R'))
+        script.run(args=packages_from_cran)
+        
+        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_binaries.R'))
+        script.run(args=packages_from_binaries)

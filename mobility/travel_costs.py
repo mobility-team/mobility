@@ -125,7 +125,6 @@ class TravelCosts(Asset):
         logging.info("Computing travel costs...")
         
         script = RScript(resources.files('mobility.R').joinpath('prepare_dodgr_costs.R'))
-
         script.run(args=[str(transport_zones.cache_path), graph, str(self.cache_path)])
 
         costs = pd.read_parquet(self.cache_path)

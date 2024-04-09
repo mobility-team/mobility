@@ -1,0 +1,24 @@
+Package: MyProjectDependencies
+Version: 1.0
+Title: Dependencies for GitHub Actions
+Description: Manages R package dependencies for GitHub Actions.
+License: GPL-3
+Imports:
+    log4r,
+    dodgr,
+    osmdata,
+    gtfsrouter,
+    sf,
+    geodist,
+    dplyr,
+    sfheaders,
+    nngeo,
+    data.table,
+    reshape2,
+    arrow,
+    stringr,
+    pbapply,
+    hms,
+    lubridate,
+    readxl,
+    pbapply
