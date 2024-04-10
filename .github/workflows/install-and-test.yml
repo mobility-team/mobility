@@ -1,4 +1,4 @@
-on:
+ :
   push:
     branches: [ "main" ]
     path-ignore:
@@ -28,6 +28,14 @@ jobs:
         init-shell: bash
         cache-environment: true
         post-cleanup: 'all'
+    - name: Install Rtools
+      run: |
+        $url = "https://cran.r-project.org/bin/windows/Rtools/rtools40-x86_64.exe"
+        $outfile = "rtools40.exe"
+        Invoke-WebRequest -Uri $url -OutFile $outfile
+        Start-Process -FilePath $outfile -Args '/VERYSILENT' -Wait
+        Write-Output "Rtools installed."
+        $env:Path += ";C:\rtools40\usr\bin;C:\rtools40\mingw64\bin"
     - name: Install pip dependencies
       run: pip install .[dev]
       shell: bash -el {0}
