@@ -11,11 +11,19 @@ if ("log4r" %in% rownames(installed.packages()) == FALSE) {
 
 if ("stringr" %in% rownames(installed.packages()) == FALSE) {
   install.packages(
+    "stringi",
+    repo = "https://cran.rstudio.com/",
+    quiet = TRUE,
+    configure.args="--disable-pkg-config"
+  )
+  install.packages(
     "stringr",
     repo = "https://cran.rstudio.com/",
     quiet = TRUE
   )
 }
+
+packages <- packages[!(packages %in% c("log4r", "stringi", "stringr"))]
 
 library(log4r)
 logger <- logger(appenders = console_appender())
