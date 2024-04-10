@@ -4,7 +4,7 @@ packages <- commandArgs(trailingOnly = TRUE)
 if ("log4r" %in% rownames(installed.packages()) == FALSE) {
   install.packages(
     "log4r",
-    repo = "https://cran.rstudio.com/",
+    repos =  "https://packagemanager.rstudio.com/cran/latest", 
     quiet = TRUE
   )
 }
@@ -12,13 +12,13 @@ if ("log4r" %in% rownames(installed.packages()) == FALSE) {
 if ("stringr" %in% rownames(installed.packages()) == FALSE) {
   install.packages(
     "stringi",
-    repo = "https://cran.rstudio.com/",
+    repos =  "https://packagemanager.rstudio.com/cran/latest",
     quiet = TRUE,
     configure.args="--disable-pkg-config"
   )
   install.packages(
     "stringr",
-    repo = "https://cran.rstudio.com/",
+     repos =  "https://packagemanager.rstudio.com/cran/latest",
     quiet = TRUE
   )
 }
@@ -34,7 +34,7 @@ if (any(installed_packages == FALSE)) {
   info(logger, "It should take a while, but it is needed only once, for the first use of the mobility package.")
   install.packages(
     packages[!installed_packages],
-    repo = "https://cran.rstudio.com/",
+    repos =  "https://packagemanager.rstudio.com/cran/latest",
     quiet = FALSE
   )
 }
