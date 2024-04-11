@@ -29,7 +29,8 @@ class RScript:
     def print_output(self, stream):
         for line in iter(stream.readline, b""):
             msg = line.decode("utf-8", errors="replace")
-            if "INFO" in msg:
-                msg = msg.split("]")[1]
-                msg = msg.strip()
-                logging.info(msg)
+            print(msg)
+            # if "INFO" in msg:
+            #     msg = msg.split("]")[1]
+            #     msg = msg.strip()
+            #     logging.info(msg)
