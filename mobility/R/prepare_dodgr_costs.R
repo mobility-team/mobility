@@ -1,5 +1,3 @@
-print("script launched")
-
 library(dodgr)
 library(log4r)
 library(sfheaders)
