@@ -137,9 +137,9 @@ def setup_project_data_folder_path(project_data_folder_path):
                 raise ValueError("Please re run setup_mobility with the project_data_folder_path pointed to your desired location.")
 
 
-def install_r_packages(install_r_packages):
+def install_r_packages(r_packages):
 
-    if install_r_packages is True:
+    if r_packages is True:
     
         packages_from_cran = [
             "dodgr",
