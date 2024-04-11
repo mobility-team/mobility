@@ -11,7 +11,7 @@ from mobility.r_script import RScript
 def set_params(
     package_data_folder_path=None, project_data_folder_path=None,
     path_to_pem_file=None, http_proxy_url=None, https_proxy_url=None,
-    install_r_packages=True
+    r_packages=True
 ):
     """
     Sets up the necessary environment for the Mobility package.
@@ -38,7 +38,7 @@ def set_params(
     setup_package_data_folder_path(package_data_folder_path)
     setup_project_data_folder_path(project_data_folder_path)
 
-    install_r_packages(install_r_packages)
+    install_r_packages(r_packages)
 
 
 def set_env_variable(key, value):
