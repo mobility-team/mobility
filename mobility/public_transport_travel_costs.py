@@ -56,7 +56,7 @@ class PublicTransportTravelCosts(Asset):
         script = RScript(resources.files('mobility.R').joinpath('prepare_public_transport_costs.R'))
         
         gtfs_router = gtfs.get()
-        gtfs_route_types_path = resources.files("mobility.data").joinpath('gtfs/gtfs_route_types.xlsx')
+        gtfs_route_types_path = resources.files("mobility").joinpath('data/gtfs/gtfs_route_types.xlsx')
         
         script.run(args=[str(transport_zones.cache_path), gtfs_router, str(gtfs_route_types_path), str(self.cache_path)])
 
