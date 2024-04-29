@@ -18,7 +18,6 @@ def prepare_school_VT(proxies={}, test=False):
     data_folder_path = (
         Path(os.path.dirname(__file__)).parents[0] / "data/insee/schools"
     )
-    # data_folder_path =Path("C:/Users/bapti/OneDrive/Documents/GitHub/mobility/mobility/data/insee/schools")    
     if (data_folder_path/ "student_flow.parquet").exists() :
         db_student_flow=pd.read_parquet(data_folder_path/ "student_flow.parquet")
     

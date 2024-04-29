@@ -23,7 +23,6 @@ def prepare_school_attendance(proxies={}, test=False):
     """
 
     data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/schools"
-    # data_folder_path =Path("C:/Users/bapti/OneDrive/Documents/GitHub/mobility/mobility/data/insee/schools")
 
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
@@ -53,6 +52,7 @@ def prepare_school_attendance(proxies={}, test=False):
         path_csv,
         sep=";",
         usecols=[
+
             "Code_commune" ,
             "Type_etablissement",
             "Nombre_d_eleves"
@@ -90,4 +90,6 @@ def prepare_school_attendance(proxies={}, test=False):
     # Write datasets to parquet files
     db_schools.to_parquet(data_folder_path / "schools.parquet")
    
+
     return db_schools
+
