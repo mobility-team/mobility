@@ -15,8 +15,8 @@ def prepare_student_attendance(proxies={}, test=False):
     and writes these into parquet files
     """
 
+
     data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/schools"
-    # data_folder_path =Path("C:/Users/bapti/OneDrive/Documents/GitHub/mobility/mobility/data/insee/schools")    
     
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
