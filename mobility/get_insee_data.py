@@ -6,6 +6,8 @@ from pathlib import Path
 from mobility.parsers.job_active_population import prepare_job_active_population
 from mobility.parsers.permanent_db_facilities import prepare_facilities
 from mobility.parsers.school_attendance import prepare_school_attendance
+from mobility.parsers.student_attendance import prepare_student_attendance
+from mobility.parsers.student_population import prepare_school_VT
 
 
 def get_insee_data(test=False):
@@ -55,6 +57,13 @@ def get_insee_data(test=False):
         check_files and (data_folder_path / "schools/schools.parquet").exists()
     )
     check_files = (
+        check_files
+        and (data_folder_path / "schools/student_flow.parquet").exists()
+    )
+    check_files = (
+        check_files and (data_folder_path / "schools/students.parquet").exists()
+    )
+    check_files = (  
         check_files and (data_folder_path / "schools/schools_map.parquet").exists()
     )
     check_files = (
@@ -84,21 +93,25 @@ def get_insee_data(test=False):
         print("Writing the INSEE parquet files.")
         prepare_job_active_population(test=test)
         prepare_school_attendance(test=test)
+        prepare_student_attendance(test=test)
+        prepare_school_VT()
         prepare_facilities()
 
     # Load the dataframes into a dict
     insee_data = {}
 
-    jobs = pd.read_parquet(data_folder_path / "work/jobs.parquet")
+    jobs = pd.read_parquet(
+        data_folder_path / "work/jobs.parquet")
     active_population = pd.read_parquet(
-        data_folder_path / "work/active_population.parquet"
-    )
-    
-    schools = pd.read_parquet(data_folder_path / "schools/schools.parquet")
-    schools_map = pd.read_parquet(data_folder_path / "schools/schools_map.parquet")
-    students = pd.read_parquet(data_folder_path / "schools/students.parquet")
-    
+        data_folder_path / "work/active_population.parquet")
     shops = pd.read_parquet(data_folder_path / "facilities/shops.parquet")
+    schools_map = pd.read_parquet(data_folder_path / "schools/schools_map.parquet")
+    schools = pd.read_parquet(
+        data_folder_path / "schools/schools.parquet")
+    students = pd.read_parquet(
+        data_folder_path / "schools/students.parquet")
+    schools_VT = pd.read_parquet(
+        data_folder_path / "schools/student_flow.parquet")
     admin = pd.read_parquet(data_folder_path / "facilities/admin_facilities.parquet")
     sport = pd.read_parquet(data_folder_path / "facilities/sport_facilities.parquet")
     care = pd.read_parquet(data_folder_path / "facilities/care_facilities.parquet")
@@ -110,6 +123,7 @@ def get_insee_data(test=False):
     insee_data["active_population"] = active_population
     insee_data["shops"] = shops
     insee_data["schools"] = schools
+    insee_data["schools_VT"]=schools_VT
     insee_data["students"] = students
     insee_data["schools_map"] = schools_map
     insee_data["admin"] = admin

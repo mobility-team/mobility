@@ -22,9 +22,7 @@ def prepare_school_attendance(proxies={}, test=False):
     and writes this into parquet file
     """
 
-    # data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/schools"
-    data_folder_path =Path("C:/Users/bapti/OneDrive/Documents/GitHub/mobility/mobility/data/insee/schools")    
-    #data_folder_path=Path("C:/Users/Formation/Documents/GitHub/mobility/mobility/data/insee/schools")
+    data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/schools"
 
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
@@ -54,34 +52,37 @@ def prepare_school_attendance(proxies={}, test=False):
         path_csv,
         sep=";",
         usecols=[
-            "Code_commune",
-            "Code_departement",
-            "Code_region",
+
+            "Code_commune" ,
             "Type_etablissement",
-            "code_nature",
-            "Nombre_d_eleves",
-            "Identifiant_de_l_etablissement",
+            "Nombre_d_eleves"
         ],
         dtype={
-            "Code_commune": str, 
-            "Code_departement": str,
-            "Identifiant_de_l_etablissement": str
+            "Code_commune": str,
+            "Type_etablissement": str
             },
         )
     
-    db_schools["code_nature_simp"]=db_schools["code_nature"]//100
+    db_schools.rename(
+        columns={
+            "Code_commune": "CODGEO"
+        },
+        inplace=True,
+    )
     
-    db_schools = db_schools.query("code_nature_simp != 8 and code_nature_simp != 4")
-
+    
+    db_schools = db_schools.query("Type_etablissement == 'Ecole' or Type_etablissement == 'Collège' or Type_etablissement == 'Lycée'")
+    
+    db_schools['Type_etablissement'] = db_schools['Type_etablissement'].replace({'Ecole': 1, 'Collège': 2, 'Lycée': 3})
+    
     db_schools = db_schools.loc[
         :, 
         [
-            "Code_commune",
+            "CODGEO",
             "Nombre_d_eleves",
-            "code_nature_simp",
+            "Type_etablissement",
         ],
-        ].groupby(["Code_commune", "code_nature_simp"]).sum().reset_index()
-    db_schools.set_index("Code_commune", inplace=True)
+        ].groupby(["CODGEO", "Type_etablissement"]).sum().reset_index()
     
     
    
@@ -89,4 +90,6 @@ def prepare_school_attendance(proxies={}, test=False):
     # Write datasets to parquet files
     db_schools.to_parquet(data_folder_path / "schools.parquet")
    
-    return db_schools_group
+
+    return db_schools
+

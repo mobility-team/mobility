@@ -15,9 +15,8 @@ def prepare_student_attendance(proxies={}, test=False):
     and writes these into parquet files
     """
 
-    # data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/schools"
-    data_folder_path =Path("C:/Users/bapti/OneDrive/Documents/GitHub/mobility/mobility/data/insee/schools")    
-    #data_folder_path=Path("C:/Users/Formation/Documents/GitHub/mobility/mobility/data/insee/schools")
+
+    data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/schools"
     
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
@@ -59,7 +58,6 @@ def prepare_student_attendance(proxies={}, test=False):
 
     db_student.rename(
         columns={
-            "CODGEO": "CodeCommune",
             "AGEPYR10": "TrancheAge",
             "NB": "Nombre"
             
@@ -70,23 +68,23 @@ def prepare_student_attendance(proxies={}, test=False):
     db_student = db_student.loc[
         :, 
         [
-            "CodeCommune",
+            "CODGEO",
             "Nombre",
             "TrancheAge"
         ],
-        ].groupby([ "CodeCommune","TrancheAge"]).sum().reset_index()
+        ].groupby([ "CODGEO","TrancheAge"]).sum().reset_index()
     
     db_student = db_student.query("TrancheAge == 3 or TrancheAge == 6 or TrancheAge == 11")
     
     new_rows = []
     for index, row in db_student.iterrows():
         if row['TrancheAge'] == 11:  # Changer 'B2' à la valeur désirée
-            new_rows.append({'CodeCommune': row['CodeCommune'], 'TrancheAge': 2, 'Nombre': row['Nombre'] * (3/7)})
-            new_rows.append({'CodeCommune': row['CodeCommune'], 'TrancheAge': 3, 'Nombre': row['Nombre'] * (4/7)})
+            new_rows.append({'CODGEO': row['CODGEO'], 'TrancheAge': 2, 'Nombre': row['Nombre'] * (3/7)})
+            new_rows.append({'CODGEO': row['CODGEO'], 'TrancheAge': 3, 'Nombre': row['Nombre'] * (4/7)})
         elif row['TrancheAge'] == 6 or row['TrancheAge'] == 3:
-            new_rows.append({'CodeCommune': row['CodeCommune'], 'TrancheAge': 1, 'Nombre': row['Nombre']})
+            new_rows.append({'CODGEO': row['CODGEO'], 'TrancheAge': 1, 'Nombre': row['Nombre']})
         else:
-            new_rows.append({'CodeCommune': row['CodeCommune'], 'TrancheAge': row['TrancheAge'], 'Nombre': row['Nombre']})
+            new_rows.append({'CODGEO': row['CODGEO'], 'TrancheAge': row['TrancheAge'], 'Nombre': row['Nombre']})
 
 
     # Création du nouveau DataFrame
@@ -95,15 +93,15 @@ def prepare_student_attendance(proxies={}, test=False):
     db_student = db_student.loc[
         :, 
         [
-            "CodeCommune",
+            "CODGEO",
             "Nombre",
             "TrancheAge"
         ],
-        ].groupby(['CodeCommune', 'TrancheAge'])['Nombre'].sum().reset_index()
+        ].groupby(['CODGEO', 'TrancheAge'])['Nombre'].sum().reset_index()
     
     
     # ------------------------------------------
     # Write datasets to parquet files
-    db_student.to_parquet(data_folder_path / "student.parquet")
+    db_student.to_parquet(data_folder_path / "students.parquet")
 
     return db_student
