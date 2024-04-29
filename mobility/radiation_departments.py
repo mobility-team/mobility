@@ -197,7 +197,7 @@ def get_data_for_model_work(
 
 def get_data_for_model_school(
     lst_departments,
-    work_home_fluxes_csv=WORK_HOME_FLUXES_CSV,
+    work_home_fluxes_csv=work_home_fluxes_csv,
     communes_coordinates_csv=COMMUNES_COORDINATES_CSV,
     communes_surfaces_csv=COMMUNES_SURFACES_CSV,
     alpha=0,
