@@ -195,8 +195,7 @@ def get_data_for_model(
         raw_flowDT,
     )
 
-<<<<<<< Updated upstream
-=======
+
 def get_data_for_model_school(
     lst_departments,
     Age,
@@ -250,29 +249,29 @@ def get_data_for_model_school(
     db_students = insee_data["students"]
     db_schools = insee_data["schools"]
     
-    db_students_1 = db_students[db_students['TrancheAge'] == Age].drop(columns=['TrancheAge'])
+    db_students_ = db_students[db_students['TrancheAge'] == Age].drop(columns=['TrancheAge'])
     
-    db_schools_1 = db_schools[db_schools['Type_etablissement'] == Age].drop(columns=['Type_etablissement'])
+    db_schools_ = db_schools[db_schools['Type_etablissement'] == Age].drop(columns=['Type_etablissement'])
 
     # Only keep the sinks in the chosen departements
-    sinks_territory1 = db_schools_1.loc[:, ["CODGEO", "Nombre_d_eleves"]]
-    sinks_territory1["DEP"] = sinks_territory1["CODGEO"].str.slice(0, 2)
-    mask = sinks_territory1["DEP"].apply(lambda x: x in lst_departments)
-    sinks_territory1 = sinks_territory1.loc[mask]
+    sinks_territory = db_schools_.loc[:, ["CODGEO", "Nombre_d_eleves"]]
+    sinks_territory["DEP"] = sinks_territory["CODGEO"].str.slice(0, 2)
+    mask = sinks_territory["DEP"].apply(lambda x: x in lst_departments)
+    sinks_territory = sinks_territory.loc[mask]
 
-    sinks_territory1 = sinks_territory1.set_index("CODGEO")
-    sinks_territory1.rename(columns={"Nombre_d_eleves": "sink_volume"}, inplace=True)
-    sinks_territory1 = sinks_territory1.drop(columns=["DEP"])
+    sinks_territory = sinks_territory.set_index("CODGEO")
+    sinks_territory.rename(columns={"Nombre_d_eleves": "sink_volume"}, inplace=True)
+    sinks_territory = sinks_territory.drop(columns=["DEP"])
     print("sinks_territory1")
     # Only keep the sinks in the chosen departements
-    sources_territory1 = db_students_1.loc[:, ["CODGEO", "Nombre"]]
-    sources_territory1["DEP"] = sources_territory1["CODGEO"].str.slice(0, 2)
-    mask = sources_territory1["DEP"].apply(lambda x: x in lst_departments)
-    sources_territory1 = sources_territory1.loc[mask]
+    sources_territory = db_students_.loc[:, ["CODGEO", "Nombre"]]
+    sources_territory["DEP"] = sources_territory["CODGEO"].str.slice(0, 2)
+    mask = sources_territory["DEP"].apply(lambda x: x in lst_departments)
+    sources_territory = sources_territory.loc[mask]
 
-    sources_territory1 = sources_territory1.set_index("CODGEO")
-    sources_territory1 = sources_territory1.drop(columns=["DEP"])
-    sources_territory1.rename(columns={"Nombre": "source_volume"}, inplace=True)
+    sources_territory = sources_territory.set_index("CODGEO")
+    sources_territory = sources_territory.drop(columns=["DEP"])
+    sources_territory.rename(columns={"Nombre": "source_volume"}, inplace=True)
     print("sources_territory1")
     data_folder_path = Path(os.path.dirname(__file__)).joinpath("data").joinpath("insee").joinpath("territories")
 
@@ -290,7 +289,7 @@ def get_data_for_model_school(
     raw_flowDT = raw_flowDT.loc[mask2]
     
 
-    raw_flowDT1 = raw_flowDT.loc[raw_flowDT['Tranche_Age'] == Age]
+    raw_flowDT = raw_flowDT.loc[raw_flowDT['Tranche_Age'] == Age]
     print("raw_flowDT1")
 
     # Import the geographic data on the work-home mobility on Millau
@@ -316,7 +315,7 @@ def get_data_for_model_school(
 
     # Compute the distance between cities
     #    distance between i and j = (x_i - x_j)**2 + (y_i - y_j)**2
-    lst_communes = sources_territory1.index.to_numpy()
+    lst_communes = sources_territory.index.to_numpy()
     idx_from_to = np.array(np.meshgrid(lst_communes, lst_communes)).T.reshape(-1, 2)
     idx_from = idx_from_to[:, 0]
     idx_to = idx_from_to[:, 1]
@@ -350,13 +349,41 @@ def get_data_for_model_school(
     )
 
     return (
-        sources_territory1,
-        sinks_territory1,
+        sources_territory,
+        sinks_territory,
         costs_territory,
         coordinates,
-        raw_flowDT1,
+        raw_flowDT,
     )
->>>>>>> Stashed changes
+
+def get_data_for_model_school_multi(
+        lst_departments
+        ):
+    
+    (
+        sources_territory,
+        sinks_territory,
+        costs_territory,
+        coordinates,
+        raw_flowDT,
+    ) = get_data_for_model_school(lst_departments,1)
+    
+    for Age in range(2,4):
+        (sources_territory_temp,
+        sinks_territory_temp
+        ) = get_data_for_model_school(lst_departments,Age)[0],[1]
+        
+        sources_territory.add(sources_territory_temp, fill_value=0)
+        sinks_territory.add(sinks_territory_temp, fill_value=0)
+    
+    return (
+        sources_territory,
+        sinks_territory,
+        costs_territory,
+        coordinates,
+        raw_flowDT,
+    )
+    
 
 def run_model_for_territory(
     sources_territory,
