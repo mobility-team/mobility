@@ -67,22 +67,6 @@ class Trips(Asset):
         transport_zones = self.inputs["population"].inputs["transport_zones"].get()
         population = self.inputs["population"].get()
         
-        self.prepare_survey_data()
-        
-        trips = self.get_population_trips(population, transport_zones)
-
-        trips.to_parquet(self.cache_path)
-
-        return trips
-    
-    def prepare_survey_data(self) -> None:
-        """
-        Prepares the mobility survey data for trip generation by fetching and organizing relevant data subsets.
-        
-        Returns:
-            None
-        """
-        
         mobility_survey = self.inputs["mobility_survey"].get()
         self.short_trips_db = mobility_survey["short_trips"]
         self.days_trip_db = mobility_survey["days_trip"]
@@ -92,6 +76,12 @@ class Trips(Asset):
         self.p_immobility = mobility_survey["p_immobility"]
         self.p_car = mobility_survey["p_car"]
         
+        trips = self.get_population_trips(population, transport_zones)
+
+        trips.to_parquet(self.cache_path)
+
+        return trips
+    
         
     def get_population_trips(self, population: pd.DataFrame, transport_zones: gpd.GeoDataFrame) -> pd.DataFrame:
         """
