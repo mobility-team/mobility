@@ -151,7 +151,7 @@ class GTFS(Asset):
             
         for dataset_metadata in metadata:
             gtfs_resources = [r for r in dataset_metadata["resources"] if "format" in r.keys()]
-            gtfs_resources = [r for r in dataset_metadata["resources"] if r["format"] == "GTFS"]
+            gtfs_resources = [r for r in gtfs_resources if r["format"] == "GTFS"]
             for r in gtfs_resources:
                 gtfs_urls.append({
                     "title": dataset_metadata["title"],
