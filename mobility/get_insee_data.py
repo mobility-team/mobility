@@ -5,7 +5,10 @@ from pathlib import Path
 
 from mobility.parsers.job_active_population import prepare_job_active_population
 from mobility.parsers.permanent_db_facilities import prepare_facilities
-
+from mobility.parsers.school_attendance import prepare_school_attendance
+from mobility.parsers.student_attendance import prepare_student_attendance
+from mobility.parsers.student_population import prepare_school_VT
+from mobility.parsers.school_mapping import prepare_school_mapping
 
 def get_insee_data(test=False):
     """
@@ -16,6 +19,7 @@ def get_insee_data(test=False):
         - the repartion of jobs
         - the repartion of shops
         - the repartion of schools
+        - the repartion of students
         - the repartion of administration facilities
         - the repartion of sport facilities
         - the repartion of care facilities
@@ -27,7 +31,8 @@ def get_insee_data(test=False):
     -------
     dict:
         keys (list of str):
-            ['jobs', 'active_population', 'malls', 'shops', 'schools',
+            ['jobs', 'active_population', 'malls', 'shops',
+             'schools', 'schools_VT', 'students', 'schools_map'
              'admin', 'sport', 'care', 'show', 'museum', 'restaurants']
         values (list of pd.DataFrame):
             The corresponding dataframes wich have the following structure:
@@ -36,6 +41,7 @@ def get_insee_data(test=False):
                 Columns:
                     sink_volume (int): weight of the corresponding facilities
     """
+    
     data_folder_path = Path(os.path.dirname(__file__)) / "data/insee"
 
     # Check if the parquet files already exist, if not writes them calling the corresponding funtion
@@ -50,7 +56,17 @@ def get_insee_data(test=False):
         check_files and (data_folder_path / "facilities/shops.parquet").exists()
     )
     check_files = (
-        check_files and (data_folder_path / "facilities/schools.parquet").exists()
+        check_files and (data_folder_path / "schools/schools.parquet").exists()
+    )
+    check_files = (
+        check_files
+        and (data_folder_path / "schools/student_flow.parquet").exists()
+    )
+    check_files = (
+        check_files and (data_folder_path / "schools/students.parquet").exists()
+    )
+    check_files = (  
+        check_files and (data_folder_path / "schools/schools_map.parquet").exists()
     )
     check_files = (
         check_files
@@ -78,17 +94,27 @@ def get_insee_data(test=False):
     if not (check_files):  # ie all the files are not here
         print("Writing the INSEE parquet files.")
         prepare_job_active_population(test=test)
+        prepare_school_attendance(test=test)
+        prepare_student_attendance(test=test)
+        prepare_school_VT()
         prepare_facilities()
+        prepare_school_mapping()
 
     # Load the dataframes into a dict
     insee_data = {}
 
-    jobs = pd.read_parquet(data_folder_path / "work/jobs.parquet")
+    jobs = pd.read_parquet(
+        data_folder_path / "work/jobs.parquet")
     active_population = pd.read_parquet(
-        data_folder_path / "work/active_population.parquet"
-    )
+        data_folder_path / "work/active_population.parquet")
     shops = pd.read_parquet(data_folder_path / "facilities/shops.parquet")
-    schools = pd.read_parquet(data_folder_path / "facilities/schools.parquet")
+    schools_map = pd.read_parquet(data_folder_path / "schools/schools_map.parquet")
+    schools = pd.read_parquet(
+        data_folder_path / "schools/schools.parquet")
+    students = pd.read_parquet(
+        data_folder_path / "schools/students.parquet")
+    schools_VT = pd.read_parquet(
+        data_folder_path / "schools/student_flow.parquet")
     admin = pd.read_parquet(data_folder_path / "facilities/admin_facilities.parquet")
     sport = pd.read_parquet(data_folder_path / "facilities/sport_facilities.parquet")
     care = pd.read_parquet(data_folder_path / "facilities/care_facilities.parquet")
@@ -100,6 +126,9 @@ def get_insee_data(test=False):
     insee_data["active_population"] = active_population
     insee_data["shops"] = shops
     insee_data["schools"] = schools
+    insee_data["schools_VT"]=schools_VT
+    insee_data["students"] = students
+    insee_data["schools_map"] = schools_map
     insee_data["admin"] = admin
     insee_data["sport"] = sport
     insee_data["care"] = care
