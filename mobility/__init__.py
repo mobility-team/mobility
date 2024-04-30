@@ -5,3 +5,6 @@ from .public_transport_travel_costs import PublicTransportTravelCosts
 from .population import Population
 from .trips import Trips
 from .localized_trips import LocalizedTrips
+from .work_destination_choice_model import WorkDestinationChoiceModel
+from .multimodal_travel_costs import MultimodalTravelCosts
+from .transport_mode_choice_model import TransportModeChoiceModel
