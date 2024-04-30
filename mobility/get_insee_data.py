@@ -8,7 +8,7 @@ from mobility.parsers.permanent_db_facilities import prepare_facilities
 from mobility.parsers.school_attendance import prepare_school_attendance
 from mobility.parsers.student_attendance import prepare_student_attendance
 from mobility.parsers.student_population import prepare_school_VT
-
+from mobility.parsers.school_mapping import prepare_school_mapping
 
 def get_insee_data(test=False):
     """
@@ -19,6 +19,7 @@ def get_insee_data(test=False):
         - the repartion of jobs
         - the repartion of shops
         - the repartion of schools
+        - the repartion of students
         - the repartion of administration facilities
         - the repartion of sport facilities
         - the repartion of care facilities
@@ -30,7 +31,8 @@ def get_insee_data(test=False):
     -------
     dict:
         keys (list of str):
-            ['jobs', 'active_population', 'malls', 'shops', 'schools',
+            ['jobs', 'active_population', 'malls', 'shops',
+             'schools', 'schools_VT', 'students', 'schools_map'
              'admin', 'sport', 'care', 'show', 'museum', 'restaurants']
         values (list of pd.DataFrame):
             The corresponding dataframes wich have the following structure:
@@ -39,6 +41,7 @@ def get_insee_data(test=False):
                 Columns:
                     sink_volume (int): weight of the corresponding facilities
     """
+    
     data_folder_path = Path(os.path.dirname(__file__)) / "data/insee"
 
     # Check if the parquet files already exist, if not writes them calling the corresponding funtion
@@ -95,6 +98,7 @@ def get_insee_data(test=False):
         prepare_student_attendance(test=test)
         prepare_school_VT()
         prepare_facilities()
+        prepare_school_mapping()
 
     # Load the dataframes into a dict
     insee_data = {}
