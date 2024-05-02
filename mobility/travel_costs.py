@@ -76,8 +76,6 @@ class TravelCosts(Asset):
         transport_zones = self.inputs["transport_zones"]
         mode = self.inputs["mode"]
         
-        logging.info("Preparing travel costs for mode " + mode)
-        
         osm = self.inputs["osm"]
         graph = self.dodgr_graph(transport_zones, osm, mode)
         costs = self.dodgr_costs(transport_zones, graph)
