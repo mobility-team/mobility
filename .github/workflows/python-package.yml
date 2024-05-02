@@ -29,7 +29,6 @@ jobs:
     - name: Install dependencies
       run: |
         conda env update --file environment.yml --name base
-        python -m pip install -e .
     - name: Lint with flake8
       run: |
         conda install flake8
