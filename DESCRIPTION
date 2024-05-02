@@ -4,7 +4,6 @@ Title: Dependencies for GitHub Actions
 Description: Manages R package dependencies for GitHub Actions.
 License: GPL-3
 Imports:
-    log4r,
     dodgr,
     osmdata,
     gtfsrouter,
