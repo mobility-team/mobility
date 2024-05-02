@@ -6,7 +6,7 @@ dotenv.load_dotenv()
 
 mobility.set_params(
     package_data_folder_path=os.environ["MOBILITY_PACKAGE_DATA_FOLDER"],
-    project_data_folder_path="D:/data/mobility/projects/marseille"
+    project_data_folder_path="D:/data/mobility/projects/lyon"
 )
 
 transport_zones = mobility.TransportZones("13201", method="radius", radius=20.0)
