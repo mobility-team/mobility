@@ -19,13 +19,9 @@ class RScript:
     def run(self, args: list) -> None:
         cmd = ["Rscript", self.script_path] + args
 
-        logging.info("creating subprocess")
-
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
         output_thread = threading.Thread(target=self.print_output, args=(process.stdout,))
-
-        logging.info("creating thread")
         output_thread.start()
         process.wait()
         output_thread.join()
