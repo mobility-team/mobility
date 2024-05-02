@@ -1,10 +1,6 @@
 name: mobility
-channels:
-  - conda-forge
 dependencies:
   - python=3.11
-  - r-base
   - geopandas
-  - osmium-tool
-  # - pip:
-  #     - mobility-tools
+  - pip:
+    - mobility-tools
