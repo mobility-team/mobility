@@ -2,8 +2,9 @@ import os
 import sys
 import pathlib
 import logging
+import subprocess
 
-from importlib import resources
+from importlib.resources import files
 from mobility.r_script import RScript
 
 
@@ -154,7 +155,7 @@ def install_r_packages():
         ]
     )
 
-    osmdata_binary_path = resources.path('mobility.resources', 'osmdata_0.2.5.005.zip')
+    osmdata_binary_path = files('mobility.ressources').joinpath("osmdata_0.2.5.005.zip")
 
     script = RScript(pathlib.Path(__file__).parent / "install_packages_from_binaries.R")
 

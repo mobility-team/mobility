@@ -57,5 +57,5 @@ Issues = "https://github.com/mobility-team/mobility/issues"
 Changelog = "https://github.com/mobility-team/mobility/releases"
 
 [tool.setuptools.package-data]
-mobility = ["data/*", "resources/*"]
+mobility = ["ressources/osmdata_0.2.5.005.zip"]
 
