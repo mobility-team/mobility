@@ -2,7 +2,6 @@ import os
 import pathlib
 import logging
 import pandas as pd
-import geopandas as gpd
 import numpy as np
 
 from rich.progress import Progress
@@ -10,8 +9,6 @@ from mobility.asset import Asset
 
 from mobility.get_survey_data import get_survey_data
 from mobility.safe_sample import safe_sample
-from mobility.travel_costs import TravelCosts
-from mobility.public_transport_travel_costs import PublicTransportTravelCosts
 
 class Trips(Asset):
     
@@ -41,37 +38,14 @@ class Trips(Asset):
         source = self.inputs["source"]
         localize = self.inputs["localize"]
         
-        self.prepare_survey_data(source)
-        
-        trips = self.get_population_trips(population, transport_zones)
-        
-        if localize:
-            trips = self.localize_trips(trips)
-
-        trips.to_parquet(self.cache_path)
-
-        return trips
-    
-    def prepare_survey_data(self, source: str):
-        
-        survey_data = get_survey_data(source=source)
-        self.short_trips_db = survey_data["short_trips"]
-        self.days_trip_db = survey_data["days_trip"]
-        self.long_trips_db = survey_data["long_trips"]
-        self.travels_db = survey_data["travels"]
-        self.n_travels_db = survey_data["n_travels"]
-        self.p_immobility = survey_data["p_immobility"]
-        self.p_car = survey_data["p_car"]
-        
-        
-    def get_population_trips(self, population: pd.DataFrame, transport_zones: gpd.GeoDataFrame):
-        
         population = pd.merge(
             population,
             transport_zones[["transport_zone_id", "urban_unit_category"]],
             on="transport_zone_id",
             how="left"
         )
+        
+        self.prepare_survey_data(source)
         
         individuals = population.to_dict(orient="records")
         all_trips = []
@@ -82,7 +56,7 @@ class Trips(Asset):
         
             for individual in individuals:
                 
-                trips = self.get_individual_trips(
+                trips = self.get_trips(
                     csp=individual["socio_pro_category"],
                     csp_household=individual["ref_pers_socio_pro_category"],
                     urban_unit_category=individual["urban_unit_category"],
@@ -98,10 +72,22 @@ class Trips(Asset):
             
         trips = pd.concat(all_trips)
         
+        trips.to_parquet(self.cache_path)
+
         return trips
+    
+    def prepare_survey_data(self, source: str):
         
+        survey_data = get_survey_data(source=source)
+        self.short_trips_db = survey_data["short_trips"]
+        self.days_trip_db = survey_data["days_trip"]
+        self.long_trips_db = survey_data["long_trips"]
+        self.travels_db = survey_data["travels"]
+        self.n_travels_db = survey_data["n_travels"]
+        self.p_immobility = survey_data["p_immobility"]
+        self.p_car = survey_data["p_car"]
         
-    def get_individual_trips(
+    def get_trips(
         self, csp, csp_household, urban_unit_category, n_pers, n_cars, n_years=1
     ):
         """
@@ -375,30 +361,3 @@ class Trips(Asset):
         all_trips = pd.concat(all_trips)
 
         return all_trips
-    
-    
-    def localize_trips(self, transport_zones: gpd.GeoDataFrame):
-        
-        car_travel_costs = TravelCosts(transport_zones, "car")
-        walk_travel_costs = TravelCosts(transport_zones, "walk")
-        bicycle_travel_costs = TravelCosts(transport_zones, "bicycle")
-        pub_trans_travel_costs = PublicTransportTravelCosts(transport_zones)
-        
-        costs = pd.concat([
-            car_travel_costs,
-            walk_travel_costs,
-            bicycle_travel_costs,
-            pub_trans_travel_costs
-        ])
-        
-        # Compute the average cost of travel between transport zones, weighted by mode probability given the utility model
-        # Compute the origin - destination flow matrix of active pop - jobs based on sources, sinks and costs of transport
-        # Compute the probability of destination tz given any origin tz
-        
-        # Set the location of home to the tz of the individual
-        # Sample one workplace for each person that goes to work
-        # Sample one mode used to go to work for each person
-        # Replace the survey distance and mode by the sampled distance and mode
-        
-        
-        
