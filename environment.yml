@@ -1,6 +1,0 @@
-name: mobility
-dependencies:
-  - python=3.11
-  - geopandas
-  - pip:
-    - mobility-tools
