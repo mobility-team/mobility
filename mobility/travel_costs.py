@@ -123,8 +123,8 @@ class TravelCosts(Asset):
         """
 
         logging.info("Computing travel costs...")
-        
-        script = RScript(resources.path('mobility.R', 'prepare_dodgr_costs.R'))
+
+        script = RScript(str(resources.path('mobility.R', 'prepare_dodgr_costs.R')))
 
         script.run(args=[str(transport_zones.cache_path), graph, str(self.cache_path)])
 
