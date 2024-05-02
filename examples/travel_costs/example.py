@@ -11,7 +11,7 @@ mobility.set_params(
 
 transport_zones = mobility.TransportZones("31404", method="radius", radius=39.0)
 
-# car_travel_costs = mobility.TravelCosts(transport_zones, "car")
+car_travel_costs = mobility.TravelCosts(transport_zones, "car")
 # walk_travel_costs = mobility.TravelCosts(transport_zones, "walk")
 # bicycle_travel_costs = mobility.TravelCosts(transport_zones, "bicycle")
 pub_trans_travel_costs = mobility.PublicTransportTravelCosts(transport_zones)
