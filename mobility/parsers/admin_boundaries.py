@@ -62,11 +62,11 @@ def get_french_old_regions_boundaries():
 
 def prepare_french_admin_boundaries():
     
-    logging.info("Preparing french city limits...")
-    
     url = "https://data.cquest.org/ign/adminexpress/ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2023-05-03.7z"
     path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express/ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2023-05-03.7z"
     download_file(url, path)
+    
+    logging.info("Unzipping file.")
     
     with py7zr.SevenZipFile(path, "r") as z:
         z.extractall(path.parent)
@@ -75,42 +75,17 @@ def prepare_french_admin_boundaries():
     path = path.parent / "ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2023-05-03" / \
      "ADMIN-EXPRESS-COG-CARTO" / "1_DONNEES_LIVRAISON_2023-05-03" / "ADECOGC_3-2_SHP_LAMB93_FXX"
     
-    for shp_file in ["ARRONDISSEMENT_MUNICIPAL.shp", "COMMUNE.shp", "EPCI.shp", "REGION.shp"]:
+    for shp_file in ["COMMUNE.shp", "EPCI.shp", "REGION.SHP"]:
             
          df = gpd.read_file(path / shp_file)
          parquet_file = pathlib.Path(shp_file).stem + ".parquet"
          output_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express" / parquet_file
          df.to_parquet(output_path)
-        
-    # Replace Paris / Lyon / Marseille cities with their constituting arrondissements
-    arrond = gpd.read_parquet(pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express" / "ARRONDISSEMENT_MUNICIPAL.parquet")
-    cities = gpd.read_parquet(pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express" / "COMMUNE.parquet")
-    
-    cities = cities[["INSEE_COM", "NOM", "SIREN_EPCI", "geometry"]]
-    arrond = arrond[["INSEE_COM", "INSEE_ARM", "NOM", "geometry"]]
-    
-    arrond = pd.merge(
-        arrond,
-        pd.DataFrame(cities.drop(columns='geometry'))[["INSEE_COM", "SIREN_EPCI"]],
-        on="INSEE_COM"
-    )
-    
-    cities = cities[~cities["INSEE_COM"].isin(arrond["INSEE_COM"])]
-    
-    arrond["INSEE_COM"] = arrond["INSEE_ARM"]
-    
-    cities = pd.concat([
-        cities,
-        arrond[["INSEE_COM", "NOM", "SIREN_EPCI", "geometry"]]
-    ])
-    
-    cities.to_parquet(pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express" / "COMMUNE_mod.parquet")
-    
          
     
 def get_french_cities_boundaries():
     
-    path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express/COMMUNE_mod.parquet"
+    path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express/COMMUNE.parquet"
     
     if path.exists() is False:
         prepare_french_admin_boundaries()

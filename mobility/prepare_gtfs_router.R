@@ -46,6 +46,8 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
   # Load the GTFS data
   gtfs <- extract_gtfs(dataset$file)
   
+  print(gtfs$agency)
+  
   # Keep only stops within the region
   stops <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
   st_crs(stops) <- 4326
@@ -65,27 +67,13 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
     }
   }
   
-  # Remove calendar data that does not respect the GTFS format
-  # (some feed erroneously copy their calendar_dates data in the calendar data)
-  calendar_cols <- c(
-    "service_id", "monday", "tuesday", "wednesday", "thursday", "friday", 
-    "saturday", "sunday", "start_date", "end_date"
-  )
-  
-  if (sum(colnames(gtfs$calendar) %in% calendar_cols) != 10) {
-    gtfs$calendar <- NULL  
-  }
-  
-  # Remove stops that are not in any trip 
-  gtfs$stops <- gtfs$stops[stop_id %in% gtfs$stop_times$stop_id]
-  
   return(gtfs)
 })
 
 # Merge all datasets
 gtfs <- list()
 
-for (table in c("agency", "calendar", "calendar_dates", "routes", "stops", "stop_times", "transfers", "trips")) {
+for (table in names(gtfs_all[[1]])) {
   df <- rbindlist(
     lapply(gtfs_all, "[[", table),
     fill = TRUE,
@@ -95,6 +83,12 @@ for (table in c("agency", "calendar", "calendar_dates", "routes", "stops", "stop
 }
 
 attr(gtfs, "filtered") <- FALSE
+
+
+info(logger, "Filtering out stops that are not in any trip...")
+
+gtfs$stops <- gtfs$stops[stop_id %in% gtfs$stop_times$stop_id]
+
 
 info(logger, "Preparing transfers between stops...")
 
@@ -158,10 +152,6 @@ info(logger, "Fixing potential issues with stop times...")
 
 fix_stop_times <- function(gtfs) {
   
-  # Store the name of the original columns to be able to filter all other 
-  # columns at the end of the function
-  cols <- colnames(gtfs$stop_times)
-  
   # Convert the GTFS stops data.table to sf to be able perform spatial operations efficiently
   stops_xy <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
   st_crs(stops_xy) <- 4326
@@ -199,12 +189,10 @@ fix_stop_times <- function(gtfs) {
   
   gtfs$stop_times[, wait_time := departure_time - arrival_time]
   
-  gtfs$stop_times[, delta_time_corr := ceiling(distance/speed_corr), by = trip_id]
+  gtfs$stop_times[, delta_time_corr := distance/speed_corr, by = trip_id]
   
   gtfs$stop_times[, arrival_time := arrival_time[1] + cumsum(delta_time_corr), by = trip_id]
   gtfs$stop_times[, departure_time := arrival_time[1] + cumsum(delta_time_corr + wait_time), by = trip_id]
-  
-  gtfs$stop_times <- gtfs$stop_times[, cols, with = FALSE]
   
   return(gtfs)
   
