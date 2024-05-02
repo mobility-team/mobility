@@ -47,6 +47,7 @@ Repository = "https://github.com/mobility-team/mobility"
 Issues = "https://github.com/mobility-team/mobility/issues"
 Changelog = "https://github.com/mobility-team/mobility/releases"
 
+
 [tool.setuptools.packages.find]
 where = ["mobility/ressources"]
 
