@@ -75,10 +75,7 @@ def setup_package_data_folder_path(package_data_folder_path):
     """
 
     if package_data_folder_path is not None:
-        
-        if not pathlib.Path(package_data_folder_path).exists():
-            os.makedirs(package_data_folder_path)
-            
+
         os.environ["MOBILITY_PACKAGE_DATA_FOLDER"] = package_data_folder_path
 
     else:
@@ -110,10 +107,6 @@ def setup_project_data_folder_path(project_data_folder_path):
     """
 
     if project_data_folder_path is not None:
-        
-        if not pathlib.Path(project_data_folder_path).exists():
-            os.makedirs(project_data_folder_path)
-            
         os.environ["MOBILITY_PROJECT_DATA_FOLDER"] = project_data_folder_path
 
     else:
