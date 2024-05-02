@@ -526,6 +526,7 @@ def prepare_emp_2019(proxies={}):
         "pondki",
     ]
     travels.set_index(["csp", "n_cars", "city_category"], inplace=True)
+    print(travels)
 
     # ------------------------------------------
     # Population by csp in 2019 from the weigths in the data base k_individu
@@ -544,8 +545,6 @@ def prepare_emp_2019(proxies={}):
     travel_csp_pop["n_travel_by_csp"] = (
         travel_csp_pop["pondki"] / travel_csp_pop["n_pop"]
     )
-    
-    # Compute the number of travels per year
     n_travel_by_csp = travel_csp_pop["n_travel_by_csp"]
 
     # ------------------------------------------
@@ -738,6 +737,7 @@ def prepare_emp_2019(proxies={}):
         "n_cars"
     ].count()
     p_car = p_car / p_car.groupby(["city_category", "csp_household", "n_pers"]).sum()
+    print(p_car)
 
     # ------------------------------------------
     # Probability of detailed public transport modes and two wheels vehicles (bikes, motorcycles)
