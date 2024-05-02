@@ -90,7 +90,7 @@ class GTFS(Asset):
         
         gtfs_files = ",".join(gtfs_files)
         
-        script = RScript(resources.files('mobility.R').joinpath('prepare_gtfs_router.R'))
+        script = RScript(resources.path('mobility.R', 'prepare_gtfs_router.R'))
         script.run(args=[str(transport_zones.cache_path), gtfs_files, str(self.cache_path)])
             
         return self.cache_path

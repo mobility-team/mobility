@@ -1,54 +1,25 @@
-import os
-import pathlib
-import logging
-import shortuuid
-import pandas as pd
-import geopandas as gpd
 import numpy as np
-
-from rich.progress import Progress
-from mobility.asset import Asset
+import pandas as pd
 
 from mobility.get_survey_data import get_survey_data
 from mobility.safe_sample import safe_sample
 
-class Trips(Asset):
-    
-    def __init__(self, population: Asset, source: str = "EMP-2019"):
-        
-        inputs = {"population": population, "source": source}
 
-        file_name = "trips.parquet"
-        cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
+class TripSampler:
+    def __init__(self, source="EMP-2019"):
+        """
+        Creates a TripSampler object for a given survey.
+        Data for short trips, days trip, long trips, travels, number of travels.
 
-        super().__init__(inputs, cache_path)
-        
-        
-    def get_cached_asset(self) -> pd.DataFrame:
+        Args:
+            source (str) :
+                The source of the travels and trips data.
+                "ENTD-2008" and "EMP-2019" are available, and "EMP-2019" is the default.
 
-        logging.info("Trips already prepared. Reusing the file : " + str(self.cache_path))
-        trips = pd.read_parquet(self.cache_path)
+        """
 
-        return trips
-    
-    def create_and_get_asset(self) -> pd.DataFrame:
-        
-        logging.info("Generating trips for each individual in the population...")
+        # Load necessary dataframes to sample with get_survey_data(source)
 
-        transport_zones = self.inputs["population"].inputs["transport_zones"].get()
-        population = self.inputs["population"].get()
-        source = self.inputs["source"]
-        
-        self.prepare_survey_data(source)
-        
-        trips = self.get_population_trips(population, transport_zones)
-
-        trips.to_parquet(self.cache_path)
-
-        return trips
-    
-    def prepare_survey_data(self, source: str):
-        
         survey_data = get_survey_data(source=source)
         self.short_trips_db = survey_data["short_trips"]
         self.days_trip_db = survey_data["days_trip"]
@@ -57,50 +28,9 @@ class Trips(Asset):
         self.n_travels_db = survey_data["n_travels"]
         self.p_immobility = survey_data["p_immobility"]
         self.p_car = survey_data["p_car"]
-        
-        
-    def get_population_trips(self, population: pd.DataFrame, transport_zones: gpd.GeoDataFrame):
-        
-        population = pd.merge(
-            population,
-            transport_zones[["transport_zone_id", "urban_unit_category"]],
-            on="transport_zone_id",
-            how="left"
-        )
-        
-        individuals = population.to_dict(orient="records")
-        all_trips = []
-        
-        with Progress() as progress:
-            
-            task = progress.add_task("[green]Generating trips...", total=len(individuals))
-        
-            for individual in individuals:
-                
-                trips = self.get_individual_trips(
-                    csp=individual["socio_pro_category"],
-                    csp_household=individual["ref_pers_socio_pro_category"],
-                    urban_unit_category=individual["urban_unit_category"],
-                    n_pers=individual["n_pers_household"],
-                    n_cars=individual["n_cars"]
-                )
-                
-                trips["individual_id"] = individual["individual_id"]
-                
-                all_trips.append(trips)
-                
-                progress.update(task, advance=1)
-            
-        trips = pd.concat(all_trips)
-        
-        # Replace trip_ids by unique values
-        trips["trip_id"] = [shortuuid.uuid() for _ in range(trips.shape[0])]
-        
-        return trips
-        
-        
-    def get_individual_trips(
-        self, csp, csp_household, urban_unit_category, n_pers, n_cars, n_years=1
+
+    def get_trips(
+        self, csp, csp_household, urban_unit_category, n_pers, n_cars=None, n_years=1
     ):
         """
         Samples long distance trips and short distance trips from survey data (prepared with prepare_survey_data),
@@ -168,7 +98,31 @@ class Trips(Asset):
         # and the number of persons in the household.
         # If there is no data for this combination, only urban unit category and CSP are used.
 
+        try:
+            filtered_p_car = (
+                self.p_car.xs(urban_unit_category)
+                .xs(csp_household)
+                .xs(n_pers)
+                .squeeze(axis=1)
+            )
+        except KeyError:
+            filtered_p_car = self.p_car.reset_index(level="n_pers", drop=True)
+            filtered_p_car = (
+                filtered_p_car.xs(urban_unit_category).xs(csp_household).squeeze(axis=1)
+            )
+            filtered_p_car /= filtered_p_car.sum()
+
         filtered_p_immobility = self.p_immobility.xs(csp)
+
+        # ---------------------------------------
+        # If the number of cars has not been specified, it is chosen respecting the probabilities
+        # associated to the city category, the CSP of the reference person and the number of persons in the household.
+        if n_cars is None:
+            # normalisation, see https://stackoverflow.com/questions/46539431/np-random-choice-probabilities-do-not-sum-to-1
+            filtered_p_car_normalised = filtered_p_car / filtered_p_car.sum()
+            n_cars = np.random.choice(
+                filtered_p_car.index.to_numpy(), 1, p=filtered_p_car_normalised
+            )[0]
 
         all_trips = []
 
@@ -373,6 +327,3 @@ class Trips(Asset):
         all_trips = pd.concat(all_trips)
 
         return all_trips
-    
-    
-   

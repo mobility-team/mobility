@@ -46,8 +46,7 @@ classifiers = [
 dev = [
     "flake8",
     "pytest",
-    "pytest-cov",
-    "pytest-dependency"
+    "pytest-cov"
 ]
 
 [project.urls]

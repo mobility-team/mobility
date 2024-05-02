@@ -138,7 +138,7 @@ def install_r_packages():
 
     os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
         
-    script = RScript(resources.files('mobility.R').joinpath('install_packages_from_cran.R'))
+    script = RScript(resources.path('mobility.R', 'install_packages_from_cran.R'))
 
     script.run(
         args=[
@@ -161,10 +161,12 @@ def install_r_packages():
         ]
     )
     
-    script = RScript(resources.files('mobility.R').joinpath('install_packages_from_binaries.R'))
+    script = RScript(resources.path('mobility.R', 'install_packages_from_binaries.R'))
     
-    script.run(
-        args=[
-            str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip'))
-        ]
-    )
+    with resources.path('mobility.resources', 'osmdata_0.2.5.005.zip') as osmdata_binary_path:
+    
+        script.run(
+            args=[
+                str(osmdata_binary_path)
+            ]
+        )
