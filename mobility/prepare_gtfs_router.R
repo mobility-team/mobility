@@ -4,8 +4,6 @@ library(log4r)
 library(data.table)
 library(arrow)
 library(lubridate)
-library(sfheaders)
-
 
 args <- commandArgs(trailingOnly = TRUE)
 
@@ -46,8 +44,6 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
   # Load the GTFS data
   gtfs <- extract_gtfs(dataset$file)
   
-  print(gtfs$agency)
-  
   # Keep only stops within the region
   stops <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
   st_crs(stops) <- 4326
@@ -55,10 +51,32 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
   
   gtfs$stops <- gtfs$stops[stop_id %in% stops$stop_id]
   gtfs$stop_times <- gtfs$stop_times[stop_id %in% stops$stop_id]
+  
   gtfs$stop_times <- gtfs$stop_times[order(trip_id, arrival_time)]
   
+  # Create the calendar table if missing
+  if (!("calendar" %in% names(gtfs)) | nrow(gtfs$calendar) == 0) {
+    
+    message("Missing calendar, building one from the calendar dates.")
+    
+    cal <- copy(gtfs$calendar_dates)
+    cal[, date_formatted := ymd(date)]
+    cal[, day := wday(date_formatted, label = TRUE, abbr = FALSE, locale = "English")]
+    cal[, day := tolower(day)]
+    
+    cal[, start_date := min(date), by = service_id] 
+    cal[, end_date := max(date), by = service_id]
+    
+    cal <- cal[, .N, by = list(service_id, start_date, end_date, day)]
+    cal[, p := N/max(N), by = list(service_id, start_date, end_date)]
+    cal[, service_level := ifelse(p > 0.5, 1.0, 0.0)]
+    
+    cal <- dcast(cal, service_id + start_date + end_date ~ day, value.var = "service_level", fill = 0)
+    gtfs$calendar <- cal
+  }
+  
   # Make all ids unique
-  columns <- c("service_id", "stop_id", "agency_id", "trip_id", "route_id", "from_stop_id", "to_stop_id")
+  columns <- c("service_id", "stop_id", "agency_id", "trip_id", "route_id")
   for (table in names(gtfs)) {
     for (col in columns) {
       if (col %in% colnames(gtfs[[table]])) {
@@ -85,125 +103,10 @@ for (table in names(gtfs_all[[1]])) {
 attr(gtfs, "filtered") <- FALSE
 
 
-info(logger, "Filtering out stops that are not in any trip...")
+# Prepare GTFS object for routing
+info(logger, "Preparing possible transfers between routes...")
 
-gtfs$stops <- gtfs$stops[stop_id %in% gtfs$stop_times$stop_id]
-
-
-info(logger, "Preparing transfers between stops...")
-
-transfer_table <- function(gtfs, d_limit = 200, crs = 2154) {
-  
-  # Convert the GTFS stops data.table to sf to be able perform spatial operations efficiently
-  stops_xy <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
-  stops_xy$stop_index <- 1:nrow(stops_xy)
-  
-  # Project the data according to the local CRS
-  st_crs(stops_xy) <- 4326
-  stops_xy <- st_transform(stops_xy, crs)
-  
-  # Find which stops are within d_limit meters of each stop
-  stops_xy_buffer <- st_buffer(stops_xy, d_limit)
-  
-  intersects <- st_intersects(stops_xy, stops_xy_buffer)
-  
-  intersects <- lapply(seq_along(intersects), function(i) {
-    data.table(stop_index = i, neighbor_stop_index = intersects[[i]])
-  })
-  
-  intersects <- rbindlist(intersects)
-  intersects <- intersects[stop_index != neighbor_stop_index]
-  
-  # Compute the crow fly distance and travel times between neighboring stops
-  # (travel times formula is based on a linear model fitted on IDFM data)
-  stops_xy_coords <- as.data.table(st_coordinates(stops_xy))
-  stops_xy_coords[, stop_index := stops_xy$stop_index]
-  
-  transfers <- merge(intersects, stops_xy_coords, by = "stop_index")
-  transfers <- merge(transfers, stops_xy_coords, by.x = "neighbor_stop_index", by.y = "stop_index", suffixes = c("_from", "_to"))
-  
-  transfers[, distance := sqrt((Y_to - Y_from)^2 + (X_to - X_from)^2)]
-  transfers[, min_transfer_time := 31 + 1.125*distance]
-  transfers[, transfer_type := 2]
-  
-  # Format the data as expected for the transfers table
-  stops_index_id <- as.data.table(st_drop_geometry(stops_xy[, c("stop_id", "stop_index")]))
-  
-  transfers <- merge(transfers, stops_index_id, by = "stop_index")
-  transfers <- merge(transfers, stops_index_id, by.x = "neighbor_stop_index", by.y = "stop_index", suffixes = c("_from", "_to"))
-  
-  setnames(transfers, c("stop_id_from", "stop_id_to"), c("from_stop_id", "to_stop_id"))
-  
-  transfers <- transfers[, list(from_stop_id, to_stop_id, transfer_type = 2, min_transfer_time)]
-  
-  # Only add new transfers
-  new_transfers <- transfers[!(paste(from_stop_id, to_stop_id) %in% gtfs$transfers[, paste(from_stop_id, to_stop_id)])]
-  
-  gtfs$transfers <- rbindlist(list(gtfs$transfers, new_transfers), fill = TRUE, use.names = TRUE)
-  
-  return(gtfs)
-  
-}
-
-gtfs <- transfer_table(gtfs, d_limit = 200, crs = 2154)
-
-
-info(logger, "Fixing potential issues with stop times...")
-
-fix_stop_times <- function(gtfs) {
-  
-  # Convert the GTFS stops data.table to sf to be able perform spatial operations efficiently
-  stops_xy <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
-  st_crs(stops_xy) <- 4326
-  stops_xy <- st_transform(stops_xy, 2154)
-  stops_xy <- as.data.table(st_coordinates(stops_xy))
-  stops_xy$stop_id <- gtfs$stops$stop_id
-  
-  gtfs$stop_times[, previous_stop_id := shift(stop_id), by = trip_id]
-  gtfs$stop_times[, previous_departure_time := shift(departure_time), by = trip_id]
-  
-  gtfs$stop_times[is.na(previous_stop_id), previous_stop_id := stop_id]
-  gtfs$stop_times[is.na(previous_departure_time), previous_departure_time := departure_time]
-  
-  gtfs$stop_times[, delta_time := arrival_time - previous_departure_time]
-  
-  gtfs$stop_times <- merge(gtfs$stop_times, stops_xy, by = "stop_id")
-  gtfs$stop_times <- merge(gtfs$stop_times, stops_xy, by.x = "previous_stop_id", by.y = "stop_id", suffixes = c("_from", "_to"))
-  
-  gtfs$stop_times[, distance := sqrt((Y_to - Y_from)^2 + (X_to - X_from)^2)]
-  
-  gtfs$stop_times <- gtfs$stop_times[order(trip_id, departure_time)]
-  
-  gtfs$stop_times[, speed := distance/delta_time]
-  gtfs$stop_times[distance == 0.0, speed := 1.0]
-  
-  gtfs$stop_times[, last_speed := shift(speed), by = trip_id]
-  gtfs$stop_times[, next_speed := shift(speed, -1), by = trip_id]
-  
-  gtfs$stop_times[speed > 100 & !is.na(last_speed) & !is.na(next_speed), speed_interp := (last_speed + next_speed)/2]
-  gtfs$stop_times[speed > 100 & is.na(speed_interp) & !is.na(last_speed), speed_interp := last_speed]
-  gtfs$stop_times[speed > 100 & is.na(speed_interp) & !is.na(next_speed), speed_interp := next_speed]
-  
-  gtfs$stop_times[, speed_corr := ifelse(speed > 100, speed_interp, speed)]
-  gtfs$stop_times[, speed_corr := ifelse(speed > 100, speed_interp, speed)]
-  
-  gtfs$stop_times[, wait_time := departure_time - arrival_time]
-  
-  gtfs$stop_times[, delta_time_corr := distance/speed_corr, by = trip_id]
-  
-  gtfs$stop_times[, arrival_time := arrival_time[1] + cumsum(delta_time_corr), by = trip_id]
-  gtfs$stop_times[, departure_time := arrival_time[1] + cumsum(delta_time_corr + wait_time), by = trip_id]
-  
-  return(gtfs)
-  
-}
-
-gtfs <- fix_stop_times(gtfs)
-
-
-info(logger, "Preparing the timetable for one day (tuesday)...")
-
-gtfs <- gtfs_timetable(gtfs, day = "tuesday")
+gtfs$transfers <- gtfs_transfer_table(gtfs, d_limit = 200)
 
 
 saveRDS(gtfs, output_file_path)

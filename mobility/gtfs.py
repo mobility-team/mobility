@@ -3,7 +3,6 @@ import pathlib
 import json
 import requests
 import logging
-import zipfile
 import pandas as pd
 import geopandas as gpd
 
@@ -116,22 +115,7 @@ class GTFS(Asset):
                 resource["gtfs_url"],
                 path
             )
-            
-            if os.path.getsize(path) < 1024:
-                
-                logging.info("Downloaded file size is inferior to 1 ko, it will not be used by mobility.")
-                
-            else:
-            
-                # Check if the downloaded file is a regular GTFS zip file
-                try:
-                    with zipfile.ZipFile(path, 'r') as zip_ref:
-                        zip_contents = zip_ref.namelist()              
-                    if "agency.txt" in zip_contents:
-                        gtfs_files.append(str(path))
-                        
-                except:
-                    logging.info("Downloaded file is not a regular GTFS zip file, it will not be used by mobility.")
+            gtfs_files.append(str(path))
             
         return gtfs_files
             
