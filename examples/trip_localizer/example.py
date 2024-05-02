@@ -14,7 +14,7 @@ mobility.set_params(
 # from the population of each transport zone around Lyon 
 # (takes ~ 30 min for now, reduce the radius and the sample size if you want faster results)
 transport_zones = mobility.TransportZones("69387", method="radius", radius=30.0)
-population = mobility.Population(transport_zones, sample_size=10000)
+population = mobility.Population(transport_zones, sample_size=1000)
 trips = mobility.Trips(population)
 loc_trips = mobility.LocalizedTrips(trips)
 

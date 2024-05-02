@@ -15,7 +15,7 @@ class LocalizedTrips(Asset):
     
     def __init__(
             self, trips: Asset, cost_of_time: float = 20.0,
-            work_alpha: float = 0.2, work_beta: float = 0.8
+            work_alpha: float = 0.0, work_beta: float = 1.0
         ):
         
         transport_zones = trips.inputs["population"].inputs["transport_zones"]
