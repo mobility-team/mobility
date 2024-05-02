@@ -15,9 +15,7 @@ def prepare_job_active_population(proxies={}, test=False):
     and writes these into parquet files
     """
 
-    #data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/work"
-    data_folder_path=Path("C:/Users/Formation/Documents/GitHub/mobility/mobility/data/insee/work")
-
+    data_folder_path = Path(os.path.dirname(__file__)).parents[0] / "data/insee/work"
 
     if data_folder_path.exists() is False:
         os.makedirs(data_folder_path)
