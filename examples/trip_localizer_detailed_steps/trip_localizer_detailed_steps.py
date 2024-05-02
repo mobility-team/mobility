@@ -20,3 +20,9 @@ population = mobility.Population(transport_zones, 100)
 
 trips = mobility.Trips(population)
 loc_trips = mobility.LocalizedTrips(trips, cost_of_time=20.0, work_alpha=0.2, work_beta=0.8)
+
+trips_df = trips.get()
+loc_trips_df = loc_trips.get()
+
+trips_df.groupby("individual_id")["distance"].sum().mean()
+loc_trips_df.groupby("individual_id")["distance"].sum().mean()
