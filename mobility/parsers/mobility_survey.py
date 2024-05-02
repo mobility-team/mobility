@@ -636,9 +636,6 @@ class MobilitySurvey(Asset):
             lambda x: x.left)
         p_det_mode["dist_bin_right"] = p_det_mode["dist_bin"].apply(
             lambda x: x.right)
-        
-        p_det_mode["dist_bin_left"] = p_det_mode["dist_bin_left"].astype(float)
-        p_det_mode["dist_bin_right"] = p_det_mode["dist_bin_right"].astype(float)
 
         p_det_mode = p_det_mode.groupby(
             ["city_category", "dist_bin_left", "dist_bin_right", "mode_group", "mode_id"]
@@ -651,14 +648,14 @@ class MobilitySurvey(Asset):
         p_det_mode.dropna(inplace=True)
         
         files = {
-            "short_trips": df,
+            "short_dist_trips": df,
             "days_trip": days_trip,
-            "p_immobility": p_immobility,
-            "long_trips": df_long,
+            "immobility_probability": p_immobility,
+            "long_dist_trips": df_long,
             "travels": travels,
-            "n_travels": n_travel_by_csp.to_frame(),
-            "p_car": p_car.to_frame(),
-            "p_det_mode": p_det_mode.to_frame()
+            "long_dist_travel_number": n_travel_by_csp.to_frame(),
+            "car_ownership_probability": p_car.to_frame(),
+            "insee_modes_to_entd_modes": p_det_mode.to_frame()
         }
         
         for name, df in files.items():
@@ -1382,9 +1379,6 @@ class MobilitySurvey(Asset):
         p_det_mode["dist_bin"] = pd.qcut(p_det_mode["distance"].values, 4)
         p_det_mode["dist_bin_left"] = p_det_mode["dist_bin"].apply(lambda x: x.left)
         p_det_mode["dist_bin_right"] = p_det_mode["dist_bin"].apply(lambda x: x.right)
-        
-        p_det_mode["dist_bin_left"] = p_det_mode["dist_bin_left"].astype(float)
-        p_det_mode["dist_bin_right"] = p_det_mode["dist_bin_right"].astype(float)
 
         p_det_mode = p_det_mode.groupby(
             ["city_category", "dist_bin_left", "dist_bin_right", "mode_group", "mode_id"]
@@ -1400,14 +1394,14 @@ class MobilitySurvey(Asset):
         # Write datasets to parquet files
         
         files = {
-            "short_trips": df,
+            "short_dist_trips": df,
             "days_trip": days_trip,
-            "p_immobility": p_immobility,
-            "long_trips": df_long,
+            "immobility_probability": p_immobility,
+            "long_dist_trips": df_long,
             "travels": travels,
-            "n_travels": n_travel_by_csp.to_frame(),
-            "p_car": p_car.to_frame(),
-            "p_det_mode": p_det_mode.to_frame()
+            "long_dist_travel_number": n_travel_by_csp.to_frame(),
+            "car_ownership_probability": p_car.to_frame(),
+            "insee_modes_to_entd_modes": p_det_mode.to_frame()
         }
         
         for name, df in files.items():

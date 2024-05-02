@@ -11,5 +11,6 @@ mobility.set_params(
     project_data_folder_path="D:/data/mobility/projects/lyon"
 )
 
-ms_2019 = MobilitySurvey(source="EMP-2019")
-ms_2008 = MobilitySurvey(source="ENTD-2008")
+transport_zones = mobility.TransportZones("69387", method="radius", radius=30.0)
+population = mobility.Population(transport_zones, sample_size=1000)
+trips = mobility.Trips(population, source="ENTD-2008")
