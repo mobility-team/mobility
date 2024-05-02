@@ -36,19 +36,14 @@ class JobsActivePopulationDistribution(Asset):
         
         data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "insee"
         zip_path = data_folder / "base-cc-emploi-pop-active-2019.zip"
-        csv_path = data_folder / "base-cc-emploi-pop-active-2019.csv"
+        csv_path = data_folder / "base-cc-emploi-pop-active-2019.CSV"
     
         download_file(url, zip_path)
-        
-        logging.info("Zip downloaded." if zip_path.exists() else "Zip download failed.")
-        
+                
         # Unzip the content
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            logging.info("csv in zip." if "base-cc-emploi-pop-active-2019.csv" in zip_ref.namelist() else "csv not in zip.")
             zip_ref.extractall(data_folder)
             
-        logging.info("csv extracted." if csv_path.exists() else "csv not extracted.")
-        
         # Informations about jobs and active population for each city
         jobs_active_population = pd.read_csv(
             csv_path,
