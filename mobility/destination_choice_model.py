@@ -48,8 +48,7 @@ class DestinationChoiceModel(Asset):
         transport_zones = self.inputs["transport_zones"].get()
         travel_costs = self.inputs["travel_costs"].get()
         
-        sources = self.prepare_sources(transport_zones)
-        sinks = self.prepare_sinks(transport_zones)
+        sources, sinks = self.prepare_sources_and_sinks(transport_zones)
         
         average_cost_by_od = self.compute_average_cost_by_od(travel_costs)
         
@@ -71,11 +70,7 @@ class DestinationChoiceModel(Asset):
     
     
     @abstractmethod
-    def prepare_sources(self):
-        pass
-    
-    @abstractmethod
-    def prepare_sinks(self):
+    def prepare_sources_and_sinks(self):
         pass
     
         
