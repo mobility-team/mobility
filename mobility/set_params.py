@@ -166,7 +166,7 @@ def install_r_packages():
     os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
         
     script = RScript(resources.files('mobility.R').joinpath('install_packages_from_cran.R'))
-    script.run(args=packages_from_cran)
+    script.run(args=packages_from_binaries)
     
     script = RScript(resources.files('mobility.R').joinpath('install_packages_from_binaries.R'))
     script.run(args=packages_from_binaries)
