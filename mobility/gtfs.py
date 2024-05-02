@@ -150,8 +150,6 @@ class GTFS(Asset):
         gtfs_urls = []
             
         for dataset_metadata in metadata:
-            print("Metadata")
-            print(dataset_metadata["resources"])
             gtfs_resources = [r for r in dataset_metadata["resources"] if r["format"] == "GTFS"]
             for r in gtfs_resources:
                 gtfs_urls.append({
