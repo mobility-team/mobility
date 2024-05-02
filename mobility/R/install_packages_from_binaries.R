@@ -16,7 +16,7 @@ if (any(installed_packages == FALSE)) {
     binary_paths[!installed_packages],
     repos = NULL,
     type = "binary",
-    quiet = FALSE
+    quiet = TRUE
   )
 }
 
