@@ -2,13 +2,13 @@ import os
 import pathlib
 import subprocess
 import geojson
+import re
 import logging
 
 from mobility.parsers.download_file import download_file
 from mobility.parsers.admin_boundaries import get_french_old_regions_boundaries
-from mobility.dodgr_modes import get_dodgr_mode
 
-def prepare_osm(transport_zones, mode, update_needed):
+def prepare_osm(transport_zones, force=False):
     """
         Prepares OSM data for the area of the transport zones.
         - Downloads OSM data from geofabrik.
@@ -17,13 +17,10 @@ def prepare_osm(transport_zones, mode, update_needed):
         - Merges all OSM data into one file.
     """
     
-    dodgr_mode = get_dodgr_mode(mode)
-    
     # File path for the final result
-    output_file_name = "osm_data_" + dodgr_mode + ".osm"
-    output_file_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / output_file_name
+    merged_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "merged.osm"
     
-    if update_needed is True:
+    if merged_path.exists() is False or force is True:
         
         logging.info("Downloading and pre-processing OSM data.")
     
@@ -34,6 +31,7 @@ def prepare_osm(transport_zones, mode, update_needed):
         regions = get_french_old_regions_boundaries()
         regions = regions[regions.intersects(transport_zones_boundary)]
         
+    
         osm_file_paths = []
         
         for geofabrik_region_name in regions["geofabrik_name"].values:
@@ -47,52 +45,89 @@ def prepare_osm(transport_zones, mode, update_needed):
             
         # Store the boundary as a temporary geojson file
         tz_boundary_geojson = geojson.Feature(geometry=transport_zones_boundary, properties={})
-        tz_boundary_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "transport_zones_boundary.geojson"
+        tz_boundary_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "transport_zones_boundary.geojson"
         
         with open(tz_boundary_path, "w") as f:
             geojson.dump(tz_boundary_geojson, f)
+            
+        tz_boundary_path_wsl = windows_path_to_wsl(tz_boundary_path)
         
-        filter_paths = []
+        filter_paths_wsl = []
         
         for osm_path in osm_file_paths:
             
             logging.info("Cropping OSM extracts")
+            
+            osm_path_wsl = windows_path_to_wsl(osm_path)
+    
             subset_name = "subset-" + osm_path.name
-            subset_path = str(pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / subset_name)
-            command = f"osmium extract --polygon {tz_boundary_path} {osm_path} --overwrite --strategy complete_ways -o {subset_path}"
+            subset_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / subset_name
+            subset_path_wsl = windows_path_to_wsl(subset_path)
+            
+            command = f"wsl osmium extract --polygon {tz_boundary_path_wsl} {osm_path_wsl} --overwrite --strategy complete_ways -o {subset_path_wsl}"
             subprocess.run(command, shell=True)
             
             logging.info("Subsetting OSM extracts")
+            
             filter_name = "filter-" + osm_path.name
-            filter_path = str(pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / filter_name)
-            osm_tags = get_dodgr_osm_tags(dodgr_mode)
-            command = f"osmium tags-filter --overwrite -o {filter_path} {subset_path} w/highway={osm_tags}"
+            filter_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / filter_name
+            filter_path_wsl = windows_path_to_wsl(filter_path)
+            
+            highway_tags = [
+                "motorway", "trunk", "primary", "secondary", "tertiary",
+                "unclassified", "residential", "service", "living_street",
+                "motorway_link", "trunk_link", "primary_link", "secondary_link",
+                "tertiary_link"
+            ]
+            highway_tags = ",".join(highway_tags)
+            
+            command = f"wsl osmium tags-filter --overwrite -o {filter_path_wsl} {subset_path_wsl} w/highway={highway_tags}"
             subprocess.run(command, shell=True)
             
-            filter_paths.append(filter_path)
+            filter_paths_wsl.append(filter_path_wsl)
             
-        filter_paths = " ".join(filter_paths)
             
         logging.info("Merging OSM extracts")
-        command = f"osmium merge {filter_paths} --overwrite -o {output_file_path}"
+            
+        filter_paths_wsl = " ".join(filter_paths_wsl)
+        merged_path_wsl = windows_path_to_wsl(merged_path)
+        
+        command = f"wsl osmium merge {filter_paths_wsl} --overwrite -o {merged_path_wsl}"
         subprocess.run(command, shell=True)
         
     else:
         
-        logging.info("OSM data already pre-processed. Reusing the file " + str(output_file_path))
+        logging.info("OSM data already pre-processed. Reusing the file " + str(merged_path))
 
-    return output_file_path
+    return merged_path
+    
+    
+def windows_path_to_wsl(path):
+    # Convert Path object to string for regex operations
+    path_str = str(path)
+
+    # This regex pattern will match the drive letter and colon (e.g., 'C:')
+    pattern = r"^[a-zA-Z]:"
+
+    # Check if the path matches the Windows drive pattern
+    if re.match(pattern, path_str):
+        # Replace backslashes with forward slashes and drive letter
+        path_str = re.sub(pattern, lambda x: f"/mnt/{x.group().lower()[0]}", path_str)
+        path_str = path_str.replace("\\", "/")
+
+    return path_str
 
 
-def get_dodgr_osm_tags(dodgr_mode):
-    
-    # Get OSM highway tags that are valid for the given mode
-    # (= tags of ways that dodgr uses for routing for this mode)
-    path_to_r_script = pathlib.Path(__file__).parents[1] / "get_dodgr_osm_tags.R"
-    cmd = ["Rscript", path_to_r_script, "-d", dodgr_mode]
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    output, error = process.communicate()
-    
-    osm_tags = output.decode().strip()
-    
-    return osm_tags
+def wsl_path_to_windows(path):
+    # This regex pattern will match the WSL path format (e.g., '/mnt/c/')
+    pattern = r"^/mnt/[a-zA-Z]/"
+
+    # Check if the path matches the WSL path pattern
+    if re.match(pattern, path):
+        # Replace the '/mnt/' part with the drive letter and a colon
+        path = re.sub(pattern, lambda x: f"{x.group()[5].upper()}:\\", path)
+
+        # Replace forward slashes with backslashes
+        path = path.replace("/", "\\")
+
+    return path

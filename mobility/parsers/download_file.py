@@ -5,7 +5,7 @@ import logging
 
 from rich.progress import Progress
 
-def download_file(url, path):
+def download_file(url, path, force=False):
     """
         Downloads a file to a given path. Creates the containing parent folde, if 
         it does not exist. 
@@ -18,6 +18,9 @@ def download_file(url, path):
         Returns:
             None
     """
+
+    
+    logging.info("Downloading " + url)
     
     path = pathlib.Path(path)
     
@@ -27,9 +30,7 @@ def download_file(url, path):
     
     # Download the file if not already existing
     # (or forcing a redownload)
-    if path.exists() is False:
-        
-        logging.info("Downloading " + url)
+    if path.exists() is False or force is True:
          
         verify = os.environ["MOBILITY_CERT_FILE"] if "MOBILITY_CERT_FILE" in os.environ.keys() else True
         
@@ -61,4 +62,4 @@ def download_file(url, path):
         
     else:
     
-        logging.info("Reusing already downloaded file at : " + str(path) + ".")
+        logging.info("File already exists at " + str(path) + ". Change the force parameter to True to redownload it anyway.")
