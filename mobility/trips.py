@@ -13,21 +13,6 @@ from mobility.safe_sample import safe_sample
 from mobility.parsers import MobilitySurvey
 
 class Trips(Asset):
-    """
-    A class to model and generate trips based on a population asset and mobility survey data.
-    
-    Attributes:
-        population (Asset): The population for which trips will be generated.
-        source (str): The source of the mobility survey data (default is "EMP-2019").
-        cache_path (pathlib.Path): Path to cache the generated trips data.
-    
-    Methods:
-        get_cached_asset: Returns the cached trips data as a pandas DataFrame.
-        create_and_get_asset: Generates trips for the population and caches the data.
-        prepare_survey_data: Prepares the necessary mobility survey data for trip generation.
-        get_population_trips: Generates trips for each individual in the population.
-        get_individual_trips: Samples trips for an individual based on their profile.
-    """
     
     def __init__(self, population: Asset, source: str = "EMP-2019"):
         
@@ -42,12 +27,6 @@ class Trips(Asset):
         
         
     def get_cached_asset(self) -> pd.DataFrame:
-        """
-        Fetches the cached trips data.
-        
-        Returns:
-            pd.DataFrame: The cached trips data as a pandas DataFrame.
-        """
 
         logging.info("Trips already prepared. Reusing the file : " + str(self.cache_path))
         trips = pd.read_parquet(self.cache_path)
@@ -55,12 +34,6 @@ class Trips(Asset):
         return trips
     
     def create_and_get_asset(self) -> pd.DataFrame:
-        """
-        Generates trips for each individual in the population based on the mobility survey data, then caches the data.
-        
-        Returns:
-            pd.DataFrame: The generated trips for the population.
-        """
         
         logging.info("Generating trips for each individual in the population...")
 
@@ -75,13 +48,7 @@ class Trips(Asset):
 
         return trips
     
-    def prepare_survey_data(self) -> None:
-        """
-        Prepares the mobility survey data for trip generation by fetching and organizing relevant data subsets.
-        
-        Returns:
-            None
-        """
+    def prepare_survey_data(self):
         
         mobility_survey = self.inputs["mobility_survey"].get()
         self.short_trips_db = mobility_survey["short_trips"]
@@ -93,17 +60,7 @@ class Trips(Asset):
         self.p_car = mobility_survey["p_car"]
         
         
-    def get_population_trips(self, population: pd.DataFrame, transport_zones: gpd.GeoDataFrame) -> pd.DataFrame:
-        """
-        Generates trips for the entire population by merging population data with transport zone data and then individually generating trips for each person.
-        
-        Args:
-            population (pd.DataFrame): The population data for which trips are to be generated.
-            transport_zones (gpd.GeoDataFrame): Geographic data for transport zones.
-        
-        Returns:
-            pd.DataFrame: A DataFrame containing generated trips for the population.
-        """
+    def get_population_trips(self, population: pd.DataFrame, transport_zones: gpd.GeoDataFrame):
         
         population = pd.merge(
             population,
@@ -145,7 +102,7 @@ class Trips(Asset):
         
     def get_individual_trips(
         self, csp, csp_household, urban_unit_category, n_pers, n_cars, n_years=1
-    ) -> pd.DataFrame:
+    ):
         """
         Samples long distance trips and short distance trips from survey data (prepared with prepare_survey_data),
         for a specific person's profile (CSP, urban unit category, number of persons and cars of the household).
