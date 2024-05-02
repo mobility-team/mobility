@@ -83,7 +83,7 @@ class TravelCosts(Asset):
         if mode in ["car", "walk", "bicycle"]:
             osm = self.inputs["osm"]
             graph = self.dodgr_graph(transport_zones, osm, mode)
-            costs = self.dodgr_costs(transport_zones, graph)
+            costs = self.dodgr_costs(transport_zones, mode, graph)
         else:
             gtfs = self.inputs["gtfs"]
             costs = self.gtfs_router_costs(transport_zones, gtfs)
