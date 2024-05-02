@@ -41,13 +41,6 @@ class TravelCosts(Asset):
         """
 
         self.dodgr_modes = {"car": "motorcar", "bicycle": "bicycle", "walk": "foot"}
-        
-        available_modes = list(self.dodgr_modes.keys())
-        if mode not in available_modes:
-            raise ValueError(
-                "Mode '" + mode + "' is not available. Available options are : " \
-                + ", ".join(available_modes) + "."
-            )
 
         osm = OSMData(transport_zones, list(self.dodgr_modes.values()))
 
@@ -81,8 +74,6 @@ class TravelCosts(Asset):
         transport_zones = self.inputs["transport_zones"]
         osm = self.inputs["osm"]
         mode = self.inputs["mode"]
-        
-        # if mode in ["car", ""]
 
         graph = self.dodgr_graph(transport_zones, osm, mode)
         costs = self.dodgr_costs(transport_zones, mode, graph)
