@@ -137,7 +137,6 @@ def install_r_packages():
     script.run(
         args=[
             "dodgr",
-            "gtfsrouter",
             "sf",
             "geodist",
             "dplyr",
@@ -146,9 +145,7 @@ def install_r_packages():
             "data.table",
             "reshape2",
             "arrow",
-            "stringr",
-            "pbapply",
-            "hms"
+            "stringr"
         ]
     )
 
