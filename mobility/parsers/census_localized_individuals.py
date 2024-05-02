@@ -3,7 +3,6 @@ import pathlib
 import logging
 import zipfile
 import pandas as pd
-import numpy as np
 
 from mobility.asset import Asset
 from mobility.parsers.download_file import download_file
@@ -122,9 +121,7 @@ class CensusLocalizedIndividuals(Asset):
         ])
         
         individuals["n_pers_household"] = individuals["n_pers_household"].astype(int)
-        
         individuals["n_cars"] = individuals["n_cars"].astype(int)
-        individuals["n_cars"] = np.where(individuals["n_cars"] < 2, individuals["n_cars"].astype(str), "2+")
         
         individuals.to_parquet(self.cache_path)
         

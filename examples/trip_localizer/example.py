@@ -11,6 +11,6 @@ mobility.set_params(
 
 transport_zones = mobility.TransportZones("69383", method="radius", radius=20.0)
 
-population = mobility.Population(transport_zones, sample_size=500)
+population = mobility.Population(transport_zones, sample_size=100)
 
 trips = mobility.Trips(transport_zones, population)
