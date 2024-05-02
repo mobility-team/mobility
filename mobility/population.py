@@ -6,8 +6,6 @@ import pandas as pd
 import numpy as np
 import geopandas as gpd
 
-from rich.progress import Progress
-
 from mobility.asset import Asset
 from mobility.parsers import CityLegalPopulation
 from mobility.parsers import CensusLocalizedIndividuals
@@ -107,28 +105,17 @@ class Population(Asset):
 
         logging.info("Sampling census data in each transport zone...")
         
-        cities = sample_sizes.to_dict(orient="records")
         individuals = []
         
-        with Progress() as progress:
-            
-            task = progress.add_task("[green]Sampling individuals...", total=len(cities))
-        
-            for city in cities:
-                
-                indiv = census_data.loc[city["CANTVILLE"]].sample(city["n_persons"], weights="weight")
-                indiv = indiv.reset_index()
-                indiv = indiv[["age", "socio_pro_category", "ref_pers_socio_pro_category", "n_pers_household", "n_cars"]]
-                indiv["transport_zone_id"] = city["transport_zone_id"]
-                individuals.append(indiv)
-                
-                progress.update(task, advance=1)
-        
+        for city in sample_sizes.to_dict(orient="records"):
+            indiv = census_data.loc[city["CANTVILLE"]].sample(city["n_persons"], weights="weight")
+            indiv = indiv.reset_index()
+            indiv = indiv[["age", "socio_pro_category", "ref_pers_socio_pro_category", "n_pers_household", "n_cars"]]
+            indiv["transport_zone_id"] = city["transport_zone_id"]
+            individuals.append(indiv)
             
         individuals = pd.concat(individuals)
         
         individuals["individual_id"] = [shortuuid.uuid() for _ in range(individuals.shape[0])]
         
         return individuals
-    
-    
