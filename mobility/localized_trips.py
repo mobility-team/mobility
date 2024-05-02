@@ -6,28 +6,27 @@ import numpy as np
 
 from mobility.asset import Asset
 
-from mobility.transport_mode_choice_model import TransportModeChoiceModel
-from mobility.work_destination_choice_model import WorkDestinationChoiceModel
-from mobility.multimodal_travel_costs import MultimodalTravelCosts
-
+from mobility.travel_costs import TravelCosts
+from mobility.public_transport_travel_costs import PublicTransportTravelCosts
+from mobility import radiation_model
+from mobility.get_insee_data import get_insee_data
 
 class LocalizedTrips(Asset):
     
-    def __init__(
-            self, trips: Asset, cost_of_time: float = 20.0,
-            work_alpha: float = 0.0, work_beta: float = 1.0
-        ):
+    def __init__(self, trips: Asset):
         
         transport_zones = trips.inputs["population"].inputs["transport_zones"]
         
-        travel_costs = MultimodalTravelCosts(transport_zones)
-        trans_mode_cm = TransportModeChoiceModel(travel_costs, cost_of_time)
-        work_dest_cm = WorkDestinationChoiceModel(transport_zones, travel_costs, cost_of_time, work_alpha, work_beta)
+        car_travel_costs = TravelCosts(transport_zones, "car")
+        walk_travel_costs = TravelCosts(transport_zones, "walk")
+        bicycle_travel_costs = TravelCosts(transport_zones, "bicycle")
+        pub_trans_travel_costs = PublicTransportTravelCosts(transport_zones)
         
         inputs = {
-            "travel_costs": travel_costs,
-            "trans_mode_cm": trans_mode_cm,
-            "work_dest_cm": work_dest_cm,
+            "car_travel_costs": car_travel_costs,
+            "walk_travel_costs": walk_travel_costs,
+            "bicycle_travel_costs": bicycle_travel_costs,
+            "pub_trans_travel_costs": pub_trans_travel_costs,
             "trips": trips
         }
 
@@ -48,33 +47,92 @@ class LocalizedTrips(Asset):
         
         logging.info("Localizing each trip...")
         
-        trips = self.inputs["trips"].get()
-        population = self.inputs["trips"].inputs["population"].get()
-        travel_costs = self.inputs["travel_costs"].get()
-        trans_mode_cm = self.inputs["trans_mode_cm"].get()
-        work_dest_cm = self.inputs["work_dest_cm"].get()
+        trips_asset = self.inputs["trips"]
+        population_asset = trips_asset.inputs["population"]
         
-        trips = self.localize_trips(trips, population, travel_costs, trans_mode_cm, work_dest_cm)
+        transport_zones = population_asset.inputs["transport_zones"].get()
+        population = population_asset.get()
+        trips = trips_asset.get()
+        
+        car_travel_costs = self.inputs["car_travel_costs"].get()
+        walk_travel_costs = self.inputs["car_travel_costs"].get()
+        bicycle_travel_costs = self.inputs["bicycle_travel_costs"].get()
+        pub_trans_travel_costs = self.inputs["pub_trans_travel_costs"].get()
+        
+        trips = self.localize_trips(
+            transport_zones, population, car_travel_costs, walk_travel_costs,
+            bicycle_travel_costs, pub_trans_travel_costs, trips
+        )
+        
         trips.to_parquet(self.cache_path)
 
         return trips
     
     
     def localize_trips(
-            self, trips: pd.DataFrame, population: pd.DataFrame,
-            travel_costs: pd.DataFrame,
-            trans_mode_cm: pd.DataFrame, work_dest_cm: pd.DataFrame
+            self, transport_zones: pd.DataFrame, population: pd.DataFrame,
+            car: pd.DataFrame, walk: pd.DataFrame, 
+            bicycle: pd.DataFrame, pub_trans: pd.DataFrame,
+            trips: pd.DataFrame
         ):
         
-        trips = self.sample_origins_destinations(trips, population, work_dest_cm)
-        trips = self.sample_modes(trips, trans_mode_cm)
-        trips = self.replace_distances(trips, travel_costs)
+        costs = self.prepare_costs(car, walk, bicycle, pub_trans)
+        trips = self.sample_origins_destinations(trips, transport_zones, population, costs)
+        trips = self.sample_modes(trips, costs)
+        trips = self.replace_distances(trips, costs)
 
         return trips
     
+    
+    def prepare_costs(
+            self, car: pd.DataFrame, walk: pd.DataFrame, 
+            bicycle: pd.DataFrame, pub_trans: pd.DataFrame
+        ):
+        
+        logging.info("Aggregating travel costs between transport zones...")
+        
+        car["mode"] = "car"
+        walk["mode"] = "walk"
+        bicycle["mode"] = "bicycle"
+        
+        # Fix public transport times to only have one row per OD pair
+        # (should be fixed in PublicTransportTravelCosts !)
+        pub_trans = pub_trans.sort_values(["from", "to", "time"])
+        pub_trans = pub_trans.groupby(["from", "to"], as_index=False).first()
+        
+        costs = pd.concat([
+            car,
+            walk,
+            bicycle,
+            pub_trans
+        ])
+        
+        # Remove null costs that might occur
+        # (bug that should be fixed in TravelCosts !)
+        costs = costs[(~costs["time"].isnull()) & (~costs["distance"].isnull())]
+        
+        costs["from"] = costs["from"].astype(int)
+        costs["to"] = costs["to"].astype(int)
+        
+        costs.set_index(["from", "to", "mode"], inplace=True)
+        
+        # Basic utility function : U = ct*time
+        # Cost of time (ct) : 10 €/h
+        costs["utility"] = -20*costs["time"]
+        
+        costs["prob"] = np.exp(costs["utility"])
+        costs["prob"] = costs["prob"]/costs.groupby(["from", "to"])["prob"].sum()
+        
+        costs["average_utility"] = costs["prob"]*costs["utility"]
+        
+        return costs
+    
 
     
-    def sample_origins_destinations(self, trips, population, work_dest_cm):
+    
+    def sample_origins_destinations(self, trips, transport_zones, population, costs):
+        
+        work_prob = self.prepare_work_destination_choice_model(transport_zones, costs)
         
         logging.info("Sampling origins and destinations by applying the choice models...")
         
@@ -84,7 +142,7 @@ class LocalizedTrips(Asset):
         home["p"] = 1.0
         
         # Individual -> work mapping
-        work = work_dest_cm.copy()
+        work = work_prob.reset_index()
         work.columns = ["transport_zone_id", "to_transport_zone_id", "p"]
         work = pd.merge(population[["individual_id", "transport_zone_id"]], work, on=["transport_zone_id"])
         work = work[["individual_id", "to_transport_zone_id", "p"]]
@@ -128,13 +186,53 @@ class LocalizedTrips(Asset):
         return trips
     
     
-    def sample_modes(self, trips, trans_mode_cm):
+    def prepare_work_destination_choice_model(self, transport_zones, costs):
+        
+        logging.info("Preparing the work destination choice model...")
+    
+        insee_data = get_insee_data()
+        active_population = insee_data["active_population"]
+        jobs = insee_data["jobs"]
+        
+        active_population = active_population.loc[transport_zones["admin_id"]].sum(axis=1).reset_index()
+        jobs = jobs.loc[transport_zones["admin_id"]].sum(axis=1).reset_index()
+        
+        active_population = pd.merge(active_population, transport_zones[["admin_id", "transport_zone_id"]], left_on="CODGEO", right_on="admin_id")
+        jobs = pd.merge(jobs, transport_zones[["admin_id", "transport_zone_id"]], left_on="CODGEO", right_on="admin_id")
+        
+        active_population = active_population[["transport_zone_id", 0]]
+        active_population.columns = ["transport_zone_id", "source_volume"]
+        active_population.set_index("transport_zone_id", inplace=True)
+        
+        jobs = jobs[["transport_zone_id", 0]]
+        jobs.columns = ["transport_zone_id", "sink_volume"]
+        jobs.set_index("transport_zone_id", inplace=True)
+        
+        average_utilities = costs.groupby(["from", "to"])["average_utility"].sum()
+        average_utilities = average_utilities.reset_index()
+        average_utilities.columns = ["from", "to", "cost"]
+        
+        flows, _, _ = radiation_model.iter_radiation_model(
+            sources=active_population,
+            sinks=jobs,
+            costs=average_utilities,
+            alpha=0.0,
+            beta=1.0
+        )
+        
+        work_prob = flows/flows.groupby("from").sum()
+        
+        return work_prob
+    
+    
+    def sample_modes(self, trips, costs):
         
         # Individual -> origin, destination, mode mapping
         logging.info("Replacing modes for localized trips...")
         
-        modes = trans_mode_cm.reset_index()[["from", "to", "mode", "prob"]]
+        modes = costs.reset_index()[["from", "to", "mode", "prob"]]
         modes.columns = ["from_transport_zone_id", "to_transport_zone_id", "mode", "p"]
+        
         
         localized_trips = trips[(~trips["from_transport_zone_id"].isnull()) & (~trips["to_transport_zone_id"].isnull())].copy()
         localized_trips = localized_trips[["individual_id", "trip_id", "from_transport_zone_id", "to_transport_zone_id"]]
@@ -142,6 +240,8 @@ class LocalizedTrips(Asset):
         localized_trips = localized_trips.melt(["individual_id", "trip_id"])
         localized_trips["value"] = localized_trips["value"].astype(int).astype(str)
         localized_trips = localized_trips.sort_values("value")
+        
+        # localized_trips = localized_trips.set_index(["individual_id", "trip_id"])
         
         trip_routes = localized_trips.groupby(["individual_id", "trip_id"], as_index=False)["value"].apply("-".join)
         
