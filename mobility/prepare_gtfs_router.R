@@ -6,6 +6,7 @@ library(arrow)
 library(lubridate)
 library(sfheaders)
 
+
 args <- commandArgs(trailingOnly = TRUE)
 
 tz_file_path <- args[1]
@@ -40,59 +41,46 @@ gtfs_file_paths <- lapply(1:length(gtfs_file_paths), function(i) {
 
 gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
   
-  message(paste0("Loading GTFS file : ", dataset$file))
-  
-  gtfs <- NULL
+  message(paste0("Loading GTFS file : ", dataset$name))
   
   # Load the GTFS data
-  tryCatch({
-    
-    gtfs <- extract_gtfs(dataset$file)
-    
-    # Keep only stops within the region
-    stops <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
-    st_crs(stops) <- 4326
-    stops <- st_intersection(stops, transport_zones_buffer)
-    
-    gtfs$stops <- gtfs$stops[stop_id %in% stops$stop_id]
-    gtfs$stop_times <- gtfs$stop_times[stop_id %in% stops$stop_id]
-    gtfs$stop_times <- gtfs$stop_times[order(trip_id, arrival_time)]
-    
-    # Make all ids unique
-    columns <- c("service_id", "stop_id", "agency_id", "trip_id", "route_id", "from_stop_id", "to_stop_id")
-    for (table in names(gtfs)) {
-      for (col in columns) {
-        if (col %in% colnames(gtfs[[table]])) {
-          gtfs[[table]][, (col) := paste0(dataset$name, "-", get(col))]
-        }
+  gtfs <- extract_gtfs(dataset$file)
+  
+  # Keep only stops within the region
+  stops <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
+  st_crs(stops) <- 4326
+  stops <- st_intersection(stops, transport_zones_buffer)
+  
+  gtfs$stops <- gtfs$stops[stop_id %in% stops$stop_id]
+  gtfs$stop_times <- gtfs$stop_times[stop_id %in% stops$stop_id]
+  gtfs$stop_times <- gtfs$stop_times[order(trip_id, arrival_time)]
+  
+  # Make all ids unique
+  columns <- c("service_id", "stop_id", "agency_id", "trip_id", "route_id", "from_stop_id", "to_stop_id")
+  for (table in names(gtfs)) {
+    for (col in columns) {
+      if (col %in% colnames(gtfs[[table]])) {
+        gtfs[[table]][, (col) := paste0(dataset$name, "-", get(col))]
       }
     }
-    
-    # Remove calendar data that does not respect the GTFS format
-    # (some feed erroneously copy their calendar_dates data in the calendar data)
-    calendar_cols <- c(
-      "service_id", "monday", "tuesday", "wednesday", "thursday", "friday", 
-      "saturday", "sunday", "start_date", "end_date"
-    )
-    
-    if (sum(colnames(gtfs$calendar) %in% calendar_cols) != 10) {
-      gtfs$calendar <- NULL  
-    }
-    
-    # Remove stops that are not in any trip 
-    gtfs$stops <- gtfs$stops[stop_id %in% gtfs$stop_times$stop_id]
-    
-    
-  }, warning = function(w) {
-    info(logger, w$message)
-  }, error = function(e) {
-    info(logger, "There was an error loading data from the zip file (possibly a corrupted archive).")
-  })
+  }
+  
+  # Remove calendar data that does not respect the GTFS format
+  # (some feed erroneously copy their calendar_dates data in the calendar data)
+  calendar_cols <- c(
+    "service_id", "monday", "tuesday", "wednesday", "thursday", "friday", 
+    "saturday", "sunday", "start_date", "end_date"
+  )
+  
+  if (sum(colnames(gtfs$calendar) %in% calendar_cols) != 10) {
+    gtfs$calendar <- NULL  
+  }
+  
+  # Remove stops that are not in any trip 
+  gtfs$stops <- gtfs$stops[stop_id %in% gtfs$stop_times$stop_id]
   
   return(gtfs)
 })
-
-gtfs_all <- Filter(function(x) {!is.null(x)}, gtfs_all)
 
 # Merge all datasets
 gtfs <- list()

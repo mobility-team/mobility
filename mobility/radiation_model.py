@@ -1,4 +1,3 @@
-import logging
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -279,7 +278,7 @@ def iter_radiation_model(
     while (
         iteration < max_iter and flows["flow_volume"].sum() > 0.01 * total_source_volume
     ):
-        logging.info("Iteration n°{} of the radiation model".format(iteration))
+        print("Iteration n°{} of the radiation model".format(iteration))
         iteration += 1
 
         # Compute the radiation model with the rest of the demand and sink volume
@@ -293,7 +292,7 @@ def iter_radiation_model(
         rest_sink.append(sink_volume.sum())
 
     if iteration == max_iter:
-        logging.info("The iterations of the radiation model didn't converge")
+        print("The iterations of the radiation model didn't converge")
     if plot:
         plt.figure(figsize=(18, 5))
         plt.subplot(121)
@@ -301,7 +300,7 @@ def iter_radiation_model(
         plt.xticks(np.arange(1, iteration + 1))
         plt.xlabel("n° itérations")
         plt.ylabel("Demand volume not fulfilled")
-        
+
         print("Total demand volume : {}".format(sources["source_volume"].sum()))
         print(
             "Rest of demand volume after {} iterations : {}".format(
@@ -321,9 +320,6 @@ def iter_radiation_model(
                 iteration, rest_sink[-1]
             )
         )
-    
-    # Remove possible null flows
-    total_flows = total_flows[total_flows > 0.0]
 
     return total_flows, source_volume, sink_volume
 
