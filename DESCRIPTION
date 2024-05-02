@@ -5,7 +5,6 @@ Description: Manages R package dependencies for GitHub Actions.
 License: GPL-3
 Imports:
     dodgr,
-    osmdata,
     gtfsrouter,
     sf,
     geodist,
