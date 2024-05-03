@@ -14,7 +14,7 @@ transport_zones = mobility.TransportZones("69387", method="radius", radius=30.0)
 
 travel_costs = mobility.MultimodalTravelCosts(transport_zones)
 trans_mode_cm = mobility.TransportModeChoiceModel(travel_costs, cost_of_time=20.0)
-work_dest_cm = mobility.WorkDestinationChoiceModel(transport_zones, travel_costs, cost_of_time=20.0, radiation_model_alpha=0.2, radiation_model_beta=0.8)
+work_dest_cm = mobility.WorkDestinationChoiceModel(transport_zones, travel_costs)
 
 population = mobility.Population(transport_zones, 100)
 
