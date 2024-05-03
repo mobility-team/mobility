@@ -3,7 +3,7 @@ sys.path.insert(0,"../..")
 
 from mobility.radiation_departments import *
 
-dep =["35"]*
+dep =["35"]
 Age=1
 
 (
