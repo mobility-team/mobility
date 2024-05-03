@@ -279,7 +279,7 @@ def iter_radiation_model(
     while (
         iteration < max_iter and flows["flow_volume"].sum() > 0.01 * total_source_volume
     ):
-        logging.info("Iteration n°{} of the radiation model".format(iteration))
+        # logging.info("Iteration n°{} of the radiation model".format(iteration))
         iteration += 1
 
         # Compute the radiation model with the rest of the demand and sink volume
