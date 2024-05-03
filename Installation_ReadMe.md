@@ -1,7 +1,7 @@
 # Processus d'installation
 
 
-## Installer gitdesktop (ou github web)
+## Installer GitDesktop (ou GitHub Web)
 
  - Cloner le dossier mobility sur l'ordinateur avec l'URL : https://github.com/mobility-team/mobility.git
  - Fetch la branche school-model
