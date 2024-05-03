@@ -18,7 +18,7 @@ dependencies = [
   "python-dotenv",
   "geojson",
   "matplotlib",
-  "throttler",
+  "seaborn",
   "sphinxcontrib-napoleon",
   "myst_parser",
   "streamlit",
