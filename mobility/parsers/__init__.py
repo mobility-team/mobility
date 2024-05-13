@@ -2,3 +2,4 @@ from .work_home_flows import download_work_home_flows
 from .city_legal_population import CityLegalPopulation
 from .census_localized_individuals import CensusLocalizedIndividuals
 from .mobility_survey import MobilitySurvey
+from .local_admin_units import LocalAdminUnits
