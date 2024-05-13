@@ -1,5 +1,7 @@
-from mobility.radiation_departments import (get_data_for_model, run_model_for_territory, compare_insee_and_model,
-                                            compare_thresholds, optimise_parameters)
+from mobility.radiation_departments import (get_data_for_model_work, get_data_for_model_school,
+                                            get_data_for_model_school_multi, run_model_for_territory,
+                                            compare_insee_and_model, compare_thresholds,
+                                            optimise_parameters)
 from mobility.radiation_FR_CH import get_franco_swiss_data_for_model
 
 
@@ -13,7 +15,7 @@ def test_radiation_model():
         costs_territory,
         coordinates,
         raw_flowDT,
-    ) = get_data_for_model(lst_departments, test=True)
+    ) = get_data_for_model_work(lst_departments, test=True)
 
     # FIRST RUN
     (
