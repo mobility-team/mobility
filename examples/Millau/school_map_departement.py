@@ -1,13 +1,11 @@
 from mobility.get_insee_data import get_insee_data
 from mobility.parsers import download_work_home_flows,prepare_school_VT
 import mobility.radiation_model as rm
-import mobility.school_map as sm
-import mobility.proximity_model as pm
+import mobility.school_map_model as smm
 import numpy as np
 import pandas as pd
 import os
 from pathlib import Path
-
 
 
 COMMUNES_COORDINATES_CSV = "donneesCommunesFrance.csv"
@@ -249,6 +247,10 @@ def get_data_for_model_school(
     db_students = insee_data["students"]
     db_schools = insee_data["schools"]
     
+    
+    db_schools_map = insee_data["schools_map"]
+    joined_schools_schoolsmap = pd.merge(db_schools_map, db_schools, how='left', on='Code_RNE')
+    
     db_students_ = db_students[db_students['TrancheAge'] == Age].drop(columns=['TrancheAge'])
     
     db_schools_ = db_schools[db_schools['Type_etablissement'] == Age].drop(columns=['Type_etablissement'])
@@ -261,7 +263,6 @@ def get_data_for_model_school(
 
     sinks_territory = sinks_territory.set_index("CODGEO")
     sinks_territory.rename(columns={"Nombre_d_eleves": "sink_volume"}, inplace=True)
-    sinks_territory = sinks_territory[sinks_territory['sink_volume'] != 0]
     sinks_territory = sinks_territory.drop(columns=["DEP"])
     
     # Only keep the sinks in the chosen departements
@@ -299,13 +300,7 @@ def get_data_for_model_school(
         usecols=["NOM_COM", "INSEE_COM", "x", "y"],
         dtype={"INSEE_COM": str},
     )
-    
-    for idx, value in coordinates['INSEE_COM'].items():
-        if len(value)==4:
-            coordinates.at[idx, 'INSEE_COM'] = "0"+value
-    
     coordinates.set_index("INSEE_COM", inplace=True)
-    
     
     # The multiplication by 1000 is only for visualization purposes
     coordinates["x"] = coordinates["x"] * 1000
@@ -317,11 +312,6 @@ def get_data_for_model_school(
         usecols=["INSEE_COM", "distance_interne"],
         dtype={"INSEE_COM": str},
     )
-    
-    for idx, value in surfaces['INSEE_COM'].items():
-        if len(value)==4:
-            surfaces.at[idx, 'INSEE_COM'] = "0"+value
-    
     surfaces.set_index("INSEE_COM", inplace=True)
 
     # Compute the distance between cities
@@ -364,7 +354,7 @@ def get_data_for_model_school(
         sinks_territory,
         costs_territory,
         coordinates,
-        raw_flowDT
+        raw_flowDT,
     )
 
 def get_data_for_model_school_multi(
@@ -404,30 +394,14 @@ def get_data_for_model_school_multi(
         raw_flowDT,
     ) = get_data_for_model_school(lst_departments,1)
     
-    raw_flowDT=raw_flowDT.drop(['Tranche_Age'],axis=1)
-    
     for Age in range(2,4):
-        (
-            sources_territory_temp,
-            sinks_territory_temp,
-            costs_territory_temp,
-            coordinates_temp,
-            raw_flowDT_temp,
-        ) = get_data_for_model_school(["75"],2)
+        (sources_territory_temp,
+        sinks_territory_temp
+        ) = get_data_for_model_school(lst_departments,Age)[0],[1]
         
         sources_territory.add(sources_territory_temp, fill_value=0)
         sinks_territory.add(sinks_territory_temp, fill_value=0)
-        
-        raw_flowDT_temp=raw_flowDT_temp.drop(['Tranche_Age'],axis=1)
-        # Fusionner les deux DataFrames sur les colonnes de codes communes
-        raw_flowDT_temp = pd.merge(raw_flowDT, raw_flowDT_temp, on=['COMMUNE', 'DCLT','DEP','DEP2'], how='outer', suffixes=('_df1', '_df2'))
-        # Remplacer les valeurs NaN par 0
-        raw_flowDT_temp = raw_flowDT_temp.fillna(0)
-        # Somme des valeurs pour les paires de codes identiques
-        raw_flowDT_temp['IPONDI'] = raw_flowDT_temp['IPONDI_df1'] + raw_flowDT_temp['IPONDI_df2']
-        # Supprimer les colonnes de valeurs inutiles
-        raw_flowDT = raw_flowDT_temp.drop(['IPONDI_df1', 'IPONDI_df2'], axis=1)
-
+    
     return (
         sources_territory,
         sinks_territory,
@@ -436,16 +410,14 @@ def get_data_for_model_school_multi(
         raw_flowDT,
     )
     
-
-def run_model_for_territory(
+def run_school_map_territory(
+    dep,
     sources_territory,
     sinks_territory,
     costs_territory,
     coordinates,
     raw_flowDT,
     model,
-    data,
-    plot=True,
     alpha=0,
     beta=1,
     subset=None,
@@ -487,7 +459,7 @@ def run_model_for_territory(
 
     """
 
-    assert data=="work" or data=="school" or model=="radiation" or model=="proximity" or model=="school_map"
+    assert model=="work" or model=="school"
 
     print(
         "Model running with {} sources, {} sinks and {} costs".format(
@@ -495,92 +467,67 @@ def run_model_for_territory(
         )
     )
 
-    if model=="radiation":
-        # COMPUTE THE MODEL : Radiation
-        (total_flows, source_rest_volume, sink_rest_volume) = rm.iter_radiation_model(
-            sources_territory,
-            sinks_territory,
-            costs_territory,
-            alpha=alpha,
-            beta=beta,
-            plot=False,
-        )
-    
-    if model=="proximity" :
-        # COMPUTE THE MODEL : Proximity
-        total_flows= pm.proximity_model(
-            sources_territory,
-            sinks_territory,
-            costs_territory,
-            coordinates,
-        )
+    # COMPUTE THE MODEL
+    total_flows = smm.school_map_model(
+        dep,
+        sources_territory
+    )
 
-    
-    if model=="school_map":
-        # COMPUTE THE MODEL : School map
-        total_flows= sm.school_map_model(
-            sources_territory,
-            sinks_territory
-        )
-    
-    
-    if plot :
-        # PLOT THE SOURCES AND THE SINKS
-        plot_sources = sources_territory.rename(columns={"source_volume": "volume"})
-        if data=="work":
-            rm.plot_volume(plot_sources, coordinates, n_locations=10, title="Volume d'actifs")
-        if data =="school":
-            rm.plot_volume(plot_sources, coordinates, n_locations=10, title="Volume d'élèves")
-    
-        plot_sinks = sinks_territory.rename(columns={"sink_volume": "volume"})
-        if data=="work":
-            rm.plot_volume(plot_sinks, coordinates, n_locations=10, title="Volume d'emplois")
-        if data =="school":
-            rm.plot_volume(plot_sinks, coordinates, n_locations=10, title="Volume des établissements scolaires")
-    
-        # PLOT THE FLOWS COMPUTED BY THE MODEL
-    
+    # PLOT THE SOURCES AND THE SINKS
+    plot_sources = sources_territory.rename(columns={"source_volume": "volume"})
+    if model=="work":
+        rm.plot_volume(plot_sources, coordinates, n_locations=10, title="Volume d'actifs")
+    if model =="school":
+        rm.plot_volume(plot_sources, coordinates, n_locations=10, title="Volume d'élèves")
+
+    plot_sinks = sinks_territory.rename(columns={"sink_volume": "volume"})
+    if model=="work":
+        rm.plot_volume(plot_sinks, coordinates, n_locations=10, title="Volume d'emplois")
+    if model =="school":
+        rm.plot_volume(plot_sinks, coordinates, n_locations=10, title="Volume des établissements scolaires")
+
+    # PLOT THE FLOWS COMPUTED BY THE MODEL
+
     plot_flows = total_flows.reset_index()
     plot_sources = sources_territory
-    
-    if plot :
-        if data=="work":
-            txt="travail"
-        elif data =="school":
-            txt="école"
-            
-            
+
+    if model=="work":
+        txt="travail"
+    if model =="school":
+        txt="école"
+        
+        
+    rm.plot_flow(
+        plot_flows,
+        coordinates,
+        sources=None,
+        n_flows=500,
+        n_locations=20,
+        size=10,
+        title=(
+            "(1) Flux domicile-{} générés par le modèle"
+            " - alpha = {} - beta = {}"
+        ).format(txt,alpha, beta),
+    )
+
+    # PLOT SUBSET FLOWS
+
+    if subset is not None:
+        print("Visualisation for the chosen subset")
+        mask = plot_flows["from"].apply(lambda x: x in subset)
+        plot_subset_flows = plot_flows.loc[mask]
         rm.plot_flow(
-            plot_flows,
+            plot_subset_flows,
             coordinates,
             sources=None,
             n_flows=500,
-            n_locations=20,
+            n_locations=len(subset)//5,
             size=10,
             title=(
-                "(1) Flux domicile-{} générés par le modèle : {}"
+                "(1) Flux domicile-{} générés par le modèle dans l'échantillon"
                 " - alpha = {} - beta = {}"
-            ).format(txt,model,alpha, beta),
+            ).format(txt,alpha, beta),
         )
-    
-        # PLOT SUBSET FLOWS
-    
-        if subset is not None:
-            print("Visualisation for the chosen subset")
-            mask = plot_flows["from"].apply(lambda x: x in subset)
-            plot_subset_flows = plot_flows.loc[mask]
-            rm.plot_flow(
-                plot_subset_flows,
-                coordinates,
-                sources=None,
-                n_flows=500,
-                n_locations=len(subset)//5,
-                size=10,
-                title=(
-                    "(1) Flux domicile-{} générés par le modèle {} dans l'échantillon"
-                    " - alpha = {} - beta = {}"
-                ).format(txt,model,alpha, beta),
-            )
 
     # PLOT THE FLOWS FROM THE INSEE DATA
 
@@ -589,16 +536,15 @@ def run_model_for_territory(
         columns={"IPONDI": "flow_volume", "COMMUNE": "from", "DCLT": "to"}, inplace=True
     )
 
-    if plot:
-        rm.plot_flow(
-            plot_flowDT,
-            coordinates,
-            sources=plot_sources,
-            n_flows=500,
-            n_locations=20,
-            size=10,
-            title=("(2) Flux domicile-{} mesurés par l'INSEE").format(txt),
-        )
+    rm.plot_flow(
+        plot_flowDT,
+        coordinates,
+        sources=plot_sources,
+        n_flows=500,
+        n_locations=20,
+        size=10,
+        title=("(2) Flux domicile-{} mesurés par l'INSEE").format(txt),
+    )
 
     # EXPORT THE MODEL AND THE INSEE DATA
 
@@ -871,3 +817,4 @@ def compare_insee_and_model(predicted_flux, empirical_flux, coordinates, plot_so
         title="(4) Flux domicile-travail générés par le modèle",
     )
     return error_repartition
+

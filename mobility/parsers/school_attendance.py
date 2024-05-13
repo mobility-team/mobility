@@ -55,17 +55,22 @@ def prepare_school_attendance(proxies={}, test=False):
 
             "Code_commune" ,
             "Type_etablissement",
-            "Nombre_d_eleves"
+            "Nombre_d_eleves",
+            "Identifiant_de_l_etablissement"
+
         ],
         dtype={
             "Code_commune": str,
-            "Type_etablissement": str
+            "Type_etablissement": str,
+            "Identifiant_de_l_etablissement": str
+
             },
         )
     
     db_schools.rename(
         columns={
-            "Code_commune": "CODGEO"
+            "Code_commune": "CODGEO", 
+            "Identifiant_de_l_etablissement": "Code_RNE"
         },
         inplace=True,
     )
@@ -81,8 +86,9 @@ def prepare_school_attendance(proxies={}, test=False):
             "CODGEO",
             "Nombre_d_eleves",
             "Type_etablissement",
+            "Code_RNE"
         ],
-        ].groupby(["CODGEO", "Type_etablissement"]).sum().reset_index()
+        ].groupby(["CODGEO","Type_etablissement"]).sum().reset_index()
     
     
    
@@ -92,4 +98,5 @@ def prepare_school_attendance(proxies={}, test=False):
    
 
     return db_schools
+
 
