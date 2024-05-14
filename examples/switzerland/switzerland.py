@@ -13,4 +13,4 @@ mobility.set_params(
 )
 
 lau = LocalAdminUnits()
-lau.get()
+x = lau.get()
