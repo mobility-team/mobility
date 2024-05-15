@@ -612,7 +612,7 @@ def run_model_for_territory(
 
     print("Model flow of {} and empirical flow of {}".format(len(flowsRM), len(flowDT)))
 
-    return flowsRM, flowDT, coordinates, plot_sources,total_flows
+    return flowsRM, flowDT, coordinates, plot_sources
 
 
 
