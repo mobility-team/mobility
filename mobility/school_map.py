@@ -43,6 +43,7 @@ def school_map_model(sources_territory, sinks_territory):
     db_school_map_model = db_school_map_model.drop('source_volume', axis=1)
     db_school_map_model = db_school_map_model.rename_axis(['from', 'to'], axis='index')
     db_school_map_model = db_school_map_model.rename(columns={'volume_moyen': 'flow_volume'})
+    db_school_map_model.dropna(subset=['flow_volume'], inplace=True)
     return db_school_map_model
 
 
@@ -69,6 +70,7 @@ def get_data_for_model_school_map(
     
     # Prepare sources_territory
     db_students_ = db_students[db_students['TrancheAge'] == Age].drop(columns=['TrancheAge'])
+    
     # Only keep the sinks in the chosen departements
     sources_territory = db_students_.loc[:, ["CODGEO", "Nombre"]]
     sources_territory["DEP"] = sources_territory["CODGEO"].str.slice(0, 2)
@@ -78,20 +80,19 @@ def get_data_for_model_school_map(
     sources_territory = sources_territory.set_index("CODGEO")
     sources_territory = sources_territory.drop(columns=["DEP"])
     sources_territory.rename(columns={"Nombre": "source_volume"}, inplace=True)
-    print("sources_territory1")
     
     
     # Schools
     db_schools_ = db_schools[db_schools['Type_etablissement'] == Age].drop(columns=['Type_etablissement'])
 
     # Only keep the sinks in the chosen departements
-    school = db_schools_.loc[:, ["CODGEO", "Code_RNE","Nombre_d_eleves"]]   
-    school = school.rename(columns={'Nombre_d_eleves': 'sink_volume'})
+    school = db_schools_.loc[:, ["CODGEO", "Code_RNE","Nombre_d_eleves"]]
+    school.rename(columns={'Nombre_d_eleves': 'sink_volume'}, inplace=True)
     mask = school['CODGEO'].str.startswith(tuple(lst_departments))
     school = school.loc[mask]
     
     # School_map
-    school_map = db_school_map.loc[:, ["code_insee", "Code_RNE",]]
+    school_map = db_school_map.loc[:, ["code_insee", "Code_RNE"]]
     mask = school_map['code_insee'].str.startswith(tuple(lst_departments))
     school_map = school_map.loc[mask]
 
@@ -101,7 +102,7 @@ def get_data_for_model_school_map(
 
     # Fait un LEFT JOIN sur le code RNE pour récupérer le code commune pour chaque établissement scolaire
     sinks_territory = pd.merge(school_map, school, how='left', on='Code_RNE')
-    print("sinks_territory1")
+    sinks_territory.dropna(subset=['CODGEO'], inplace=True)
     
     
     

@@ -39,6 +39,41 @@ import matplotlib.pyplot as plt
 
 def proximity_model(data_students, data_schools, costs_territory, data_communes):
     
+    """
+    This function computes the volume of flows between source and sink nodes,
+    according to the proximity model. The model only takes into account the 
+    euclidian distance between the residence of the student and the schools. It
+    selects the nearest school and calculate the flow volume from each city to
+    the differents schools.
+
+    Args:
+        data_students (pd.DataFrame):
+            Index:
+                CODGEO (str): unique id of the city of origin.
+            Columns:
+                source_volume (float): volume of "demand" of the transport zones.
+        data_schools (pd.DataFrame):
+            Index:
+                CODGEO (str): unique id of the cities that have at least one school.
+            Columns:
+                sink_volume (float): volume of "opportunities" of the transport
+                zones (places available in schools).
+        costs (pd.DataFrame):
+            Index:
+                from (str): trip origin transport zone id.
+                to (str): trip destination transport zone id.
+            Columns:
+                cost (float): cost/benefit to go from the origin (source) to the destination (sink).
+        data_communes
+    Returns:
+        flows (pd.DataFrame):
+            Index:
+                from (str): trip origin transport zone id (source).
+                to (str): trip destination transport zone id (sink).
+            Columns:
+                flow_volume (float): flow volume between source and sink nodes.
+    """
+    
     df_origine_dest = pd.DataFrame(index=range(len(data_students)), columns=["from", "to", "flow_volume"])
     
     for i, commune_origine in enumerate(data_students.index):
@@ -74,49 +109,27 @@ def proximity_model(data_students, data_schools, costs_territory, data_communes)
 
 def iter_proximity_model(data_students, data_schools, costs_territory, data_communes, plot=False):
     """
-    Iterates the radiation model between source and sink nodes.
-
-    At each iteration, the flows between the sources and the sinks are computed
-    as well as the rest of the volume of demand and opportunities,
-    according to the radiation model. The next iteration, the rest of the volume
-    of demand and opportunities are used.
-    The iterations stops after max_iter or when the flow volume computed is small
-    compared to the total source volume.
+    No need of iteration for proximity model, the function only returns the flow volumes
 
     Args:
-        sources (pd.DataFrame):
+        data_students (pd.DataFrame):
             Index:
-                transport_zone_id (str): unique id of the transport zone.
+                CODGEO (str): unique id of the city of origin.
             Columns:
                 source_volume (float): volume of "demand" of the transport zones.
-        sinks (pd.DataFrame):
+        data_schools (pd.DataFrame):
             Index:
-                transport_zone_id (str): unique id of the transport zone.
+                CODGEO (str): unique id of the cities that have at least one school.
             Columns:
-                sink_volume (float): volume of "opportunities" of the transport zones.
+                sink_volume (float): volume of "opportunities" of the transport
+                zones (places available in schools).
         costs (pd.DataFrame):
             Index:
                 from (str): trip origin transport zone id.
                 to (str): trip destination transport zone id.
             Columns:
                 cost (float): cost/benefit to go from the origin (source) to the destination (sink).
-        alpha (float):
-            Must be in [0,1] s.t alpha+beta<=1.
-            Parameter of the radiation model: reflects the behavior of the individual's tendency
-            to choose the destination whose benefit is higher than the benefits of the origin
-            and the intervening opportunities .
-            (see "A universal opportunity model for human mobility", developped by Liu and Yan)
-        beta (float):
-            Must be in [0,1] s.t alpha+beta<=1.
-            Parameter of the radiation model: reflects the behavior of the individual’s tendency
-            to choose the destination whose benefit is higher than the benefit of the origin,
-            and the benefit of the origin is higher than the benefits of the intervening opportunities.
-            (see "A universal opportunity model for human mobility", developped by Liu and Yan)
-        max_iter (int):
-            Maximum number of iterations of the radiation model.
-        plot (boolean):
-            Indicates whether the evolution of the demand volume and opportunities volume
-            should be plotted.
+        
 
     Returns:
         total_flows (pd.Series):
@@ -125,16 +138,6 @@ def iter_proximity_model(data_students, data_schools, costs_territory, data_comm
                 to (str): trip destination transport zone id (sink).
                 Columns:
                 flow_volume (float): flow volume between source and sink nodes.
-        source_rest_volume (pd.Series):
-            Index:
-                from (str): unique id of the transport zone.
-            Name:
-                source_volume (float): rest of the volum of demand of the transport zone.
-        sink_rest_volume (pd.Series):
-            Index:
-                to (str): unique id of the transport zone.
-            Name:
-                sink_volume (float): rest of the volume of oopportunities of the transport zone.
     """
 
 

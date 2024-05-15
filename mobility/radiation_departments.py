@@ -487,7 +487,7 @@ def run_model_for_territory(
 
     """
 
-    assert data=="work" or data=="school" or model=="radiation" or model=="proximity" or model=="school_map"
+    assert (data=="work" or data=="school") and (model=="radiation" or model=="proximity" or model=="school_map")
 
     print(
         "Model running with {} sources, {} sinks and {} costs".format(
@@ -612,7 +612,7 @@ def run_model_for_territory(
 
     print("Model flow of {} and empirical flow of {}".format(len(flowsRM), len(flowDT)))
 
-    return flowsRM, flowDT, coordinates, plot_sources
+    return flowsRM, flowDT, coordinates, plot_sources,total_flows
 
 
 
