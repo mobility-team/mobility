@@ -26,9 +26,9 @@
   
   - Ouvrir Spyder dans le dossier mobility via Miniforge3.
   - Ouvrir le fichier C:\Users\Formation\Documents\GitHub\mobility\examples\Millau\pa.py pour tester l'installation en sélectionnant:
-  	- Une variable "Age" en utilisant les valeurs 1, 2 et 3 pour accéder respectivement aux données d'écoles maternelles et primaires, des collèges ou des lycées
-     	- Une variable "model" ou on pourra choisir les modèles de radiation (radiation), proximité (proximity) ou de carte scolaire (school_map)
-        - Une liste "dep" contenant le ou les départements sur lesquels vous voulez observer les déplacements scolaires.
+  	- Une variable *Age* en utilisant les valeurs 1, 2 et 3 pour accéder respectivement aux données d'écoles maternelles et primaires, des collèges ou des lycées
+	- Une variable *model* où on pourra choisir les modèles de radiation (radiation), proximité (proximity) ou de carte scolaire (school_map)
+  	- Une liste *dep* contenant le ou les départements sur lesquels vous voulez observer les déplacements scolaires.
 
 Si vous obtenez une erreur sur l'import Mobility, vérifiez que votre fichier comporte les lignes suivantes: 
 ```python
