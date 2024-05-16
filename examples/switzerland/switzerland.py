@@ -3,8 +3,6 @@ import dotenv
 import mobility
 import pandas as pd
 
-from mobility.parsers import LocalAdminUnits
-
 dotenv.load_dotenv()
 
 mobility.set_params(
@@ -12,5 +10,5 @@ mobility.set_params(
     project_data_folder_path=os.environ["MOBILITY_PROJECT_DATA_FOLDER"]
 )
 
-lau = LocalAdminUnits()
-x = lau.get()
+transport_zones = mobility.TransportZones(["fr-74012", "fr-74298", "ch-6621"])
+transport_zones = mobility.TransportZones("ch-6621", radius = 60)

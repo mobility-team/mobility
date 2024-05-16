@@ -2,12 +2,13 @@ import os
 import logging
 import pandas as pd
 import geopandas as gpd
-import shapely
 import pathlib
+from typing import Union, List
 
-from mobility.parsers.admin_boundaries import get_french_cities_boundaries, get_french_epci_boundaries
+
 from mobility.parsers.urban_units import get_french_urban_units
 from mobility.asset import Asset
+from mobility.parsers import LocalAdminUnits
 
 
 class TransportZones(Asset):
@@ -19,28 +20,31 @@ class TransportZones(Asset):
 
     Attributes:
         insee_city_id (str): The INSEE code of the city.
-        method (str): The method to define transport zones ('epci_rings' or 'radius').
         radius (int): The radius around the city to define transport zones, applicable if method is 'radius'.
 
     Methods:
         get_cached_asset: Retrieve a cached transport zones GeoDataFrame.
         create_and_get_asset: Create and retrieve transport zones based on the current inputs.
-        filter_cities_epci_rings: Filter cities based on EPCI rings.
         filter_cities_within_radius: Filter cities within a specified radius.
         prepare_transport_zones_df: Prepare the transport zones GeoDataFrame.
     """
 
-    def __init__(self, insee_city_id: str, method: str = "epci_rings", radius: int = 40):
+    def __init__(self, local_admin_unit_id: Union[str, List[str]], radius: int = 40):
         """
-        Initializes a TransportZones object with the given INSEE city ID, method, and radius.
+        Initializes a TransportZones object based on a list of local admin unit 
+        ids or one local admin unit id and a radius within which all local admin 
+        unit ids should be included.
 
         Args:
-            insee_city_id (str): The INSEE code of the city.
-            method (str, optional): Method to define transport zones. Defaults to 'epci_rings'.
-            radius (int, optional): Radius in kilometers if method is 'radius'. Defaults to 40.
+            local_admin_unit_id (str or list): id or ids of the local admin unit(s).
+            radius (int, optional): Radius in kilometers (defaults to 40 km).
         """
 
-        inputs = {"insee_city_id": insee_city_id, "method": method, "radius": radius}
+        inputs = {
+            "local_admin_units": LocalAdminUnits(),
+            "local_admin_unit_id": local_admin_unit_id,
+            "radius": radius
+        }
 
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "transport_zones.gpkg"
 
@@ -69,62 +73,29 @@ class TransportZones(Asset):
 
         logging.info("Creating transport zones...")
 
-        cities = get_french_cities_boundaries()
+        local_admin_unit_id = self.inputs["local_admin_unit_id"]
+        local_admin_units = self.inputs["local_admin_units"].get()
 
-        if self.inputs["method"] == "epci_rings":
-            filtered_cities = self.filter_cities_epci_rings(cities, self.inputs["insee_city_id"])
-
-        elif self.inputs["method"] == "radius":
-            filtered_cities = self.filter_cities_within_radius(cities, self.inputs["insee_city_id"], self.inputs["radius"])
-
+        if isinstance(local_admin_unit_id, str):
+            
+            local_admin_units = self.filter_within_radius(
+                local_admin_units,
+                local_admin_unit_id,
+                self.inputs["radius"]
+            )
+            
         else:
-            raise ValueError("Method should be one of : epci_rings, radius.")
+            
+            local_admin_units = local_admin_units[local_admin_units["local_admin_unit_id"].isin(local_admin_unit_id)]
 
-        transport_zones = self.prepare_transport_zones_df(filtered_cities)
+
+        transport_zones = self.prepare_transport_zones_df(local_admin_units)
         transport_zones.to_file(self.cache_path)
 
         return transport_zones
 
-    def filter_cities_epci_rings(self, cities: gpd.GeoDataFrame, insee_city_id: str):
-        """
-        Filters cities based on the EPCI rings method. It selects cities belonging to the first and
-        second ring of EPCIs around the EPCI of the specified city.
 
-        Args:
-            cities (gpd.GeoDataFrame): The GeoDataFrame containing city data.
-            insee_city_id (str): The INSEE code of the target city.
-
-        Returns:
-            gpd.GeoDataFrame: A GeoDataFrame of cities filtered based on EPCI rings.
-        """
-
-        # Find the EPCI of the city
-        epci_id = cities.loc[cities["INSEE_COM"] == insee_city_id, "SIREN_EPCI"].values
-
-        if len(epci_id) == 0:
-            raise ValueError("No city with id '" + insee_city_id + "' was found in the admin-express 2023 database.")
-        else:
-            epci_id = epci_id[0]
-
-        # Load the geometries of all nearby EPCIs
-        epcis = get_french_epci_boundaries()
-
-        # Select first / second ring of EPCIs around the EPCI of the city
-        city_epci = epcis.loc[epcis["CODE_SIREN"] == epci_id].iloc[0]
-
-        first_ring_epcis = epcis[epcis.touches(city_epci.geometry)]
-        first_ring_epcis_union = shapely.ops.unary_union(first_ring_epcis.geometry)
-
-        second_ring_epcis = epcis[epcis.touches(first_ring_epcis_union)]
-
-        selected_epcis = pd.concat([first_ring_epcis, second_ring_epcis])
-
-        # Get the geometries of the cities in the selected EPCIs
-        cities = cities.loc[cities["SIREN_EPCI"].isin(selected_epcis["CODE_SIREN"].values)]
-
-        return cities
-
-    def filter_cities_within_radius(self, cities: gpd.GeoDataFrame, insee_city_id: str, radius: int) -> gpd.GeoDataFrame:
+    def filter_within_radius(self, local_admin_units: gpd.GeoDataFrame, local_admin_unit_id: str, radius: int) -> gpd.GeoDataFrame:
         """
         Filters cities within a specified radius from a given city. It selects cities within the
         specified radius from the centroid of the target city.
@@ -138,37 +109,40 @@ class TransportZones(Asset):
             gpd.GeoDataFrame: A GeoDataFrame of cities filtered within the specified radius.
         """
 
-        city = cities[cities["INSEE_COM"] == insee_city_id]
-        if city.empty:
-            raise ValueError(f"No city with INSEE code '{insee_city_id}' found.")
-        buffer = city.centroid.buffer(radius * 1000).iloc[0]
-        cities = cities[cities.within(buffer)]
+        local_admin_unit = local_admin_units[local_admin_units["local_admin_unit_id"] == local_admin_unit_id]
+        if local_admin_unit.empty:
+            raise ValueError(f"No local admin unit with code '{local_admin_unit_id}' found.")
+        buffer = local_admin_unit.centroid.buffer(radius * 1000).iloc[0]
+        local_admin_units = local_admin_units[local_admin_units.within(buffer)]
 
-        return cities
+        return local_admin_units
 
-    def prepare_transport_zones_df(self, filtered_cities: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    def prepare_transport_zones_df(self, local_admin_units: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """
         Prepares and formats the transport zones data frame from the filtered cities. It includes
         merging with urban unit categories and assigning transport zone IDs.
 
         Args:
-            filtered_cities (gpd.GeoDataFrame): The GeoDataFrame of filtered cities.
+            local_admin_units (gpd.GeoDataFrame): The GeoDataFrame of local admin units.
 
         Returns:
             gpd.GeoDataFrame: A formatted GeoDataFrame representing transport zones.
         """
 
         # Add the urban unit category info
-        urban_units = get_french_urban_units()
-        filtered_cities = pd.merge(filtered_cities, urban_units, on="INSEE_COM", how="left")
-
+        # urban_units = get_french_urban_units()
+        # local_admin_units = pd.merge(local_admin_units, urban_units, on="local_admin_unit_id", how="left")
+        local_admin_units["urban_unit_category"] = "C"
+        
         # Prepare and format the transport zones data frame
-        transport_zones = filtered_cities[["INSEE_COM", "NOM", "urban_unit_category", "geometry"]].copy()
-        transport_zones.columns = ["admin_id", "name", "urban_unit_category", "geometry"]
-        transport_zones["admin_level"] = "city"
+        transport_zones = local_admin_units[
+            ["local_admin_unit_id", "local_admin_unit_name", "urban_unit_category", "geometry"]
+        ].copy()
+        
         transport_zones["transport_zone_id"] = [i for i in range(transport_zones.shape[0])]
+        
         transport_zones = transport_zones[
-            ["transport_zone_id", "admin_id", "name", "admin_level", "urban_unit_category", "geometry"]
+            ["transport_zone_id", "local_admin_unit_id", "local_admin_unit_name", "urban_unit_category", "geometry"]
         ]
 
         return transport_zones

@@ -20,6 +20,7 @@ dependencies = [
   "geojson",
   "matplotlib",
   "seaborn",
+  "pyogrio",
   "sphinxcontrib-napoleon",
   "myst_parser",
   "streamlit",

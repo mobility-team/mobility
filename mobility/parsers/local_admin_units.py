@@ -71,9 +71,9 @@ class LocalAdminUnits(Asset):
             arrond
         ])
         
-        cities.columns = ["local_admin_id", "local_admin_name", "geometry"]
+        cities.columns = ["local_admin_unit_id", "local_admin_unit_name", "geometry"]
         
-        cities["local_admin_id"] = "fr-" + cities["local_admin_id"]
+        cities["local_admin_unit_id"] = "fr-" + cities["local_admin_unit_id"]
         
         cities = cities.to_crs(3035)
         
@@ -98,9 +98,9 @@ class LocalAdminUnits(Asset):
         cities = gpd.read_file(file_path, layer="tlm_hoheitsgebiet")
         
         cities = cities[["bfs_nummer", "name", "geometry"]].copy()
-        cities.columns = ["local_admin_id", "local_admin_name", "geometry"]
+        cities.columns = ["local_admin_unit_id", "local_admin_unit_name", "geometry"]
         
-        cities["local_admin_id"] = "ch-" + cities["local_admin_id"].astype(str)
+        cities["local_admin_unit_id"] = "ch-" + cities["local_admin_unit_id"].astype(str)
         
         cities["geometry"] = shapely.wkb.loads(shapely.wkb.dumps(cities["geometry"], output_dimension=2))
         cities = cities.to_crs(3035)
