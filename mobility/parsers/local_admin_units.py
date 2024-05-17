@@ -9,12 +9,16 @@ import pandas as pd
 
 from mobility.asset import Asset
 from mobility.parsers.download_file import download_file
+from mobility.parsers.local_admin_units_categories import LocalAdminUnitsCategories
 
 class LocalAdminUnits(Asset):
     
     def __init__(self):
         
-        inputs = {}
+        inputs = {
+            "categories": LocalAdminUnitsCategories()
+        }
+        
         cache_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "local_admin_units.parquet"
         super().__init__(inputs, cache_path)
         
@@ -34,6 +38,13 @@ class LocalAdminUnits(Asset):
         local_admin_units_ch = self.prepare_swiss_local_admin_units()
         
         local_admin_units = pd.concat([local_admin_units_fr, local_admin_units_ch])
+        
+        local_admin_units = pd.merge(
+            local_admin_units,
+            self.inputs["categories"].get(),
+            on="local_admin_unit_id"
+        )
+    
         local_admin_units.to_parquet(self.cache_path)
 
         return local_admin_units
@@ -61,10 +72,12 @@ class LocalAdminUnits(Asset):
         cities = cities[["INSEE_COM", "NOM", "geometry"]]
         arrond = arrond[["INSEE_COM", "INSEE_ARM", "NOM", "geometry"]]
         
+        cities_with_arrond = arrond["INSEE_COM"].unique()
+        
         arrond["INSEE_COM"] = arrond["INSEE_ARM"]
         arrond = arrond[["INSEE_COM", "NOM", "geometry"]]
         
-        cities = cities[~cities["INSEE_COM"].isin(arrond["INSEE_COM"])]
+        cities = cities[~cities["INSEE_COM"].isin(cities_with_arrond)]
         
         cities = pd.concat([
             cities,

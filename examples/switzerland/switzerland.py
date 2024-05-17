@@ -11,4 +11,14 @@ mobility.set_params(
 )
 
 transport_zones = mobility.TransportZones(["fr-74012", "fr-74298", "ch-6621"])
-transport_zones = mobility.TransportZones("ch-6621", radius = 60)
+transport_zones = mobility.TransportZones("fr-75113", radius = 70)
+
+transport_zones.get().plot("urban_unit_category")
+
+# from mobility.parsers import LocalAdminUnits
+
+# lau = LocalAdminUnits()
+# lau = lau.get()
+
+# lau = lau.set_index("local_admin_unit_id")
+# lau.loc["fr-75111"]
