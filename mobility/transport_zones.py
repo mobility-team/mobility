@@ -128,11 +128,6 @@ class TransportZones(Asset):
         Returns:
             gpd.GeoDataFrame: A formatted GeoDataFrame representing transport zones.
         """
-
-        # Add the urban unit category info
-        # urban_units = get_french_urban_units()
-        # local_admin_units = pd.merge(local_admin_units, urban_units, on="local_admin_unit_id", how="left")
-        local_admin_units["urban_unit_category"] = "C"
         
         # Prepare and format the transport zones data frame
         transport_zones = local_admin_units[
