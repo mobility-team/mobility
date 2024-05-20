@@ -46,7 +46,7 @@ class TravelCosts(Asset):
                 + ", ".join(available_modes) + "."
             )
 
-        osm = OSMData(transport_zones, list(self.dodgr_modes.values()))
+        osm = OSMData(transport_zones)
         inputs = {"transport_zones": transport_zones, "osm": osm, "mode": mode}
 
         file_name = "dodgr_travel_costs_" + mode + ".parquet"

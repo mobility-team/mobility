@@ -9,7 +9,7 @@ import geopandas as gpd
 from typing import Tuple, List
 
 from mobility.parsers.download_file import download_file
-from mobility.parsers.admin_boundaries import get_french_old_regions_boundaries
+from mobility.parsers.geofabrik_regions import GeofabrikRegions
 from mobility.asset import Asset
 
 class OSMData(Asset):
@@ -21,7 +21,6 @@ class OSMData(Asset):
 
     Attributes:
         transport_zones (gpd.GeoDataFrame): The geographical areas for which OSM data is needed.
-        dodgr_modes (list): List of modes used for routing in the dodgr package.
 
     Methods:
         get_cached_asset: Retrieve a cached OSM data file path.
@@ -31,22 +30,19 @@ class OSMData(Asset):
         crop_region: Crop OSM region files to the transport zones boundary.
         filter_region: Filter OSM region files based on specified tags.
         merge_regions: Merge multiple OSM region files into a single file.
-        get_dodgr_modes_osm_tags: Retrieve OSM tags relevant to the specified dodgr modes.
-        get_dodgr_mode_osm_tags: Retrieve OSM tags for a specific dodgr mode.
     """
     
-    def __init__(self, transport_zones: gpd.GeoDataFrame, dodgr_modes: list):
+    def __init__(self, transport_zones: gpd.GeoDataFrame, geofabrik_extract_date: str = "240101"):
         """
         Initializes an OSMData object with the given transport zones and dodgr modes.
 
         Args:
             transport_zones (gpd.GeoDataFrame): GeoDataFrame defining the transport zones.
-            dodgr_modes (list): List of modes to be used for routing in dodgr.
         """
         
         inputs = {
             "transport_zones": transport_zones,
-            "dodgr_modes": dodgr_modes
+            "geofabrik_extract_date": geofabrik_extract_date
         }
         
         file_name = "osm_data.osm"
@@ -147,16 +143,18 @@ class OSMData(Asset):
         """
         
         # Find which geofabrik regions are included in the transport zone 
-        regions = get_french_old_regions_boundaries()
+        regions = GeofabrikRegions(extract_date=self.inputs["geofabrik_extract_date"]).get()
         regions = regions[regions.intersects(transport_zones_boundary)]
         
         osm_regions = []
         
-        for geofabrik_region_name in regions["geofabrik_name"].values:
+        for index, region in regions.iterrows():
             
-            url = f"https://download.geofabrik.de/europe/france/{geofabrik_region_name}-latest.osm.pbf"
-            path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "osm" / f"{geofabrik_region_name}-latest.osm.pbf"
-            download_file(url, path)
+            logging.info("Downloading Geofabrik data : " + region.url)
+            
+            file = pathlib.Path(region.url).name
+            path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "osm" / file
+            download_file(region.url, path)
                     
             osm_regions.append(path)
             
