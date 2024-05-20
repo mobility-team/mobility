@@ -10,8 +10,7 @@ mobility.set_params(
     project_data_folder_path=os.environ["MOBILITY_PROJECT_DATA_FOLDER"]
 )
 
-transport_zones = mobility.TransportZones(["fr-74012", "fr-74298", "ch-6621"])
-transport_zones = mobility.TransportZones("fr-75113", radius = 70)
+transport_zones = mobility.TransportZones("fr-74298", radius = 30)
 
 transport_zones.get().plot("urban_unit_category")
 
@@ -22,3 +21,9 @@ transport_zones.get().plot("urban_unit_category")
 
 # lau = lau.set_index("local_admin_unit_id")
 # lau.loc["fr-75111"]
+
+from mobility.parsers.osm import OSMData
+
+osm = OSMData(transport_zones)
+
+tc_car = mobility.TravelCosts(transport_zones, "car")

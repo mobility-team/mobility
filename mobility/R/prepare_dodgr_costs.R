@@ -15,6 +15,7 @@ output_file_path <- args[3]
 logger <- logger(appenders = console_appender())
 
 transport_zones <- st_read(tz_file_path)
+transport_zones_crs <- st_crs(transport_zones)
 
 transport_zones_boundary <- st_union(st_geometry(transport_zones))
 transport_zones_boundary <- nngeo::st_remove_holes(transport_zones_boundary)
@@ -29,7 +30,7 @@ info(logger, "Clustering network vertices...")
 
 vertices_geo <- sfheaders::sf_point(vertices, x = "x", y = "y", keep = TRUE)
 st_crs(vertices_geo) <- 4326
-vertices_geo <- st_transform(vertices_geo, 2154)
+vertices_geo <- st_transform(vertices_geo, transport_zones_crs)
 
 transport_zones$area <- as.numeric(st_area(transport_zones))/1e6
 vertices_geo <- st_join(vertices_geo, transport_zones)
@@ -68,11 +69,11 @@ vertices_geo[, cluster_center := d_cluster_center == min(d_cluster_center), by =
 vertices_geo_cluster <- vertices_geo[cluster_center == TRUE]
 
 vertices_geo_cluster_zones <- sfheaders::sf_point(vertices_geo_cluster, x = "X", y = "Y", keep = TRUE)
-st_crs(vertices_geo_cluster_zones) <- 2154
+st_crs(vertices_geo_cluster_zones) <- transport_zones_crs
 
 v <- st_voronoi(do.call(c, st_geometry(vertices_geo_cluster_zones)))
 v <- st_collection_extract(v)
-st_crs(v) <- 2154
+st_crs(v) <- transport_zones_crs
 
 v <- st_intersection(v, transport_zones_boundary)
 
