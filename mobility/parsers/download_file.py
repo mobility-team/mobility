@@ -2,6 +2,7 @@ import pathlib
 import requests
 import os
 import logging
+import re
 
 from rich.progress import Progress
 
@@ -20,6 +21,7 @@ def download_file(url, path):
     """
     
     path = pathlib.Path(path)
+    path = path.parent / re.sub(r"[^\w\-_.]", "", path.name)
     
     # Create the folder containing the file if not already existing
     if path.parent.exists() is False:
@@ -51,7 +53,7 @@ def download_file(url, path):
         with Progress() as progress:
             
             task = progress.add_task("[green]Downloading...", total=total_size)
-    
+            
             with open(path, "wb") as file:
                 for data in response.iter_content(chunk_size=1024):
                     file.write(data)
@@ -62,3 +64,5 @@ def download_file(url, path):
     else:
     
         logging.info("Reusing already downloaded file at : " + str(path) + ".")
+        
+    return path

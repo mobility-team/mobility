@@ -7,16 +7,17 @@ import geopandas as gpd
 from importlib import resources
 from mobility.asset import Asset
 from mobility.r_script import RScript
-from mobility.gtfs import GTFS
+from mobility.gtfs_router import GTFSRouter
+from mobility.transport_zones import TransportZones
 
 class PublicTransportTravelCosts(Asset):
 
 
-    def __init__(self, transport_zones: gpd.GeoDataFrame):
+    def __init__(self, transport_zones: TransportZones):
         
-        gtfs = GTFS(transport_zones)
+        gtfs_router = GTFSRouter(transport_zones)
 
-        inputs = {"transport_zones": transport_zones, "gtfs": gtfs}
+        inputs = {"transport_zones": transport_zones, "gtfs_router": gtfs_router}
 
         file_name = "public_transport_travel_costs.parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
@@ -33,13 +34,13 @@ class PublicTransportTravelCosts(Asset):
     def create_and_get_asset(self) -> pd.DataFrame:
 
         transport_zones = self.inputs["transport_zones"]
-        gtfs = self.inputs["gtfs"]
-        costs = self.gtfs_router_costs(transport_zones, gtfs)
+        gtfs_router = self.inputs["gtfs_router"]
+        costs = self.gtfs_router_costs(transport_zones, gtfs_router)
 
         return costs
 
     
-    def gtfs_router_costs(self, transport_zones: gpd.GeoDataFrame, gtfs: GTFS) -> pd.DataFrame:
+    def gtfs_router_costs(self, transport_zones: gpd.GeoDataFrame, gtfs_router: GTFSRouter) -> pd.DataFrame:
         """
         Calculates travel costs for public transport between transport zones.
 
@@ -51,14 +52,22 @@ class PublicTransportTravelCosts(Asset):
             pd.DataFrame: A DataFrame containing calculated public transport travel costs.
         """
 
-        logging.info("Computing travel costs...")
+        logging.info("Computing public transport travel costs...")
         
         script = RScript(resources.files('mobility.R').joinpath('prepare_public_transport_costs.R'))
         
-        gtfs_router = gtfs.get()
         gtfs_route_types_path = resources.files("mobility").joinpath('data/gtfs/gtfs_route_types.xlsx')
         
-        script.run(args=[str(transport_zones.cache_path), gtfs_router, str(gtfs_route_types_path), str(self.cache_path)])
+        gtfs_router.get()
+        
+        script.run(
+            args=[
+                str(transport_zones.cache_path),
+                gtfs_router.cache_path,
+                str(gtfs_route_types_path),
+                str(self.cache_path)
+            ]
+        )
 
         costs = pd.read_parquet(self.cache_path)
 

@@ -45,8 +45,8 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
     
     def prepare_sources(self, transport_zones: gpd.GeoDataFrame, active_population: pd.DataFrame)-> pd.DataFrame:
 
-        active_population = active_population.loc[transport_zones["admin_id"], "active_pop"].reset_index()
-        active_population = pd.merge(active_population, transport_zones[["admin_id", "transport_zone_id"]], left_on="CODGEO", right_on="admin_id")
+        active_population = active_population.loc[transport_zones["local_admin_unit_id"], "active_pop"].reset_index()
+        active_population = pd.merge(active_population, transport_zones[["local_admin_unit_id", "transport_zone_id"]], on="local_admin_unit_id")
 
         active_population = active_population[["transport_zone_id", "active_pop"]]
         active_population.columns = ["transport_zone_id", "source_volume"]
@@ -57,8 +57,8 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
     
     def prepare_sinks(self, transport_zones: gpd.GeoDataFrame, jobs: pd.DataFrame) -> pd.DataFrame:
         
-        jobs = jobs.loc[transport_zones["admin_id"], "n_jobs_total"].reset_index()
-        jobs = pd.merge(jobs, transport_zones[["admin_id", "transport_zone_id"]], left_on="CODGEO", right_on="admin_id")
+        jobs = jobs.loc[transport_zones["local_admin_unit_id"], "n_jobs_total"].reset_index()
+        jobs = pd.merge(jobs, transport_zones[["local_admin_unit_id", "transport_zone_id"]], on="local_admin_unit_id")
         
         jobs = jobs[["transport_zone_id", "n_jobs_total"]]
         jobs.columns = ["transport_zone_id", "sink_volume"]
@@ -69,10 +69,10 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
     
     def prepare_reference_flows(self, transport_zones: gpd.GeoDataFrame):
         
-        admin_ids = transport_zones["admin_id"].values
+        admin_ids = transport_zones["local_admin_unit_id"].values
         
         ref_flows = self.reference_flows.get()
-        ref_flows = ref_flows[(ref_flows["admin_id_from"].isin(admin_ids)) & (ref_flows["admin_id_to"].isin(admin_ids))]
+        ref_flows = ref_flows[(ref_flows["local_admin_unit_id_from"].isin(admin_ids)) & (ref_flows["local_admin_unit_id_to"].isin(admin_ids))]
         ref_flows.rename({"flow_volume": "ref_flow_volume"}, axis=1, inplace=True)
         
         return ref_flows

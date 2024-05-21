@@ -26,6 +26,7 @@ def prepare_french_admin_boundaries():
     for shp_file in ["ARRONDISSEMENT_MUNICIPAL.shp", "COMMUNE.shp", "EPCI.shp", "REGION.shp"]:
             
          df = gpd.read_file(path / shp_file)
+         df = df.to_crs(3035)
          parquet_file = pathlib.Path(shp_file).stem + ".parquet"
          output_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express" / parquet_file
          df.to_parquet(output_path)
@@ -74,6 +75,8 @@ def get_french_cities_boundaries():
     
     # Fix the Grand Paris EPCI ids
     cities.loc[cities["SIREN_EPCI"].str[0:9] == "200054781", "SIREN_EPCI"] = "200054781"
+    
+    cities["INSEE_COM"] = "fr-" + cities["INSEE_COM"]
     
     return cities
          

@@ -12,18 +12,5 @@ mobility.set_params(
 
 transport_zones = mobility.TransportZones("fr-74298", radius = 30)
 
-transport_zones.get().plot("urban_unit_category")
-
-# from mobility.parsers import LocalAdminUnits
-
-# lau = LocalAdminUnits()
-# lau = lau.get()
-
-# lau = lau.set_index("local_admin_unit_id")
-# lau.loc["fr-75111"]
-
-from mobility.parsers.osm import OSMData
-
-osm = OSMData(transport_zones)
-
-tc_car = mobility.TravelCosts(transport_zones, "car")
+# travel_costs_car = mobility.TravelCosts(transport_zones, "car").get()
+travel_costs_pt = mobility.PublicTransportTravelCosts(transport_zones).get()
