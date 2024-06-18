@@ -13,11 +13,24 @@ from mobility.transport_zones import TransportZones
 class PublicTransportTravelCosts(Asset):
 
 
-    def __init__(self, transport_zones: TransportZones):
+    def __init__(
+            self,
+            transport_zones: TransportZones,
+            start_time_min: float = 7.5,
+            start_time_max: float = 8.5,
+            max_traveltime: float = 1.0,
+            additional_gtfs_files: list = None
+    ):
         
-        gtfs_router = GTFSRouter(transport_zones)
+        gtfs_router = GTFSRouter(transport_zones, additional_gtfs_files)
 
-        inputs = {"transport_zones": transport_zones, "gtfs_router": gtfs_router}
+        inputs = {
+            "transport_zones": transport_zones,
+            "gtfs_router": gtfs_router,
+            "start_time_min": start_time_min,
+            "start_time_max": start_time_max,
+            "max_traveltime": max_traveltime
+        }
 
         file_name = "public_transport_travel_costs.parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
@@ -32,15 +45,26 @@ class PublicTransportTravelCosts(Asset):
         return costs
 
     def create_and_get_asset(self) -> pd.DataFrame:
-
-        transport_zones = self.inputs["transport_zones"]
-        gtfs_router = self.inputs["gtfs_router"]
-        costs = self.gtfs_router_costs(transport_zones, gtfs_router)
+        
+        costs = self.gtfs_router_costs(
+            self.inputs["transport_zones"],
+            self.inputs["gtfs_router"],
+            self.inputs["start_time_min"],
+            self.inputs["start_time_max"],
+            self.inputs["max_traveltime"]
+        )
 
         return costs
 
     
-    def gtfs_router_costs(self, transport_zones: gpd.GeoDataFrame, gtfs_router: GTFSRouter) -> pd.DataFrame:
+    def gtfs_router_costs(
+            self,
+            transport_zones: gpd.GeoDataFrame,
+            gtfs_router: GTFSRouter,
+            start_time_min: float,
+            start_time_max: float,
+            max_traveltime: float
+        ) -> pd.DataFrame:
         """
         Calculates travel costs for public transport between transport zones.
 
@@ -65,6 +89,9 @@ class PublicTransportTravelCosts(Asset):
                 str(transport_zones.cache_path),
                 gtfs_router.cache_path,
                 str(gtfs_route_types_path),
+                str(start_time_min),
+                str(start_time_max),
+                str(max_traveltime),
                 str(self.cache_path)
             ]
         )

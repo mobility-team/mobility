@@ -16,9 +16,12 @@ from mobility.parsers.gtfs_stops import GTFSStops
 
 class GTFSRouter(Asset):
     
-    def __init__(self, transport_zones: TransportZones):
+    def __init__(self, transport_zones: TransportZones, additional_gtfs_files: list = None):
         
-        inputs = {"transport_zones": transport_zones}
+        inputs = {
+            "transport_zones": transport_zones,
+            "additional_gtfs_files": additional_gtfs_files
+        }
         
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "gtfs_router.rds"
 
@@ -34,7 +37,10 @@ class GTFSRouter(Asset):
         transport_zones = self.inputs["transport_zones"]
         
         stops = self.get_stops(transport_zones)
+        
         gtfs_files = self.download_gtfs_files(stops)
+        gtfs_files.append(self.inputs["additional_gtfs_files"])
+        
         gtfs_router = self.prepare_gtfs_router(transport_zones, gtfs_files)
 
         return gtfs_router

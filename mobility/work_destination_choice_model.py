@@ -9,10 +9,15 @@ from mobility.parsers.jobs_active_population_flows import JobsActivePopulationFl
 class WorkDestinationChoiceModel(DestinationChoiceModel):
     
     def __init__(
-            self, transport_zones: gpd.GeoDataFrame, travel_costs: pd.DataFrame,
-            cost_of_time: float = None,
-            radiation_model_alpha: float = None, radiation_model_beta: float = None,
-            fit_radiation_model: bool = True, ssi_min_flow_volume: float = 200.0
+            self,
+            transport_zones: gpd.GeoDataFrame,
+            travel_costs: pd.DataFrame,
+            cost_of_time: float = 20.0,
+            crossborder_flow_utilities: dict = {"fr-fr": 0.0, "ch-fr": 200.0, "ch-ch": 200.0, "cr-ch": 0.0},
+            radiation_model_alpha: float = 0.2,
+            radiation_model_beta: float = 0.8,
+            fit_radiation_model: bool = False,
+            ssi_min_flow_volume: float = 200.0
         ):
         
         self.jobs_active_population = JobsActivePopulationDistribution()
@@ -31,12 +36,12 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             elif radiation_model_beta is None:
                 raise ValueError("The radiation model automatic fit was disabled but you did not provide pass a value for the radiation_model_beta parameter.")
         
-        super().__init__("work", transport_zones, travel_costs, cost_of_time, radiation_model_alpha, radiation_model_beta, fit_radiation_model, ssi_min_flow_volume)
+        super().__init__("work", transport_zones, travel_costs, cost_of_time, crossborder_flow_utilities, radiation_model_alpha, radiation_model_beta, fit_radiation_model, ssi_min_flow_volume)
         
         
     def prepare_sources_and_sinks(self, transport_zones: gpd.GeoDataFrame):
         
-        active_population, jobs = self.jobs_active_population.get()
+        jobs, active_population = self.jobs_active_population.get()
         sources = self.prepare_sources(transport_zones, active_population)
         sinks = self.prepare_sinks(transport_zones, jobs)
         

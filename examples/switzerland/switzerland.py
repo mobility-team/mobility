@@ -12,5 +12,10 @@ mobility.set_params(
 
 transport_zones = mobility.TransportZones("fr-74298", radius = 30)
 
-# travel_costs_car = mobility.TravelCosts(transport_zones, "car").get()
-travel_costs_pt = mobility.PublicTransportTravelCosts(transport_zones).get()
+travel_costs = mobility.MultimodalTravelCosts(transport_zones)
+trans_mode_cm = mobility.TransportModeChoiceModel(travel_costs)
+work_dest_cm = mobility.WorkDestinationChoiceModel(transport_zones, travel_costs)
+
+costs = travel_costs.get()
+mode_cm = trans_mode_cm.get()
+work_cm = work_dest_cm.get()

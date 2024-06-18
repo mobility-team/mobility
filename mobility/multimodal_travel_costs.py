@@ -11,12 +11,26 @@ from mobility.public_transport_travel_costs import PublicTransportTravelCosts
 
 class MultimodalTravelCosts(Asset):
     
-    def __init__(self, transport_zones: gpd.GeoDataFrame):
+    def __init__(
+            self,
+            transport_zones: gpd.GeoDataFrame,
+            public_transport_start_time_min: float = 7.5,
+            public_transport_start_time_max: float = 8.5,
+            public_transport_max_traveltime: float = 1.0,
+            public_transport_additional_gtfs_files: list = None
+        ):
         
         car_travel_costs = TravelCosts(transport_zones, "car")
         walk_travel_costs = TravelCosts(transport_zones, "walk")
         bicycle_travel_costs = TravelCosts(transport_zones, "bicycle")
-        pub_trans_travel_costs = PublicTransportTravelCosts(transport_zones)
+        
+        pub_trans_travel_costs = PublicTransportTravelCosts(
+            transport_zones,
+            public_transport_start_time_min,
+            public_transport_start_time_max,
+            public_transport_max_traveltime,
+            public_transport_additional_gtfs_files
+        )
         
         inputs = {
             "car_travel_costs": car_travel_costs,
