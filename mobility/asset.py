@@ -47,7 +47,6 @@ class Asset(ABC):
             self.cache_path = cache_path.parent / filename
             self.hash_path = cache_path.with_suffix(".inputs-hash")
         
-        # self.get()
 
     @abstractmethod
     def get_cached_asset(self):

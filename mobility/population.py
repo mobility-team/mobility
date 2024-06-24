@@ -5,7 +5,6 @@ import shortuuid
 import pandas as pd
 import numpy as np
 import geopandas as gpd
-import concurrent.futures
 
 from rich.progress import Progress
 
@@ -106,7 +105,7 @@ class Population(Asset):
         cantons = cantons[["INSEE_COM", "INSEE_CAN"]]
         cantons.columns = ["local_admin_unit_id", "CANTVILLE"]
         
-        sample_sizes = pd.merge(sample_sizes, cantons, on="local_admin_unit_id", how="left")
+        sample_sizes = pd.merge(sample_sizes, cantons, on="local_admin_unit_id")
 
         logging.info("Sampling census data in each transport zone...")
         

@@ -39,7 +39,9 @@ class GTFSRouter(Asset):
         stops = self.get_stops(transport_zones)
         
         gtfs_files = self.download_gtfs_files(stops)
-        gtfs_files.append(self.inputs["additional_gtfs_files"])
+        
+        if self.inputs["additional_gtfs_files"] is not None:
+            gtfs_files.extend(self.inputs["additional_gtfs_files"])
         
         gtfs_router = self.prepare_gtfs_router(transport_zones, gtfs_files)
 
