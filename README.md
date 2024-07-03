@@ -24,6 +24,15 @@ Pour l'instant, la solution est centrée sur les territoires et les données fra
 
 Plus d'infos sur [le site web](https://mobility-team.github.io/) !
 
+# Installation
+- Installer mamba avec [miniforge](https://github.com/conda-forge/miniforge).
+- Aller dans le dossier qui contient le code du repo : `cd path/to/mobility-repo`.
+- Créer un environnement pour mobility à partir du fichier environment.yml : `mamba env create -n mobility -f environment.yml`.
+- Activer l'environnement mobility : `mamba activate mobility`.
+- Installer mobility avec pip : `pip install -e .`.
+- Importer mobility dans votre code avec `import mobility` (script d'exemple [ici](https://github.com/mobility-team/mobility/blob/main/examples/trip_localizer_detailed_steps/trip_localizer_detailed_steps.py)).
+- Il faut appeler `mobility.setup` avant de pouvoir utiliser mobility : la fonction va fixer plusieurs variables d'environnement qui peuvent être nécessaires (où stocker les fichiers temporaires, info sur le proxy pour les requêtes http...) et installer si besoin les packages R.
+
 # Contributeur·ices
 | Entreprise/école  | Participant·es |
 | :------------- | :------------- |
