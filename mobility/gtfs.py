@@ -81,7 +81,7 @@ class GTFS(Asset):
             stops = gpd.read_file(path, bbox=bbox)
             
             
-        stops = gpd.sjoin(stops, transport_zones, how="inner", op='within')
+        stops = gpd.sjoin(stops, transport_zones, how="inner", predicate='within')
         
         return stops
     
