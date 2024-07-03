@@ -10,7 +10,8 @@ mobility.set_params(
     project_data_folder_path="D:/data/mobility/projects/lyon"
 )
 
-transport_zones = mobility.TransportZones("69387", method="radius", radius=30.0)
+# transport_zones = mobility.TransportZones("69387", method="radius", radius=30.0)
+transport_zones = mobility.TransportZones("fr-69387", radius=30.0)
 
 travel_costs = mobility.MultimodalTravelCosts(transport_zones)
 trans_mode_cm = mobility.TransportModeChoiceModel(travel_costs, cost_of_time=20.0)

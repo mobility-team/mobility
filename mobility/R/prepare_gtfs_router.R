@@ -8,9 +8,6 @@ library(sfheaders)
 
 args <- commandArgs(trailingOnly = TRUE)
 
-print('----------------------------')
-print(args)
-
 tz_file_path <- args[1]
 gtfs_file_paths <- args[2]
 output_file_path <- args[3]
@@ -335,6 +332,14 @@ max_services_date <- as.integer(format(max_services_date, "%Y%m%d"))
 
 # Create the GTFS timetable
 gtfs <- gtfs_timetable(gtfs, date = max_services_date)
+
+# Remove stops that do not appear in any trips
+# stop_ids <- unique(gtfs$stop_times$stop_id)
+# 
+# gtfs$stops <- gtfs$stops[stop_id %in% stop_ids]
+# 
+# gtfs$timetable <- gtfs$timetable[departure_station]
+# gtfs$stop_ids <- gtfs$stop_ids[gtfs$stop_id %in% stop_ids]
 
 
 saveRDS(gtfs, output_file_path)

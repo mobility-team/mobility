@@ -153,11 +153,18 @@ def install_r_packages(r_packages):
             "reshape2",
             "arrow",
             "stringr",
-            "pbapply",
             "hms",
             "lubridate",
             "readxl",
-            "pbapply"
+            "lubridate",
+            "codetools",
+            "future",
+            "future.apply",
+            "devtools"
+        ]
+
+        packages_from_github = [
+            "gtfsrouter"
         ]
         
         packages_from_binaries = []
@@ -171,6 +178,9 @@ def install_r_packages(r_packages):
             
         script = RScript(resources.files('mobility.R').joinpath('install_packages_from_cran.R'))
         script.run(args=packages_from_cran)
+
+        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_github.R'))
+        script.run(args=packages_from_github)
         
         script = RScript(resources.files('mobility.R').joinpath('install_packages_from_binaries.R'))
         script.run(args=packages_from_binaries)

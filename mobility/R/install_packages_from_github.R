@@ -14,15 +14,11 @@ packages <- packages[!(packages %in% c("log4r"))]
 library(log4r)
 logger <- logger(appenders = console_appender())
 
-print(packages)
-
 installed_packages <- packages %in% rownames(installed.packages())
-
 if (any(installed_packages == FALSE)) {
-  info(logger, paste("Installing R packages from CRAN :", paste(packages[!installed_packages], collapse = ", ")))
-  install.packages(
+  info(logger, paste("Installing R packages from Github :", paste(packages[!installed_packages], collapse = ", ")))
+  remotes::install_github(
     packages[!installed_packages],
-    repos = "https://packagemanager.rstudio.com/cran/latest",
     quiet = TRUE
   )
 }
