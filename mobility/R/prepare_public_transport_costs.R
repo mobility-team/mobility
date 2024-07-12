@@ -69,7 +69,7 @@ info(
 
 plan(multisession, workers = min(parallel::detectCores()-2))
 
-travel_costs <- future_lapply(seq(length(stops$stop_id))[1:100], future.seed = TRUE, FUN = function(i) {
+travel_costs <- future_lapply(seq(length(stops$stop_id)), future.seed = TRUE, FUN = function(i) {
   
   tt <- gtfs_traveltimes(
     gtfs = gtfs,

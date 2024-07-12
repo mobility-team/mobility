@@ -14,8 +14,6 @@ packages <- packages[!(packages %in% c("log4r"))]
 library(log4r)
 logger <- logger(appenders = console_appender())
 
-print(packages)
-
 installed_packages <- packages %in% rownames(installed.packages())
 
 if (any(installed_packages == FALSE)) {
