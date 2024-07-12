@@ -174,11 +174,21 @@ class OSMData(Asset):
         """
         
         logging.info("Cropping OSM extracts")
+        
         cropped_region_name = "cropped-" + osm_region.name
         cropped_region_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / cropped_region_name
         cropped_region_path_str = str(cropped_region_path)
-        command = f"osmium extract --polygon '{tz_boundary_path}' '{osm_region}' --overwrite --strategy complete_ways -o '{cropped_region_path_str}'"
-        subprocess.run(command, shell=True)
+
+        command = [
+            "osmium", "extract",
+            "--polygon", tz_boundary_path,
+            osm_region,
+            "--overwrite",
+            "--strategy", "complete_ways",
+            "-o", cropped_region_path_str
+        ]
+        
+        subprocess.run(command)
         
         return cropped_region_path
         
@@ -196,11 +206,20 @@ class OSMData(Asset):
         """
         
         logging.info("Subsetting OSM extracts")
+        
         osm_tags = ",".join(osm_tags)
         filtered_region_name = "filtered-" + cropped_region_path.name
         filtered_region_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / filtered_region_name
-        command = f"osmium tags-filter --overwrite -o '{filtered_region_path}' '{cropped_region_path}' w/highway={osm_tags}"
-        subprocess.run(command, shell=True)
+        
+        command = [
+            "osmium", "tags-filter",
+            "--overwrite",
+            "-o", filtered_region_path,
+            cropped_region_path,
+            f"w/highway={osm_tags}"
+        ]
+        
+        subprocess.run(command)
         
         return filtered_region_path
     
@@ -217,9 +236,15 @@ class OSMData(Asset):
         """
         
         filtered_regions_paths = [str(path) for path in filtered_regions_paths]
-        filtered_regions_paths = "' '".join(filtered_regions_paths)
         
         logging.info("Merging OSM extracts")
-        command = f"osmium merge '{filtered_regions_paths}' --overwrite -o '{self.cache_path}'"
-        subprocess.run(command, shell=True)
+        
+        command = [
+            "osmium", "merge",
+            *filtered_regions_paths,
+            "--overwrite",
+            "-o", self.cache_path
+        ]
+        
+        subprocess.run(command)
     
