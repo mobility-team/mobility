@@ -159,8 +159,7 @@ def install_r_packages(r_packages):
             "lubridate",
             "codetools",
             "future",
-            "future.apply",
-            "devtools"
+            "future.apply"
         ]
 
         packages_from_github = [

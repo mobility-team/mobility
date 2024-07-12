@@ -24,7 +24,8 @@ dependencies = [
   "myst_parser",
   "streamlit",
   "streamlit_lottie",
-  "streamlit_option_menu"
+  "streamlit_option_menu",
+  "polars"
 ]
 
 requires-python = ">=3.11"

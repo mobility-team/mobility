@@ -90,7 +90,7 @@ class TransportZones(Asset):
 
 
         transport_zones = self.prepare_transport_zones_df(local_admin_units)
-        transport_zones.to_file(self.cache_path)
+        transport_zones.to_file(self.cache_path, driver="GPKG", index=False)
 
         return transport_zones
 
