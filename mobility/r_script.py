@@ -3,6 +3,7 @@ import subprocess
 import threading
 import contextlib
 import pathlib
+import os
 
 class RScript:
     def __init__(self, script_path: str | contextlib._GeneratorContextManager):
@@ -29,7 +30,10 @@ class RScript:
     def print_output(self, stream):
         for line in iter(stream.readline, b""):
             msg = line.decode("utf-8", errors="replace")
-            if "INFO" in msg:
-                msg = msg.split("]")[1]
-                msg = msg.strip()
-                logging.info(msg)
+            if os.environ["MOBILITY_DEBUG"] == "1":
+                print(msg)
+            else:
+                if "INFO" in msg:
+                    msg = msg.split("]")[1]
+                    msg = msg.strip()
+                    logging.info(msg)

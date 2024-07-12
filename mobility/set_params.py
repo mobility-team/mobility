@@ -159,7 +159,9 @@ def install_r_packages(r_packages):
             "lubridate",
             "codetools",
             "future",
-            "future.apply"
+            "future.apply",
+            "ggplot2",
+            "svglite"
         ]
 
         packages_from_github = [

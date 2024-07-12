@@ -2,10 +2,15 @@ import logging
 import pandas as pd
 import geopandas as gpd
 import numpy as np
+import pathlib
+import os
+
+from importlib import resources
 
 from mobility.destination_choice_model import DestinationChoiceModel
 from mobility.parsers.jobs_active_population_distribution import JobsActivePopulationDistribution
 from mobility.parsers.jobs_active_population_flows import JobsActivePopulationFlows
+from mobility.r_script import RScript
 
 class WorkDestinationChoiceModel(DestinationChoiceModel):
     
@@ -180,5 +185,24 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         ref_flows.rename({"flow_volume": "ref_flow_volume"}, axis=1, inplace=True)
         
         return ref_flows
+    
+    
+    def plot_flows(self):
+        
+        output_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "flows.svg"
+        
+        logging.info(f"Plotting flows (svg path: {output_path})")
+        
+        script = RScript(resources.files('mobility.R').joinpath('plot_flows.R'))
+        script.run(
+            args=[
+                str(self.inputs["transport_zones"].cache_path),
+                str(self.cache_path["od_flows"]),
+                output_path
+            ]
+        )
+        
+        return None
+
     
 
