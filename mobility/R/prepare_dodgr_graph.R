@@ -30,7 +30,7 @@ graph <- weight_streetnet(
 
 info(logger, "Contracting dodgr graph...")
 
-graph <- dodgr_contract_graph(graph)
+graph <- dodgr_contract_graph(graph, nocache = TRUE)
 graph <- graph[graph$component == 1, ]
 
 info(logger, "Saving dodgr graph...")
