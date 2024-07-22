@@ -161,7 +161,10 @@ def install_r_packages(r_packages):
             "future",
             "future.apply",
             "ggplot2",
-            "svglite"
+            "svglite",
+            "cppRouting",
+            "duckdb",
+            "jsonlite"
         ]
 
         packages_from_github = [
