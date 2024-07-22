@@ -102,7 +102,7 @@ class TravelCosts(Asset):
         
         dodgr_mode = self.dodgr_modes[mode]
 
-        output_file_name = "dodgr_graph_" + dodgr_mode + ".rds"
+        output_file_name = "dodgr_graph_" + dodgr_mode
         output_file_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / output_file_name
 
         logging.info("Creating a routable graph with dodgr, this might take a while...")
