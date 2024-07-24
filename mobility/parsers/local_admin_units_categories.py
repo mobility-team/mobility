@@ -87,7 +87,7 @@ class LocalAdminUnitsCategories(Asset):
         data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "bfs"
         file_path = data_folder / "BFS - Typologie des communes 2020 en 9 catégories.xlsx"
         
-        download_file(url, file_path)
+        file_path = download_file(url, file_path)
         
         
         categories = pd.read_excel(file_path, skiprows=4, skipfooter=11)
