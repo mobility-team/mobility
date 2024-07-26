@@ -10,7 +10,7 @@ on:
 
 jobs:
   build-ubuntu:
-    runs-on: ubuntu-latest
+    runs-on: [ubuntu-latest, windows-latest]
     strategy:
       max-parallel: 5
       fail-fast: false
