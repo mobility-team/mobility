@@ -60,6 +60,8 @@ class CarpoolTravelCosts(Asset):
         logging.info("Preparing carpool travel costs for " + str(nb_occupant) + " occupants...")
         
         costs = self.compute_carpool_costs(car_travel_costs, nb_occupant)
+        
+        costs.to_parquet(self.cache_path)
 
         return costs
 

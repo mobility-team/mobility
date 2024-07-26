@@ -34,17 +34,17 @@ class MultimodalTravelCosts(Asset):
         )
 
         carpool2_travel_costs = CarpoolTravelCosts(car_travel_costs, 2)
-        carpool3_travel_costs = CarpoolTravelCosts(car_travel_costs, 3)
-        carpool4_travel_costs = CarpoolTravelCosts(car_travel_costs, 4)
+        # carpool3_travel_costs = CarpoolTravelCosts(car_travel_costs, 3)
+        # carpool4_travel_costs = CarpoolTravelCosts(car_travel_costs, 4)
 
         inputs = {
             "car_travel_costs": car_travel_costs,
             "walk_travel_costs": walk_travel_costs,
             "bicycle_travel_costs": bicycle_travel_costs,
             "pub_trans_travel_costs": pub_trans_travel_costs,
-            "carpool2_travel_costs": carpool2_travel_costs,
-            "carpool3_travel_costs": carpool3_travel_costs,
-            "carpool4_travel_costs": carpool4_travel_costs
+            "carpool2_travel_costs": carpool2_travel_costs
+            # "carpool3_travel_costs": carpool3_travel_costs,
+            # "carpool4_travel_costs": carpool4_travel_costs
         }
 
         file_name = "multimodal_travel_costs.parquet"
@@ -68,8 +68,9 @@ class MultimodalTravelCosts(Asset):
         walk = self.inputs["walk_travel_costs"].get()
         bicycle = self.inputs["bicycle_travel_costs"].get()
         pub_trans = self.inputs["pub_trans_travel_costs"].get()
+        carpool2 = self.inputs["carpool2_travel_costs"].get()
         
-        costs = self.aggregate_travel_costs(car, walk, bicycle, pub_trans)
+        costs = self.aggregate_travel_costs(car, walk, bicycle, pub_trans, carpool2)
         costs.to_parquet(self.cache_path)
 
         return costs
