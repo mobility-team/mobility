@@ -21,7 +21,9 @@ def download_file(url, path):
     """
     
     path = pathlib.Path(path)
-    path = path.parent / re.sub(r"[^\w\-_.]", "", path.name)
+    name = re.sub(r"\s", "_", path.name)
+    name = re.sub(r"[^\w\-_.]", "", name)
+    path = path.parent / name
     
     # Create the folder containing the file if not already existing
     if path.parent.exists() is False:
