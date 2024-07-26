@@ -8,6 +8,7 @@ from mobility.asset import Asset
 
 from mobility.travel_costs import TravelCosts
 from mobility.public_transport_travel_costs import PublicTransportTravelCosts
+from mobility.carpool_travel_costs import CarpoolTravelCosts
 
 class MultimodalTravelCosts(Asset):
     
@@ -31,12 +32,19 @@ class MultimodalTravelCosts(Asset):
             public_transport_max_traveltime,
             public_transport_additional_gtfs_files
         )
-        
+
+        carpool2_travel_costs = CarpoolTravelCosts(car_travel_costs, 2)
+        carpool3_travel_costs = CarpoolTravelCosts(car_travel_costs, 3)
+        carpool4_travel_costs = CarpoolTravelCosts(car_travel_costs, 4)
+
         inputs = {
             "car_travel_costs": car_travel_costs,
             "walk_travel_costs": walk_travel_costs,
             "bicycle_travel_costs": bicycle_travel_costs,
-            "pub_trans_travel_costs": pub_trans_travel_costs
+            "pub_trans_travel_costs": pub_trans_travel_costs,
+            "carpool2_travel_costs": carpool2_travel_costs,
+            "carpool3_travel_costs": carpool3_travel_costs,
+            "carpool4_travel_costs": carpool4_travel_costs
         }
 
         file_name = "multimodal_travel_costs.parquet"
