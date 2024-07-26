@@ -82,7 +82,7 @@ jobs:
       with:
         cache: true
     - name: Test with pytest
-      run: pyhtopytest --cov --log-cli-level INFO --clear_inputs
+      run: pytest --cov --log-cli-level INFO --clear_inputs
       shell: powershell
 
 
