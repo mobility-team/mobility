@@ -83,6 +83,6 @@ jobs:
         cache: true
     - name: Test with pytest
       run: python3 -m pytest --cov --log-cli-level INFO --clear_inputs
-      shell: powershell
+      shell: bash -el {0}
 
 
