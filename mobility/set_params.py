@@ -12,6 +12,7 @@ def set_params(
     package_data_folder_path=None, project_data_folder_path=None,
     path_to_pem_file=None, http_proxy_url=None, https_proxy_url=None,
     r_packages=True,
+    r_packages_force_reinstall=False,
     debug=False
 ):
     """
@@ -41,7 +42,7 @@ def set_params(
     setup_package_data_folder_path(package_data_folder_path)
     setup_project_data_folder_path(project_data_folder_path)
 
-    install_r_packages(r_packages)
+    install_r_packages(r_packages, r_packages_force_reinstall)
 
 
 def set_env_variable(key, value):
@@ -140,54 +141,45 @@ def setup_project_data_folder_path(project_data_folder_path):
                 raise ValueError("Please re run setup_mobility with the project_data_folder_path pointed to your desired location.")
 
 
-def install_r_packages(r_packages):
+def install_r_packages(r_packages, r_packages_force_reinstall):
 
     if r_packages is True:
     
-        packages_from_cran = [
-            "dodgr",
-            "gtfsrouter",
-            "sf",
-            "geodist",
-            "dplyr",
-            "sfheaders",
-            "nngeo",
-            "data.table",
-            "reshape2",
-            "arrow",
-            "stringr",
-            "hms",
-            "lubridate",
-            "readxl",
-            "lubridate",
-            "codetools",
-            "future",
-            "future.apply",
-            "ggplot2",
-            "svglite",
-            "cppRouting",
-            "duckdb",
-            "jsonlite"
+        packages = [
+            "CRAN/remotes",
+            "CRAN/dodgr",
+            "CRAN/sf",
+            "CRAN/geodist",
+            "CRAN/dplyr",
+            "CRAN/sfheaders",
+            "CRAN/nngeo",
+            "CRAN/data.table",
+            "CRAN/reshape2",
+            "CRAN/arrow",
+            "CRAN/stringr",
+            "CRAN/hms",
+            "CRAN/lubridate",
+            "CRAN/readxl",
+            "CRAN/lubridate",
+            "CRAN/codetools",
+            "CRAN/future",
+            "CRAN/future.apply",
+            "CRAN/ggplot2",
+            "CRAN/svglite",
+            "CRAN/cppRouting",
+            "CRAN/duckdb",
+            "CRAN/jsonlite",
+            "CRAN/gtfsrouter"
         ]
-
-        packages_from_github = [
-            "gtfsrouter"
-        ]
-        
-        packages_from_binaries = []
         
         if platform.system() == "Windows":
-            packages_from_binaries.append(str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip')))
+            packages.append("local/" + str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip')))
         else:
-            packages_from_cran.append("osmdata")
+            packages.append("CRAN/osmdata")
+            
+        packages.append(str(r_packages_force_reinstall))
 
         os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
             
-        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_cran.R'))
-        script.run(args=packages_from_cran)
-
-        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_github.R'))
-        script.run(args=packages_from_github)
-        
-        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_binaries.R'))
-        script.run(args=packages_from_binaries)
+        script = RScript(resources.files('mobility.R').joinpath('install_packages.R'))
+        script.run(args=packages)

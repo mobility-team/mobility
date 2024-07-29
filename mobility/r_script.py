@@ -16,6 +16,9 @@ class RScript:
             self.script_path = script_path
         else:
             raise ValueError("R script path should be provided as str, pathlib.Path or contextlib._GeneratorContextManager")
+            
+        if pathlib.Path(self.script_path).exists() is False:
+            raise ValueError("Rscript not found : " + self.script_path)
 
     def run(self, args: list) -> None:
         cmd = ["Rscript", self.script_path] + args
@@ -31,7 +34,12 @@ class RScript:
         stderr_thread.join()
         
         if process.returncode != 0:
-            raise RScriptError("Rscript error (the error message is logged just before the error stack trace).")
+            raise RScriptError(
+                """
+                    Rscript error (the error message is logged just before the error stack trace).
+                    If you want more detail, you can print all R output by setting debug=True when calling set_params.
+                """
+            )
 
     def print_output(self, stream, is_error=False):
         for line in iter(stream.readline, b""):
