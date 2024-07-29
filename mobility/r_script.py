@@ -44,24 +44,19 @@ class RScript:
     def print_output(self, stream, is_error=False):
         for line in iter(stream.readline, b""):
             msg = line.decode("utf-8", errors="replace")
-<<<<<<< HEAD
-            if os.environ["MOBILITY_DEBUG"] == "1":
-                print(msg)
-=======
+
             if os.environ.get("MOBILITY_DEBUG") == "1":
                 logging.info(msg)
->>>>>>> f7dc88657338362f3be73833f156d0524a7a6481
+
             else:
                 if "INFO" in msg:
                     msg = msg.split("]")[1]
                     msg = msg.strip()
                     logging.info(msg)
-<<<<<<< HEAD
-=======
                 elif is_error and "Error" in msg or "Erreur" in msg:
                     logging.error("RScript execution failed, with the following message : " + msg)
 
 
 class RScriptError(Exception):
     pass
->>>>>>> f7dc88657338362f3be73833f156d0524a7a6481
+
