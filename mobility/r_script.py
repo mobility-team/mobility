@@ -51,7 +51,7 @@ class RScript:
             msg = line.decode("utf-8", errors="replace")
 
             if os.environ.get("MOBILITY_DEBUG") == "1":
-                logging.info(msg)
+                logging.debug(msg)
 
             else:
                 if "INFO" in msg:
