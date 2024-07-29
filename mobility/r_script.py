@@ -21,7 +21,12 @@ class RScript:
             raise ValueError("Rscript not found : " + self.script_path)
 
     def run(self, args: list) -> None:
+        
         cmd = ["Rscript", self.script_path] + args
+        
+        if os.environ.get("MOBILITY_DEBUG") == "1":
+            logging.info("Running R script " + self.script_path + " with the following arguments :")
+            logging.info(args)
         
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout_thread = threading.Thread(target=self.print_output, args=(process.stdout,))
@@ -46,7 +51,7 @@ class RScript:
             msg = line.decode("utf-8", errors="replace")
 
             if os.environ.get("MOBILITY_DEBUG") == "1":
-                logging.info(msg)
+                logging.debug(msg)
 
             else:
                 if "INFO" in msg:
