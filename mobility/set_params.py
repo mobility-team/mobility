@@ -11,7 +11,8 @@ from mobility.r_script import RScript
 def set_params(
     package_data_folder_path=None, project_data_folder_path=None,
     path_to_pem_file=None, http_proxy_url=None, https_proxy_url=None,
-    r_packages=True
+    r_packages=True,
+    debug=False
 ):
     """
     Sets up the necessary environment for the Mobility package.
@@ -34,6 +35,8 @@ def set_params(
     set_env_variable("MOBILITY_CERT_FILE", path_to_pem_file)
     set_env_variable("HTTP_PROXY", http_proxy_url)
     set_env_variable("HTTPS_PROXY", https_proxy_url)
+    
+    os.environ["MOBILITY_DEBUG"] = "1" if debug else "0"
 
     setup_package_data_folder_path(package_data_folder_path)
     setup_project_data_folder_path(project_data_folder_path)
@@ -153,11 +156,22 @@ def install_r_packages(r_packages):
             "reshape2",
             "arrow",
             "stringr",
-            "pbapply",
             "hms",
             "lubridate",
             "readxl",
-            "pbapply"
+            "lubridate",
+            "codetools",
+            "future",
+            "future.apply",
+            "ggplot2",
+            "svglite",
+            "cppRouting",
+            "duckdb",
+            "jsonlite"
+        ]
+
+        packages_from_github = [
+            "gtfsrouter"
         ]
         
         packages_from_binaries = []
@@ -171,6 +185,9 @@ def install_r_packages(r_packages):
             
         script = RScript(resources.files('mobility.R').joinpath('install_packages_from_cran.R'))
         script.run(args=packages_from_cran)
+
+        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_github.R'))
+        script.run(args=packages_from_github)
         
         script = RScript(resources.files('mobility.R').joinpath('install_packages_from_binaries.R'))
         script.run(args=packages_from_binaries)
