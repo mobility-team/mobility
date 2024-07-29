@@ -3,6 +3,7 @@ import sys
 import pathlib
 import logging
 import platform
+import json
 
 from importlib import resources
 from mobility.r_script import RScript
@@ -146,41 +147,51 @@ def install_r_packages(r_packages, r_packages_force_reinstall):
     if r_packages is True:
     
         packages = [
-            "CRAN/remotes",
-            "CRAN/dodgr",
-            "CRAN/sf",
-            "CRAN/geodist",
-            "CRAN/dplyr",
-            "CRAN/sfheaders",
-            "CRAN/nngeo",
-            "CRAN/data.table",
-            "CRAN/reshape2",
-            "CRAN/arrow",
-            "CRAN/stringr",
-            "CRAN/hms",
-            "CRAN/lubridate",
-            "CRAN/readxl",
-            "CRAN/lubridate",
-            "CRAN/codetools",
-            "CRAN/future",
-            "CRAN/future.apply",
-            "CRAN/ggplot2",
-            "CRAN/svglite",
-            "CRAN/cppRouting",
-            "CRAN/duckdb",
-            "CRAN/jsonlite",
-            "CRAN/gtfsrouter"
+            {'source': 'CRAN', 'name': 'remotes'},
+            {'source': 'CRAN', 'name': 'dodgr'},
+            {'source': 'CRAN', 'name': 'sf'},
+            {'source': 'CRAN', 'name': 'geodist'},
+            {'source': 'CRAN', 'name': 'dplyr'},
+            {'source': 'CRAN', 'name': 'sfheaders'},
+            {'source': 'CRAN', 'name': 'nngeo'},
+            {'source': 'CRAN', 'name': 'data.table'},
+            {'source': 'CRAN', 'name': 'reshape2'},
+            {'source': 'CRAN', 'name': 'arrow'},
+            {'source': 'CRAN', 'name': 'stringr'},
+            {'source': 'CRAN', 'name': 'hms'},
+            {'source': 'CRAN', 'name': 'lubridate'},
+            {'source': 'CRAN', 'name': 'readxl'},
+            {'source': 'CRAN', 'name': 'codetools'},
+            {'source': 'CRAN', 'name': 'future'},
+            {'source': 'CRAN', 'name': 'future.apply'},
+            {'source': 'CRAN', 'name': 'ggplot2'},
+            {'source': 'CRAN', 'name': 'svglite'},
+            {'source': 'CRAN', 'name': 'cppRouting'},
+            {'source': 'CRAN', 'name': 'duckdb'},
+            {'source': 'CRAN', 'name': 'jsonlite'},
+            {'source': 'CRAN', 'name': 'gtfsrouter'}
         ]
         
         if platform.system() == "Windows":
-            packages.append("local/" + str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip')))
+            packages.append(
+                {
+                    "source": "local",
+                    "path": str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip'))
+                }
+            )
         else:
-            packages.append("CRAN/osmdata")
+            packages.append({'source': 'CRAN', 'name': 'osmdata'})
             
-        packages.append(str(r_packages_force_reinstall))
+            
+        args = {
+            "packages": packages,
+            "force_reinstall": r_packages_force_reinstall
+        }
+            
+        args = json.dumps(args)
 
         os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
             
         script = RScript(resources.files('mobility.R').joinpath('install_packages.R'))
-        script.run(args=packages)
+        script.run(args=[args])
 
