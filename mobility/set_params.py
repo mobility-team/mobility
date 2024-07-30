@@ -179,7 +179,22 @@ def install_r_packages(r_packages):
         if platform.system() == "Windows":
             packages_from_binaries.append(str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip')))
         else:
+<<<<<<< Updated upstream
             packages_from_cran.append("osmdata")
+=======
+            packages.append({'source': 'CRAN', 'name': 'osmdata'})
+            
+            
+        args = {
+            "packages": packages,
+            "force_reinstall": r_packages_force_reinstall
+        }
+            
+        args = json.dumps(args)
+            
+        script = RScript(resources.files('mobility.R').joinpath('install_packages.R'))
+        #script.run(args=[args])
+>>>>>>> Stashed changes
 
         os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
             
