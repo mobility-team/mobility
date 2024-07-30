@@ -189,8 +189,6 @@ def install_r_packages(r_packages, r_packages_force_reinstall):
         }
             
         args = json.dumps(args)
-
-        os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
             
         script = RScript(resources.files('mobility.R').joinpath('install_packages.R'))
         script.run(args=[args])

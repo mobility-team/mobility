@@ -1,10 +1,7 @@
 
 # Install pak if needed
-lib <- Sys.getenv("R_LIBS")
-
-# Install pak if not available
 if (!("pak" %in% installed.packages())) {
-  install.packages("pak", lib = lib, repos = sprintf(
+  install.packages("pak", repos = sprintf(
     "https://r-lib.github.io/p/pak/%s/%s/%s/%s",
     "stable",
     .Platform$pkgType,
@@ -17,14 +14,14 @@ library(pak)
 
 # Install log4r if not available
 if (!("log4r" %in% installed.packages())) {
-  pkg_install("log4r", lib = lib)
+  pkg_install("log4r")
 }
 library(log4r)
 logger <- logger(appenders = console_appender())
 
 # Install log4r if not available
 if (!("jsonlite" %in% installed.packages())) {
-  pkg_install("jsonlite", lib = lib)
+  pkg_install("jsonlite")
 }
 library(jsonlite)
 
@@ -48,7 +45,7 @@ if (force_reinstall == FALSE) {
 
 if (length(cran_packages) > 0) {
   info(logger, paste0("Installing R packages from CRAN : ", paste0(cran_packages, collapse = ", ")))
-  pkg_install(cran_packages, lib = lib)
+  pkg_install(cran_packages)
 }
 
 # Github packages
@@ -65,7 +62,7 @@ if (force_reinstall == FALSE) {
 
 if (length(github_packages) > 0) {
   info(logger, paste0("Installing R packages from Github :", paste0(github_packages, collapse = ", ")))
-  remotes::install_github(github_packages, lib = lib)
+  remotes::install_github(github_packages)
 }
 
 # Local packages
