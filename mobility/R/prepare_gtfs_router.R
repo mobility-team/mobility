@@ -101,6 +101,7 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
     
   }, error = function(e) {
     info(logger, "There was an error loading data from the zip file (possibly a corrupted archive).")
+  }, warning = function(w) {
   })
   
   return(gtfs)
@@ -327,7 +328,7 @@ n_services[, n_month_average := mean(n), by = list(year(date), month(date))]
 n_services <- n_services[n_month_average == max(n_month_average)]
 
 # Select the day with the most services
-max_services_date <- n_services[n == max(n), date]
+max_services_date <- n_services[n == max(n), date][1]
 max_services_date <- as.integer(format(max_services_date, "%Y%m%d"))
 
 # Create the GTFS timetable

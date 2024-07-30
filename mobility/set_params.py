@@ -191,4 +191,5 @@ def install_r_packages(r_packages, r_packages_force_reinstall):
         args = json.dumps(args)
             
         script = RScript(resources.files('mobility.R').joinpath('install_packages.R'))
-        script.run(args=[args])
+        #script.run(args=[args])
+
