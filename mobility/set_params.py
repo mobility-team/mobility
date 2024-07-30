@@ -3,6 +3,7 @@ import sys
 import pathlib
 import logging
 import platform
+import json
 
 from importlib import resources
 from mobility.r_script import RScript
@@ -12,6 +13,7 @@ def set_params(
     package_data_folder_path=None, project_data_folder_path=None,
     path_to_pem_file=None, http_proxy_url=None, https_proxy_url=None,
     r_packages=True,
+    r_packages_force_reinstall=False,
     debug=False
 ):
     """
@@ -41,7 +43,7 @@ def set_params(
     setup_package_data_folder_path(package_data_folder_path)
     setup_project_data_folder_path(project_data_folder_path)
 
-    install_r_packages(r_packages)
+    install_r_packages(r_packages, r_packages_force_reinstall)
 
 
 def set_env_variable(key, value):
@@ -140,48 +142,44 @@ def setup_project_data_folder_path(project_data_folder_path):
                 raise ValueError("Please re run setup_mobility with the project_data_folder_path pointed to your desired location.")
 
 
-def install_r_packages(r_packages):
+def install_r_packages(r_packages, r_packages_force_reinstall):
 
     if r_packages is True:
     
-        packages_from_cran = [
-            "dodgr",
-            "gtfsrouter",
-            "sf",
-            "geodist",
-            "dplyr",
-            "sfheaders",
-            "nngeo",
-            "data.table",
-            "reshape2",
-            "arrow",
-            "stringr",
-            "hms",
-            "lubridate",
-            "readxl",
-            "lubridate",
-            "codetools",
-            "future",
-            "future.apply",
-            "ggplot2",
-            "svglite",
-            "cppRouting",
-            "duckdb",
-            "jsonlite"
+        packages = [
+            {'source': 'CRAN', 'name': 'remotes'},
+            {'source': 'CRAN', 'name': 'dodgr'},
+            {'source': 'CRAN', 'name': 'sf'},
+            {'source': 'CRAN', 'name': 'geodist'},
+            {'source': 'CRAN', 'name': 'dplyr'},
+            {'source': 'CRAN', 'name': 'sfheaders'},
+            {'source': 'CRAN', 'name': 'nngeo'},
+            {'source': 'CRAN', 'name': 'data.table'},
+            {'source': 'CRAN', 'name': 'reshape2'},
+            {'source': 'CRAN', 'name': 'arrow'},
+            {'source': 'CRAN', 'name': 'stringr'},
+            {'source': 'CRAN', 'name': 'hms'},
+            {'source': 'CRAN', 'name': 'lubridate'},
+            {'source': 'CRAN', 'name': 'readxl'},
+            {'source': 'CRAN', 'name': 'codetools'},
+            {'source': 'CRAN', 'name': 'future'},
+            {'source': 'CRAN', 'name': 'future.apply'},
+            {'source': 'CRAN', 'name': 'ggplot2'},
+            {'source': 'CRAN', 'name': 'svglite'},
+            {'source': 'CRAN', 'name': 'cppRouting'},
+            {'source': 'CRAN', 'name': 'duckdb'},
+            {'source': 'CRAN', 'name': 'jsonlite'},
+            {'source': 'CRAN', 'name': 'gtfsrouter'}
         ]
-
-        packages_from_github = [
-            "gtfsrouter"
-        ]
-        
-        packages_from_binaries = []
         
         if platform.system() == "Windows":
-            packages_from_binaries.append(str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip')))
+            packages.append(
+                {
+                    "source": "local",
+                    "path": str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip'))
+                }
+            )
         else:
-<<<<<<< Updated upstream
-            packages_from_cran.append("osmdata")
-=======
             packages.append({'source': 'CRAN', 'name': 'osmdata'})
             
             
@@ -193,16 +191,4 @@ def install_r_packages(r_packages):
         args = json.dumps(args)
             
         script = RScript(resources.files('mobility.R').joinpath('install_packages.R'))
-        #script.run(args=[args])
->>>>>>> Stashed changes
-
-        os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
-            
-        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_cran.R'))
-        script.run(args=packages_from_cran)
-
-        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_github.R'))
-        script.run(args=packages_from_github)
-        
-        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_binaries.R'))
-        script.run(args=packages_from_binaries)
+        script.run(args=[args])
