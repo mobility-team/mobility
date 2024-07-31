@@ -78,7 +78,7 @@ class MultimodalTravelCosts(Asset):
         walk["mode"] = "walk"
         bicycle["mode"] = "bicycle"
         
-        # BUG
+        # BUG (check if still there now that gtfs_router has been improved ?)
         # Fix public transport times to only have one row per OD pair
         # (should be fixed in PublicTransportTravelCosts !)
         pub_trans = pub_trans.sort_values(["from", "to", "time"])
@@ -91,7 +91,7 @@ class MultimodalTravelCosts(Asset):
             pub_trans
         ])
         
-        # BUG
+        # BUG (check if still there now that we use cpprouting ?)
         # Remove null costs that might occur
         # (should be fixed in TravelCosts !)
         costs = costs[(~costs["time"].isnull()) & (~costs["distance"].isnull())]
