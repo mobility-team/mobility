@@ -20,38 +20,29 @@ class DestinationChoiceModel(Asset):
             motive: str,
             transport_zones: gpd.GeoDataFrame, 
             travel_costs: TravelCosts,
-            cost_of_time: float,
-            cost_of_distance: float,
-            additional_utility: dict,
-            radiation_model_type: str,
-            radiation_model_alpha: float,
-            radiation_model_beta: float,
-            radiation_model_lambda: float,
-            fit_radiation_model: bool, ssi_min_flow_volume: float
+            model_parameters: dict,
+            utility_parameters: dict,
+            ssi_min_flow_volume: float
         ):
         
         inputs = {
             "motive": motive,
             "transport_zones": transport_zones,
             "travel_costs": travel_costs,
-            "cost_of_time": cost_of_time,
-            "cost_of_distance": cost_of_distance,
-            "additional_utility": additional_utility,
-            "radiation_model_type": radiation_model_type,
-            "radiation_model_alpha": radiation_model_alpha,
-            "radiation_model_beta": radiation_model_beta,
-            "radiation_model_lambda": radiation_model_lambda,
-            "fit_radiation_model": fit_radiation_model,
+            "model_parameters": model_parameters,
+            "utility_parameters": utility_parameters,
             "ssi_min_flow_volume": ssi_min_flow_volume
         }
         
         data_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
         od_flows_filename = motive + "_od_flows.parquet"
         dest_cm_filename = motive + "_destination_choice_model.parquet"
+        utility_by_od_and_mode_filename = motive + "_utility_by_od_and_mode.parquet"
         
         cache_path = {
             "od_flows": data_folder / od_flows_filename,
-            "destination_choice_model": data_folder / dest_cm_filename
+            "destination_choice_model": data_folder / dest_cm_filename,
+            "utility_by_od_and_mode": data_folder / utility_by_od_and_mode_filename
         }
         
         super().__init__(inputs, cache_path)
@@ -75,47 +66,39 @@ class DestinationChoiceModel(Asset):
         sources, sinks = self.prepare_sources_and_sinks(transport_zones)
         ref_flows = self.prepare_reference_flows(transport_zones)
         
-        radiation_model_type = self.inputs["radiation_model_type"]
-        additional_utility = self.inputs["additional_utility"]
+        model_parameters = self.inputs["model_parameters"]
+        utility_parameters = self.inputs["utility_parameters"]
         
-        if self.inputs["fit_radiation_model"] is True:
-            
-            logging.info("Fitting the radiation model to reference OD flows...")
-                
-            cost_of_time, cost_of_distance, alpha, beta, selection_lambda = self.find_optimal_parameters(transport_zones, sources, sinks, travel_costs, ref_flows, radiation_model_type)
-            
-        else:
-            
-            cost_of_time = self.inputs["cost_of_time"]
-            cost_of_distance = self.inputs["cost_of_distance"]
-            alpha = self.inputs["radiation_model_alpha"]
-            beta = self.inputs["radiation_model_beta"]
-            selection_lambda = self.inputs["radiation_model_lambda"]
+        travel_costs = travel_costs.set_index(["from", "to", "mode"])
+        travel_costs = travel_costs[travel_costs["time"] < 2.0]
+        
+        utility_by_od_and_mode = self.compute_utility_by_od_and_mode(
+            transport_zones,
+            travel_costs,
+            utility_parameters
+        )
+        
+        utility_by_od = self.compute_utility_by_od(utility_by_od_and_mode)
             
         flows = self.compute_flows(
             transport_zones,
             sources,
             sinks,
-            travel_costs,
-            cost_of_time,
-            cost_of_distance,
-            additional_utility,
-            radiation_model_type,
-            alpha,
-            beta,
-            selection_lambda
+            utility_by_od,
+            model_parameters
         )
         
         flows = self.add_reference_flows(transport_zones, flows, ref_flows)
         
-        flows.to_parquet(self.cache_path["od_flows"])
         
         choice_model = flows[["from", "to", "flow_volume"]].set_index(["from", "to"])["flow_volume"]
         choice_model = choice_model/choice_model.groupby("from").sum()
         choice_model.name = "prob"
         choice_model = choice_model.reset_index()
         
+        flows.to_parquet(self.cache_path["od_flows"])
         choice_model.to_parquet(self.cache_path["destination_choice_model"])
+        utility_by_od_and_mode.to_parquet(self.cache_path["utility_by_od_and_mode"])
         
         return choice_model
     
@@ -128,138 +111,59 @@ class DestinationChoiceModel(Asset):
     @abstractmethod
     def prepare_sources_and_sinks(self):
         pass
-        
     
-    def find_optimal_parameters(
-            self, transport_zones: gpd.GeoDataFrame, sources: pd.DataFrame, sinks: pd.DataFrame,
-            travel_costs: pd.DataFrame, ref_flows: pd.DataFrame, radiation_model_type: str
+    
+    def compute_utility_by_od(
+            self,
+            utilities: pd.DataFrame,
         ):
         
-        if radiation_model_type == "universal":
-            
-            logging.info("Optimizing cost_of_time, alpha and beta parameters...")
-            
-            x0 = [0.5, 0.1, 0.2, 0.8]
-            res = minimize(
-                self.neg_ssi,
-                x0,
-                args=(transport_zones, sources, sinks, travel_costs, ref_flows, radiation_model_type),
-                method="Nelder-Mead",
-                bounds=((0.0, 1.0), (0.0, 0.1), (0.0, 1.0), (0.0, 1.0)),
-                options={"maxiter": 20, "fatol": 1e-3}
-            )
-            
-            cost_of_time, cost_of_distance, alpha, beta = res.x
-            cost_of_time *= 40
-            
-        elif radiation_model_type == "selection":
-            
-            logging.info("Optimizing cost_of_time and lambda parameters...")
-            
-            x0 = [0.5, 0.1, 0.9999]
-            res = minimize(
-                self.neg_ssi,
-                x0,
-                args=(transport_zones, sources, sinks, travel_costs, ref_flows, radiation_model_type),
-                method="Nelder-Mead",
-                bounds=((0.0, 1.0), (0.0, 0.1), (0.0, 1.0)),
-                options={"maxiter": 20, "fatol": 1e-3}
-            )
-            
-            cost_of_time, cost_of_distance, alpha, beta = res.x
-            cost_of_time *= 40
-            
-        else:
-            
-            raise ValueError("Radiation model type " + radiation_model_type + " is not available (should be 'universal' or 'selection').")
-            
+        utilities = utilities.copy()
         
-        ssi = round((1.0 - res.fun)*1000)/10
+        # Shift the utility to avoid exp overflows 
+        # max_net_utility = utilities["net_utility"].max()
+        # utilities["net_utility"] -= max_net_utility
         
-        logging.info(f"Optimal parameters : cost_of_time={cost_of_time}, cost_of_distance={cost_of_distance}, alpha={alpha}, beta={beta}.")
-        logging.info(f"Final SSI value : {ssi}.")
+        utilities["prob"] = np.exp(utilities["net_utility"])
+        utilities["prob"] = utilities["prob"]/utilities.groupby(["from", "to"])["prob"].transform("sum")
         
-        return cost_of_time, alpha, beta
-    
-    def neg_ssi(self, x, transport_zones, sources, sinks, travel_costs, ref_flows, radiation_model_type):
+        utilities["cost"] = utilities["prob"]*utilities["cost"]
+        utilities["net_utility"] = utilities["prob"]*utilities["net_utility"]
         
-        if radiation_model_type == "universal":
-            cost_of_time, cost_of_distance, alpha, beta = x
-            selection_lambda = None
-        else:
-            cost_of_time, cost_of_distance, selection_lambda = x
-            alpha = beta = None
+        utilities = utilities.groupby(["from", "to"]).agg({
+            "cost": "sum",
+            "utility": "first",
+            "net_utility": "sum"
+        })
         
-        cost_of_time *= 40
+        # utilities["net_utility"] += max_net_utility
         
-        flows = self.compute_flows(
-            transport_zones=transport_zones,
-            sources=sources,
-            sinks=sinks,
-            travel_costs=travel_costs,
-            cost_of_time=cost_of_time,
-            cost_of_distance=cost_of_distance,
-            additional_utility=self.inputs["additional_utility"],
-            radiation_model_type=radiation_model_type,
-            alpha=alpha,
-            beta=beta,
-            selection_lambda=selection_lambda
-        )
-    
-        flows = self.add_reference_flows(transport_zones, flows, ref_flows)
-        nssi = 1.0 - self.compute_ssi(flows, self.inputs["ssi_min_flow_volume"])
+        return utilities
         
-        # Log optimization progress
-        cost_of_time = round(cost_of_time*1000)/1000
-        cost_of_distance = round(cost_of_distance*1000)/1000
-        alpha = round(alpha*1000)/1000
-        beta = round(beta*1000)/1000
-        ssi = round((1.0 - nssi)*10000)/100
-        
-        logging.info(f"cost_of_time={cost_of_time} - cost_of_distance={cost_of_distance} - alpha={alpha} - beta={beta} - SSI={ssi}")
 
-        return nssi
-    
     def compute_flows(
             self,
             transport_zones,
             sources: pd.DataFrame,
             sinks: pd.DataFrame,
-            travel_costs: pd.DataFrame,
-            cost_of_time: float,
-            cost_of_distance: float,
-            additional_utility: dict,
-            radiation_model_type: str,
-            alpha: float,
-            beta: float,
-            selection_lambda: float
+            utility_by_od: pd.DataFrame,
+            model_parameters: dict
         ):
         
-        travel_costs = travel_costs.set_index(["from", "to", "mode"])
-        travel_costs = travel_costs[travel_costs["time"] < 2.0]
-        
-        utility_by_od = self.compute_utility_by_od(
-            transport_zones,
-            travel_costs,
-            cost_of_time,
-            cost_of_distance,
-            additional_utility
-        )
-        
-        if radiation_model_type == "universal":
+        if model_parameters["type"] == "radiation_universal":
             flows, _, _ = radiation_model.iter_radiation_model(
                 sources=sources,
                 sinks=sinks,
                 costs=utility_by_od,
-                alpha=alpha,
-                beta=beta
+                alpha=model_parameters["alpha"],
+                beta=model_parameters["beta"]
             )
         else:
             flows, _, _ = radiation_model_selection.iter_radiation_model_selection(
                 sources=sources,
                 sinks=sinks,
                 costs=utility_by_od,
-                selection_lambda=selection_lambda
+                selection_lambda=model_parameters["lambda"]
             )
         
         flows = flows.to_frame().reset_index()
@@ -340,75 +244,6 @@ class DestinationChoiceModel(Asset):
         error = comparison["mod_distance"].sum()/comparison["ref_distance"].sum() - 1.0
         
         return error
-    
-        
-    def compute_utility_by_od(
-            self,
-            transport_zones: gpd.GeoDataFrame,
-            travel_costs: pd.DataFrame,
-            cost_of_time: float,
-            cost_of_distance: float,
-            additional_utility: dict
-        ):
-        
-        travel_costs = pd.merge(
-            travel_costs,
-            transport_zones[["transport_zone_id", "local_admin_unit_id"]].rename({"transport_zone_id": "from"}, axis=1).set_index("from"),
-            left_index=True,
-            right_index=True
-        )
-        
-        travel_costs = pd.merge(
-            travel_costs,
-            transport_zones[["transport_zone_id", "local_admin_unit_id"]].rename({"transport_zone_id": "to"}, axis=1).set_index("to"),
-            left_index=True,
-            right_index=True
-        )
-        
-        travel_costs["crossborder_flow"] = travel_costs["local_admin_unit_id_x"].str[0:2] + "-" + travel_costs["local_admin_unit_id_y"].str[0:2]
-        
-        
-        # Utility function : U = -ct*time*2 + -cd*distance*2 + u_crossborder
-        
-        # Cost of time (ct) : distance dependant, from https://www.ecologie.gouv.fr/sites/default/files/documents/V.2.pdf
-        # 
-        ct = 18.6
-        ct = np.where(travel_costs["distance"] > 20, 14.4 + 0.215*travel_costs["distance"], ct)
-        ct = np.where(travel_costs["distance"] > 80, 30.2 + 0.017*travel_costs["distance"], ct)
-        ct = np.where(travel_costs["distance"] > 400, 37.0, ct)
-        ct *= 1.17
-        
-        if "ch" in [k[0:2] for k in additional_utility.keys()]:
-            ct_ch = ct*2.0
-            ct = np.where(travel_costs["crossborder_flow"].str.contains("ch-"), ct_ch, ct)
-        
-        travel_costs["cost"] = ct*travel_costs["time"]*2
-        travel_costs["cost"] += cost_of_distance*travel_costs["distance"]*2
-        
-        travel_costs["utility"] = travel_costs["crossborder_flow"].map(additional_utility)
-        
-        travel_costs["net_utility"] = travel_costs["utility"] - travel_costs["cost"]
-        
-        # Shift the utility to avoid exp overflows 
-        max_net_utility = travel_costs["net_utility"].max()
-        travel_costs["net_utility"] -= max_net_utility
-        
-        travel_costs["prob"] = np.exp(travel_costs["net_utility"])
-        travel_costs["prob"] = travel_costs["prob"]/travel_costs.groupby(["from", "to"])["prob"].transform("sum")
-        
-        travel_costs["cost"] = travel_costs["prob"]*travel_costs["cost"]
-        travel_costs["net_utility"] = travel_costs["prob"]*travel_costs["net_utility"]
-        
-        travel_costs = travel_costs.groupby(["from", "to"]).agg({
-            "cost": "sum",
-            "utility": "first",
-            "net_utility": "sum"
-        })
-        
-        travel_costs["net_utility"] += max_net_utility
-        
-        return travel_costs
-    
     
     
     def plot_model_fit(self):

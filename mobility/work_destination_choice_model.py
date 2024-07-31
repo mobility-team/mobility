@@ -18,17 +18,11 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             self,
             transport_zones: gpd.GeoDataFrame,
             travel_costs: pd.DataFrame,
+            utility_parameters: dict,
             active_population: pd.DataFrame = None,
             jobs: pd.DataFrame = None,
             reference_flows: pd.DataFrame = None,
-            cost_of_time: float = 25.0,
-            cost_of_distance: float = 0.2,
-            additional_utility: dict = {"fr-fr": 120.0, "fr-ch": 240.0, "ch-fr": 120.0, "ch-ch": 240.0},
-            radiation_model_type: str = "universal",
-            radiation_model_alpha: float = 0.2,
-            radiation_model_beta: float = 0.8,
-            radiation_model_lambda: float = 0.9999,
-            fit_radiation_model: bool = False,
+            model_parameters: dict = {"type": "selection", "lambda": 0.9999},
             ssi_min_flow_volume: float = 200.0
         ):
         
@@ -43,34 +37,25 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             self.reference_flows = reference_flows
         
         
-        if fit_radiation_model is False:
-            if radiation_model_alpha is None and radiation_model_beta is None:
-                logging.log("The radiation model automatic fit was disabled by setting fit_radiation_model to False. Using cost_of_time=20.0, cost_of_distance=0.1, alpha=0.5, beta=0.5 as default parameters (you can set them manually with the radiation_model_alpha and radiation_model_beta parameters).")
-                cost_of_time = 20.0
-                cost_of_distance = 0.1
-                radiation_model_alpha = 0.5
-                radiation_model_beta = 0.5
-            elif cost_of_time is None:
-                raise ValueError("The radiation model automatic fit was disabled but you did not provide a value for the cost_of_time parameter.")
-            elif cost_of_distance is None:
-                raise ValueError("The radiation model automatic fit was disabled but you did not provide a value for the cost_of_distance parameter.")
-            elif radiation_model_alpha is None:
-                raise ValueError("The radiation model automatic fit was disabled but you did not provide a value for the radiation_model_alpha parameter.")
-            elif radiation_model_beta is None:
-                raise ValueError("The radiation model automatic fit was disabled but you did not provide a value for the radiation_model_beta parameter.")
+        if "type" not in model_parameters.keys():
+            raise ValueError("The model_parameters should be a dict that specifies the type of radiation model : radiation_universal or radiation_selection")
+        
+        if model_parameters["type"] == "radiation_selection":
+            if "lambda" not in model_parameters.keys():
+                raise ValueError("Lambda parameter missing in model_parameters.")
+            
+        if model_parameters["type"] == "radiation_universal":
+            if "alpha" not in model_parameters.keys():
+                raise ValueError("Alpha parameter missing in model_parameters.")
+            if "beta" not in model_parameters.keys():
+                raise ValueError("Beta parameter missing in model_parameters.")
         
         super().__init__(
             "work",
             transport_zones,
             travel_costs,
-            cost_of_time,
-            cost_of_distance,
-            additional_utility,
-            radiation_model_type,
-            radiation_model_alpha,
-            radiation_model_beta,
-            radiation_model_lambda,
-            fit_radiation_model,
+            model_parameters,
+            utility_parameters,
             ssi_min_flow_volume
         )
         
@@ -185,6 +170,65 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         ref_flows.rename({"flow_volume": "ref_flow_volume"}, axis=1, inplace=True)
         
         return ref_flows
+   
+    
+    def compute_utility_by_od_and_mode(
+            self,
+            transport_zones: gpd.GeoDataFrame,
+            travel_costs: pd.DataFrame,
+            utility_parameters: dict
+        ):
+        
+        travel_costs = pd.merge(
+            travel_costs,
+            transport_zones[["transport_zone_id", "local_admin_unit_id"]].rename({"transport_zone_id": "from"}, axis=1).set_index("from"),
+            left_index=True,
+            right_index=True
+        )
+        
+        travel_costs = pd.merge(
+            travel_costs,
+            transport_zones[["transport_zone_id", "local_admin_unit_id"]].rename({"transport_zone_id": "to"}, axis=1).set_index("to"),
+            left_index=True,
+            right_index=True
+        )
+        
+        travel_costs["crossborder_flow"] = travel_costs["local_admin_unit_id_x"].str[0:2] + "-" + travel_costs["local_admin_unit_id_y"].str[0:2]
+        
+        # Utility function : U = -ct*time*2 + -cd*distance*2 - constant + u_crossborder
+        
+        # Extract all OD modes (grouping all public_transport into one category for now)
+        modes = travel_costs.index.get_level_values("mode")
+        modes = modes.where(modes.isin(["car", "bicycle", "walk"]), "public_transport")
+        
+        # Cost of time (ct) : distance dependant, from https://www.ecologie.gouv.fr/sites/default/files/documents/V.2.pdf
+        ct = 18.6
+        ct = np.where(travel_costs["distance"] > 20, 14.4 + 0.215*travel_costs["distance"], ct)
+        ct = np.where(travel_costs["distance"] > 80, 30.2 + 0.017*travel_costs["distance"], ct)
+        ct = np.where(travel_costs["distance"] > 400, 37.0, ct)
+        ct *= 1.17 # Inflation coeff
+        
+        # Cost of distance : mode dependent      
+        cd = {m: c["cost_of_distance"] for m, c in utility_parameters["mode_coefficients"].items()}
+        cd = modes.map(cd)
+        
+        # Constant : mode dependent
+        constants = {m: c["constant"] for m, c in utility_parameters["mode_coefficients"].items()}
+        constants = modes.map(constants)
+        
+        # Crossborder utility
+        u_crossborder = travel_costs["crossborder_flow"].map(utility_parameters["crossborder_constant"])
+        
+        # Compute the total cost, utility and net utility
+        travel_costs["cost"] = ct*travel_costs["time"]*2
+        travel_costs["cost"] += cd*travel_costs["distance"]*2
+        travel_costs["cost"] += constants
+    
+        travel_costs["utility"] = u_crossborder
+        travel_costs["net_utility"] = travel_costs["utility"] - travel_costs["cost"]
+        
+        return travel_costs
+    
     
     
     def plot_flows(self):
