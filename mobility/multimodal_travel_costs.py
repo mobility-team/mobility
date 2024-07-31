@@ -34,17 +34,17 @@ class MultimodalTravelCosts(Asset):
         )
 
         carpool2_travel_costs = CarpoolTravelCosts(car_travel_costs, 2)
-        # carpool3_travel_costs = CarpoolTravelCosts(car_travel_costs, 3)
-        # carpool4_travel_costs = CarpoolTravelCosts(car_travel_costs, 4)
+        carpool3_travel_costs = CarpoolTravelCosts(car_travel_costs, 3)
+        carpool4_travel_costs = CarpoolTravelCosts(car_travel_costs, 4)
 
         inputs = {
             "car_travel_costs": car_travel_costs,
             "walk_travel_costs": walk_travel_costs,
             "bicycle_travel_costs": bicycle_travel_costs,
             "pub_trans_travel_costs": pub_trans_travel_costs,
-            "carpool2_travel_costs": carpool2_travel_costs
-            # "carpool3_travel_costs": carpool3_travel_costs,
-            # "carpool4_travel_costs": carpool4_travel_costs
+            "carpool2_travel_costs": carpool2_travel_costs,
+            "carpool3_travel_costs": carpool3_travel_costs,
+            "carpool4_travel_costs": carpool4_travel_costs
         }
 
         file_name = "multimodal_travel_costs.parquet"
@@ -69,8 +69,10 @@ class MultimodalTravelCosts(Asset):
         bicycle = self.inputs["bicycle_travel_costs"].get()
         pub_trans = self.inputs["pub_trans_travel_costs"].get()
         carpool2 = self.inputs["carpool2_travel_costs"].get()
+        carpool3 = self.inputs["carpool3_travel_costs"].get()
+        carpool4 = self.inputs["carpool4_travel_costs"].get()
         
-        costs = self.aggregate_travel_costs(car, walk, bicycle, pub_trans, carpool2)
+        costs = self.aggregate_travel_costs(car, walk, bicycle, pub_trans, carpool2, carpool3, carpool4)
         costs.to_parquet(self.cache_path)
 
         return costs
@@ -78,7 +80,9 @@ class MultimodalTravelCosts(Asset):
     
     def aggregate_travel_costs(
             self, car: pd.DataFrame, walk: pd.DataFrame, 
-            bicycle: pd.DataFrame, pub_trans: pd.DataFrame
+            bicycle: pd.DataFrame, pub_trans: pd.DataFrame,
+            carpool2: pd.DataFrame, carpool3: pd.DataFrame,
+            carpool4: pd.DataFrame
         ):
         
         logging.info("Aggregating travel costs between transport zones...")
@@ -86,6 +90,9 @@ class MultimodalTravelCosts(Asset):
         car["mode"] = "car"
         walk["mode"] = "walk"
         bicycle["mode"] = "bicycle"
+        carpool2["mode"] = "carpool2"
+        carpool3["mode"] = "carpool3"
+        carpool4["mode"] = "carpool4"
         
         # BUG (check if still there now that gtfs_router has been improved ?)
         # Fix public transport times to only have one row per OD pair
@@ -97,7 +104,10 @@ class MultimodalTravelCosts(Asset):
             car,
             walk,
             bicycle,
-            pub_trans
+            pub_trans,
+            carpool2,
+            carpool3,
+            carpool4
         ])
         
         # BUG (check if still there now that we use cpprouting ?)

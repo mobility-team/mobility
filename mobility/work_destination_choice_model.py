@@ -199,7 +199,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         
         # Extract all OD modes (grouping all public_transport into one category for now)
         modes = travel_costs.index.get_level_values("mode")
-        modes = modes.where(modes.isin(["car", "bicycle", "walk"]), "public_transport")
+        modes = modes.where(modes.isin(["car", "bicycle", "walk", "carpool2", "carpool3", "carpool4"]), "public_transport")
         
         # Cost of time (ct) : distance dependant, from https://www.ecologie.gouv.fr/sites/default/files/documents/V.2.pdf
         ct = 18.6
