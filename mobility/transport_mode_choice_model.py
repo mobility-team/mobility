@@ -6,15 +6,14 @@ import numpy as np
 
 from mobility.asset import Asset
 
-from mobility.multimodal_travel_costs import MultimodalTravelCosts
+from mobility.destination_choice_model import DestinationChoiceModel
 
 class TransportModeChoiceModel(Asset):
     
-    def __init__(self, travel_costs: MultimodalTravelCosts, cost_of_time: float = 20.0):
+    def __init__(self, destination_choice_model: DestinationChoiceModel):
         
         inputs = {
-            "travel_costs": travel_costs,
-            "cost_of_time": cost_of_time
+            "destination_choice_model": destination_choice_model
         }
 
         file_name = "modal_choice_model.parquet"
@@ -34,29 +33,19 @@ class TransportModeChoiceModel(Asset):
         
         logging.info("Computing mode probabilities by OD...")
         
-        costs = self.inputs["travel_costs"].get()
-        cost_of_time = self.inputs["cost_of_time"]
-        
-        prob = self.compute_mode_probability_by_od(costs, cost_of_time)
+        od_utility = pd.read_parquet(self.inputs["destination_choice_model"].cache_path["utility_by_od_and_mode"])
+        prob = self.compute_mode_probability_by_od_and_mode(od_utility)
         prob.to_parquet(self.cache_path)
 
         return prob
     
     
-    def compute_mode_probability_by_od(self, costs, cost_of_time):
+    def compute_mode_probability_by_od_and_mode(self, costs):
           
         prob = costs.copy()
-        
-        prob.set_index(["from", "to", "mode"], inplace=True)
-        
-        # Basic utility function : U = ct*time
-        # Cost of time (ct) : 20 €/h by default
-        prob["utility"] = -self.inputs["cost_of_time"]*prob["time"]
-        
-        prob["prob"] = np.exp(prob["utility"])
+        prob["prob"] = np.exp(prob["net_utility"])
         prob["prob"] = prob["prob"]/prob.groupby(["from", "to"])["prob"].sum()
-        
-        prob = prob[["utility", "prob"]].reset_index()
+        prob = prob.reset_index()
         
         return prob
         
