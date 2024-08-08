@@ -5,7 +5,7 @@ import polars as pl
 from scipy.optimize import minimize_scalar
 import matplotlib.pyplot as plt
 
-def radiation_model_selection(sources, sinks, costs, selection_lambda=0.9999):
+def radiation_model_selection(sources, sinks, costs, selection_lambda):
 
     eps = 1e-6
 
@@ -30,7 +30,22 @@ def radiation_model_selection(sources, sinks, costs, selection_lambda=0.9999):
     
     od["s_ij"] = od.groupby("from")["sink_volume"].cumsum()
     
-    od["p_a"] = (1 - np.power(selection_lambda, 1+od["s_ij"]))/(1+od["s_ij"])/(1-selection_lambda)
+    # od["p_a"] = (1 - np.power(selection_lambda, 1+od["s_ij"]))/(1+od["s_ij"])/(1-selection_lambda)
+    
+    od["p_a"] = (
+        1 - np.where(
+            od["country_id"] == "fr",
+            np.power(selection_lambda["fr"], 1 + od["s_ij"]),
+            np.power(selection_lambda["ch"], 1 + od["s_ij"])
+        )
+    ) / (1 + od["s_ij"]) / (
+        1 - np.where(
+            od["country_id"] == "fr",
+            selection_lambda["fr"],
+            selection_lambda["ch"]
+        )
+    )
+    
     od["p_a_lag"] = od.groupby("from")["p_a"].shift(fill_value = 1.0)
     
     od["p_ij"] = (od["p_a_lag"] - od["p_a"])
@@ -57,7 +72,7 @@ def radiation_model_selection(sources, sinks, costs, selection_lambda=0.9999):
 
 
 
-def radiation_model_selection_polars(sources, sinks, costs, selection_lambda=0.9999):
+def radiation_model_selection_polars(sources, sinks, costs, selection_lambda, country_zone=dict()):
 
     eps = 1e-6
 
@@ -67,7 +82,7 @@ def radiation_model_selection_polars(sources, sinks, costs, selection_lambda=0.9
     # Create modified versions of the 'od' DataFrame
     multipliers = [0.05, 0.25, 0.4, 0.25, 0.05]
     adjustments = [-2.0, -1.0, 0.0, 1.0, 2.0]
-    
+
     # Create and concatenate modified DataFrames
     od_list = [
         od.with_columns([
@@ -86,10 +101,23 @@ def radiation_model_selection_polars(sources, sinks, costs, selection_lambda=0.9
     od = od.with_columns([
         pl.col('sink_volume').cum_sum().over('from').alias('s_ij')
     ])
-    
+
     # Calculate probabilities
+    # od = od.with_columns([
+    #     ((1 - selection_lambda ** (1 + pl.col('s_ij'))) / (1 + pl.col('s_ij')) / (1 - selection_lambda)).alias('p_a'),
+    # ])
+    
+    # Calculate probabilities with a differentiated lambda for ch and fr
     od = od.with_columns([
-        ((1 - selection_lambda ** (1 + pl.col('s_ij'))) / (1 + pl.col('s_ij')) / (1 - selection_lambda)).alias('p_a'),
+        (
+            (1 - pl.when(pl.col('country_id') == 'fr')
+                    .then(selection_lambda['fr'] ** (1 + pl.col('s_ij')))
+                    .otherwise(selection_lambda['ch'] ** (1 + pl.col('s_ij')))
+            ) / (1 + pl.col('s_ij')) / 
+            (1 - pl.when(pl.col('country_id') == 'fr')
+                    .then(selection_lambda['fr'])
+                    .otherwise(selection_lambda['ch']))
+        ).alias('p_a'),
     ])
     
     
@@ -100,7 +128,7 @@ def radiation_model_selection_polars(sources, sinks, costs, selection_lambda=0.9
     od = od.with_columns([
         (pl.col('p_a_lag') - pl.col('p_a')).alias('p_ij')
     ])
-    
+
     # Normalize p_ij within each group
     od = od.with_columns([
         (pl.col('p_ij') / pl.col('p_ij').sum().over('from')).alias('p_ij')
@@ -236,7 +264,7 @@ def conjugate_frank_wolfe(sources, sinks, costs, selection_lambda, max_iteration
 
 
 def iter_radiation_model_selection(
-    sources, sinks, costs, selection_lambda=0.9999, max_iter=20, plot=False
+    sources, sinks, costs, selection_lambda, max_iter=20, plot=False
 ):
     
     # First iteration of the radiation model

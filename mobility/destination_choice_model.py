@@ -79,7 +79,7 @@ class DestinationChoiceModel(Asset):
         )
         
         utility_by_od = self.compute_utility_by_od(utility_by_od_and_mode)
-            
+        
         flows = self.compute_flows(
             transport_zones,
             sources,
@@ -149,6 +149,11 @@ class DestinationChoiceModel(Asset):
             utility_by_od: pd.DataFrame,
             model_parameters: dict
         ):
+        
+        country_zone = transport_zones[["transport_zone_id", "local_admin_unit_id"]].set_index("transport_zone_id").rename_axis('from')
+        country_zone["local_admin_unit_id"] = country_zone["local_admin_unit_id"].str[:2]
+        country_zone.rename(columns={"local_admin_unit_id": "country_id"}, inplace=True) 
+        sources = pd.merge(sources, country_zone, on="from", how="inner")
         
         if model_parameters["type"] == "radiation_universal":
             flows, _, _ = radiation_model.iter_radiation_model(
