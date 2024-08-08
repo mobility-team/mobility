@@ -72,6 +72,21 @@ class MultimodalTravelCosts(Asset):
         carpool3 = self.inputs["carpool3_travel_costs"].get()
         carpool4 = self.inputs["carpool4_travel_costs"].get()
         
+        # BUG (distances underestimated for mode car for intra-zones travels)
+        # Force it to be higher or equal to the the distance by feet and keep the same speed
+        for orig in list(set(car["from"])):
+            mask_car = (car["from"] == orig) & (car["to"] == orig)
+            mask_walk = (walk["from"] == orig) & (walk["to"] == orig)
+            car_speed = car.loc[mask_car, "distance"]/car.loc[mask_car, "time"]
+            dist_walk = walk.loc[mask_walk, "distance"]
+            if not dist_walk.empty:
+                car.loc[mask_car, "distance"] = car.loc[mask_car, "distance"].apply(lambda x: max(dist_walk.iloc[0], x))
+                car.loc[mask_car, "time"] = car.loc[mask_car, "distance"]/car_speed
+
+        # Add 5min+1km for public transport
+        pub_trans["time"] = pub_trans["time"] + 0.12
+        pub_trans["distance"] = pub_trans["distance"] + 1
+
         costs = self.aggregate_travel_costs(car, walk, bicycle, pub_trans, carpool2, carpool3, carpool4)
         costs.to_parquet(self.cache_path)
 
