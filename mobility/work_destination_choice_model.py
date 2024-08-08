@@ -200,10 +200,29 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         # Extract all OD modes (grouping all public_transport into one category for now)
         modes = travel_costs.index.get_level_values("mode")
         modes = modes.where(modes.isin(["car", "bicycle", "walk", "carpool2", "carpool3", "carpool4"]), "public_transport")
+
+        # Cost of time (ct) : distance dependent, from https://www.ecologie.gouv.fr/sites/default/files/documents/V.2.pdf
+        # ct = 18.6
+        # ct = np.where(travel_costs["distance"] > 20, 14.4 + 0.215*travel_costs["distance"], ct)
+        # ct = np.where(travel_costs["distance"] > 80, 30.2 + 0.017*travel_costs["distance"], ct)
+        # ct = np.where(travel_costs["distance"] > 400, 37.0, ct)
+        # ct *= 1.17 # Inflation coeff
         
-        # Cost of time (ct) : distance dependant, from https://www.ecologie.gouv.fr/sites/default/files/documents/V.2.pdf
-        ct = 18.6
-        ct = np.where(travel_costs["distance"] > 20, 14.4 + 0.215*travel_costs["distance"], ct)
+        # Cost of time, constant c0_short for less than 5km : mode dependent
+        c0_short = {m: c["c0_short"] for m, c in utility_parameters["ct_coefficients"].items()}
+        c0_short = modes.map(c0_short)
+        
+        # Cost of time, constant c0 : mode dependent
+        c0 = {m: c["c0"] for m, c in utility_parameters["ct_coefficients"].items()}
+        c0 = modes.map(c0)
+        
+        # Cost of time, coeff c1 : mode dependent
+        c1 = {m: c["c1"] for m, c in utility_parameters["ct_coefficients"].items()}
+        c1 = modes.map(c1)
+        
+        # Cost of time (ct) : distance dependent, from https://www.ecologie.gouv.fr/sites/default/files/documents/V.2.pdf
+        ct = c0_short
+        ct = np.where(travel_costs["distance"] > 20, c0 + c1*travel_costs["distance"], ct)
         ct = np.where(travel_costs["distance"] > 80, 30.2 + 0.017*travel_costs["distance"], ct)
         ct = np.where(travel_costs["distance"] > 400, 37.0, ct)
         ct *= 1.17 # Inflation coeff
