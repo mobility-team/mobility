@@ -42,7 +42,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         
         if model_parameters["type"] == "radiation_selection":
             if "lambda" not in model_parameters.keys():
-                raise ValueError("Lambda parameter missing in model_parameters.")
+                raise ValueError("Lambda parameter missing in model_parameters. It should be a dict with keys fr and ch.")
             
         if model_parameters["type"] == "radiation_universal":
             if "alpha" not in model_parameters.keys():
@@ -57,6 +57,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             model_parameters,
             utility_parameters,
             ssi_min_flow_volume
+            # active_population
         )
         
         
@@ -200,13 +201,6 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         # Extract all OD modes (grouping all public_transport into one category for now)
         modes = travel_costs.index.get_level_values("mode")
         modes = modes.where(modes.isin(["car", "bicycle", "walk", "carpool2", "carpool3", "carpool4"]), "public_transport")
-
-        # Cost of time (ct) : distance dependent, from https://www.ecologie.gouv.fr/sites/default/files/documents/V.2.pdf
-        # ct = 18.6
-        # ct = np.where(travel_costs["distance"] > 20, 14.4 + 0.215*travel_costs["distance"], ct)
-        # ct = np.where(travel_costs["distance"] > 80, 30.2 + 0.017*travel_costs["distance"], ct)
-        # ct = np.where(travel_costs["distance"] > 400, 37.0, ct)
-        # ct *= 1.17 # Inflation coeff
         
         # Cost of time, constant c0_short for less than 5km : mode dependent
         c0_short = {m: c["c0_short"] for m, c in utility_parameters["ct_coefficients"].items()}
@@ -226,6 +220,10 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         ct = np.where(travel_costs["distance"] > 80, 30.2 + 0.017*travel_costs["distance"], ct)
         ct = np.where(travel_costs["distance"] > 400, 37.0, ct)
         ct *= 1.17 # Inflation coeff
+        
+        # Adjusting the cost of time for carpool in Switzerland to differentiate it from ct carpool in France
+        coeff_carpool_ch = utility_parameters["coeff_carpool_ch"]
+        ct = np.where((travel_costs["local_admin_unit_id_x"].str.startswith("ch") & travel_costs.index.get_level_values("mode").str.startswith("carpool")), coeff_carpool_ch*ct, ct)
         
         # Cost of distance : mode dependent      
         cd = {m: c["cost_of_distance"] for m, c in utility_parameters["mode_coefficients"].items()}
