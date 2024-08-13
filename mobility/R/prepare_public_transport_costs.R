@@ -77,7 +77,8 @@ travel_costs <- future_lapply(seq(length(stops$stop_id)), future.seed = TRUE, FU
     from_is_id = TRUE,
     start_time_limits = c(start_time_min, start_time_max)*3600,
     max_traveltime = max_traveltime*3600,
-    minimise_transfers = TRUE
+    minimise_transfers = TRUE,
+    quiet = FALSE
   )
   
   if (nrow(tt) == 0) {
@@ -155,7 +156,7 @@ travel_costs <- rbindlist(travel_costs)
 travel_costs <- travel_costs[,
    list(
      distance = distance[which.min(abs(median(time) - time))][1],
-     time = 10*60 + median(time),
+     time = 5*60 + min(time),
      mode = route_type[which.min(abs(median(time) - time))][1]
    ),
    by = list(from, to)
