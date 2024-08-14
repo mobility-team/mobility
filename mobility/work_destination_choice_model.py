@@ -11,6 +11,7 @@ from mobility.destination_choice_model import DestinationChoiceModel
 from mobility.parsers.jobs_active_population_distribution import JobsActivePopulationDistribution
 from mobility.parsers.jobs_active_population_flows import JobsActivePopulationFlows
 from mobility.r_script import RScript
+import pdb
 
 class WorkDestinationChoiceModel(DestinationChoiceModel):
     
@@ -251,14 +252,27 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         
         # Cost of time (ct) : distance dependent, from https://www.ecologie.gouv.fr/sites/default/files/documents/V.2.pdf
         ct = c0_short
-        ct = np.where(travel_costs["distance"] > 20, c0 + c1*travel_costs["distance"], ct)
-        ct = np.where(travel_costs["distance"] > 80, 30.2 + 0.017*travel_costs["distance"], ct)
-        ct = np.where(travel_costs["distance"] > 400, 37.0, ct)
+        ct = np.where(travel_costs["distance"] > 5, c0 + c1*travel_costs["distance"], ct)
+        ct = np.where(travel_costs["distance"] > 20, 30.2 + 0.017*travel_costs["distance"], ct)
+        ct = np.where(travel_costs["distance"] > 80, 37.0, ct)
         ct *= 1.17 # Inflation coeff
         
         # Adjusting the cost of time for carpool in Switzerland to differentiate it from ct carpool in France
         coeff_carpool_ch = utility_parameters["coeff_carpool_ch"]
         ct = np.where((travel_costs["local_admin_unit_id_x"].str.startswith("ch") & travel_costs.index.get_level_values("mode").str.startswith("carpool")), coeff_carpool_ch*ct, ct)
+        
+        # Carpool exclusive highways
+        if "voies" in utility_parameters["leviers"]:
+            valserhone = utility_parameters["leviers"]["voies"]["valserhone"]
+            saint_julien = utility_parameters["leviers"]["voies"]["saint_julien"]
+            cruseilles = utility_parameters["leviers"]["voies"]["cruseilles"]
+            ct = np.where(
+                (((travel_costs["local_admin_unit_id_x"].isin(valserhone)) & (travel_costs["local_admin_unit_id_y"].isin(saint_julien))) |
+                ((travel_costs["local_admin_unit_id_x"].isin(cruseilles)) & (travel_costs["local_admin_unit_id_y"].isin(saint_julien)))) &
+                (travel_costs.index.get_level_values("mode").str.startswith("carpool")),
+                0.8*ct,
+                ct
+            )
         
         # Cost of distance : mode dependent      
         cd = {m: c["cost_of_distance"] for m, c in utility_parameters["mode_coefficients"].items()}
@@ -268,17 +282,56 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         constants = {m: c["constant"] for m, c in utility_parameters["mode_coefficients"].items()}
         constants = modes.map(constants)
         
+        # Carpool subvention : 1.50€ + 0.10€/km up to 3€
+        if "subvention_carpool_idf" in utility_parameters["leviers"]:
+            zone_to_apply = utility_parameters["leviers"]["subvention_carpool_idf"]["zone"]
+            constants = np.where(
+                (travel_costs["local_admin_unit_id_x"].str.startswith(zone_to_apply)) & 
+                (travel_costs["distance"] < 15) & 
+                (travel_costs.index.get_level_values("mode").str.startswith("carpool")),
+                constants - 1.5 - 0.10 * travel_costs["distance"],
+                np.where(
+                    (travel_costs["local_admin_unit_id_x"].str.startswith("fr")) & 
+                    (travel_costs.index.get_level_values("mode").str.startswith("carpool")),
+                    constants - 3,
+                    constants
+                )
+            )
+
+        # Other method : 1.50€ per passenger
+        if "subvention_carpool_ara" in utility_parameters["leviers"]:
+            zone_to_apply = utility_parameters["leviers"]["subvention_carpool_ara"]["zone"]
+            sub_val = utility_parameters["leviers"]["subvention_carpool_ara"]["sub_val"]
+            
+            constants = np.where(
+                ((travel_costs["local_admin_unit_id_x"].str.startswith(zone_to_apply)) & 
+                (travel_costs.index.get_level_values("mode")=="carpool2")),
+                constants - sub_val,
+                constants
+            )
+            constants = np.where(
+                ((travel_costs["local_admin_unit_id_x"].str.startswith(zone_to_apply)) & 
+                (travel_costs.index.get_level_values("mode")=="carpool3")),
+                constants - 2*sub_val,
+                constants
+            )
+            constants = np.where(
+                ((travel_costs["local_admin_unit_id_x"].str.startswith(zone_to_apply)) & 
+                (travel_costs.index.get_level_values("mode")=="carpool4")),
+                constants - 3*sub_val,
+                constants
+            )
+
         # Crossborder utility
         u_crossborder = travel_costs["crossborder_flow"].map(utility_parameters["crossborder_constant"])
         
         # Compute the total cost, utility and net utility
         travel_costs["cost"] = ct*travel_costs["time"]*2
-        travel_costs["cost"] += cd*travel_costs["distance"]*2
+        travel_costs["cost"] += cd/100*travel_costs["distance"]*2
         travel_costs["cost"] += constants
-    
+        
         travel_costs["utility"] = u_crossborder
         travel_costs["net_utility"] = travel_costs["utility"] - travel_costs["cost"]
-        
         return travel_costs
     
     
