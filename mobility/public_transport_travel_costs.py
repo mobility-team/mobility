@@ -30,7 +30,7 @@ class PublicTransportTravelCosts(Asset):
             additional_gtfs_files: list = None
     ):
         """
-        Retrieves public transport traval costs if they already exist for these transport zones and parameters,
+        Retrieves public transport travel costs if they already exist for these transport zones and parameters,
         otherwise calculates them.
         
         Expected running time : between a few seconds and a few minutes.
