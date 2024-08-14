@@ -11,7 +11,15 @@ from mobility.gtfs_router import GTFSRouter
 from mobility.transport_zones import TransportZones
 
 class PublicTransportTravelCosts(Asset):
+    """
+    A class for managing public transport travel costs calculations using GTFS files, inheriting from the Asset class.
 
+    This class is responsible for creating, caching, and retrieving public transport travel costs 
+    based on specified transport zones and travel modes.
+    
+    Uses GTFS files that have been prepared by TransportZones, but a list of additional GTFS files
+    (representing a project for instance) can be provided.
+    """
 
     def __init__(
             self,
@@ -21,6 +29,21 @@ class PublicTransportTravelCosts(Asset):
             max_traveltime: float = 1.0,
             additional_gtfs_files: list = None
     ):
+        """
+        Retrieves public transport traval costs if they already exist for these transport zones and parameters,
+        otherwise calculates them.
+        
+        Expected running time : between a few seconds and a few minutes.
+        
+        Args:
+            transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
+            gtfs_router : GTFSRouter object containing data about public transport routes and schedules.
+            start_time_min : float containing the start hour to consider for cost determination
+            start_time_max : float containing the end hour to consider for cost determination, should be superior to start_time_min
+            max_traveltime : float with the maximum travel time to consider for public transport, in hours
+            additional_gtfs_files : list of additional GTFS files to include in the calculations
+
+        """
         
         gtfs_router = GTFSRouter(transport_zones, additional_gtfs_files)
 
@@ -70,7 +93,10 @@ class PublicTransportTravelCosts(Asset):
 
         Args:
             transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
-            gtfs (GTFS): GTFS object containing data about public transport routes and schedules.
+            gtfs_router : GTFSRouter object containing data about public transport routes and schedules.
+            start_time_min : float containing the start hour to consider for cost determination
+            start_time_max : float containing the end hour to consider for cost determination, should be superior to start_time_min
+            max_traveltime : float with the maximum travel time to consider for public transport, in hours
 
         Returns:
             pd.DataFrame: A DataFrame containing calculated public transport travel costs.
