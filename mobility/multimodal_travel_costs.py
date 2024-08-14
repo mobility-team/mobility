@@ -11,6 +11,15 @@ from mobility.public_transport_travel_costs import PublicTransportTravelCosts
 from mobility.carpool_travel_costs import CarpoolTravelCosts
 
 class MultimodalTravelCosts(Asset):
+    """
+    Class to compute the travel costs for the covered modes using dedicated classes:
+        - TravelCosts for modes car, walk and bicycle
+        - PublicTransportTravelCosts for public transport
+        - CarpoolTravelCosts for carpool (2, 3 or 4 persons in the car)
+    
+    This class is responsible for creating, caching, and retrieving multimodal travel costs based on specified transport zones and travel modes.
+
+    """
     
     def __init__(
             self,
@@ -20,7 +29,20 @@ class MultimodalTravelCosts(Asset):
             public_transport_max_traveltime: float = 1.0,
             public_transport_additional_gtfs_files: list = None
         ):
+        """
+        Retrieves travel costs for the covered modes if they already exist for these transport zones and parameters,
+        otherwise calculates them.
         
+        Expected running time : between a few seconds and a few minutes.
+        
+        Args:
+            transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
+            public_transport_start_time_min : float containing the start hour to consider for public transport cost determination
+            start_time_max : float containing the end hour to consider for public transport cost determination, should be superior to start_time_min
+            public_transport_start_time_max : float with the maximum travel time to consider for public transport, in hours
+            public_transport_max_traveltime : list of additional GTFS files to include in the calculations
+
+        """        
         car_travel_costs = TravelCosts(transport_zones, "car")
         walk_travel_costs = TravelCosts(transport_zones, "walk")
         bicycle_travel_costs = TravelCosts(transport_zones, "bicycle")
@@ -83,9 +105,6 @@ class MultimodalTravelCosts(Asset):
                 car.loc[mask_car, "distance"] = car.loc[mask_car, "distance"].apply(lambda x: max(dist_walk.iloc[0], x))
                 car.loc[mask_car, "time"] = car.loc[mask_car, "distance"]/car_speed
 
-        # Add 5min+1km for public transport
-        pub_trans["time"] = pub_trans["time"] + 0.12
-        pub_trans["distance"] = pub_trans["distance"] + 1
 
         costs = self.aggregate_travel_costs(car, walk, bicycle, pub_trans, carpool2, carpool3, carpool4)
         costs.to_parquet(self.cache_path)
