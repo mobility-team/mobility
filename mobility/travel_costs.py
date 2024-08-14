@@ -11,9 +11,10 @@ from mobility.r_script import RScript
 
 class TravelCosts(Asset):
     """
-    A class for managing travel cost calculations using OpenStreetMap (OSM) data, inheriting from the Asset class.
+    A class for managing travel cost calculations for certain modes using OpenStreetMap (OSM) data, inheriting from the Asset class.
 
-    This class is responsible for creating, caching, and retrieving travel costs based on specified transport zones and travel modes.
+    This class is responsible for creating, caching, and retrieving travel costs for modes car, walk, and bicycle,
+    based on specified transport zones and travel modes.
 
     Attributes:
         dodgr_modes (dict): Mapping of general travel modes to specific dodgr package modes.

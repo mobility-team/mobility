@@ -67,10 +67,12 @@ info(
   )
 )
 
+# Uses all the available logical cores but 2, to speed us calculations
 plan(multisession, workers = min(parallel::detectCores()-2))
 
 travel_costs <- future_lapply(seq(length(stops$stop_id)), future.seed = TRUE, FUN = function(i) {
   
+  # Finds travel times from that stop to every other stop within the max_traveltime limit
   tt <- gtfs_traveltimes(
     gtfs = gtfs,
     from = stops$stop_id[i],
@@ -89,15 +91,18 @@ travel_costs <- future_lapply(seq(length(stops$stop_id)), future.seed = TRUE, FU
     
     tt <- as.data.table(tt)
     
+    # Keeps only actual durations
     tt <- tt[!grepl("-", duration)]
     tt[, duration := as.numeric(lubridate::hms(duration))]
     
+    # Adds transport_zone_id for each origin stop
     tt[, from_transport_zone_id := stops$transport_zone_id[i]]
     tt[, from_stop_id := stops$stop_id[i]]
     
     setnames(tt, "stop_id", "to_stop_id")
     tt <- tt[, list(from_transport_zone_id, from_stop_id, to_stop_id, duration)]
     
+    # Merges in a single table by origin and destination stops
     tt <- merge(
       tt,
       stops[, list(stop_id, X, Y)],
@@ -112,9 +117,11 @@ travel_costs <- future_lapply(seq(length(stops$stop_id)), future.seed = TRUE, FU
       by.y = "stop_id"
     )
     
+    # Euclidian distance between stops plus a small detour 
     tt[, distance := sqrt((X.x - X.y)^2 + (Y.x - Y.y)^2)]
     tt[, distance := distance*(1.1+0.3*exp(-distance/20))]
     
+    # Adds route modes for stops
     tt <- merge(
       tt,
       route_modes,
@@ -148,11 +155,14 @@ travel_costs <- future_lapply(seq(length(stops$stop_id)), future.seed = TRUE, FU
   
 })
 
+#Back to single core use
 plan(sequential)
 
+#Eliminating null durations
 travel_costs <- Filter(function(x) !is.null(x), travel_costs)
 travel_costs <- rbindlist(travel_costs)
 
+# Takes the distance and the mode of a median journey between transport zones, but the minimal time plus a constant
 travel_costs <- travel_costs[,
    list(
      distance = distance[which.min(abs(median(time) - time))][1],
