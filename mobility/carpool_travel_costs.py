@@ -14,22 +14,33 @@ class CarpoolTravelCosts(Asset):
 
     Attributes:
         car_travel_costs (MultimodalTravelCosts): The travel costs for the different modes (excluding )
-        nb_occupant: number of persons in the vehicule.
+        number_persons (int): number of persons in the vehicule.
+        absolute_delay_per_passenger (int): absolute delay per supplementary passenger, in minutes. Default: 5
+        relative_delay_per_passenger (float) : relative delay per supplementary passenger in proportion of the total travel time. Default: 0.05
+        absolute_extra_distance_per_passenger (float): absolute extra distance per supplementary passenger, in km. Default: 1
+        relative_extra_distance_per_passenger (flaot) : relative extra distance per supplementary passenger in proportion of the total distance. Default: 0.05
+        
 
     Methods:
         get_cached_asset: Retrieve a cached DataFrame of travel costs.
         create_and_get_asset: Calculate and retrieve travel costs based on the current inputs.
     """
 
-    def __init__(self, car_travel_costs: TravelCosts, nb_occupant: int):
+    def __init__(self, car_travel_costs: TravelCosts, number_persons: int,
+                 absolute_delay_per_passenger: int = 5, relative_delay_per_passenger: float = 0.05,
+                 absolute_extra_distance_per_passenger: float = 1, relative_extra_distance_per_passenger: float = 0.05):
         """
-        Initializes a CarpoolTravelCosts object with the given transport zones and travel mode.
+        Initializes a CarpoolTravelCosts object with the given transport zones, travel mode and parameters.
 
         """
 
-        inputs = {"car_travel_costs": car_travel_costs, "nb_occupant": nb_occupant}
+        inputs = {"car_travel_costs": car_travel_costs, "number_persons": number_persons,
+                  "absolute_delay_per_passenger": absolute_delay_per_passenger,
+                  "relative_delay_per_passenger": relative_delay_per_passenger,
+                  "absolute_extra_distance_per_passenger": absolute_extra_distance_per_passenger,
+                  "relative_extra_distance_per_passenger", relative_extra_distance_per_passenger}
 
-        file_name = "carpool" + str(nb_occupant) + "_travel_costs.parquet"
+        file_name = "carpool" + str(number_persons) + "_travel_costs.parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
 
         super().__init__(inputs, cache_path)
@@ -55,35 +66,42 @@ class CarpoolTravelCosts(Asset):
             pd.DataFrame: A DataFrame of calculated carpool travel costs.
         """
         car_travel_costs = self.inputs["car_travel_costs"].get()
-        nb_occupant = self.inputs["nb_occupant"]
+        number_persons = self.inputs["number_persons"]
+        absolute_delay_per_passenger = self.inputs["absolute_delay_per_passenger"]
+        relative_delay_per_passenger = self.inputs["relative_delay_per_passenger"]
+        absolute_extra_distance_per_passenger = self.inputs["absolute_delay_per_passenger"]
+        relative_extra_distance_per_passenger = self.inputs["relative_extra_distance_per_passenger"]
         
-        logging.info("Preparing carpool travel costs for " + str(nb_occupant) + " occupants...")
+        logging.info("Preparing carpool travel costs for " + str(number_persons) + " occupants...")
         
-        costs = self.compute_carpool_costs(car_travel_costs, nb_occupant)
+        costs = self.compute_carpool_costs(car_travel_costs, number_persons, absolute_delay_per_passenger, relative_delay_per_passenger,
+                                           absolute_extra_distance_per_passenger, relative_extra_distance_per_passenger=)
         
         costs.to_parquet(self.cache_path)
 
         return costs
 
-    def compute_carpool_costs(self, car_travel_costs: pd.DataFrame, nb_occupant: int) -> pd.DataFrame:
+    def compute_carpool_costs(self, car_travel_costs: pd.DataFrame, number_persons: int,
+                              absolute_delay_per_passenger: int, relative_delay_per_passenger: float,
+                              absolute_extra_distance_per_passenger: float, relative_extra_distance_per_passenger: float) -> pd.DataFrame:
         """
         Calculates carpool travel costs for the specified number of occupants in the vehicule.
 
         Args:
             car_travel_costs (MultimodalTravelCosts): The travel costs for the different modes (excluding )
-            nb_occupant: number of persons in the vehicule.
+            number_persons: number of persons in the vehicule.
 
         Returns:
             pd.DataFrame: A DataFrame containing calculated travel costs.
         """
 
-        logging.info("Computing carpool travel costs for " + str(nb_occupant) + " occupants...")
+        logging.info("Computing carpool travel costs for " + str(number_persons) + " occupants...")
         
         costs = car_travel_costs.copy()
         
         # Adding a delay of 5min (1km) and 5% of the travel time (resp. distance) per passenger
-        costs["time"] += (nb_occupant-1)*(0.05*costs["time"] + 5/60)
-        costs["distance"] += (nb_occupant-1)*(0.05*costs["distance"] + 1)
+        costs["time"] += (number_persons-1)*(relative_delay_per_passenger*costs["time"] + absolute_delay_per_passenger/60)
+        costs["distance"] += (number_persons-1)*(relative_extra_distance_per_passenger*costs["distance"] + absolute_extra_distance_per_passenger)
 
         return costs
     
