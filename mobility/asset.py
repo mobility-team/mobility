@@ -1,6 +1,7 @@
 import json
 import hashlib
 import pathlib
+import os
 
 from typing import Any
 from abc import ABC, abstractmethod
@@ -46,6 +47,8 @@ class Asset(ABC):
             cache_path = cache_path.parent / filename
             self.cache_path = cache_path.parent / filename
             self.hash_path = cache_path.with_suffix(".inputs-hash")
+            if not cache_path.parent.exists():
+                os.makedirs(cache_path.parent)
             
         self.update_hash(self.inputs_hash)
             
