@@ -13,7 +13,6 @@ def download_file(url, path):
         Args:
             url (str): the url of the file tow download.
             path (str or pathlib.Path): the path to download the file to.
-            force (boolean): wether the already downloaded file should be overwritten. 
     
         Returns:
             None
@@ -51,11 +50,16 @@ def download_file(url, path):
         with Progress() as progress:
             
             task = progress.add_task("[green]Downloading...", total=total_size)
+            size = 0
     
             with open(path, "wb") as file:
-                for data in response.iter_content(chunk_size=1024):
+                for data in response.iter_content(chunk_size=8192):
                     file.write(data)
                     progress.update(task, advance=len(data))
+                    size += len(data)
+                    
+            if size != total_size:
+                raise RuntimeError(f"Download incomplete: expected {total_size} bytes, but got {size} bytes.")
             
         logging.info("Downloaded file to " + str(path))
         
