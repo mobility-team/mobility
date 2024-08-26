@@ -1,7 +1,3 @@
-# Parse arguments
-args <- commandArgs(trailingOnly = TRUE)
-packages <- args[-length(args)]
-force_reinstall <- args[length(args)] == "True"
 
 # Install pak if needed
 lib <- Sys.getenv("R_LIBS")
@@ -26,12 +22,25 @@ if (!("log4r" %in% installed.packages())) {
 library(log4r)
 logger <- logger(appenders = console_appender())
 
+# Install log4r if not available
+if (!("jsonlite" %in% installed.packages())) {
+  pkg_install("jsonlite", lib = lib)
+}
+library(jsonlite)
 
-# Install packages
-repos <- unlist(lapply(strsplit(packages, "/"), "[[", 1))
+# Parse arguments
+args <- commandArgs(trailingOnly = TRUE)
+args <- fromJSON(args, simplifyVector = FALSE)
+packages <- args[["packages"]]
+force_reinstall <- args[["force_reinstall"]]
 
 # CRAN packages
-cran_packages <- unlist(lapply(strsplit(packages[repos == "CRAN"], "/"), "[[", 2))
+cran_packages <- Filter(function(p) {p[["source"]]} == "CRAN", packages)
+if (length(cran_packages) > 0) {
+  cran_packages <- unlist(lapply(cran_packages, "[[", "name"))
+} else {
+  cran_packages <- c()
+}
 
 if (force_reinstall == FALSE) {
   cran_packages <- cran_packages[!(cran_packages %in% rownames(installed.packages()))]
@@ -43,11 +52,12 @@ if (length(cran_packages) > 0) {
 }
 
 # Github packages
-github_packages <- paste(
-  unlist(lapply(strsplit(packages[repos == "github"], "/"), "[[", 2)),
-  unlist(lapply(strsplit(packages[repos == "github"], "/"), "[[", 3)),
-  sep = "/"
-)
+github_packages <- Filter(function(p) {p[["source"]]} == "github", packages)
+if (length(github_packages) > 0) {
+  github_packages <- unlist(lapply(github_packages, "[[", "name"))
+} else {
+  github_packages <- c()
+}
 
 if (force_reinstall == FALSE) {
   github_packages <- github_packages[!(github_packages %in% rownames(installed.packages()))]
@@ -59,8 +69,14 @@ if (length(github_packages) > 0) {
 }
 
 # Local packages
-binaries_paths <- unlist(lapply(strsplit(packages[repos == "local"], "/"), "[[", 2))
-local_packages <- unlist(lapply(strsplit(basename(binaries_paths), "_"), "[[", 1))
+local_packages <- Filter(function(p) {p[["source"]]} == "local", packages)
+
+if (length(local_packages) > 0) {
+  binaries_paths <- unlist(lapply(local_packages, "[[", "path"))
+  local_packages <- unlist(lapply(strsplit(basename(binaries_paths), "_"), "[[", 1))
+} else {
+  local_packages <- c()
+}
 
 if (force_reinstall == FALSE) {
   local_packages <- local_packages[!(local_packages %in% rownames(installed.packages()))]
