@@ -25,7 +25,7 @@ def download_file(url, path):
     path = path.parent / name
     
     temp_path = path.parent / (path.name + ".part")
-    
+
     # Create the folder containing the file if not already existing
     if path.parent.exists() is False:
         os.makedirs(str(path.parent))
