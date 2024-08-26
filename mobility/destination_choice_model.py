@@ -17,7 +17,7 @@ class DestinationChoiceModel(Asset):
     
     def __init__(
             self, motive: str, transport_zones: gpd.GeoDataFrame, 
-            travel_costs: TravelCosts, cost_of_time: float,
+            travel_costs: TravelCosts, cost_of_time: float, crossborder_flow_utilities: dict,
             radiation_model_alpha: float, radiation_model_beta: float,
             fit_radiation_model: bool, ssi_min_flow_volume: float
         ):
@@ -27,6 +27,7 @@ class DestinationChoiceModel(Asset):
             "transport_zones": transport_zones,
             "travel_costs": travel_costs,
             "cost_of_time": cost_of_time,
+            "crossborder_flow_utilities": crossborder_flow_utilities,
             "radiation_model_alpha": radiation_model_alpha,
             "radiation_model_beta": radiation_model_beta,
             "fit_radiation_model": fit_radiation_model,
@@ -63,6 +64,8 @@ class DestinationChoiceModel(Asset):
         sources, sinks = self.prepare_sources_and_sinks(transport_zones)
         ref_flows = self.prepare_reference_flows(transport_zones)
         
+        crossborder_flow_utilities = self.inputs["crossborder_flow_utilities"]
+        
         if self.inputs["fit_radiation_model"] is True:
             
             logging.info("Fitting the radiation model to reference OD flows...")
@@ -75,7 +78,7 @@ class DestinationChoiceModel(Asset):
             alpha = self.inputs["radiation_model_alpha"]
             beta = self.inputs["radiation_model_beta"]
             
-        flows = self.compute_flows(transport_zones, sources, sinks, travel_costs, cost_of_time, alpha, beta)
+        flows = self.compute_flows(transport_zones, sources, sinks, travel_costs, cost_of_time, crossborder_flow_utilities, alpha, beta)
         flows = self.add_reference_flows(flows, ref_flows)
         flows.to_parquet(self.cache_path["od_flows"])
         
@@ -155,11 +158,17 @@ class DestinationChoiceModel(Asset):
         return nssi
     
     def compute_flows(
-            self, transport_zones, sources: pd.DataFrame, sinks: pd.DataFrame,
-            travel_costs: pd.DataFrame, cost_of_time: float, alpha: float, beta: float
+            self,
+            transport_zones,
+            sources: pd.DataFrame,
+            sinks: pd.DataFrame,
+            travel_costs: pd.DataFrame,
+            cost_of_time: float,
+            crossborder_flow_utilities: dict,
+            alpha: float, beta: float
         ):
         
-        average_cost_by_od = self.compute_average_cost_by_od(travel_costs, cost_of_time)
+        average_cost_by_od = self.compute_average_cost_by_od(transport_zones, travel_costs, cost_of_time, crossborder_flow_utilities)
         
         flows, _, _ = radiation_model.iter_radiation_model(
             sources=sources,
@@ -184,7 +193,7 @@ class DestinationChoiceModel(Asset):
             ref_flows,
             flows,
             on=["local_admin_unit_id_from", "local_admin_unit_id_to"],
-            how = "outer"
+            how="outer"
         )
         
         comparison["ref_flow_volume"] = comparison["ref_flow_volume"].fillna(0.0)
@@ -204,15 +213,40 @@ class DestinationChoiceModel(Asset):
         return ssi
     
         
-    def compute_average_cost_by_od(self, costs: pd.DataFrame, cost_of_time: float):
+    def compute_average_cost_by_od(
+            self,
+            transport_zones: gpd.GeoDataFrame,
+            costs: pd.DataFrame,
+            cost_of_time: float,
+            crossborder_flow_utilities:dict
+        ):
           
         costs = costs.copy()
+        
+        # Add cross border flow utilities
+        costs = pd.merge(
+            costs,
+            transport_zones[["transport_zone_id", "local_admin_unit_id"]],
+            left_on="from",
+            right_on="transport_zone_id"
+        )
+        
+        costs = pd.merge(
+            costs,
+            transport_zones[["transport_zone_id", "local_admin_unit_id"]],
+            left_on="to",
+            right_on="transport_zone_id",
+            suffixes=["_from", "_to"]
+        )
+        
+        costs["crossborder_flow"] = costs["local_admin_unit_id_from"].str[0:2] + "-" + costs["local_admin_unit_id_to"].str[0:2]
+        costs["crossborder_flow_utility"] = costs["crossborder_flow"].map(crossborder_flow_utilities)
         
         costs.set_index(["from", "to", "mode"], inplace=True)
         
         # Basic utility function : U = ct*time
         # Cost of time (ct) : 20 €/h by default
-        costs["utility"] = -cost_of_time*costs["time"]
+        costs["utility"] = -cost_of_time*costs["time"] + costs["crossborder_flow_utility"]
         
         costs["prob"] = np.exp(costs["utility"])
         costs["prob"] = costs["prob"]/costs.groupby(["from", "to"])["prob"].sum()

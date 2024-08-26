@@ -11,9 +11,15 @@ library(pbapply)
 args <- commandArgs(trailingOnly = TRUE)
 
 tz_file_path <- args[1]
+
 gtfs_file_path <- args[2]
 gtfs_route_types_path <- args[3]
-output_file_path <- args[4]
+
+start_time_min <- as.numeric(args[4])
+start_time_max <- as.numeric(args[5])
+max_traveltime <- as.numeric(args[6])
+
+output_file_path <- args[7]
 
 logger <- logger(appenders = console_appender())
 
@@ -215,8 +221,8 @@ travel_costs <- gtfs_travel_costs(
   transport_zone_ids = stops_cluster$transport_zone_id,
   stop_ids = stops_cluster$stop_id,
   from_is_id = TRUE,
-  start_time_limits = c(7.5, 8.5)*3600,
-  max_traveltime = 1*3600,
+  start_time_limits = c(start_time_min, start_time_max)*3600,
+  max_traveltime = max_traveltime*3600,
   minimise_transfers = FALSE,
   stops = stops,
   route_modes = route_modes

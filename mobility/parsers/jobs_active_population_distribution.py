@@ -3,6 +3,7 @@ import pathlib
 import logging
 import zipfile
 import pandas as pd
+import numpy as np
 
 from mobility.asset import Asset
 from mobility.parsers.download_file import download_file
@@ -27,10 +28,24 @@ class JobsActivePopulationDistribution(Asset):
         active_population = pd.read_parquet(self.cache_path["active_population"])
         jobs = pd.read_parquet(self.cache_path["jobs"])
 
-        return active_population, jobs
+        return jobs, active_population
     
     
     def create_and_get_asset(self) -> pd.DataFrame:
+        
+        jobs_fr, act_fr = self.prepare_french_jobs_active_population_distribution()
+        jobs_ch, act_ch = self.prepare_swiss_jobs_active_population_distribution()
+        
+        jobs = pd.concat([jobs_fr, jobs_ch])
+        act = pd.concat([act_fr, act_ch])
+        
+        jobs.to_parquet(self.cache_path["jobs"])
+        act.to_parquet(self.cache_path["active_population"])
+        
+        return jobs, act
+        
+    
+    def prepare_french_jobs_active_population_distribution(self):
         
         url = "https://www.data.gouv.fr/fr/datasets/r/02653cc4-76c0-4c3a-bc17-d5485c7ea2b9"
         
@@ -125,10 +140,83 @@ class JobsActivePopulationDistribution(Asset):
             inplace=True
         )
         
-        active_population.to_parquet(self.cache_path["active_population"])
-        jobs.to_parquet(self.cache_path["jobs"])
-        
         os.unlink(zip_path)
         os.unlink(csv_path)
 
-        return active_population, jobs
+        return jobs, active_population
+    
+    
+    def prepare_swiss_jobs_active_population_distribution(self):
+        
+        url = "https://www.data.gouv.fr/fr/datasets/r/5529f7f8-7a00-4890-b453-0d215c7a5726"
+        file_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "bfs" / "je-f-21.03.01.xlsx"
+        download_file(url, file_path)
+        
+        jobs_act = pd.read_excel(file_path)
+        jobs_act = jobs_act.iloc[8:2180, [0, 2, 6, 7, 8, 22]]
+        jobs_act.columns = ["local_admin_unit_id", "n_pop_total", "share_pop_inf_19", "share_pop_20_64", "share_pop_sup_65", "n_jobs_total"]
+        jobs_act["local_admin_unit_id"] = "ch-" + jobs_act["local_admin_unit_id"].astype(int).astype(str)
+        
+        # Compute the active population count based on a global hypothesis of 79%
+        # (could be more precise by using BFS data at canton or city level)
+        jobs_act["active_pop"] = 0.79*jobs_act["n_pop_total"]*(0.25*jobs_act["share_pop_inf_19"] + jobs_act["share_pop_20_64"])/100
+        
+        # Compute the number of jobs when the data is missing, based on the average act pop / jobs ratio in Switzerland
+        jobs_act["n_jobs_total"] = pd.to_numeric(jobs_act["n_jobs_total"], errors="coerce")
+        
+        n_jobs = jobs_act.loc[~jobs_act["n_jobs_total"].isnull(), "n_jobs_total"].sum()
+        n_act = jobs_act.loc[~jobs_act["active_pop"].isnull(), "active_pop"].sum()
+        ratio = n_jobs/n_act
+        
+        jobs_act["n_jobs_total"] = np.where(
+            jobs_act["n_jobs_total"].isnull(),
+            ratio*jobs_act["active_pop"],
+            jobs_act["n_jobs_total"]
+        )
+        
+        # Merge cities 2021 -> 2024
+        url = "https://www.data.gouv.fr/fr/datasets/r/9f51fe8f-3e07-40cf-8c75-00bdfa01ceaf"
+        file_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "bfs" / "bfs_mutations_communes.csv"
+        download_file(url, file_path)
+        
+        bfs_mutations = pd.read_csv(file_path)
+        bfs_mutations = bfs_mutations.iloc[:, [0, 5, 7, 8]]
+        bfs_mutations.columns = ["mutation_id", "bfs_id", "radiation", "inscription"]
+    
+        from_ids = []
+        to_ids = []
+        
+        for i, mutation in bfs_mutations.groupby("mutation_id"):
+            
+            if (mutation["radiation"] == "Radiation").any() and (mutation["inscription"] == "Création").any() and ((mutation["inscription"] == "Création").sum() == 1):
+                
+                for row in mutation.to_dict(orient="records"):
+                    
+                    if row["radiation"] == "Radiation":
+                        from_ids.append(row["bfs_id"])
+                    elif row["inscription"] == "Création":
+                        to_ids += [row["bfs_id"]]*(mutation.shape[0]-1)
+        
+        bfs_mutations = pd.DataFrame({"from_bfs_id": from_ids, "to_bfs_id": to_ids})
+        bfs_mutations = bfs_mutations.groupby("from_bfs_id", as_index=False).last()
+        
+        bfs_mutations["from_bfs_id"] = "ch-" + bfs_mutations["from_bfs_id"].astype(int).astype(str)
+        bfs_mutations["to_bfs_id"] = "ch-" + bfs_mutations["to_bfs_id"].astype(int).astype(str)
+        
+        jobs_act = pd.merge(jobs_act, bfs_mutations, left_on="local_admin_unit_id", right_on="from_bfs_id", how = "left")
+        
+        jobs_act["local_admin_unit_id"] = np.where(
+            ~jobs_act["to_bfs_id"].isnull(),
+            jobs_act["to_bfs_id"],
+            jobs_act["local_admin_unit_id"]
+        )
+        
+        jobs_act = jobs_act.groupby(["local_admin_unit_id"], as_index=False)[["n_jobs_total", "active_pop"]].sum()
+        
+        jobs = jobs_act[["local_admin_unit_id", "n_jobs_total"]].copy()
+        act = jobs_act[["local_admin_unit_id", "active_pop"]].copy()
+        
+        jobs.set_index("local_admin_unit_id", inplace=True)
+        act.set_index("local_admin_unit_id", inplace=True)
+
+        return jobs, act

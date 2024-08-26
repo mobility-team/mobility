@@ -3,3 +3,5 @@ from .city_legal_population import CityLegalPopulation
 from .census_localized_individuals import CensusLocalizedIndividuals
 from .mobility_survey import MobilitySurvey
 from .local_admin_units import LocalAdminUnits
+from .jobs_active_population_distribution import JobsActivePopulationDistribution
+from .jobs_active_population_flows import JobsActivePopulationFlows
