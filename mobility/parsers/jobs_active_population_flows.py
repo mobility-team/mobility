@@ -87,7 +87,7 @@ class JobsActivePopulationFlows(Asset):
         )
         
         flows["local_admin_unit_id_to"] = np.where(
-            flows["DCFLT"].isnull(),
+            flows["DCFLT"] == "99999",
             "fr-" + flows["DCLT"],
             "ch-" + flows["bfs_id"]
         )

@@ -14,8 +14,8 @@ class MultimodalTravelCosts(Asset):
     def __init__(
             self,
             transport_zones: gpd.GeoDataFrame,
-            public_transport_start_time_min: float = 7.5,
-            public_transport_start_time_max: float = 8.5,
+            public_transport_start_time_min: float = 6.5,
+            public_transport_start_time_max: float = 7.5,
             public_transport_max_traveltime: float = 1.0,
             public_transport_additional_gtfs_files: list = None
         ):
