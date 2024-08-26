@@ -8,6 +8,9 @@ library(sfheaders)
 
 args <- commandArgs(trailingOnly = TRUE)
 
+print('----------------------------')
+print(args)
+
 tz_file_path <- args[1]
 gtfs_file_paths <- args[2]
 output_file_path <- args[3]

@@ -47,7 +47,7 @@ class Asset(ABC):
             self.cache_path = cache_path.parent / filename
             self.hash_path = cache_path.with_suffix(".inputs-hash")
         
-        self.get()
+        # self.get()
 
     @abstractmethod
     def get_cached_asset(self):
@@ -69,7 +69,7 @@ class Asset(ABC):
         """
         pass
     
-    def get(self) -> Any:
+    def get(self, *args, **kwargs) -> Any:
         """
         Retrieves the Asset, either from the cache or by creating a new one if the
         cache is outdated or non-existent.
@@ -78,10 +78,10 @@ class Asset(ABC):
             The retrieved or newly created Asset.
         """
         if self.is_update_needed():
-            asset = self.create_and_get_asset()
+            asset = self.create_and_get_asset(*args, **kwargs)
             self.update_hash(self.inputs_hash)
             return asset
-        return self.get_cached_asset()
+        return self.get_cached_asset(*args, **kwargs)
         
     def compute_inputs_hash(self) -> str:
         """

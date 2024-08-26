@@ -56,8 +56,7 @@ class Population(Asset):
         population = pd.merge(
             transport_zones,
             legal_pop_by_city,
-            left_on="admin_id",
-            right_on="insee_city_id",
+            on="local_admin_unit_id",
             how="left"
         )
         
@@ -70,8 +69,7 @@ class Population(Asset):
                     to zero.
                 """
             )
-            population["legal_population"].fillna(0, inplace=True)
-            
+            population["legal_population"].fillna(0.0, inplace=True)
         
         population["n_persons"] = sample_size*population["legal_population"].pow(0.5)/population["legal_population"].pow(0.5).sum()
         population["n_persons"] = np.ceil(population["n_persons"])
@@ -91,7 +89,7 @@ class Population(Asset):
         
         regions = get_french_regions_boundaries()
         
-        transport_zones = gpd.sjoin(transport_zones, regions[["INSEE_REG", "geometry"]], how="left", predicate="intersects") 
+        transport_zones = gpd.sjoin(transport_zones, regions[["INSEE_REG", "geometry"]], predicate="intersects") 
         transport_zones_regions = transport_zones["INSEE_REG"].drop_duplicates().tolist()
         
         census_data = [CensusLocalizedIndividuals(tz_region).get() for tz_region in transport_zones_regions]
@@ -106,9 +104,9 @@ class Population(Asset):
         
         cantons = get_french_cities_boundaries()
         cantons = cantons[["INSEE_COM", "INSEE_CAN"]]
-        cantons.columns = ["admin_id", "CANTVILLE"]
+        cantons.columns = ["local_admin_unit_id", "CANTVILLE"]
         
-        sample_sizes = pd.merge(sample_sizes, cantons, on="admin_id", how="left")
+        sample_sizes = pd.merge(sample_sizes, cantons, on="local_admin_unit_id", how="left")
 
         logging.info("Sampling census data in each transport zone...")
         

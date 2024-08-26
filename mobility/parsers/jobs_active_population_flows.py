@@ -47,8 +47,12 @@ class JobsActivePopulationFlows(Asset):
         )
         
         flows.loc[flows["ARM"] != "ZZZZZ", "COMMUNE"] = flows.loc[flows["ARM"] != "ZZZZZ", "ARM"]
-        flows.rename({"COMMUNE": "admin_id_from", "DCLT": "admin_id_to", "IPONDI": "ref_flow_volume"}, axis=1, inplace=True)
-        flows = flows.groupby(["admin_id_from", "admin_id_to"], as_index=False)[["ref_flow_volume"]].sum()
+        flows.rename({"COMMUNE": "local_admin_unit_id_from", "DCLT": "local_admin_unit_id_to", "IPONDI": "ref_flow_volume"}, axis=1, inplace=True)
+        
+        flows["local_admin_unit_id_from"] = "fr-" + flows["local_admin_unit_id_from"]
+        flows["local_admin_unit_id_to"] = "fr-" + flows["local_admin_unit_id_to"]
+        
+        flows = flows.groupby(["local_admin_unit_id_from", "local_admin_unit_id_to"], as_index=False)[["ref_flow_volume"]].sum()
         
         flows.to_parquet(self.cache_path)
         

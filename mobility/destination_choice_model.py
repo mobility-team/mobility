@@ -170,10 +170,10 @@ class DestinationChoiceModel(Asset):
         )
         
         flows = flows.to_frame().reset_index()
-        flows = pd.merge(flows, transport_zones[["transport_zone_id", "admin_id"]], left_on="from", right_on="transport_zone_id")
-        flows = pd.merge(flows, transport_zones[["transport_zone_id", "admin_id"]], left_on="to", right_on="transport_zone_id", suffixes=["_from", "_to"])
+        flows = pd.merge(flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="from", right_on="transport_zone_id")
+        flows = pd.merge(flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="to", right_on="transport_zone_id", suffixes=["_from", "_to"])
         
-        flows = flows[["from", "to", "admin_id_from", "admin_id_to", "flow_volume"]]
+        flows = flows[["from", "to", "local_admin_unit_id_from", "local_admin_unit_id_to", "flow_volume"]]
         
         return flows
     
@@ -183,7 +183,7 @@ class DestinationChoiceModel(Asset):
         comparison = pd.merge(
             ref_flows,
             flows,
-            on=["admin_id_from", "admin_id_to"],
+            on=["local_admin_unit_id_from", "local_admin_unit_id_to"],
             how = "outer"
         )
         

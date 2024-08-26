@@ -98,6 +98,8 @@ class TravelCosts(Asset):
             str: The file path to the saved routable graph.
         """
 
+        osm.get()
+        
         dodgr_mode = self.dodgr_modes[mode]
 
         output_file_name = "dodgr_graph_" + dodgr_mode + ".rds"

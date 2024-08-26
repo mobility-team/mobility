@@ -67,11 +67,14 @@ class JobsActivePopulationDistribution(Asset):
             ],
             dtype={"CODGEO": str}
         )
+        
+        jobs_active_population.rename({"CODGEO": "local_admin_unit_id"}, axis=1, inplace=True)
+        jobs_active_population["local_admin_unit_id"] = "fr-" + jobs_active_population["local_admin_unit_id"]
 
         jobs = jobs_active_population.loc[
             :,
             [
-                "CODGEO",
+                "local_admin_unit_id",
                 "P19_EMPLT",
                 "C19_EMPLT_CS1",
                 "C19_EMPLT_CS2",
@@ -81,7 +84,7 @@ class JobsActivePopulationDistribution(Asset):
                 "C19_EMPLT_CS6",
             ],
         ]
-        jobs.set_index("CODGEO", inplace=True)
+        jobs.set_index("local_admin_unit_id", inplace=True)
         jobs.rename(
             columns={
                 "P19_EMPLT": "n_jobs_total",
@@ -98,7 +101,7 @@ class JobsActivePopulationDistribution(Asset):
         active_population = jobs_active_population.loc[
             :,
             [
-                "CODGEO",
+                "local_admin_unit_id",
                 "P19_ACTOCC",
                 "C19_ACTOCC1564_CS1",
                 "C19_ACTOCC1564_CS2",
@@ -108,7 +111,7 @@ class JobsActivePopulationDistribution(Asset):
                 "C19_ACTOCC1564_CS6",
             ],
         ]
-        active_population.set_index("CODGEO", inplace=True)
+        active_population.set_index("local_admin_unit_id", inplace=True)
         active_population.rename(
             columns={
                 "P19_ACTOCC": "active_pop",

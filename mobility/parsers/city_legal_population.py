@@ -15,7 +15,7 @@ class CityLegalPopulation(Asset):
         inputs = {}
 
         file_name = "insee_city_legal_population.parquet"
-        cache_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / file_name
+        cache_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "insee" / "legal_populations" / file_name
 
         super().__init__(inputs, cache_path)
         
@@ -45,7 +45,9 @@ class CityLegalPopulation(Asset):
             usecols=["COM", "PTOT"],
             dtype={"COM": str, "PTOT": np.int32}
         )
-        legal_populations.columns = ["insee_city_id", "legal_population"]
+        legal_populations.columns = ["local_admin_unit_id", "legal_population"]
+        
+        legal_populations["local_admin_unit_id"] = "fr-" + legal_populations["local_admin_unit_id"]
         
         legal_populations.to_parquet(self.cache_path)
         
