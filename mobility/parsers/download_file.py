@@ -19,6 +19,7 @@ def download_file(url, path):
     """
     
     path = pathlib.Path(path)
+    temp_path = path.parent / (path.name + ".part")
     
     # Create the folder containing the file if not already existing
     if path.parent.exists() is False:
@@ -45,21 +46,20 @@ def download_file(url, path):
             verify=verify
         )
         
+        response.raise_for_status()
+        
         total_size = int(response.headers.get('content-length', 0))
 
         with Progress() as progress:
             
             task = progress.add_task("[green]Downloading...", total=total_size)
-            size = 0
     
-            with open(path, "wb") as file:
+            with open(temp_path, "wb") as file:
                 for data in response.iter_content(chunk_size=8192):
                     file.write(data)
                     progress.update(task, advance=len(data))
-                    size += len(data)
                     
-            if size != total_size:
-                raise RuntimeError(f"Download incomplete: expected {total_size} bytes, but got {size} bytes.")
+            os.rename(temp_path, path)
             
         logging.info("Downloaded file to " + str(path))
         

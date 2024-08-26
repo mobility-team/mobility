@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "mobility-tools"
 version = "0.1"
 dependencies = [
+  "geopandas",
   "numpy",
   "pandas",
   "requests",
@@ -48,6 +49,10 @@ dev = [
     "pytest",
     "pytest-cov",
     "pytest-dependency"
+]
+
+spyder = [
+    "spyder-kernels"
 ]
 
 [project.urls]
