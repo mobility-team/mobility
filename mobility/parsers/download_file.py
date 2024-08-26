@@ -26,8 +26,10 @@ def download_file(url, path):
         os.makedirs(str(path.parent))
     
     # Download the file if not already existing
-    # (or forcing a redownload)
     if path.exists() is False:
+        
+        if temp_path.exists() is True:
+            os.remove(temp_path)
         
         logging.info("Downloading " + url)
          
