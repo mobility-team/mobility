@@ -24,8 +24,7 @@ class DestinationChoiceModel(Asset):
             motive: str,
             transport_zones: gpd.GeoDataFrame, 
             travel_costs,
-            model_parameters: dict,
-            utility_parameters: dict,
+            parameters,
             ssi_min_flow_volume: float
         ):
         """Retrieves destination choice model if it already exists for these transport zones, travel costs, motive and other parameters.
@@ -50,8 +49,7 @@ class DestinationChoiceModel(Asset):
             "motive": motive,
             "transport_zones": transport_zones,
             "travel_costs": travel_costs,
-            "model_parameters": model_parameters,
-            "utility_parameters": utility_parameters,
+            "parameters": parameters,
             "ssi_min_flow_volume": ssi_min_flow_volume
         }
         
@@ -87,16 +85,12 @@ class DestinationChoiceModel(Asset):
         sources, sinks = self.prepare_sources_and_sinks(transport_zones)
         ref_flows = self.prepare_reference_flows(transport_zones)
         
-        model_parameters = self.inputs["model_parameters"]
-        utility_parameters = self.inputs["utility_parameters"]
-        
         travel_costs = travel_costs.set_index(["from", "to", "mode"])
         travel_costs = travel_costs[travel_costs["time"] < 2.0]
         
         utility_by_od_and_mode = self.compute_utility_by_od_and_mode(
             transport_zones,
-            travel_costs,
-            utility_parameters
+            travel_costs
         )
         
         utility_by_od = self.compute_utility_by_od(utility_by_od_and_mode)
@@ -105,8 +99,7 @@ class DestinationChoiceModel(Asset):
             transport_zones,
             sources,
             sinks,
-            utility_by_od,
-            model_parameters
+            utility_by_od
         )
         
         flows = self.add_reference_flows(transport_zones, flows, ref_flows)
@@ -167,29 +160,30 @@ class DestinationChoiceModel(Asset):
             transport_zones,
             sources: pd.DataFrame,
             sinks: pd.DataFrame,
-            utility_by_od: pd.DataFrame,
-            model_parameters: dict
+            utility_by_od: pd.DataFrame
         ):
+        
+        parameters = self.inputs["parameters"]
         
         country_zone = transport_zones[["transport_zone_id", "local_admin_unit_id"]].set_index("transport_zone_id").rename_axis('from')
         country_zone["local_admin_unit_id"] = country_zone["local_admin_unit_id"].str[:2]
         country_zone.rename(columns={"local_admin_unit_id": "country_id"}, inplace=True) 
         sources = pd.merge(sources, country_zone, on="from", how="inner")
         
-        if model_parameters["type"] == "radiation_universal":
+        if parameters.model["type"] == "radiation_universal":
             flows, _, _ = radiation_model.iter_radiation_model(
                 sources=sources,
                 sinks=sinks,
                 costs=utility_by_od,
-                alpha=model_parameters["alpha"],
-                beta=model_parameters["beta"]
+                alpha=parameters.model["alpha"],
+                beta=parameters.model["beta"]
             )
         else:
             flows, _, _ = radiation_model_selection.iter_radiation_model_selection(
                 sources=sources,
                 sinks=sinks,
                 costs=utility_by_od,
-                selection_lambda=model_parameters["lambda"]
+                selection_lambda=parameters.model["lambda"]
             )
         
         flows = flows.to_frame().reset_index()

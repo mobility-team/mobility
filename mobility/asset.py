@@ -36,6 +36,9 @@ class Asset(ABC):
             inputs (Dict): The inputs used for creating or updating the Asset.
             cache_path (pathlib.Path): The path where the Asset is cached.
         """
+        
+        self.value = None
+        
         self.inputs = inputs
         self.inputs_hash = self.compute_inputs_hash()
         

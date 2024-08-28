@@ -12,17 +12,38 @@ from mobility.parsers.jobs_active_population_distribution import JobsActivePopul
 from mobility.parsers.jobs_active_population_flows import JobsActivePopulationFlows
 from mobility.r_utils.r_script import RScript
 
+from dataclasses import dataclass, field
+from typing import Dict, Union
+
+@dataclass
+class WorkDestinationChoiceModelParameters:
+    
+    model: Dict[str, Union[str, float]] = field(
+        default_factory=lambda: {
+            "type": "radiation",
+            "lambda": 0.9999
+        }
+    )
+    
+    utility: Dict[str, float] = field(
+        default_factory=lambda: {
+            "fr": 120.0,
+            "ch": 240.0
+        }
+    )
+    
+    
+
 class WorkDestinationChoiceModel(DestinationChoiceModel):
     
     def __init__(
             self,
             transport_zones: gpd.GeoDataFrame,
             travel_costs: pd.DataFrame,
-            utility_parameters: dict,
+            parameters: WorkDestinationChoiceModelParameters = WorkDestinationChoiceModelParameters(),
             active_population: pd.DataFrame = None,
             jobs: pd.DataFrame = None,
             reference_flows: pd.DataFrame = None,
-            model_parameters: dict = {"type": "radiation_selection", "lambda": 0.9999},
             ssi_min_flow_volume: float = 200.0
         ):
         """
@@ -72,27 +93,25 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             self.reference_flows = reference_flows
         
         
-        if "type" not in model_parameters.keys():
+        if "type" not in parameters.model.keys():
             raise ValueError("The model_parameters should be a dict that specifies the type of radiation model : radiation_universal or radiation_selection")
         
-        if model_parameters["type"] == "radiation_selection":
-            if "lambda" not in model_parameters.keys():
+        if parameters.model["type"] == "radiation_selection":
+            if "lambda" not in parameters.model.keys():
                 raise ValueError("Lambda parameter missing in model_parameters. It should be a dict with keys fr and ch.")
             
-        if model_parameters["type"] == "radiation_universal":
-            if "alpha" not in model_parameters.keys():
+        if parameters.model["type"] == "radiation_universal":
+            if "alpha" not in parameters.model.keys():
                 raise ValueError("Alpha parameter missing in model_parameters.")
-            if "beta" not in model_parameters.keys():
+            if "beta" not in parameters.model.keys():
                 raise ValueError("Beta parameter missing in model_parameters.")
         
         super().__init__(
             "work",
             transport_zones,
             travel_costs,
-            model_parameters,
-            utility_parameters,
+            parameters,
             ssi_min_flow_volume
-            # active_population
         )
         
         
@@ -211,126 +230,21 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
     def compute_utility_by_od_and_mode(
             self,
             transport_zones: gpd.GeoDataFrame,
-            travel_costs: pd.DataFrame,
-            utility_parameters: dict
+            travel_costs: pd.DataFrame
         ):
         
-        travel_costs = pd.merge(
-            travel_costs,
-            transport_zones[["transport_zone_id", "local_admin_unit_id"]].rename({"transport_zone_id": "from"}, axis=1).set_index("from"),
-            left_index=True,
-            right_index=True
-        )
+        params = self.inputs["parameters"]
         
         travel_costs = pd.merge(
             travel_costs,
-            transport_zones[["transport_zone_id", "local_admin_unit_id"]].rename({"transport_zone_id": "to"}, axis=1).set_index("to"),
+            transport_zones[["transport_zone_id", "country"]].rename({"transport_zone_id": "to"}, axis=1).set_index("to"),
             left_index=True,
             right_index=True
         )
-        
-        travel_costs["crossborder_flow"] = travel_costs["local_admin_unit_id_x"].str[0:2] + "-" + travel_costs["local_admin_unit_id_y"].str[0:2]
-        
-        # Utility function : U = -ct*time*2 + -cd*distance*2 - constant + u_crossborder
-        
-        # Extract all OD modes (grouping all public_transport into one category for now)
-        modes = travel_costs.index.get_level_values("mode")
-        modes = modes.where(modes.isin(["car", "bicycle", "walk", "carpool2", "carpool3", "carpool4"]), "public_transport")
-        
-        # Cost of time, constant c0_short for less than 5km : mode dependent        
-        c0_short = {m: c["c0_short"] for m, c in utility_parameters["ct_coefficients"].items()}
-        c0_short = modes.map(c0_short)
-        
-        # Cost of time, constant c0 : mode dependent
-        c0 = {m: c["c0"] for m, c in utility_parameters["ct_coefficients"].items()}
-        c0 = modes.map(c0)
-        
-        # Cost of time, coeff c1 : mode dependent
-        c1 = {m: c["c1"] for m, c in utility_parameters["ct_coefficients"].items()}
-        c1 = modes.map(c1)
-        
-        # Cost of time (ct) : distance dependent, from https://www.ecologie.gouv.fr/sites/default/files/documents/V.2.pdf
-        ct = c0_short
-        ct = np.where(travel_costs["distance"] > 5, c0 + c1*travel_costs["distance"], ct)
-        ct = np.where(travel_costs["distance"] > 20, 30.2 + 0.017*travel_costs["distance"], ct)
-        ct = np.where(travel_costs["distance"] > 80, 37.0, ct)
-        ct *= 1.17 # Inflation coeff
-        
-        # Adjusting the cost of time for carpool in Switzerland to differentiate it from ct carpool in France
-        coeff_carpool_ch = utility_parameters["coeff_carpool_ch"]
-        ct = np.where((travel_costs["local_admin_unit_id_x"].str.startswith("ch") & travel_costs.index.get_level_values("mode").str.startswith("carpool")), coeff_carpool_ch*ct, ct)
-        
-        # Carpool exclusive highways
-        if "voies" in utility_parameters["leviers"]:
-            valserhone = utility_parameters["leviers"]["voies"]["valserhone"]
-            saint_julien = utility_parameters["leviers"]["voies"]["saint_julien"]
-            cruseilles = utility_parameters["leviers"]["voies"]["cruseilles"]
-            ct = np.where(
-                (((travel_costs["local_admin_unit_id_x"].isin(valserhone)) & (travel_costs["local_admin_unit_id_y"].isin(saint_julien))) |
-                ((travel_costs["local_admin_unit_id_x"].isin(cruseilles)) & (travel_costs["local_admin_unit_id_y"].isin(saint_julien)))) &
-                (travel_costs.index.get_level_values("mode").str.startswith("carpool")),
-                0.8*ct,
-                ct
-            )
-        
-        # Cost of distance : mode dependent      
-        cd = {m: c["cost_of_distance"] for m, c in utility_parameters["mode_coefficients"].items()}
-        cd = modes.map(cd)
-        
-        # Constant : mode dependent
-        constants = {m: c["constant"] for m, c in utility_parameters["mode_coefficients"].items()}
-        constants = modes.map(constants)
-        
-        # Carpool subvention : 1.50€ + 0.10€/km up to 3€
-        if "subvention_carpool_idf" in utility_parameters["leviers"]:
-            zone_to_apply = utility_parameters["leviers"]["subvention_carpool_idf"]["zone"]
-            constants = np.where(
-                (travel_costs["local_admin_unit_id_x"].str.startswith(zone_to_apply)) & 
-                (travel_costs["distance"] < 15) & 
-                (travel_costs.index.get_level_values("mode").str.startswith("carpool")),
-                constants - 1.5 - 0.10 * travel_costs["distance"],
-                np.where(
-                    (travel_costs["local_admin_unit_id_x"].str.startswith("fr")) & 
-                    (travel_costs.index.get_level_values("mode").str.startswith("carpool")),
-                    constants - 3,
-                    constants
-                )
-            )
 
-        # Other method : 1.50€ per passenger
-        if "subvention_carpool_ara" in utility_parameters["leviers"]:
-            zone_to_apply = utility_parameters["leviers"]["subvention_carpool_ara"]["zone"]
-            sub_val = utility_parameters["leviers"]["subvention_carpool_ara"]["sub_val"]
-            
-            constants = np.where(
-                ((travel_costs["local_admin_unit_id_x"].str.startswith(zone_to_apply)) & 
-                (travel_costs.index.get_level_values("mode")=="carpool2")),
-                constants - sub_val,
-                constants
-            )
-            constants = np.where(
-                ((travel_costs["local_admin_unit_id_x"].str.startswith(zone_to_apply)) & 
-                (travel_costs.index.get_level_values("mode")=="carpool3")),
-                constants - 2*sub_val,
-                constants
-            )
-            constants = np.where(
-                ((travel_costs["local_admin_unit_id_x"].str.startswith(zone_to_apply)) & 
-                (travel_costs.index.get_level_values("mode")=="carpool4")),
-                constants - 3*sub_val,
-                constants
-            )
-
-        # Crossborder utility
-        u_crossborder = travel_costs["crossborder_flow"].map(utility_parameters["crossborder_constant"])
-        
-        # Compute the total cost, utility and net utility
-        travel_costs["cost"] = ct*travel_costs["time"]*2
-        travel_costs["cost"] += cd/100*travel_costs["distance"]*2
-        travel_costs["cost"] += constants
-        
-        travel_costs["utility"] = u_crossborder
+        travel_costs["utility"] = travel_costs["country"].map(params.utility)
         travel_costs["net_utility"] = travel_costs["utility"] - travel_costs["cost"]
+        
         return travel_costs
     
     

@@ -8,10 +8,9 @@ class CarpoolMode(TransportMode):
     def __init__(
         self,
         car_mode: CarMode,
-        parameters: CarpoolParameters
+        parameters: CarpoolParameters = CarpoolParameters(2)
     ):
-        name = "carpool" + str(parameters.number_persons)
-        travel_costs = CarpoolTravelCosts(car_mode.travel_costs, name, parameters)
-        super().__init__(name, travel_costs, parameters)
+        travel_costs = CarpoolTravelCosts(car_mode.travel_costs, parameters)
+        super().__init__(travel_costs, parameters)
         
         

@@ -87,6 +87,7 @@ class LocalAdminUnits(Asset):
         cities.columns = ["local_admin_unit_id", "local_admin_unit_name", "geometry"]
         
         cities["local_admin_unit_id"] = "fr-" + cities["local_admin_unit_id"]
+        cities["country"] = "fr"
         
         cities = cities.to_crs(3035)
         
@@ -114,6 +115,7 @@ class LocalAdminUnits(Asset):
         cities.columns = ["local_admin_unit_id", "local_admin_unit_name", "geometry"]
         
         cities["local_admin_unit_id"] = "ch-" + cities["local_admin_unit_id"].astype(str)
+        cities["country"] = "ch"
         
         cities["geometry"] = shapely.wkb.loads(shapely.wkb.dumps(cities["geometry"], output_dimension=2))
         cities = cities.to_crs(3035)

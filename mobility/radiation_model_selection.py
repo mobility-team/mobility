@@ -103,22 +103,22 @@ def radiation_model_selection_polars(sources, sinks, costs, selection_lambda, co
     ])
 
     # Calculate probabilities
-    # od = od.with_columns([
-    #     ((1 - selection_lambda ** (1 + pl.col('s_ij'))) / (1 + pl.col('s_ij')) / (1 - selection_lambda)).alias('p_a'),
-    # ])
+    od = od.with_columns([
+        ((1 - selection_lambda ** (1 + pl.col('s_ij'))) / (1 + pl.col('s_ij')) / (1 - selection_lambda)).alias('p_a'),
+    ])
     
     # Calculate probabilities with a differentiated lambda for ch and fr
-    od = od.with_columns([
-        (
-            (1 - pl.when(pl.col('country_id') == 'fr')
-                    .then(selection_lambda['fr'] ** (1 + pl.col('s_ij')))
-                    .otherwise(selection_lambda['ch'] ** (1 + pl.col('s_ij')))
-            ) / (1 + pl.col('s_ij')) / 
-            (1 - pl.when(pl.col('country_id') == 'fr')
-                    .then(selection_lambda['fr'])
-                    .otherwise(selection_lambda['ch']))
-        ).alias('p_a'),
-    ])
+    # od = od.with_columns([
+    #     (
+    #         (1 - pl.when(pl.col('country_id') == 'fr')
+    #                 .then(selection_lambda['fr'] ** (1 + pl.col('s_ij')))
+    #                 .otherwise(selection_lambda['ch'] ** (1 + pl.col('s_ij')))
+    #         ) / (1 + pl.col('s_ij')) / 
+    #         (1 - pl.when(pl.col('country_id') == 'fr')
+    #                 .then(selection_lambda['fr'])
+    #                 .otherwise(selection_lambda['ch']))
+    #     ).alias('p_a'),
+    # ])
     
     
     od = od.with_columns([

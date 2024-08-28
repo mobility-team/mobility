@@ -15,10 +15,10 @@ osm_file_path <- args[2]
 mode <- args[3]
 output_file_path <- args[4]
 
-# tz_file_path <- "D:/data/mobility/projects/grand-geneve/531b04c8103ba01eca9b80642820ca99-transport_zones.gpkg"
-# osm_file_path <- "D:/data/mobility/projects/grand-geneve/b105d7de84c8c153749badaa911770f2-osm_data.osm"
-# mode <- "motorcar"
-# output_file_path <- "D:/data/mobility/projects/grand-geneve/cppr_car"
+tz_file_path <- "D:/data/mobility/projects/grand-geneve/fa3d29c9577e794ad6ca289986a94368-transport_zones.gpkg"
+osm_file_path <- "D:/data/mobility/projects/grand-geneve/5b923b0264a3c52233227fec7998fb7e-osm_data.osm"
+mode <- "motorcar"
+output_file_path <- "D:/data/mobility/projects/grand-geneve/cppr_car"
 
 logger <- logger(appenders = console_appender())
 

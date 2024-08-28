@@ -9,6 +9,7 @@ from mobility.transport_modes.carpool import CarpoolMode, CarpoolParameters
 from mobility.transport_modes.public_transport import PublicTransportMode
 
 from mobility.transport_modes.multimodal.multimodal_travel_costs import MultiModalTravelCosts
+from mobility.parameters import ModeParameters
 
 class MultiModalMode(TransportMode):
     
@@ -34,6 +35,6 @@ class MultiModalMode(TransportMode):
         
         
         travel_costs = MultiModalTravelCosts(transport_zones, modes)
-        super().__init__("car", travel_costs)
+        super().__init__(travel_costs, ModeParameters("multimodal"))
         
     

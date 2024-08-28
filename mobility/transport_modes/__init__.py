@@ -1,3 +1,4 @@
+from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.car import CarMode
 from mobility.transport_modes.walk import WalkMode
 from mobility.transport_modes.bicycle import BicycleMode

@@ -1,17 +1,17 @@
-from mobility.parameters import Parameters
+from mobility.parameters import ModeParameters
 
 class TransportMode:
+    
     def __init__(
         self,
-        name: str,
         travel_costs,
-        parameters: Parameters = None
+        parameters: ModeParameters = None
     ):
         
-        self.name = name
+        self.name = parameters.name
         self.travel_costs = travel_costs
         self.parameters = parameters
-    
+        
 
 
         

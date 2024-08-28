@@ -57,11 +57,18 @@ class TransportZones(Asset):
         Returns:
             gpd.GeoDataFrame: The cached transport zones.
         """
+        
+        if self.value is None:
+            
+            logging.info("Transport zones already created. Reusing the file " + str(self.cache_path))
+            transport_zones = gpd.read_file(self.cache_path)
+            self.value = transport_zones
+            return transport_zones
+        
+        else:
+            
+            return self.value
 
-        logging.info("Transport zones already created. Reusing the file " + str(self.cache_path))
-        transport_zones = gpd.read_file(self.cache_path)
-
-        return transport_zones
 
     def create_and_get_asset(self) -> gpd.GeoDataFrame:
         """
@@ -131,13 +138,24 @@ class TransportZones(Asset):
         
         # Prepare and format the transport zones data frame
         transport_zones = local_admin_units[
-            ["local_admin_unit_id", "local_admin_unit_name", "urban_unit_category", "geometry"]
+            ["local_admin_unit_id", "local_admin_unit_name", "country",
+             "urban_unit_category", "geometry"]
         ].copy()
         
         transport_zones["transport_zone_id"] = [i for i in range(transport_zones.shape[0])]
         
         transport_zones = transport_zones[
-            ["transport_zone_id", "local_admin_unit_id", "local_admin_unit_name", "urban_unit_category", "geometry"]
+            ["transport_zone_id", "local_admin_unit_id", "local_admin_unit_name",
+             "country", "urban_unit_category", "geometry"]
         ]
 
         return transport_zones
+    
+    
+    def ids_to_countries(self, transport_zone_ids):
+        transport_zones = self.get()
+        id_country_map = transport_zones[["transport_zone_id", "country"]].set_index("transport_zone_id").to_dict()
+        return pd.Series(transport_zone_ids).map(id_country_map)
+        
+        
+        
