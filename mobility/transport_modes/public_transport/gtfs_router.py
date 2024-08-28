@@ -8,7 +8,7 @@ import hashlib
 from importlib import resources
 from mobility.asset import Asset
 from mobility.transport_zones import TransportZones
-from mobility.r_script import RScript
+from mobility.r_utils.r_script import RScript
 
 from mobility.parsers.download_file import download_file
 from mobility.parsers.gtfs_stops import GTFSStops
@@ -64,7 +64,7 @@ class GTFSRouter(Asset):
         
         gtfs_files = ",".join(gtfs_files)
         
-        script = RScript(resources.files('mobility.R').joinpath('prepare_gtfs_router.R'))
+        script = RScript(resources.files('mobility.r_utils').joinpath('prepare_gtfs_router.R'))
         script.run(args=[str(transport_zones.cache_path), gtfs_files, str(self.cache_path)])
             
         return self.cache_path

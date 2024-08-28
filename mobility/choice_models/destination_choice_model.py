@@ -6,12 +6,10 @@ import geopandas as gpd
 import numpy as np
 import seaborn as sns
 
-from scipy.optimize import minimize
-
 from abc import abstractmethod
 
 from mobility.asset import Asset
-from mobility import radiation_model, radiation_model_selection, TravelCosts
+from mobility import radiation_model, radiation_model_selection
 
 class DestinationChoiceModel(Asset):
     """
@@ -25,7 +23,7 @@ class DestinationChoiceModel(Asset):
             self,
             motive: str,
             transport_zones: gpd.GeoDataFrame, 
-            travel_costs: TravelCosts,
+            travel_costs,
             model_parameters: dict,
             utility_parameters: dict,
             ssi_min_flow_volume: float

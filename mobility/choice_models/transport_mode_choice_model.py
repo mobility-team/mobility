@@ -6,7 +6,7 @@ import numpy as np
 
 from mobility.asset import Asset
 
-from mobility.destination_choice_model import DestinationChoiceModel
+from mobility.choice_models.destination_choice_model import DestinationChoiceModel
 
 class TransportModeChoiceModel(Asset):
     

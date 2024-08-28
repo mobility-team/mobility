@@ -6,9 +6,10 @@ import geopandas as gpd
 
 from importlib import resources
 from mobility.asset import Asset
-from mobility.r_script import RScript
-from mobility.gtfs_router import GTFSRouter
+from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
+from mobility.transport_modes.public_transport.gtfs_router import GTFSRouter
+from mobility.transport_modes.public_transport.public_transport_parameters import PublicTransportParameters
 
 class PublicTransportTravelCosts(Asset):
     """
@@ -24,10 +25,7 @@ class PublicTransportTravelCosts(Asset):
     def __init__(
             self,
             transport_zones: TransportZones,
-            start_time_min: float = 7.5,
-            start_time_max: float = 8.5,
-            max_traveltime: float = 1.0,
-            additional_gtfs_files: list = None
+            parameters: PublicTransportParameters
     ):
         """
         Retrieves public transport travel costs if they already exist for these transport zones and parameters,
@@ -45,14 +43,12 @@ class PublicTransportTravelCosts(Asset):
 
         """
         
-        gtfs_router = GTFSRouter(transport_zones, additional_gtfs_files)
+        gtfs_router = GTFSRouter(transport_zones, parameters.additional_gtfs_files)
 
         inputs = {
             "transport_zones": transport_zones,
             "gtfs_router": gtfs_router,
-            "start_time_min": start_time_min,
-            "start_time_max": start_time_max,
-            "max_traveltime": max_traveltime
+            "parameters": parameters
         }
 
         file_name = "public_transport_travel_costs.parquet"
@@ -72,9 +68,7 @@ class PublicTransportTravelCosts(Asset):
         costs = self.gtfs_router_costs(
             self.inputs["transport_zones"],
             self.inputs["gtfs_router"],
-            self.inputs["start_time_min"],
-            self.inputs["start_time_max"],
-            self.inputs["max_traveltime"]
+            self.inputs["parameters"]
         )
 
         return costs
@@ -84,9 +78,7 @@ class PublicTransportTravelCosts(Asset):
             self,
             transport_zones: gpd.GeoDataFrame,
             gtfs_router: GTFSRouter,
-            start_time_min: float,
-            start_time_max: float,
-            max_traveltime: float
+            parameters: PublicTransportParameters
         ) -> pd.DataFrame:
         """
         Calculates travel costs for public transport between transport zones.
@@ -104,7 +96,7 @@ class PublicTransportTravelCosts(Asset):
 
         logging.info("Computing public transport travel costs...")
         
-        script = RScript(resources.files('mobility.R').joinpath('prepare_public_transport_costs.R'))
+        script = RScript(resources.files('mobility.r_utils').joinpath('prepare_public_transport_costs.R'))
         
         gtfs_route_types_path = resources.files("mobility").joinpath('data/gtfs/gtfs_route_types.xlsx')
         
@@ -115,9 +107,9 @@ class PublicTransportTravelCosts(Asset):
                 str(transport_zones.cache_path),
                 gtfs_router.cache_path,
                 str(gtfs_route_types_path),
-                str(start_time_min),
-                str(start_time_max),
-                str(max_traveltime),
+                str(parameters.start_time_min),
+                str(parameters.start_time_max),
+                str(parameters.max_traveltime),
                 str(self.cache_path)
             ]
         )

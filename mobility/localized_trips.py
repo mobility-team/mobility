@@ -6,9 +6,9 @@ import numpy as np
 
 from mobility.asset import Asset
 
-from mobility.transport_mode_choice_model import TransportModeChoiceModel
-from mobility.work_destination_choice_model import WorkDestinationChoiceModel
-from mobility.multimodal_travel_costs import MultimodalTravelCosts
+from mobility.choice_models.transport_mode_choice_model import TransportModeChoiceModel
+from mobility.choice_models.work_destination_choice_model import WorkDestinationChoiceModel
+from mobility.transport_modes import MultiModalMode
 
 
 class LocalizedTrips(Asset):
@@ -20,7 +20,7 @@ class LocalizedTrips(Asset):
         
         transport_zones = trips.inputs["population"].inputs["transport_zones"]
         
-        travel_costs = MultimodalTravelCosts(transport_zones)
+        travel_costs = MultiModalMode(transport_zones).travel_costs
         trans_mode_cm = TransportModeChoiceModel(travel_costs, cost_of_time)
         work_dest_cm = WorkDestinationChoiceModel(transport_zones, travel_costs, cost_of_time, work_alpha, work_beta)
         

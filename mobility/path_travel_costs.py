@@ -7,9 +7,9 @@ import geopandas as gpd
 from importlib import resources
 from mobility.parsers.osm import OSMData
 from mobility.asset import Asset
-from mobility.r_script import RScript
+from mobility.r_utils.r_script import RScript
 
-class TravelCosts(Asset):
+class PathTravelCosts(Asset):
     """
     A class for managing travel cost calculations for certain modes using OpenStreetMap (OSM) data, inheriting from the Asset class.
 
@@ -65,6 +65,8 @@ class TravelCosts(Asset):
 
         logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
         costs = pd.read_parquet(self.cache_path)
+        
+        costs["mode"] = self.inputs["mode"]
 
         return costs
 
@@ -83,6 +85,8 @@ class TravelCosts(Asset):
         osm = self.inputs["osm"]
         graph = self.dodgr_graph(transport_zones, osm, mode)
         costs = self.dodgr_costs(transport_zones, graph)
+        
+        costs["mode"] = self.inputs["mode"]
 
         return costs
 
@@ -108,7 +112,7 @@ class TravelCosts(Asset):
 
         logging.info("Creating a routable graph with dodgr, this might take a while...")
          
-        script = RScript(resources.files('mobility.R').joinpath('prepare_dodgr_graph.R'))
+        script = RScript(resources.files('mobility.r_utils').joinpath('prepare_dodgr_graph.R'))
         script.run(args=[str(transport_zones.cache_path), str(osm.cache_path), dodgr_mode, output_file_path])
 
         return output_file_path
@@ -127,7 +131,7 @@ class TravelCosts(Asset):
 
         logging.info("Computing travel costs...")
         
-        script = RScript(resources.files('mobility.R').joinpath('prepare_dodgr_costs.R'))
+        script = RScript(resources.files('mobility.r_utils').joinpath('prepare_dodgr_costs.R'))
         script.run(args=[str(transport_zones.cache_path), graph, str(self.cache_path)])
 
         costs = pd.read_parquet(self.cache_path)

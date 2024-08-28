@@ -6,7 +6,7 @@ import platform
 import json
 
 from importlib import resources
-from mobility.r_script import RScript
+from mobility.r_utils.r_script import RScript
 
 
 def set_params(
@@ -190,5 +190,5 @@ def install_r_packages(r_packages, r_packages_force_reinstall):
             
         args = json.dumps(args)
             
-        script = RScript(resources.files('mobility.R').joinpath('install_packages.R'))
+        script = RScript(resources.files('mobility.r_utils').joinpath('install_packages.R'))
         script.run(args=[args])

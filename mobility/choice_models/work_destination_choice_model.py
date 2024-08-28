@@ -7,11 +7,10 @@ import os
 
 from importlib import resources
 
-from mobility.destination_choice_model import DestinationChoiceModel
+from mobility.choice_models.destination_choice_model import DestinationChoiceModel
 from mobility.parsers.jobs_active_population_distribution import JobsActivePopulationDistribution
 from mobility.parsers.jobs_active_population_flows import JobsActivePopulationFlows
-from mobility.r_script import RScript
-import pdb
+from mobility.r_utils.r_script import RScript
 
 class WorkDestinationChoiceModel(DestinationChoiceModel):
     
@@ -238,7 +237,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         modes = travel_costs.index.get_level_values("mode")
         modes = modes.where(modes.isin(["car", "bicycle", "walk", "carpool2", "carpool3", "carpool4"]), "public_transport")
         
-        # Cost of time, constant c0_short for less than 5km : mode dependent
+        # Cost of time, constant c0_short for less than 5km : mode dependent        
         c0_short = {m: c["c0_short"] for m, c in utility_parameters["ct_coefficients"].items()}
         c0_short = modes.map(c0_short)
         
@@ -342,7 +341,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         
         logging.info(f"Plotting flows (svg path: {output_path})")
         
-        script = RScript(resources.files('mobility.R').joinpath('plot_flows.R'))
+        script = RScript(resources.files('mobility.r_utils').joinpath('plot_flows.R'))
         script.run(
             args=[
                 str(self.inputs["transport_zones"].cache_path),

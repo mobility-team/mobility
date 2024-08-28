@@ -1,10 +1,11 @@
-import os
 import pathlib
+import os
 import logging
 import pandas as pd
 
 from mobility.asset import Asset
-from mobility.travel_costs import TravelCosts
+from mobility.path_travel_costs import PathTravelCosts
+from mobility.transport_modes.carpool.carpool_parameters import CarpoolParameters
 
 class CarpoolTravelCosts(Asset):
     """
@@ -26,21 +27,25 @@ class CarpoolTravelCosts(Asset):
         create_and_get_asset: Calculate and retrieve travel costs based on the current inputs.
     """
 
-    def __init__(self, car_travel_costs: TravelCosts, number_persons: int,
-                 absolute_delay_per_passenger: int = 5, relative_delay_per_passenger: float = 0.05,
-                 absolute_extra_distance_per_passenger: float = 1, relative_extra_distance_per_passenger: float = 0.05):
+    def __init__(
+            self,
+            car_travel_costs: PathTravelCosts,
+            name: str,
+            parameters: CarpoolParameters
+        ):
         """
         Initializes a CarpoolTravelCosts object with the given transport zones, travel mode and parameters.
 
         """
+        
+        self.name = name
 
-        inputs = {"car_travel_costs": car_travel_costs, "number_persons": number_persons,
-                  "absolute_delay_per_passenger": absolute_delay_per_passenger,
-                  "relative_delay_per_passenger": relative_delay_per_passenger,
-                  "absolute_extra_distance_per_passenger": absolute_extra_distance_per_passenger,
-                  "relative_extra_distance_per_passenger", relative_extra_distance_per_passenger}
+        inputs = {
+            "car_travel_costs": car_travel_costs,
+            "parameters": parameters
+        }
 
-        file_name = "carpool" + str(number_persons) + "_travel_costs.parquet"
+        file_name = "carpool" + str(parameters.number_persons) + "_travel_costs.parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
 
         super().__init__(inputs, cache_path)
@@ -55,6 +60,7 @@ class CarpoolTravelCosts(Asset):
 
         logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
         costs = pd.read_parquet(self.cache_path)
+        costs["mode"] = self.name
 
         return costs
 
@@ -64,26 +70,34 @@ class CarpoolTravelCosts(Asset):
 
         Returns:
             pd.DataFrame: A DataFrame of calculated carpool travel costs.
-        """
-        car_travel_costs = self.inputs["car_travel_costs"].get()
-        number_persons = self.inputs["number_persons"]
-        absolute_delay_per_passenger = self.inputs["absolute_delay_per_passenger"]
-        relative_delay_per_passenger = self.inputs["relative_delay_per_passenger"]
-        absolute_extra_distance_per_passenger = self.inputs["absolute_delay_per_passenger"]
-        relative_extra_distance_per_passenger = self.inputs["relative_extra_distance_per_passenger"]
+        """ 
         
-        logging.info("Preparing carpool travel costs for " + str(number_persons) + " occupants...")
+        logging.info("Preparing carpool travel costs for " + str(self.inputs["parameters"].number_persons) + " occupants...")
         
-        costs = self.compute_carpool_costs(car_travel_costs, number_persons, absolute_delay_per_passenger, relative_delay_per_passenger,
-                                           absolute_extra_distance_per_passenger, relative_extra_distance_per_passenger=)
+        costs = self.compute_carpool_costs(
+            self.inputs["car_travel_costs"].get(),
+            self.inputs["parameters"].number_persons,
+            self.inputs["parameters"].absolute_delay_per_passenger,
+            self.inputs["parameters"].relative_delay_per_passenger,
+            self.inputs["parameters"].absolute_delay_per_passenger,
+            self.inputs["parameters"].relative_extra_distance_per_passenger
+        )
         
         costs.to_parquet(self.cache_path)
+        
+        costs["mode"] = self.name
 
         return costs
 
-    def compute_carpool_costs(self, car_travel_costs: pd.DataFrame, number_persons: int,
-                              absolute_delay_per_passenger: int, relative_delay_per_passenger: float,
-                              absolute_extra_distance_per_passenger: float, relative_extra_distance_per_passenger: float) -> pd.DataFrame:
+    def compute_carpool_costs(
+            self,
+            car_travel_costs: pd.DataFrame,
+            number_persons: int,
+            absolute_delay_per_passenger: int,
+            relative_delay_per_passenger: float,
+            absolute_extra_distance_per_passenger: float,
+            relative_extra_distance_per_passenger: float
+        ) -> pd.DataFrame:
         """
         Calculates carpool travel costs for the specified number of occupants in the vehicule.
 
@@ -104,4 +118,3 @@ class CarpoolTravelCosts(Asset):
         costs["distance"] += (number_persons-1)*(relative_extra_distance_per_passenger*costs["distance"] + absolute_extra_distance_per_passenger)
 
         return costs
-    

@@ -5,6 +5,7 @@ import os
 
 from typing import Any
 from abc import ABC, abstractmethod
+from dataclasses import is_dataclass, fields
 
 class Asset(ABC):
     """
@@ -96,9 +97,18 @@ class Asset(ABC):
         Returns:
             A hash string representing the current state of the inputs.
         """
-        hashable_inputs = {
-            k: v.get_cached_hash() if isinstance(v, Asset) else v for k, v in self.inputs.items()
-        }
+        
+        hashable_inputs = {}
+        
+        for k, v in self.inputs.items():
+            if isinstance(v, Asset):
+                hashable_inputs[k] = v.get_cached_hash()
+            elif is_dataclass(v):
+                for field in fields(v):
+                    hashable_inputs[f"{k}.{field.name}"] = getattr(v, field.name)
+            else:
+                hashable_inputs[k] = v 
+
         serialized_inputs = json.dumps(hashable_inputs, sort_keys=True).encode('utf-8')
         return hashlib.md5(serialized_inputs).hexdigest()
 

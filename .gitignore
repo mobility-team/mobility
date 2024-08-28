@@ -219,3 +219,5 @@ mobility/data/insee/territories/UU2020_au_01-01-2023.xlsx
 
 
 **/.env
+
+.DS_Store
