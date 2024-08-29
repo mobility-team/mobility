@@ -144,15 +144,13 @@ class PathTravelCosts(Asset):
         costs = pd.merge(
             costs,
             transport_zones[["transport_zone_id", "local_admin_unit_id", "country"]].rename({"transport_zone_id": "from"}, axis=1).set_index("from"),
-            left_index=True,
-            right_index=True
+            on="from"
         )
         
         costs = pd.merge(
             costs,
             transport_zones[["transport_zone_id", "local_admin_unit_id", "country"]].rename({"transport_zone_id": "to"}, axis=1).set_index("to"),
-            left_index=True,
-            right_index=True,
+            on="to",
             suffixes=["_from", "_to"]
         )
         
