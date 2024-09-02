@@ -2,8 +2,6 @@ import os
 import pathlib
 import json
 import logging
-import zipfile
-import hashlib
 
 from importlib import resources
 from mobility.asset import Asset
@@ -13,13 +11,16 @@ from mobility.r_utils.r_script import RScript
 from mobility.parsers.download_file import download_file
 from mobility.parsers.gtfs_stops import GTFSStops
 
+from mobility.transport_modes.public_transport.gtfs_data import GTFSData
+
 class GTFSRouter(Asset):
     
     def __init__(self, transport_zones: TransportZones, additional_gtfs_files: list = None):
         
         inputs = {
             "transport_zones": transport_zones,
-            "additional_gtfs_files": additional_gtfs_files
+            "additional_gtfs_files": additional_gtfs_files,
+            "download_date": os.environ["MOBILITY_GTFS_DOWNLOAD_DATE"]
         }
         
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "gtfs_router.rds"
@@ -36,8 +37,8 @@ class GTFSRouter(Asset):
         transport_zones = self.inputs["transport_zones"]
         
         stops = self.get_stops(transport_zones)
-        
-        gtfs_files = self.download_gtfs_files(stops)
+
+        gtfs_files = self.get_gtfs_files(stops)
         
         if self.inputs["additional_gtfs_files"] is not None:
             gtfs_files.extend(self.inputs["additional_gtfs_files"])
@@ -70,42 +71,11 @@ class GTFSRouter(Asset):
         return self.cache_path
     
     
-    def download_gtfs_files(self, stops):
+    def get_gtfs_files(self, stops):
         
         gtfs_urls = self.get_gtfs_urls(stops)
-        
-        gtfs_files = []
-        
-        for gtfs_url in gtfs_urls:
-            
-            filename = pathlib.Path(gtfs_url).name
-            filename = hashlib.md5(gtfs_url.encode('utf-8')).hexdigest() + "_" + filename
-            
-            path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "gtfs" / filename
-            
-            if path.suffix != ".zip":
-                path = path.with_suffix('.zip')
-                
-            path = download_file(
-                gtfs_url,
-                path
-            )
-            
-            if os.path.getsize(path) < 1024:
-                
-                logging.info("Downloaded file size is inferior to 1 ko, it will not be used by mobility.")
-                
-            else:
-            
-                # Check if the downloaded file is a regular GTFS zip file
-                try:
-                    with zipfile.ZipFile(path, 'r') as zip_ref:
-                        zip_contents = zip_ref.namelist()              
-                    if "agency.txt" in zip_contents:
-                        gtfs_files.append(str(path))
-                        
-                except:
-                    logging.info("Downloaded file is not a regular GTFS zip file, it will not be used by mobility.")
+        gtfs_files = [GTFSData(gtfs_url).get() for gtfs_url in gtfs_urls]
+        gtfs_files = [str(f[0]) for f in gtfs_files if f[1] == True]
             
         return gtfs_files
             

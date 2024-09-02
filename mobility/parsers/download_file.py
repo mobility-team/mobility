@@ -19,11 +19,7 @@ def download_file(url, path):
             None
     """
     
-    path = pathlib.Path(path)
-    name = re.sub(r"\s", "_", path.name)
-    name = re.sub(r"[^\w\-_.]", "", name)
-    path = path.parent / name
-    
+    path = clean_path(path)
     temp_path = path.parent / (path.name + ".part")
 
     # Create the folder containing the file if not already existing
@@ -74,4 +70,15 @@ def download_file(url, path):
     
         logging.info("Reusing already downloaded file at : " + str(path) + ".")
         
+    return path
+
+
+
+def clean_path(path):
+    
+    path = pathlib.Path(path)
+    name = re.sub(r"\s", "_", path.name)
+    name = re.sub(r"[^\w\-_.]", "", name)
+    path = path.parent / name
+    
     return path

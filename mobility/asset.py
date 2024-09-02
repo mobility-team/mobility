@@ -42,6 +42,9 @@ class Asset(ABC):
         self.inputs = inputs
         self.inputs_hash = self.compute_inputs_hash()
         
+        for k, v in self.inputs.items():
+            setattr(self, k, v)
+        
         if isinstance(cache_path, dict):
             self.cache_path = {k: cp.parent / (self.inputs_hash + "-" + cp.name) for k, cp in cache_path.items()}
             self.hash_path = self.cache_path[list(self.cache_path.keys())[0]].with_suffix(".inputs-hash")
