@@ -154,4 +154,5 @@ class CarpoolTravelCosts(Asset):
         costs["cost"] += params.cost_of_distance*costs["distance"]*2
         costs["cost"] += params.cost_constant
         costs["cost"] -= revenues_distance + revenues_passenger
+        
         return costs
