@@ -87,6 +87,8 @@ class PathTravelCosts(Asset):
         graph = self.prepare_path_graph(transport_zones, osm, mode)
         costs = self.compute_costs_by_OD(transport_zones, graph)
         costs["mode"] = mode
+        
+        costs.to_parquet(self.cache_path)
 
         return costs
 
@@ -140,19 +142,6 @@ class PathTravelCosts(Asset):
         transport_zones = self.inputs["transport_zones"].get()
         
         logging.info("Computing generalized cost by OD...")
-        
-        costs = pd.merge(
-            costs,
-            transport_zones[["transport_zone_id", "local_admin_unit_id", "country"]].rename({"transport_zone_id": "from"}, axis=1).set_index("from"),
-            on="from"
-        )
-        
-        costs = pd.merge(
-            costs,
-            transport_zones[["transport_zone_id", "local_admin_unit_id", "country"]].rename({"transport_zone_id": "to"}, axis=1).set_index("to"),
-            on="to",
-            suffixes=["_from", "_to"]
-        )
         
         # Compute the cost of time based on travelled distance
         ct = params.cost_of_time_c0_short
