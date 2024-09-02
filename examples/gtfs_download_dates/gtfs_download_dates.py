@@ -1,3 +1,4 @@
+import os
 import dotenv
 import mobility
 
@@ -8,7 +9,11 @@ import mobility
 # MOBILITY_GTFS_DOWNLOAD_DATE="2024-09-02"
 
 dotenv.load_dotenv()
-mobility.set_params()
+
+mobility.set_params(
+    package_data_folder_path=os.environ["MOBILITY_PACKAGE_DATA_FOLDER"],
+    project_data_folder_path=os.environ["MOBILITY_PROJECT_DATA_FOLDER"]
+)
 
 transport_zones = mobility.TransportZones("fr-24037", radius=21.0)
 gtfs_router = mobility.GTFSRouter(transport_zones)

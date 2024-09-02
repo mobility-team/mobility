@@ -22,8 +22,6 @@ class GTFSData(Asset):
             "url": url,
             "download_date": os.environ["MOBILITY_GTFS_DOWNLOAD_DATE"]
         }
-        
-        print(inputs)
 
         super().__init__(inputs, cache_path)
         
@@ -50,21 +48,21 @@ class GTFSData(Asset):
         
         file_ok = False
         
-        if os.path.getsize(path) < 1024:
-            
-            logging.info("Downloaded file size is inferior to 1 ko, it will not be used by mobility.")
-            
-        else:
+        if os.path.exists(path) is False:
+            return False
         
-            try:
-                with zipfile.ZipFile(path, 'r') as zip_ref:
-                    zip_contents = zip_ref.namelist()              
-                if "agency.txt" in zip_contents:
-                    file_ok = True
-            except:
-                logging.info("Downloaded file is not a regular GTFS zip file, it will not be used by mobility.")
-                
-        return file_ok
+        if os.path.getsize(path) < 1024:
+            logging.info("Downloaded file size is inferior to 1 ko, it will not be used by mobility.")
+            return False
+        
+        try:
+            with zipfile.ZipFile(path, 'r') as zip_ref:
+                zip_contents = zip_ref.namelist()              
+            return "agency.txt" in zip_contents
+        except:
+            logging.info("Downloaded file is not a regular GTFS zip file, it will not be used by mobility.")
+            return False
+        
     
     
         
