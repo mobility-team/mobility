@@ -10,8 +10,11 @@ from mobility.r_utils.r_script import RScript
 
 
 def set_params(
-    package_data_folder_path=None, project_data_folder_path=None,
-    path_to_pem_file=None, http_proxy_url=None, https_proxy_url=None,
+    package_data_folder_path=None,
+    project_data_folder_path=None,
+    path_to_pem_file=None,
+    http_proxy_url=None,
+    https_proxy_url=None,
     r_packages=True,
     r_packages_force_reinstall=False,
     debug=False
@@ -23,6 +26,7 @@ def set_params(
     for package and project data folders.
 
     Parameters:
+    gtfs_download_date (str): the download date of the GTFS files.
     package_data_folder_path (str, optional): The file path for storing common datasets used by all projects.
     project_data_folder_path (str, optional): The file path for storing project-specific datasets.
     path_to_pem_file (str, optional): The file path to the PEM file for SSL certification.
@@ -32,7 +36,7 @@ def set_params(
     """
 
     setup_logging()
-
+    
     set_env_variable("MOBILITY_ENV_PATH", str(pathlib.Path(sys.executable).parent))
     set_env_variable("MOBILITY_CERT_FILE", path_to_pem_file)
     set_env_variable("HTTP_PROXY", http_proxy_url)

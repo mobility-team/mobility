@@ -9,3 +9,5 @@ from .transport_modes import MultiModalMode, BicycleMode, CarMode, CarpoolMode, 
 from .transport_modes import BicycleParameters, CarParameters, CarpoolParameters, PublicTransportParameters, WalkParameters
 from .choice_models.transport_mode_choice_model import TransportModeChoiceModel
 from .parsers import LocalAdminUnits
+
+from mobility.transport_modes.public_transport import GTFSRouter

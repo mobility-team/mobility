@@ -20,9 +20,7 @@ class MultiModalMode(TransportMode):
     ):
         
         if modes is None:
-            
             car_mode = CarMode(transport_zones)
-            
             modes = [
                 WalkMode(transport_zones),
                 BicycleMode(transport_zones),
@@ -32,7 +30,6 @@ class MultiModalMode(TransportMode):
                 CarpoolMode(car_mode, CarpoolParameters(number_persons=3)),
                 CarpoolMode(car_mode, CarpoolParameters(number_persons=4))
             ]
-        
         
         travel_costs = MultiModalTravelCosts(transport_zones, modes)
         super().__init__(travel_costs, ModeParameters("multimodal"))
