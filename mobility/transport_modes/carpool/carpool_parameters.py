@@ -46,10 +46,10 @@ class CarpoolParameters(ModeParameters):
     )
     
     # Cost of distance parameters
-    cost_of_distance = float = 0.1
+    cost_of_distance: float = 0.1
     
     # Constant
-    cost_constant = float = 10.0
+    cost_constant: float = 10.0
     
     # Revenues
     # Based on travelled distance

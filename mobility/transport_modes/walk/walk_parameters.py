@@ -13,10 +13,10 @@ class WalkParameters(ModeParameters):
     cost_of_time_country_coeff_ch: float = 1.0
     
     # Cost of distance parameters
-    cost_of_distance = float = 0.1
+    cost_of_distance: float = 0.1
     
     # Constant
-    cost_constant = float = 10.0
+    cost_constant: float = 10.0
     
     def __post_init__(self):
         self.name = "walk"
