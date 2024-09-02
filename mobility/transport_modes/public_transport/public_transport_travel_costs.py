@@ -3,6 +3,7 @@ import pathlib
 import logging
 import pandas as pd
 import geopandas as gpd
+import numpy as np
 
 from importlib import resources
 from mobility.asset import Asset
@@ -115,6 +116,22 @@ class PublicTransportTravelCosts(Asset):
         )
 
         costs = pd.read_parquet(self.cache_path)
+        
+        logging.info("Computing generalized cost by OD...")
+        
+        # Compute the cost of time based on travelled distance
+        params = self.inputs["parameters"]
+        
+        ct = params.cost_of_time_c0_short
+        ct = np.where(costs["distance"] > 5, params.cost_of_time_c0 + params.cost_of_time_c1*costs["distance"], ct)
+        ct = np.where(costs["distance"] > 20, 30.2 + 0.017*costs["distance"], ct)
+        ct = np.where(costs["distance"] > 80, 37.0, ct)
+        ct *= 1.17 # Inflation coeff
+           
+        # Add all cost and revenues components
+        costs["cost"] = ct*costs["time"]*2
+        costs["cost"] += params.cost_of_distance*costs["distance"]*2
+        costs["cost"] += params.cost_constant
 
         return costs
     
