@@ -71,6 +71,8 @@ class PublicTransportTravelCosts(Asset):
             self.inputs["gtfs_router"],
             self.inputs["parameters"]
         )
+        
+        costs.to_parquet(self.cache_path)
 
         return costs
 
