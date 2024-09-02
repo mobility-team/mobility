@@ -4,7 +4,8 @@ from .path_travel_costs import PathTravelCosts
 from .population import Population
 from .trips import Trips
 from .localized_trips import LocalizedTrips
-from .choice_models.work_destination_choice_model import WorkDestinationChoiceModel
-from .transport_modes import MultiModalMode
+from .choice_models.work_destination_choice_model import WorkDestinationChoiceModel, WorkDestinationChoiceModelParameters
+from .transport_modes import MultiModalMode, BicycleMode, CarMode, CarpoolMode, PublicTransportMode, WalkMode
+from .transport_modes import BicycleParameters, CarParameters, CarpoolParameters, PublicTransportParameters, WalkParameters
 from .choice_models.transport_mode_choice_model import TransportModeChoiceModel
 from .parsers import LocalAdminUnits
