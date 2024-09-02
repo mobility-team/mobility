@@ -1,7 +1,7 @@
 from mobility.transport_modes.transport_mode import TransportMode
-from mobility.transport_modes.car import CarMode
-from mobility.transport_modes.walk import WalkMode
-from mobility.transport_modes.bicycle import BicycleMode
-from mobility.transport_modes.public_transport import PublicTransportMode
+from mobility.transport_modes.car import CarMode, CarParameters
+from mobility.transport_modes.walk import WalkMode, WalkParameters
+from mobility.transport_modes.bicycle import BicycleMode, BicycleParameters
+from mobility.transport_modes.public_transport import PublicTransportMode, PublicTransportParameters
 from mobility.transport_modes.carpool import CarpoolMode, CarpoolParameters
 from mobility.transport_modes.multimodal import MultiModalMode
