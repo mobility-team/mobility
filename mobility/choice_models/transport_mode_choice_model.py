@@ -10,10 +10,11 @@ from mobility.choice_models.destination_choice_model import DestinationChoiceMod
 
 class TransportModeChoiceModel(Asset):
     
-    def __init__(self, destination_choice_model: DestinationChoiceModel):
+    def __init__(self, destination_choice_model: DestinationChoiceModel, logit_factor=10):
         
         inputs = {
-            "destination_choice_model": destination_choice_model
+            "destination_choice_model": destination_choice_model,
+            "logit_factor": logit_factor
         }
 
         file_name = "modal_choice_model.parquet"
@@ -40,10 +41,10 @@ class TransportModeChoiceModel(Asset):
         return prob
     
     
-    def compute_mode_probability_by_od_and_mode(self, costs):
+    def compute_mode_probability_by_od_and_mode(self, costs, logit_factor=10):
           
         prob = costs.copy()
-        prob["prob"] = np.exp(prob["net_utility"])
+        prob["prob"] = np.exp(prob["net_utility"]/logit_factor)
         prob["prob"] = prob["prob"]/prob.groupby(["from", "to"])["prob"].sum()
         prob = prob.reset_index()
         
