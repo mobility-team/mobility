@@ -4,13 +4,16 @@ import subprocess
 import geojson
 import logging
 import shapely
+import hashlib
 import geopandas as gpd
 
+from rich.progress import Progress
 from typing import Tuple, List
 
 from mobility.parsers.download_file import download_file
 from mobility.parsers.geofabrik_regions import GeofabrikRegions
 from mobility.asset import Asset
+from mobility.study_area import StudyArea
 
 class OSMData(Asset):
     """
@@ -32,7 +35,16 @@ class OSMData(Asset):
         merge_regions: Merge multiple OSM region files into a single file.
     """
     
-    def __init__(self, transport_zones: gpd.GeoDataFrame, geofabrik_extract_date: str = "240101"):
+    def __init__(
+            self,
+            study_area: StudyArea,
+            object_type: str,
+            key: str,
+            tags: List[str] = None,
+            split_local_admin_units: bool = False,
+            geofabrik_extract_date: str = "240101",
+            file_format: str = "pbf"
+        ):
         """
         Initializes an OSMData object with the given transport zones and dodgr modes.
 
@@ -40,12 +52,24 @@ class OSMData(Asset):
             transport_zones (gpd.GeoDataFrame): GeoDataFrame defining the transport zones.
         """
         
+        if tags is None:
+            tags = []
+        
         inputs = {
-            "transport_zones": transport_zones,
-            "geofabrik_extract_date": geofabrik_extract_date
+            "study_area": study_area,
+            "object_type": object_type,
+            "key": key,
+            "tags": tags,
+            "split_local_admin_units": split_local_admin_units,
+            "geofabrik_extract_date": geofabrik_extract_date,
+            "file_format": file_format
         }
         
-        file_name = "osm_data.osm"
+        if split_local_admin_units is False:
+            file_name = key + "-osm_data." + file_format
+        else:
+            file_name = pathlib.Path(key + "-osm_data") / "done"
+        
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
         
         super().__init__(inputs, cache_path)
@@ -59,7 +83,11 @@ class OSMData(Asset):
             str: The file path of the cached OSM data.
         """
         logging.info("OSM data already prepared. Reusing the file : " + str(self.cache_path))
-        return self.cache_path
+        
+        if self.split_local_admin_units is False:
+            return self.cache_path
+        else:
+            return self.cache_path.parent
     
 
     def create_and_get_asset(self) -> str:
@@ -75,33 +103,35 @@ class OSMData(Asset):
         
         logging.info("Downloading and pre-processing OSM data.")
         
-        transport_zones = self.inputs["transport_zones"].get()
-        
-        osm_tags = [
-            "primary", "secondary", "tertiary", "unclassified", "residential",
-            "service", "track", "cycleway", "path", "steps", "ferry",
-            "living_street", "bridleway", "footway", "pedestrian",
-            "primary_link", "secondary_link", "tertiary_link"
-        ]
+        study_area = self.inputs["study_area"].get()
     
-        tz_boundary, tz_boundary_path = self.create_transport_zones_boundary(transport_zones)
-        regions_paths = self.get_osm_regions(tz_boundary)
+        boundary, boundary_path = self.create_study_area_boundary(study_area)
+        regions_paths = self.get_osm_regions(boundary)
         
         filtered_regions_paths = []
         
         for region_path in regions_paths:
             
-            cropped_region_path = self.crop_region(region_path, tz_boundary_path)
-            filtered_region_path = self.filter_region(cropped_region_path, osm_tags)
+            cropped_region_path = self.crop_region(region_path, boundary_path)
+            filtered_region_path = self.filter_region(cropped_region_path, self.object_type, self.key, self.tags)
             filtered_regions_paths.append(filtered_region_path)
             
-        merged_regions_path = self.merge_regions(filtered_regions_paths)
+        
+        if self.split_local_admin_units is True:
+            result_path = self.merge_regions(filtered_regions_paths, self.cache_path.parents[1] / (self.key + "merged-filtered-cropped.pbf"))
+            result_path = self.crop_by_local_admin_unit(result_path, study_area, self.cache_path.parent)
+        else:
+            result_path = self.merge_regions(filtered_regions_paths, self.cache_path)
     
-        return merged_regions_path
+        if self.split_local_admin_units is False:
+            return self.cache_path
+        else:
+            return self.cache_path.parent
     
     
-    def create_transport_zones_boundary(
-            self, transport_zones: gpd.GeoDataFrame
+    
+    def create_study_area_boundary(
+            self, study_area: StudyArea
         ) -> Tuple[shapely.Polygon, str]:
         """
         Creates a combined boundary polygon for all transport zones and saves it as a GeoJSON file.
@@ -119,16 +149,16 @@ class OSMData(Asset):
         """
         
         # Merge all transport zones into one polygon
-        transport_zones_boundary = transport_zones.to_crs(4326).unary_union.buffer(0.1)
+        boundary = study_area.to_crs(4326).unary_union.buffer(0.1)
         
         # Store the boundary as a temporary geojson file
-        tz_boundary_geojson = geojson.Feature(geometry=transport_zones_boundary, properties={})
-        tz_boundary_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "transport_zones_boundary.geojson"
+        boundary_geojson = geojson.Feature(geometry=boundary, properties={})
+        boundary_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "transport_zones_boundary.geojson"
         
-        with open(tz_boundary_path, "w") as f:
-            geojson.dump(tz_boundary_geojson, f)
+        with open(boundary_path, "w") as f:
+            geojson.dump(boundary_geojson, f)
             
-        return transport_zones_boundary, tz_boundary_path
+        return boundary, boundary_path
     
     
     def get_osm_regions(self, transport_zones_boundary: shapely.Polygon) -> List[pathlib.Path]:
@@ -193,7 +223,13 @@ class OSMData(Asset):
         return cropped_region_path
         
         
-    def filter_region(self, cropped_region_path: pathlib.Path, osm_tags: List[str]) -> pathlib.Path:
+    def filter_region(
+            self,
+            cropped_region_path: pathlib.Path,
+            object_type: str,
+            key: str,
+            tags: List[str]
+        ) -> pathlib.Path:
         """
         Filters the cropped OSM region file based on specified OSM tags.
 
@@ -207,8 +243,11 @@ class OSMData(Asset):
         
         logging.info("Subsetting OSM extracts")
         
-        osm_tags = ",".join(osm_tags)
-        filtered_region_name = "filtered-" + cropped_region_path.name
+        tags = "=" + ",".join(tags) if len(tags) > 0 else ""
+        query = object_type + "/" + key + tags
+        query_hash = hashlib.md5(query.encode("utf-8")).hexdigest()
+        
+        filtered_region_name = query_hash + "-filtered-" + cropped_region_path.name
         filtered_region_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / filtered_region_name
         
         command = [
@@ -216,7 +255,7 @@ class OSMData(Asset):
             "--overwrite",
             "-o", filtered_region_path,
             cropped_region_path,
-            f"w/highway={osm_tags}"
+            query
         ]
         
         subprocess.run(command)
@@ -224,7 +263,7 @@ class OSMData(Asset):
         return filtered_region_path
     
     
-    def merge_regions(self, filtered_regions_paths: List[pathlib.Path]):
+    def merge_regions(self, filtered_regions_paths: List[pathlib.Path], result_path: pathlib.Path):
         """
         Merges multiple filtered OSM region files into a single file.
 
@@ -243,8 +282,59 @@ class OSMData(Asset):
             "osmium", "merge",
             *filtered_regions_paths,
             "--overwrite",
-            "-o", self.cache_path
+            "-o", str(result_path)
         ]
         
         subprocess.run(command)
-    
+        
+        return result_path
+
+        
+    def crop_by_local_admin_unit(
+            self,
+            osm_region: pathlib.Path,
+            study_area: gpd.GeoDataFrame,
+            result_folder: pathlib.Path
+        ) -> pathlib.Path:
+        
+        logging.info("Splitting OSM data by local admin unit...")
+        
+        study_area = study_area.to_crs(4326)
+        
+        with Progress() as progress:
+            
+            task = progress.add_task("[green]Extracting data by local admin unit...", total=study_area.shape[0])
+        
+            for row in study_area.itertuples():
+                
+                boundary = geojson.Feature(geometry=row.geometry, properties={})
+                
+                lau_fp = result_folder / row.local_admin_unit_id
+                boundary_fp = lau_fp / "boundary.geojson"
+                result_fp = lau_fp / (self.key + ".pbf")
+                
+                os.makedirs(lau_fp, exist_ok=True)
+                
+                if result_fp.exists() is False:
+                
+                    with open(boundary_fp, "w") as f:
+                        geojson.dump(boundary, f)
+            
+                    command = [
+                        "osmium", "extract",
+                        "--polygon", str(boundary_fp),
+                        str(osm_region),
+                        "--overwrite",
+                        "--strategy", "complete_ways",
+                        "-o", str(result_fp)
+                    ]
+                
+                    subprocess.run(command)
+                    
+                progress.update(task, advance=1)
+        
+        # Write the flag to indicate all osmium commands ran
+        with open(self.cache_path, "w"):
+            pass
+        
+        return result_folder

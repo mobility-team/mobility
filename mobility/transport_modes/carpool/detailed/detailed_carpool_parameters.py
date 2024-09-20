@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
 from mobility.parameters import ModeParameters
-from typing import List, Union, Dict
+from typing import List, Union, Dict, Tuple
 
 @dataclass
-class CarpoolParameters(ModeParameters):
+class DetailedCarpoolParameters(ModeParameters):
     """
     Attributes:
         number_persons (int): number of persons in the vehicule.
@@ -14,6 +14,9 @@ class CarpoolParameters(ModeParameters):
     """
     
     number_persons: int = 2
+    
+    # Ridesharing parking locations (CRS : WGS 84 - 4326)
+    parking_locations: List[Tuple[float, float]] = field(default_factory=list)
     
     # Delays compared to the single occupant car mode
     absolute_delay_per_passenger: int = 5
@@ -63,7 +66,7 @@ class CarpoolParameters(ModeParameters):
     revenue_passengers_r1: float = 1.5
     
     def __post_init__(self):
-        self.name = "carpool" + str(self.number_persons)
+        self.name = "detailed_carpool" + str(self.number_persons)
     
     
     

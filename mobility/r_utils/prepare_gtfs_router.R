@@ -8,9 +8,10 @@ library(sfheaders)
 
 args <- commandArgs(trailingOnly = TRUE)
 
-tz_file_path <- args[1]
-gtfs_file_paths <- args[2]
-output_file_path <- args[3]
+package_path <- args[1]
+tz_file_path <- args[2]
+gtfs_file_paths <- args[3]
+output_file_path <- args[4]
 
 logger <- logger(appenders = console_appender())
 
@@ -181,6 +182,7 @@ transfer_table <- function(gtfs, d_limit = 200, crs = 2154) {
 }
 
 gtfs <- transfer_table(gtfs, d_limit = 200, crs = 2154)
+gtfs$transfers <- gtfs$transfers[from_stop_id != to_stop_id]
 
 
 info(logger, "Fixing potential issues with stop times...")
@@ -219,12 +221,12 @@ fix_stop_times <- function(gtfs) {
   gtfs$stop_times[, last_speed := shift(speed), by = trip_id]
   gtfs$stop_times[, next_speed := shift(speed, -1), by = trip_id]
   
-  gtfs$stop_times[speed > 100 & !is.na(last_speed) & !is.na(next_speed), speed_interp := (last_speed + next_speed)/2]
-  gtfs$stop_times[speed > 100 & is.na(speed_interp) & !is.na(last_speed), speed_interp := last_speed]
-  gtfs$stop_times[speed > 100 & is.na(speed_interp) & !is.na(next_speed), speed_interp := next_speed]
+  gtfs$stop_times[speed > 200 & !is.na(last_speed) & !is.na(next_speed), speed_interp := (last_speed + next_speed)/2]
+  gtfs$stop_times[speed > 200 & is.na(speed_interp) & !is.na(last_speed), speed_interp := last_speed]
+  gtfs$stop_times[speed > 200 & is.na(speed_interp) & !is.na(next_speed), speed_interp := next_speed]
   
-  gtfs$stop_times[, speed_corr := ifelse(speed > 100, speed_interp, speed)]
-  gtfs$stop_times[, speed_corr := ifelse(speed > 100, speed_interp, speed)]
+  gtfs$stop_times[, speed_corr := ifelse(speed > 200, speed_interp, speed)]
+  gtfs$stop_times[, speed_corr := ifelse(speed > 200, speed_interp, speed)]
   
   gtfs$stop_times[, wait_time := departure_time - arrival_time]
   

@@ -7,174 +7,146 @@ library(lubridate)
 library(readxl)
 library(future.apply)
 library(lubridate)
+library(FNN)
+library(cppRouting)
 
 args <- commandArgs(trailingOnly = TRUE)
 
-tz_file_path <- args[1]
+package_path <- args[1]
 
-gtfs_file_path <- args[2]
-gtfs_route_types_path <- args[3]
+tz_file_path <- args[2]
 
-start_time_min <- as.numeric(args[4])
-start_time_max <- as.numeric(args[5])
-max_traveltime <- as.numeric(args[6])
+gtfs_file_path <- args[3]
+gtfs_route_types_path <- args[4]
 
-output_file_path <- args[7]
+start_time_min <- as.numeric(args[5])
+start_time_max <- as.numeric(args[6])
+max_traveltime <- as.numeric(args[7])
+
+walk_graph_fp <- args[8]
+
+output_file_path <- args[9]
+
+
+# package_path <- 'D:/dev/mobility_oss/mobility'
+# tz_file_path <- 'D:\\data\\mobility\\projects\\study_area\\d2b01e6ba3afa070549c111f1012c92d-transport_zones.gpkg'
+# gtfs_file_path <- 'D:/data/mobility/projects/study_area/3b724506861960add825434760d69b05-gtfs_router.rds'
+# gtfs_route_types_path <- 'D:\\dev\\mobility_oss\\mobility\\data\\gtfs\\gtfs_route_types.xlsx'
+# start_time_min <- as.numeric('6.5')
+# start_time_max <- as.numeric('7.5')
+# max_traveltime <- as.numeric('1.0')
+# max_walking_time <- as.numeric('0.167')
+# max_walking_speed <- as.numeric('5')
+# walk_graph_fp <- "D:/data/mobility/projects/study_area/path_graph_walk/simplified"
+# output_file_path <- 'D:\\data\\mobility\\projects\\study_area\\92d64787200e7ed83bc8eadf88d3acc4-public_transport_travel_costs.parquet'
+# 
+
+
+buildings_sample_fp <- file.path(
+  dirname(tz_file_path),
+  paste0(
+    gsub("-transport_zones.gpkg", "", basename(tz_file_path)),
+    "-transport_zones_buildings.parquet"
+  )
+)
+
+source(file.path(package_path, "r_utils", "compute_gtfs_travel_costs.R"))
+source(file.path(package_path, "r_utils", "duplicate_cpprouting_graph.R"))
+source(file.path(package_path, "r_utils", "initialize_travel_costs.R"))
+source(file.path(package_path, "r_utils", "concatenate_graphs.R"))
+source(file.path(package_path, "r_utils", "create_graph_from_travel_costs.R"))
+source(file.path(package_path, "r_utils", "cpprouting_io.R"))
 
 logger <- logger(appenders = console_appender())
 
 transport_zones <- st_read(tz_file_path)
 
-transport_zones_boundary <- st_union(st_geometry(transport_zones))
-transport_zones_boundary <- nngeo::st_remove_holes(transport_zones_boundary)
+buildings_sample <- as.data.table(read_parquet(buildings_sample_fp))
+buildings_sample[, building_id := 1:.N]
 
-transport_zones_buffer <- st_union(st_buffer(st_geometry(transport_zones), 20e3))
-transport_zones_buffer <- st_transform(transport_zones_buffer, 4326)
-transport_zones <- st_transform(transport_zones, 4326)
+# Create a three layer routing graph
+# Layer 1 : original walk graph
+# Layer 2 : destination walk graph (duplicate of the layer 1)
+# Layer 3 : public transport "shortcuts" from the layer 1 to the layer 2
 
+# This setup prevents the router from jumping back and forth between the walk
+# graph and the public transport shortcuts (because the router can only go from
+# layer 1 to 2 through layer 3, but cannot go back)
 
+# Load walk cpprouting graph and vertices
+graph_1 <- read_cppr_graph(walk_graph_fp)
+verts_1 <- read_parquet(file.path(dirname(walk_graph_fp), "vertices.parquet"))
+
+graph_2 <- duplicate_cpprouting_graph(graph_1, verts_1)
+verts_2 <- graph_2[["vertices"]]
+graph_2 <- graph_2[["graph"]]
+
+# Compute the travel costs between all stops in the GTFS data
 gtfs <- readRDS(gtfs_file_path)
+stops <- get_gtfs_stops(gtfs, transport_zones)
 
-info(logger, "Preparing stops...")
-
-stops <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
-st_crs(stops) <- 4326
-
-stops <- st_join(stops, transport_zones)
-stops <- st_transform(stops, 2154)
-
-stops <- cbind(as.data.table(stops)[, list(stop_id, transport_zone_id)], st_coordinates(stops))
-stops <- stops[!is.na(transport_zone_id)]
-stops <- stops[!duplicated(stops[, list(X, Y)])]
-
-# Add the mode
-route_types <- as.data.table(read_excel(gtfs_route_types_path))
-route_types <- route_types[, list(route_type, route_type_label)]
-
-route_modes <- unique(gtfs$stop_times[, list(trip_id, stop_id)])
-route_modes <- merge(route_modes, gtfs$trips[, list(trip_id, service_id, route_id)], by = "trip_id")
-route_modes <- merge(route_modes, gtfs$routes[, list(route_id, route_type)], by = "route_id")
-route_modes <- merge(route_modes, route_types, by = "route_type", all.x = TRUE)
-route_modes <- route_modes[, list(route_type_label = route_type_label[1]), by = list(stop_id)]
-
-
-info(
-  logger,
-  sprintf(
-    "Finding fastest routes between accessible stops between %s and %s hours (this can take a while)...",
-    as.character(start_time_min),
-    as.character(start_time_max)
-  )
+gtfs_travel_costs <- compute_gtfs_travel_costs(
+  gtfs,
+  stops,
+  start_time_min,
+  start_time_max,
+  max_traveltime,
+  gtfs_route_types_path
 )
 
-# Uses all the available logical cores but 2, to speed us calculations
-plan(multisession, workers = min(parallel::detectCores()-2))
+graph_3 <- create_graph_from_travel_costs(
+  gtfs_travel_costs,
+  stops,
+  graph_1,
+  verts_1,
+  graph_2,
+  verts_2
+)
 
-travel_costs <- future_lapply(seq(length(stops$stop_id)), future.seed = TRUE, FUN = function(i) {
-  
-  # Finds travel times from that stop to every other stop within the max_traveltime limit
-  tt <- gtfs_traveltimes(
-    gtfs = gtfs,
-    from = stops$stop_id[i],
-    from_is_id = TRUE,
-    start_time_limits = c(start_time_min, start_time_max)*3600,
-    max_traveltime = max_traveltime*3600,
-    minimise_transfers = TRUE,
-    quiet = FALSE
-  )
-  
-  if (nrow(tt) == 0) {
-    
-    tt <- NULL
+graph <- concatenate_graphs(graph_1, graph_2, graph_3)
 
-  } else {
-    
-    tt <- as.data.table(tt)
-    
-    # Keeps only actual durations
-    tt <- tt[!grepl("-", duration)]
-    tt[, duration := as.numeric(lubridate::hms(duration))]
-    
-    # Adds transport_zone_id for each origin stop
-    tt[, from_transport_zone_id := stops$transport_zone_id[i]]
-    tt[, from_stop_id := stops$stop_id[i]]
-    
-    setnames(tt, "stop_id", "to_stop_id")
-    tt <- tt[, list(from_transport_zone_id, from_stop_id, to_stop_id, duration)]
-    
-    # Merges in a single table by origin and destination stops
-    tt <- merge(
-      tt,
-      stops[, list(stop_id, X, Y)],
-      by.x = "from_stop_id",
-      by.y = "stop_id"
-    )
-    
-    tt <- merge(
-      tt,
-      stops[, list(stop_id, to_transport_zone_id = transport_zone_id, X, Y)],
-      by.x = "to_stop_id",
-      by.y = "stop_id"
-    )
-    
-    # Euclidian distance between stops plus a small detour 
-    tt[, distance := sqrt((X.x - X.y)^2 + (Y.x - Y.y)^2)]
-    tt[, distance := distance*(1.1+0.3*exp(-distance/20))]
-    
-    # Adds route modes for stops
-    tt <- merge(
-      tt,
-      route_modes,
-      by.x = "from_stop_id",
-      by.y = "stop_id",
-      all.x = TRUE
-    )
-    
-    tt <- merge(
-      tt,
-      route_modes,
-      by.x = "to_stop_id",
-      by.y = "stop_id",
-      all.x = TRUE,
-      suffixes = c("_from", "_to")
-    )
-    
-    tt[, route_type := paste0(route_type_label_from, "+", route_type_label_to)]
-    
-    tt <- tt[, list(
-      from = from_transport_zone_id,
-      to = to_transport_zone_id,
-      distance = distance,
-      time = duration,
-      route_type
-    )]
-    
-  }
 
-  return(tt)
-  
-})
+travel_costs <- initialize_travel_costs(
+  transport_zones,
+  buildings_sample,
+  verts_1,
+  verts_2
+)
 
-#Back to single core use
-plan(sequential)
+# Compute the travel time between clusters
+info(logger, "Computing travel times...")
 
-#Eliminating null durations
-travel_costs <- Filter(function(x) !is.null(x), travel_costs)
-travel_costs <- rbindlist(travel_costs)
+travel_costs$time <- get_distance_pair(
+  graph,
+  from = travel_costs$vertex_id_from,
+  to = travel_costs$vertex_id_to,
+  aggregate_aux = FALSE
+)
 
-# Takes the distance and the mode of a median journey between transport zones, but the minimal time plus a constant
-travel_costs <- travel_costs[,
-   list(
-     distance = distance[which.min(abs(median(time) - time))][1],
-     time = 5*60 + min(time),
-     mode = route_type[which.min(abs(median(time) - time))][1]
-   ),
-   by = list(from, to)
+# Compute the distances between clusters
+info(logger, "Computing travel distances...")
+
+travel_costs$distance <- get_distance_pair(
+  graph,
+  from = travel_costs$vertex_id_from,
+  to = travel_costs$vertex_id_to,
+  aggregate_aux = TRUE
+)
+
+
+# Aggregate the result by transport zone
+travel_costs[, prob := weight_from*weight_to]
+travel_costs[, prob := prob/sum(prob), list(from, to)]
+
+travel_costs <- travel_costs[, list(
+    distance = weighted.mean(distance, prob),
+    time = weighted.mean(time, prob)
+  ),
+  by = list(from, to)
 ]
 
-travel_costs[, from := as.integer(from)]
-travel_costs[, to := as.integer(to)]
 travel_costs[, distance := distance/1000]
 travel_costs[, time := time/3600]
+travel_costs <- travel_costs[time < max_traveltime]
 
 write_parquet(travel_costs, output_file_path)

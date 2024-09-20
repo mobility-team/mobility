@@ -79,20 +79,20 @@ def radiation_model_selection_polars(sources, sinks, costs, selection_lambda, co
     # Merge sources, costs, and sinks
     od = sources.join(costs, on="from").join(sinks, on="to")
     
-    # Create modified versions of the 'od' DataFrame
-    multipliers = [0.05, 0.25, 0.4, 0.25, 0.05]
-    adjustments = [-2.0, -1.0, 0.0, 1.0, 2.0]
+    # # Create modified versions of the 'od' DataFrame
+    # multipliers = [0.05, 0.25, 0.4, 0.25, 0.05]
+    # adjustments = [-2.0, -1.0, 0.0, 1.0, 2.0]
 
-    # Create and concatenate modified DataFrames
-    od_list = [
-        od.with_columns([
-            (pl.col('net_utility') + adj).alias('net_utility'),
-            (pl.col('sink_volume') * mult).alias('sink_volume')
-        ])
-        for adj, mult in zip(adjustments, multipliers)
-    ]
+    # # Create and concatenate modified DataFrames
+    # od_list = [
+    #     od.with_columns([
+    #         (pl.col('net_utility') + adj).alias('net_utility'),
+    #         (pl.col('sink_volume') * mult).alias('sink_volume')
+    #     ])
+    #     for adj, mult in zip(adjustments, multipliers)
+    # ]
     
-    od = pl.concat(od_list)
+    # od = pl.concat(od_list)
     
     # Sort values by 'from' and 'net_utility' in descending order
     od = od.sort(['from', 'net_utility'], descending=[False, True])

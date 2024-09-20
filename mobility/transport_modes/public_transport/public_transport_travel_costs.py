@@ -11,6 +11,7 @@ from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
 from mobility.transport_modes.public_transport.gtfs_router import GTFSRouter
 from mobility.transport_modes.public_transport.public_transport_parameters import PublicTransportParameters
+from mobility.path_travel_costs import PathTravelCosts
 
 class PublicTransportTravelCosts(Asset):
     """
@@ -26,6 +27,7 @@ class PublicTransportTravelCosts(Asset):
     def __init__(
             self,
             transport_zones: TransportZones,
+            walk_travel_costs: PathTravelCosts,
             parameters: PublicTransportParameters
     ):
         """
@@ -48,6 +50,7 @@ class PublicTransportTravelCosts(Asset):
 
         inputs = {
             "transport_zones": transport_zones,
+            "walk_travel_costs": walk_travel_costs,
             "gtfs_router": gtfs_router,
             "parameters": parameters
         }
@@ -61,6 +64,7 @@ class PublicTransportTravelCosts(Asset):
         
         logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
         costs = pd.read_parquet(self.cache_path)
+        costs["mode"] = "public_transport"
 
         return costs
 
@@ -69,8 +73,10 @@ class PublicTransportTravelCosts(Asset):
         costs = self.gtfs_router_costs(
             self.inputs["transport_zones"],
             self.inputs["gtfs_router"],
+            self.inputs["walk_travel_costs"],
             self.inputs["parameters"]
         )
+        costs["mode"] = "public_transport"
         
         costs.to_parquet(self.cache_path)
 
@@ -79,8 +85,9 @@ class PublicTransportTravelCosts(Asset):
     
     def gtfs_router_costs(
             self,
-            transport_zones: gpd.GeoDataFrame,
+            transport_zones: TransportZones,
             gtfs_router: GTFSRouter,
+            walk_travel_costs: PathTravelCosts,
             parameters: PublicTransportParameters
         ) -> pd.DataFrame:
         """
@@ -102,17 +109,17 @@ class PublicTransportTravelCosts(Asset):
         script = RScript(resources.files('mobility.r_utils').joinpath('prepare_public_transport_costs.R'))
         
         gtfs_route_types_path = resources.files("mobility").joinpath('data/gtfs/gtfs_route_types.xlsx')
-        
         gtfs_router.get()
         
         script.run(
             args=[
                 str(transport_zones.cache_path),
-                gtfs_router.cache_path,
+                str(gtfs_router.cache_path),
                 str(gtfs_route_types_path),
                 str(parameters.start_time_min),
                 str(parameters.start_time_max),
                 str(parameters.max_traveltime),
+                str(walk_travel_costs.simplified_path_graph.get()),
                 str(self.cache_path)
             ]
         )
@@ -134,6 +141,8 @@ class PublicTransportTravelCosts(Asset):
         costs["cost"] = ct*costs["time"]*2
         costs["cost"] += params.cost_of_distance*costs["distance"]*2
         costs["cost"] += params.cost_constant
+        
+        costs["mode"] = "public_transport"
 
         return costs
     

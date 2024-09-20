@@ -18,6 +18,12 @@ class CarParameters(ModeParameters):
     # Constant
     cost_constant: float = 10.0
     
+    # Routing parameters
+    # (use these parameters to filter ODs that will be in the model, based 
+    # on crowfly distance)
+    routing_max_speed = 80.0 # km/h
+    routing_max_time = 1.0   # h
+    
     def __post_init__(self):
         self.name = "car"
     

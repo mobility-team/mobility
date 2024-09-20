@@ -134,15 +134,21 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         return sources, sinks
     
     
-    def prepare_sources(self, transport_zones: gpd.GeoDataFrame, active_population: pd.DataFrame, reference_flows: pd.DataFrame)-> pd.DataFrame:
+    def prepare_sources(
+            self,
+            transport_zones: gpd.GeoDataFrame,
+            active_population: pd.DataFrame,
+            reference_flows: pd.DataFrame
+        ) -> pd.DataFrame:
+        
+        tz_lau_ids = transport_zones["local_admin_unit_id"].unique()
 
-        active_population = active_population.loc[transport_zones["local_admin_unit_id"], "active_pop"].reset_index()
-        active_population = pd.merge(active_population, transport_zones[["local_admin_unit_id", "transport_zone_id"]], on="local_admin_unit_id")
+        active_population = active_population.loc[tz_lau_ids, "active_pop"].reset_index()
         
         # Remove the part of the active population that works outside of the transport zones
         act_pop_ext = reference_flows.loc[
-            (reference_flows["local_admin_unit_id_from"].isin(transport_zones["local_admin_unit_id"])) &
-            (~reference_flows["local_admin_unit_id_to"].isin(transport_zones["local_admin_unit_id"]))
+            (reference_flows["local_admin_unit_id_from"].isin(tz_lau_ids)) &
+            (~reference_flows["local_admin_unit_id_to"].isin(tz_lau_ids))
         ]
         
         act_pop_ext = act_pop_ext.groupby("local_admin_unit_id_from", as_index=False)["ref_flow_volume"].sum()
@@ -158,12 +164,18 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         active_population["ref_flow_volume"] = active_population["ref_flow_volume"].fillna(0.0)
         active_population["active_pop"] -= active_population["ref_flow_volume"]
         
-        # There are errors in the reference data that lead to negative values,
-        # so we need to set these to zero
-        active_population["active_pop"] = np.where(active_population["active_pop"] < 0.0, 0.0, active_population["active_pop"])
-
+        # There are errors in the reference data that can lead to negative values
         active_population = active_population[active_population["active_pop"] > 0.0]
-
+        
+        # Disaggregate the active population at transport zone level
+        active_population = pd.merge(
+            transport_zones[["transport_zone_id", "local_admin_unit_id", "weight"]],
+            active_population[["local_admin_unit_id", "active_pop"]],
+            on="local_admin_unit_id"
+        )
+        
+        active_population["active_pop"] *= active_population["weight"]
+    
         active_population = active_population[["transport_zone_id", "active_pop"]]
         active_population.columns = ["from", "source_volume"]
         active_population.set_index("from", inplace=True)
@@ -173,15 +185,21 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         return active_population
     
     
-    def prepare_sinks(self, transport_zones: gpd.GeoDataFrame, jobs: pd.DataFrame, reference_flows: pd.DataFrame) -> pd.DataFrame:
+    def prepare_sinks(
+            self,
+            transport_zones: gpd.GeoDataFrame, 
+            jobs: pd.DataFrame,
+            reference_flows: pd.DataFrame
+        ) -> pd.DataFrame:
         
-        jobs = jobs.loc[transport_zones["local_admin_unit_id"], "n_jobs_total"].reset_index()
-        jobs = pd.merge(jobs, transport_zones[["local_admin_unit_id", "transport_zone_id"]], on="local_admin_unit_id")
+        tz_lau_ids = transport_zones["local_admin_unit_id"].unique()
+        
+        jobs = jobs.loc[tz_lau_ids, "n_jobs_total"].reset_index()
         
         # Remove the part of the jobs that are occupied by people living outside of the transport zones
         jobs_ext = reference_flows.loc[
-            (~reference_flows["local_admin_unit_id_from"].isin(transport_zones["local_admin_unit_id"])) &
-            (reference_flows["local_admin_unit_id_to"].isin(transport_zones["local_admin_unit_id"]))
+            (~reference_flows["local_admin_unit_id_from"].isin(tz_lau_ids)) &
+            (reference_flows["local_admin_unit_id_to"].isin(tz_lau_ids))
         ]
         
         jobs_ext = jobs_ext.groupby("local_admin_unit_id_to", as_index=False)["ref_flow_volume"].sum()
@@ -197,11 +215,18 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         jobs["ref_flow_volume"] = jobs["ref_flow_volume"].fillna(0.0)
         jobs["n_jobs_total"] -= jobs["ref_flow_volume"]
         
-        # There are errors in the reference data that lead to negative values,
-        # so we need to set these to zero
-        jobs["n_jobs_total"] = np.where(jobs["n_jobs_total"] < 0.0, 0.0, jobs["n_jobs_total"])
-    
+        # There are errors in the reference data that lead to negative values
         jobs = jobs[jobs["n_jobs_total"] > 0.0]
+        
+        # Disaggregate the jobs counts at transport zone level
+        jobs = pd.merge(
+            transport_zones[["transport_zone_id", "local_admin_unit_id", "weight"]],
+            jobs[["local_admin_unit_id", "n_jobs_total"]],
+            on="local_admin_unit_id"
+        )
+        
+        jobs["n_jobs_total"] *= jobs["weight"]
+    
         
         jobs = jobs[["transport_zone_id", "n_jobs_total"]]
         jobs.columns = ["to", "sink_volume"]

@@ -6,10 +6,11 @@ import numpy as np
 import geopandas as gpd
 
 from importlib import resources
-from mobility.parsers.osm import OSMData
+from mobility.path_graph import PathGraph
 from mobility.asset import Asset
 from mobility.r_utils.r_script import RScript
 from mobility.parameters import ModeParameters
+from mobility.transport_zones import TransportZones
 
 class PathTravelCosts(Asset):
     """
@@ -40,17 +41,14 @@ class PathTravelCosts(Asset):
             mode (str): Mode of transportation for calculating travel costs.
         """
 
-        self.dodgr_modes = {"car": "motorcar", "bicycle": "bicycle", "walk": "foot"}
+        path_graph = PathGraph(transport_zones, mode_parameters)
         
-        available_modes = list(self.dodgr_modes.keys())
-        if mode_parameters.name not in available_modes:
-            raise ValueError(
-                "Cannot compute travel costs for mode : '" + mode_parameters.name + "'. Available options are : " \
-                + ", ".join(available_modes) + "."
-            )
-
-        osm = OSMData(transport_zones)
-        inputs = {"transport_zones": transport_zones, "osm": osm, "mode_parameters": mode_parameters}
+        inputs = {
+            "transport_zones": transport_zones,
+            "mode_parameters": mode_parameters,
+            "simplified_path_graph": path_graph.simplified,
+            "contracted_path_graph": path_graph.contracted
+        }
 
         file_name = "dodgr_travel_costs_" + mode_parameters.name + ".parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
@@ -67,7 +65,7 @@ class PathTravelCosts(Asset):
 
         logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
         costs = pd.read_parquet(self.cache_path)
-        costs["mode"] = self.inputs["mode_parameters"].name
+        costs["mode"] = self.mode_parameters.name
 
         return costs
 
@@ -78,48 +76,24 @@ class PathTravelCosts(Asset):
         Returns:
             pd.DataFrame: A DataFrame of calculated travel costs.
         """
-        transport_zones = self.inputs["transport_zones"]
-        mode = self.inputs["mode_parameters"].name
+        
+        mode = self.mode_parameters.name
         
         logging.info("Preparing travel costs for mode " + mode)
         
-        osm = self.inputs["osm"]
-        graph = self.prepare_path_graph(transport_zones, osm, mode)
-        costs = self.compute_costs_by_OD(transport_zones, graph)
+        self.transport_zones.get()
+        self.contracted_path_graph.get()
+        
+        costs = self.compute_costs_by_OD(self.transport_zones, self.contracted_path_graph)
         costs["mode"] = mode
         
         costs.to_parquet(self.cache_path)
 
         return costs
 
-    def prepare_path_graph(self, transport_zones: gpd.GeoDataFrame, osm: str, mode: str) -> str:
-        """
-        Creates a routable graph for the specified mode of transportation using dodgr.
 
-        Args:
-            transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
-            osm (str): Path to the OSM data file.
-            mode (str): Mode of transportation for which the graph is created.
 
-        Returns:
-            str: The file path to the saved routable graph.
-        """
-
-        osm.get()
-        
-        dodgr_mode = self.dodgr_modes[mode]
-
-        output_file_name = "dodgr_graph_" + dodgr_mode
-        output_file_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / output_file_name
-
-        logging.info("Creating a routable graph with dodgr, this might take a while...")
-         
-        script = RScript(resources.files('mobility.r_utils').joinpath('prepare_dodgr_graph.R'))
-        script.run(args=[str(transport_zones.cache_path), str(osm.cache_path), dodgr_mode, output_file_path])
-
-        return output_file_path
-
-    def compute_costs_by_OD(self, transport_zones: gpd.GeoDataFrame, graph: str) -> pd.DataFrame:
+    def compute_costs_by_OD(self, transport_zones: TransportZones, path_graph: PathGraph) -> pd.DataFrame:
         """
         Calculates travel costs for the specified mode of transportation using the created graph.
 
@@ -134,12 +108,19 @@ class PathTravelCosts(Asset):
         logging.info("Computing travel times and distances by OD...")
         
         script = RScript(resources.files('mobility.r_utils').joinpath('prepare_dodgr_costs.R'))
-        script.run(args=[str(transport_zones.cache_path), graph, str(self.cache_path)])
+        script.run(
+            args=[
+                str(transport_zones.cache_path),
+                str(path_graph.cache_path),
+                str(self.mode_parameters.routing_max_speed),
+                str(self.mode_parameters.routing_max_time),
+                str(self.cache_path)
+            ]
+        )
 
         costs = pd.read_parquet(self.cache_path)
         
-        params = self.inputs["mode_parameters"]
-        transport_zones = self.inputs["transport_zones"].get()
+        params = self.mode_parameters
         
         logging.info("Computing generalized cost by OD...")
         

@@ -79,7 +79,15 @@ class DestinationChoiceModel(Asset):
         
         logging.info("Creating destination choice model...")
         
-        transport_zones = self.inputs["transport_zones"].get()
+        transport_zones = self.inputs["transport_zones"]
+        
+        study_area = transport_zones.study_area.get()
+        transport_zones = pd.merge(
+            transport_zones.get(),
+            study_area[["local_admin_unit_id", "country"]],
+            on="local_admin_unit_id"
+        )
+        
         travel_costs = self.inputs["travel_costs"].get()
         
         sources, sinks = self.prepare_sources_and_sinks(transport_zones)
@@ -102,7 +110,7 @@ class DestinationChoiceModel(Asset):
             utility_by_od
         )
         
-        flows = self.add_reference_flows(transport_zones, flows, ref_flows)
+        # flows = self.add_reference_flows(transport_zones, flows, ref_flows)
         
         
         choice_model = flows[["from", "to", "flow_volume"]].set_index(["from", "to"])["flow_volume"]
@@ -165,10 +173,10 @@ class DestinationChoiceModel(Asset):
         
         parameters = self.inputs["parameters"]
         
-        country_zone = transport_zones[["transport_zone_id", "local_admin_unit_id"]].set_index("transport_zone_id").rename_axis('from')
-        country_zone["local_admin_unit_id"] = country_zone["local_admin_unit_id"].str[:2]
-        country_zone.rename(columns={"local_admin_unit_id": "country_id"}, inplace=True) 
-        sources = pd.merge(sources, country_zone, on="from", how="inner")
+        # country_zone = transport_zones[["transport_zone_id", "country"]].set_index("transport_zone_id").rename_axis('from')
+        # country_zone["local_admin_unit_id"] = country_zone["local_admin_unit_id"].str[:2]
+        # country_zone.rename(columns={"local_admin_unit_id": "country_id"}, inplace=True) 
+        # sources = pd.merge(sources, country_zone, on="from", how="inner")
         
         if parameters.model["type"] == "radiation_universal":
             flows, _, _ = radiation_model.iter_radiation_model(
@@ -196,34 +204,25 @@ class DestinationChoiceModel(Asset):
         return flows
     
     
-    def add_reference_flows(self, transport_zones, flows, ref_flows):
+    def get_comparison(self):
+        
+        flows = pd.read_parquet(self.cache_path["od_flows"])
+        flows = flows.groupby(["local_admin_unit_id_from", "local_admin_unit_id_to"], as_index=False)["flow_volume"].sum()
+        
+        lau_ids = flows["local_admin_unit_id_from"].unique()
+        
+        ref_flows = self.reference_flows.get()
+        ref_flows = ref_flows[ref_flows["local_admin_unit_id_from"].isin(lau_ids) & ref_flows["local_admin_unit_id_to"].isin(lau_ids)]
         
         od_pairs = pd.concat([
             ref_flows[["local_admin_unit_id_from", "local_admin_unit_id_to"]],
             flows[["local_admin_unit_id_from", "local_admin_unit_id_to"]]
         ]).drop_duplicates()
         
-        od_pairs = pd.merge(
-            od_pairs,
-            transport_zones[["local_admin_unit_id", "transport_zone_id"]],
-            left_on="local_admin_unit_id_from",
-            right_on="local_admin_unit_id"
-        )
-        
-        od_pairs = pd.merge(
-            od_pairs,
-            transport_zones[["local_admin_unit_id", "transport_zone_id"]],
-            left_on="local_admin_unit_id_to",
-            right_on="local_admin_unit_id"
-        )
-        
-        od_pairs = od_pairs[["local_admin_unit_id_from", "local_admin_unit_id_to", "transport_zone_id_x", "transport_zone_id_y"]]
-        od_pairs.columns = ["local_admin_unit_id_from", "local_admin_unit_id_to", "from", "to"]
-        
         comparison = pd.merge(
             od_pairs,
-            flows[["from", "to", "flow_volume"]],
-            on=["from", "to"],
+            flows,
+            on=["local_admin_unit_id_from", "local_admin_unit_id_to"],
             how="left"
         )
         
@@ -266,13 +265,13 @@ class DestinationChoiceModel(Asset):
         return error
     
     
-    def plot_model_fit(self):
+    def plot_model_fit(self, comparison):
         
-        flows = pd.read_parquet(self.cache_path["od_flows"])
-        flows["log_ref_flow_volume"] = np.log(flows["ref_flow_volume"])
-        flows["log_flow_volume"] = np.log(flows["flow_volume"])
+        comparison = comparison.copy()
+        comparison["log_ref_flow_volume"] = np.log(comparison["ref_flow_volume"])
+        comparison["log_flow_volume"] = np.log(comparison["flow_volume"])
         
         sns.set_theme()
-        sns.scatterplot(data=flows, x="log_ref_flow_volume", y="log_flow_volume", size=5, linewidth=0, alpha=0.5)
+        sns.scatterplot(data=comparison, x="log_ref_flow_volume", y="log_flow_volume", size=5, linewidth=0, alpha=0.5)
         
         
