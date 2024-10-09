@@ -123,6 +123,8 @@ cppr_graph_s_dist <- cpp_simplify(
 
 cppr_graph_simple$attrib$aux <- cppr_graph_s_dist$data$dist
 
+vertices_3035 <- vertices_3035[vertex_id %in% cppr_graph_simple$dict$ref]
+
 info(logger, "Saving cppRouting graph and vertices coordinates...")
 
 save_cppr_graph(cppr_graph_simple, dirname(output_file_path))

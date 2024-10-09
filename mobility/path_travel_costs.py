@@ -2,17 +2,16 @@ import os
 import pathlib
 import logging
 import pandas as pd
-import numpy as np
 import geopandas as gpd
 
 from importlib import resources
 from mobility.path_graph import PathGraph
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
-from mobility.parameters import ModeParameters
 from mobility.transport_zones import TransportZones
+from mobility.path_routing_parameters import PathRoutingParameters
 
-class PathTravelCosts(Asset):
+class PathTravelCosts(FileAsset):
     """
     A class for managing travel cost calculations for certain modes using OpenStreetMap (OSM) data, inheriting from the Asset class.
 
@@ -32,7 +31,7 @@ class PathTravelCosts(Asset):
         dodgr_costs: Calculate travel costs using the generated graph.
     """
 
-    def __init__(self, transport_zones: gpd.GeoDataFrame, mode_parameters: ModeParameters):
+    def __init__(self, mode_name: str, transport_zones: gpd.GeoDataFrame, routing_parameters: PathRoutingParameters):
         """
         Initializes a TravelCosts object with the given transport zones and travel mode.
 
@@ -41,16 +40,17 @@ class PathTravelCosts(Asset):
             mode (str): Mode of transportation for calculating travel costs.
         """
 
-        path_graph = PathGraph(transport_zones, mode_parameters)
+        path_graph = PathGraph(mode_name, transport_zones)
         
         inputs = {
             "transport_zones": transport_zones,
-            "mode_parameters": mode_parameters,
+            "mode_name": mode_name,
             "simplified_path_graph": path_graph.simplified,
-            "contracted_path_graph": path_graph.contracted
+            "contracted_path_graph": path_graph.contracted,
+            "routing_parameters": routing_parameters
         }
 
-        file_name = "dodgr_travel_costs_" + mode_parameters.name + ".parquet"
+        file_name = "dodgr_travel_costs_" + mode_name + ".parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
 
         super().__init__(inputs, cache_path)
@@ -65,7 +65,6 @@ class PathTravelCosts(Asset):
 
         logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
         costs = pd.read_parquet(self.cache_path)
-        costs["mode"] = self.mode_parameters.name
 
         return costs
 
@@ -77,7 +76,7 @@ class PathTravelCosts(Asset):
             pd.DataFrame: A DataFrame of calculated travel costs.
         """
         
-        mode = self.mode_parameters.name
+        mode = self.mode_name
         
         logging.info("Preparing travel costs for mode " + mode)
         
@@ -85,8 +84,6 @@ class PathTravelCosts(Asset):
         self.contracted_path_graph.get()
         
         costs = self.compute_costs_by_OD(self.transport_zones, self.contracted_path_graph)
-        costs["mode"] = mode
-        
         costs.to_parquet(self.cache_path)
 
         return costs
@@ -112,29 +109,13 @@ class PathTravelCosts(Asset):
             args=[
                 str(transport_zones.cache_path),
                 str(path_graph.cache_path),
-                str(self.mode_parameters.routing_max_speed),
-                str(self.mode_parameters.routing_max_time),
+                str(self.routing_parameters.filter_max_speed),
+                str(self.routing_parameters.filter_max_time),
                 str(self.cache_path)
             ]
         )
 
         costs = pd.read_parquet(self.cache_path)
-        
-        params = self.mode_parameters
-        
-        logging.info("Computing generalized cost by OD...")
-        
-        # Compute the cost of time based on travelled distance
-        ct = params.cost_of_time_c0_short
-        ct = np.where(costs["distance"] > 5, params.cost_of_time_c0 + params.cost_of_time_c1*costs["distance"], ct)
-        ct = np.where(costs["distance"] > 20, 30.2 + 0.017*costs["distance"], ct)
-        ct = np.where(costs["distance"] > 80, 37.0, ct)
-        ct *= 1.17 # Inflation coeff
-           
-        # Add all cost and revenues components
-        costs["cost"] = ct*costs["time"]*2
-        costs["cost"] += params.cost_of_distance*costs["distance"]*2
-        costs["cost"] += params.cost_constant
 
         return costs
     

@@ -5,8 +5,7 @@ compute_gtfs_travel_costs <- function(
     stops,
     start_time_min,
     start_time_max,
-    max_traveltime,
-    gtfs_route_types_path
+    max_traveltime
   ) {
   
   info(
@@ -18,20 +17,8 @@ compute_gtfs_travel_costs <- function(
     )
   )
   
-  # Add the mode
-  route_types <- as.data.table(read_excel(gtfs_route_types_path))
-  route_types <- route_types[, list(route_type, route_type_label)]
-  
-  route_modes <- unique(gtfs$stop_times[, list(trip_id, stop_id)])
-  route_modes <- merge(route_modes, gtfs$trips[, list(trip_id, service_id, route_id)], by = "trip_id")
-  route_modes <- merge(route_modes, gtfs$routes[, list(route_id, route_type)], by = "route_id")
-  route_modes <- merge(route_modes, route_types, by = "route_type", all.x = TRUE)
-  route_modes <- route_modes[, list(route_type_label = route_type_label[1]), by = list(stop_id)]
-  
-  modes <- unique(route_modes$route_type_label)
-  
   # Uses all the available logical cores but 2, to speed us calculations
-  plan(multisession, workers = min(parallel::detectCores()-2))
+  plan(multisession, workers = max(parallel::detectCores()-2, 1))
   
   gtfs_travel_costs <- future_lapply(seq(length(stops$stop_id)), future.seed = TRUE, FUN = function(i) {
     
@@ -93,29 +80,7 @@ compute_gtfs_travel_costs <- function(
       # bug in gtfsrouter or the gtfs data ?
       tt <- tt[distance/time*3.6 < 150.0]
       
-      # Adds route modes for stops
-      tt <- merge(
-        tt,
-        route_modes,
-        by.x = "from_stop_id",
-        by.y = "stop_id",
-        all.x = TRUE
-      )
-      
-      tt <- merge(
-        tt,
-        route_modes,
-        by.x = "to_stop_id",
-        by.y = "stop_id",
-        all.x = TRUE,
-        suffixes = c("_from", "_to")
-      )
-      
-      for (mode in modes) {
-        tt[, (mode) := route_type_label_from == mode | route_type_label_to == mode]
-      }
-      
-      tt <- tt[, c("from_stop_id", "to_stop_id", "distance", "time", modes), with = FALSE]
+      tt <- tt[, c("from_stop_id", "to_stop_id", "distance", "time"), with = FALSE]
       
     }
     
@@ -130,6 +95,10 @@ compute_gtfs_travel_costs <- function(
   # Eliminating stops that cannot reach any ther stop in the given time window
   gtfs_travel_costs <- Filter(function(x) !is.null(x), gtfs_travel_costs)
   gtfs_travel_costs <- rbindlist(gtfs_travel_costs)
+  
+  # Create virtual departure and arrival stops
+  gtfs_travel_costs[, from_stop_id := paste0("dep-", from_stop_id)]
+  gtfs_travel_costs[, to_stop_id := paste0("arr-", to_stop_id)]
   
   return(gtfs_travel_costs)
   

@@ -4,7 +4,7 @@ import json
 import logging
 
 from importlib import resources
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.transport_zones import TransportZones
 from mobility.r_utils.r_script import RScript
 
@@ -13,7 +13,7 @@ from mobility.parsers.gtfs_stops import GTFSStops
 
 from mobility.transport_modes.public_transport.gtfs_data import GTFSData
 
-class GTFSRouter(Asset):
+class GTFSRouter(FileAsset):
     
     def __init__(self, transport_zones: TransportZones, additional_gtfs_files: list = None):
         
@@ -43,9 +43,9 @@ class GTFSRouter(Asset):
         if self.inputs["additional_gtfs_files"] is not None:
             gtfs_files.extend(self.inputs["additional_gtfs_files"])
         
-        gtfs_router = self.prepare_gtfs_router(transport_zones, gtfs_files)
+        self.prepare_gtfs_router(transport_zones, gtfs_files)
 
-        return gtfs_router
+        return self.cache_path
     
         
     def get_stops(self, transport_zones):
@@ -68,7 +68,7 @@ class GTFSRouter(Asset):
         script = RScript(resources.files('mobility.r_utils').joinpath('prepare_gtfs_router.R'))
         script.run(args=[str(transport_zones.cache_path), gtfs_files, str(self.cache_path)])
             
-        return self.cache_path
+        return None
     
     
     def get_gtfs_files(self, stops):

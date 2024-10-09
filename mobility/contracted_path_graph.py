@@ -3,17 +3,17 @@ import pathlib
 import logging
 
 from importlib import resources
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.simplified_path_graph import SimplifiedPathGraph
 
-class ContractedPathGraph(Asset):
+class ContractedPathGraph(FileAsset):
 
     def __init__(self, simplified_graph: SimplifiedPathGraph):
         
         inputs = {"simplified_graph": simplified_graph}
         
-        file_name = pathlib.Path("path_graph_" + simplified_graph.mode_parameters.name) / "contracted" / "done"
+        file_name = pathlib.Path("path_graph_" + simplified_graph.mode_name) / "contracted" / "done"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
 
         super().__init__(inputs, cache_path)

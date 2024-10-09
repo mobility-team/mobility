@@ -8,7 +8,7 @@ from .path_graph import PathGraph
 
 from .population import Population
 from .trips import Trips
-from .localized_trips import LocalizedTrips
+# from .localized_trips import LocalizedTrips
 
 from .choice_models.work_destination_choice_model import (
     WorkDestinationChoiceModel,
@@ -16,22 +16,22 @@ from .choice_models.work_destination_choice_model import (
 )
 
 from .transport_modes import (
-    MultiModalMode,
     BicycleMode,
     CarMode,
     CarpoolMode,
     PublicTransportMode,
-    WalkMode
+    WalkMode,
+    ModalShift
 )
 
+from .path_routing_parameters import PathRoutingParameters
+
 from .transport_modes import (
-    BicycleParameters,
-    CarParameters,
-    DetailedCarpoolParameters,
-    SimpleCarpoolParameters,
-    PublicTransportParameters,
-    WalkParameters
+    DetailedCarpoolRoutingParameters,
+    PublicTransportRoutingParameters
 )
+
+from .generalized_cost_parameters import GeneralizedCostParameters
 
 from .choice_models.transport_mode_choice_model import TransportModeChoiceModel
 from .parsers import LocalAdminUnits

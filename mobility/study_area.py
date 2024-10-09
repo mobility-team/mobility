@@ -5,11 +5,11 @@ import geopandas as gpd
 import pathlib
 from typing import Union, List
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.parsers.local_admin_units import LocalAdminUnits
 
 
-class StudyArea(Asset):
+class StudyArea(FileAsset):
     """
     A class for managing transport zones, inheriting from the Asset class.
 

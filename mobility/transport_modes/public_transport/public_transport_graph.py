@@ -3,6 +3,8 @@ import pathlib
 import logging
 import json
 import pandas as pd
+import geopandas as gpd
+import numpy as np
 
 from importlib import resources
 from dataclasses import asdict
@@ -10,13 +12,13 @@ from dataclasses import asdict
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
-from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportGraph
+from mobility.transport_modes.public_transport.gtfs_router import GTFSRouter
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
+from mobility.path_travel_costs import PathTravelCosts
 from mobility.transport_modes import TransportMode
 from mobility.transport_modes.modal_shift import ModalShift
-from mobility.path_graph import SimplifiedPathGraph
 
-class PublicTransportTravelCosts(FileAsset):
+class PublicTransportGraph(FileAsset):
     """
     A class for managing public transport travel costs calculations using GTFS files, inheriting from the Asset class.
 
@@ -30,11 +32,7 @@ class PublicTransportTravelCosts(FileAsset):
     def __init__(
             self,
             transport_zones: TransportZones,
-            parameters: PublicTransportRoutingParameters,
-            first_leg_mode: TransportMode,
-            last_leg_mode: TransportMode,
-            first_modal_shift: ModalShift = None,
-            last_modal_shift: ModalShift = None
+            parameters: PublicTransportRoutingParameters = PublicTransportRoutingParameters()
     ):
         """
         Retrieves public transport travel costs if they already exist for these transport zones and parameters,
@@ -52,59 +50,38 @@ class PublicTransportTravelCosts(FileAsset):
 
         """
         
-
-        public_transport_graph = PublicTransportGraph(transport_zones, parameters)
+        gtfs_router = GTFSRouter(transport_zones, parameters.additional_gtfs_files)
 
         inputs = {
             "transport_zones": transport_zones,
-            "public_transport_graph": public_transport_graph,
-            "first_leg_graph": first_leg_mode.travel_costs.simplified_path_graph,
-            "last_leg_graph": last_leg_mode.travel_costs.simplified_path_graph,
-            "first_modal_shift": first_modal_shift,
-            "last_modal_shift": last_modal_shift,
+            "gtfs_router": gtfs_router,
             "parameters": parameters
         }
-        
-        self.first_leg_mode = first_leg_mode
-        self.last_leg_mode = last_leg_mode
 
-        file_name = "public_transport_travel_costs.parquet"
+        file_name = "public_transport_graph/simplified/done"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
 
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pd.DataFrame:
-        
-        logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
-        costs = pd.read_parquet(self.cache_path)
-
-        return costs
+        logging.info("Graph already prepared. Reusing the file : " + str(self.cache_path))
+        return self.cache_path.parent
 
     def create_and_get_asset(self) -> pd.DataFrame:
         
-        costs = self.compute_travel_costs(
+        self.gtfs_graph(
             self.inputs["transport_zones"],
-            self.inputs["public_transport_graph"],
-            self.inputs["first_leg_graph"],
-            self.inputs["last_leg_graph"],
-            self.inputs["first_modal_shift"],
-            self.inputs["last_modal_shift"],
+            self.inputs["gtfs_router"],
             self.inputs["parameters"]
         )
-        
-        costs.to_parquet(self.cache_path)
 
-        return costs
+        return self.cache_path.parent
 
     
-    def  compute_travel_costs(
+    def gtfs_graph(
             self,
             transport_zones: TransportZones,
-            public_transport_graph: PublicTransportGraph,
-            first_leg_graph: SimplifiedPathGraph,
-            last_leg_graph: SimplifiedPathGraph,
-            first_modal_shift: ModalShift,
-            last_modal_shift: ModalShift,
+            gtfs_router: GTFSRouter,
             parameters: PublicTransportRoutingParameters
         ) -> pd.DataFrame:
         """
@@ -123,21 +100,16 @@ class PublicTransportTravelCosts(FileAsset):
 
         logging.info("Computing public transport travel costs...")
         
-        script = RScript(resources.files('mobility.transport_modes.public_transport').joinpath('compute_intermodal_public_transport_travel_costs.R'))
+        script = RScript(resources.files('mobility.transport_modes.public_transport').joinpath('prepare_public_transport_graph.R'))
         
         script.run(
             args=[
                 str(transport_zones.cache_path),
-                str(public_transport_graph.get()),
-                str(first_leg_graph.get()),
-                str(last_leg_graph.get()),
-                json.dumps(asdict(first_modal_shift)),
-                json.dumps(asdict(last_modal_shift)),
+                str(gtfs_router.get()),
+                json.dumps(asdict(parameters)),
                 str(self.cache_path)
             ]
         )
 
-        costs = pd.read_parquet(self.cache_path)
-
-        return costs
+        return None
     

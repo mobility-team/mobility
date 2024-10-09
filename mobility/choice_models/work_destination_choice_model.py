@@ -12,8 +12,10 @@ from mobility.parsers.jobs_active_population_distribution import JobsActivePopul
 from mobility.parsers.jobs_active_population_flows import JobsActivePopulationFlows
 from mobility.r_utils.r_script import RScript
 
+from mobility.transport_modes import TransportMode
+
 from dataclasses import dataclass, field
-from typing import Dict, Union
+from typing import Dict, Union, List
 
 @dataclass
 class WorkDestinationChoiceModelParameters:
@@ -21,14 +23,14 @@ class WorkDestinationChoiceModelParameters:
     model: Dict[str, Union[str, float]] = field(
         default_factory=lambda: {
             "type": "radiation",
-            "lambda": 0.9999
+            "lambda": 0.99986
         }
     )
     
     utility: Dict[str, float] = field(
         default_factory=lambda: {
             "fr": 120.0,
-            "ch": 240.0
+            "ch": 120.0
         }
     )
     
@@ -39,7 +41,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
     def __init__(
             self,
             transport_zones: gpd.GeoDataFrame,
-            travel_costs: pd.DataFrame,
+            modes: List[TransportMode],
             parameters: WorkDestinationChoiceModelParameters = WorkDestinationChoiceModelParameters(),
             active_population: pd.DataFrame = None,
             jobs: pd.DataFrame = None,
@@ -109,7 +111,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         super().__init__(
             "work",
             transport_zones,
-            travel_costs,
+            modes,
             parameters,
             ssi_min_flow_volume
         )
@@ -268,7 +270,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         )
 
         travel_costs["utility"] = travel_costs["country"].map(params.utility)
-        travel_costs["net_utility"] = travel_costs["utility"] - travel_costs["cost"]
+        travel_costs["net_utility"] = travel_costs["utility"] - 2*travel_costs["cost"]
         
         return travel_costs
     

@@ -8,10 +8,10 @@ import seaborn as sns
 
 from abc import abstractmethod
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility import radiation_model, radiation_model_selection
 
-class DestinationChoiceModel(Asset):
+class DestinationChoiceModel(FileAsset):
     """
     A generic class for destination choice models, with a subclass for every motive.
     
@@ -23,7 +23,7 @@ class DestinationChoiceModel(Asset):
             self,
             motive: str,
             transport_zones: gpd.GeoDataFrame, 
-            travel_costs,
+            modes,
             parameters,
             ssi_min_flow_volume: float
         ):
@@ -45,10 +45,13 @@ class DestinationChoiceModel(Asset):
         ssi_min_flow_volume : float
             Minimum reference volume to consider for similarity index.
         """
+        
+        generalized_costs = {mode.name: mode.generalized_cost for mode in modes}
+        
         inputs = {
             "motive": motive,
             "transport_zones": transport_zones,
-            "travel_costs": travel_costs,
+            "generalized_costs": generalized_costs,
             "parameters": parameters,
             "ssi_min_flow_volume": ssi_min_flow_volume
         }
@@ -88,17 +91,17 @@ class DestinationChoiceModel(Asset):
             on="local_admin_unit_id"
         )
         
-        travel_costs = self.inputs["travel_costs"].get()
+        costs = [gc.get().assign(mode=m) for m, gc in self.generalized_costs.items()]
+        costs = pd.concat(costs)
         
         sources, sinks = self.prepare_sources_and_sinks(transport_zones)
         ref_flows = self.prepare_reference_flows(transport_zones)
         
-        travel_costs = travel_costs.set_index(["from", "to", "mode"])
-        travel_costs = travel_costs[travel_costs["time"] < 2.0]
+        costs = costs.set_index(["from", "to", "mode"])
         
         utility_by_od_and_mode = self.compute_utility_by_od_and_mode(
             transport_zones,
-            travel_costs
+            costs
         )
         
         utility_by_od = self.compute_utility_by_od(utility_by_od_and_mode)
@@ -268,8 +271,8 @@ class DestinationChoiceModel(Asset):
     def plot_model_fit(self, comparison):
         
         comparison = comparison.copy()
-        comparison["log_ref_flow_volume"] = np.log(comparison["ref_flow_volume"])
-        comparison["log_flow_volume"] = np.log(comparison["flow_volume"])
+        comparison["log_ref_flow_volume"] = np.log10(comparison["ref_flow_volume"])
+        comparison["log_flow_volume"] = np.log10(comparison["flow_volume"])
         
         sns.set_theme()
         sns.scatterplot(data=comparison, x="log_ref_flow_volume", y="log_flow_volume", size=5, linewidth=0, alpha=0.5)

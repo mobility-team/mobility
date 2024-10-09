@@ -5,22 +5,21 @@ import geopandas as gpd
 
 from importlib import resources
 from mobility.parsers.osm import OSMData
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
-from mobility.parameters import ModeParameters
 
-class SimplifiedPathGraph(Asset):
+class SimplifiedPathGraph(FileAsset):
 
     def __init__(
             self,
-            transport_zones: gpd.GeoDataFrame,
-            mode_parameters: ModeParameters
+            mode_name: str,
+            transport_zones: gpd.GeoDataFrame
         ):
         
         available_modes = ["car", "bicycle", "walk"]
-        if mode_parameters.name not in available_modes:
+        if mode_name not in available_modes:
             raise ValueError(
-                "Cannot compute travel costs for mode : '" + mode_parameters.name + "'. Available options are : " \
+                "Cannot compute travel costs for mode : '" + mode_name + "'. Available options are : " \
                 + ", ".join(available_modes) + "."
             )
 
@@ -41,10 +40,10 @@ class SimplifiedPathGraph(Asset):
         inputs = {
             "transport_zones": transport_zones,
             "osm": osm,
-            "mode_parameters": mode_parameters
+            "mode_name": mode_name
         }
         
-        file_name = pathlib.Path("path_graph_" + mode_parameters.name) / "simplified" / "done"
+        file_name = pathlib.Path("path_graph_" + mode_name) / "simplified" / "done"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
 
         super().__init__(inputs, cache_path)
@@ -56,15 +55,13 @@ class SimplifiedPathGraph(Asset):
         return self.cache_path.parent
 
     def create_and_get_asset(self) -> pathlib.Path:
-
-        mode = self.inputs["mode_parameters"].name
         
-        logging.info("Preparing travel costs for mode " + mode)
+        logging.info("Preparing travel costs for mode " + self.mode_name)
 
         self.prepare_path_graph(
             self.transport_zones,
             self.osm.get(),
-            self.mode_parameters.name,
+            self.mode_name,
             self.cache_path
         )
 

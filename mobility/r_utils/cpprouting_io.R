@@ -1,6 +1,7 @@
 library(DBI)
 library(duckdb)
 library(jsonlite)
+library(arrow)
 
 duckdb_df_to_parquet <- function(df, con, path) {
   

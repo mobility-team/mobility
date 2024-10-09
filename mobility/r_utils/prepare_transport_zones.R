@@ -5,6 +5,8 @@ library(geos)
 library(wk)
 library(arrow)
 library(cluster)
+library(future)
+library(future.apply)
 
 args <- commandArgs(trailingOnly = TRUE)
 
@@ -15,8 +17,8 @@ level_of_detail <- as.integer(args[4])
 output_fp <- args[5]
 
 # package_path <- 'D:/dev/mobility_oss/mobility'
-# study_area_fp <- 'D:/data/mobility/projects/study_area/0d806be2b67e7b991adbdd06aac30e4d-study_area.gpkg'
-# osm_buildings_fp <- 'D:/data/mobility/projects/study_area/building-osm_data/'
+# study_area_fp <- 'D:/data/mobility/projects/grand-geneve/c30098e5ececd6613a1e1d5261e0ba07-study_area.gpkg'
+# osm_buildings_fp <- 'D:/data/mobility/projects/grand-geneve/building-osm_data/'
 # level_of_detail <- 1
 # output_fp <- 'D:/data/mobility/projects/study_area/51d687bdfde7cd7e33d288929ffe4ff6-transport_zones.gpkg'
 
@@ -31,7 +33,8 @@ clusters_fp <- file.path(
 
 buildings_area_threshold <- 2e5
 n_buildings_sample <- 10
-minimum_building_area <- 20
+min_building_area <- 20
+max_building_area <- 500e3
 
 convert_sf_to_geos_dt <- function(sf_df) {
   
@@ -110,7 +113,7 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
   
   buildings <- st_transform(buildings, wk_crs(lau_geom))
   buildings$area <- as.numeric(st_area(buildings))
-  buildings <- buildings[buildings$area > minimum_building_area, ]
+  buildings <- buildings[buildings$area > min_building_area & buildings$area < max_building_area, ]
   
   st_agr(buildings) <- "constant"
   buildings <- st_centroid(buildings)
@@ -155,7 +158,7 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
       crs = wk_crs(lau_geom)
     )
     
-    env <- geos_buffer(env, 10e3)
+    env <- geos_buffer(env, 100e3)
     
     clusters_geos <- geos_make_collection(geos_read_xy(clusters[, list(X, Y)]))
     wk_crs(clusters_geos) <- wk_crs(lau_geom)
@@ -206,6 +209,8 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
   }
   
   transport_zones[, local_admin_unit_id := lau_id]
+  transport_zones[, geometry := geos_write_wkb(geometry)]
+  
   k_medoids[, local_admin_unit_id := lau_id]
   
   return(list(transport_zones, k_medoids))
@@ -214,25 +219,41 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
 
 study_area <- st_read(study_area_fp, quiet = TRUE)
 study_area_dt <- convert_sf_to_geos_dt(study_area)
+study_area_dt[, geometry_wkb := geos_write_wkb(geometry)]
 
 set.seed(0)
 
-transport_zones_buildings <- lapply(study_area_dt$local_admin_unit_id, function(lau_id) {
+plan(multisession, workers = max(parallel::detectCores()-2, 1))
+# plan(sequential)
+
+transport_zones_buildings <- future_lapply(
   
-  message(lau_id)
+  study_area_dt$local_admin_unit_id,
+  future.seed = 0,
   
-  result <- clusters_to_voronoi(
-    lau_id = lau_id,
-    lau_geom = study_area_dt[local_admin_unit_id == lau_id, geometry],
-    level_of_detail = level_of_detail,
-    buildings_area_threshold = buildings_area_threshold,
-    n_buildings_sample = n_buildings_sample,
-    minimum_building_area = minimum_building_area
-  )
+  FUN = function(lau_id) {
   
-  return(result)
+    message(lau_id)
+    
+    lau_geom <- study_area_dt[local_admin_unit_id == lau_id, geometry_wkb]
+    lau_geom <- geos_read_wkb(lau_geom)
+    wk_crs(lau_geom) <- "EPSG:3035"
+    
+    result <- clusters_to_voronoi(
+      lau_id = lau_id,
+      lau_geom = lau_geom,
+      level_of_detail = level_of_detail,
+      buildings_area_threshold = buildings_area_threshold,
+      n_buildings_sample = n_buildings_sample,
+      minimum_building_area = minimum_building_area
+    )
+    
+    return(result)
   
-})
+  }
+)
+
+plan(sequential)
 
 transport_zones <- rbindlist(lapply(transport_zones_buildings, "[[", 1), use.names = TRUE)
 clusters <- rbindlist(lapply(transport_zones_buildings, "[[", 2), use.names = TRUE)
@@ -251,6 +272,8 @@ setnames(clusters, "new_transport_zone_id", "transport_zone_id")
 transport_zones[, transport_zone_id := NULL]
 setnames(transport_zones, "new_transport_zone_id", "transport_zone_id")
 
+transport_zones[, geometry := geos_read_wkb(geometry)]
+wk_crs(transport_zones$geometry) <- "EPSG:3035"
 transport_zones <- st_as_sf(transport_zones)
 
 # Write the result

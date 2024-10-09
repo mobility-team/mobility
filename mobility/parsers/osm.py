@@ -5,17 +5,21 @@ import geojson
 import logging
 import shapely
 import hashlib
+import psutil
+import json
+import math
 import geopandas as gpd
 
 from rich.progress import Progress
 from typing import Tuple, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from mobility.parsers.download_file import download_file
 from mobility.parsers.geofabrik_regions import GeofabrikRegions
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.study_area import StudyArea
 
-class OSMData(Asset):
+class OSMData(FileAsset):
     """
     A class for managing OpenStreetMap (OSM) data, inheriting from the Asset class.
 
@@ -301,36 +305,63 @@ class OSMData(Asset):
         
         study_area = study_area.to_crs(4326)
         
+        # Create a config file for osmium specifiying multiple extracts
+        # (one for each local admin unit)
+        extracts = []
+        
+        for row in study_area.itertuples():
+                
+            boundary = geojson.Feature(geometry=row.geometry, properties={})
+            
+            lau_fp = result_folder / row.local_admin_unit_id
+            boundary_fp = lau_fp / "boundary.geojson"
+            result_fp = lau_fp / (self.key + ".pbf")
+            
+            os.makedirs(lau_fp, exist_ok=True)
+            
+            if result_fp.exists() is False:
+            
+                with open(boundary_fp, "w") as f:
+                    geojson.dump(boundary, f)
+                    
+                extracts.append({
+                    "output": row.local_admin_unit_id + "/" + self.key + ".pbf",
+                    "polygon": {
+                        "file_name": str(boundary_fp),
+                        "file_type": "geojson"
+                    }
+                })
+                
+        n_extracts_max = 20
+        
         with Progress() as progress:
             
-            task = progress.add_task("[green]Extracting data by local admin unit...", total=study_area.shape[0])
-        
-            for row in study_area.itertuples():
+            task = progress.add_task("[green]Extracting buidlings in each local admin unit..", total=math.ceil(len(extracts)/n_extracts_max))
                 
-                boundary = geojson.Feature(geometry=row.geometry, properties={})
+            for i in range(0, len(extracts), n_extracts_max):
                 
-                lau_fp = result_folder / row.local_admin_unit_id
-                boundary_fp = lau_fp / "boundary.geojson"
-                result_fp = lau_fp / (self.key + ".pbf")
-                
-                os.makedirs(lau_fp, exist_ok=True)
-                
-                if result_fp.exists() is False:
-                
-                    with open(boundary_fp, "w") as f:
-                        geojson.dump(boundary, f)
-            
-                    command = [
-                        "osmium", "extract",
-                        "--polygon", str(boundary_fp),
-                        str(osm_region),
-                        "--overwrite",
-                        "--strategy", "complete_ways",
-                        "-o", str(result_fp)
-                    ]
-                
-                    subprocess.run(command)
+                extract_batch = extracts[i:i + n_extracts_max]
                     
+                config = {
+                    "extracts": extract_batch,
+                    "directory": str(result_folder)
+                }
+                
+                config_fp = result_folder / "config.json"
+                with open(config_fp, "w") as f:
+                    json.dump(config, f)
+                
+                # Run osmium extract
+                command = [
+                    "osmium", "extract",
+                    "--config", str(config_fp),
+                    str(osm_region),
+                    "--overwrite",
+                    "--strategy", "complete_ways"
+                ]
+            
+                subprocess.run(command)
+                
                 progress.update(task, advance=1)
         
         # Write the flag to indicate all osmium commands ran

@@ -6,12 +6,12 @@ import pathlib
 from importlib import resources
 from typing import Literal, List, Union
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.study_area import StudyArea
 from mobility.parsers.osm import OSMData
 from mobility.r_utils.r_script import RScript
 
-class TransportZones(Asset):
+class TransportZones(FileAsset):
     """
     A class for managing transport zones, inheriting from the Asset class.
 

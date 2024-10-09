@@ -1,6 +1,5 @@
 import geopandas as gpd
 
-from mobility.parameters import ModeParameters
 from mobility.simplified_path_graph import SimplifiedPathGraph
 from mobility.contracted_path_graph import ContractedPathGraph
 
@@ -8,11 +7,11 @@ class PathGraph:
     
     def __init__(
         self,
-        transport_zones: gpd.GeoDataFrame,
-        mode_parameters: ModeParameters
+        mode_name: str,
+        transport_zones: gpd.GeoDataFrame
     ):
         
-        self.simplified = SimplifiedPathGraph(transport_zones, mode_parameters)
+        self.simplified = SimplifiedPathGraph(mode_name, transport_zones)
         self.contracted = ContractedPathGraph(self.simplified)
         
         
