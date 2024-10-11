@@ -56,11 +56,13 @@ buildings_sample <- as.data.table(read_parquet(buildings_sample_fp))
 buildings_sample[, building_id := 1:.N]
 
 # Load cpprouting graphs and vertices
-start_graph <- read_cppr_graph(first_leg_graph_fp)
-start_verts <- read_parquet(file.path(dirname(first_leg_graph_fp), "vertices.parquet"))
+hash <- strsplit(basename(first_leg_graph_fp), "-")[[1]][1]
+start_graph <- read_cppr_graph(dirname(first_leg_graph_fp), hash)
+start_verts <- read_parquet(file.path(dirname(dirname(first_leg_graph_fp)), paste0(hash, "-vertices.parquet")))
 
-last_graph <- read_cppr_graph(last_leg_graph_fp)
-last_verts <- read_parquet(file.path(dirname(first_leg_graph_fp), "vertices.parquet"))
+hash <- strsplit(basename(last_leg_graph_fp), "-")[[1]][1]
+last_graph <- read_cppr_graph(dirname(last_leg_graph_fp), hash)
+last_verts <- read_parquet(file.path(dirname(dirname(last_leg_graph_fp)), paste0(hash, "-vertices.parquet")))
 
 info(logger, "Concatenating graphs...")
 

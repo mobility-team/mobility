@@ -45,8 +45,9 @@ buildings_sample <- as.data.table(read_parquet(buildings_sample_fp))
 buildings_sample[, building_id := 1:.N]
 
 # Load cpprouting graph
-graph <- read_cppr_contracted_graph(dirname(graph_fp))
-vertices <- read_parquet(file.path(dirname(dirname(graph_fp)), "vertices.parquet"))
+hash <- strsplit(basename(graph_fp), "-")[[1]][1]
+graph <- read_cppr_graph(dirname(graph_fp), hash)
+vertices <- read_parquet(file.path(dirname(dirname(graph_fp)), paste0(hash, "-vertices.parquet")))
 
 # Compute crowfly distances between transport zones to compute the number of 
 # points within the origin and destination zones that should be used

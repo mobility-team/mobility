@@ -32,6 +32,9 @@ from .transport_modes import (
 )
 
 from .generalized_cost_parameters import GeneralizedCostParameters
+from .transport_modes.carpool.detailed.detailed_carpool_generalized_cost_parameters import DetailedCarpoolGeneralizedCostParameters
+
+from .cost_of_time_parameters import CostOfTimeParameters
 
 from .choice_models.transport_mode_choice_model import TransportModeChoiceModel
 from .parsers import LocalAdminUnits

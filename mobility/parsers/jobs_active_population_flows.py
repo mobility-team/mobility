@@ -68,8 +68,8 @@ class JobsActivePopulationFlows(FileAsset):
         flows = pd.read_csv(
             csv_path,
             sep=";",
-            usecols=["COMMUNE", "ARM", "DCFLT", "DCLT", "IPONDI"],
-            dtype={"COMMUNE": str, "ARM": str, "DCFLT": str, "DCLT": str, "IPONDI": float}
+            usecols=["COMMUNE", "ARM", "DCFLT", "DCLT", "TRANS", "IPONDI"],
+            dtype={"COMMUNE": str, "ARM": str, "DCFLT": str, "DCLT": str, "TRANS": str, "IPONDI": float}
         )
         
         flows["DCFLT"] = flows["DCFLT"].str.replace(".", "")
@@ -93,10 +93,18 @@ class JobsActivePopulationFlows(FileAsset):
             "ch-" + flows["bfs_id"]
         )
         
-        # Volume
-        flows.rename({"IPONDI": "ref_flow_volume"}, axis=1, inplace=True)
+        flows.rename({"IPONDI": "ref_flow_volume", "TRANS": "mode"}, axis=1, inplace=True)
+        
+        flows["mode"].replace({
+            "1": "no-transport",
+            "2": "walk",
+            "3": "bicycle",
+            "4": "motorcycle",
+            "5": "car",
+            "6": "public-transport"
+        }, inplace=True)
 
-        flows = flows.groupby(["local_admin_unit_id_from", "local_admin_unit_id_to"], as_index=False)[["ref_flow_volume"]].sum()
+        flows = flows.groupby(["local_admin_unit_id_from", "local_admin_unit_id_to", "mode"], as_index=False)[["ref_flow_volume"]].sum()
         
         os.unlink(zip_path)
         os.unlink(csv_path)
@@ -127,6 +135,9 @@ class JobsActivePopulationFlows(FileAsset):
         flows = flows[flows["local_admin_unit_id_from"].isin(local_admin_units["local_admin_unit_id"])]
         flows = flows[flows["local_admin_unit_id_to"].isin(local_admin_units["local_admin_unit_id"])]
         
+        # No availalable ref data in switzerland so we force the mode to car
+        flows["mode"] = "car"
+        
         # BUG ?
         # The number of active persons in each city computed from the flows is not the 
         # same than the one computed based on the 15 - 64 years population count.
@@ -141,7 +152,6 @@ class JobsActivePopulationFlows(FileAsset):
         
         flows = pd.merge(flows, correction[["local_admin_unit_id_from", "k"]], on="local_admin_unit_id_from")
         flows["ref_flow_volume"] *= flows["k"]
-        
         del flows["k"]
         
         return flows

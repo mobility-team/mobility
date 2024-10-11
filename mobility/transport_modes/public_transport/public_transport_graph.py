@@ -65,7 +65,7 @@ class PublicTransportGraph(FileAsset):
 
     def get_cached_asset(self) -> pd.DataFrame:
         logging.info("Graph already prepared. Reusing the file : " + str(self.cache_path))
-        return self.cache_path.parent
+        return self.cache_path
 
     def create_and_get_asset(self) -> pd.DataFrame:
         
@@ -75,7 +75,7 @@ class PublicTransportGraph(FileAsset):
             self.inputs["parameters"]
         )
 
-        return self.cache_path.parent
+        return self.cache_path
 
     
     def gtfs_graph(

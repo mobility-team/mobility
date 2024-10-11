@@ -66,7 +66,7 @@ duckdb_parquet_to_vector <- function(con, path) {
 }
 
 
-save_cppr_graph <- function(graph, path) {
+save_cppr_graph <- function(graph, path, hash) {
   
   attrib <- data.table(
     i = 1:nrow(graph$data),
@@ -99,15 +99,15 @@ save_cppr_graph <- function(graph, path) {
   
   con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
   
-  duckdb_df_to_parquet(graph$data, con, file.path(path, "data.parquet"))
-  duckdb_df_to_parquet(graph$dict, con, file.path(path, "dict.parquet"))
-  duckdb_df_to_parquet(attrib, con, file.path(path, "attrib.parquet"))
+  duckdb_df_to_parquet(graph$data, con, file.path(path, paste0(hash, "data.parquet")))
+  duckdb_df_to_parquet(graph$dict, con, file.path(path, paste0(hash, "dict.parquet")))
+  duckdb_df_to_parquet(attrib, con, file.path(path, paste0(hash, "attrib.parquet")))
   
   dbDisconnect(con, shutdown = TRUE)
   
 }
 
-read_cppr_graph <- function(path) {
+read_cppr_graph <- function(path, hash) {
   
   con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
   
@@ -124,10 +124,10 @@ read_cppr_graph <- function(path) {
     )
   )
   
-  graph[["data"]] <- duckdb_parquet_to_df(con, file.path(path, "data.parquet"))
-  graph[["dict"]] <- duckdb_parquet_to_df(con, file.path(path, "dict.parquet"))
+  graph[["data"]] <- duckdb_parquet_to_df(con, file.path(path, paste0(hash, "data.parquet")))
+  graph[["dict"]] <- duckdb_parquet_to_df(con, file.path(path, paste0(hash,"dict.parquet")))
   
-  attrib <- duckdb_parquet_to_df(con, file.path(path, "attrib.parquet"))
+  attrib <- duckdb_parquet_to_df(con, file.path(path, paste0(hash,"attrib.parquet")))
   
   if (any(!is.na(attrib$aux))) {
     graph$attrib$aux <- attrib$aux
@@ -154,60 +154,60 @@ read_cppr_graph <- function(path) {
 }
 
 
-save_cppr_contracted_graph <- function(graph, path) {
-  
-  if (!dir.exists(path)) {
-    dir.create(path, recursive = TRUE)
-  }
-  
-  con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
-  
-  duckdb_df_to_parquet(graph$data, con, file.path(path, "data.parquet"))
-  duckdb_vector_to_parquet(graph$rank, con, file.path(path, "rank.parquet"))
-  duckdb_df_to_parquet(graph$shortcuts, con, file.path(path, "shortcuts.parquet"))
-  duckdb_df_to_parquet(graph$dict, con, file.path(path, "dict.parquet"))
-  duckdb_df_to_parquet(graph$original$data, con, file.path(path, "original_data.parquet"))
-  duckdb_vector_to_parquet(graph$original$attrib$aux, con, file.path(path, "original_data_attrib_aux.parquet"))
-  
-  dbDisconnect(con, shutdown = TRUE)
-  
-}
-
-read_cppr_contracted_graph <- function(path) {
-  
-  con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
-  
-  graph <- list(
-    data = NULL,
-    rank = NULL,
-    shortcuts = NULL,
-    nbnode = NULL,
-    dict = NULL,
-    original = list(
-      data = NULL,
-      attrib = list(
-        aux = NULL,
-        cap = NULL,
-        alpha = NULL,
-        beta = NULL
-      )
-    )
-  )
-  
-  graph[["data"]] <- duckdb_parquet_to_df(con, file.path(path, "data.parquet"))
-  graph[["rank"]] <- duckdb_parquet_to_vector(con, file.path(path, "rank.parquet"))
-  graph[["shortcuts"]] <- duckdb_parquet_to_df(con, file.path(path, "shortcuts.parquet"))
-  graph[["nbnode"]] <- nrow(graph[["data"]])
-  graph[["dict"]] <- duckdb_parquet_to_df(con, file.path(path, "dict.parquet"))
-  graph[["original"]] <- list(data = NULL, attrib = list(aux = NULL, cap = NULL, alpha = NULL, beta = NULL))
-  graph[["original"]][["data"]] <- duckdb_parquet_to_df(con, file.path(path, "original_data.parquet"))
-  graph[["original"]][["attrib"]][["aux"]] <- duckdb_parquet_to_vector(con, file.path(path, "original_data_attrib_aux.parquet"))
-  
-  dbDisconnect(con, shutdown = TRUE)
-  
-  return(graph)
-  
-}
+# save_cppr_contracted_graph <- function(graph, path) {
+#   
+#   if (!dir.exists(path)) {
+#     dir.create(path, recursive = TRUE)
+#   }
+#   
+#   con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
+#   
+#   duckdb_df_to_parquet(graph$data, con, file.path(path, "data.parquet"))
+#   duckdb_vector_to_parquet(graph$rank, con, file.path(path, "rank.parquet"))
+#   duckdb_df_to_parquet(graph$shortcuts, con, file.path(path, "shortcuts.parquet"))
+#   duckdb_df_to_parquet(graph$dict, con, file.path(path, "dict.parquet"))
+#   duckdb_df_to_parquet(graph$original$data, con, file.path(path, "original_data.parquet"))
+#   duckdb_vector_to_parquet(graph$original$attrib$aux, con, file.path(path, "original_data_attrib_aux.parquet"))
+#   
+#   dbDisconnect(con, shutdown = TRUE)
+#   
+# }
+# 
+# read_cppr_contracted_graph <- function(path) {
+#   
+#   con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
+#   
+#   graph <- list(
+#     data = NULL,
+#     rank = NULL,
+#     shortcuts = NULL,
+#     nbnode = NULL,
+#     dict = NULL,
+#     original = list(
+#       data = NULL,
+#       attrib = list(
+#         aux = NULL,
+#         cap = NULL,
+#         alpha = NULL,
+#         beta = NULL
+#       )
+#     )
+#   )
+#   
+#   graph[["data"]] <- duckdb_parquet_to_df(con, file.path(path, "data.parquet"))
+#   graph[["rank"]] <- duckdb_parquet_to_vector(con, file.path(path, "rank.parquet"))
+#   graph[["shortcuts"]] <- duckdb_parquet_to_df(con, file.path(path, "shortcuts.parquet"))
+#   graph[["nbnode"]] <- nrow(graph[["data"]])
+#   graph[["dict"]] <- duckdb_parquet_to_df(con, file.path(path, "dict.parquet"))
+#   graph[["original"]] <- list(data = NULL, attrib = list(aux = NULL, cap = NULL, alpha = NULL, beta = NULL))
+#   graph[["original"]][["data"]] <- duckdb_parquet_to_df(con, file.path(path, "original_data.parquet"))
+#   graph[["original"]][["attrib"]][["aux"]] <- duckdb_parquet_to_vector(con, file.path(path, "original_data_attrib_aux.parquet"))
+#   
+#   dbDisconnect(con, shutdown = TRUE)
+#   
+#   return(graph)
+#   
+# }
 
 
 save_graph_vertices <- function(vertices, path) {

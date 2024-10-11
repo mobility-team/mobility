@@ -5,9 +5,9 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Polygon
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 
-class GeofabrikRegions(Asset):
+class GeofabrikRegions(FileAsset):
     
     def __init__(self, extract_date: str = "240101"):
         

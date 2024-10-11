@@ -66,14 +66,17 @@ buildings_sample[, building_id := 1:.N]
 # layer 1 to 2 through layer 3, but cannot go back)
 
 # Load cpprouting graphs and vertices
-start_graph <- read_cppr_graph(first_leg_graph_fp)
-start_verts <- read_parquet(file.path(dirname(first_leg_graph_fp), "vertices.parquet"))
+hash <- strsplit(basename(first_leg_graph_fp), "-")[[1]][1]
+start_graph <- read_cppr_graph(dirname(first_leg_graph_fp), hash)
+start_verts <- read_parquet(file.path(dirname(dirname(first_leg_graph_fp)), paste0(hash, "-vertices.parquet")))
 
-last_graph <- read_cppr_graph(last_leg_graph_fp)
-last_verts <- read_parquet(file.path(dirname(first_leg_graph_fp), "vertices.parquet"))
+hash <- strsplit(basename(last_leg_graph_fp), "-")[[1]][1]
+last_graph <- read_cppr_graph(dirname(last_leg_graph_fp), hash)
+last_verts <- read_parquet(file.path(dirname(dirname(last_leg_graph_fp)), paste0(hash, "-vertices.parquet")))
 
-mid_graph <- read_cppr_graph(pt_graph_fp)
-mid_verts <- read_parquet(file.path(dirname(pt_graph_fp), "vertices.parquet"))
+hash <- strsplit(basename(pt_graph_fp), "-")[[1]][1]
+mid_graph <- read_cppr_graph(dirname(pt_graph_fp), hash)
+mid_verts <- read_parquet(file.path(dirname(dirname(pt_graph_fp)), paste0(hash, "-vertices.parquet")))
 
 # Make sure all vertices are in the graph
 # (this should not be needed because vertices are now filtered at graph creation

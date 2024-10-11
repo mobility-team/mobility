@@ -30,7 +30,7 @@ class PublicTransportMode(TransportMode):
         )
         
         if generalized_cost_parameters is None:
-            pt_gen_cost_parameters = GeneralizedCostParameters(
+            generalized_cost_parameters = GeneralizedCostParameters(
                 cost_constant=0.0,
                 cost_of_distance=0.1,
                 cost_of_time=CostOfTimeParameters()
@@ -39,7 +39,7 @@ class PublicTransportMode(TransportMode):
         generalized_cost = PublicTransportGeneralizedCost(
             travel_costs,
             start_parameters=first_leg_mode.generalized_cost.parameters,
-            mid_parameters=pt_gen_cost_parameters,
+            mid_parameters=generalized_cost_parameters,
             last_parameters=last_leg_mode.generalized_cost.parameters
         )
         

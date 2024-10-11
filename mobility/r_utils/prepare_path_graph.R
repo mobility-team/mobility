@@ -127,8 +127,10 @@ vertices_3035 <- vertices_3035[vertex_id %in% cppr_graph_simple$dict$ref]
 
 info(logger, "Saving cppRouting graph and vertices coordinates...")
 
-save_cppr_graph(cppr_graph_simple, dirname(output_file_path))
-write_parquet(vertices_3035, file.path(dirname(dirname(output_file_path)), "vertices.parquet"))
+hash <- strsplit(basename(output_file_path), "-")[[1]][1]
+
+save_cppr_graph(cppr_graph_simple, dirname(output_file_path), hash)
+write_parquet(vertices_3035, file.path(dirname(dirname(output_file_path)), paste0(hash, "-vertices.parquet")))
 
 file.create(output_file_path)
 

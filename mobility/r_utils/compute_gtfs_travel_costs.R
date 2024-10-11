@@ -17,6 +17,20 @@ compute_gtfs_travel_costs <- function(
     )
   )
   
+  # Compute the average time between consecutive services (= headway) at each stop and for each service
+  services_headways <- gtfs$stop_times[, list(stop_id, trip_id, departure_time)]
+  services_headways <- merge(services_headways, gtfs$trips[, list(trip_id, service_id)], by = "trip_id")
+  services_headways <- services_headways[order(departure_time)]
+  services_headways <- services_headways[departure_time > start_time_min*3600 & departure_time < start_time_max*3600]
+  services_headways[, departure_time := departure_time - start_time_min*3600]
+  services_headways[, d_departure_time := diff(c(departure_time[.N]-3600, departure_time)), by = list(service_id, stop_id)]
+  services_headways <- services_headways[, list(headway_time = mean(d_departure_time)), by = list(stop_id, service_id)]
+  
+  # Compute the average headway at each stop
+  stops_headways <- services_headways[, list(headway_time = mean(headway_time)), by = stop_id]
+  stops_headways[, wait_time := pmin(0.5*headway_time, 15.0*60)]
+  stops_headways <- stops_headways[, list(stop_id, wait_time)]
+  
   # Uses all the available logical cores but 2, to speed us calculations
   plan(multisession, workers = max(parallel::detectCores()-2, 1))
   
@@ -79,6 +93,10 @@ compute_gtfs_travel_costs <- function(
       # Remove trips that are faster than 150 km/h 
       # bug in gtfsrouter or the gtfs data ?
       tt <- tt[distance/time*3.6 < 150.0]
+      
+      # Add wait time
+      tt <- merge(tt, stops_headways, by.x = "from_stop_id", by.y = "stop_id")
+      tt[, time := time + wait_time]
       
       tt <- tt[, c("from_stop_id", "to_stop_id", "distance", "time"), with = FALSE]
       

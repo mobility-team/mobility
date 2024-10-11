@@ -216,7 +216,8 @@ class DestinationChoiceModel(FileAsset):
         
         ref_flows = self.reference_flows.get()
         ref_flows = ref_flows[ref_flows["local_admin_unit_id_from"].isin(lau_ids) & ref_flows["local_admin_unit_id_to"].isin(lau_ids)]
-        
+        ref_flows = ref_flows.groupby(["local_admin_unit_id_from", "local_admin_unit_id_to"], as_index=False)["ref_flow_volume"].sum()
+
         od_pairs = pd.concat([
             ref_flows[["local_admin_unit_id_from", "local_admin_unit_id_to"]],
             flows[["local_admin_unit_id_from", "local_admin_unit_id_to"]]
@@ -235,6 +236,7 @@ class DestinationChoiceModel(FileAsset):
             on=["local_admin_unit_id_from", "local_admin_unit_id_to"],
             how="left"
         )
+    
         
         comparison.fillna(0.0, inplace=True)
         

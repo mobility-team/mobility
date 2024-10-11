@@ -52,7 +52,7 @@ class SimplifiedPathGraph(FileAsset):
         
         logging.info("Path graph already prepared. Reusing the graph in : " + str(self.cache_path.parent))
         
-        return self.cache_path.parent
+        return self.cache_path
 
     def create_and_get_asset(self) -> pathlib.Path:
         
@@ -65,7 +65,7 @@ class SimplifiedPathGraph(FileAsset):
             self.cache_path
         )
 
-        return self.cache_path.parent
+        return self.cache_path
 
     def prepare_path_graph(
             self,

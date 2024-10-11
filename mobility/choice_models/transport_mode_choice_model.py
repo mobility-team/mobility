@@ -4,11 +4,12 @@ import logging
 import pandas as pd
 import numpy as np
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 
 from mobility.choice_models.destination_choice_model import DestinationChoiceModel
+from mobility.parsers import JobsActivePopulationFlows
 
-class TransportModeChoiceModel(Asset):
+class TransportModeChoiceModel(FileAsset):
     
     def __init__(self, destination_choice_model: DestinationChoiceModel):
         
@@ -42,10 +43,54 @@ class TransportModeChoiceModel(Asset):
     
     def compute_mode_probability_by_od_and_mode(self, costs):
           
-        prob = costs.copy()
-        prob["prob"] = np.exp(prob["net_utility"])
-        prob["prob"] = prob["prob"]/prob.groupby(["from", "to"])["prob"].sum()
-        prob = prob.reset_index()
+        costs["prob"] = np.exp(costs["net_utility"])
+        costs["prob"] = costs["prob"]/costs.groupby(["from", "to"])["prob"].sum()
         
-        return prob
+        # Remove very small probabilities
+        costs = costs[costs["prob"] > 0.01].copy()
+        costs["prob"] = costs["prob"]/costs.groupby(["from", "to"])["prob"].sum()
+        
+        costs = costs.reset_index()
+        costs = costs[["from", "to", "mode", "prob"]].copy()
+        
+        return costs
+    
+    
+    def get_comparison_by_origin(self, flows):
+        
+        flows = flows.groupby(["local_admin_unit_id_from", "mode"], as_index=False)["flow_volume"].sum()
+        
+        lau_ids = flows["local_admin_unit_id_from"].unique()
+        
+        ref_flows = JobsActivePopulationFlows().get()
+        ref_flows = ref_flows[ref_flows["local_admin_unit_id_from"].isin(lau_ids) & ref_flows["local_admin_unit_id_to"].isin(lau_ids)]
+        ref_flows = ref_flows.groupby(["local_admin_unit_id_from", "mode"], as_index=False)["ref_flow_volume"].sum()
+
+        od_pairs = pd.concat([
+            ref_flows[["local_admin_unit_id_from", "mode"]],
+            flows[["local_admin_unit_id_from", "mode"]]
+        ]).drop_duplicates()
+        
+        
+        # Remove all flows originating from switzerland as there is no reference data
+        od_pairs = od_pairs[od_pairs["local_admin_unit_id_from"].str[0:2] != "ch"]
+        
+        comparison = pd.merge(
+            od_pairs,
+            flows,
+            on=["local_admin_unit_id_from", "mode"],
+            how="left"
+        )
+        
+        comparison = pd.merge(
+            comparison,
+            ref_flows,
+            on=["local_admin_unit_id_from", "mode"],
+            how="left"
+        )
+    
+        
+        comparison.fillna(0.0, inplace=True)
+        
+        return comparison
         

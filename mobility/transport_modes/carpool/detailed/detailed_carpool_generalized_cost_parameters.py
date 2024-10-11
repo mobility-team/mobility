@@ -8,8 +8,8 @@ class DetailedCarpoolGeneralizedCostParameters:
     
     number_persons: int = 2
     
-    car_cost_of_time = CostOfTimeParameters()
-    carpooling_cost_of_time = CostOfTimeParameters()
+    car_cost_of_time: CostOfTimeParameters = field(default_factory=lambda: CostOfTimeParameters())
+    carpooling_cost_of_time: CostOfTimeParameters = field(default_factory=lambda: CostOfTimeParameters())
     
     cost_of_time_od_coeffs: List[
         Dict[
@@ -32,7 +32,7 @@ class DetailedCarpoolGeneralizedCostParameters:
     carpooling_cost_of_distance: float = 0.05
     
     # Constant
-    car_cost_constant: float = 10.0
+    car_cost_constant: float = 0.0
     carpooling_cost_constant: float = 0.0
     
     # Revenues

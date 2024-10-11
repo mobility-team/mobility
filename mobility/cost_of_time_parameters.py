@@ -21,7 +21,7 @@ class CostOfTimeParameters():
             raise ValueError("The number of breaks and slopes do not match, there should be N-1 slopes for N breaks.")
     
     
-    def compute(self, distance: NDArray[np.float64]) -> NDArray[np.float64]:
+    def compute(self, distance: NDArray[np.float64], country) -> NDArray[np.float64]:
         
         cost = self.intercept
         
@@ -43,6 +43,9 @@ class CostOfTimeParameters():
                 base = base + slope*(right_break - left_break)
         
         cost = np.where(cost > self.max_value, self.max_value, cost)
+        
+        cost = np.where(country == "fr", cost*self.country_coeff_fr, cost)
+        cost = np.where(country == "ch", cost*self.country_coeff_ch, cost)
         
         return cost
                    

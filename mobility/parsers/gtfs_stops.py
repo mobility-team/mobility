@@ -6,10 +6,10 @@ import geopandas as gpd
 import zipfile
 
 from mobility import TransportZones
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file
 
-class GTFSStops(Asset):
+class GTFSStops(FileAsset):
     
     def __init__(self, admin_prefixes: list):
         

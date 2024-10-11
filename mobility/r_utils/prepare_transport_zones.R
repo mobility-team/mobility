@@ -232,8 +232,6 @@ transport_zones_buildings <- future_lapply(
   future.seed = 0,
   
   FUN = function(lau_id) {
-  
-    message(lau_id)
     
     lau_geom <- study_area_dt[local_admin_unit_id == lau_id, geometry_wkb]
     lau_geom <- geos_read_wkb(lau_geom)
