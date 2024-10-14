@@ -7,7 +7,7 @@ from rich.progress import Progress
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
-def download_file(url, path, max_retries=3, timeout=10):
+def download_file(url, path, max_retries=3, timeout=30):
     """
     Downloads a file to a given path. Creates the containing parent folder, if 
     it does not exist. Handles retries and timeouts to avoid common download issues.
@@ -62,8 +62,14 @@ def download_file(url, path, max_retries=3, timeout=10):
             if response.status_code == 404:
                 logging.error(f"Error 404: The resource at {url} was not found.")
                 return None
+            if response.status_code == 401:
+                logging.error(f"Error 401: The resource at {url} could not be accessed (authorization error).")
+                return None
             logging.error(f"HTTP error occurred: {http_err}")
             raise
+        except ConnectionError as conn_err:
+            logging.error(f"Connection error occurred: {conn_err}")
+            return None
         except requests.exceptions.RequestException as req_err:
             logging.error(f"Error during requests to {url}: {req_err}")
             raise

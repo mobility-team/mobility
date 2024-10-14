@@ -22,9 +22,13 @@ source(file.path(package_path, "r_utils", "cpprouting_io.R"))
 
 logger <- logger(appenders = console_appender())
 
-cppr_graph <- read_cppr_graph(cppr_graph_path)
+hash <- strsplit(basename(cppr_graph_path), "-")[[1]][1]
+cppr_graph <- read_cppr_graph(dirname(cppr_graph_path), hash)
 cppr_graph <- cpp_contract(cppr_graph)
+vertices <- read_parquet(file.path(dirname(dirname(cppr_graph_path)), paste0(hash, "-vertices.parquet")))
 
-save_cppr_contracted_graph(cppr_graph, dirname(output_file_path))
+hash <- strsplit(basename(output_file_path), "-")[[1]][1]
+save_cppr_contracted_graph(cppr_graph, dirname(output_file_path), hash)
+write_parquet(vertices, file.path(dirname(dirname(output_file_path)), paste0(hash, "-vertices.parquet")))
 
 file.create(output_file_path)

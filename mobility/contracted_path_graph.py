@@ -22,7 +22,7 @@ class ContractedPathGraph(FileAsset):
         
         logging.info("Contracted graph already prepared. Reusing the files in : " + str(self.cache_path.parent))
          
-        return self.cache_path.parent
+        return self.cache_path
 
     def create_and_get_asset(self) -> pathlib.Path:
         
@@ -33,7 +33,7 @@ class ContractedPathGraph(FileAsset):
             self.cache_path
         )
 
-        return self.cache_path.parent
+        return self.cache_path
 
     def contract_graph(
             self,

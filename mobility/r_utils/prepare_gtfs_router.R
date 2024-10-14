@@ -13,6 +13,11 @@ tz_file_path <- args[2]
 gtfs_file_paths <- args[3]
 output_file_path <- args[4]
 
+package_path <- 'D:/dev/mobility_oss/mobility'
+tz_file_path <- 'D:\\data\\mobility\\projects\\grand-geneve\\2e3f146ec4314657eda8c102d316cb49-transport_zones.gpkg'
+gtfs_file_paths <- 'D:\\data\\mobility\\data\\gtfs\\aa01d021a36d977442017bcbf81f1f06-a161391d60620240d7ae4ee37235fbc3_gtfs_complete.zip,D:\\data\\mobility\\data\\gtfs\\a4b0683e98db619fd0f1059412a048ce-2f009fbd51ed54c18dcf9b2cdc7f0364_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\a3f11398509cab5d6479ed1bd4c927c9-b70c0b29d3c2d0d262640e04a62869cb_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\6b19b87ec8cd0c7621d11e3f00fa64e6-8b448f968541a814cd23152c77f54797_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\844d0f40ab04b8e940587d49219d0c36-6434c57678fdd877da53c749c0eea4cf_gtfs_generic_eu.zip,D:\\data\\mobility\\data\\gtfs\\853ab300e3f25133c760fafc1b020f17-328d14646a81a0cdd25e39a12191b806_gtfs_static.zip,D:\\data\\mobility\\data\\gtfs\\af0bdb788a9327ca029558d94ba1129c-c9e2c2b923e6ab5a6a02776f6ee82207_export-ter-gtfs-last.zip,D:\\data\\mobility\\data\\gtfs\\6ed723ba6bcedaf33afe0a279fcd90eb-d47d66a3537807ae0e6b9eae45d2a802_export_gtfs_voyages.zip,D:\\data\\mobility\\data\\gtfs\\06101eb02fd2cb92513c5a9146258fef-184253675901bfb025145a45593a95d0_DAT_AURA_GTFS_ExportAOM.zip,D:\\data\\mobility\\data\\gtfs\\118e8c7ccc21dab6ef7c4ae00aeb2829-f47807b294f863252c2da5e52a82a0da_GTFS_haute_savoie.zip,D:\\data\\mobility\\data\\gtfs\\4b15be20d8f43c174e5518dffe382b9c-e852de9f6ce818cc03277ac94926620a_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\d258e974735db72d69d53635f49f8e7a-859952002fa3c071703717753892eab8_DownloadfileNameCG38.GTFS.zip,D:\\data\\mobility\\data\\gtfs\\ad3958a96dacccb44825549e21e84979-7c570637abe59c4c966bdd7323db2746_naq-aggregated-gtfs.zip,D:\\data\\mobility\\data\\gtfs\\76ae84ec77435f8027de4beb735aebb7-9adb2aafa0827752a0db8a036b32f0e7_DESTINEO.gtfs.zip,D:\\data\\mobility\\data\\gtfs\\9e748ff3e0f6f3d11c7e7cf702348174-7eb92f86cd2571d4b6659470f41c66ce_KORRIGOBRET.gtfs.zip,D:\\data\\mobility\\data\\gtfs\\2e7eba6649c71cad0be8babd91b52ef8-05db816cd25aa105999a4cfe22c25ff3_pt-th-offer-atoumod-gtfs-20240515-708-opendata.zip,D:\\data\\mobility\\data\\gtfs\\4c0ab6406f889725882c14d580c5125f-9a6ec87a6e13b2162aae4c8f1e48a13c_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\bbcd21254f084dce9842c6ab472e89db-3099d69b1640aa362433a2b01a5adc4d_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\7a2f14da880080e2c63fb77abaac8b8e-2a8453724d9c657011b2640ab935f1ad_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\b4818db36776c0fb9d913e87abb49204-3cb37cbf51263dcec94874cc10aa8913_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\bc783b0a8511eebc0336a1a47e7ec6a7-ba0fc9ebd797ef95c9ae8c794b02d65a_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\b17491e099321ffe59121158cc03df2e-e844419b3e84ae96125e7b87ce222526_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\004500fc0adb8c8ae9f55831a6979eb7-70b9a19cf4e00c1988a5b8cb1a9a9e5e_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\6224dcc8471990db2ce2d52e4b3d1837-3b1b9a8a5bedc5c63b0b2cf11c6ba185_gtfs-sibra.zip,D:\\data\\mobility\\data\\gtfs\\d941bf10e2cbff9cfe93789801ff6e78-01939c605ab107a671c35ddb2859774b_chamberyapiKey223f2f102c1242570d3f0231326a271940774f72typegtfs_urbain.zip,D:\\data\\mobility\\data\\gtfs\\7233442004315843e003a063b0b226db-42f0655e9e41033f28eb9d26b17cb80f_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\60b323006158fc93308008b7626ad243-88f516ac120d0a40b50a35638a182350_DownloadfileNameCAPI.GTFS.zip,D:\\data\\mobility\\data\\gtfs\\bc4d950d015d8a1427d6748c283b85e2-36b41f205c5ab27575d18b06caa34ee0_capg-2024.zip,D:\\data\\mobility\\data\\gtfs\\1b011f6b7ee75af5951714b3622b9399-d00b7b823644abd7a018b69af98f5f96_medias.zip,D:\\data\\mobility\\data\\gtfs\\05dd0d50d9b519ed2c2f31474b0c448f-6343c6699bbcbdab5f285629f0c7ed27_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\495875e4327e0246c28afdb7a245260c-c70e52d90d19c7067176a1382459e454_medias.zip,D:\\data\\mobility\\data\\gtfs\\ce4c2ed581224b29eb57036f6bff0dbc-1745561814d0d3b6bb148b516e09d468_gtfs-evian-10122023-26052024-v3.zip'
+
+
 logger <- logger(appenders = console_appender())
 
 transport_zones <- st_read(tz_file_path)
@@ -183,6 +188,10 @@ transfer_table <- function(gtfs, d_limit = 200, crs = 2154) {
 
 gtfs <- transfer_table(gtfs, d_limit = 200, crs = 2154)
 gtfs$transfers <- gtfs$transfers[from_stop_id != to_stop_id]
+
+# Transfers are NA in some feeds
+# TO DO : investigate why ?
+gtfs$transfers[is.na(transfer_type), transfer_type := 2]
 
 
 info(logger, "Fixing potential issues with stop times...")
