@@ -17,8 +17,8 @@ level_of_detail <- as.integer(args[4])
 output_fp <- args[5]
 
 # package_path <- 'D:/dev/mobility_oss/mobility'
-# study_area_fp <- 'D:/data/mobility/projects/grand-geneve/c30098e5ececd6613a1e1d5261e0ba07-study_area.gpkg'
-# osm_buildings_fp <- 'D:/data/mobility/projects/grand-geneve/building-osm_data/'
+# study_area_fp <- 'D:/data/mobility/projects/experiments/4f31c2f75db56445cc3f8414b53e0b0c-study_area.gpkg'
+# osm_buildings_fp <- 'D:/data/mobility/projects/experiments/building-osm_data/'
 # level_of_detail <- 1
 # output_fp <- 'D:/data/mobility/projects/study_area/51d687bdfde7cd7e33d288929ffe4ff6-transport_zones.gpkg'
 

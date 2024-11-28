@@ -14,8 +14,10 @@ gtfs_file_paths <- args[3]
 output_file_path <- args[4]
 
 package_path <- 'D:/dev/mobility_oss/mobility'
-tz_file_path <- 'D:\\data\\mobility\\projects\\grand-geneve\\2e3f146ec4314657eda8c102d316cb49-transport_zones.gpkg'
-gtfs_file_paths <- 'D:\\data\\mobility\\data\\gtfs\\aa01d021a36d977442017bcbf81f1f06-a161391d60620240d7ae4ee37235fbc3_gtfs_complete.zip,D:\\data\\mobility\\data\\gtfs\\a4b0683e98db619fd0f1059412a048ce-2f009fbd51ed54c18dcf9b2cdc7f0364_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\a3f11398509cab5d6479ed1bd4c927c9-b70c0b29d3c2d0d262640e04a62869cb_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\6b19b87ec8cd0c7621d11e3f00fa64e6-8b448f968541a814cd23152c77f54797_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\844d0f40ab04b8e940587d49219d0c36-6434c57678fdd877da53c749c0eea4cf_gtfs_generic_eu.zip,D:\\data\\mobility\\data\\gtfs\\853ab300e3f25133c760fafc1b020f17-328d14646a81a0cdd25e39a12191b806_gtfs_static.zip,D:\\data\\mobility\\data\\gtfs\\af0bdb788a9327ca029558d94ba1129c-c9e2c2b923e6ab5a6a02776f6ee82207_export-ter-gtfs-last.zip,D:\\data\\mobility\\data\\gtfs\\6ed723ba6bcedaf33afe0a279fcd90eb-d47d66a3537807ae0e6b9eae45d2a802_export_gtfs_voyages.zip,D:\\data\\mobility\\data\\gtfs\\06101eb02fd2cb92513c5a9146258fef-184253675901bfb025145a45593a95d0_DAT_AURA_GTFS_ExportAOM.zip,D:\\data\\mobility\\data\\gtfs\\118e8c7ccc21dab6ef7c4ae00aeb2829-f47807b294f863252c2da5e52a82a0da_GTFS_haute_savoie.zip,D:\\data\\mobility\\data\\gtfs\\4b15be20d8f43c174e5518dffe382b9c-e852de9f6ce818cc03277ac94926620a_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\d258e974735db72d69d53635f49f8e7a-859952002fa3c071703717753892eab8_DownloadfileNameCG38.GTFS.zip,D:\\data\\mobility\\data\\gtfs\\ad3958a96dacccb44825549e21e84979-7c570637abe59c4c966bdd7323db2746_naq-aggregated-gtfs.zip,D:\\data\\mobility\\data\\gtfs\\76ae84ec77435f8027de4beb735aebb7-9adb2aafa0827752a0db8a036b32f0e7_DESTINEO.gtfs.zip,D:\\data\\mobility\\data\\gtfs\\9e748ff3e0f6f3d11c7e7cf702348174-7eb92f86cd2571d4b6659470f41c66ce_KORRIGOBRET.gtfs.zip,D:\\data\\mobility\\data\\gtfs\\2e7eba6649c71cad0be8babd91b52ef8-05db816cd25aa105999a4cfe22c25ff3_pt-th-offer-atoumod-gtfs-20240515-708-opendata.zip,D:\\data\\mobility\\data\\gtfs\\4c0ab6406f889725882c14d580c5125f-9a6ec87a6e13b2162aae4c8f1e48a13c_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\bbcd21254f084dce9842c6ab472e89db-3099d69b1640aa362433a2b01a5adc4d_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\7a2f14da880080e2c63fb77abaac8b8e-2a8453724d9c657011b2640ab935f1ad_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\b4818db36776c0fb9d913e87abb49204-3cb37cbf51263dcec94874cc10aa8913_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\bc783b0a8511eebc0336a1a47e7ec6a7-ba0fc9ebd797ef95c9ae8c794b02d65a_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\b17491e099321ffe59121158cc03df2e-e844419b3e84ae96125e7b87ce222526_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\004500fc0adb8c8ae9f55831a6979eb7-70b9a19cf4e00c1988a5b8cb1a9a9e5e_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\6224dcc8471990db2ce2d52e4b3d1837-3b1b9a8a5bedc5c63b0b2cf11c6ba185_gtfs-sibra.zip,D:\\data\\mobility\\data\\gtfs\\d941bf10e2cbff9cfe93789801ff6e78-01939c605ab107a671c35ddb2859774b_chamberyapiKey223f2f102c1242570d3f0231326a271940774f72typegtfs_urbain.zip,D:\\data\\mobility\\data\\gtfs\\7233442004315843e003a063b0b226db-42f0655e9e41033f28eb9d26b17cb80f_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\60b323006158fc93308008b7626ad243-88f516ac120d0a40b50a35638a182350_DownloadfileNameCAPI.GTFS.zip,D:\\data\\mobility\\data\\gtfs\\bc4d950d015d8a1427d6748c283b85e2-36b41f205c5ab27575d18b06caa34ee0_capg-2024.zip,D:\\data\\mobility\\data\\gtfs\\1b011f6b7ee75af5951714b3622b9399-d00b7b823644abd7a018b69af98f5f96_medias.zip,D:\\data\\mobility\\data\\gtfs\\05dd0d50d9b519ed2c2f31474b0c448f-6343c6699bbcbdab5f285629f0c7ed27_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\495875e4327e0246c28afdb7a245260c-c70e52d90d19c7067176a1382459e454_medias.zip,D:\\data\\mobility\\data\\gtfs\\ce4c2ed581224b29eb57036f6bff0dbc-1745561814d0d3b6bb148b516e09d468_gtfs-evian-10122023-26052024-v3.zip'
+tz_file_path <- 'D:/data/mobility/projects/experiments/6bd940d1b76b6128d0aa3840fc09df07-transport_zones.gpkg'
+gtfs_file_paths <- 'D:/data/mobility/data/gtfs/fb4441305cb5d990a82cba49ecdc899c-b70c0b29d3c2d0d262640e04a62869cb_gtfs.zip,D:/data/mobility/data/gtfs/2350ef5d5e3a6e930ba0a59bd4ba1c5e-6434c57678fdd877da53c749c0eea4cf_gtfs_generic_eu.zip,D:/data/mobility/data/gtfs/2b99d1ca977f472ed5397e2939aa789e-c9e2c2b923e6ab5a6a02776f6ee82207_export-ter-gtfs-last.zip,D:/data/mobility/data/gtfs/968305a79fb51e308cf775239e743680-d47d66a3537807ae0e6b9eae45d2a802_export_gtfs_voyages.zip,D:/data/mobility/data/gtfs/7d186f3ce0dbd0ed535b17f5277f2102-105a0eda70e1e7dd1bc81c5505570bef_iledefrance_public.zip,D:/data/mobility/data/gtfs/ec7684622f34a1d84a84f45ffc544e11-a925e164271e4bca93433756d6a340d1_IDFM-gtfs.zip,D:/data/mobility/data/gtfs/a4601d5a90bd843dfb43718ae34f02b4-9adb2aafa0827752a0db8a036b32f0e7_DESTINEO.gtfs.zip,D:/data/mobility/data/gtfs/78c78e206ce4b0754702038c1958c868-7eb92f86cd2571d4b6659470f41c66ce_KORRIGOBRET.gtfs.zip,D:/data/mobility/data/gtfs/a56593ffb468cd4bdc5417bd1c9c7b37-8cdee8d2c78a1f828e0362c15b039c27_BREIZHGO_TER.gtfs.zip,D:/data/mobility/data/gtfs/0224fdb1e537792424013175bf65e9f9-05db816cd25aa105999a4cfe22c25ff3_pt-th-offer-atoumod-gtfs-20240515-708-opendata.zip,D:/data/mobility/data/gtfs/8860d5c99ddc6c9e62c40ed0a32a3c0e-e3e838387844b9d0d9bc349ae2ea5cb6_gtfs.zip,D:/data/mobility/data/gtfs/4acf9dcc8cb93180e062764313c4c74b-188dc42cb4c63c3e534f923ebf8ece38_feed.zip,D:/data/mobility/data/gtfs/27b22eb049345c541d98a8dfadb8013e-f4e7dc87159bb859a63b1e4decf16de1_gtfs-rezobus-rentree-septembre-2022.zip,D:/data/mobility/data/gtfs/dd3c139886b8d0f9f265312ed5fbcff5-97a181234e7d57c2da2ce4f9f367724f_knsbernay-18129489-gtfs-urbain-bernay.zip'
+# gtfs_file_paths <- 'D:/data/mobility/data/gtfs/2b99d1ca977f472ed5397e2939aa789e-c9e2c2b923e6ab5a6a02776f6ee82207_export-ter-gtfs-last.zip'
+output_file_path <- 'D:/data/mobility/projects/experiments/8a3e4753ed52c0dbbda6d3ff240fab31-gtfs_router.rds'
 
 
 logger <- logger(appenders = console_appender())
@@ -47,73 +49,161 @@ gtfs_file_paths <- lapply(1:length(gtfs_file_paths), function(i) {
 gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
   
   info(logger, paste0("Loading GTFS file : ", dataset$file))
+
+  gtfs <- extract_gtfs(dataset$file, quiet = FALSE)
   
-  gtfs <- NULL
+  # Keep only stops within the region
+  stops <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
+  st_crs(stops) <- 4326
+  stops_in_tz <- lengths(st_intersects(stops, transport_zones_buffer)) > 0
   
-  # Load the GTFS data
-  tryCatch({
+  gtfs$stops <- gtfs$stops[stops_in_tz, list(stop_id, stop_name, stop_lat, stop_lon)]
+  
+  # Keep only stop times at stops that are within the region
+  gtfs$stop_times <- gtfs$stop_times[
+    stop_id %in% gtfs$stops$stop_id,
+    list(trip_id, arrival_time, departure_time, stop_id, stop_sequence)
+  ]
+  
+  if (nrow(gtfs$stop_times) == 0) {
     
-    gtfs <- extract_gtfs(dataset$file, quiet = TRUE)
+    return(NULL)
     
-    # Keep only stops within the region
-    stops <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
-    st_crs(stops) <- 4326
-    stops <- st_intersection(stops, transport_zones_buffer)
+  } else {
     
-    gtfs$stops <- gtfs$stops[stop_id %in% stops$stop_id]
-    gtfs$stop_times <- gtfs$stop_times[stop_id %in% stops$stop_id]
+    # Keep only trips stopping within the region
+    stop_ids <- gtfs$stops$stop_id
+    trip_ids <- unique(gtfs$stop_times$trip_id)
+    
     gtfs$stop_times <- gtfs$stop_times[order(trip_id, arrival_time)]
+    gtfs$trips <- gtfs$trips[trip_id %in% trip_ids, list(route_id, service_id, trip_id)]
     
-    gtfs$trips <- gtfs$trips[trip_id %in% gtfs$stop_times$trip_id]
-    gtfs$routes <- gtfs$routes[route_id %in% gtfs$trips$route_id]
-    gtfs$calendar <- gtfs$calendar[service_id %in% gtfs$trips$service_id]
-    gtfs$calendar_dates <- gtfs$calendar_dates[service_id %in% gtfs$trips$service_id]
+    # Remove trips with fewer than 2 stops
+    trip_stop_counts <- gtfs$stop_times[, .N, by=trip_id]
+    valid_trips <- trip_stop_counts[N >= 2, trip_id]
     
-    # Make all ids unique
-    columns <- c("service_id", "stop_id", "agency_id", "trip_id", "route_id", "from_stop_id", "to_stop_id")
-    for (table in names(gtfs)) {
-      for (col in columns) {
-        if (col %in% colnames(gtfs[[table]])) {
-          gtfs[[table]][, (col) := paste0(dataset$name, "-", get(col))]
+    if (length(valid_trips) == 0) {
+      
+      return(NULL)
+      
+    } else {
+      
+      gtfs$trips <- gtfs$trips[trip_id %in% valid_trips]
+      gtfs$stop_times <- gtfs$stop_times[trip_id %in% valid_trips]
+      
+      # Keep only routes passing in the region
+      route_ids <- unique(gtfs$trips$route_id)
+      gtfs$routes <- gtfs$routes[route_id %in% route_ids, list(route_id, agency_id, route_short_name)]
+      
+      # Keep only agencies that have routes passing in the region
+      agency_ids <- unique(gtfs$routes$agency_id)
+      gtfs$agency <- gtfs$agency[agency_id %in% agency_ids, list(agency_id, agency_name)]
+      
+      # Keep only calendar dates for the remaining services
+      service_ids <- unique(gtfs$trips$service_id)
+      
+      if ("calendar" %in% names(gtfs)) {
+        gtfs$calendar <- gtfs$calendar[service_id %in% service_ids]
+      }
+      
+      if ("calendar_dates" %in% names(gtfs)) {
+        gtfs$calendar_dates <- gtfs$calendar_dates[service_id %in% service_ids]
+      }
+      
+      # Keep only transfers between stops in the region
+      if ("transfers" %in% names(gtfs)) {
+        gtfs$transfers <- gtfs$transfers[from_stop_id %in% stop_ids & to_stop_id %in% stop_ids, ]
+      }
+      
+      # Make all ids unique by prefixing them with the id of the GTFS dataset
+      columns <- c("service_id", "stop_id", "agency_id", "trip_id", "route_id", "from_stop_id", "to_stop_id")
+      for (table in names(gtfs)) {
+        for (col in columns) {
+          if (col %in% colnames(gtfs[[table]])) {
+            gtfs[[table]][, (col) := paste0(dataset$name, "-", get(col))]
+          }
         }
       }
-    }
-    
-    # Remove calendar data that does not respect the GTFS format
-    # (some feed erroneously copy their calendar_dates data in the calendar data)
-    if ("calendar" %in% names(gtfs)) {
-      calendar_cols <- c(
-        "service_id", "monday", "tuesday", "wednesday", "thursday", "friday", 
-        "saturday", "sunday", "start_date", "end_date"
-      )
       
-      if (sum(colnames(gtfs$calendar) %in% calendar_cols) != 10) {
-        gtfs$calendar <- NULL  
+      # Remove calendar data that does not respect the GTFS format
+      # (some feed erroneously copy their calendar_dates data in the calendar data)
+      if ("calendar" %in% names(gtfs)) {
+        calendar_cols <- c(
+          "service_id", "monday", "tuesday", "wednesday", "thursday", "friday", 
+          "saturday", "sunday", "start_date", "end_date"
+        )
+        
+        if (!all(calendar_cols %in% colnames(gtfs$calendar))) {
+          gtfs$calendar <- NULL  
+        }
       }
-    }
-    
-    if ("calendar_dates" %in% names(gtfs)) {
-      calendar_dates_cols <- c(
-        "service_id", "date", "exception_type"
-      )
       
-      if (sum(colnames(gtfs$calendar_dates) %in% calendar_dates_cols) != 3) {
-        gtfs$calendar_dates <- NULL  
+      if ("calendar_dates" %in% names(gtfs)) {
+        calendar_dates_cols <- c(
+          "service_id", "date", "exception_type"
+        )
+        
+        if (!all(calendar_dates_cols %in% colnames(gtfs$calendar_dates))) {
+          gtfs$calendar_dates <- NULL  
+        }
       }
+      
+      return(gtfs)
+      
     }
-
-    # Remove stops that are not in any trip 
-    gtfs$stops <- gtfs$stops[stop_id %in% gtfs$stop_times$stop_id]
-    
-  }, error = function(e) {
-    info(logger, "There was an error loading data from the zip file (possibly a corrupted archive).")
-  }, warning = function(w) {
-  })
   
-  return(gtfs)
+  }
+  
 })
 
 gtfs_all <- Filter(function(x) {!is.null(x)}, gtfs_all)
+
+
+# Align all GTFS to a common start date
+# Helps when feeds were downloaded at different times or when adding files created manually
+# Warning : does not take into account "special days" like holidays !
+min_dates <- sapply(gtfs_all, function(gtfs) {
+  print(gtfs$calendar)
+  print(gtfs$calendar_dates)
+  min(gtfs$calendar$start_date, gtfs$calendar_dates$date, na.rm = TRUE)
+})
+
+max_min_date <- max(ymd(min_dates))
+
+gtfs_all <- lapply(gtfs_all, function(gtfs) {
+  
+  min_date <- ymd(min(gtfs$calendar$start_date, gtfs$calendar_dates$date, na.rm = TRUE))
+  delta_days <- min_date - max_min_date
+  
+  # Offset by whole weeks to avoid mixing up week days
+  delta_days <- 7*(as.numeric(delta_days) %/% 7)
+  
+  date_to_int <- function(date) {
+    int_date <- paste0(
+      sprintf("%02d", year(date)),
+      sprintf("%02d", month(date)),
+      sprintf("%02d", day(date))
+    )
+    return(as.integer(int_date))
+  }
+  
+  if ("calendar" %in% names(gtfs)) {
+    gtfs$calendar[, start_date := ymd(start_date) - delta_days]
+    gtfs$calendar[, end_date := ymd(end_date) - delta_days]
+    gtfs$calendar[, start_date := date_to_int(start_date)]
+    gtfs$calendar[, end_date := date_to_int(end_date)]
+  }
+  
+  if ("calendar_dates" %in% names(gtfs)) {
+    gtfs$calendar_dates[, date := ymd(date) - delta_days]
+    gtfs$calendar_dates[, date := date_to_int(date)]
+  }
+  
+  return(gtfs)
+  
+})
+
+
 
 # Merge all datasets
 gtfs <- list()
@@ -128,8 +218,9 @@ for (table in c("agency", "calendar", "calendar_dates", "routes", "stops", "stop
 }
 
 gtfs <- Filter(function(x) {nrow(x) > 0}, gtfs)
-
 attr(gtfs, "filtered") <- FALSE
+
+
 
 info(logger, "Preparing transfers between stops...")
 
@@ -180,77 +271,29 @@ transfer_table <- function(gtfs, d_limit = 200, crs = 2154) {
   # Only add new transfers
   new_transfers <- transfers[!(paste(from_stop_id, to_stop_id) %in% gtfs$transfers[, paste(from_stop_id, to_stop_id)])]
   
-  gtfs$transfers <- rbindlist(list(gtfs$transfers, new_transfers), fill = TRUE, use.names = TRUE)
+  if (is.null(transfers)) {
+    gtfs$transfers <- new_transfers
+  } else {
+    gtfs$transfers <- rbindlist(list(gtfs$transfers, new_transfers), fill = TRUE, use.names = TRUE)
+  }
+  
+  gtfs$transfers <- gtfs$transfers[, list(from_stop_id, to_stop_id, min_transfer_time, transfer_type)]
+  
+  gtfs$transfers <- gtfs$transfers[, list(
+    min_transfer_time = min(min_transfer_time),
+    transfer_type = transfer_type[which.min(min_transfer_time)]
+    ),
+    list(from_stop_id, to_stop_id)
+  ]
+  
+  gtfs$transfers <- gtfs$transfers[from_stop_id != to_stop_id]
+  gtfs$transfers[is.na(transfer_type), transfer_type := 2]
   
   return(gtfs)
   
 }
 
 gtfs <- transfer_table(gtfs, d_limit = 200, crs = 2154)
-gtfs$transfers <- gtfs$transfers[from_stop_id != to_stop_id]
-
-# Transfers are NA in some feeds
-# TO DO : investigate why ?
-gtfs$transfers[is.na(transfer_type), transfer_type := 2]
-
-
-info(logger, "Fixing potential issues with stop times...")
-
-fix_stop_times <- function(gtfs) {
-  
-  # Store the name of the original columns to be able to filter all other 
-  # columns at the end of the function
-  cols <- colnames(gtfs$stop_times)
-  
-  # Convert the GTFS stops data.table to sf to be able perform spatial operations efficiently
-  stops_xy <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
-  st_crs(stops_xy) <- 4326
-  stops_xy <- st_transform(stops_xy, 2154)
-  stops_xy <- as.data.table(st_coordinates(stops_xy))
-  stops_xy$stop_id <- gtfs$stops$stop_id
-  
-  gtfs$stop_times[, previous_stop_id := shift(stop_id), by = trip_id]
-  gtfs$stop_times[, previous_departure_time := shift(departure_time), by = trip_id]
-  
-  gtfs$stop_times[is.na(previous_stop_id), previous_stop_id := stop_id]
-  gtfs$stop_times[is.na(previous_departure_time), previous_departure_time := departure_time]
-  
-  gtfs$stop_times[, delta_time := arrival_time - previous_departure_time]
-  
-  gtfs$stop_times <- merge(gtfs$stop_times, stops_xy, by = "stop_id")
-  gtfs$stop_times <- merge(gtfs$stop_times, stops_xy, by.x = "previous_stop_id", by.y = "stop_id", suffixes = c("_from", "_to"))
-  
-  gtfs$stop_times[, distance := sqrt((Y_to - Y_from)^2 + (X_to - X_from)^2)]
-  
-  gtfs$stop_times <- gtfs$stop_times[order(trip_id, departure_time)]
-  
-  gtfs$stop_times[, speed := distance/delta_time]
-  gtfs$stop_times[distance == 0.0, speed := 1.0]
-  
-  gtfs$stop_times[, last_speed := shift(speed), by = trip_id]
-  gtfs$stop_times[, next_speed := shift(speed, -1), by = trip_id]
-  
-  gtfs$stop_times[speed > 200 & !is.na(last_speed) & !is.na(next_speed), speed_interp := (last_speed + next_speed)/2]
-  gtfs$stop_times[speed > 200 & is.na(speed_interp) & !is.na(last_speed), speed_interp := last_speed]
-  gtfs$stop_times[speed > 200 & is.na(speed_interp) & !is.na(next_speed), speed_interp := next_speed]
-  
-  gtfs$stop_times[, speed_corr := ifelse(speed > 200, speed_interp, speed)]
-  gtfs$stop_times[, speed_corr := ifelse(speed > 200, speed_interp, speed)]
-  
-  gtfs$stop_times[, wait_time := departure_time - arrival_time]
-  
-  gtfs$stop_times[, delta_time_corr := ceiling(distance/speed_corr), by = trip_id]
-  
-  gtfs$stop_times[, arrival_time := arrival_time[1] + cumsum(delta_time_corr), by = trip_id]
-  gtfs$stop_times[, departure_time := arrival_time[1] + cumsum(delta_time_corr + wait_time), by = trip_id]
-  
-  gtfs$stop_times <- gtfs$stop_times[, cols, with = FALSE]
-  
-  return(gtfs)
-  
-}
-
-gtfs <- fix_stop_times(gtfs)
 
 
 info(logger, "Preparing the timetable for one day (tuesday with a maximum of running services)...")
@@ -306,19 +349,20 @@ if ("calendar_dates" %in% names(gtfs)) {
 }
 
 
+
 # Create the list of tuesdays covering all dates in the GTFS
 end_date <- max(c(cal$end_date, cal_dates$date), na.rm = TRUE)
-
 start_date <- min(c(cal$start_date, cal_dates$date), na.rm = TRUE)
 
-adjust_to_tuesday <- function(date) {
+adjust_to_tuesday <- function(date, direction = "past") {
   while(wday(date) != 2) {
-    date <- date + days(1)
+    date <- date + ifelse(direction == "past", -1.0, 1.0)*days(1)
   }
   return(date)
 }
 
-start_date <- adjust_to_tuesday(start_date)
+start_date <- adjust_to_tuesday(start_date, "past")
+end_date <- adjust_to_tuesday(end_date, "future")
 
 tuesdays <- data.table(date = seq(from = start_date, to = end_date, by = "1 week"))
 
@@ -344,14 +388,6 @@ max_services_date <- as.integer(format(max_services_date, "%Y%m%d"))
 
 # Create the GTFS timetable
 gtfs <- gtfs_timetable(gtfs, date = max_services_date)
-
-# Remove stops that do not appear in any trips
-# stop_ids <- unique(gtfs$stop_times$stop_id)
-# 
-# gtfs$stops <- gtfs$stops[stop_id %in% stop_ids]
-# 
-# gtfs$timetable <- gtfs$timetable[departure_station]
-# gtfs$stop_ids <- gtfs$stop_ids[gtfs$stop_id %in% stop_ids]
 
 
 saveRDS(gtfs, output_file_path)

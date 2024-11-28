@@ -92,7 +92,6 @@ save_cppr_graph <- function(graph, path, hash) {
     attrib$cap <- graph$attrib$cap
   }
   
-  
   if (!dir.exists(path)) {
     dir.create(path, recursive = TRUE)
   }

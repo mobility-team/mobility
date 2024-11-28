@@ -12,7 +12,8 @@ class CarMode(TransportMode):
         self,
         transport_zones: TransportZones,
         routing_parameters: PathRoutingParameters = None,
-        generalized_cost_parameters: GeneralizedCostParameters = None
+        generalized_cost_parameters: GeneralizedCostParameters = None,
+        congestion: bool = False
     ):
         
         if routing_parameters is None:
@@ -32,5 +33,5 @@ class CarMode(TransportMode):
         travel_costs = PathTravelCosts("car", transport_zones, routing_parameters)
         generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters)
         
-        super().__init__("car", travel_costs, generalized_cost)
+        super().__init__("car", travel_costs, generalized_cost, congestion)
         

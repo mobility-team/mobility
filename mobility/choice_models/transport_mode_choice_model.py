@@ -3,6 +3,7 @@ import pathlib
 import logging
 import pandas as pd
 import numpy as np
+import polars as pl
 
 from mobility.file_asset import FileAsset
 
@@ -33,27 +34,35 @@ class TransportModeChoiceModel(FileAsset):
     def create_and_get_asset(self) -> pd.DataFrame:
         
         logging.info("Computing mode probabilities by OD...")
+                
+        costs = []
+        for mode in self.inputs["destination_choice_model"].costs.modes:
+            costs.append(
+                pl.DataFrame(mode.generalized_cost.get())
+                .with_columns(pl.lit(mode.name).alias("mode"))
+            )
+        costs = pl.concat(costs)
         
-        od_utility = pd.read_parquet(self.inputs["destination_choice_model"].cache_path["utility_by_od_and_mode"])
-        prob = self.compute_mode_probability_by_od_and_mode(od_utility)
+        prob = self.compute_mode_probability_by_od(costs)
         prob.to_parquet(self.cache_path)
 
         return prob
     
     
-    def compute_mode_probability_by_od_and_mode(self, costs):
-          
-        costs["prob"] = np.exp(costs["net_utility"])
-        costs["prob"] = costs["prob"]/costs.groupby(["from", "to"])["prob"].sum()
+    def compute_mode_probability_by_od(self, costs):
         
-        # Remove very small probabilities
-        costs = costs[costs["prob"] > 0.01].copy()
-        costs["prob"] = costs["prob"]/costs.groupby(["from", "to"])["prob"].sum()
+        prob = (
+            costs
+            .with_columns((pl.col("cost").neg().exp()).alias("prob"))
+            .with_columns((pl.col("prob")/pl.col("prob").sum().over(["from", "to"])).alias("prob"))
+            .filter(pl.col("prob") > 0.01)
+            .with_columns((pl.col("prob")/pl.col("prob").sum().over(["from", "to"])).alias("prob"))
+            .select(["from", "to", "mode", "prob"])
+        )
         
-        costs = costs.reset_index()
-        costs = costs[["from", "to", "mode", "prob"]].copy()
+        prob = prob.to_pandas()
         
-        return costs
+        return prob
     
     
     def get_comparison_by_origin(self, flows):

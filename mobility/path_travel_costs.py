@@ -1,6 +1,7 @@
 import os
 import pathlib
 import logging
+import shutil
 import pandas as pd
 import geopandas as gpd
 
@@ -50,25 +51,32 @@ class PathTravelCosts(FileAsset):
             "routing_parameters": routing_parameters
         }
 
-        file_name = "dodgr_travel_costs_" + mode_name + ".parquet"
-        cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
+        cache_path = {
+            "freeflow": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / ("travel_costs_free_flow_" + mode_name + ".parquet"),
+            "congested": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / ("travel_costs_congested_" + mode_name + ".parquet")
+        }
 
         super().__init__(inputs, cache_path)
 
-    def get_cached_asset(self) -> pd.DataFrame:
+    def get_cached_asset(self, congestion: bool = False) -> pd.DataFrame:
         """
         Retrieves the travel costs DataFrame from the cache.
 
         Returns:
             pd.DataFrame: The cached DataFrame of travel costs.
         """
+        
+        if congestion is False:
+            path = self.cache_path["freeflow"]
+        else:
+            path = self.cache_path["congested"]
 
-        logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
-        costs = pd.read_parquet(self.cache_path)
+        logging.info("Travel costs already prepared. Reusing the file : " + str(path))
+        costs = pd.read_parquet(path)
 
         return costs
 
-    def create_and_get_asset(self) -> pd.DataFrame:
+    def create_and_get_asset(self, congestion: bool = False) -> pd.DataFrame:
         """
         Creates and retrieves travel costs based on the current inputs.
 
@@ -83,14 +91,21 @@ class PathTravelCosts(FileAsset):
         self.transport_zones.get()
         self.contracted_path_graph.get()
         
-        costs = self.compute_costs_by_OD(self.transport_zones, self.contracted_path_graph)
-        costs.to_parquet(self.cache_path)
+        if congestion is False:
+            output_path = self.cache_path["freeflow"]
+        else:
+            output_path = self.cache_path["congested"]
+        
+        costs = self.compute_freeflow_costs_by_OD(self.transport_zones, self.contracted_path_graph, output_path)
+        
+        if congestion is False:
+            shutil.copy(self.cache_path["freeflow"], self.cache_path["congested"])
 
         return costs
 
 
 
-    def compute_costs_by_OD(self, transport_zones: TransportZones, path_graph: PathGraph) -> pd.DataFrame:
+    def compute_freeflow_costs_by_OD(self, transport_zones: TransportZones, path_graph: PathGraph, output_path: pathlib.Path) -> pd.DataFrame:
         """
         Calculates travel costs for the specified mode of transportation using the created graph.
 
@@ -111,12 +126,18 @@ class PathTravelCosts(FileAsset):
                 str(path_graph.cache_path),
                 str(self.routing_parameters.filter_max_speed),
                 str(self.routing_parameters.filter_max_time),
-                str(self.cache_path)
+                str(output_path)
             ]
         )
-
-        costs = pd.read_parquet(self.cache_path)
+        
+        costs = pd.read_parquet(output_path)
 
         return costs
+    
+    
+    def update(self, od_flows):
+        
+        self.contracted_path_graph.update(od_flows)
+        self.create_and_get_asset(congestion=True)
     
     

@@ -9,7 +9,8 @@ import seaborn as sns
 from abc import abstractmethod
 
 from mobility.file_asset import FileAsset
-from mobility import radiation_model, radiation_model_selection
+from mobility import radiation_model_selection
+from mobility.choice_models.travel_costs_aggregator import TravelCostsAggregator
 
 class DestinationChoiceModel(FileAsset):
     """
@@ -46,12 +47,12 @@ class DestinationChoiceModel(FileAsset):
             Minimum reference volume to consider for similarity index.
         """
         
-        generalized_costs = {mode.name: mode.generalized_cost for mode in modes}
+        costs = TravelCostsAggregator(modes)
         
         inputs = {
             "motive": motive,
             "transport_zones": transport_zones,
-            "generalized_costs": generalized_costs,
+            "costs": costs,
             "parameters": parameters,
             "ssi_min_flow_volume": ssi_min_flow_volume
         }
@@ -91,29 +92,16 @@ class DestinationChoiceModel(FileAsset):
             on="local_admin_unit_id"
         )
         
-        costs = [gc.get().assign(mode=m) for m, gc in self.generalized_costs.items()]
-        costs = pd.concat(costs)
-        
         sources, sinks = self.prepare_sources_and_sinks(transport_zones)
-        ref_flows = self.prepare_reference_flows(transport_zones)
-        
-        costs = costs.set_index(["from", "to", "mode"])
-        
-        utility_by_od_and_mode = self.compute_utility_by_od_and_mode(
-            transport_zones,
-            costs
-        )
-        
-        utility_by_od = self.compute_utility_by_od(utility_by_od_and_mode)
+        utilities = self.prepare_utilities(transport_zones, sinks)
         
         flows = self.compute_flows(
             transport_zones,
             sources,
             sinks,
-            utility_by_od
+            self.costs,
+            utilities
         )
-        
-        # flows = self.add_reference_flows(transport_zones, flows, ref_flows)
         
         
         choice_model = flows[["from", "to", "flow_volume"]].set_index(["from", "to"])["flow_volume"]
@@ -123,7 +111,7 @@ class DestinationChoiceModel(FileAsset):
         
         flows.to_parquet(self.cache_path["od_flows"])
         choice_model.to_parquet(self.cache_path["destination_choice_model"])
-        utility_by_od_and_mode.to_parquet(self.cache_path["utility_by_od_and_mode"])
+        # utility_by_od_and_mode.to_parquet(self.cache_path["utility_by_od_and_mode"])
         
         return choice_model
     
@@ -137,74 +125,34 @@ class DestinationChoiceModel(FileAsset):
     def prepare_sources_and_sinks(self):
         pass
     
-    
-    def compute_utility_by_od(
-            self,
-            utilities: pd.DataFrame,
-        ):
-        
-        utilities = utilities.copy()
-        
-        # Shift the utility to avoid exp overflows 
-        # max_net_utility = utilities["net_utility"].max()
-        # utilities["net_utility"] -= max_net_utility
-        
-        utilities["prob"] = np.exp(utilities["net_utility"])
-        utilities["prob"] = utilities["prob"]/utilities.groupby(["from", "to"])["prob"].transform("sum")
-        
-        utilities["cost"] = utilities["prob"]*utilities["cost"]
-        utilities["net_utility"] = utilities["prob"]*utilities["net_utility"]
-        
-        utilities = utilities.groupby(["from", "to"]).agg({
-            "cost": "sum",
-            "utility": "first",
-            "net_utility": "sum"
-        })
-        
-        # utilities["net_utility"] += max_net_utility
-        
-        return utilities
-        
 
-    def compute_flows(
-            self,
-            transport_zones,
-            sources: pd.DataFrame,
-            sinks: pd.DataFrame,
-            utility_by_od: pd.DataFrame
-        ):
+    # def compute_flows(
+    #         self,
+    #         transport_zones,
+    #         sources: pd.DataFrame,
+    #         sinks: pd.DataFrame,
+    #         costs,
+    #         utilities
+    #     ):
         
-        parameters = self.inputs["parameters"]
+    #     parameters = self.inputs["parameters"]
         
-        # country_zone = transport_zones[["transport_zone_id", "country"]].set_index("transport_zone_id").rename_axis('from')
-        # country_zone["local_admin_unit_id"] = country_zone["local_admin_unit_id"].str[:2]
-        # country_zone.rename(columns={"local_admin_unit_id": "country_id"}, inplace=True) 
-        # sources = pd.merge(sources, country_zone, on="from", how="inner")
+    #     flows, _, _ = radiation_model_selection.radiation_model_selection(
+    #         sources=sources,
+    #         sinks=sinks,
+    #         costs=costs,
+    #         utilities=utilities,
+    #         selection_lambda=parameters.model["lambda"]
+    #     )
         
-        if parameters.model["type"] == "radiation_universal":
-            flows, _, _ = radiation_model.iter_radiation_model(
-                sources=sources,
-                sinks=sinks,
-                costs=utility_by_od,
-                alpha=parameters.model["alpha"],
-                beta=parameters.model["beta"]
-            )
-        else:
-            flows, _, _ = radiation_model_selection.iter_radiation_model_selection(
-                sources=sources,
-                sinks=sinks,
-                costs=utility_by_od,
-                selection_lambda=parameters.model["lambda"]
-            )
+    #     flows = flows.to_frame().reset_index()
         
-        flows = flows.to_frame().reset_index()
+    #     flows = pd.merge(flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="from", right_on="transport_zone_id")
+    #     flows = pd.merge(flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="to", right_on="transport_zone_id", suffixes=["_from", "_to"])
         
-        flows = pd.merge(flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="from", right_on="transport_zone_id")
-        flows = pd.merge(flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="to", right_on="transport_zone_id", suffixes=["_from", "_to"])
+    #     flows = flows[["from", "to", "local_admin_unit_id_from", "local_admin_unit_id_to", "flow_volume"]]
         
-        flows = flows[["from", "to", "local_admin_unit_id_from", "local_admin_unit_id_to", "flow_volume"]]
-        
-        return flows
+    #     return flows
     
     
     def get_comparison(self):

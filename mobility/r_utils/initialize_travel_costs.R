@@ -7,8 +7,7 @@ initialize_travel_costs <- function(
     mid_verts,
     dest_verts,
     first_modal_shift,
-    last_modal_shift,
-    graph
+    last_modal_shift
   ) {
   
   buildings_sample <- copy(buildings_sample)
@@ -101,7 +100,7 @@ initialize_travel_costs <- function(
   )
 
   # Filter out origin - destinations pairs for which there is no public transport 
-  # spot within travel times to access the first stop and to get to the final destination
+  # stop within travel times to access the first stop and to get to the final destination
   if (!is.null(mid_verts)) {
     
     travel_costs <- merge(
@@ -124,11 +123,11 @@ initialize_travel_costs <- function(
   
   }
   
-  travel_costs[, vertex_id_from := paste0("s", vertex_id_from)]
-  travel_costs[, vertex_id_to := paste0("l", vertex_id_to)]
+  # travel_costs[, vertex_id_from := paste0("s", vertex_id_from)]
+  # travel_costs[, vertex_id_to := paste0("l", vertex_id_to)]
   
-  travel_costs <- travel_costs[vertex_id_from %in% graph$dict$ref]
-  travel_costs <- travel_costs[vertex_id_to %in% graph$dict$ref]
+  # travel_costs <- travel_costs[vertex_id_from %in% graph$dict$ref]
+  # travel_costs <- travel_costs[vertex_id_to %in% graph$dict$ref]
   
   return(travel_costs)
   

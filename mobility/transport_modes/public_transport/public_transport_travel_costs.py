@@ -58,8 +58,8 @@ class PublicTransportTravelCosts(FileAsset):
         inputs = {
             "transport_zones": transport_zones,
             "public_transport_graph": public_transport_graph,
-            "first_leg_graph": first_leg_mode.travel_costs.simplified_path_graph,
-            "last_leg_graph": last_leg_mode.travel_costs.simplified_path_graph,
+            "first_leg_graph": first_leg_mode.travel_costs.contracted_path_graph,
+            "last_leg_graph": last_leg_mode.travel_costs.contracted_path_graph,
             "first_modal_shift": first_modal_shift,
             "last_modal_shift": last_modal_shift,
             "parameters": parameters

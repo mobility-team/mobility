@@ -12,6 +12,8 @@ class PathGraph:
     ):
         
         self.simplified = SimplifiedPathGraph(mode_name, transport_zones)
-        self.contracted = ContractedPathGraph(self.simplified)
+        self.contracted = ContractedPathGraph(self.simplified, transport_zones)
+        
+
         
         

@@ -27,7 +27,7 @@ class RScript:
         # Prepend the package path to the argument list so the R script can
         # know where it is run (useful when sourcing other R scripts).
         with resources.files('mobility') as p:
-            args = [p] + args
+            args = [str(p)] + args
         
         cmd = ["Rscript", self.script_path] + args
         

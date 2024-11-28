@@ -21,10 +21,10 @@ max_time <- as.numeric(args[5])
 output_fp <- args[6]
 
 # package_path <- "D:/dev/mobility_oss/mobility"
-# tz_fp <- "D:\\data\\mobility\\projects\\study_area\\d2b01e6ba3afa070549c111f1012c92d-transport_zones.gpkg"
+# tz_fp <- "D:/data/mobility/projects/experiments/6250b72770c44a2e0776d242a7551226-transport_zones.gpkg"
 # max_speed <- 80.0
 # max_time <- 1.0
-# graph_fp <- "D:\\data\\mobility\\projects\\study_area\\path_graph_walk\\contracted\\50afbe9bead045124493d2ad51a3904d-done"
+# graph_fp <- "D:/data/mobility/projects/experiments/path_graph_car/contracted/43e9b13b899c59847afcf30d5ea79d8e-done"
 
 buildings_sample_fp <- file.path(
   dirname(tz_fp),
@@ -123,6 +123,8 @@ travel_costs$time <- get_distance_pair(
   to = travel_costs$vertex_id_to,
   aggregate_aux = FALSE
 )
+
+travel_costs <- travel_costs[!is.na(time) & !is.na(distance)]
 
 travel_costs[, prob := weight_from_cluster*weight_to_cluster]
 travel_costs[, prob := prob/sum(prob), list(from, to)]

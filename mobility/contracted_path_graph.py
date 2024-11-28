@@ -6,15 +6,21 @@ from importlib import resources
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.simplified_path_graph import SimplifiedPathGraph
+from mobility.transport_zones import TransportZones
 
 class ContractedPathGraph(FileAsset):
 
-    def __init__(self, simplified_graph: SimplifiedPathGraph):
+    def __init__(self, simplified_graph: SimplifiedPathGraph, transport_zones: TransportZones):
         
-        inputs = {"simplified_graph": simplified_graph}
+        inputs = {
+            "transport_zones": transport_zones,
+            "simplified_graph": simplified_graph
+        }
         
         file_name = pathlib.Path("path_graph_" + simplified_graph.mode_name) / "contracted" / "done"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
+        
+        self.flows_file_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / ("path_graph_" + simplified_graph.mode_name) / "simplified" / "flows.parquet"
 
         super().__init__(inputs, cache_path)
 
@@ -27,9 +33,13 @@ class ContractedPathGraph(FileAsset):
     def create_and_get_asset(self) -> pathlib.Path:
         
         logging.info("Contracting graph...")
+        
+        self.transport_zones.get()
 
         self.contract_graph(
             self.simplified_graph.get(),
+            self.transport_zones.cache_path,
+            self.flows_file_path,
             self.cache_path
         )
 
@@ -38,6 +48,8 @@ class ContractedPathGraph(FileAsset):
     def contract_graph(
             self,
             simplified_graph_path: pathlib.Path,
+            transport_zones_path: pathlib.Path,
+            flows_file_path: pathlib.Path,
             output_file_path: pathlib.Path
         ) -> None:
          
@@ -46,10 +58,19 @@ class ContractedPathGraph(FileAsset):
         script.run(
             args=[
                 str(simplified_graph_path),
+                str(transport_zones_path),
+                str(flows_file_path),
                 str(output_file_path)
             ]
         )
 
         return None
+    
+    def update(self, od_flows):
+        
+        logging.info("Rebuilding contracted graph given OD flows and congestion...")
+        
+        od_flows.write_parquet(self.flows_file_path)
+        self.create_and_get_asset()
 
 

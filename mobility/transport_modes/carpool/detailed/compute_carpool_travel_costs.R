@@ -23,8 +23,8 @@ output_file_path <- args[6]
 
 # package_path <- 'D:/dev/mobility_oss/mobility'
 # tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg'
-# first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_car/simplified"
-# last_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_car/simplified"
+# first_leg_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\9a6f4500ffbf148bfe6aa215a322e045-done"
+# last_leg_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\9a6f4500ffbf148bfe6aa215a322e045-done"
 # modal_shift <- '{"max_travel_time": 0.33, "average_speed": 50.0, "shift_time": 10.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
 # output_file_path <- 'D:\\data\\mobility\\projects\\study_area\\92d64787200e7ed83bc8eadf88d3acc4-public_transport_travel_costs.parquet'
 
@@ -84,9 +84,11 @@ travel_costs <- initialize_travel_costs(
   NULL,
   last_verts,
   NULL,
-  NULL,
-  graph
+  NULL
 )
+
+travel_costs[, vertex_id_from := paste0("s", vertex_id_from)]
+travel_costs[, vertex_id_to := paste0("l", vertex_id_to)]
 
 # Compute the travel time between clusters
 info(logger, "Computing travel times...")
