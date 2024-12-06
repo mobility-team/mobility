@@ -3,5 +3,5 @@ from mobility.transport_modes.car import CarMode
 from mobility.transport_modes.walk import WalkMode
 from mobility.transport_modes.bicycle import BicycleMode
 from mobility.transport_modes.public_transport import PublicTransportMode, PublicTransportRoutingParameters
-from mobility.transport_modes.carpool import CarpoolMode, DetailedCarpoolRoutingParameters, DetailedCarpoolGeneralizedCostParameters
+from mobility.transport_modes.carpool import CarpoolMode, DetailedCarpoolRoutingParameters
 from mobility.transport_modes.modal_shift import ModalShift

@@ -7,6 +7,13 @@ from mobility.cost_of_time_parameters import CostOfTimeParameters
 from mobility.path_generalized_cost import PathGeneralizedCost
 
 class CarMode(TransportMode):
+    """
+    A class for car transportation. Creates travel costs for the mode, using the provided parameters or default ones.
+    
+    Attributes:
+        transport_zones (TransportZones): transport zones to consider
+        parameters(CarParameters): composants of cost. Default: standard parameters.
+    """
     
     def __init__(
         self,
