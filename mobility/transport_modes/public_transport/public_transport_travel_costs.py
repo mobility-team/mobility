@@ -14,7 +14,7 @@ from mobility.transport_modes.public_transport.public_transport_graph import Pub
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
 from mobility.transport_modes import TransportMode
 from mobility.transport_modes.modal_shift import ModalShift
-from mobility.path_graph import SimplifiedPathGraph
+from mobility.path_graph import SimplifiedPathGraph, ContractedPathGraph
 
 class PublicTransportTravelCosts(FileAsset):
     """
@@ -97,12 +97,12 @@ class PublicTransportTravelCosts(FileAsset):
         return costs
 
     
-    def  compute_travel_costs(
+    def compute_travel_costs(
             self,
             transport_zones: TransportZones,
             public_transport_graph: PublicTransportGraph,
-            first_leg_graph: SimplifiedPathGraph,
-            last_leg_graph: SimplifiedPathGraph,
+            first_leg_graph: ContractedPathGraph,
+            last_leg_graph: ContractedPathGraph,
             first_modal_shift: ModalShift,
             last_modal_shift: ModalShift,
             parameters: PublicTransportRoutingParameters

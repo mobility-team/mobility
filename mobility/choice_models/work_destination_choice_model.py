@@ -31,7 +31,9 @@ class WorkDestinationChoiceModelParameters:
             "end_of_contract_rate": 0.1,
             "job_change_utility_constant": -10.0,
             "max_iterations": 20,
-            "tolerance": 0.01
+            "tolerance": 0.01,
+            "cost_update": False,
+            "n_iter_cost_update": 5
         }
     )
     
@@ -98,6 +100,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             self.jobs_active_population = JobsActivePopulationDistribution()
             self.reference_flows = JobsActivePopulationFlows()
         else:
+            self.jobs_active_population = None
             self.active_population = active_population
             self.jobs = jobs
             self.reference_flows = reference_flows
@@ -120,6 +123,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             "work",
             transport_zones,
             modes,
+            self.jobs_active_population,
             parameters,
             ssi_min_flow_volume
         )
@@ -190,6 +194,8 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         
         # There are errors in the reference data that can lead to negative values
         active_population = active_population[active_population["active_pop"] > 0.0]
+        
+        
         
         # Disaggregate the active population at transport zone level
         active_population = pd.merge(
@@ -285,6 +291,8 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             job_change_utility_constant = self.parameters.model["job_change_utility_constant"]
             max_iterations = self.parameters.model["max_iterations"]
             tolerance = self.parameters.model["tolerance"]
+            cost_update = self.parameters.model["cost_update"]
+            n_iter_cost_update = self.parameters.model["n_iter_cost_update"]
         
             # Convert input DataFrames to Polars DataFrames
             sources = pl.DataFrame(sources.reset_index()).with_columns([
@@ -327,8 +335,10 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
                         .select(["from", "to", "flow_volume"])
                     )
                 
-                # costs.update(od_flows)
-                # costs_values = costs.get(congestion=True)
+                # Update the costs of flows every n iterations
+                if cost_update is True and i > 0 and i % n_iter_cost_update == 0: 
+                    costs.update(od_flows)
+                    costs_values = costs.get(congestion=True)
                 
                 od_flows = (
                     
@@ -360,9 +370,6 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
                     .select(["from", "to", "flow_volume", "job_seekers"])
                     
                 )
-                
-                print(od_flows["flow_volume"].sum())
-                    
                 
                 sources = (
                     od_flows
@@ -397,10 +404,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
                 
                 logging.info("Iteration n°" + str(i) + " - Convergence : " + str(d_flows))
                 
-                i += 1
-                
-                # job_change_utility_constant += 0.1
-    
+                i += 1    
             
             
             # After convergence all jobless persons are assigned to the remaining opportunities with the radiation model
@@ -412,9 +416,6 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
                 selection_lambda=selection_lambda
             )
             
-            print(od_flows["flow_volume"].sum())
-            print(job_seekers_flows["flow_volume"].sum())
-            
             od_flows = (
                 od_flows
                 .join(job_seekers_flows, on=["from", "to"], how="full", coalesce=True)
@@ -424,7 +425,6 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             )
             
             # Last step, we need to reassign remaining jobless persons to the remaining opportunites
-            
             od_flows = (
                 
                 # Compute the number of persons in each OD flow that could not find a 
@@ -465,9 +465,6 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
                 utilities_values,
                 selection_lambda=selection_lambda
             )
-            
-            print(od_flows["flow_volume"].sum())
-            print(job_seekers_flows["flow_volume"].sum())
             
             od_flows = (
                 od_flows

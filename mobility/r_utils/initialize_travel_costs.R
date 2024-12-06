@@ -71,7 +71,7 @@ initialize_travel_costs <- function(
   if (!is.null(mid_verts)) {
     
     con_knn <- get.knnx(
-      unique(mid_verts[, list(x, y)]),
+      unique(mid_verts[vertex_type == "access", list(x, y)]),
       buildings_sample[, list(x, y)],
       k = 1
     )
@@ -118,8 +118,8 @@ initialize_travel_costs <- function(
       suffixes = c("_from", "_to")
     )
   
-    travel_costs <- travel_costs[dist_con_from/1000/first_modal_shift$average_speed < first_modal_shift$max_travel_time*1.5]
-    travel_costs <- travel_costs[dist_con_to/1000/last_modal_shift$average_speed < last_modal_shift$max_travel_time*1.5]
+    travel_costs <- travel_costs[dist_con_from/1000/first_modal_shift$average_speed < first_modal_shift$max_travel_time]
+    travel_costs <- travel_costs[dist_con_to/1000/last_modal_shift$average_speed < last_modal_shift$max_travel_time]
   
   }
   

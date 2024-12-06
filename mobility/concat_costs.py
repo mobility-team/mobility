@@ -1,9 +1,15 @@
 import pandas as pd
 import numpy as np
 
-def concat_travel_costs(modes):
+def concat_travel_costs(modes, year):
     
-    costs = {m.name: m.travel_costs.get() for m in modes}
+    def get_travel_costs(mode):
+        if mode.congestion:
+            return mode.travel_costs.get(congestion=mode.congestion)
+        else:
+            return mode.travel_costs.get()
+    
+    costs = {m.name: get_travel_costs(m) for m in modes}
     costs = [tc.assign(mode=m) for m, tc in costs.items()]
     costs = pd.concat(costs)
     
@@ -16,7 +22,11 @@ def concat_travel_costs(modes):
         "walk": 0.0
     }
     
-    ef["car_average"] = 0.02*ef["car_electric"] + 0.98*ef["car_ice"]
+    if year == 2024:
+        ef["car_average"] = 0.02*ef["car_electric"] + 0.98*ef["car_ice"]
+    else:
+        ef["car_average"] = 0.9*ef["car_electric"] + 0.1*ef["car_ice"]
+        
     ef["carpool"] = ef["car_average"]/2
     
     costs["ghg_emissions"] = 0.0
@@ -42,6 +52,13 @@ def concat_travel_costs(modes):
     costs["ghg_emissions"] = np.where(
         costs["mode"] == "car/public_transport/walk",
         costs["start_distance"]*ef["car_average"] + costs["mid_distance"]*ef["public_transport"],
+        costs["ghg_emissions"]
+    )
+    
+    
+    costs["ghg_emissions"] = np.where(
+        costs["mode"] == "bicycle/public_transport/walk",
+        costs["mid_distance"]*ef["public_transport"],
         costs["ghg_emissions"]
     )
     

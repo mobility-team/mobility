@@ -57,13 +57,13 @@ for car_vot in [0.0]:
         )
     )
 
-    car_cost_constant = 5.0
+    car_cost_constant = 0.0
     car_cost_of_distance = 0.1
 
     car_cost_of_time = mobility.CostOfTimeParameters(
         intercept=9.0,
         breaks=[0.0, 2.0, 10.0, 10000.0],
-        slopes=[0.0, 1.0*(12.0-9.0)/(6.0-2.0), 1.0*(27.0-15.0)/(50.0-10.0)],
+        slopes=[0.0, (12.0-9.0)/(6.0-2.0), (27.0-15.0)/(50.0-10.0)],
         max_value=26.0
     )
 
@@ -116,11 +116,12 @@ for car_vot in [0.0]:
     work_dest_parms = mobility.WorkDestinationChoiceModelParameters(
         model={
             "type": "radiation",
-            "lambda": 0.9997,
-            "end_of_contract_rate": 0.0,
+            "lambda": 0.9998,
+            "end_of_contract_rate": 0.001,
             "job_change_utility_constant": -5.0,
-            "max_iterations": 30,
-            "tolerance": 0.01
+            "max_iterations": 20,
+            "tolerance": 0.005,
+            "cost_update": True
         }
     )
     
@@ -156,8 +157,9 @@ for car_vot in [0.0]:
 print(ssi)
 
 
-comparison = comparison[(comparison["ref_flow_volume"] > 100.0) | (comparison["flow_volume"] > 100.0)]
+comparison = comparison[(comparison["ref_flow_volume"] > 200.0) | (comparison["flow_volume"] > 200.0)]
 comparison["delta"] = comparison["flow_volume"] - comparison["ref_flow_volume"]
+comparison["relative_error"] = comparison["delta"]/comparison["ref_flow_volume"]
 
 rmse = np.sqrt((comparison["delta"].pow(2)).sum()/comparison.shape[0])
 nrmse = rmse/comparison["ref_flow_volume"].mean()

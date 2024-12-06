@@ -25,6 +25,7 @@ class DestinationChoiceModel(FileAsset):
             motive: str,
             transport_zones: gpd.GeoDataFrame, 
             modes,
+            sources_sinks,
             parameters,
             ssi_min_flow_volume: float
         ):
@@ -50,6 +51,7 @@ class DestinationChoiceModel(FileAsset):
         costs = TravelCostsAggregator(modes)
         
         inputs = {
+            "sources_sinks": sources_sinks,
             "motive": motive,
             "transport_zones": transport_zones,
             "costs": costs,
@@ -60,12 +62,10 @@ class DestinationChoiceModel(FileAsset):
         data_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
         od_flows_filename = motive + "_od_flows.parquet"
         dest_cm_filename = motive + "_destination_choice_model.parquet"
-        utility_by_od_and_mode_filename = motive + "_utility_by_od_and_mode.parquet"
         
         cache_path = {
             "od_flows": data_folder / od_flows_filename,
-            "destination_choice_model": data_folder / dest_cm_filename,
-            "utility_by_od_and_mode": data_folder / utility_by_od_and_mode_filename
+            "destination_choice_model": data_folder / dest_cm_filename
         }
         
         super().__init__(inputs, cache_path)
@@ -102,7 +102,6 @@ class DestinationChoiceModel(FileAsset):
             self.costs,
             utilities
         )
-        
         
         choice_model = flows[["from", "to", "flow_volume"]].set_index(["from", "to"])["flow_volume"]
         choice_model = choice_model/choice_model.groupby("from").sum()

@@ -30,7 +30,7 @@ class CarMode(TransportMode):
             )
             
         
-        travel_costs = PathTravelCosts("car", transport_zones, routing_parameters)
+        travel_costs = PathTravelCosts("car", transport_zones, routing_parameters, congestion)
         generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters)
         
         super().__init__("car", travel_costs, generalized_cost, congestion)

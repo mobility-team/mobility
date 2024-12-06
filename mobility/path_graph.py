@@ -8,11 +8,12 @@ class PathGraph:
     def __init__(
         self,
         mode_name: str,
-        transport_zones: gpd.GeoDataFrame
+        transport_zones: gpd.GeoDataFrame,
+        congestion: bool
     ):
         
         self.simplified = SimplifiedPathGraph(mode_name, transport_zones)
-        self.contracted = ContractedPathGraph(self.simplified, transport_zones)
+        self.contracted = ContractedPathGraph(self.simplified, transport_zones, congestion)
         
 
         

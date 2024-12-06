@@ -32,7 +32,13 @@ class PathTravelCosts(FileAsset):
         dodgr_costs: Calculate travel costs using the generated graph.
     """
 
-    def __init__(self, mode_name: str, transport_zones: gpd.GeoDataFrame, routing_parameters: PathRoutingParameters):
+    def __init__(
+            self,
+            mode_name: str,
+            transport_zones: gpd.GeoDataFrame,
+            routing_parameters: PathRoutingParameters,
+            congestion: bool = False
+        ):
         """
         Initializes a TravelCosts object with the given transport zones and travel mode.
 
@@ -41,7 +47,7 @@ class PathTravelCosts(FileAsset):
             mode (str): Mode of transportation for calculating travel costs.
         """
 
-        path_graph = PathGraph(mode_name, transport_zones)
+        path_graph = PathGraph(mode_name, transport_zones, congestion)
         
         inputs = {
             "transport_zones": transport_zones,
@@ -105,7 +111,12 @@ class PathTravelCosts(FileAsset):
 
 
 
-    def compute_freeflow_costs_by_OD(self, transport_zones: TransportZones, path_graph: PathGraph, output_path: pathlib.Path) -> pd.DataFrame:
+    def compute_freeflow_costs_by_OD(
+            self,
+            transport_zones: TransportZones,
+            path_graph: PathGraph,
+            output_path: pathlib.Path
+        ) -> pd.DataFrame:
         """
         Calculates travel costs for the specified mode of transportation using the created graph.
 

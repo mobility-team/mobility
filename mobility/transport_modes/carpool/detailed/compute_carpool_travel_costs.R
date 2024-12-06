@@ -136,15 +136,6 @@ travel_costs$carpooling_time <- get_distance_pair(
 
 travel_costs$car_time <- travel_costs$total_time - travel_costs$carpooling_time
 
-# travel_costs[from == 39 & to == 145]
-# get_path_pair(graph, "s1208010892", "l6442616615")
-# graph$dict[graph$dict$ref == "s3540076720"]
-# graph$dict[graph$dict$ref == "l3540076720"]
-# graph$data[graph$data$from == 94271 & graph$data$to == 269361, ]
-# get_path_pair(start_graph, "6466696885", "6442616615")
-# get_distance_pair(graph, "s6466696885", "l6442616615")
-# get_distance_pair(start_graph, "6466696885", "6442616615", aggregate_aux = FALSE)
-
 
 # Aggregate the result by transport zone
 travel_costs[, prob := weight_from*weight_to]

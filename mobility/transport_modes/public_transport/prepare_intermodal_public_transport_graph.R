@@ -317,12 +317,12 @@ all_verts <- rbindlist(
 
 all_verts <- all_verts[vertex_id %in% all_legs$from | vertex_id %in% all_legs$to]
 
-graph <- makegraph(
+cppr_graph <- makegraph(
   all_legs[, list(from, to, dist = time)],
   coords = all_verts
 )
 
-graph$attrib <- list(
+cppr_graph$attrib <- list(
   aux = NULL,
   alpha = NULL,
   beta = NULL,
@@ -334,92 +334,14 @@ graph$attrib <- list(
   last_time = all_legs[, ifelse(leg == 3, time, 0.0)]
 )
 
-# graph <- cpp_contract(graph)
-
-
 travel_costs[, vertex_id_from := paste0("s1-", vertex_id_from)]
 travel_costs[, vertex_id_to := paste0("l2-", vertex_id_to)]
 
 
-# Compute the travel costs
-info(logger, "Computing travel costs...")
+# Save the graph
+hash <- strsplit(basename(output_fp), "-")[[1]][1]
+save_cppr_contracted_graph(cppr_graph, dirname(output_fp), hash)
+write_parquet(all_verts, file.path(dirname(dirname(output_fp)), paste0(hash, "-vertices.parquet")))
 
-travel_costs <- travel_costs[vertex_id_from %in% all_verts$vertex_id & vertex_id_to %in% all_verts$vertex_id]
+file.create(output_fp)
 
-graph_c <- cpp_contract(graph)
-
-travel_costs$total_time <- get_distance_pair(
-  graph_c,
-  travel_costs$vertex_id_from,
-  travel_costs$vertex_id_to
-)
-
-modal_shift_time <- 60*(first_modal_shift$shift_time + last_modal_shift$shift_time)
-travel_costs[, total_time := total_time + modal_shift_time]
-
-travel_costs <- travel_costs[total_time < 3600]
-
-get_distance_pair_aux <- function(graph, from, to, aux_name) {
-  
-  graph$attrib$aux <- graph$attrib[[aux_name]]
-  
-  value <- get_distance_pair(
-    graph,
-    from = from,
-    to = to,
-    algorithm = "NBA",
-    constant = 0.1,
-    aggregate_aux = TRUE
-  )
-  
-  return(value)
-}
-
-
-for (aux_name in c("start_time", "last_time", "start_distance", "mid_distance", "last_distance")) {
-  
-  info(logger, paste0("Computing auxiliary variable : ", aux_name))
-  
-  travel_costs[[aux_name]] <- get_distance_pair_aux(
-    graph,
-    from = travel_costs$vertex_id_from,
-    to = travel_costs$vertex_id_to,
-    aux_name = aux_name
-  )
-  
-  # Remove trips that don't rely enough on public transport
-  if (aux_name == "start_time") {
-    travel_costs <- travel_costs[start_time/total_time < 0.5]
-  }
-  
-  if (aux_name == "last_time") {
-    travel_costs <- travel_costs[last_time/total_time < 0.5]
-  }
-  
-}
-
-
-travel_costs[, mid_time := total_time - start_time - last_time]
-
-
-
-# Aggregate the result by transport zone
-travel_costs[, prob := weight_from*weight_to]
-travel_costs[, prob := prob/sum(prob), list(from, to)]
-
-travel_costs <- travel_costs[,
-  list(
-    start_distance = weighted.mean(start_distance, prob)/1000,
-    start_time = weighted.mean(start_time, prob)/3600,
-    mid_distance = weighted.mean(mid_distance, prob)/1000,
-    mid_time = weighted.mean(mid_time, prob)/3600,
-    last_distance = weighted.mean(last_distance, prob)/1000,
-    last_time = weighted.mean(last_time, prob)/3600
-  ),
-  by = list(from, to)
-]
-
-
-
-
-write_parquet(travel_costs, output_file_path)

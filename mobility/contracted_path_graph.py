@@ -10,11 +10,17 @@ from mobility.transport_zones import TransportZones
 
 class ContractedPathGraph(FileAsset):
 
-    def __init__(self, simplified_graph: SimplifiedPathGraph, transport_zones: TransportZones):
+    def __init__(
+            self,
+            simplified_graph: SimplifiedPathGraph,
+            transport_zones: TransportZones,
+            handles_congestion: bool = False
+        ):
         
         inputs = {
             "transport_zones": transport_zones,
-            "simplified_graph": simplified_graph
+            "simplified_graph": simplified_graph,
+            "handles_congestion": handles_congestion
         }
         
         file_name = pathlib.Path("path_graph_" + simplified_graph.mode_name) / "contracted" / "done"
@@ -30,7 +36,7 @@ class ContractedPathGraph(FileAsset):
          
         return self.cache_path
 
-    def create_and_get_asset(self) -> pathlib.Path:
+    def create_and_get_asset(self, enable_congestion: bool = False) -> pathlib.Path:
         
         logging.info("Contracting graph...")
         
@@ -39,6 +45,7 @@ class ContractedPathGraph(FileAsset):
         self.contract_graph(
             self.simplified_graph.get(),
             self.transport_zones.cache_path,
+            enable_congestion,
             self.flows_file_path,
             self.cache_path
         )
@@ -49,6 +56,7 @@ class ContractedPathGraph(FileAsset):
             self,
             simplified_graph_path: pathlib.Path,
             transport_zones_path: pathlib.Path,
+            congestion: bool,
             flows_file_path: pathlib.Path,
             output_file_path: pathlib.Path
         ) -> None:
@@ -59,6 +67,7 @@ class ContractedPathGraph(FileAsset):
             args=[
                 str(simplified_graph_path),
                 str(transport_zones_path),
+                str(congestion),
                 str(flows_file_path),
                 str(output_file_path)
             ]
@@ -68,9 +77,11 @@ class ContractedPathGraph(FileAsset):
     
     def update(self, od_flows):
         
-        logging.info("Rebuilding contracted graph given OD flows and congestion...")
-        
-        od_flows.write_parquet(self.flows_file_path)
-        self.create_and_get_asset()
+        if self.handles_congestion is True:
+            
+            logging.info("Rebuilding contracted graph given OD flows and congestion...")
+            
+            od_flows.write_parquet(self.flows_file_path)
+            self.create_and_get_asset(enable_congestion=True)
 
 

@@ -1,4 +1,5 @@
 import polars as pl
+import logging
 
 from mobility.in_memory_asset import InMemoryAsset
 
@@ -11,6 +12,8 @@ class TravelCostsAggregator(InMemoryAsset):
         
         
     def get(self, congestion: bool = False):
+        
+        logging.info("Aggregating costs...")
         
         costs = []
         
@@ -47,6 +50,8 @@ class TravelCostsAggregator(InMemoryAsset):
         
         
     def update(self, od_flows):
+        
+        logging.info("Updating travel costs given OD flows...")
         
         for mode in self.modes:
             if mode.congestion is True:

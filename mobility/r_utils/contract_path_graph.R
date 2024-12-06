@@ -13,13 +13,15 @@ args <- commandArgs(trailingOnly = TRUE)
 package_fp <- args[1]
 cppr_graph_fp <- args[2]
 transport_zones_fp <- args[3]
-flows_fp <- args[4]
-output_fp <- args[5]
+congestion <- args[4]
+flows_fp <- args[5]
+output_fp <- args[6]
 
 # package_fp <- "D:/dev/mobility_oss/mobility"
-# cppr_graph_fp <- "D:/data/mobility/projects/experiments/path_graph_car/simplified/62b22e6f35a51af629cb515adbc5234e-done"
-# transport_zones_fp <- "D:/data/mobility/projects/experiments/90c5d8004cebc13d3c4fdfa89d17d8ce-transport_zones.gpkg"
-# flows_fp <- "D:/data/mobility/projects/experiments/path_graph_car/simplified/flows.parquet"
+# cppr_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\9a6f4500ffbf148bfe6aa215a322e045-done"
+# transport_zones_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg"
+# congestion <- "True"
+# flows_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\flows.parquet"
 # output_fp <- "D:/data/mobility/projects/experiments/path_graph_car/contracted/5ca9ce47abdf6f3f5977f01ea64a785e-done"
 
 
@@ -36,13 +38,13 @@ vertices <- read_parquet(file.path(dirname(dirname(cppr_graph_fp)), paste0(hash,
 
 # If OD flows were provided, estimate the congestion on each link and update
 # the travel times 
-if (file.exists(flows_fp)) {
+if (as.logical(congestion) == TRUE & file.exists(flows_fp)) {
   
-  # Load OD flows, transport zones and representative buildings and disaggregate
+  # Load OD flows, transport zones and representative buildings and disagregate
   # each flow between transport zones into flows between network vertices
   od_flows <- as.data.table(read_parquet(flows_fp))
   
-  transport_zones <- st_read(transport_zones_fp)
+  transport_zones <- st_read(transport_zones_fp, quiet = TRUE)
   transport_zones <- as.data.table(st_drop_geometry(transport_zones))
   
   buildings_fp <- file.path(
@@ -68,17 +70,26 @@ if (file.exists(flows_fp)) {
   od_flows <- merge(od_flows, vertex_pairs, by.x = c("from", "to"), by.y = c("tz_id_from", "tz_id_to"))
   od_flows[, flow_volume := flow_volume*weight]
   
+  # Retain only the largest flows accounting for 95 % of the total volume
+  # and upscale them to match the total volume
+  od_flows <- od_flows[order(-flow_volume)]
+  od_flows[, cum_share := cumsum(flow_volume)/sum(flow_volume)]
+  od_flows <- od_flows[cum_share < 0.95]
+  od_flows[, flow_volume := flow_volume/0.95]
+  
   # Assign traffic 
   traffic <- assign_traffic(
     cppr_graph,
     from = od_flows$vertex_id_from,
     to = od_flows$vertex_id_to,
     demand = od_flows$flow_volume,
+    algorithm = "cfw",
     aon_method = "cbi",
-    max_gap = 0.01,
-    max_it = 20
+    max_gap = 0.05,
+    max_it = 10,
+    verbose = TRUE
   )
-  
+
   # Update travel times
   cppr_graph$data$dist <- traffic$data$cost
   

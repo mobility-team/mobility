@@ -37,10 +37,17 @@ class TransportModeChoiceModel(FileAsset):
                 
         costs = []
         for mode in self.inputs["destination_choice_model"].costs.modes:
+            
+            if mode.congestion:
+                gc = mode.generalized_cost.get(congestion=True)
+            else:
+                gc = mode.generalized_cost.get()
+                
             costs.append(
-                pl.DataFrame(mode.generalized_cost.get())
+                pl.DataFrame(gc)
                 .with_columns(pl.lit(mode.name).alias("mode"))
             )
+            
         costs = pl.concat(costs)
         
         prob = self.compute_mode_probability_by_od(costs)

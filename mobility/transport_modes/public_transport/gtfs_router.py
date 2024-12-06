@@ -66,7 +66,15 @@ class GTFSRouter(FileAsset):
         gtfs_files = ",".join(gtfs_files)
         
         script = RScript(resources.files('mobility.r_utils').joinpath('prepare_gtfs_router.R'))
-        script.run(args=[str(transport_zones.cache_path), gtfs_files, str(self.cache_path)])
+        
+        script.run(
+            args=[
+                str(transport_zones.cache_path),
+                gtfs_files,
+                str(resources.files('mobility.data').joinpath('gtfs/gtfs_route_types.csv')),
+                str(self.cache_path)
+            ]
+        )
             
         return None
     
