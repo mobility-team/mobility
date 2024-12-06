@@ -1,18 +1,22 @@
 import os
 import pathlib
 import logging
+import json
 import pandas as pd
-import geopandas as gpd
-import numpy as np
 
 from importlib import resources
-from mobility.asset import Asset
+from dataclasses import asdict
+
+from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
-from mobility.transport_modes.public_transport.gtfs_router import GTFSRouter
-from mobility.transport_modes.public_transport.public_transport_parameters import PublicTransportParameters
+from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportGraph
+from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
+from mobility.transport_modes import TransportMode
+from mobility.transport_modes.modal_shift import ModalShift
+from mobility.path_graph import SimplifiedPathGraph
 
-class PublicTransportTravelCosts(Asset):
+class PublicTransportTravelCosts(FileAsset):
     """
     A class for managing public transport travel costs calculations using GTFS files, inheriting from the Asset class.
 
@@ -26,7 +30,11 @@ class PublicTransportTravelCosts(Asset):
     def __init__(
             self,
             transport_zones: TransportZones,
-            parameters: PublicTransportParameters
+            parameters: PublicTransportRoutingParameters,
+            first_leg_mode: TransportMode,
+            last_leg_mode: TransportMode,
+            first_modal_shift: ModalShift = None,
+            last_modal_shift: ModalShift = None
     ):
         """
         Retrieves public transport travel costs if they already exist for these transport zones and parameters,
@@ -44,13 +52,21 @@ class PublicTransportTravelCosts(Asset):
 
         """
         
-        gtfs_router = GTFSRouter(transport_zones, parameters.additional_gtfs_files)
+
+        public_transport_graph = PublicTransportGraph(transport_zones, parameters)
 
         inputs = {
             "transport_zones": transport_zones,
-            "gtfs_router": gtfs_router,
+            "public_transport_graph": public_transport_graph,
+            "first_leg_graph": first_leg_mode.travel_costs.contracted_path_graph,
+            "last_leg_graph": last_leg_mode.travel_costs.contracted_path_graph,
+            "first_modal_shift": first_modal_shift,
+            "last_modal_shift": last_modal_shift,
             "parameters": parameters
         }
+        
+        self.first_leg_mode = first_leg_mode
+        self.last_leg_mode = last_leg_mode
 
         file_name = "public_transport_travel_costs.parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
@@ -66,9 +82,13 @@ class PublicTransportTravelCosts(Asset):
 
     def create_and_get_asset(self) -> pd.DataFrame:
         
-        costs = self.gtfs_router_costs(
+        costs = self.compute_travel_costs(
             self.inputs["transport_zones"],
-            self.inputs["gtfs_router"],
+            self.inputs["public_transport_graph"],
+            self.inputs["first_leg_graph"],
+            self.inputs["last_leg_graph"],
+            self.inputs["first_modal_shift"],
+            self.inputs["last_modal_shift"],
             self.inputs["parameters"]
         )
         
@@ -77,11 +97,15 @@ class PublicTransportTravelCosts(Asset):
         return costs
 
     
-    def gtfs_router_costs(
+    def  compute_travel_costs(
             self,
-            transport_zones: gpd.GeoDataFrame,
-            gtfs_router: GTFSRouter,
-            parameters: PublicTransportParameters
+            transport_zones: TransportZones,
+            public_transport_graph: PublicTransportGraph,
+            first_leg_graph: SimplifiedPathGraph,
+            last_leg_graph: SimplifiedPathGraph,
+            first_modal_shift: ModalShift,
+            last_modal_shift: ModalShift,
+            parameters: PublicTransportRoutingParameters
         ) -> pd.DataFrame:
         """
         Calculates travel costs for public transport between transport zones.
@@ -99,41 +123,21 @@ class PublicTransportTravelCosts(Asset):
 
         logging.info("Computing public transport travel costs...")
         
-        script = RScript(resources.files('mobility.r_utils').joinpath('prepare_public_transport_costs.R'))
-        
-        gtfs_route_types_path = resources.files("mobility").joinpath('data/gtfs/gtfs_route_types.xlsx')
-        
-        gtfs_router.get()
+        script = RScript(resources.files('mobility.transport_modes.public_transport').joinpath('compute_intermodal_public_transport_travel_costs.R'))
         
         script.run(
             args=[
                 str(transport_zones.cache_path),
-                gtfs_router.cache_path,
-                str(gtfs_route_types_path),
-                str(parameters.start_time_min),
-                str(parameters.start_time_max),
-                str(parameters.max_traveltime),
+                str(public_transport_graph.get()),
+                str(first_leg_graph.get()),
+                str(last_leg_graph.get()),
+                json.dumps(asdict(first_modal_shift)),
+                json.dumps(asdict(last_modal_shift)),
                 str(self.cache_path)
             ]
         )
 
         costs = pd.read_parquet(self.cache_path)
-        
-        logging.info("Computing generalized cost by OD...")
-        
-        # Compute the cost of time based on travelled distance
-        params = self.inputs["parameters"]
-        
-        ct = params.cost_of_time_c0_short
-        ct = np.where(costs["distance"] > 5, params.cost_of_time_c0 + params.cost_of_time_c1*costs["distance"], ct)
-        ct = np.where(costs["distance"] > 20, 30.2 + 0.017*costs["distance"], ct)
-        ct = np.where(costs["distance"] > 80, 37.0, ct)
-        ct *= 1.17 # Inflation coeff
-           
-        # Add all cost and revenues components
-        costs["cost"] = ct*costs["time"]*2
-        costs["cost"] += params.cost_of_distance*costs["distance"]*2
-        costs["cost"] += params.cost_constant
 
         return costs
     

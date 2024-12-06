@@ -6,9 +6,9 @@ import numpy as np
 
 from mobility.asset import Asset
 from mobility.path_travel_costs import PathTravelCosts
-from mobility.transport_modes.carpool.carpool_parameters import CarpoolParameters
+from mobility.transport_modes.carpool.simple.simple_carpool_parameters import SimpleCarpoolParameters
 
-class CarpoolTravelCosts(Asset):
+class SimpleCarpoolTravelCosts(Asset):
     """
     A class for computing carpooling travel cost using car travel costs, inheriting from the Asset class.
 
@@ -31,7 +31,7 @@ class CarpoolTravelCosts(Asset):
     def __init__(
             self,
             car_travel_costs: PathTravelCosts,
-            parameters: CarpoolParameters
+            parameters: SimpleCarpoolParameters
         ):
         """
         Initializes a CarpoolTravelCosts object with the given transport zones, travel mode and parameters.
@@ -43,7 +43,7 @@ class CarpoolTravelCosts(Asset):
             "parameters": parameters
         }
 
-        file_name = "carpool" + str(parameters.number_persons) + "_travel_costs.parquet"
+        file_name = "simplified_carpool" + str(parameters.number_persons) + "_travel_costs.parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
 
         super().__init__(inputs, cache_path)
@@ -95,14 +95,12 @@ class CarpoolTravelCosts(Asset):
         transport_zones = self.inputs["car_travel_costs"].inputs["transport_zones"].get()
         
         logging.info("Computing carpool travel costs for " + str(params.number_persons) + " occupants...")
-        print(costs)
         
         costs = pd.merge(
             costs,
             transport_zones[["transport_zone_id", "local_admin_unit_id", "country"]].rename({"transport_zone_id": "from"}, axis=1).set_index("from"),
             on="from"
-            )
-        print(costs)
+        )
         
         costs = pd.merge(
             costs,

@@ -5,11 +5,12 @@ import zipfile
 import pandas as pd
 import numpy as np
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file
 from mobility.parsers.local_admin_units import LocalAdminUnits
+from mobility.parsers.jobs_active_population_distribution import JobsActivePopulationDistribution
 
-class JobsActivePopulationFlows(Asset):
+class JobsActivePopulationFlows(FileAsset):
     
     def __init__(self):
         
@@ -56,7 +57,7 @@ class JobsActivePopulationFlows(Asset):
             zip_ref.extractall(data_folder)
             
         # Map INSEE ids to BFS ids
-        url = "https://www.data.gouv.fr/fr/datasets/r/96b13cd7-92c7-4d72-b6e6-a3d96a2a6b06"
+        url = "https://www.data.gouv.fr/fr/datasets/r/a3643a84-3190-44ad-b933-84fb25459dce"
         data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "insee"
         file_path = data_folder / "insee_bfs_mapping.xlsx"
         download_file(url, file_path)
@@ -67,8 +68,8 @@ class JobsActivePopulationFlows(Asset):
         flows = pd.read_csv(
             csv_path,
             sep=";",
-            usecols=["COMMUNE", "ARM", "DCFLT", "DCLT", "IPONDI"],
-            dtype={"COMMUNE": str, "ARM": str, "DCFLT": str, "DCLT": str, "IPONDI": float}
+            usecols=["COMMUNE", "ARM", "DCFLT", "DCLT", "TRANS", "IPONDI"],
+            dtype={"COMMUNE": str, "ARM": str, "DCFLT": str, "DCLT": str, "TRANS": str, "IPONDI": float}
         )
         
         flows["DCFLT"] = flows["DCFLT"].str.replace(".", "")
@@ -92,10 +93,18 @@ class JobsActivePopulationFlows(Asset):
             "ch-" + flows["bfs_id"]
         )
         
-        # Volume
-        flows.rename({"IPONDI": "ref_flow_volume"}, axis=1, inplace=True)
+        flows.rename({"IPONDI": "ref_flow_volume", "TRANS": "mode"}, axis=1, inplace=True)
+        
+        flows["mode"].replace({
+            "1": "no-transport",
+            "2": "walk",
+            "3": "bicycle",
+            "4": "motorcycle",
+            "5": "car",
+            "6": "public-transport"
+        }, inplace=True)
 
-        flows = flows.groupby(["local_admin_unit_id_from", "local_admin_unit_id_to"], as_index=False)[["ref_flow_volume"]].sum()
+        flows = flows.groupby(["local_admin_unit_id_from", "local_admin_unit_id_to", "mode"], as_index=False)[["ref_flow_volume"]].sum()
         
         os.unlink(zip_path)
         os.unlink(csv_path)
@@ -125,6 +134,25 @@ class JobsActivePopulationFlows(Asset):
         
         flows = flows[flows["local_admin_unit_id_from"].isin(local_admin_units["local_admin_unit_id"])]
         flows = flows[flows["local_admin_unit_id_to"].isin(local_admin_units["local_admin_unit_id"])]
+        
+        # No availalable ref data in switzerland so we force the mode to car
+        flows["mode"] = "car"
+        
+        # BUG ?
+        # The number of active persons in each city computed from the flows is not the 
+        # same than the one computed based on the 15 - 64 years population count.
+        # So we adjust the flows proportionnaly to make the two source match.
+        jobs, act = JobsActivePopulationDistribution().get()
+        
+        act = act[["active_pop"]].reset_index()
+        act_flows = flows.groupby("local_admin_unit_id_from", as_index=False)["ref_flow_volume"].sum()
+        
+        correction = pd.merge(act_flows, act, left_on="local_admin_unit_id_from", right_on="local_admin_unit_id")
+        correction["k"] = correction["active_pop"]/correction["ref_flow_volume"]
+        
+        flows = pd.merge(flows, correction[["local_admin_unit_id_from", "k"]], on="local_admin_unit_id_from")
+        flows["ref_flow_volume"] *= flows["k"]
+        del flows["k"]
         
         return flows
         

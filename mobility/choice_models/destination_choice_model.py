@@ -8,10 +8,11 @@ import seaborn as sns
 
 from abc import abstractmethod
 
-from mobility.asset import Asset
-from mobility import radiation_model, radiation_model_selection
+from mobility.file_asset import FileAsset
+from mobility import radiation_model_selection
+from mobility.choice_models.travel_costs_aggregator import TravelCostsAggregator
 
-class DestinationChoiceModel(Asset):
+class DestinationChoiceModel(FileAsset):
     """
     A generic class for destination choice models, with a subclass for every motive.
     
@@ -23,7 +24,7 @@ class DestinationChoiceModel(Asset):
             self,
             motive: str,
             transport_zones: gpd.GeoDataFrame, 
-            travel_costs,
+            modes,
             parameters,
             ssi_min_flow_volume: float
         ):
@@ -45,10 +46,13 @@ class DestinationChoiceModel(Asset):
         ssi_min_flow_volume : float
             Minimum reference volume to consider for similarity index.
         """
+        
+        costs = TravelCostsAggregator(modes)
+        
         inputs = {
             "motive": motive,
             "transport_zones": transport_zones,
-            "travel_costs": travel_costs,
+            "costs": costs,
             "parameters": parameters,
             "ssi_min_flow_volume": ssi_min_flow_volume
         }
@@ -79,30 +83,25 @@ class DestinationChoiceModel(Asset):
         
         logging.info("Creating destination choice model...")
         
-        transport_zones = self.inputs["transport_zones"].get()
-        travel_costs = self.inputs["travel_costs"].get()
+        transport_zones = self.inputs["transport_zones"]
         
-        sources, sinks = self.prepare_sources_and_sinks(transport_zones)
-        ref_flows = self.prepare_reference_flows(transport_zones)
-        
-        travel_costs = travel_costs.set_index(["from", "to", "mode"])
-        travel_costs = travel_costs[travel_costs["time"] < 2.0]
-        
-        utility_by_od_and_mode = self.compute_utility_by_od_and_mode(
-            transport_zones,
-            travel_costs
+        study_area = transport_zones.study_area.get()
+        transport_zones = pd.merge(
+            transport_zones.get(),
+            study_area[["local_admin_unit_id", "country"]],
+            on="local_admin_unit_id"
         )
         
-        utility_by_od = self.compute_utility_by_od(utility_by_od_and_mode)
+        sources, sinks = self.prepare_sources_and_sinks(transport_zones)
+        utilities = self.prepare_utilities(transport_zones, sinks)
         
         flows = self.compute_flows(
             transport_zones,
             sources,
             sinks,
-            utility_by_od
+            self.costs,
+            utilities
         )
-        
-        flows = self.add_reference_flows(transport_zones, flows, ref_flows)
         
         
         choice_model = flows[["from", "to", "flow_volume"]].set_index(["from", "to"])["flow_volume"]
@@ -112,7 +111,7 @@ class DestinationChoiceModel(Asset):
         
         flows.to_parquet(self.cache_path["od_flows"])
         choice_model.to_parquet(self.cache_path["destination_choice_model"])
-        utility_by_od_and_mode.to_parquet(self.cache_path["utility_by_od_and_mode"])
+        # utility_by_od_and_mode.to_parquet(self.cache_path["utility_by_od_and_mode"])
         
         return choice_model
     
@@ -126,104 +125,56 @@ class DestinationChoiceModel(Asset):
     def prepare_sources_and_sinks(self):
         pass
     
-    
-    def compute_utility_by_od(
-            self,
-            utilities: pd.DataFrame,
-        ):
-        
-        utilities = utilities.copy()
-        
-        # Shift the utility to avoid exp overflows 
-        # max_net_utility = utilities["net_utility"].max()
-        # utilities["net_utility"] -= max_net_utility
-        
-        utilities["prob"] = np.exp(utilities["net_utility"])
-        utilities["prob"] = utilities["prob"]/utilities.groupby(["from", "to"])["prob"].transform("sum")
-        
-        utilities["cost"] = utilities["prob"]*utilities["cost"]
-        utilities["net_utility"] = utilities["prob"]*utilities["net_utility"]
-        
-        utilities = utilities.groupby(["from", "to"]).agg({
-            "cost": "sum",
-            "utility": "first",
-            "net_utility": "sum"
-        })
-        
-        # utilities["net_utility"] += max_net_utility
-        
-        return utilities
-        
 
-    def compute_flows(
-            self,
-            transport_zones,
-            sources: pd.DataFrame,
-            sinks: pd.DataFrame,
-            utility_by_od: pd.DataFrame
-        ):
+    # def compute_flows(
+    #         self,
+    #         transport_zones,
+    #         sources: pd.DataFrame,
+    #         sinks: pd.DataFrame,
+    #         costs,
+    #         utilities
+    #     ):
         
-        parameters = self.inputs["parameters"]
+    #     parameters = self.inputs["parameters"]
         
-        country_zone = transport_zones[["transport_zone_id", "local_admin_unit_id"]].set_index("transport_zone_id").rename_axis('from')
-        country_zone["local_admin_unit_id"] = country_zone["local_admin_unit_id"].str[:2]
-        country_zone.rename(columns={"local_admin_unit_id": "country_id"}, inplace=True) 
-        sources = pd.merge(sources, country_zone, on="from", how="inner")
+    #     flows, _, _ = radiation_model_selection.radiation_model_selection(
+    #         sources=sources,
+    #         sinks=sinks,
+    #         costs=costs,
+    #         utilities=utilities,
+    #         selection_lambda=parameters.model["lambda"]
+    #     )
         
-        if parameters.model["type"] == "radiation_universal":
-            flows, _, _ = radiation_model.iter_radiation_model(
-                sources=sources,
-                sinks=sinks,
-                costs=utility_by_od,
-                alpha=parameters.model["alpha"],
-                beta=parameters.model["beta"]
-            )
-        else:
-            flows, _, _ = radiation_model_selection.iter_radiation_model_selection(
-                sources=sources,
-                sinks=sinks,
-                costs=utility_by_od,
-                selection_lambda=parameters.model["lambda"]
-            )
+    #     flows = flows.to_frame().reset_index()
         
-        flows = flows.to_frame().reset_index()
+    #     flows = pd.merge(flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="from", right_on="transport_zone_id")
+    #     flows = pd.merge(flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="to", right_on="transport_zone_id", suffixes=["_from", "_to"])
         
-        flows = pd.merge(flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="from", right_on="transport_zone_id")
-        flows = pd.merge(flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="to", right_on="transport_zone_id", suffixes=["_from", "_to"])
+    #     flows = flows[["from", "to", "local_admin_unit_id_from", "local_admin_unit_id_to", "flow_volume"]]
         
-        flows = flows[["from", "to", "local_admin_unit_id_from", "local_admin_unit_id_to", "flow_volume"]]
-        
-        return flows
+    #     return flows
     
     
-    def add_reference_flows(self, transport_zones, flows, ref_flows):
+    def get_comparison(self):
         
+        flows = pd.read_parquet(self.cache_path["od_flows"])
+        flows = flows.groupby(["local_admin_unit_id_from", "local_admin_unit_id_to"], as_index=False)["flow_volume"].sum()
+        
+        lau_ids = flows["local_admin_unit_id_from"].unique()
+        
+        ref_flows = self.reference_flows.get()
+        ref_flows = ref_flows[ref_flows["local_admin_unit_id_from"].isin(lau_ids) & ref_flows["local_admin_unit_id_to"].isin(lau_ids)]
+        ref_flows = ref_flows.groupby(["local_admin_unit_id_from", "local_admin_unit_id_to"], as_index=False)["ref_flow_volume"].sum()
+
         od_pairs = pd.concat([
             ref_flows[["local_admin_unit_id_from", "local_admin_unit_id_to"]],
             flows[["local_admin_unit_id_from", "local_admin_unit_id_to"]]
         ]).drop_duplicates()
         
-        od_pairs = pd.merge(
-            od_pairs,
-            transport_zones[["local_admin_unit_id", "transport_zone_id"]],
-            left_on="local_admin_unit_id_from",
-            right_on="local_admin_unit_id"
-        )
-        
-        od_pairs = pd.merge(
-            od_pairs,
-            transport_zones[["local_admin_unit_id", "transport_zone_id"]],
-            left_on="local_admin_unit_id_to",
-            right_on="local_admin_unit_id"
-        )
-        
-        od_pairs = od_pairs[["local_admin_unit_id_from", "local_admin_unit_id_to", "transport_zone_id_x", "transport_zone_id_y"]]
-        od_pairs.columns = ["local_admin_unit_id_from", "local_admin_unit_id_to", "from", "to"]
-        
         comparison = pd.merge(
             od_pairs,
-            flows[["from", "to", "flow_volume"]],
-            on=["from", "to"],
+            flows,
+            on=["local_admin_unit_id_from", "local_admin_unit_id_to"],
             how="left"
         )
         
@@ -233,6 +184,7 @@ class DestinationChoiceModel(Asset):
             on=["local_admin_unit_id_from", "local_admin_unit_id_to"],
             how="left"
         )
+    
         
         comparison.fillna(0.0, inplace=True)
         
@@ -266,13 +218,13 @@ class DestinationChoiceModel(Asset):
         return error
     
     
-    def plot_model_fit(self):
+    def plot_model_fit(self, comparison):
         
-        flows = pd.read_parquet(self.cache_path["od_flows"])
-        flows["log_ref_flow_volume"] = np.log(flows["ref_flow_volume"])
-        flows["log_flow_volume"] = np.log(flows["flow_volume"])
+        comparison = comparison.copy()
+        comparison["log_ref_flow_volume"] = np.log10(comparison["ref_flow_volume"])
+        comparison["log_flow_volume"] = np.log10(comparison["flow_volume"])
         
         sns.set_theme()
-        sns.scatterplot(data=flows, x="log_ref_flow_volume", y="log_flow_volume", size=5, linewidth=0, alpha=0.5)
+        sns.scatterplot(data=comparison, x="log_ref_flow_volume", y="log_flow_volume", size=5, linewidth=0, alpha=0.5)
         
         

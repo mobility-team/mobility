@@ -1,17 +1,18 @@
 import os
 import pathlib
 import logging
+import shutil
 import pandas as pd
-import numpy as np
 import geopandas as gpd
 
 from importlib import resources
-from mobility.parsers.osm import OSMData
-from mobility.asset import Asset
+from mobility.path_graph import PathGraph
+from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
-from mobility.parameters import ModeParameters
+from mobility.transport_zones import TransportZones
+from mobility.path_routing_parameters import PathRoutingParameters
 
-class PathTravelCosts(Asset):
+class PathTravelCosts(FileAsset):
     """
     A class for managing travel cost calculations for certain modes using OpenStreetMap (OSM) data, inheriting from the Asset class.
 
@@ -31,7 +32,7 @@ class PathTravelCosts(Asset):
         dodgr_costs: Calculate travel costs using the generated graph.
     """
 
-    def __init__(self, transport_zones: gpd.GeoDataFrame, mode_parameters: ModeParameters):
+    def __init__(self, mode_name: str, transport_zones: gpd.GeoDataFrame, routing_parameters: PathRoutingParameters):
         """
         Initializes a TravelCosts object with the given transport zones and travel mode.
 
@@ -40,86 +41,71 @@ class PathTravelCosts(Asset):
             mode (str): Mode of transportation for calculating travel costs.
         """
 
-        self.dodgr_modes = {"car": "motorcar", "bicycle": "bicycle", "walk": "foot"}
+        path_graph = PathGraph(mode_name, transport_zones)
         
-        available_modes = list(self.dodgr_modes.keys())
-        if mode_parameters.name not in available_modes:
-            raise ValueError(
-                "Cannot compute travel costs for mode : '" + mode_parameters.name + "'. Available options are : " \
-                + ", ".join(available_modes) + "."
-            )
+        inputs = {
+            "transport_zones": transport_zones,
+            "mode_name": mode_name,
+            "simplified_path_graph": path_graph.simplified,
+            "contracted_path_graph": path_graph.contracted,
+            "routing_parameters": routing_parameters
+        }
 
-        osm = OSMData(transport_zones)
-        inputs = {"transport_zones": transport_zones, "osm": osm, "mode_parameters": mode_parameters}
-
-        file_name = "dodgr_travel_costs_" + mode_parameters.name + ".parquet"
-        cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
+        cache_path = {
+            "freeflow": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / ("travel_costs_free_flow_" + mode_name + ".parquet"),
+            "congested": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / ("travel_costs_congested_" + mode_name + ".parquet")
+        }
 
         super().__init__(inputs, cache_path)
 
-    def get_cached_asset(self) -> pd.DataFrame:
+    def get_cached_asset(self, congestion: bool = False) -> pd.DataFrame:
         """
         Retrieves the travel costs DataFrame from the cache.
 
         Returns:
             pd.DataFrame: The cached DataFrame of travel costs.
         """
+        
+        if congestion is False:
+            path = self.cache_path["freeflow"]
+        else:
+            path = self.cache_path["congested"]
 
-        logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
-        costs = pd.read_parquet(self.cache_path)
-        costs["mode"] = self.inputs["mode_parameters"].name
+        logging.info("Travel costs already prepared. Reusing the file : " + str(path))
+        costs = pd.read_parquet(path)
 
         return costs
 
-    def create_and_get_asset(self) -> pd.DataFrame:
+    def create_and_get_asset(self, congestion: bool = False) -> pd.DataFrame:
         """
         Creates and retrieves travel costs based on the current inputs.
 
         Returns:
             pd.DataFrame: A DataFrame of calculated travel costs.
         """
-        transport_zones = self.inputs["transport_zones"]
-        mode = self.inputs["mode_parameters"].name
+        
+        mode = self.mode_name
         
         logging.info("Preparing travel costs for mode " + mode)
         
-        osm = self.inputs["osm"]
-        graph = self.prepare_path_graph(transport_zones, osm, mode)
-        costs = self.compute_costs_by_OD(transport_zones, graph)
-        costs["mode"] = mode
+        self.transport_zones.get()
+        self.contracted_path_graph.get()
         
-        costs.to_parquet(self.cache_path)
+        if congestion is False:
+            output_path = self.cache_path["freeflow"]
+        else:
+            output_path = self.cache_path["congested"]
+        
+        costs = self.compute_freeflow_costs_by_OD(self.transport_zones, self.contracted_path_graph, output_path)
+        
+        if congestion is False:
+            shutil.copy(self.cache_path["freeflow"], self.cache_path["congested"])
 
         return costs
 
-    def prepare_path_graph(self, transport_zones: gpd.GeoDataFrame, osm: str, mode: str) -> str:
-        """
-        Creates a routable graph for the specified mode of transportation using dodgr.
 
-        Args:
-            transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
-            osm (str): Path to the OSM data file.
-            mode (str): Mode of transportation for which the graph is created.
 
-        Returns:
-            str: The file path to the saved routable graph.
-        """
-
-        osm.get()
-        
-        dodgr_mode = self.dodgr_modes[mode]
-
-        output_file_name = "dodgr_graph_" + dodgr_mode
-        output_file_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / output_file_name
-
-        logging.info("Creating a routable graph with dodgr, this might take a while...")
-         
-        script = RScript(resources.files('mobility.r_utils').joinpath('prepare_dodgr_graph.R'))
-        script.run(args=[str(transport_zones.cache_path), str(osm.cache_path), dodgr_mode, output_file_path])
-
-        return output_file_path
-
-    def compute_costs_by_OD(self, transport_zones: gpd.GeoDataFrame, graph: str) -> pd.DataFrame:
+    def compute_freeflow_costs_by_OD(self, transport_zones: TransportZones, path_graph: PathGraph, output_path: pathlib.Path) -> pd.DataFrame:
         """
         Calculates travel costs for the specified mode of transportation using the created graph.
 
@@ -134,27 +120,24 @@ class PathTravelCosts(Asset):
         logging.info("Computing travel times and distances by OD...")
         
         script = RScript(resources.files('mobility.r_utils').joinpath('prepare_dodgr_costs.R'))
-        script.run(args=[str(transport_zones.cache_path), graph, str(self.cache_path)])
-
-        costs = pd.read_parquet(self.cache_path)
+        script.run(
+            args=[
+                str(transport_zones.cache_path),
+                str(path_graph.cache_path),
+                str(self.routing_parameters.filter_max_speed),
+                str(self.routing_parameters.filter_max_time),
+                str(output_path)
+            ]
+        )
         
-        params = self.inputs["mode_parameters"]
-        transport_zones = self.inputs["transport_zones"].get()
-        
-        logging.info("Computing generalized cost by OD...")
-        
-        # Compute the cost of time based on travelled distance
-        ct = params.cost_of_time_c0_short
-        ct = np.where(costs["distance"] > 5, params.cost_of_time_c0 + params.cost_of_time_c1*costs["distance"], ct)
-        ct = np.where(costs["distance"] > 20, 30.2 + 0.017*costs["distance"], ct)
-        ct = np.where(costs["distance"] > 80, 37.0, ct)
-        ct *= 1.17 # Inflation coeff
-           
-        # Add all cost and revenues components
-        costs["cost"] = ct*costs["time"]*2
-        costs["cost"] += params.cost_of_distance*costs["distance"]*2
-        costs["cost"] += params.cost_constant
+        costs = pd.read_parquet(output_path)
 
         return costs
+    
+    
+    def update(self, od_flows):
+        
+        self.contracted_path_graph.update(od_flows)
+        self.create_and_get_asset(congestion=True)
     
     

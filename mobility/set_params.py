@@ -173,7 +173,10 @@ def install_r_packages(r_packages, r_packages_force_reinstall):
             {'source': 'CRAN', 'name': 'cppRouting'},
             {'source': 'CRAN', 'name': 'duckdb'},
             {'source': 'CRAN', 'name': 'jsonlite'},
-            {'source': 'CRAN', 'name': 'gtfsrouter'}
+            {'source': 'CRAN', 'name': 'gtfsrouter'},
+            {'source': 'CRAN', 'name': 'geos'},
+            {'source': 'CRAN', 'name': 'FNN'},
+            {'source': 'CRAN', 'name': 'cluster'},
         ]
         
         if platform.system() == "Windows":

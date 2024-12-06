@@ -1,16 +1,25 @@
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.car import CarMode
-from mobility.transport_modes.carpool.carpool_parameters import CarpoolParameters
-from mobility.transport_modes.carpool.carpool_travel_costs import CarpoolTravelCosts
+from mobility.transport_modes.carpool.detailed import DetailedCarpoolRoutingParameters, DetailedCarpoolGeneralizedCostParameters, DetailedCarpoolTravelCosts, DetailedCarpoolGeneralizedCost
+
+from mobility.transport_modes.modal_shift import ModalShift
 
 class CarpoolMode(TransportMode):
     
     def __init__(
         self,
         car_mode: CarMode,
-        parameters: CarpoolParameters = CarpoolParameters(2)
+        routing_parameters: DetailedCarpoolRoutingParameters = None,
+        generalized_cost_parameters: DetailedCarpoolGeneralizedCostParameters = None,
+        modal_shift: ModalShift = None
     ):
-        travel_costs = CarpoolTravelCosts(car_mode.travel_costs, parameters)
-        super().__init__(travel_costs, parameters)
+            
+        routing_parameters = routing_parameters or DetailedCarpoolRoutingParameters()
+        travel_costs = DetailedCarpoolTravelCosts("carpool", car_mode.travel_costs, routing_parameters, modal_shift)
+        
+        generalized_cost_parameters = generalized_cost_parameters or DetailedCarpoolGeneralizedCostParameters()
+        generalized_cost = DetailedCarpoolGeneralizedCost(travel_costs, generalized_cost_parameters)
+            
+        super().__init__("carpool", travel_costs, generalized_cost)
         
         

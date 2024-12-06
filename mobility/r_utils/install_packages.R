@@ -27,7 +27,7 @@ library(jsonlite)
 
 # Parse arguments
 args <- commandArgs(trailingOnly = TRUE)
-args <- fromJSON(args, simplifyVector = FALSE)
+args <- fromJSON(args[2], simplifyVector = FALSE)
 packages <- args[["packages"]]
 force_reinstall <- args[["force_reinstall"]]
 

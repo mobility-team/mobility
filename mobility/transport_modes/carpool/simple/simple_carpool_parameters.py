@@ -3,7 +3,7 @@ from mobility.parameters import ModeParameters
 from typing import List, Union, Dict
 
 @dataclass
-class CarpoolParameters(ModeParameters):
+class SimpleCarpoolParameters(ModeParameters):
     """
     Attributes:
         number_persons (int): number of persons in the vehicule.
@@ -63,7 +63,7 @@ class CarpoolParameters(ModeParameters):
     revenue_passengers_r1: float = 1.5
     
     def __post_init__(self):
-        self.name = "carpool" + str(self.number_persons)
+        self.name = "simple_carpool" + str(self.number_persons)
     
     
     

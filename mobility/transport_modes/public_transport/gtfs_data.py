@@ -4,10 +4,10 @@ import logging
 import zipfile
 import hashlib
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file, clean_path
 
-class GTFSData(Asset):
+class GTFSData(FileAsset):
     
     def __init__(self, url: str):
         

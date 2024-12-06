@@ -7,11 +7,11 @@ import shapely
 import geopandas as gpd
 import pandas as pd
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file
 from mobility.parsers.local_admin_units_categories import LocalAdminUnitsCategories
 
-class LocalAdminUnits(Asset):
+class LocalAdminUnits(FileAsset):
     
     def __init__(self):
         
