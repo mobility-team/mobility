@@ -20,17 +20,16 @@ first_leg_graph_fp <- args[4]
 last_leg_graph_fp <- args[5]
 first_modal_shift <- args[6]
 last_modal_shift <- args[7]
-output_file_path <- args[8]
+output_fp <- args[8]
 
 # package_path <- 'D:/dev/mobility_oss/mobility'
 # tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg'
 # pt_graph_fp <- "D:/data/mobility/projects/haut-doubs/public_transport_graph/simplified/3d807c3ccc9ee020cbabb3e281f5635a-done"
-# first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_car/contracted/60c7d5b22e428d3fbea41ac0ffadd067-done"
+# first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-done"
 # last_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-done"
 # first_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "shift_time": 5.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
 # last_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
-# output_file_path <- 'D:/data/mobility/projects/experiments/f65f378d4dc11f0929cf7f2aeaa2aaf5-public_transport_travel_costs.parquet'
-
+# output_fp <- 'D:\\data\\mobility\\projects\\haut-doubs\\walk_public_transport_walk_intermodal_transport_graph\\simplified\\dad2d53274998829d5a595ee27df908a-done'
 
 first_modal_shift <- fromJSON(first_modal_shift)
 last_modal_shift <- fromJSON(last_modal_shift)
@@ -334,13 +333,9 @@ cppr_graph$attrib <- list(
   last_time = all_legs[, ifelse(leg == 3, time, 0.0)]
 )
 
-travel_costs[, vertex_id_from := paste0("s1-", vertex_id_from)]
-travel_costs[, vertex_id_to := paste0("l2-", vertex_id_to)]
-
-
 # Save the graph
 hash <- strsplit(basename(output_fp), "-")[[1]][1]
-save_cppr_contracted_graph(cppr_graph, dirname(output_fp), hash)
+save_cppr_graph(cppr_graph, dirname(output_fp), hash)
 write_parquet(all_verts, file.path(dirname(dirname(output_fp)), paste0(hash, "-vertices.parquet")))
 
 file.create(output_fp)

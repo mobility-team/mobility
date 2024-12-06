@@ -76,20 +76,8 @@ save_cppr_graph <- function(graph, path, hash) {
     cap = NA
   )
   
-  if (any(!is.na(graph$attrib$aux))) {
-    attrib$aux <- graph$attrib$aux
-  }
-  
-  if (any(!is.na(graph$attrib$alpha))) {
-    attrib$alpha <- graph$attrib$alpha
-  }
-  
-  if (any(!is.na(graph$attrib$beta))) {
-    attrib$beta <- graph$attrib$beta
-  }
-  
-  if (any(!is.na(graph$attrib$cap))) {
-    attrib$cap <- graph$attrib$cap
+  for (var in names(graph$attrib)) {
+    attrib[[var]] <- graph$attrib[[var]]
   }
   
   if (!dir.exists(path)) {
@@ -128,20 +116,8 @@ read_cppr_graph <- function(path, hash) {
   
   attrib <- duckdb_parquet_to_df(con, file.path(path, paste0(hash,"attrib.parquet")))
   
-  if (any(!is.na(attrib$aux))) {
-    graph$attrib$aux <- attrib$aux
-  }
-  
-  if (any(!is.na(attrib$beta))) {
-    graph$attrib$alpha <- attrib$alpha
-  }
-  
-  if (any(!is.na(attrib$beta))) {
-    graph$attrib$beta <- attrib$beta
-  }
-  
-  if (any(!is.na(attrib$beta))) {
-    graph$attrib$cap <- attrib$cap
+  for (var in colnames(attrib)) {
+    graph$attrib[[var]] <- attrib[[var]]
   }
   
   graph$nbnode <- nrow(graph[["dict"]])
