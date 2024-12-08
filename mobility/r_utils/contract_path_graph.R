@@ -93,6 +93,10 @@ if (as.logical(congestion) == TRUE & file.exists(flows_fp)) {
   # Update travel times
   cppr_graph$data$dist <- traffic$data$cost
   
+  # Save the updated travel times
+  hash <- strsplit(basename(cppr_graph_fp), "-")[[1]][1]
+  write_parquet(cppr_graph$data, file.path(dirname(cppr_graph_fp), paste0(hash, "-updated-times.parquet")))
+  
 }
 
 # Contract the graph and save it

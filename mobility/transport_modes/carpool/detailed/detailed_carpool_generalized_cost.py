@@ -13,9 +13,9 @@ class DetailedCarpoolGeneralizedCost(InMemoryAsset):
         super().__init__(inputs)
         
         
-    def get(self) -> pd.DataFrame:
+    def get(self, congestion: bool = False) -> pd.DataFrame:
         
-        costs = self.travel_costs.get()
+        costs = self.travel_costs.get(congestion)
         
         study_area = self.travel_costs.car_travel_costs.transport_zones.study_area.get()
         transport_zones = self.travel_costs.car_travel_costs.transport_zones.get()

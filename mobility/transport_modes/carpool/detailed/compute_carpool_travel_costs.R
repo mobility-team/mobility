@@ -13,22 +13,23 @@ library(jsonlite)
 
 args <- commandArgs(trailingOnly = TRUE)
 
+# args <- c(
+#   'D:\\dev\\mobility_oss\\mobility', # package_path
+#   'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg', # tz_file_path
+#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\9a6f4500ffbf148bfe6aa215a322e045-done', # graph_fp
+#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\9a6f4500ffbf148bfe6aa215a322e045-done', # modal_shift
+#   '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "shift_time": 10.0, "shortcuts_shift_time": null, "shortcuts_locations": null}', # congestion
+#   'True',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\7418f0652ae728684d6e6acc42da802d-carpool_travel_costs.parquet' # output_file_path
+# )
+
 package_path <- args[1]
 tz_file_path <- args[2]
 first_leg_graph_fp <- args[3]
 last_leg_graph_fp <- args[4]
 modal_shift <- args[5]
-output_file_path <- args[6]
-
-
-# package_path <- 'D:/dev/mobility_oss/mobility'
-# tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg'
-# first_leg_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\9a6f4500ffbf148bfe6aa215a322e045-done"
-# last_leg_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\9a6f4500ffbf148bfe6aa215a322e045-done"
-# modal_shift <- '{"max_travel_time": 0.33, "average_speed": 50.0, "shift_time": 10.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
-# output_file_path <- 'D:\\data\\mobility\\projects\\study_area\\92d64787200e7ed83bc8eadf88d3acc4-public_transport_travel_costs.parquet'
-
-
+congestion <- args[6]
+output_file_path <- args[7]
 
 buildings_sample_fp <- file.path(
   dirname(tz_file_path),
@@ -39,6 +40,7 @@ buildings_sample_fp <- file.path(
 )
 
 modal_shift <- fromJSON(modal_shift)
+congestion <- as.logical(congestion)
 
 source(file.path(package_path, "r_utils", "compute_gtfs_travel_costs.R"))
 source(file.path(package_path, "r_utils", "duplicate_cpprouting_graph.R"))
@@ -63,6 +65,19 @@ start_verts <- read_parquet(file.path(dirname(dirname(first_leg_graph_fp)), past
 hash <- strsplit(basename(last_leg_graph_fp), "-")[[1]][1]
 last_graph <- read_cppr_graph(dirname(last_leg_graph_fp), hash)
 last_verts <- read_parquet(file.path(dirname(dirname(last_leg_graph_fp)), paste0(hash, "-vertices.parquet")))
+
+
+# Update the travel times based on congestion if needed
+if (congestion == TRUE) {
+  
+  hash <- strsplit(basename(first_leg_graph_fp), "-")[[1]][1]
+  updated_times <- read_parquet(file.path(dirname(first_leg_graph_fp), paste0(hash, "-updated-times.parquet")))
+  
+  start_graph$data <- as.data.table(updated_times)
+  last_graph$data <- as.data.table(updated_times)
+  
+}
+
 
 info(logger, "Concatenating graphs...")
 
@@ -90,6 +105,9 @@ travel_costs <- initialize_travel_costs(
 travel_costs[, vertex_id_from := paste0("s", vertex_id_from)]
 travel_costs[, vertex_id_to := paste0("l", vertex_id_to)]
 
+# Remove trips that are very long
+travel_costs <- travel_costs[distance < 80e3]
+
 # Compute the travel time between clusters
 info(logger, "Computing travel times...")
 
@@ -99,6 +117,26 @@ travel_costs$total_time <- get_distance_pair(
   to = travel_costs$vertex_id_to,
   aggregate_aux = FALSE
 )
+
+# Remove trips that are very long
+travel_costs <- travel_costs[total_time < 3600]
+
+
+graph$original$attrib$aux <- graph$original$attrib$carpooling_time
+
+travel_costs$carpooling_time <- get_distance_pair(
+  graph,
+  from = travel_costs$vertex_id_from,
+  to = travel_costs$vertex_id_to,
+  aggregate_aux = TRUE
+)
+
+travel_costs$car_time <- travel_costs$total_time - travel_costs$carpooling_time
+
+
+# Remove trips that are 100 % solo driving
+travel_costs <- travel_costs[car_time/total_time < 1.0]
+
 
 # Compute the distances between clusters
 info(logger, "Computing travel distances...")
@@ -125,16 +163,6 @@ travel_costs$carpooling_distance <- get_distance_pair(
 travel_costs$car_distance <- travel_costs$total_distance - travel_costs$carpooling_distance
 
 
-graph$original$attrib$aux <- graph$original$attrib$carpooling_time
-
-travel_costs$carpooling_time <- get_distance_pair(
-  graph,
-  from = travel_costs$vertex_id_from,
-  to = travel_costs$vertex_id_to,
-  aggregate_aux = TRUE
-)
-
-travel_costs$car_time <- travel_costs$total_time - travel_costs$carpooling_time
 
 
 # Aggregate the result by transport zone
@@ -142,10 +170,10 @@ travel_costs[, prob := weight_from*weight_to]
 travel_costs[, prob := prob/sum(prob), list(from, to)]
 
 travel_costs <- travel_costs[, list(
-    car_distance = weighted.mean(car_distance, prob)/1000,
-    carpooling_distance = weighted.mean(carpooling_distance, prob)/1000,
-    car_time = weighted.mean(car_time, prob)/3600,
-    carpooling_time = weighted.mean(carpooling_time, prob)/3600
+    car_distance = sum(car_distance*prob)/1000,
+    carpooling_distance = sum(carpooling_distance*prob)/1000,
+    car_time = sum(car_time*prob)/3600,
+    carpooling_time = sum(carpooling_time*prob)/3600
   ),
   by = list(from, to)
 ]

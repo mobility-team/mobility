@@ -17,7 +17,10 @@ class TravelCostsAggregator(InMemoryAsset):
         
         costs = []
         
-        for mode in self.modes:
+        # Put the car first so that road congestion is computed first
+        modes = sorted(self.modes, key=lambda mode: mode.name != "car")
+        
+        for mode in modes:
             if mode.congestion:
                 costs.append(pl.DataFrame(mode.generalized_cost.get(congestion)))
             else:

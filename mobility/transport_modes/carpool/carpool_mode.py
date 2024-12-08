@@ -19,7 +19,9 @@ class CarpoolMode(TransportMode):
         
         generalized_cost_parameters = generalized_cost_parameters or DetailedCarpoolGeneralizedCostParameters()
         generalized_cost = DetailedCarpoolGeneralizedCost(travel_costs, generalized_cost_parameters)
+        
+        congestion = car_mode.congestion
             
-        super().__init__("carpool", travel_costs, generalized_cost)
+        super().__init__("carpool", travel_costs, generalized_cost, congestion)
         
         

@@ -102,7 +102,7 @@ class PathTravelCosts(FileAsset):
         else:
             output_path = self.cache_path["congested"]
         
-        costs = self.compute_freeflow_costs_by_OD(self.transport_zones, self.contracted_path_graph, output_path)
+        costs = self.compute_costs_by_OD(self.transport_zones, self.contracted_path_graph, output_path)
         
         if congestion is False:
             shutil.copy(self.cache_path["freeflow"], self.cache_path["congested"])
@@ -111,7 +111,7 @@ class PathTravelCosts(FileAsset):
 
 
 
-    def compute_freeflow_costs_by_OD(
+    def compute_costs_by_OD(
             self,
             transport_zones: TransportZones,
             path_graph: PathGraph,

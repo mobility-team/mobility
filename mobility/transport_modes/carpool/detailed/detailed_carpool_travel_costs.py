@@ -38,21 +38,22 @@ class DetailedCarpoolTravelCosts(FileAsset):
 
         super().__init__(inputs, cache_path)
 
-    def get_cached_asset(self) -> pd.DataFrame:
+    def get_cached_asset(self, congestion: bool = False) -> pd.DataFrame:
 
         logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
         costs = pd.read_parquet(self.cache_path)
 
         return costs
 
-    def create_and_get_asset(self) -> pd.DataFrame:
+    def create_and_get_asset(self, congestion: bool = False) -> pd.DataFrame:
         
         logging.info("Preparing carpool travel costs for occupants...")
         
         costs = self.compute_travel_costs(
             self.car_travel_costs,
             self.parameters,
-            self.modal_shift
+            self.modal_shift,
+            congestion
         )
         costs.to_parquet(self.cache_path)
 
@@ -62,7 +63,8 @@ class DetailedCarpoolTravelCosts(FileAsset):
             self,
             car_travel_costs: PathTravelCosts,
             params: DetailedCarpoolRoutingParameters,
-            modal_shift: ModalShift
+            modal_shift: ModalShift,
+            congestion: bool
         ) -> pd.DataFrame:
         
         script = RScript(resources.files('mobility.transport_modes.carpool.detailed').joinpath('compute_carpool_travel_costs.R'))
@@ -73,6 +75,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
                 str(car_travel_costs.simplified_path_graph.get()),
                 str(car_travel_costs.simplified_path_graph.get()),
                 json.dumps(asdict(modal_shift)),
+                str(congestion),
                 str(self.cache_path)
             ]
         )
@@ -80,3 +83,8 @@ class DetailedCarpoolTravelCosts(FileAsset):
         costs = pd.read_parquet(self.cache_path)
         
         return costs
+    
+    
+    def update(self, od_flows):
+        
+        self.create_and_get_asset(congestion=True)
