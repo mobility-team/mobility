@@ -5,7 +5,7 @@ import pandas as pd
 import polars as pl
 
 from mobility.file_asset import FileAsset
-
+from mobility.parsers import JobsActivePopulationFlows
 from mobility.choice_models.destination_choice_model import DestinationChoiceModel
 
 class TransportModeChoiceModel(FileAsset):
@@ -62,3 +62,40 @@ class TransportModeChoiceModel(FileAsset):
         return prob
     
     
+    def get_comparison_by_origin(self, flows):
+    
+        flows = flows.groupby(["local_admin_unit_id_from", "mode"], as_index=False)["flow_volume"].sum()
+        
+        lau_ids = flows["local_admin_unit_id_from"].unique()
+        
+        ref_flows = JobsActivePopulationFlows().get()
+        ref_flows = ref_flows[ref_flows["local_admin_unit_id_from"].isin(lau_ids) & ref_flows["local_admin_unit_id_to"].isin(lau_ids)]
+        ref_flows = ref_flows.groupby(["local_admin_unit_id_from", "mode"], as_index=False)["ref_flow_volume"].sum()
+        od_pairs = pd.concat([
+            ref_flows[["local_admin_unit_id_from", "mode"]],
+            flows[["local_admin_unit_id_from", "mode"]]
+        ]).drop_duplicates()
+        
+        
+        # Remove all flows originating from switzerland as there is no reference data
+        od_pairs = od_pairs[od_pairs["local_admin_unit_id_from"].str[0:2] != "ch"]
+        
+        comparison = pd.merge(
+            od_pairs,
+            flows,
+            on=["local_admin_unit_id_from", "mode"],
+            how="left"
+        )
+        
+        comparison = pd.merge(
+            comparison,
+            ref_flows,
+            on=["local_admin_unit_id_from", "mode"],
+            how="left"
+        )
+    
+        
+        comparison.fillna(0.0, inplace=True)
+        
+        return comparison
+        
