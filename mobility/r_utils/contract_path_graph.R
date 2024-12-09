@@ -10,19 +10,21 @@ library(data.table)
 
 args <- commandArgs(trailingOnly = TRUE)
 
+# args <- c(
+#   'D:\\dev\\mobility_oss\\mobility',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\fb5768b837eda7904a70cebefcb75fa9-done',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\2e3f146ec4314657eda8c102d316cb49-transport_zones.gpkg',
+#   'True',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\flows.parquet',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\contracted\\a2db17f162b1bd6ea3a7cb5704595621-done'
+# )
+
 package_fp <- args[1]
 cppr_graph_fp <- args[2]
 transport_zones_fp <- args[3]
 congestion <- args[4]
 flows_fp <- args[5]
 output_fp <- args[6]
-
-# package_fp <- "D:/dev/mobility_oss/mobility"
-# cppr_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\9a6f4500ffbf148bfe6aa215a322e045-done"
-# transport_zones_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg"
-# congestion <- "True"
-# flows_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\flows.parquet"
-# output_fp <- "D:/data/mobility/projects/experiments/path_graph_car/contracted/5ca9ce47abdf6f3f5977f01ea64a785e-done"
 
 
 source(file.path(package_fp, "r_utils", "cpprouting_io.R"))

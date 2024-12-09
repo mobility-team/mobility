@@ -13,6 +13,15 @@ library(FNN)
 
 args <- commandArgs(trailingOnly = TRUE)
 
+# args <- c(
+#   'D:\\dev\\mobility_oss\\mobility',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\2e3f146ec4314657eda8c102d316cb49-transport_zones.gpkg',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\contracted\\a2db17f162b1bd6ea3a7cb5704595621-done',
+#   '60.0',
+#   '1.0',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\d6b65fe9bbe771cc5991b958d4f6cf95-travel_costs_congested_car.parquet'
+# )
+
 package_path <- args[1]
 tz_fp <- args[2]
 graph_fp <- args[3]

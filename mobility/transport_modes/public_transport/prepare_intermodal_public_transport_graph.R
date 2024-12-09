@@ -27,7 +27,7 @@ output_fp <- args[8]
 # pt_graph_fp <- "D:/data/mobility/projects/haut-doubs/public_transport_graph/simplified/3d807c3ccc9ee020cbabb3e281f5635a-done"
 # first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-done"
 # last_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-done"
-# first_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "shift_time": 5.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
+# first_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
 # last_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
 # output_fp <- 'D:\\data\\mobility\\projects\\haut-doubs\\walk_public_transport_walk_intermodal_transport_graph\\simplified\\dad2d53274998829d5a595ee27df908a-done'
 
@@ -183,9 +183,6 @@ first_leg <- merge(first_leg, start_verts, by.x = "to", by.y = "vertex_id", suff
 first_leg[, angle := 180/pi*atan2(y_to - y_from, x_to - x_from)]
 first_leg[, angle_bin := round(angle/delta_angle_sector)*delta_angle_sector]
 first_leg[, distance := sqrt((x_to - x_from)^2 + (y_to - y_from)^2)]
-
-first_leg <- first_leg[order(i, distance)]
-first_leg <- first_leg[first_leg[, .I[1:min(.N, n_stops_per_sector)], by = .(i, angle_bin)]$V1]
 
 # Remove duplicates (origin to stops that are located at the same spot)
 first_leg <- first_leg[first_leg[, .I[1], by = list(from, to)]$V1, list(from, to)]

@@ -127,6 +127,91 @@ travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_
 travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_to = weight, vertex_id_to)], by.x = "building_id_to_cluster", by.y = "building_id")
 
 
+# xy <- travel_costs[
+#   from %in% transport_zones[local_admin_unit_id == "fr-25462", transport_zone_id] & 
+#     to %in% transport_zones[local_admin_unit_id == "ch-5764", transport_zone_id] 
+# ]
+# 
+# p <- ggplot(xy)
+# p <- p + geom_point(aes(x = x_from, y = y_from))
+# p
+# 
+# get_distance_pair(
+#   intermodal_graph,
+#   xy$vertex_id_from,
+#   xy$vertex_id_to
+# )
+# 
+# paths <- get_multi_paths(
+#   intermodal_graph,
+#   xy$vertex_id_from,
+#   xy$vertex_id_to,
+#   long = TRUE
+# )
+# 
+# paths <- paths[!duplicated(paths), ]
+# 
+# paths <- as.data.table(paths)
+# paths <- merge(paths, intermodal_verts, by.x = "node", by.y = "vertex_id", sort = FALSE)
+# paths[, index := 1:.N, by = list(from, to)]
+# paths[, od := .GRP, by = list(from, to)]
+# paths[, leg := substr(node, 1, 1)]
+# 
+# paths <- merge(paths, intermodal_graph$dict, by.x = "node", by.y = "ref", sort = FALSE)
+# paths[, previous_id := shift(id, type = "lag", n = 1), by = list(from, to)]
+# 
+# paths <- merge(paths, intermodal_graph$data, by.x = c("previous_id", "id"), by.y = c("from", "to"), all.x = TRUE, sort = FALSE)
+# 
+# p <- ggplot(paths)
+# p <- p + geom_path(aes(x = x, y = y, color = leg))
+# p <- p + geom_point(aes(x = x, y = y, color = leg))
+# # p <- p + geom_text_repel(aes(x = x, y = y, label = node))
+# p <- p + facet_wrap(~od)
+# p <- p + coord_equal()
+# p
+# 
+# fwrite(paths, "paths.csv")
+# 
+# 
+# lines <- as.data.table(intermodal_graph$data)
+# lines <- merge(lines, intermodal_graph$dict, by.x = "from", by.y = "id")
+# lines <- merge(lines, intermodal_graph$dict, by.x = "to", by.y = "id", suffixes = c("_from", "_to"))
+# 
+# lines <- merge(lines, intermodal_verts, by.x = "ref_from", by.y = "vertex_id")
+# lines <- merge(lines, intermodal_verts, by.x = "ref_to", by.y = "vertex_id", suffixes = c("_from", "_to"))
+# 
+# lines[, d := sqrt((x_to-x_from)^2 + (y_to-y_from)^2)]
+# lines <- lines[d > 0 & dist > 0.0]
+# 
+# lines <- lines[, list(edge_id = paste(ref_from, ref_to), x_from, y_from, x_to, y_to, dist)]
+# 
+# lines_long <- rbind(
+#   lines[, .(edge_id, x = x_from, y = y_from, dist, point_id = 1)],
+#   lines[, .(edge_id, x = x_to, y = y_to, dist, point_id = 2)]
+# )[order(edge_id, point_id)]
+# 
+# linestrings <- sfheaders::sf_linestring(
+#   obj = lines_long,
+#   x = "x",
+#   y = "y",
+#   linestring_id = "edge_id",
+#   keep = TRUE
+# )
+# 
+# st_crs(linestrings) <- 3035
+# 
+# st_write(linestrings, "intermodal.gpkg", delete_dsn = TRUE)
+# 
+# graph <- as.data.table(intermodal_graph$data)
+# dict <- as.data.table(intermodal_graph$dict)
+# 
+# graph <- merge(graph, dict, by.x = "from", by.y = "id")
+# graph <- merge(graph, dict, by.x = "to", by.y = "id", suffixes = c("_from", "_to"))
+# 
+# graph[ref_from == "s1-7431598429"]
+
+
+
 # Compute the travel costs
 info(logger, "Computing travel costs...")
 
