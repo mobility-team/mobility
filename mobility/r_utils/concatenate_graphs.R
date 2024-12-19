@@ -397,7 +397,10 @@ add_modal_shift_times <- function(graph, verts, first_modal_shift, last_modal_sh
   
   if (!is.null(first_modal_shift$shortcuts_locations)) {
     
-    sc_locations <- sfheaders::sf_point(first_modal_shift$shortcuts_locations, x = "lon", y = "lat")
+    shortcuts_locations <- as.data.frame(last_modal_shift$shortcuts_locations)
+    colnames(shortcuts_locations) <- c("lon", "lat")
+    
+    sc_locations <- sfheaders::sf_point(shortcuts_locations, x = "lon", y = "lat")
     st_crs(sc_locations) <- 4326
     sc_locations <- st_transform(sc_locations, 3035)
     sc_locations <- st_coordinates(sc_locations)
@@ -426,7 +429,10 @@ add_modal_shift_times <- function(graph, verts, first_modal_shift, last_modal_sh
   
   if (!is.null(last_modal_shift$shortcuts_locations)) {
     
-    sc_locations <- sfheaders::sf_point(last_modal_shift$shortcuts_locations, x = "lon", y = "lat")
+    shortcuts_locations <- as.data.frame(last_modal_shift$shortcuts_locations)
+    colnames(shortcuts_locations) <- c("lon", "lat")
+    
+    sc_locations <- sfheaders::sf_point(shortcuts_locations, x = "lon", y = "lat")
     st_crs(sc_locations) <- 4326
     sc_locations <- st_transform(sc_locations, 3035)
     sc_locations <- st_coordinates(sc_locations)
@@ -535,7 +541,10 @@ add_carpooling_edges <- function(
   
   if (!is.null(modal_shift$shortcuts_locations)) {
     
-    sc_locations <- sfheaders::sf_point(modal_shift$shortcuts_locations, x = "lon", y = "lat")
+    shortcuts_locations <- as.data.frame(modal_shift$shortcuts_locations)
+    colnames(shortcuts_locations) <- c("lon", "lat")
+    
+    sc_locations <- sfheaders::sf_point(shortcuts_locations, x = "lon", y = "lat")
     st_crs(sc_locations) <- 4326
     sc_locations <- st_transform(sc_locations, 3035)
     sc_locations <- as.data.table(st_coordinates(sc_locations))

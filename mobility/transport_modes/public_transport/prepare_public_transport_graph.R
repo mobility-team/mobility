@@ -13,10 +13,10 @@ gtfs_file_path <-args[3]
 parameters <- args[4]
 output_file_path <- args[5]
 
-package_path <- 'D:/dev/mobility_oss/mobility'
-tz_file_path <- "D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg"
-gtfs_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\6d6b436353d8cb52ae4f8d8c0aa7c9ba-gtfs_router.rds'
-parameters <- '{"start_time_min": 6.5, "start_time_max": 7.5, "max_traveltime": 1.0}'
+# package_path <- 'D:/dev/mobility_oss/mobility'
+# tz_file_path <- "D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg"
+# gtfs_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\6d6b436353d8cb52ae4f8d8c0aa7c9ba-gtfs_router.rds'
+# parameters <- '{"start_time_min": 6.5, "start_time_max": 7.5, "max_traveltime": 1.0}'
 
 source(file.path(package_path, "r_utils", "cpprouting_io.R"))
 
