@@ -10,7 +10,7 @@ from mobility.choice_models.destination_choice_model import DestinationChoiceMod
 
 class TransportModeChoiceModel(FileAsset):
     
-    def __init__(self, destination_choice_model: DestinationChoiceModel, logit_factor=10):
+    def __init__(self, destination_choice_model: DestinationChoiceModel, logit_factor=1):
         
         inputs = {
             "destination_choice_model": destination_choice_model,
@@ -38,8 +38,10 @@ class TransportModeChoiceModel(FileAsset):
         for mode in self.inputs["destination_choice_model"].costs.modes:
             
             if mode.congestion:
+                print(f"Getting congested costs for mode {mode.name}")
                 gc = mode.generalized_cost.get(congestion=True)
             else:
+                print(f"Getting costs for mode {mode.name}")
                 gc = mode.generalized_cost.get()
                 
             costs.append(
@@ -51,7 +53,7 @@ class TransportModeChoiceModel(FileAsset):
         
         prob = (
             costs
-            .with_columns(pl.col("cost").neg().exp().alias("exp_u"))
+            .with_columns(pl.col("cost").truediv(self.logit_factor).neg().exp().alias("exp_u"))
             .with_columns((pl.col("exp_u")/pl.col("exp_u").sum().over(["from", "to"])).alias("prob"))
             .select(["from", "to", "mode", "prob"])
         )

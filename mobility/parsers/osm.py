@@ -336,7 +336,7 @@ class OSMData(FileAsset):
         
         with Progress() as progress:
             
-            task = progress.add_task("[green]Extracting buidlings in each local admin unit..", total=math.ceil(len(extracts)/n_extracts_max))
+            task = progress.add_task("[green]Extracting buildings in each local admin unit..", total=math.ceil(len(extracts)/n_extracts_max))
                 
             for i in range(0, len(extracts), n_extracts_max):
                 

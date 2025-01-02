@@ -10,6 +10,10 @@ from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file
 
 class GTFSStops(FileAsset):
+    """
+    Class to get GTFS stops for the study territory.
+    Currently covers France and Switzerland using two national datasets.
+    """
     
     def __init__(self, admin_prefixes: list):
         

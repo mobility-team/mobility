@@ -16,8 +16,8 @@ args <- commandArgs(trailingOnly = TRUE)
 package_path <- args[1]
 tz_file_path <- args[2]
 intermodal_graph_fp <- args[3]
-first_modal_shift <- args[4]
-last_modal_shift <- args[5]
+first_modal_transfer <- args[4]
+last_modal_transfer <- args[5]
 output_file_path <- args[6]
 
 # package_path <- 'D:/dev/mobility_oss/mobility'
@@ -26,13 +26,13 @@ output_file_path <- args[6]
 # intermodal_graph_fp <- "D:/data/mobility/projects/haut-doubs/walk_public_transport_walk_intermodal_transport_graph/simplified/dad2d53274998829d5a595ee27df908a-done"
 # first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_car/contracted/60c7d5b22e428d3fbea41ac0ffadd067-done"
 # last_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-done"
-# first_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "shift_time": 5.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
-# last_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
+# first_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 5.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
+# last_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
 # output_file_path <- 'D:/data/mobility/projects/experiments/f65f378d4dc11f0929cf7f2aeaa2aaf5-public_transport_travel_costs.parquet'
 
 
-first_modal_shift <- fromJSON(first_modal_shift)
-last_modal_shift <- fromJSON(last_modal_shift)
+first_modal_transfer <- fromJSON(first_modal_transfer)
+last_modal_transfer <- fromJSON(last_modal_transfer)
 
 buildings_sample_fp <- file.path(
   dirname(tz_file_path),
@@ -158,7 +158,7 @@ travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_
 # paths[, leg := substr(node, 1, 1)]
 # 
 # paths <- merge(paths, intermodal_graph$dict, by.x = "node", by.y = "ref", sort = FALSE)
-# paths[, previous_id := shift(id, type = "lag", n = 1), by = list(from, to)]
+# paths[, previous_id := transfer(id, type = "lag", n = 1), by = list(from, to)]
 # 
 # paths <- merge(paths, intermodal_graph$data, by.x = c("previous_id", "id"), by.y = c("from", "to"), all.x = TRUE, sort = FALSE)
 # 
@@ -225,8 +225,8 @@ travel_costs$total_time <- get_distance_pair(
 
 travel_costs <- travel_costs[!is.na(total_time)]
 
-modal_shift_time <- 60*(first_modal_shift$shift_time + last_modal_shift$shift_time)
-travel_costs[, total_time := total_time + modal_shift_time]
+modal_transfer_time <- 60*(first_modal_transfer$transfer_time + last_modal_transfer$transfer_time)
+travel_costs[, total_time := total_time + modal_transfer_time]
 
 travel_costs <- travel_costs[total_time < 3600]
 

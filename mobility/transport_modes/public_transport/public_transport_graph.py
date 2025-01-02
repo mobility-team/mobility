@@ -16,17 +16,21 @@ from mobility.transport_modes.public_transport.gtfs_router import GTFSRouter
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
 from mobility.path_travel_costs import PathTravelCosts
 from mobility.transport_modes import TransportMode
-from mobility.transport_modes.modal_shift import ModalShift
+from mobility.transport_modes.modal_transfer import IntermodalTransfer
 
 class PublicTransportGraph(FileAsset):
     """
-    A class for managing public transport travel costs calculations using GTFS files, inheriting from the Asset class.
+    A class for managing public transport travel costs calculations using GTFS files, inheriting from the FileAsset class.
 
     This class is responsible for creating, caching, and retrieving public transport travel costs 
-    based on specified transport zones and travel modes.
+    based on specified transport zones and travel modes, using a R script managed by the gtfs_graph method.
     
     Uses GTFS files that have been prepared by TransportZones, but a list of additional GTFS files
     (representing a project for instance) can be provided.
+    
+    Args:
+        transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
+        parameters: PublicTransportRoutingParameters. Will use standard parameters by default
     """
 
     def __init__(
@@ -34,23 +38,8 @@ class PublicTransportGraph(FileAsset):
             transport_zones: TransportZones,
             parameters: PublicTransportRoutingParameters = PublicTransportRoutingParameters()
     ):
-        """
-        Retrieves public transport travel costs if they already exist for these transport zones and parameters,
-        otherwise calculates them.
         
-        Expected running time : between a few seconds and a few minutes.
-        
-        Args:
-            transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
-            gtfs_router : GTFSRouter object containing data about public transport routes and schedules.
-            start_time_min : float containing the start hour to consider for cost determination
-            start_time_max : float containing the end hour to consider for cost determination, should be superior to start_time_min
-            max_traveltime : float with the maximum travel time to consider for public transport, in hours
-            additional_gtfs_files : list of additional GTFS files to include in the calculations
-
-        """
-        
-        gtfs_router = GTFSRouter(transport_zones, parameters.additional_gtfs_files)
+        gtfs_router = GTFSRouter(transport_zones, parameters.additional_gtfs_files, parameters.expected_agencies)
 
         inputs = {
             "transport_zones": transport_zones,
@@ -85,17 +74,13 @@ class PublicTransportGraph(FileAsset):
             parameters: PublicTransportRoutingParameters
         ) -> pd.DataFrame:
         """
-        Calculates travel costs for public transport between transport zones.
+        Calculates travel costs for public transport between transport zones using the R script prepare_public_transport_graph.R
 
         Args:
             transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
             gtfs_router : GTFSRouter object containing data about public transport routes and schedules.
-            start_time_min : float containing the start hour to consider for cost determination
-            start_time_max : float containing the end hour to consider for cost determination, should be superior to start_time_min
-            max_traveltime : float with the maximum travel time to consider for public transport, in hours
+            parameters: PublicTransportRoutingParameters
 
-        Returns:
-            pd.DataFrame: A DataFrame containing calculated public transport travel costs.
         """
 
         logging.info("Computing public transport travel costs...")

@@ -8,6 +8,11 @@ from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file, clean_path
 
 class GTFSData(FileAsset):
+    """
+    Simple FileAsset to store GTFS files.
+    
+    Checks that the GTFS zip is >1ko and contains an agency.txt file.
+    """
     
     def __init__(self, url: str):
         
@@ -17,6 +22,8 @@ class GTFSData(FileAsset):
         
         if cache_path.suffix != ".zip":
             cache_path = cache_path.with_suffix('.zip')
+            
+        self.name = name 
             
         inputs = {
             "url": url,
@@ -62,6 +69,17 @@ class GTFSData(FileAsset):
         except:
             logging.info("Downloaded file is not a regular GTFS zip file, it will not be used by mobility.")
             return False
+    
+    
+    def get_agencies_names(self, path):
+                
+        with zipfile.ZipFile(path, 'r') as gtfs_folder:
+            with gtfs_folder.open("agency.txt") as agency:
+                agencies = agency.read().decode('utf-8')
+                print(agencies)
+                return agencies
+
+
         
     
     

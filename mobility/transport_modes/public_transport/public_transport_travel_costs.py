@@ -14,12 +14,12 @@ from mobility.transport_modes.public_transport.public_transport_graph import Pub
 from mobility.transport_modes.public_transport.intermodal_transport_graph import IntermodalTransportGraph
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
 from mobility.transport_modes import TransportMode
-from mobility.transport_modes.modal_shift import ModalShift
+from mobility.transport_modes.modal_transfer import IntermodalTransfer
 from mobility.path_graph import SimplifiedPathGraph, ContractedPathGraph
 
 class PublicTransportTravelCosts(FileAsset):
     """
-    A class for managing public transport travel costs calculations using GTFS files, inheriting from the Asset class.
+    A class for managing public transport travel costs calculations using GTFS files, inheriting from the FileAsset class.
 
     This class is responsible for creating, caching, and retrieving public transport travel costs 
     based on specified transport zones and travel modes.
@@ -34,8 +34,8 @@ class PublicTransportTravelCosts(FileAsset):
             parameters: PublicTransportRoutingParameters,
             first_leg_mode: TransportMode,
             last_leg_mode: TransportMode,
-            first_modal_shift: ModalShift = None,
-            last_modal_shift: ModalShift = None
+            first_modal_transfer: IntermodalTransfer = None,
+            last_modal_transfer: IntermodalTransfer = None
     ):
         """
         Retrieves public transport travel costs if they already exist for these transport zones and parameters,
@@ -59,15 +59,15 @@ class PublicTransportTravelCosts(FileAsset):
             parameters,
             first_leg_mode,
             last_leg_mode,
-            first_modal_shift,
-            last_modal_shift
+            first_modal_transfer,
+            last_modal_transfer
         )
 
         inputs = {
             "intermodal_graph": intermodal_graph,
             "transport_zones": transport_zones,
-            "first_modal_shift": first_modal_shift,
-            "last_modal_shift": last_modal_shift
+            "first_modal_transfer": first_modal_transfer,
+            "last_modal_transfer": last_modal_transfer
         }
 
         file_name = first_leg_mode.name + "_public_transport_" + last_leg_mode.name + "_travel_costs.parquet"
@@ -87,8 +87,8 @@ class PublicTransportTravelCosts(FileAsset):
         costs = self.compute_travel_costs(
             self.inputs["transport_zones"],
             self.inputs["intermodal_graph"],
-            self.inputs["first_modal_shift"],
-            self.inputs["last_modal_shift"]
+            self.inputs["first_modal_transfer"],
+            self.inputs["last_modal_transfer"]
         )
         
         costs.to_parquet(self.cache_path)
@@ -100,8 +100,8 @@ class PublicTransportTravelCosts(FileAsset):
             self,
             transport_zones: TransportZones,
             intermodal_graph: IntermodalTransportGraph,
-            first_modal_shift: ModalShift,
-            last_modal_shift: ModalShift
+            first_modal_transfer: IntermodalTransfer,
+            last_modal_transfer: IntermodalTransfer
         ) -> pd.DataFrame:
         """
         Calculates travel costs for public transport between transport zones.
@@ -125,9 +125,10 @@ class PublicTransportTravelCosts(FileAsset):
             args=[
                 str(transport_zones.cache_path),
                 str(intermodal_graph.get()),
-                json.dumps(asdict(first_modal_shift)),
-                json.dumps(asdict(last_modal_shift)),
-                str(self.cache_path)
+                json.dumps(asdict(first_modal_transfer)),
+                json.dumps(asdict(last_modal_transfer)),
+                str(self.cache_path),
+                
             ]
         )
 

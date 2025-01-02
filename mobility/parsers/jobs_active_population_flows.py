@@ -135,7 +135,7 @@ class JobsActivePopulationFlows(FileAsset):
         flows = flows[flows["local_admin_unit_id_from"].isin(local_admin_units["local_admin_unit_id"])]
         flows = flows[flows["local_admin_unit_id_to"].isin(local_admin_units["local_admin_unit_id"])]
         
-        # No availalable ref data in switzerland so we force the mode to car
+        # No available ref data in Switzerland so we force the mode to car
         flows["mode"] = "car"
         
         # BUG ?

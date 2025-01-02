@@ -12,13 +12,15 @@ from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
 from mobility.transport_modes import TransportMode
-from mobility.transport_modes.modal_shift import ModalShift
+from mobility.transport_modes.modal_transfer import IntermodalTransfer
 from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportGraph
 from mobility.path_graph import ContractedPathGraph
 
 class IntermodalTransportGraph(FileAsset):
     """
-    A class for managing public transport travel costs calculations using GTFS files, inheriting from the Asset class.
+    A class for managing intermodal transport travel costs calculations using GTFS files, inheriting from the FileAsset class.
+    A first leg mode (like walk or car) enables to reach the public transport network.
+    A last leg mode enables to reach destination from the public transport network. 
 
     This class is responsible for creating, caching, and retrieving public transport travel costs 
     based on specified transport zones and travel modes.
@@ -33,8 +35,8 @@ class IntermodalTransportGraph(FileAsset):
             parameters: PublicTransportRoutingParameters,
             first_leg_mode: TransportMode,
             last_leg_mode: TransportMode,
-            first_modal_shift: ModalShift = None,
-            last_modal_shift: ModalShift = None
+            first_modal_transfer: IntermodalTransfer = None,
+            last_modal_transfer: IntermodalTransfer = None
     ):
         """
         Retrieves public transport travel costs if they already exist for these transport zones and parameters,
@@ -60,8 +62,8 @@ class IntermodalTransportGraph(FileAsset):
             "public_transport_graph": public_transport_graph,
             "first_leg_graph": first_leg_mode.travel_costs.contracted_path_graph,
             "last_leg_graph": last_leg_mode.travel_costs.contracted_path_graph,
-            "first_modal_shift": first_modal_shift,
-            "last_modal_shift": last_modal_shift,
+            "first_modal_transfer": first_modal_transfer,
+            "last_modal_transfer": last_modal_transfer,
             "parameters": parameters
         }
         
@@ -84,8 +86,8 @@ class IntermodalTransportGraph(FileAsset):
             self.inputs["public_transport_graph"],
             self.inputs["first_leg_graph"],
             self.inputs["last_leg_graph"],
-            self.inputs["first_modal_shift"],
-            self.inputs["last_modal_shift"],
+            self.inputs["first_modal_transfer"],
+            self.inputs["last_modal_transfer"],
             self.inputs["parameters"]
         )
 
@@ -98,22 +100,25 @@ class IntermodalTransportGraph(FileAsset):
             public_transport_graph: PublicTransportGraph,
             first_leg_graph: ContractedPathGraph,
             last_leg_graph: ContractedPathGraph,
-            first_modal_shift: ModalShift,
-            last_modal_shift: ModalShift,
+            first_modal_transfer: IntermodalTransfer,
+            last_modal_transfer: IntermodalTransfer,
             parameters: PublicTransportRoutingParameters
         ) -> pd.DataFrame:
         """
-        Calculates travel costs for public transport between transport zones.
+        Calculates intermodal travel costs between transport zones. Uses the R script called prepare_intermodal_public_transport_graph.R
 
         Args:
             transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
-            gtfs_router : GTFSRouter object containing data about public transport routes and schedules.
-            start_time_min : float containing the start hour to consider for cost determination
-            start_time_max : float containing the end hour to consider for cost determination, should be superior to start_time_min
-            max_traveltime : float with the maximum travel time to consider for public transport, in hours
+            public_transport_graph (PublicTransportGraph): public transport part of the intermodal graph
+            first_leg_graph: graph for the first leg mode
+            last_leg_graph: graph for the last leg mode
+            first_modal_transfer: transfer parameters between the first mode and public transport
+            last_modal_transfer: transfer parameters between public transport and the last mode
+            parameters: PublicTransportRoutingParameters
+
 
         Returns:
-            pd.DataFrame: A DataFrame containing calculated public transport travel costs.
+            None, but a file is prepared
         """
 
         logging.info("Computing public transport travel costs...")
@@ -126,8 +131,8 @@ class IntermodalTransportGraph(FileAsset):
                 str(public_transport_graph.get()),
                 str(first_leg_graph.get()),
                 str(last_leg_graph.get()),
-                json.dumps(asdict(first_modal_shift)),
-                json.dumps(asdict(last_modal_shift)),
+                json.dumps(asdict(first_modal_transfer)),
+                json.dumps(asdict(last_modal_transfer)),
                 str(self.cache_path)
             ]
         )
