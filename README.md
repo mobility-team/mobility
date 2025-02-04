@@ -7,4 +7,4 @@ It uses discrete choice models to evaluate destination and mode decisions based 
 
 It handles the preparation of most inputs from open data (administrative boundaries, housing and places of interest spatial distribution, transport infrastructure, public transport schedules, activity programmes) and provides reasonable default values for model parameters. 
 
-To see how Mobility works, take a look at the [installation instructions](docs/installation.md) and the [quickstart page](docs/quickstart.md). If you want to contribute, see our [guidelines](docs/guidelines.md) and the [issue tracker](https://github.com/mobility-team/mobility).
+To see how Mobility works, take a look at the [installation instructions](docs/installation.md) and the [quickstart page](docs/quickstart.md). If you want to contribute, see our [guidelines](docs/contributing.md) and the [issue tracker](https://github.com/mobility-team/mobility).
