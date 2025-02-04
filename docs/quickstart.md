@@ -146,6 +146,9 @@ loc_trips = mobility.LocalizedTrips(
     work_dest_cm=work_choice_model,
     mode_cm=mode_choice_model
 )
+
+trips.get()
+loc_trips.get()
 ```
 
 # Complete script
@@ -254,4 +257,6 @@ loc_trips = mobility.LocalizedTrips(
     mode_cm=mode_choice_model
 )
 
+trips.get()
+loc_trips.get()
 ```
