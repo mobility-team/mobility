@@ -5,17 +5,17 @@
 - Installer un environnement de développement, pour pouvoir utiliser la librairie dans des scripts. Vous pouvez par exemple utiliser [spyder](https://www.spyder-ide.org/) (idéalement dans un environnement mamba, voir les [instructions d'installation de spyder](https://docs.spyder-ide.org/current/installation.html#conda-environment)) ou [vs code](https://code.visualstudio.com/).
 
 ## Récuperer le code avec git
-- Ouvrir une invite de commande, puis allez dans le dossier dans lequel vous souhaitez stocker le code de Mobility : `cd path/to/mobility-repo`.
-- Récupérer le code avec la commande : `git clone https://github.com/mobility-team/mobility.git`.
-- Passer sur la branche carpool : `git checkout carpool`.
+- Ouvrir une invite de commande, puis allez dans le dossier dans lequel vous souhaitez stocker le code de Mobility : `cd path/to/mobility-repo`
+- Récupérer le code avec la commande : `git clone https://github.com/mobility-team/mobility.git`
+- Passer sur la branche carpool : `git checkout carpool`
 
 ## Créer un environnement dédié et installer les dépendances de mobility
-- Créer un environnement pour mobility à partir du fichier environment.yml : `mamba env create -n mobility -f environment.yml`.
-- Activer l'environnement mobility : `mamba activate mobility`.
-- Installer mobility avec pip : `pip install -e .`.
+- Créer un environnement pour mobility à partir du fichier environment.yml : `mamba env create -n mobility -f environment.yml`
+- Activer l'environnement mobility : `mamba activate mobility`
+- Installer mobility avec pip : `pip install -e .`
 - Si vous utilisez spyder, installez la librairie spyder-kernels : `pip install spyder-kernels`.
 - Installer les dépendances R de mobility en lançant Python dans l'invite de commande, avec la commande `python`, puis :
-```
+```python
 import mobility
 mobility.set_params()
 ```
