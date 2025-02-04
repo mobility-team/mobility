@@ -8,19 +8,19 @@ import geopandas as gpd
 
 from rich.progress import Progress
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.parsers import CityLegalPopulation
 from mobility.parsers import CensusLocalizedIndividuals
 from mobility.parsers.admin_boundaries import get_french_regions_boundaries, get_french_cities_boundaries
 
-class Population(Asset):
+class Population(FileAsset):
     
     def __init__(self, transport_zones: gpd.GeoDataFrame, sample_size: int):
         
         inputs = {"transport_zones": transport_zones, "sample_size": sample_size}
 
         file_name = "population.parquet"
-        cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
+        cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name    
 
         super().__init__(inputs, cache_path)
         

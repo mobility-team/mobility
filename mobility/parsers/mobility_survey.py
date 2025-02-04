@@ -5,10 +5,10 @@ import zipfile
 import pandas as pd
 import numpy as np
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file
 
-class MobilitySurvey(Asset):
+class MobilitySurvey(FileAsset):
     """
     A class for managing and processing mobility survey data for the EMP-2019 and ENTD-2008 surveys.
     

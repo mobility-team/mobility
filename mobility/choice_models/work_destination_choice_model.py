@@ -28,12 +28,12 @@ class WorkDestinationChoiceModelParameters:
         default_factory=lambda: {
             "type": "radiation",
             "lambda": 0.99986,
-            "end_of_contract_rate": 0.1,
-            "job_change_utility_constant": -10.0,
-            "max_iterations": 20,
+            "end_of_contract_rate": 0.00,
+            "job_change_utility_constant": -5.0,
+            "max_iterations": 10,
             "tolerance": 0.01,
             "cost_update": False,
-            "n_iter_cost_update": 5
+            "n_iter_cost_update": 3
         }
     )
     

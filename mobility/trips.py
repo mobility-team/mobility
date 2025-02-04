@@ -7,12 +7,12 @@ import geopandas as gpd
 import numpy as np
 
 from rich.progress import Progress
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 
 from mobility.safe_sample import safe_sample
 from mobility.parsers import MobilitySurvey
 
-class Trips(Asset):
+class Trips(FileAsset):
     """
     A class to model and generate trips based on a population asset and mobility survey data.
     
@@ -29,7 +29,7 @@ class Trips(Asset):
         get_individual_trips: Samples trips for an individual based on their profile.
     """
     
-    def __init__(self, population: Asset, source: str = "EMP-2019"):
+    def __init__(self, population: FileAsset, source: str = "EMP-2019"):
         
         mobility_survey = MobilitySurvey(source)
         
@@ -65,6 +65,8 @@ class Trips(Asset):
         logging.info("Generating trips for each individual in the population...")
 
         transport_zones = self.inputs["population"].inputs["transport_zones"].get()
+        study_area = self.inputs["population"].inputs["transport_zones"].study_area.get()
+        
         population = self.inputs["population"].get()
         
         mobility_survey = self.inputs["mobility_survey"].get()
@@ -76,14 +78,19 @@ class Trips(Asset):
         self.p_immobility = mobility_survey["p_immobility"]
         self.p_car = mobility_survey["p_car"]
         
-        trips = self.get_population_trips(population, transport_zones)
+        trips = self.get_population_trips(population, transport_zones, study_area)
 
         trips.to_parquet(self.cache_path)
 
         return trips
     
         
-    def get_population_trips(self, population: pd.DataFrame, transport_zones: gpd.GeoDataFrame) -> pd.DataFrame:
+    def get_population_trips(
+            self,
+            population: pd.DataFrame,
+            transport_zones: gpd.GeoDataFrame,
+            study_area: gpd.GeoDataFrame,
+        ) -> pd.DataFrame:
         """
         Generates trips for the entire population by merging population data with transport zone data and then individually generating trips for each person.
         
@@ -95,9 +102,15 @@ class Trips(Asset):
             pd.DataFrame: A DataFrame containing generated trips for the population.
         """
         
+        urban_unit_categories = pd.merge(
+            transport_zones[["transport_zone_id", "local_admin_unit_id"]],
+            study_area[["local_admin_unit_id", "urban_unit_category"]],
+            on="local_admin_unit_id"
+        )
+        
         population = pd.merge(
             population,
-            transport_zones[["transport_zone_id", "urban_unit_category"]],
+            urban_unit_categories[["transport_zone_id", "urban_unit_category"]],
             on="transport_zone_id",
             how="left"
         )

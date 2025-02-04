@@ -1,6 +1,7 @@
 import polars as pl
 import logging
 
+from typing import List
 from mobility.in_memory_asset import InMemoryAsset
 
 class TravelCostsAggregator(InMemoryAsset):
@@ -11,22 +12,26 @@ class TravelCostsAggregator(InMemoryAsset):
         super().__init__(inputs)
         
         
-    def get(self, congestion: bool = False):
+    def get(
+            self,
+            metrics=["cost"],
+            congestion: bool = False,
+            aggregate_by_od: bool = True
+        ):
         
         logging.info("Aggregating costs...")
         
-        costs = []
+        if aggregate_by_od is True:
+            costs = self.get_costs_by_od(metrics, congestion)
+        else:
+            costs = self.get_costs_by_od_and_mode(metrics, congestion)
         
-        # Put the car first so that road congestion is computed first
-        modes = sorted(self.modes, key=lambda mode: mode.name != "car")
+        return costs
+    
+    
+    def get_costs_by_od(self, metrics: List, congestion: bool):
         
-        for mode in modes:
-            if mode.congestion:
-                costs.append(pl.DataFrame(mode.generalized_cost.get(congestion)))
-            else:
-                costs.append(pl.DataFrame(mode.generalized_cost.get()))
-        
-        costs = pl.concat(costs)
+        costs = self.get_costs_by_od_and_mode(metrics, congestion)
         
         costs = costs.with_columns([
             (pl.col("cost").neg().exp()).alias("prob")
@@ -48,6 +53,30 @@ class TravelCostsAggregator(InMemoryAsset):
             pl.col("from").cast(pl.Int64),
             pl.col("to").cast(pl.Int64)
         ])
+        
+        return costs
+        
+        
+    def get_costs_by_od_and_mode(self, metrics: List, congestion: bool):
+        
+        costs = []
+        
+        # Put the car first so that road congestion is computed first
+        modes = sorted(self.modes, key=lambda mode: mode.name != "car")
+        
+        for mode in modes:
+            
+            if mode.congestion:
+                gc = pl.DataFrame(mode.generalized_cost.get(metrics, congestion))
+            else:
+                gc = pl.DataFrame(mode.generalized_cost.get(metrics))
+                
+            costs.append(
+                pl.DataFrame(gc)
+                .with_columns(pl.lit(mode.name).alias("mode"))
+            )
+        
+        costs = pl.concat(costs)
         
         return costs
         

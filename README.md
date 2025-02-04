@@ -1,72 +1,10 @@
-[![codecov](https://codecov.io/github/mobility-team/mobility/branch/main/graph/badge.svg?token=D31X32AZ43)](https://codecov.io/github/mobility-team/mobility)
-[![Python package](https://github.com/mobility-team/mobility/actions/workflows/python-package.yml/badge.svg?branch=main)](https://github.com/mobility-team/mobility/actions/workflows/python-package.yml)
-[![Code style: black][black-badge]][black-link]
-[![Documentation Status][rtd-badge]][rtd-link]
+# Mobility - Open source multi-scale travel behavior modelling
+Mobility is an open source Python library for modelling the travel behavior of local populations, from short range to long range trips, for different travel motives (personnal and professional) and on multimodal transport networks (walk, bicycle, public transport and car). It can be used on regions composed of hundreds of cities (up to a thousand), located in France and Switzerland.
 
-# Mobility, an open-source library for mobility modelisation
-Mobility is an open-source solution to compute the carbon emissions due to the mobility of a local population.
+It provides estimated travel diaries of a local sample population, based on indidividual socio-economical characteristics, expected daily activity programmes, competition over opportunities at places of interest (jobs, shops, leisure facilities...) and congestion of transport infrastructures.
 
-It is developed mainly by [AREP](https://arep.fr) and [Elioth](https://elioth.com/) with [ADEME](https://wiki.resilience-territoire.ademe.fr/wiki/Mobility) support, but anyone can join us!
-For now, it is mainly focused on French territories.
+It uses discrete choice models to evaluate destination and mode decisions based on generalized cost estimates, estimated from detailed unimodal and intermodal travel costs between the transport zones of the studied region.
 
-[Documentation on mobility.readthedocs.io](https://mobility.readthedocs.io/en/latest/)
+It handles the preparation of most inputs from open data (administrative boundaries, housing and places of interest spatial distribution, transport infrastructure, public transport schedules, activity programmes) and provides reasonable default values for model parameters. 
 
-Find more infos (in French) on [Mobility website](https://mobility-team.github.io/)
-
-# Mobility, une librairie open source pour la modélisation de la mobilité
-Mobility est une solution open source servant à calculer l'empreinte carbone liée à la mobilité d'une population locale.
-
-
-L'outil est principalement développé par [AREP](https://arep.fr) et [Elioth](https://elioth.com/) avec le soutien de l'[ADEME](https://wiki.resilience-territoire.ademe.fr/wiki/Mobility), mais toute personne peut nous rejoindre !
-Pour l'instant, la solution est centrée sur les territoires et les données françaises.
-
-[Documentation sur mobility.readthedocs.io](https://mobility.readthedocs.io/en/latest/)
-
-Plus d'infos sur [le site web](https://mobility-team.github.io/) !
-
-# Installation
-- Installer mamba avec [miniforge](https://github.com/conda-forge/miniforge).
-- Aller dans le dossier qui contient le code du repo : `cd path/to/mobility-repo`.
-- Créer un environnement pour mobility à partir du fichier environment.yml : `mamba env create -n mobility -f environment.yml`.
-- Activer l'environnement mobility : `mamba activate mobility`.
-- Installer mobility avec pip : `pip install -e .`.
-- Vous pouvez utiliser Spyder en indiquant bien l'environnement que vous avez créé comme environnement à utiliser
-- Importer mobility dans votre code avec `import mobility` (script d'exemple [ici](https://github.com/mobility-team/mobility/blob/main/examples/trip_localizer_detailed_steps/trip_localizer_detailed_steps.py)).
-- Il faut appeler `mobility.setup` avant de pouvoir utiliser mobility : la fonction va fixer plusieurs variables d'environnement qui peuvent être nécessaires (où stocker les fichiers temporaires, info sur le proxy pour les requêtes http...) et installer si besoin les packages R.
-> Si votre code renvoie une erreur de type R indiquant qu'un package est manquant (généralement pak), il est possible que le téléchargement soit bloqué par votre proxy d'entreprise. C'est notamment le cas chez AREP, voici la procédure dans ce cas :
-> * Dans le terminal Miniforge Prompt, après avoir exécuté `mamba activate mobility`, utiliser la commande  `R` pour entrer dans le terminal R
-> * Utiliser la commande `install.packages(c("dodgr","gtfsrouter", "sf", "geodist", "dplyr", "sfheaders", "nngeo", "data.table", "reshape2", "arrow", "stringr", "pbapply", "hms", "lubridate", "readxl", "pbapply"), method='wininet')` pour installer les packages R
-> * Sur Windows, utiliser la commande `install.packages(file.choose(), repos=NULL)` et aller sélectionner le fichier ZIP `osmdata_0.2.5.005.zip` dans `mobility/mobility/resources/`, cela permet d'installer une version d'osmdata plus rapide (modifiée par nos soins).
-> * Utiliser la commande `q()` pour quitter le terminal R.
-
-> Si Spyder ne reconnaît pas l'environnement que vous avee créé, vous pouvez :
-> * Utiliser la commande `mamba install spyder` dans l'environnement `mobility`
-> * Accepter les changements proposés
-> * Lancer la commande `spyder` depuis l'environnement
-
-# Contributeur·ices
-| Entreprise/école  | Participant·es |
-| :------------- | :------------- |
-| AREP  | Capucine-Marin Dubroca-Voisin <br> Antoine Gauchot <br> Félix Pouchain |
-| Elioth  | Louise Gontier <br> Arthur Haulon  |
-| École Centrale de Lyon | Anas Lahmar <br> Ayoub Foundou <br> Charles Pequignot <br> Lyes Kaya  <br> Zakariaa El Mhassani |
-
-# Utilisations
-| Utilisateur  | Date | Projet |
-| :------------- | :------------- | :------------- |
-| AREP  | 2020-2022 | [Luxembourg in Transition]([url](https://www.arep.fr/nos-projets/luxembourg-in-transition-paysage-capital/)) |
-| AREP | En cours (2022) | Étude pour le [Grand Annecy]([url](https://www.arep.fr/nos-projets/grand-annecy/)) |
-
-# Comment utiliser Mobility ?
-_En cours de rédaction_
-
-# Comment contribuer ?
-* Vous pouvez regarder nos [issues](https://github.com/mobility-team/mobility/issues), particulièrement celles marquées comme [good-first-issue](https://github.com/mobility-team/mobility/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), et proposer d'y contribuer.
-* Tester l'outil et nous indiquer là où la documentation peut être améliorée est très utile ! Que ce soit pour une suggestion ou une issue, n'hésitez pas à [ouvrir une issue](https://github.com/mobility-team/mobility/issues/new).
-* Nous espérons que vous pourrez utiliser Mobility pour vos travaux de recherche et de conseil ! Nous comptons sur vous pour partager le code que vous avez utilisé.
-* Nous suivons PEP8 pour notre code Python. Pour d'autres bonnes pratiques, [suivez le guide](https://github.com/mobility-team/mobility/tree/main/mobility) !
-
-[rtd-badge]: https://readthedocs.org/projects/mobility/badge/?version=latest
-[rtd-link]: https://mobility.readthedocs.io/en/latest/?badge=latest
-[black-badge]: https://img.shields.io/badge/code%20style-black-000000.svg
-[black-link]: https://github.com/ambv/black
+To see how Mobility works, take a look at the [installation instructions](docs/installation.md) and the [quickstart page](docs/quickstart.md). If you want to contribute, see our [guidelines](docs/guidelines.md) and the [issue tracker](https://github.com/mobility-team/mobility).

@@ -40,3 +40,6 @@ from .choice_models.transport_mode_choice_model import TransportModeChoiceModel
 from .parsers import LocalAdminUnits
 
 from mobility.transport_modes.public_transport import GTFSRouter
+
+
+from .localized_trips import LocalizedTrips

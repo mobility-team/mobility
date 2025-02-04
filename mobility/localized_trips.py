@@ -3,30 +3,25 @@ import pathlib
 import logging
 import pandas as pd
 import numpy as np
+import polars as pl
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 
 from mobility.choice_models.transport_mode_choice_model import TransportModeChoiceModel
 from mobility.choice_models.work_destination_choice_model import WorkDestinationChoiceModel
-from mobility.transport_modes import MultiModalMode
+from mobility.choice_models.travel_costs_aggregator import TravelCostsAggregator
 
-
-class LocalizedTrips(Asset):
+class LocalizedTrips(FileAsset):
     
     def __init__(
-            self, trips: Asset, cost_of_time: float = 20.0,
-            work_alpha: float = 0.2, work_beta: float = 0.8
+            self,
+            trips: FileAsset,
+            work_dest_cm: WorkDestinationChoiceModel,
+            mode_cm: TransportModeChoiceModel
         ):
         
-        transport_zones = trips.inputs["population"].inputs["transport_zones"]
-        
-        travel_costs = MultiModalMode(transport_zones).travel_costs
-        trans_mode_cm = TransportModeChoiceModel(travel_costs, cost_of_time)
-        work_dest_cm = WorkDestinationChoiceModel(transport_zones, travel_costs, cost_of_time, work_alpha, work_beta)
-        
         inputs = {
-            "travel_costs": travel_costs,
-            "trans_mode_cm": trans_mode_cm,
+            "mode_cm": mode_cm,
             "work_dest_cm": work_dest_cm,
             "trips": trips
         }
@@ -50,8 +45,11 @@ class LocalizedTrips(Asset):
         
         trips = self.inputs["trips"].get()
         population = self.inputs["trips"].inputs["population"].get()
-        travel_costs = self.inputs["travel_costs"].get()
-        trans_mode_cm = self.inputs["trans_mode_cm"].get()
+        
+        travel_costs = self.inputs["work_dest_cm"].inputs["costs"]
+        travel_costs = travel_costs.get(metrics=["distance"], aggregate_by_od=False).to_pandas()
+        
+        trans_mode_cm = self.inputs["mode_cm"].get()
         work_dest_cm = self.inputs["work_dest_cm"].get()
         
         trips = self.localize_trips(trips, population, travel_costs, trans_mode_cm, work_dest_cm)
@@ -119,7 +117,7 @@ class LocalizedTrips(Asset):
         )
         
         trips["p"] = trips["p_from"]*trips["p_to"]
-        trips["p"].fillna(1.0, inplace=True)
+        trips["p"] = trips["p"].fillna(1.0)
         
         trips = trips.sample(frac=1.0, weights="p").groupby("trip_id", as_index=False).head(1)
         

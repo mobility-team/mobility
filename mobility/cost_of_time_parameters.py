@@ -7,10 +7,10 @@ from numpy.typing import NDArray
 @dataclass
 class CostOfTimeParameters():
     
-    intercept: float = 18.6
-    breaks: List[float] = field(default_factory=lambda: [0.0, 20.0, 80.0, 10000000.0])
-    slopes: List[float] = field(default_factory=lambda: [0.0, 0.215, 0.017])
-    max_value: float = 37.0
+    intercept: float = 20.0
+    breaks: List[float] = field(default_factory=lambda: [0.0, 10000000.0])
+    slopes: List[float] = field(default_factory=lambda: [0.0])
+    max_value: float = 20.0
     
     country_coeff_fr: float = 1.0
     country_coeff_ch: float = 1.0

@@ -17,8 +17,8 @@ level_of_detail <- as.integer(args[4])
 output_fp <- args[5]
 
 # package_path <- 'D:/dev/mobility_oss/mobility'
-# study_area_fp <- 'D:/data/mobility/projects/experiments/4f31c2f75db56445cc3f8414b53e0b0c-study_area.gpkg'
-# osm_buildings_fp <- 'D:/data/mobility/projects/experiments/building-osm_data/'
+# study_area_fp <- 'C:/Users/pouchaif/.mobility/data/projects/541b87bc788b750132e7210c8c014ec8-study_area.gpkg'
+# osm_buildings_fp <- 'C:/Users/pouchaif/.mobility/data/projects/building-osm_data'
 # level_of_detail <- 1
 # output_fp <- 'D:/data/mobility/projects/study_area/51d687bdfde7cd7e33d288929ffe4ff6-transport_zones.gpkg'
 
@@ -129,7 +129,7 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
   # Split the transport zone into clusters based on the area of buildings
   if (level_of_detail == 1 & n_clusters > 1) {
     
-    k_medoids <- clara(buildings_dt[, list(X, Y)], n_clusters)
+    k_medoids <- clara(buildings_dt[, list(X, Y)], n_clusters, samples = 50)
     
     clusters <- as.data.table(k_medoids$medoids)
     clusters[, cluster := 1:.N]

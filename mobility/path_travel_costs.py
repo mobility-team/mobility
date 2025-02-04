@@ -2,6 +2,7 @@ import os
 import pathlib
 import logging
 import shutil
+import shortuuid
 import pandas as pd
 import geopandas as gpd
 
@@ -150,5 +151,20 @@ class PathTravelCosts(FileAsset):
         
         self.contracted_path_graph.update(od_flows)
         self.create_and_get_asset(congestion=True)
+        
+    def clone(self):
+        
+        ptc = PathTravelCosts(
+            self.mode_name,
+            self.transport_zones,
+            self.routing_parameters,
+            self.contracted_path_graph.handles_congestion
+        )
+        
+        ptc.cache_path = {
+            "freeflow": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / (self.inputs_hash + "-travel_costs_free_flow_" + self.mode_name + ".parquet"),
+            "congested": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / (self.inputs_hash + "-travel_costs_congested_" + self.mode_name + "_clone_" + shortuuid.uuid() + ".parquet")
+        }
     
+        return ptc
     

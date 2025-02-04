@@ -32,7 +32,7 @@ class TransportZones(FileAsset):
     def __init__(
             self,
             local_admin_unit_id: Union[str, List[str]],
-            level_of_detail: Literal[0, 1],
+            level_of_detail: Literal[0, 1] = 0,
             radius: int = 40
         ):
         """

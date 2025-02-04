@@ -109,5 +109,6 @@ class FileAsset(Asset):
             new_hash (str): The new hash string to be cached.
         """
         self.inputs_hash = new_hash
+        self.hash_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.hash_path, "w") as f:
             f.write(new_hash)

@@ -56,7 +56,7 @@ class ContractedPathGraph(FileAsset):
             self,
             simplified_graph_path: pathlib.Path,
             transport_zones_path: pathlib.Path,
-            congestion: bool,
+            enable_congestion: bool,
             flows_file_path: pathlib.Path,
             output_file_path: pathlib.Path
         ) -> None:
@@ -67,7 +67,7 @@ class ContractedPathGraph(FileAsset):
             args=[
                 str(simplified_graph_path),
                 str(transport_zones_path),
-                str(congestion),
+                str(enable_congestion),
                 str(flows_file_path),
                 str(output_file_path)
             ]
