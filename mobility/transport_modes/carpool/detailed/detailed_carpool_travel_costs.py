@@ -12,7 +12,7 @@ from dataclasses import asdict
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_modes.carpool.detailed.detailed_carpool_routing_parameters import DetailedCarpoolRoutingParameters
-from mobility.transport_modes.modal_shift import ModalShift
+from mobility.transport_modes.modal_transfer import IntermodalTransfer
 from mobility.path_travel_costs import PathTravelCosts
 
 class DetailedCarpoolTravelCosts(FileAsset):
@@ -21,13 +21,13 @@ class DetailedCarpoolTravelCosts(FileAsset):
             self,
             car_travel_costs: PathTravelCosts,
             parameters: DetailedCarpoolRoutingParameters,
-            modal_shift: ModalShift,
+            modal_transfer: IntermodalTransfer,
         ):
 
         inputs = {
             "car_travel_costs": car_travel_costs,
             "parameters": parameters,
-            "modal_shift": modal_shift
+            "modal_transfer": modal_transfer
         }
         
         cache_path = {
@@ -62,7 +62,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
         costs = self.compute_travel_costs(
             self.car_travel_costs,
             self.parameters,
-            self.modal_shift,
+            self.modal_transfer,
             congestion,
             output_path
         )
@@ -76,7 +76,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
             self,
             car_travel_costs: PathTravelCosts,
             params: DetailedCarpoolRoutingParameters,
-            modal_shift: ModalShift,
+            modal_transfer: IntermodalTransfer,
             congestion: bool,
             output_path: pathlib.Path
         ) -> pd.DataFrame:
@@ -88,7 +88,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
                 str(car_travel_costs.transport_zones.cache_path),
                 str(car_travel_costs.simplified_path_graph.get()),
                 str(car_travel_costs.simplified_path_graph.get()),
-                json.dumps(asdict(modal_shift)),
+                json.dumps(asdict(modal_transfer)),
                 str(congestion),
                 output_path
             ]

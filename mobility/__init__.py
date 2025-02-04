@@ -21,7 +21,7 @@ from .transport_modes import (
     CarpoolMode,
     PublicTransportMode,
     WalkMode,
-    ModalShift
+    IntermodalTransfer
 )
 
 from .path_routing_parameters import PathRoutingParameters
