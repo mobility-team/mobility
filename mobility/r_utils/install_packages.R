@@ -1,4 +1,4 @@
-
+# -----------------------------------------------------------------------------
 # Install pak if needed
 if (!("pak" %in% installed.packages())) {
   install.packages("pak", repos = sprintf(
@@ -10,7 +10,6 @@ if (!("pak" %in% installed.packages())) {
   ))
 }
 library(pak)
-
 
 # Install log4r if not available
 if (!("log4r" %in% installed.packages())) {
@@ -25,12 +24,42 @@ if (!("jsonlite" %in% installed.packages())) {
 }
 library(jsonlite)
 
+# -----------------------------------------------------------------------------
 # Parse arguments
 args <- commandArgs(trailingOnly = TRUE)
 args <- fromJSON(args[2], simplifyVector = FALSE)
 packages <- args[["packages"]]
 force_reinstall <- args[["force_reinstall"]]
 
+# -----------------------------------------------------------------------------
+# Local packages
+local_packages <- Filter(function(p) {p[["source"]]} == "local", packages)
+
+if (length(local_packages) > 0) {
+  binaries_paths <- unlist(lapply(local_packages, "[[", "path"))
+  local_packages <- unlist(lapply(strsplit(basename(binaries_paths), "_"), "[[", 1))
+} else {
+  local_packages <- c()
+}
+
+
+
+if (force_reinstall == FALSE) {
+  local_packages <- local_packages[!(local_packages %in% rownames(installed.packages()))]
+}
+
+if (length(local_packages) > 0) {
+  info(logger, paste0("Installing R packages from local binaries : ", paste0(local_packages, collapse = ", ")))
+  info(logger, binaries_paths)
+  install.packages(
+    binaries_paths,
+    repos = NULL,
+    type = "binary",
+    quiet = FALSE
+  )
+}
+
+# -----------------------------------------------------------------------------
 # CRAN packages
 cran_packages <- Filter(function(p) {p[["source"]]} == "CRAN", packages)
 if (length(cran_packages) > 0) {
@@ -48,6 +77,7 @@ if (length(cran_packages) > 0) {
   pkg_install(cran_packages)
 }
 
+# -----------------------------------------------------------------------------
 # Github packages
 github_packages <- Filter(function(p) {p[["source"]]} == "github", packages)
 if (length(github_packages) > 0) {
@@ -65,27 +95,4 @@ if (length(github_packages) > 0) {
   remotes::install_github(github_packages)
 }
 
-# Local packages
-local_packages <- Filter(function(p) {p[["source"]]} == "local", packages)
-
-if (length(local_packages) > 0) {
-  binaries_paths <- unlist(lapply(local_packages, "[[", "path"))
-  local_packages <- unlist(lapply(strsplit(basename(binaries_paths), "_"), "[[", 1))
-} else {
-  local_packages <- c()
-}
-
-if (force_reinstall == FALSE) {
-  local_packages <- local_packages[!(local_packages %in% rownames(installed.packages()))]
-}
-
-if (length(local_packages) > 0) {
-  info(logger, paste0("Installing R packages from local binaries : ", paste0(local_packages, collapse = ", ")))
-  install.packages(
-    binaries_paths,
-    repos = NULL,
-    type = "binary",
-    quiet = FALSE
-  )
-}
 

@@ -13,7 +13,7 @@
 - Créer un environnement pour mobility à partir du fichier environment.yml : `mamba env create -n mobility -f environment.yml`
 - Activer l'environnement mobility : `mamba activate mobility`
 - Installer mobility avec pip : `pip install -e .`
-- Si vous utilisez spyder, installez la librairie spyder-kernels : `pip install spyder-kernels`.
+- Si vous utilisez spyder, installez la librairie spyder-kernels : `pip install spyder-kernels`
 - Installer les dépendances R de mobility en lançant Python dans l'invite de commande, avec la commande `python`, puis :
 ```python
 import mobility
