@@ -18,14 +18,18 @@ tz_file_path <- args[2]
 intermodal_graph_fp <- args[3]
 first_modal_transfer <- args[4]
 last_modal_transfer <- args[5]
-output_file_path <- args[6]
+from_ids <- args[6]
+to_ids <- args[7]
+output_file_path <- args[8]
 
-# package_path <- 'D:/dev/mobility_oss/mobility'
-# tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\1f2ab44e21d117bef05387137ec9aefc-transport_zones.gpkg'
-# intermodal_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\walk_public_transport_walk_intermodal_transport_graph\\simplified\\0a01572358ed33800849b2b1ce876395-done"
-# first_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
-# last_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
-# output_file_path <- 'D:/data/mobility/projects/experiments/f65f378d4dc11f0929cf7f2aeaa2aaf5-public_transport_travel_costs.parquet'
+package_path <- 'D:/dev/mobility_oss/mobility'
+tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\1f2ab44e21d117bef05387137ec9aefc-transport_zones.gpkg'
+intermodal_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\walk_public_transport_walk_intermodal_transport_graph\\simplified\\9fb7b8ff16ce7c1934a83c342ede6161-done"
+first_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
+last_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
+from_ids <- 213:219
+to_ids <- 330:331
+output_file_path <- 'D:/data/mobility/projects/haut-doubs/paths.gpkg'
 
 
 first_modal_transfer <- fromJSON(first_modal_transfer)
@@ -125,81 +129,52 @@ travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_
 
 
 
-
-# Compute the travel costs
-info(logger, "Computing travel costs...")
-
-graph_c <- cpp_contract(intermodal_graph)
-
-travel_costs$total_time <- get_distance_pair(
-  graph_c,
-  travel_costs$vertex_id_from,
-  travel_costs$vertex_id_to
-)
-
-travel_costs <- travel_costs[!is.na(total_time)]
-
-modal_transfer_time <- 60*(first_modal_transfer$transfer_time + last_modal_transfer$transfer_time)
-travel_costs[, total_time := total_time + modal_transfer_time]
-
-travel_costs <- travel_costs[total_time < 3600.0*2.0]
-
-get_distance_pair_aux <- function(graph, from, to, aux_name) {
-  
-  graph$attrib$aux <- graph$attrib[[aux_name]]
-  
-  value <- get_distance_pair(
-    graph,
-    from = from,
-    to = to,
-    algorithm = "NBA",
-    constant = 0.1,
-    aggregate_aux = TRUE
-  )
-  
-  return(value)
-}
-
-
-for (aux_name in c("start_time", "last_time", "start_distance", "mid_distance", "last_distance")) {
-  
-  info(logger, paste0("Computing auxiliary variable : ", aux_name))
-  
-  travel_costs[[aux_name]] <- get_distance_pair_aux(
-    intermodal_graph,
-    from = travel_costs$vertex_id_from,
-    to = travel_costs$vertex_id_to,
-    aux_name = aux_name
-  )
-  
-  # Remove trips that don't rely enough on public transport
-  # if (aux_name == "start_time") {
-  #   travel_costs <- travel_costs[start_time/total_time < 0.5]
-  # }
-  # 
-  # if (aux_name == "last_time") {
-  #   travel_costs <- travel_costs[last_time/total_time < 0.5]
-  # }
-  
-}
-
-
-travel_costs[, mid_time := total_time - start_time - last_time]
-
-# Aggregate the result by transport zone
-travel_costs[, prob := weight_from*weight_to]
-travel_costs[, prob := prob/sum(prob), list(from, to)]
-
-travel_costs <- travel_costs[,
-  list(
-    start_distance = weighted.mean(start_distance, prob)/1000,
-    start_time = weighted.mean(start_time, prob)/3600,
-    mid_distance = weighted.mean(mid_distance, prob)/1000,
-    mid_time = weighted.mean(mid_time, prob)/3600,
-    last_distance = weighted.mean(last_distance, prob)/1000,
-    last_time = weighted.mean(last_time, prob)/3600
-  ),
-  by = list(from, to)
+xy <- travel_costs[
+  from %in% from_ids &
+    to %in% to_ids
 ]
 
-write_parquet(travel_costs, output_file_path)
+paths <- get_multi_paths(
+  intermodal_graph,
+  xy$vertex_id_from,
+  xy$vertex_id_to,
+  long = TRUE
+)
+
+paths <- paths[!duplicated(paths), ]
+
+paths <- as.data.table(paths)
+paths <- merge(paths, intermodal_verts, by.x = "node", by.y = "vertex_id", sort = FALSE)
+
+paths <- merge(
+  paths,
+  xy[, list(vertex_id_from, vertex_id_to, tz_id_from = from, tz_id_to = to)],
+  by.x = c("from", "to"),
+  by.y = c("vertex_id_from", "vertex_id_to")
+)
+
+paths[, index := 1:.N, by = list(from, to)]
+paths[, od := .GRP, by = list(from, to)]
+paths[, leg := substr(node, 1, 1)]
+
+paths <- merge(paths, intermodal_graph$dict, by.x = "node", by.y = "ref", sort = FALSE)
+paths[, previous_id := shift(id, type = "lag", n = 1), by = list(from, to)]
+
+paths <- merge(
+  paths,
+  intermodal_graph$data,
+  by.x = c("previous_id", "id"),
+  by.y = c("from", "to"),
+  all.x = TRUE,
+  sort = FALSE
+)
+
+paths[, linestring_id := paste(from, to)]
+
+
+paths <- sfheaders::sf_linestring(paths, x = "x", y = "y", keep = FALSE, linestring_id = "linestring_id")
+st_crs(paths) <- 3035
+
+
+
+st_write(paths, output_file_path, delete_dsn = TRUE)

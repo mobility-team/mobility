@@ -11,7 +11,7 @@ from mobility.r_utils.r_script import RScript
 from mobility.parsers.download_file import download_file
 from mobility.parsers.gtfs_stops import GTFSStops
 
-from mobility.transport_modes.public_transport.gtfs_data import GTFSData
+from .gtfs_data import GTFSData
 
 class GTFSRouter(FileAsset):
     """
@@ -107,7 +107,7 @@ class GTFSRouter(FileAsset):
         
         gtfs_files = ",".join(gtfs_files)
         
-        script = RScript(resources.files('mobility.r_utils').joinpath('prepare_gtfs_router.R'))
+        script = RScript(resources.files('mobility.transport_modes.public_transport.gtfs').joinpath('prepare_gtfs_router.R'))
         
         script.run(
             args=[

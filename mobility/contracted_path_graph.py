@@ -23,7 +23,7 @@ class ContractedPathGraph(FileAsset):
             "handles_congestion": handles_congestion
         }
         
-        file_name = pathlib.Path("path_graph_" + simplified_graph.mode_name) / "contracted" / "done"
+        file_name = pathlib.Path("path_graph_" + simplified_graph.mode_name) / "contracted" / (simplified_graph.mode_name + "-contracted-path-graph")
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
         
         self.flows_file_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / ("path_graph_" + simplified_graph.mode_name) / "simplified" / "flows.parquet"

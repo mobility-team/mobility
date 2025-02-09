@@ -1,5 +1,7 @@
 import pathlib
 import os
+import sqlite3
+import networkx as nx
 
 from mobility.asset import Asset
 from typing import Any
@@ -38,16 +40,34 @@ class FileAsset(Asset):
         super().__init__(inputs)
         
         if isinstance(cache_path, dict):
+            
             self.cache_path = {k: cp.parent / (self.inputs_hash + "-" + cp.name) for k, cp in cache_path.items()}
             self.hash_path = self.cache_path[list(self.cache_path.keys())[0]].with_suffix(".inputs-hash")
+            
+            for k in self.cache_path.keys():
+                
+                self.update_ui_db(
+                    cache_path[k].name,
+                    self.inputs_hash,
+                    self.cache_path[k]
+                )
+            
         else:
+            
             cache_path = pathlib.Path(cache_path)
-            filename = self.inputs_hash + "-" + cache_path.name
+            basename = cache_path.name
+            filename = self.inputs_hash + "-" + basename
             cache_path = cache_path.parent / filename
             self.cache_path = cache_path.parent / filename
             self.hash_path = cache_path.with_suffix(".inputs-hash")
             if not cache_path.parent.exists():
                 os.makedirs(cache_path.parent)
+                
+            self.update_ui_db(
+                basename,
+                self.inputs_hash,
+                cache_path
+            )
             
         self.update_hash(self.inputs_hash)
     
@@ -82,12 +102,49 @@ class FileAsset(Asset):
         Returns:
             True if an update is needed, False otherwise.
         """
+        
         same_hashes = self.get_cached_hash() == self.inputs_hash
+        
         if isinstance(self.cache_path, dict):
             file_exists = all([cp.exists() for cp in self.cache_path.values()])
         else:
             file_exists = self.cache_path.exists()
-        return same_hashes is False or file_exists is False
+            
+        # Build a graph of input assets
+        graph = nx.DiGraph()
+        
+        def add_upstream_deps(asset):
+            graph.add_node(asset)
+            for inp in asset.inputs.values():
+                if isinstance(inp, FileAsset):
+                    graph.add_node(inp)
+                    graph.add_edge(inp, asset)
+                    add_upstream_deps(inp)
+        
+        for inp in self.inputs.values():
+            if isinstance(inp, FileAsset):
+                add_upstream_deps(inp)
+        
+        # Find out which ones need to be updated and recompute them, as well
+        # as all their descendants
+        update_needed_assets = set()
+
+        for asset in graph.nodes:
+            if asset.is_update_needed():
+                update_needed_assets.add(asset)
+                for descendant in nx.descendants(graph, asset):
+                    update_needed_assets.add(descendant)
+    
+        topo_order = list(nx.topological_sort(graph))
+        
+        assets = [asset for asset in topo_order if asset in update_needed_assets]
+        
+        for asset in assets:
+            asset.get()
+            
+        upstream_updates = len(assets) > 0
+        
+        return same_hashes is False or file_exists is False or upstream_updates is True
         
     def get_cached_hash(self) -> str:
         """
@@ -112,3 +169,32 @@ class FileAsset(Asset):
         self.hash_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.hash_path, "w") as f:
             f.write(new_hash)
+            
+            
+    def update_ui_db(self, file_name: str, inputs_hash: str, cache_path: pathlib.Path) -> None:
+        
+        db_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "ui.sqlite"
+        
+        # with sqlite3.connect(db_path) as conn:
+            
+        #     cursor = conn.cursor()
+    
+        #     cursor.execute("""
+        #         CREATE TABLE IF NOT EXISTS ui_cache (
+        #             id INTEGER PRIMARY KEY AUTOINCREMENT,
+        #             file_name TEXT NOT NULL,
+        #             inputs_hash TEXT NOT NULL,
+        #             cache_path TEXT NOT NULL,
+        #             UNIQUE(file_name, inputs_hash)
+        #         )
+        #     """)
+            
+        #     cursor.execute("""
+        #         INSERT INTO ui_cache (file_name, inputs_hash, cache_path)
+        #         VALUES (?, ?, ?)
+        #         ON CONFLICT(file_name, inputs_hash) 
+        #         DO UPDATE SET cache_path = excluded.cache_path
+        #     """, (file_name, inputs_hash, str(cache_path)))
+        
+        #     conn.commit()
+            

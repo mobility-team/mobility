@@ -43,7 +43,7 @@ class SimplifiedPathGraph(FileAsset):
             "mode_name": mode_name
         }
         
-        file_name = pathlib.Path("path_graph_" + mode_name) / "simplified" / "done"
+        file_name = pathlib.Path("path_graph_" + mode_name) / "simplified" / (mode_name + "-simplified-path-graph")
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
 
         super().__init__(inputs, cache_path)

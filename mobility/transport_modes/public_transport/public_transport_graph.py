@@ -12,7 +12,7 @@ from dataclasses import asdict
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
-from mobility.transport_modes.public_transport.gtfs_router import GTFSRouter
+from .gtfs.gtfs_router import GTFSRouter
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
 from mobility.path_travel_costs import PathTravelCosts
 from mobility.transport_modes import TransportMode
@@ -39,7 +39,11 @@ class PublicTransportGraph(FileAsset):
             parameters: PublicTransportRoutingParameters = PublicTransportRoutingParameters()
     ):
         
-        gtfs_router = GTFSRouter(transport_zones, parameters.additional_gtfs_files, parameters.expected_agencies)
+        gtfs_router = GTFSRouter(
+            transport_zones,
+            parameters.additional_gtfs_files,
+            parameters.expected_agencies
+        )
 
         inputs = {
             "transport_zones": transport_zones,
@@ -47,7 +51,7 @@ class PublicTransportGraph(FileAsset):
             "parameters": parameters
         }
 
-        file_name = "public_transport_graph/simplified/done"
+        file_name = "public_transport_graph/simplified/public-transport-graph"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
 
         super().__init__(inputs, cache_path)
@@ -97,5 +101,7 @@ class PublicTransportGraph(FileAsset):
         )
 
         return None
+    
+
     
     

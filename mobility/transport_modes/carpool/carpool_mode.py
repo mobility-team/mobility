@@ -11,11 +11,11 @@ class CarpoolMode(TransportMode):
         car_mode: CarMode,
         routing_parameters: DetailedCarpoolRoutingParameters = None,
         generalized_cost_parameters: DetailedCarpoolGeneralizedCostParameters = None,
-        modal_transfer: IntermodalTransfer = None
+        intermodal_transfer: IntermodalTransfer = None
     ):
             
         routing_parameters = routing_parameters or DetailedCarpoolRoutingParameters()
-        travel_costs = DetailedCarpoolTravelCosts(car_mode.travel_costs, routing_parameters, modal_transfer)
+        travel_costs = DetailedCarpoolTravelCosts(car_mode.travel_costs, routing_parameters, intermodal_transfer)
         
         generalized_cost_parameters = generalized_cost_parameters or DetailedCarpoolGeneralizedCostParameters()
         generalized_cost = DetailedCarpoolGeneralizedCost(travel_costs, generalized_cost_parameters)

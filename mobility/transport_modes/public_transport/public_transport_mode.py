@@ -28,8 +28,8 @@ class PublicTransportMode(TransportMode):
         transport_zones: TransportZones,
         first_leg_mode: TransportMode = None,
         last_leg_mode: TransportMode = None,
-        first_modal_transfer: IntermodalTransfer = None,
-        last_modal_transfer: IntermodalTransfer = None,
+        first_intermodal_transfer: IntermodalTransfer = None,
+        last_intermodal_transfer: IntermodalTransfer = None,
         routing_parameters: PublicTransportRoutingParameters = PublicTransportRoutingParameters(),
         generalized_cost_parameters: GeneralizedCostParameters = None
     ):
@@ -39,8 +39,8 @@ class PublicTransportMode(TransportMode):
             routing_parameters,
             first_leg_mode,
             last_leg_mode,
-            first_modal_transfer,
-            last_modal_transfer
+            first_intermodal_transfer,
+            last_intermodal_transfer
         )
         
         if generalized_cost_parameters is None:

@@ -13,7 +13,7 @@ class DetailedCarpoolGeneralizedCost(InMemoryAsset):
         super().__init__(inputs)
         
         
-    def get(self, congestion: bool = False) -> pd.DataFrame:
+    def get(self, metrics=["cost"], congestion: bool = False) -> pd.DataFrame:
         
         costs = self.travel_costs.get(congestion)
         
@@ -65,7 +65,9 @@ class DetailedCarpoolGeneralizedCost(InMemoryAsset):
         gen_cost -= revenues_distance + revenues_passenger
         
         costs["cost"] = gen_cost
-        costs = costs[["from", "to", "cost"]]
+        
+        metrics = ["from", "to"] + metrics
+        costs = costs[metrics]
         
         return costs
             
