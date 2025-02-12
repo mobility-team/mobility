@@ -4,6 +4,7 @@ library(data.table)
 library(sf)
 library(jsonlite)
 library(cppRouting)
+library(dbscan)
 
 args <- commandArgs(trailingOnly = TRUE)
 
@@ -14,8 +15,8 @@ parameters <- args[4]
 output_file_path <- args[5]
 
 # package_path <- 'D:/dev/mobility_oss/mobility'
-# tz_file_path <- "D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg"
-# gtfs_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\6d6b436353d8cb52ae4f8d8c0aa7c9ba-gtfs_router.rds'
+# tz_file_path <- "D:/data/mobility/projects/haut-doubs/94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg"
+# gtfs_file_path <- 'D:/data/mobility/projects/haut-doubs/77fc071276830ce94acaf3226b266bd8-gtfs_router.rds'
 # parameters <- '{"start_time_min": 6.5, "start_time_max": 7.5, "max_traveltime": 1.0}'
 
 source(file.path(package_path, "r_utils", "cpprouting_io.R"))
@@ -82,10 +83,19 @@ verts_sf <- st_transform(verts_sf, 3035)
 verts <- as.data.table(cbind(st_drop_geometry(verts_sf), st_coordinates(verts_sf)))
 setnames(verts, c("vertex_id", "x", "y"))
 
+
+
+
 # Group stops by spatial proximity (1 m bins)
-verts[, x_bin := round(x)]
-verts[, y_bin := round(y)]
-verts[, stop_group_index := .GRP, by = list(x_bin, y_bin)]
+# verts[, x_bin := round(x)]
+# verts[, y_bin := round(y)]
+# verts[, stop_group_index := .GRP, by = list(x_bin, y_bin)]
+
+verts[, stop_group_index := dbscan(verts[, list(x, y)], eps = 40.0, minPts = 1)$cluster]
+verts[, x_bin := mean(x), by = stop_group_index]
+verts[, y_bin := mean(y), by = stop_group_index]
+
+
 verts[, access_stop_group_index := stop_group_index + max(stops_routes$stop_index)]
 verts[, exit_stop_group_index := stop_group_index + max(verts$access_stop_group_index)]
 
@@ -139,6 +149,8 @@ stop_times <- stop_times[, list(
   wait_time,
   vehicle_capacity
 )]
+
+stop_times <- unique(stop_times)
 
 
 
@@ -249,8 +261,11 @@ transfer_times <- transfer_times[time < 20.0*60.0]
 # for the public transport network.
 info(logger, "Adding virtual access and exit nodes to all stops and services accessible at each location...")
 
-headway_times <- stop_times[order(arrival_time)][, list(average_headway = diff(arrival_time)), by = list(prev_dep_stop_index, next_dep_stop_index)]
-headway_times <- headway_times[, list(average_headway = mean(average_headway)), by = list(from = prev_dep_stop_index)]
+# headway_times <- stop_times[order(arrival_time)][, list(headway = diff(arrival_time)), by = list(arrival_stop_index)]
+# headway_times <- headway_times[, list(average_headway = mean(headway)), by = list(from = arrival_stop_index)]
+
+headway_times <- stop_times[order(arrival_time)][, list(headway = diff(arrival_time)), by = list(prev_dep_stop_index, next_dep_stop_index)]
+headway_times <- headway_times[, list(average_headway = mean(headway)), by = list(to = next_dep_stop_index)]
 
 access_times <- stops_routes[
   stop_type == "departure",
@@ -263,7 +278,7 @@ access_times <- stops_routes[
 access_times <- merge(
   access_times,
   headway_times,
-  by = "from",
+  by = "to",
   all.x = TRUE
 )
 

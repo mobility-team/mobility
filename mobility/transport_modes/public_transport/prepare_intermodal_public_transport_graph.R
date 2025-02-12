@@ -23,11 +23,11 @@ last_modal_shift <- args[7]
 output_fp <- args[8]
 
 # package_path <- 'D:/dev/mobility_oss/mobility'
-# tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg'
-# pt_graph_fp <- "D:/data/mobility/projects/haut-doubs/public_transport_graph/simplified/3d807c3ccc9ee020cbabb3e281f5635a-done"
-# first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-done"
-# last_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-done"
-# first_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
+# tz_file_path <- 'D:/data/mobility/projects/haut-doubs/94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg'
+# pt_graph_fp <- "D:/data/mobility/projects/haut-doubs/public_transport_graph/simplified/df9291b3ad75bf88494ac84d6b99c4a1-public-transport-graph"
+# first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_car/contracted/f92c93e808a0af018f4858ddcc6bb1b5-car-contracted-path-graph"
+# last_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-walk-contracted-path-graph"
+# first_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "shift_time": 5.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
 # last_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
 # output_fp <- 'D:\\data\\mobility\\projects\\haut-doubs\\walk_public_transport_walk_intermodal_transport_graph\\simplified\\dad2d53274998829d5a595ee27df908a-done'
 
@@ -97,8 +97,8 @@ get_well_connected_vertices_ids <- function(graph) {
   )
   bidirectional_edges <- bidirectional_edges[, .N, by = list(from, to)][N > 1]
   
-  n_incoming_edges <- data[, .N, by = to][N > 3]
-  n_outgoing_edges <- data[, .N, by = from][N > 3]
+  n_incoming_edges <- data[, .N, by = to][N > 2]
+  n_outgoing_edges <- data[, .N, by = from][N > 2]
   
   well_connected_edges <- data[from %in% n_outgoing_edges$from & to %in% n_incoming_edges$to]
   well_connected_edges <- merge(well_connected_edges, bidirectional_edges, by = c("from", "to"))
@@ -174,18 +174,18 @@ first_leg <- first_leg[from != to]
 
 # Limit the number of reachable stops from each origin by taking the N first 
 # encountered stops in each angular sector around the origin point
-delta_angle_sector <- 20
-n_stops_per_sector <- 5
+# delta_angle_sector <- 20
+# n_stops_per_sector <- 5
 
 first_leg <- merge(first_leg, start_verts, by.x = "from", by.y = "vertex_id")
 first_leg <- merge(first_leg, start_verts, by.x = "to", by.y = "vertex_id", suffixes = c("_from", "_to"))
 
-first_leg[, angle := 180/pi*atan2(y_to - y_from, x_to - x_from)]
-first_leg[, angle_bin := round(angle/delta_angle_sector)*delta_angle_sector]
-first_leg[, distance := sqrt((x_to - x_from)^2 + (y_to - y_from)^2)]
+# first_leg[, angle := 180/pi*atan2(y_to - y_from, x_to - x_from)]
+# first_leg[, angle_bin := round(angle/delta_angle_sector)*delta_angle_sector]
+# first_leg[, distance := sqrt((x_to - x_from)^2 + (y_to - y_from)^2)]
 
 # Remove duplicates (origin to stops that are located at the same spot)
-first_leg <- first_leg[first_leg[, .I[1], by = list(from, to)]$V1, list(from, to)]
+# first_leg <- first_leg[first_leg[, .I[1], by = list(from, to)]$V1, list(from, to)]
 
 # Compute the time and distance 
 first_leg$time <- get_distance_pair(
