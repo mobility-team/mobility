@@ -64,3 +64,7 @@ class Asset(ABC):
         serialized_inputs = json.dumps(hashable_inputs, sort_keys=True).encode('utf-8')
         
         return hashlib.md5(serialized_inputs).hexdigest()
+    
+    
+        
+        

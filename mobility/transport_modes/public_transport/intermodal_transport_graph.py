@@ -76,7 +76,7 @@ class IntermodalTransportGraph(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pd.DataFrame:
-        logging.info("Intermodal grpah already created. Reusing the file : " + str(self.cache_path))
+        logging.info("Intermodal graph already created. Reusing the file : " + str(self.cache_path))
         return self.cache_path
 
     def create_and_get_asset(self) -> pd.DataFrame:
@@ -133,6 +133,7 @@ class IntermodalTransportGraph(FileAsset):
                 str(last_leg_graph.get()),
                 json.dumps(asdict(first_modal_transfer)),
                 json.dumps(asdict(last_modal_transfer)),
+                json.dumps(asdict(parameters)),
                 str(self.cache_path)
             ]
         )

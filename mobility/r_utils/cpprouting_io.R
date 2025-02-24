@@ -73,7 +73,8 @@ save_cppr_graph <- function(graph, path, hash) {
     aux = NA,
     alpha = NA,
     beta = NA,
-    cap = NA
+    cap = NA,
+    real_times = NA
   )
   
   for (var in names(graph$attrib)) {
@@ -112,9 +113,9 @@ read_cppr_graph <- function(path, hash) {
   )
   
   graph[["data"]] <- duckdb_parquet_to_df(con, file.path(path, paste0(hash, "data.parquet")))
-  graph[["dict"]] <- duckdb_parquet_to_df(con, file.path(path, paste0(hash,"dict.parquet")))
+  graph[["dict"]] <- duckdb_parquet_to_df(con, file.path(path, paste0(hash, "dict.parquet")))
   
-  attrib <- duckdb_parquet_to_df(con, file.path(path, paste0(hash,"attrib.parquet")))
+  attrib <- duckdb_parquet_to_df(con, file.path(path, paste0(hash, "attrib.parquet")))
   
   for (var in colnames(attrib)) {
     graph$attrib[[var]] <- attrib[[var]]

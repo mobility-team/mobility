@@ -67,7 +67,8 @@ class PublicTransportTravelCosts(FileAsset):
             "intermodal_graph": intermodal_graph,
             "transport_zones": transport_zones,
             "first_modal_transfer": first_modal_transfer,
-            "last_modal_transfer": last_modal_transfer
+            "last_modal_transfer": last_modal_transfer,
+            "parameters": parameters
         }
 
         file_name = first_leg_mode.name + "_public_transport_" + last_leg_mode.name + "_travel_costs.parquet"
@@ -88,7 +89,8 @@ class PublicTransportTravelCosts(FileAsset):
             self.inputs["transport_zones"],
             self.inputs["intermodal_graph"],
             self.inputs["first_modal_transfer"],
-            self.inputs["last_modal_transfer"]
+            self.inputs["last_modal_transfer"],
+            self.inputs["parameters"]
         )
         
         costs.to_parquet(self.cache_path)
@@ -101,7 +103,8 @@ class PublicTransportTravelCosts(FileAsset):
             transport_zones: TransportZones,
             intermodal_graph: IntermodalTransportGraph,
             first_modal_transfer: IntermodalTransfer,
-            last_modal_transfer: IntermodalTransfer
+            last_modal_transfer: IntermodalTransfer,
+            parameters: PublicTransportRoutingParameters
         ) -> pd.DataFrame:
         """
         Calculates travel costs for public transport between transport zones.
@@ -127,8 +130,8 @@ class PublicTransportTravelCosts(FileAsset):
                 str(intermodal_graph.get()),
                 json.dumps(asdict(first_modal_transfer)),
                 json.dumps(asdict(last_modal_transfer)),
-                str(self.cache_path),
-                
+                json.dumps(asdict(parameters)),
+                str(self.cache_path)
             ]
         )
 

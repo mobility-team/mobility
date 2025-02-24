@@ -17,7 +17,8 @@ output_file_path <- args[5]
 # package_path <- 'D:/dev/mobility_oss/mobility'
 # tz_file_path <- "D:/data/mobility/projects/haut-doubs/94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg"
 # gtfs_file_path <- 'D:/data/mobility/projects/haut-doubs/77fc071276830ce94acaf3226b266bd8-gtfs_router.rds'
-# parameters <- '{"start_time_min": 6.5, "start_time_max": 7.5, "max_traveltime": 1.0}'
+# parameters <- '{"start_time_min": 6.5, "start_time_max": 8.0, "target_time": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "transfer_time_coeff": 2.0, "no_show_perceived_prob": 0.2}'
+# output_file_path <- "D:/data/mobility/projects/haut-doubs/public_transport_graph/simplified/27d7760b538be20bcd4e5c47c8f488d5-public-transport-graph"
 
 source(file.path(package_path, "r_utils", "cpprouting_io.R"))
 
@@ -83,18 +84,10 @@ verts_sf <- st_transform(verts_sf, 3035)
 verts <- as.data.table(cbind(st_drop_geometry(verts_sf), st_coordinates(verts_sf)))
 setnames(verts, c("vertex_id", "x", "y"))
 
-
-
-
-# Group stops by spatial proximity (1 m bins)
-# verts[, x_bin := round(x)]
-# verts[, y_bin := round(y)]
-# verts[, stop_group_index := .GRP, by = list(x_bin, y_bin)]
-
+# Group stops by spatial proximity
 verts[, stop_group_index := dbscan(verts[, list(x, y)], eps = 40.0, minPts = 1)$cluster]
 verts[, x_bin := mean(x), by = stop_group_index]
 verts[, y_bin := mean(y), by = stop_group_index]
-
 
 verts[, access_stop_group_index := stop_group_index + max(stops_routes$stop_index)]
 verts[, exit_stop_group_index := stop_group_index + max(verts$access_stop_group_index)]
@@ -152,16 +145,11 @@ stop_times <- stop_times[, list(
 
 stop_times <- unique(stop_times)
 
-
-
 stops_routes <- stops_routes[
   stop_index %in% stop_times$prev_dep_stop_index |
   stop_index %in% stop_times$arrival_stop_index |
   stop_index %in% stop_times$next_dep_stop_index
 ]
-
-# stop_times[trip_id == "11-33009"][order(stop_sequence)]
-
 
 # Remove abnormal travel times (negative and very low, inf to 10 s)
 # stop_times[, n_abnormal := sum(travel_time < 10.0), by = trip_id]
@@ -195,6 +183,8 @@ stop_wait_times <- stop_times[,
     to = next_dep_stop_index
   )
 ]
+
+stop_wait_times[, perceived_time := time*parameters[["wait_time_coeff"]]]
 
 info(logger, "Computing average transfer times between services and stops...")
 
@@ -252,6 +242,8 @@ transfer_times <- transfer_times[,
    by = list(from, to)
 ]
 
+transfer_times[, perceived_time := time*parameters[["transfer_time_coeff"]]]
+
 # Remove transfers that take more than 20 min
 transfer_times <- transfer_times[time < 20.0*60.0]
 
@@ -261,10 +253,8 @@ transfer_times <- transfer_times[time < 20.0*60.0]
 # for the public transport network.
 info(logger, "Adding virtual access and exit nodes to all stops and services accessible at each location...")
 
-# headway_times <- stop_times[order(arrival_time)][, list(headway = diff(arrival_time)), by = list(arrival_stop_index)]
-# headway_times <- headway_times[, list(average_headway = mean(headway)), by = list(from = arrival_stop_index)]
-
 headway_times <- stop_times[order(arrival_time)][, list(headway = diff(arrival_time)), by = list(prev_dep_stop_index, next_dep_stop_index)]
+
 headway_times <- headway_times[, list(average_headway = mean(headway)), by = list(to = next_dep_stop_index)]
 
 access_times <- stops_routes[
@@ -282,7 +272,23 @@ access_times <- merge(
   all.x = TRUE
 )
 
-access_times[, time := ifelse(is.na(average_headway), 5.0*60.0, pmin(5.0*60.0, 0.5*average_headway))]
+# Wait time at the start of the journey is at most 5 min
+# or half the average headway if it leads to a wait time of less than 5 min
+access_times[, time := ifelse(
+  is.na(average_headway),
+  5.0*60.0,
+  pmin(5.0*60.0, 0.5*average_headway)
+)]
+
+# Add a perceived risk of waiting for the next departure in case the first 
+# one does not show up or the user misses it
+# (taking one hour of headway when it is not known)
+access_times[, perceived_time := ifelse(
+  is.na(average_headway),
+  time + parameters[["no_show_perceived_prob"]]*60.0*60.0,
+  time + parameters[["no_show_perceived_prob"]]*average_headway
+)]
+
 
 exit_times <- stops_routes[
   stop_type == "arrival",
@@ -292,6 +298,14 @@ exit_times <- stops_routes[
     time = 0.0
   )
 ]
+
+
+# Compute the minimum time difference between the target arrival time at destination
+# and the service arrival times
+stop_times[, delta_target_arrival := parameters[["target_time"]]*3600.0 - arrival_time]
+stop_times[delta_target_arrival < 0.0, delta_target_arrival := 0.0]
+
+target_time_diff <- stop_times[delta_target_arrival > 0.0, list(arrival_stop_index, delta_target_arrival)]
 
 # Estimate the distance between consecutive stops
 info(logger, "Estimating distances between stops...")
@@ -318,15 +332,23 @@ distances <- c(
 info(logger, "Building cpprouting graph...")
 
 # Concatenate all times
-times <- rbindlist(
+perceived_times <- rbindlist(
   list(
     travel_times[, list(from, to, time)],
-    stop_wait_times[, list(from, to, time)],
-    transfer_times[, list(from, to, time)],
-    access_times[, list(from, to, time)],
-    exit_times[, list(from, to, time)]
+    stop_wait_times[, list(from, to, time = perceived_time)],
+    transfer_times[, list(from, to, time = perceived_time)],
+    access_times[, list(from, to, time = perceived_time)],
+    exit_times[, list(from, to, time = 0.0)]
   )
 )
+
+real_time <- c(
+  travel_times$time,
+  stop_wait_times$time,
+  transfer_times$time,
+  access_times$time,
+  exit_times$time
+) 
 
 capacity <- c(
   travel_times$capacity,
@@ -354,12 +376,14 @@ beta <- c(
 
 
 graph <- makegraph(
-  times,
+  perceived_times,
   aux = distances,
   capacity = capacity,
   alpha = alpha,
   beta = beta
 )
+
+graph$attrib$real_time <- real_time
 
 stops_verts <- merge(
   stops_routes[, list(vertex_id = stop_index, vertex_type = stop_type, gtfs_stop_id)],
@@ -376,11 +400,14 @@ verts <- rbindlist(
   )
 )
 
+verts <- verts[vertex_id %in% unique(perceived_times$from) | vertex_id %in% unique(perceived_times$to)]
+
 info(logger, "Saving cppRouting graph and vertices coordinates...")
 
 hash <- strsplit(basename(output_file_path), "-")[[1]][1]
 
 save_cppr_graph(graph, dirname(output_file_path), hash)
 write_parquet(verts, file.path(dirname(dirname(output_file_path)), paste0(hash, "-vertices.parquet")))
+write_parquet(target_time_diff, file.path(dirname(dirname(output_file_path)), paste0(hash, "-delta-target-arrival.parquet")))
 
 file.create(output_file_path)

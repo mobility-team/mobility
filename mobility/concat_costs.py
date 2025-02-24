@@ -103,7 +103,13 @@ def concat_travel_costs(modes, year):
 
 def concat_generalized_cost(modes):
     
-    costs = {m.name: m.generalized_cost.get() for m in modes}
+    def get_gen_costs(mode):
+        if mode.congestion:
+            return mode.generalized_cost.get(congestion=mode.congestion)
+        else:
+            return mode.generalized_cost.get()
+    
+    costs = {m.name: get_gen_costs(m) for m in modes}
     costs = [gc.assign(mode=m) for m, gc in costs.items()]
     costs = pd.concat(costs)
     

@@ -20,19 +20,22 @@ first_leg_graph_fp <- args[4]
 last_leg_graph_fp <- args[5]
 first_modal_shift <- args[6]
 last_modal_shift <- args[7]
-output_fp <- args[8]
+parameters <- args[8]
+output_fp <- args[9]
 
 # package_path <- 'D:/dev/mobility_oss/mobility'
 # tz_file_path <- 'D:/data/mobility/projects/haut-doubs/94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg'
-# pt_graph_fp <- "D:/data/mobility/projects/haut-doubs/public_transport_graph/simplified/df9291b3ad75bf88494ac84d6b99c4a1-public-transport-graph"
-# first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_car/contracted/f92c93e808a0af018f4858ddcc6bb1b5-car-contracted-path-graph"
+# pt_graph_fp <- "D:/data/mobility/projects/haut-doubs/public_transport_graph/simplified/27d7760b538be20bcd4e5c47c8f488d5-public-transport-graph"
+# first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-walk-contracted-path-graph"
 # last_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-walk-contracted-path-graph"
-# first_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "shift_time": 5.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
+# first_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
 # last_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
+# parameters <- '{"start_time_min": 6.5, "start_time_max": 8.0, "target_time": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "max_wait_time_at_destination": 0.3333333333}'
 # output_fp <- 'D:\\data\\mobility\\projects\\haut-doubs\\walk_public_transport_walk_intermodal_transport_graph\\simplified\\dad2d53274998829d5a595ee27df908a-done'
 
 first_modal_shift <- fromJSON(first_modal_shift)
 last_modal_shift <- fromJSON(last_modal_shift)
+parameters <- fromJSON(parameters)
 
 buildings_sample_fp <- file.path(
   dirname(tz_file_path),
@@ -171,21 +174,7 @@ first_leg <- merge(first_leg, pt_start_verts[, list(i = 1:.N, from = vertex_id)]
 first_leg <- merge(first_leg, mid_verts[vertex_type == "access", list(j = 1:.N, to = nn_start_vertex_id)], by = "j")
 
 first_leg <- first_leg[from != to]
-
-# Limit the number of reachable stops from each origin by taking the N first 
-# encountered stops in each angular sector around the origin point
-# delta_angle_sector <- 20
-# n_stops_per_sector <- 5
-
-first_leg <- merge(first_leg, start_verts, by.x = "from", by.y = "vertex_id")
-first_leg <- merge(first_leg, start_verts, by.x = "to", by.y = "vertex_id", suffixes = c("_from", "_to"))
-
-# first_leg[, angle := 180/pi*atan2(y_to - y_from, x_to - x_from)]
-# first_leg[, angle_bin := round(angle/delta_angle_sector)*delta_angle_sector]
-# first_leg[, distance := sqrt((x_to - x_from)^2 + (y_to - y_from)^2)]
-
-# Remove duplicates (origin to stops that are located at the same spot)
-# first_leg <- first_leg[first_leg[, .I[1], by = list(from, to)]$V1, list(from, to)]
+first_leg <- unique(first_leg[, list(from, to)])
 
 # Compute the time and distance 
 first_leg$time <- get_distance_pair(
@@ -229,6 +218,7 @@ last_leg <- merge(last_leg, pt_last_verts[, list(j = 1:.N, to = vertex_id)], by 
 
 
 last_leg <- last_leg[from != to]
+last_leg <- unique(last_leg[, list(from, to)])
 
 last_leg$time <- get_distance_pair(
   last_graph,
@@ -236,7 +226,7 @@ last_leg$time <- get_distance_pair(
   to = last_leg$to
 )
 
-first_leg <- first_leg[time < last_modal_shift$max_travel_time*3600.0]
+last_leg <- last_leg[time < last_modal_shift$max_travel_time*3600.0]
 
 last_leg$distance <- get_distance_pair(
   last_graph,
@@ -247,6 +237,26 @@ last_leg$distance <- get_distance_pair(
 
 last_leg[, from := paste0("l1-", from)]
 last_leg[, to := paste0("l2-", to)]
+
+# Compute the max departure time from the last public transport stop by going 
+# backward in time from the target time
+# (ie if the target time is 8:00 and it takes 10 min to walk from the stop, 
+# the user has to be at the station at maximum 7:50)
+last_leg[, max_time_at_station := parameters[["target_time"]]*3600.0 - time]
+last_leg[, max_time_at_station := round(max_time_at_station/60.0)*60.0]
+last_leg[, from_with_time := paste0(from, "-", max_time_at_station)]
+
+
+# Compute the arrival times to the last public transport stops of the journeys
+hash <- strsplit(basename(pt_graph_fp), "-")[[1]][1]
+arrival_times <- read_parquet(file.path(dirname(dirname(pt_graph_fp)), paste0(hash, "-delta-target-arrival.parquet")))
+arrival_times[, arrival_stop_index := as.character(arrival_stop_index)]
+arrival_times[, arrival_time := parameters[["target_time"]]*3600.0 - delta_target_arrival]
+arrival_times[, arrival_time := round(arrival_time/60.0)*60.0]
+arrival_times <- arrival_times[, list(vertex_id_from = arrival_stop_index, arrival_time)]
+
+
+
 
 # Combine the 3 graphs into one
 info(logger, "Combining the three routing graphs...")
@@ -291,13 +301,83 @@ mid_leg[is.na(from), from := paste0("m", vertex_id_from)]
 mid_leg[is.na(to), to := paste0("m", vertex_id_to)]
 
 mid_leg[, distance := mid_graph$attrib$aux]
+mid_leg[, real_time := mid_graph$attrib$real_time]
+
+# Create one arrival -> exit edges per arrival time
+exit_edges <- mid_leg[grepl("l1", to)]
+other_edges <- mid_leg[!grepl("l1", to)]
+
+exit_edges <- merge(exit_edges, arrival_times, by = "vertex_id_from")
+exit_edges[, to_with_time := paste0(to, "-", arrival_time)]
+
+# Combine arrival -> exit edges and exit -> final destination edges and create 
+# edges between time expanded exit nodes to make it possible for the user to 
+# wait once at destination
+# (ie if a train arrives at 7:40, the target arrival time at destination is 8:00,
+# and it takes 10 min to get to the destination, we simulate the wait at destination
+# by making the user wait 10 min at the arrival stop)
+wait_edges <- rbindlist(
+  list(
+    exit_edges[, list(edge_type = "inp", v_id = to, v_id_with_time = to_with_time, time = arrival_time)],
+    last_leg[, list(edge_type = "out", v_id = from, v_id_with_time = from_with_time, time = max_time_at_station)]
+  )
+)
+
+# Don't create edges for exits that do not have any last leg edge
+# (this can happen if the destinations are too far way from the stops)
+n_in_out <- wait_edges[, .N, by = list(v_id, edge_type)]
+n_in_out <- dcast(n_in_out, v_id ~ edge_type, value.var = "N")
+valid_v_ids <- n_in_out[!is.na(out), v_id]
+wait_edges <- wait_edges[v_id %in% valid_v_ids]
+
+# Remove arrivals that are so early that the user is guaranteed to wait at least 
+# a certain amount of time to reach any of the destinations
+wait_edges[, min_out_time := min(time[edge_type == "out"]), by = v_id]
+wait_edges <- wait_edges[time > min_out_time - parameters[["max_wait_time_at_destination"]]*60.0]
+
+# Remove duplicate exit nodes
+wait_edges <- unique(wait_edges[, list(v_id, v_id_with_time, time)])
+
+# Replace the exit nodes by the time expanded ones in the vertices table
+time_exp_exit_verts <- wait_edges[, list(v_id, vertex_id = v_id_with_time)]
+time_exp_exit_verts <- merge(
+  time_exp_exit_verts,
+  last_verts[, list(v_id = paste0("l1-", vertex_id), x, y)],
+  by = "v_id"
+)
+
+mid_verts <- mid_verts[vertex_type != "exit"]
 
 
+# Create the edges between the unique time expanded exit nodes
+wait_edges <- wait_edges[order(v_id, time)]
+wait_edges[, delta_time := time - shift(time, n = 1, type = "lag"), by = v_id]
+wait_edges[, prev_v_id_with_time := shift(v_id_with_time, n = 1, type = "lag"), by = v_id]
+wait_edges <- wait_edges[!is.na(delta_time), list(from = prev_v_id_with_time, to = v_id_with_time, time = delta_time)]
+
+wait_edges[, real_time := time]
+wait_edges[, perceived_time := time*parameters[["wait_time_coeff"]]]
+
+# Redirect the arrival -> exit and the exit -> destination edges to the time 
+# expanded exit nodes
+exit_edges[, to := to_with_time]
+
+# Rebuild the mid leg graph and add the wait edges
+mid_leg <- rbindlist(
+  list(
+    other_edges[, list(from, to, perceived_time = time, real_time, distance)],
+    exit_edges[, list(from, to, perceived_time = 0, real_time = 0, distance)],
+    wait_edges[, list(from, to, perceived_time, real_time, distance = 0.0)]
+  )
+)
+
+
+# Concatenate all graphs
 all_legs <- rbindlist(
   list(
-    first_leg[, list(leg = 1, from, to, time, distance)],
-    mid_leg[, list(leg = 2, from, to, time, distance)],
-    last_leg[, list(leg = 3, from, to, time, distance)]
+    first_leg[, list(leg = 1, from, to, perceived_time = time, real_time = time, distance)],
+    mid_leg[, list(leg = 2, from, to, perceived_time, real_time, distance)],
+    last_leg[, list(leg = 3, from = from_with_time, to, perceived_time = time, real_time = time, distance)]
   )
 )
 
@@ -306,15 +386,17 @@ all_verts <- rbindlist(
     start_verts[, list(vertex_id = paste0("s1-", vertex_id), x, y)],
     start_verts[, list(vertex_id = paste0("s2-", vertex_id), x, y)],
     mid_verts[, list(vertex_id = paste0("m", vertex_id), x, y)],
-    last_verts[, list(vertex_id = paste0("l1-", vertex_id), x, y)],
+    time_exp_exit_verts[, list(vertex_id, x, y)],
     last_verts[, list(vertex_id = paste0("l2-", vertex_id), x, y)]
   )
 )
 
 all_verts <- all_verts[vertex_id %in% all_legs$from | vertex_id %in% all_legs$to]
+all_legs <- all_legs[from %in% all_verts$vertex_id & to %in% all_verts$vertex_id]
 
+# Create the cpprouting graph
 cppr_graph <- makegraph(
-  all_legs[, list(from, to, dist = time)],
+  all_legs[, list(from, to, dist = perceived_time)],
   coords = all_verts
 )
 
@@ -323,11 +405,12 @@ cppr_graph$attrib <- list(
   alpha = NULL,
   beta = NULL,
   cap = NULL,
+  real_time = all_legs$real_time,
   start_distance = all_legs[, ifelse(leg == 1, distance, 0.0)],
   mid_distance = all_legs[, ifelse(leg == 2, distance, 0.0)],
   last_distance = all_legs[, ifelse(leg == 3, distance, 0.0)],
-  start_time = all_legs[, ifelse(leg == 1, time, 0.0)],
-  last_time = all_legs[, ifelse(leg == 3, time, 0.0)]
+  start_time = all_legs[, ifelse(leg == 1, real_time, 0.0)],
+  last_time = all_legs[, ifelse(leg == 3, real_time, 0.0)]
 )
 
 # Save the graph
