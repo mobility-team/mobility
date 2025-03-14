@@ -15,7 +15,7 @@ from mobility.transport_zones import TransportZones
 from .gtfs.gtfs_router import GTFSRouter
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
 from mobility.path_travel_costs import PathTravelCosts
-from mobility.transport_modes import TransportMode
+from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
 
 class PublicTransportGraph(FileAsset):

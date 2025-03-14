@@ -86,7 +86,7 @@ def concat_travel_costs(modes, year):
     if "car/public_transport/walk" in mode_names or "bicycle/public_transport/walk" in mode_names  or "walk/public_transport/walk" in mode_names :
         costs["time"] = np.where(
             costs["mode"].str.contains("public_transport"),
-            costs["start_time"] + costs["mid_time"] + costs["last_time"],
+            costs["start_real_time"] + costs["mid_real_time"] + costs["last_real_time"],
             costs["time"]
         )
         

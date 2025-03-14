@@ -5,6 +5,7 @@ from mobility.path_routing_parameters import PathRoutingParameters
 from mobility.generalized_cost_parameters import GeneralizedCostParameters
 from mobility.cost_of_time_parameters import CostOfTimeParameters
 from mobility.path_generalized_cost import PathGeneralizedCost
+from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 
 class CarMode(TransportMode):
     """
@@ -19,8 +20,10 @@ class CarMode(TransportMode):
         self,
         transport_zones: TransportZones,
         routing_parameters: PathRoutingParameters = None,
+        osm_capacity_parameters: OSMCapacityParameters = None,
         generalized_cost_parameters: GeneralizedCostParameters = None,
-        congestion: bool = False
+        congestion: bool = False,
+        congestion_flows_scaling_factor: float = 1.0
     ):
         
         if routing_parameters is None:
@@ -28,6 +31,9 @@ class CarMode(TransportMode):
                 filter_max_time=1.0,
                 filter_max_speed=60.0
             )
+            
+        if osm_capacity_parameters is None:
+            osm_capacity_parameters = OSMCapacityParameters("car")
         
         if generalized_cost_parameters is None:
             generalized_cost_parameters = GeneralizedCostParameters(
@@ -37,8 +43,19 @@ class CarMode(TransportMode):
             )
             
         
-        travel_costs = PathTravelCosts("car", transport_zones, routing_parameters, congestion)
-        generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters)
+        travel_costs = PathTravelCosts(
+            "car", 
+            transport_zones, 
+            routing_parameters, 
+            osm_capacity_parameters,
+            congestion,
+            congestion_flows_scaling_factor
+        )
+        
+        generalized_cost = PathGeneralizedCost(
+            travel_costs,
+            generalized_cost_parameters
+        )
         
         super().__init__("car", travel_costs, generalized_cost, congestion)
         

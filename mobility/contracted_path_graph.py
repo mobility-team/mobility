@@ -1,6 +1,7 @@
 import os
 import pathlib
 import logging
+import polars as pl
 
 from importlib import resources
 from mobility.file_asset import FileAsset
@@ -14,13 +15,15 @@ class ContractedPathGraph(FileAsset):
             self,
             simplified_graph: SimplifiedPathGraph,
             transport_zones: TransportZones,
-            handles_congestion: bool = False
+            handles_congestion: bool = False,
+            congestion_flows_scaling_factor: float = 1.0
         ):
         
         inputs = {
             "transport_zones": transport_zones,
             "simplified_graph": simplified_graph,
-            "handles_congestion": handles_congestion
+            "handles_congestion": handles_congestion,
+            "congestion_flows_scaling_factor": congestion_flows_scaling_factor
         }
         
         file_name = pathlib.Path("path_graph_" + simplified_graph.mode_name) / "contracted" / (simplified_graph.mode_name + "-contracted-path-graph")
@@ -47,6 +50,7 @@ class ContractedPathGraph(FileAsset):
             self.transport_zones.cache_path,
             enable_congestion,
             self.flows_file_path,
+            self.congestion_flows_scaling_factor,
             self.cache_path
         )
 
@@ -58,6 +62,7 @@ class ContractedPathGraph(FileAsset):
             transport_zones_path: pathlib.Path,
             enable_congestion: bool,
             flows_file_path: pathlib.Path,
+            congestion_flows_scaling_factor: float,
             output_file_path: pathlib.Path
         ) -> None:
          
@@ -69,6 +74,7 @@ class ContractedPathGraph(FileAsset):
                 str(transport_zones_path),
                 str(enable_congestion),
                 str(flows_file_path),
+                str(congestion_flows_scaling_factor),
                 str(output_file_path)
             ]
         )

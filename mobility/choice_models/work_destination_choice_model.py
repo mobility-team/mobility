@@ -16,7 +16,7 @@ from mobility.r_utils.r_script import RScript
 
 from mobility.radiation_model_selection import apply_radiation_model
 
-from mobility.transport_modes import TransportMode
+from mobility.transport_modes.transport_mode import TransportMode
 
 from dataclasses import dataclass, field
 from typing import Dict, Union, List

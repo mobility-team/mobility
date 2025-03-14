@@ -63,9 +63,10 @@ class Population(FileAsset):
             logging.info(
                 """
                     Could not associate legal populations to some of the 
-                    transport zones (different INSEE COG versions ?). 
-                    The population count of these transport zones will be set
-                    to zero.
+                    transport zones (maybe because of differences between
+                    cities ids in the sources for the transport zones and 
+                    the legal populations ?). The population count of these 
+                    transport zones will be set to zero.
                 """
             )
             population["legal_population"].fillna(0.0, inplace=True)
@@ -91,7 +92,7 @@ class Population(FileAsset):
         transport_zones = gpd.sjoin(transport_zones, regions[["INSEE_REG", "geometry"]], predicate="intersects") 
         transport_zones_regions = transport_zones["INSEE_REG"].drop_duplicates().tolist()
         
-        census_data = [CensusLocalizedIndividuals(tz_region).get() for tz_region in transport_zones_regions]
+        census_data = [CensusLocalizedIndividuals(transport_zones).get() for tz_region in transport_zones_regions]
         census_data = pd.concat(census_data)
         
         census_data.set_index(["CANTVILLE"], inplace=True)

@@ -12,11 +12,12 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\fb5768b837eda7904a70cebefcb75fa9-done',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\2e3f146ec4314657eda8c102d316cb49-transport_zones.gpkg',
+#   'D:/data/mobility/projects/haut-doubs/path_graph_car/simplified/ffd1b0a5590d2b4781792dfe0549182f-car-simplified-path-graph',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg',
 #   'True',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\flows.parquet',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\contracted\\a2db17f162b1bd6ea3a7cb5704595621-done'
+#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\flows.parquet',
+#   '1.5',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\contracted\\a2db17f162b1bd6ea3a7cb5704595621-done'
 # )
 
 package_fp <- args[1]
@@ -24,7 +25,8 @@ cppr_graph_fp <- args[2]
 transport_zones_fp <- args[3]
 congestion <- args[4]
 flows_fp <- args[5]
-output_fp <- args[6]
+congestion_flows_scaling_factor <- args[6]
+output_fp <- args[7]
 
 
 source(file.path(package_fp, "r_utils", "cpprouting_io.R"))
@@ -32,6 +34,8 @@ source(file.path(package_fp, "r_utils", "tz_pairs_to_vertex_pairs.R"))
 source(file.path(package_fp, "r_utils", "get_buildings_nearest_vertex_id.R"))
 
 logger <- logger(appenders = console_appender())
+
+congestion_flows_scaling_factor <- as.numeric(congestion_flows_scaling_factor)
 
 # Load the cpprouting graph
 hash <- strsplit(basename(cppr_graph_fp), "-")[[1]][1]
@@ -45,6 +49,12 @@ if (as.logical(congestion) == TRUE & file.exists(flows_fp)) {
   # Load OD flows, transport zones and representative buildings and disagregate
   # each flow between transport zones into flows between network vertices
   od_flows <- as.data.table(read_parquet(flows_fp))
+  
+  if (any(is.na(od_flows$vehicle_volume))) {
+    print(flows_fp)
+    print(od_flows[is.na(vehicle_volume)])
+    stop("Cannot assign traffic, some OD flows volumes are NA.")
+  }
   
   transport_zones <- st_read(transport_zones_fp, quiet = TRUE)
   transport_zones <- as.data.table(st_drop_geometry(transport_zones))
@@ -70,21 +80,21 @@ if (as.logical(congestion) == TRUE & file.exists(flows_fp)) {
   )
   
   od_flows <- merge(od_flows, vertex_pairs, by.x = c("from", "to"), by.y = c("tz_id_from", "tz_id_to"))
-  od_flows[, flow_volume := flow_volume*weight]
+  od_flows[, vehicle_volume := vehicle_volume*weight]
   
   # Retain only the largest flows accounting for 95 % of the total volume
   # and upscale them to match the total volume
-  od_flows <- od_flows[order(-flow_volume)]
-  od_flows[, cum_share := cumsum(flow_volume)/sum(flow_volume)]
+  od_flows <- od_flows[order(-vehicle_volume)]
+  od_flows[, cum_share := cumsum(vehicle_volume)/sum(vehicle_volume)]
   od_flows <- od_flows[cum_share < 0.95]
-  od_flows[, flow_volume := flow_volume/0.95]
+  od_flows[, vehicle_volume := vehicle_volume/0.95*congestion_flows_scaling_factor]
   
   # Assign traffic 
   traffic <- assign_traffic(
     cppr_graph,
     from = od_flows$vertex_id_from,
     to = od_flows$vertex_id_to,
-    demand = od_flows$flow_volume,
+    demand = od_flows$vehicle_volume,
     algorithm = "cfw",
     aon_method = "cbi",
     max_gap = 0.05,

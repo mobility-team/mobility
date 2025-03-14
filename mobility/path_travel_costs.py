@@ -12,6 +12,7 @@ from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
 from mobility.path_routing_parameters import PathRoutingParameters
+from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 
 class PathTravelCosts(FileAsset):
     """
@@ -38,7 +39,9 @@ class PathTravelCosts(FileAsset):
             mode_name: str,
             transport_zones: gpd.GeoDataFrame,
             routing_parameters: PathRoutingParameters,
-            congestion: bool = False
+            osm_capacity_parameters: OSMCapacityParameters,
+            congestion: bool = False,
+            congestion_flows_scaling_factor: float = 1.0
         ):
         """
         Initializes a TravelCosts object with the given transport zones and travel mode.
@@ -48,7 +51,13 @@ class PathTravelCosts(FileAsset):
             mode (str): Mode of transportation for calculating travel costs.
         """
 
-        path_graph = PathGraph(mode_name, transport_zones, congestion)
+        path_graph = PathGraph(
+            mode_name,
+            transport_zones,
+            osm_capacity_parameters,
+            congestion,
+            congestion_flows_scaling_factor
+        )
         
         inputs = {
             "transport_zones": transport_zones,

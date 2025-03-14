@@ -73,12 +73,11 @@ save_cppr_graph <- function(graph, path, hash) {
     aux = NA,
     alpha = NA,
     beta = NA,
-    cap = NA,
-    real_times = NA
+    cap = NA
   )
   
   for (var in names(graph$attrib)) {
-    attrib[[var]] <- graph$attrib[[var]]
+    attrib[, (var) := graph$attrib[[var]]]
   }
   
   if (!dir.exists(path)) {

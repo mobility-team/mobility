@@ -42,11 +42,6 @@ buildings_sample_fp <- file.path(
   )
 )
 
-# source(file.path(package_path, "r_utils", "compute_gtfs_travel_costs.R"))
-# source(file.path(package_path, "r_utils", "duplicate_cpprouting_graph.R"))
-# source(file.path(package_path, "r_utils", "initialize_travel_costs.R"))
-# source(file.path(package_path, "r_utils", "concatenate_graphs.R"))
-# source(file.path(package_path, "r_utils", "create_graph_from_travel_costs.R"))
 source(file.path(package_path, "r_utils", "cpprouting_io.R"))
 
 logger <- logger(appenders = console_appender())
@@ -127,75 +122,143 @@ travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_
 travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_to = weight, vertex_id_to)], by.x = "building_id_to_cluster", by.y = "building_id")
 
 
-
-
-# Compute the travel costs
-info(logger, "Computing travel costs...")
+info(logger, "Contracting graphs travel costs...")
 
 graph_c <- cpp_contract(intermodal_graph)
 
-travel_costs$perceived_time <- get_distance_pair(
+
+# Compute the travel costs
+info(logger, "Computing travel costs between representative buildings in transport zones...")
+
+od_pairs <- unique(travel_costs[distance > 0.0, list(vertex_id_from, vertex_id_to)])
+
+od_pairs$perceived_time <- get_distance_pair(
   graph_c,
-  travel_costs$vertex_id_from,
-  travel_costs$vertex_id_to
+  od_pairs$vertex_id_from,
+  od_pairs$vertex_id_to,
+  algorithm = "NBA",
+  constant = 0.1
 )
 
-travel_costs <- travel_costs[!is.na(perceived_time)]
+od_pairs <- od_pairs[!is.na(perceived_time)]
 
 modal_transfer_time <- 60*(first_modal_transfer$transfer_time + last_modal_transfer$transfer_time)
-travel_costs[, perceived_time := perceived_time + modal_transfer_time]
+od_pairs[, perceived_time := perceived_time + modal_transfer_time]
 
-travel_costs <- travel_costs[perceived_time < 3600.0*parameters[["max_perceived_time"]]]
+od_pairs <- od_pairs[perceived_time < 3600.0*parameters[["max_perceived_time"]]]
 
+info(logger, "Reconstructing detailed distances and travel times for each leg...")
 
-get_distance_pair_aux <- function(graph, from, to, aux_name) {
-  
-  graph$attrib$aux <- graph$attrib[[aux_name]]
-  
-  value <- get_distance_pair(
-    graph,
-    from = from,
-    to = to,
-    algorithm = "NBA",
-    constant = 0.1,
-    aggregate_aux = TRUE
-  )
-  
-  return(value)
-}
+paths <- get_path_pair(
+  graph_c,
+  from = od_pairs$vertex_id_from,
+  to = od_pairs$vertex_id_to,
+  algorithm = "NBA",
+  constant = 0.1,
+  long = TRUE
+)
 
+paths <- as.data.table(paths)
+paths[, prev_node := shift(node, type = "lag", n = 1), by = list(from, to)]
 
-for (aux_name in c("real_time", "start_time", "last_time", "start_distance", "mid_distance", "last_distance")) {
-  
-  info(logger, paste0("Computing auxiliary variable : ", aux_name))
-  
-  travel_costs[, (aux_name) := get_distance_pair_aux(
-    intermodal_graph,
-    from = travel_costs$vertex_id_from,
-    to = travel_costs$vertex_id_to,
-    aux_name = aux_name
-  )]
-  
-}
+attrib <- cbind(
+  as.data.table(intermodal_graph$data)[, list(from, to, perceived_time = dist)],
+  as.data.table(intermodal_graph$attrib)[, list(distance = start_distance + mid_distance + last_distance, real_time = real_time)]
+)
 
+attrib <- merge(
+  attrib,
+  as.data.table(intermodal_graph$dict),
+  by.x = "from",
+  by.y = "id"
+)
 
-travel_costs[, mid_time := real_time - start_time - last_time]
+attrib <- merge(
+  attrib,
+  as.data.table(intermodal_graph$dict),
+  by.x = "to",
+  by.y = "id",
+  suffixes = c("_from", "_to")
+)
+
+paths <- merge(
+  paths,
+  attrib,
+  by.x = c("prev_node", "node"),
+  by.y = c("ref_from", "ref_to"),
+  sort = FALSE
+)
+
+paths[, is_first_leg := grepl("s1", prev_node)]
+paths[, is_last_leg := grepl("l2", node)]
+paths[, is_mid_leg := !is_first_leg & !is_last_leg]
+
+paths[, start_distance := ifelse(is_first_leg, distance, 0.0)]
+paths[, last_distance := ifelse(is_last_leg, distance, 0.0)]
+paths[, mid_distance := ifelse(is_mid_leg, distance, 0.0)]
+
+paths[, start_real_time := ifelse(is_first_leg, real_time, 0.0)]
+paths[, last_real_time := ifelse(last_distance, real_time, 0.0)]
+paths[, mid_real_time := ifelse(is_mid_leg, real_time, 0.0)]
+
+paths[, start_perceived_time := ifelse(is_first_leg, perceived_time, 0.0)]
+paths[, last_perceived_time := ifelse(is_last_leg, perceived_time, 0.0)]
+paths[, mid_perceived_time := ifelse(is_mid_leg, perceived_time, 0.0)]
+
+paths <- paths[, 
+               list(
+                 start_distance = sum(start_distance),
+                 mid_distance = sum(mid_distance),
+                 last_distance = sum(last_distance),
+                 start_real_time = sum(start_real_time),
+                 mid_real_time = sum(mid_real_time),
+                 last_real_time = sum(last_real_time),
+                 start_perceived_time = sum(start_perceived_time),
+                 mid_perceived_time = sum(mid_perceived_time),
+                 last_perceived_time = sum(last_perceived_time)
+               ),
+               by = list(
+                 vertex_id_from = from.x,
+                 vertex_id_to = to.x
+               )
+]
 
 # Aggregate the result by transport zone
+
+info(logger, "Aggregating results at transport zone level...")
+
+travel_costs <- merge(
+  travel_costs,
+  od_pairs[, list(vertex_id_from, vertex_id_to)],
+  by = c("vertex_id_from", "vertex_id_to")
+)
+
+travel_costs <- merge(
+  travel_costs,
+  paths,
+  by = c("vertex_id_from", "vertex_id_to")
+)
+
 travel_costs[, prob := weight_from*weight_to]
 travel_costs[, prob := prob/sum(prob), list(from, to)]
 
 travel_costs <- travel_costs[,
-  list(
-    start_distance = weighted.mean(start_distance, prob)/1000,
-    start_time = weighted.mean(start_time, prob)/3600,
-    mid_distance = weighted.mean(mid_distance, prob)/1000,
-    mid_time = weighted.mean(mid_time, prob)/3600,
-    last_distance = weighted.mean(last_distance, prob)/1000,
-    last_time = weighted.mean(last_time, prob)/3600,
-    perceived_time = weighted.mean(perceived_time, prob)/3600
-  ),
-  by = list(from, to)
+                             list(
+                               start_distance = sum(start_distance * prob)/1000,
+                               mid_distance = sum(mid_distance * prob)/1000,
+                               last_distance = sum(last_distance * prob)/1000,
+                               
+                               start_real_time = sum(start_real_time * prob)/3600,
+                               mid_real_time = sum(mid_real_time * prob)/3600,
+                               last_real_time = sum(last_real_time * prob)/3600,
+                               
+                               start_perceived_time = sum(start_perceived_time * prob)/3600,
+                               mid_perceived_time = sum(mid_perceived_time * prob)/3600,
+                               last_perceived_time = sum(last_perceived_time * prob)/3600
+                             ),
+                             by = list(from, to)
 ]
+
+info(logger, "Saving the result...")
 
 write_parquet(travel_costs, output_file_path)

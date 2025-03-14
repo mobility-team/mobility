@@ -15,21 +15,17 @@ from .choice_models.work_destination_choice_model import (
     WorkDestinationChoiceModelParameters
 )
 
-from .transport_modes import (
-    BicycleMode,
-    CarMode,
-    CarpoolMode,
-    PublicTransportMode,
-    WalkMode,
-    IntermodalTransfer
-)
+from mobility.transport_modes.walk import WalkMode
+from mobility.transport_modes.bicycle import BicycleMode
+from mobility.transport_modes.car import CarMode
+from mobility.transport_modes.carpool import CarpoolMode
+from mobility.transport_modes.public_transport import PublicTransportMode
+from mobility.transport_modes.modal_transfer import IntermodalTransfer
 
 from .path_routing_parameters import PathRoutingParameters
 
-from .transport_modes import (
-    DetailedCarpoolRoutingParameters,
-    PublicTransportRoutingParameters
-)
+from mobility.transport_modes.carpool import DetailedCarpoolRoutingParameters
+from mobility.transport_modes.public_transport import PublicTransportRoutingParameters
 
 from .generalized_cost_parameters import GeneralizedCostParameters
 from .transport_modes.carpool.detailed.detailed_carpool_generalized_cost_parameters import DetailedCarpoolGeneralizedCostParameters

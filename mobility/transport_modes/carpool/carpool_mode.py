@@ -1,7 +1,7 @@
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.car import CarMode
 from mobility.transport_modes.carpool.detailed import DetailedCarpoolRoutingParameters, DetailedCarpoolGeneralizedCostParameters, DetailedCarpoolTravelCosts, DetailedCarpoolGeneralizedCost
-
+from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
 
 class CarpoolMode(TransportMode):
