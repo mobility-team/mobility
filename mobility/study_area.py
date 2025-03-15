@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 import geopandas as gpd
 import pathlib
+import geojson
 from typing import Union, List
 
 from mobility.file_asset import FileAsset
@@ -44,7 +45,10 @@ class StudyArea(FileAsset):
             "radius": radius
         }
 
-        cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "study_area.gpkg"
+        cache_path = {
+            "polygons": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "study_area.gpkg",
+            "boundary": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "study_area_boundary.geojson"
+        }
 
         super().__init__(inputs, cache_path)
 
@@ -59,7 +63,7 @@ class StudyArea(FileAsset):
         if self.value is None:
             
             logging.info("Transport zones already created. Reusing the file " + str(self.cache_path))
-            local_admin_units = gpd.read_file(self.cache_path)
+            local_admin_units = gpd.read_file(self.cache_path["polygons"])
             self.value = local_admin_units
             return local_admin_units
         
@@ -99,7 +103,9 @@ class StudyArea(FileAsset):
              "urban_unit_category", "geometry"]
         ].copy()
         
-        local_admin_units.to_file(self.cache_path, driver="GPKG", index=False)
+        local_admin_units.to_file(self.cache_path["polygons"], driver="GPKG", index=False)
+
+        self.create_study_area_boundary(local_admin_units)
 
         return local_admin_units
 
@@ -132,6 +138,39 @@ class StudyArea(FileAsset):
         local_admin_units = self.get()
         id_country_map = local_admin_units[["local_admin_unit_id", "country"]].set_index("local_admin_unit_id").to_dict()
         return pd.Series(local_admin_unit_ids).map(id_country_map)
+    
+
+        
+    def create_study_area_boundary(
+            self,
+            study_area
+        ):
+        """
+        Creates a combined boundary polygon for all transport zones and saves it as a GeoJSON file.
+
+        This method merges the geometries of all provided transport zones into a single polygon, 
+        which represents the combined boundary of these zones. It then saves this boundary as a 
+        GeoJSON file to be used in subsequent operations.
+
+        Args:
+            transport_zones (gpd.GeoDataFrame): A GeoDataFrame containing the geometries of transport zones.
+
+        Returns:
+            Tuple[shapely.geometry.Polygon, str]: A tuple containing the combined boundary polygon 
+            and the path to the saved GeoJSON file.
+        """
+        
+        # Merge all transport zones into one polygon
+        boundary = study_area.to_crs(4326).unary_union
+        
+        # Store the boundary as a temporary geojson file
+        boundary_geojson = geojson.Feature(geometry=boundary, properties={})
+        
+        with open(self.cache_path["boundary"], "w") as f:
+            geojson.dump(boundary_geojson, f)
+            
+        return None
+    
         
         
         

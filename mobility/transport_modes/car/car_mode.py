@@ -1,11 +1,14 @@
 from mobility.transport_zones import TransportZones
-from mobility.path_travel_costs import PathTravelCosts
+from mobility.transport_costs.path_travel_costs import PathTravelCosts
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.path_routing_parameters import PathRoutingParameters
 from mobility.generalized_cost_parameters import GeneralizedCostParameters
 from mobility.cost_of_time_parameters import CostOfTimeParameters
-from mobility.path_generalized_cost import PathGeneralizedCost
+from mobility.transport_costs.path_generalized_cost import PathGeneralizedCost
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
+from mobility.transport_graphs.speed_modifier import SpeedModifier
+
+from typing import List
 
 class CarMode(TransportMode):
     """
@@ -23,7 +26,8 @@ class CarMode(TransportMode):
         osm_capacity_parameters: OSMCapacityParameters = None,
         generalized_cost_parameters: GeneralizedCostParameters = None,
         congestion: bool = False,
-        congestion_flows_scaling_factor: float = 1.0
+        congestion_flows_scaling_factor: float = 1.0,
+        speed_modifiers: List[SpeedModifier] = []
     ):
         
         if routing_parameters is None:
@@ -49,7 +53,8 @@ class CarMode(TransportMode):
             routing_parameters, 
             osm_capacity_parameters,
             congestion,
-            congestion_flows_scaling_factor
+            congestion_flows_scaling_factor,
+            speed_modifiers
         )
         
         generalized_cost = PathGeneralizedCost(

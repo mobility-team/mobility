@@ -14,16 +14,16 @@ library(jsonlite)
 args <- commandArgs(trailingOnly = TRUE)
 
 
-args <- c(
-  'D:\\dev\\mobility_oss\\mobility',
-  'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg',
-  'D:/data/mobility/projects/haut-doubs/a25b56abc681fdfbf95b35a21c4b59db-study_area.gpkg',
-  'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\ffd1b0a5590d2b4781792dfe0549182f-car-simplified-path-graph',
-  'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\ffd1b0a5590d2b4781792dfe0549182f-car-simplified-path-graph',
-  '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 10.0, "shortcuts_transfer_time": 4.0, "shortcuts_locations": [[5.439751353407316, 47.0683887064354]]}',
-  'False',
-  'D:/data/mobility/projects/haut-doubs/f8755d0523b785bfe9ff3c93d1b7e393-travel_costs_free_flow_carpool.parquet'
-)
+# args <- c(
+#   'D:\\dev\\mobility_oss\\mobility',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg',
+#   'D:/data/mobility/projects/haut-doubs/a25b56abc681fdfbf95b35a21c4b59db-study_area.gpkg',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\ffd1b0a5590d2b4781792dfe0549182f-car-simplified-path-graph',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\ffd1b0a5590d2b4781792dfe0549182f-car-simplified-path-graph',
+#   '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 10.0, "shortcuts_transfer_time": 4.0, "shortcuts_locations": [[5.439751353407316, 47.0683887064354]]}',
+#   'False',
+#   'D:/data/mobility/projects/haut-doubs/f8755d0523b785bfe9ff3c93d1b7e393-travel_costs_free_flow_carpool.parquet'
+# )
 
 package_path <- args[1]
 tz_file_path <- args[2]

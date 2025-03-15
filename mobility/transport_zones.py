@@ -83,7 +83,7 @@ class TransportZones(FileAsset):
 
         logging.info("Creating transport zones...")
         
-        study_area_fp = self.study_area.cache_path
+        study_area_fp = self.study_area.cache_path["polygons"]
         osm_buildings_fp = self.osm_buildings.get()
         
         script = RScript(resources.files('mobility.r_utils').joinpath('prepare_transport_zones.R'))

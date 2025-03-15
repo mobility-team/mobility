@@ -14,7 +14,7 @@ from mobility.transport_modes.public_transport.public_transport_routing_paramete
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
 from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportGraph
-from mobility.path_graph import ContractedPathGraph
+from mobility.transport_graphs.path_graph import ContractedPathGraph
 
 class IntermodalTransportGraph(FileAsset):
     """

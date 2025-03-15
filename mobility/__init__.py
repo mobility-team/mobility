@@ -3,8 +3,8 @@ from .set_params import set_params
 from .study_area import StudyArea
 from .transport_zones import TransportZones
 
-from .path_travel_costs import PathTravelCosts
-from .path_graph import PathGraph
+from .transport_costs.path_travel_costs import PathTravelCosts
+from .transport_graphs.path_graph import PathGraph
 
 from .population import Population
 from .trips import Trips
@@ -37,3 +37,9 @@ from .parsers import LocalAdminUnits
 
 
 from .localized_trips import LocalizedTrips
+
+
+from mobility.transport_graphs.speed_modifier import (
+    BorderCrossingSpeedModifier,
+    LimitedSpeedZonesModifier
+)

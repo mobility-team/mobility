@@ -12,12 +12,12 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:/data/mobility/projects/haut-doubs/path_graph_car/simplified/ffd1b0a5590d2b4781792dfe0549182f-car-simplified-path-graph',
-#   'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg',
-#   'True',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\modified\\c3dd4a7c2b5a8a4169b0cdc8df7edee2-car-modified-path-graph',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\9da6c9b51734ddd0278a650c3b00fe30-transport_zones.gpkg',
+#   'False',
 #   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\flows.parquet',
-#   '1.5',
-#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\contracted\\a2db17f162b1bd6ea3a7cb5704595621-done'
+#   '1.0',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\contracted\\1d720115e33af3bb17776a15bc2c6d49-car-contracted-path-graph'
 # )
 
 package_fp <- args[1]

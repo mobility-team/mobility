@@ -10,13 +10,14 @@ from mobility.parsers.osm import OSMData
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
+from mobility.transport_zones import TransportZones
 
 class SimplifiedPathGraph(FileAsset):
 
     def __init__(
             self,
             mode_name: str,
-            transport_zones: gpd.GeoDataFrame,
+            transport_zones: TransportZones,
             osm_capacity_parameters: OSMCapacityParameters
         ):
         
@@ -28,7 +29,7 @@ class SimplifiedPathGraph(FileAsset):
             )
 
         osm = OSMData(
-            transport_zones,
+            transport_zones.study_area,
             object_type="w",
             key="highway",
             tags = osm_capacity_parameters.get_highway_tags(),
@@ -80,7 +81,7 @@ class SimplifiedPathGraph(FileAsset):
     
         logging.info("Creating a routable graph with dodgr and cpp routing this might take a while...")
          
-        script = RScript(resources.files('mobility.r_utils').joinpath('prepare_path_graph.R'))
+        script = RScript(resources.files('mobility.transport_graphs').joinpath('prepare_path_graph.R'))
 
         script.run(
             args=[

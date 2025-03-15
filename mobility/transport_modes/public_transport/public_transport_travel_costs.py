@@ -15,7 +15,7 @@ from mobility.transport_modes.public_transport.intermodal_transport_graph import
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
-from mobility.path_graph import SimplifiedPathGraph, ContractedPathGraph
+from mobility.transport_graphs import SimplifiedPathGraph, ContractedPathGraph
 
 class PublicTransportTravelCosts(FileAsset):
     """

@@ -15,7 +15,7 @@ class GeofabrikRegions(FileAsset):
         cache_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "geofabrik_regions.gpkg"
         super().__init__(inputs, cache_path)
         
-    def get_cached_asset(self) -> pd.DataFrame:
+    def get_cached_asset(self) -> gpd.GeoDataFrame:
 
         logging.info("Geofabrik regions already prepared. Reusing the file : " + str(self.cache_path))
         regions = gpd.read_file(self.cache_path)

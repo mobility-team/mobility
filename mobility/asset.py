@@ -51,12 +51,20 @@ class Asset(ABC):
             """
             if isinstance(value, Asset):
                 return value.get_cached_hash()
+            
+            elif isinstance(value, list) and all(isinstance(v, Asset) for v in value):
+                return {i: serialize(v) for i, v in enumerate(value)}
+            
             elif is_dataclass(value):
                 return {field.name: serialize(getattr(value, field.name)) for field in fields(value)}
+            
             elif isinstance(value, dict):
+               
                return {k: serialize(v) for k, v in value.items()}
+            
             elif isinstance(value, set):
                 return list(value)
+            
             else:
                 return value
     

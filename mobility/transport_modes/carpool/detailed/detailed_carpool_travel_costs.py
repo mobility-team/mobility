@@ -13,7 +13,7 @@ from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_modes.carpool.detailed.detailed_carpool_routing_parameters import DetailedCarpoolRoutingParameters
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
-from mobility.path_travel_costs import PathTravelCosts
+from mobility.transport_costs.path_travel_costs import PathTravelCosts
 
 class DetailedCarpoolTravelCosts(FileAsset):
 
@@ -86,6 +86,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
         script.run(
             args=[
                 str(car_travel_costs.transport_zones.cache_path),
+                str(car_travel_costs.transport_zones.study_area.cache_path["polygons"]),
                 str(car_travel_costs.simplified_path_graph.get()),
                 str(car_travel_costs.simplified_path_graph.get()),
                 json.dumps(asdict(modal_transfer)),

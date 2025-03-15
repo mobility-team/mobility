@@ -1,19 +1,18 @@
 import os
 import pathlib
 import logging
-import polars as pl
 
 from importlib import resources
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
-from mobility.simplified_path_graph import SimplifiedPathGraph
+from mobility.transport_graphs.modified_path_graph import ModifiedPathGraph
 from mobility.transport_zones import TransportZones
 
 class ContractedPathGraph(FileAsset):
 
     def __init__(
             self,
-            simplified_graph: SimplifiedPathGraph,
+            modified_graph: ModifiedPathGraph,
             transport_zones: TransportZones,
             handles_congestion: bool = False,
             congestion_flows_scaling_factor: float = 1.0
@@ -21,15 +20,17 @@ class ContractedPathGraph(FileAsset):
         
         inputs = {
             "transport_zones": transport_zones,
-            "simplified_graph": simplified_graph,
+            "modified_graph": modified_graph,
             "handles_congestion": handles_congestion,
             "congestion_flows_scaling_factor": congestion_flows_scaling_factor
         }
         
-        file_name = pathlib.Path("path_graph_" + simplified_graph.mode_name) / "contracted" / (simplified_graph.mode_name + "-contracted-path-graph")
-        cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
+        mode_name = modified_graph.mode_name
+        folder_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
+        file_name = pathlib.Path("path_graph_" + mode_name) / "contracted" / (mode_name + "-contracted-path-graph")
+        cache_path = folder_path / file_name
         
-        self.flows_file_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / ("path_graph_" + simplified_graph.mode_name) / "simplified" / "flows.parquet"
+        self.flows_file_path = folder_path / ("path_graph_" + mode_name) / "simplified" / "flows.parquet"
 
         super().__init__(inputs, cache_path)
 
@@ -46,7 +47,7 @@ class ContractedPathGraph(FileAsset):
         self.transport_zones.get()
 
         self.contract_graph(
-            self.simplified_graph.get(),
+            self.modified_graph.get(),
             self.transport_zones.cache_path,
             enable_congestion,
             self.flows_file_path,
@@ -58,7 +59,7 @@ class ContractedPathGraph(FileAsset):
 
     def contract_graph(
             self,
-            simplified_graph_path: pathlib.Path,
+            modified_graph_path: pathlib.Path,
             transport_zones_path: pathlib.Path,
             enable_congestion: bool,
             flows_file_path: pathlib.Path,
@@ -66,11 +67,11 @@ class ContractedPathGraph(FileAsset):
             output_file_path: pathlib.Path
         ) -> None:
          
-        script = RScript(resources.files('mobility.r_utils').joinpath('contract_path_graph.R'))
+        script = RScript(resources.files('mobility.transport_graphs').joinpath('contract_path_graph.R'))
 
         script.run(
             args=[
-                str(simplified_graph_path),
+                str(modified_graph_path),
                 str(transport_zones_path),
                 str(enable_congestion),
                 str(flows_file_path),

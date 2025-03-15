@@ -1,10 +1,10 @@
 from mobility.transport_zones import TransportZones
-from mobility.path_travel_costs import PathTravelCosts
+from mobility.transport_costs.path_travel_costs import PathTravelCosts
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.path_routing_parameters import PathRoutingParameters
 from mobility.generalized_cost_parameters import GeneralizedCostParameters
 from mobility.cost_of_time_parameters import CostOfTimeParameters
-from mobility.path_generalized_cost import PathGeneralizedCost
+from mobility.transport_costs.path_generalized_cost import PathGeneralizedCost
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 
 class WalkMode(TransportMode):
