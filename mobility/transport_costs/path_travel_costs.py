@@ -69,6 +69,7 @@ class PathTravelCosts(FileAsset):
             "mode_name": mode_name,
             "simplified_path_graph": path_graph.simplified,
             "modified_path_graph": path_graph.modified,
+            "congested_path_graph": path_graph.congested,
             "contracted_path_graph": path_graph.contracted,
             "routing_parameters": routing_parameters
         }

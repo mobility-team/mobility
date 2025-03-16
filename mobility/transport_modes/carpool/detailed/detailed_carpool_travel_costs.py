@@ -87,8 +87,8 @@ class DetailedCarpoolTravelCosts(FileAsset):
             args=[
                 str(car_travel_costs.transport_zones.cache_path),
                 str(car_travel_costs.transport_zones.study_area.cache_path["polygons"]),
-                str(car_travel_costs.simplified_path_graph.get()),
-                str(car_travel_costs.simplified_path_graph.get()),
+                str(car_travel_costs.congested_path_graph.get()),
+                str(car_travel_costs.congested_path_graph.get()),
                 json.dumps(asdict(modal_transfer)),
                 str(congestion),
                 output_path

@@ -4,6 +4,7 @@ import geopandas as gpd
 from mobility.transport_zones import TransportZones
 from mobility.transport_graphs.simplified_path_graph import SimplifiedPathGraph
 from mobility.transport_graphs.modified_path_graph import ModifiedPathGraph
+from mobility.transport_graphs.congested_path_graph import CongestedPathGraph
 from mobility.transport_graphs.contracted_path_graph import ContractedPathGraph
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport_graphs.speed_modifier import SpeedModifier
@@ -32,12 +33,16 @@ class PathGraph:
             self.simplified,
             speed_modifiers
         )
-        
-        self.contracted = ContractedPathGraph(
+
+        self.congested = CongestedPathGraph(
             self.modified,
             transport_zones,
             congestion,
             congestion_flows_scaling_factor
+        )
+        
+        self.contracted = ContractedPathGraph(
+            self.congested
         )
         
 
