@@ -39,6 +39,7 @@ congestion <- as.logical(congestion)
 congestion_flows_scaling_factor <- as.numeric(congestion_flows_scaling_factor)
 
 # Load the cpprouting graph
+info(logger, "Loading simplified/modified graph...")
 hash <- strsplit(basename(cppr_graph_fp), "-")[[1]][1]
 cppr_graph <- read_cppr_graph(dirname(cppr_graph_fp), hash)
 vertices <- read_parquet(file.path(dirname(dirname(cppr_graph_fp)), paste0(hash, "-vertices.parquet")))
@@ -46,6 +47,8 @@ vertices <- read_parquet(file.path(dirname(dirname(cppr_graph_fp)), paste0(hash,
 # If OD flows were provided, estimate the congestion on each link and update
 # the travel times 
 if (congestion == TRUE & file.exists(flows_fp)) {
+  
+  info(logger, "Loading OD flows...")
   
   # Load OD flows, transport zones and representative buildings and disagregate
   # each flow between transport zones into flows between network vertices
@@ -89,6 +92,8 @@ if (congestion == TRUE & file.exists(flows_fp)) {
   od_flows[, vehicle_volume := vehicle_volume/0.95*congestion_flows_scaling_factor]
   
   # Assign traffic 
+  info(logger, "Assigning traffic...")
+  
   traffic <- assign_traffic(
     cppr_graph,
     from = od_flows$vertex_id_from,
@@ -111,6 +116,7 @@ if (congestion == TRUE & file.exists(flows_fp)) {
 }
 
 # Save the graph
+info(logger, "Saving congested graph...")
 hash <- strsplit(basename(output_fp), "-")[[1]][1]
 save_cppr_graph(cppr_graph, dirname(output_fp), hash)
 write_parquet(vertices, file.path(dirname(dirname(output_fp)), paste0(hash, "-vertices.parquet")))
