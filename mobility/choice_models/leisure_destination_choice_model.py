@@ -1,0 +1,521 @@
+import logging
+import pandas as pd
+import geopandas as gpd
+import numpy as np
+import pathlib
+import os
+import polars as pl
+
+from importlib import resources
+
+from mobility.choice_models.destination_choice_model import DestinationChoiceModel
+from mobility.choice_models.work_utilities import WorkUtilities
+from mobility.parsers.leisure_sources_and_sinks_distribution import LeisureFacilitiesDistribution
+from mobility.r_utils.r_script import RScript
+
+from mobility.radiation_model_selection import apply_radiation_model
+
+from mobility.transport_modes import TransportMode
+
+from dataclasses import dataclass, field
+from typing import Dict, Union, List
+
+
+"""
+Source pour les pratiques sportives à Genève : https://www.ge.ch/document/38417/telecharger
+Section 13 en particulier, et 12 aussi
+"""
+
+@dataclass
+class LeisureDestinationChoiceModelParameters:
+    
+    model: Dict[str, Union[str, float]] = field(
+        default_factory=lambda: {
+            "type": "radiation",
+            "lambda": 0.99986,
+            "end_of_contract_rate": 0.00, # à supprimer ?
+            "job_change_utility_constant": -5.0, # à supprimer ?
+            "max_iterations": 10,
+            "tolerance": 0.01,
+            "cost_update": False,
+            "n_iter_cost_update": 3
+        }
+    )
+    
+    utility: Dict[str, float] = field(
+        default_factory=lambda: {
+            "fr": 120.0,
+            "ch": 120.0
+        }
+    )
+    
+    
+
+class LeisureDestinationChoiceModel(DestinationChoiceModel):
+    
+    def __init__(
+            self,
+            transport_zones: gpd.GeoDataFrame,
+            modes: List[TransportMode],
+            parameters: LeisureDestinationChoiceModelParameters = LeisureDestinationChoiceModelParameters(),
+            leisure_sources_and_sinks: pd.DataFrame = None,
+            jobs: pd.DataFrame = None,
+            reference_flows: pd.DataFrame = None,
+            ssi_min_flow_volume: float = 200.0
+        ):
+        """
+
+        """
+        
+        
+        if leisure_sources_and_sinks is None:
+            self.leisure_sources_and_sinks = None
+            self.leisure_facilities = None
+            self.leisure_sources_and_sinks = LeisureFacilitiesDistribution()
+        else:
+            self.leisure_sources_and_sinks = None
+            self.leisure_sources_and_sinks = leisure_sources_and_sinks
+            self.jobs = jobs
+            self.reference_flows = reference_flows
+        
+        
+        if "type" not in parameters.model.keys():
+            raise ValueError("The model_parameters should be a dict that specifies the type of radiation model : radiation_universal or radiation_selection")
+        
+        if parameters.model["type"] == "radiation_selection":
+            if "lambda" not in parameters.model.keys():
+                raise ValueError("Lambda parameter missing in model_parameters. It should be a dict with keys fr and ch.")
+            
+        if parameters.model["type"] == "radiation_universal":
+            if "alpha" not in parameters.model.keys():
+                raise ValueError("Alpha parameter missing in model_parameters.")
+            if "beta" not in parameters.model.keys():
+                raise ValueError("Beta parameter missing in model_parameters.")
+        
+        super().__init__(
+            "leisure",
+            transport_zones,
+            modes,
+            self.leisure_sources_and_sinks,
+            parameters,
+            ssi_min_flow_volume
+        )
+        
+        
+    def prepare_sources_and_sinks(self, transport_zones: gpd.GeoDataFrame):
+        
+        if self.leisure_sources_and_sinks is None:
+        
+            jobs, active_population = self.jobs_active_population.get()
+            reference_flows = self.reference_flows.get()
+            
+        else:
+            
+            active_population = self.active_population
+            jobs = self.jobs
+            reference_flows = self.reference_flows
+        
+        sources = self.prepare_sources(transport_zones, active_population, reference_flows)
+        sinks = self.prepare_sinks(transport_zones, jobs, reference_flows)
+        
+        return sources, sinks
+    
+    def prepare_utilities(self, transport_zones, sinks):
+        utilities = WorkUtilities(transport_zones, sinks, self.inputs["parameters"].utility)
+        return utilities
+
+    
+    def prepare_sources(
+            self,
+            transport_zones: gpd.GeoDataFrame,
+            active_population: pd.DataFrame,
+            reference_flows: pd.DataFrame
+        ) -> pd.DataFrame:
+        
+        tz_lau_ids = set(transport_zones["local_admin_unit_id"].unique())
+        
+        # Check if all admin units ids are in the source dataset and print warning if some are not
+        missing_ids = tz_lau_ids.difference(set(active_population.index.get_level_values(0)))
+        
+        if len(missing_ids) > 0:
+            logging.info("No active population data available for the following admin units : " + ", ".join(missing_ids) + "")
+            tz_lau_ids = list(tz_lau_ids.difference(missing_ids))
+        else:
+            tz_lau_ids = list(tz_lau_ids)
+
+        # Filter the active population dataframe
+        active_population = active_population.loc[tz_lau_ids, "active_pop"].reset_index()
+        
+        # Remove the part of the active population that works outside of the transport zones
+        act_pop_ext = reference_flows.loc[
+            (reference_flows["local_admin_unit_id_from"].isin(tz_lau_ids)) &
+            (~reference_flows["local_admin_unit_id_to"].isin(tz_lau_ids))
+        ]
+        
+        act_pop_ext = act_pop_ext.groupby("local_admin_unit_id_from", as_index=False)["ref_flow_volume"].sum()
+        
+        active_population = pd.merge(
+            active_population,
+            act_pop_ext,
+            left_on="local_admin_unit_id",
+            right_on="local_admin_unit_id_from",
+            how = "left"
+        )
+        
+        active_population["ref_flow_volume"] = active_population["ref_flow_volume"].fillna(0.0)
+        active_population["active_pop"] -= active_population["ref_flow_volume"]
+        
+        # There are errors in the reference data that can lead to negative values
+        active_population = active_population[active_population["active_pop"] > 0.0]
+        
+        
+        
+        # Disaggregate the active population at transport zone level
+        active_population = pd.merge(
+            transport_zones[["transport_zone_id", "local_admin_unit_id", "weight"]],
+            active_population[["local_admin_unit_id", "active_pop"]],
+            on="local_admin_unit_id"
+        )
+        
+        active_population["active_pop"] *= active_population["weight"]
+    
+        active_population = active_population[["transport_zone_id", "active_pop"]]
+        active_population.columns = ["from", "source_volume"]
+        active_population.set_index("from", inplace=True)
+        
+        logging.info("Total active population count  : " + str(round(active_population["source_volume"].sum())))
+        
+        return active_population
+    
+    
+    def prepare_sinks(
+            self,
+            transport_zones: gpd.GeoDataFrame, 
+            jobs: pd.DataFrame,
+            reference_flows: pd.DataFrame
+        ) -> pd.DataFrame:
+        
+        tz_lau_ids = set(transport_zones["local_admin_unit_id"].unique())
+        
+        # Check if all admin units ids are in the source dataset and print warning if some are not
+        missing_ids = tz_lau_ids.difference(set(jobs.index.get_level_values(0)))
+        
+        if len(missing_ids) > 0:
+            logging.info("No active population data available for the following admin units : " + ", ".join(missing_ids) + "")
+            tz_lau_ids = list(tz_lau_ids.difference(missing_ids))
+        else:
+            tz_lau_ids = list(tz_lau_ids)
+        
+        # Filter the jobs dataframe
+        jobs = jobs.loc[tz_lau_ids, "n_jobs_total"].reset_index()
+        
+        # Remove the part of the jobs that are occupied by people living outside of the transport zones
+        jobs_ext = reference_flows.loc[
+            (~reference_flows["local_admin_unit_id_from"].isin(tz_lau_ids)) &
+            (reference_flows["local_admin_unit_id_to"].isin(tz_lau_ids))
+        ]
+        
+        jobs_ext = jobs_ext.groupby("local_admin_unit_id_to", as_index=False)["ref_flow_volume"].sum()
+        
+        jobs = pd.merge(
+            jobs,
+            jobs_ext,
+            left_on="local_admin_unit_id",
+            right_on="local_admin_unit_id_to",
+            how = "left"
+        )
+        
+        jobs["ref_flow_volume"] = jobs["ref_flow_volume"].fillna(0.0)
+        jobs["n_jobs_total"] -= jobs["ref_flow_volume"]
+        
+        # There are errors in the reference data that lead to negative values
+        jobs = jobs[jobs["n_jobs_total"] > 0.0]
+        
+        # Disaggregate the jobs counts at transport zone level
+        jobs = pd.merge(
+            transport_zones[["transport_zone_id", "local_admin_unit_id", "weight"]],
+            jobs[["local_admin_unit_id", "n_jobs_total"]],
+            on="local_admin_unit_id"
+        )
+        
+        jobs["n_jobs_total"] *= jobs["weight"]
+    
+        
+        jobs = jobs[["transport_zone_id", "n_jobs_total"]]
+        jobs.columns = ["to", "sink_volume"]
+        jobs.set_index("to", inplace=True)
+        
+        logging.info("Total job count : " + str(round(jobs["sink_volume"].sum())))
+        
+        return jobs
+    
+    
+    def compute_flows(
+            self,
+            transport_zones,
+            sources,
+            sinks,
+            costs,
+            utilities
+        ):
+        
+            selection_lambda = self.parameters.model["lambda"]
+            end_of_contract_rate = self.parameters.model["end_of_contract_rate"]
+            job_change_utility_constant = self.parameters.model["job_change_utility_constant"]
+            max_iterations = self.parameters.model["max_iterations"]
+            tolerance = self.parameters.model["tolerance"]
+            cost_update = self.parameters.model["cost_update"]
+            n_iter_cost_update = self.parameters.model["n_iter_cost_update"]
+        
+            # Convert input DataFrames to Polars DataFrames
+            sources = pl.DataFrame(sources.reset_index()).with_columns([
+                pl.col("from").cast(pl.Int64)
+            ])
+            
+            sinks = pl.DataFrame(sinks.reset_index()).with_columns([
+                pl.col("to").cast(pl.Int64)
+            ])
+        
+            base_sources = sources.clone()
+            base_sinks = sinks.clone()
+            
+            # Compute the flows given costs and utilities before any congestion effect
+            costs_values = costs.get(congestion=False)
+            utilities_values = utilities.get(congestion=False)
+
+            
+            i = 0
+            d_flows = None
+            previous_od_flows = None
+            
+            while (d_flows is None or d_flows > tolerance) and i < max_iterations:
+                
+                job_seekers_flows = apply_radiation_model(
+                    sources,
+                    sinks,
+                    costs_values,
+                    utilities_values,
+                    selection_lambda=selection_lambda
+                )
+                
+                if previous_od_flows is None:
+                    od_flows = job_seekers_flows
+                else:
+                    od_flows = (
+                        previous_od_flows
+                        .join(job_seekers_flows, on=["from", "to"], how="full", coalesce=True)
+                        .with_columns((pl.col("flow_volume").fill_null(0.0) + pl.col("flow_volume_right").fill_null(0.0)).alias("flow_volume"))
+                        .select(["from", "to", "flow_volume"])
+                    )
+                
+                # Update the costs of flows every n iterations
+                if cost_update is True and i > 0 and i % n_iter_cost_update == 0: 
+                    costs.update(od_flows)
+                    costs_values = costs.get(congestion=True)
+                
+                od_flows = (
+                    
+                    # Compute the number of persons in each OD flow that could not find a 
+                    # job because too many people chose the same destiation
+                    od_flows
+                    .join(base_sinks, on="to")
+                    .with_columns((1.0 - pl.col("sink_volume").first().over("to")/pl.col("flow_volume").sum().over("to")).clip(0.0, 1.0).alias("p_jobless"))
+                    .with_columns((pl.col("flow_volume")*pl.col("p_jobless").clip(0.0, 1.0)).alias("jobless"))
+                    .with_columns((pl.col("flow_volume") - pl.col("jobless")).alias("flow_volume"))
+                    
+                    # Compute the number of persons losing their jobs
+                    .with_columns((end_of_contract_rate*pl.col("flow_volume")).alias("laid_off"))
+                    .with_columns((pl.col("flow_volume") - pl.col("laid_off")).alias("flow_volume"))
+                    
+                    # Compute the number of persons switching jobs after comparing their 
+                    # utility to the average utility of persons living in the same place
+                    # (adding X € to the no switch decision to account for transition costs)
+                    .join(utilities_values, on="to")
+                    .join(costs_values, on=["from", "to"])
+                    .with_columns((pl.col("utility") - 2*pl.col("cost")).alias("net_utility"))
+                    .with_columns(((pl.col("flow_volume")*pl.col("net_utility")).sum().over("from")/pl.col("flow_volume").sum().over("from")).alias("average_utility"))
+                    .with_columns((pl.col("average_utility").exp()/((pl.col("net_utility") + job_change_utility_constant).exp() + pl.col("average_utility").exp())).alias("p_change"))
+                    .with_columns((pl.col("p_change")*pl.col("flow_volume")).alias("switchers"))
+                    .with_columns((pl.col("flow_volume") - pl.col("switchers")).alias("flow_volume"))
+                    
+                    # Agregate job seekers
+                    .with_columns((pl.col("jobless") + pl.col("laid_off") + pl.col("switchers")).alias("job_seekers"))
+                    .select(["from", "to", "flow_volume", "job_seekers"])
+                    
+                )
+                
+                sources = (
+                    od_flows
+                    .group_by("from")
+                    .agg(pl.col("job_seekers").sum().alias("source_volume"))
+                    .select(["from", "source_volume"])
+                )
+                
+                sinks = (
+                    od_flows
+                    .group_by("to")
+                    .agg(pl.col("flow_volume").sum())
+                    .join(base_sinks, on="to", how="outer", coalesce=True)
+                    .with_columns((pl.col("sink_volume").fill_null(0.0) - pl.col("flow_volume").fill_null(0.0)).alias("sink_volume"))
+                    .select(["to", "sink_volume"])
+                )
+                
+                od_flows = od_flows.select(["from", "to", "flow_volume"]).filter(pl.col("flow_volume") > 0.0)
+                
+                if previous_od_flows is None:
+                    d_flows = tolerance + 1.0
+                else:
+                    d_flows = (
+                        previous_od_flows
+                        .join(od_flows, on=["from", "to"], how="outer", coalesce=True)
+                        .with_columns((pl.col("flow_volume").fill_null(0.0) - pl.col("flow_volume_right").fill_null(0.0)).alias("d_flow"))
+                        .select(pl.col("d_flow").abs().sum()/pl.col("flow_volume").sum())
+                        .item()
+                    )
+                    
+                previous_od_flows = od_flows.clone()
+                
+                logging.info("Iteration n°" + str(i) + " - Convergence : " + str(d_flows))
+                
+                i += 1    
+            
+            
+            # After convergence all jobless persons are assigned to the remaining opportunities with the radiation model
+            job_seekers_flows = apply_radiation_model(
+                sources,
+                sinks,
+                costs_values,
+                utilities_values,
+                selection_lambda=selection_lambda
+            )
+            
+            od_flows = (
+                od_flows
+                .join(job_seekers_flows, on=["from", "to"], how="full", coalesce=True)
+                .with_columns((pl.col("flow_volume").fill_null(0.0) + pl.col("flow_volume_right").fill_null(0.0)).alias("flow_volume"))
+                .select(["from", "to", "flow_volume"])
+                .filter(pl.col("flow_volume") > 0.0)
+            )
+            
+            # Last step, we need to reassign remaining jobless persons to the remaining opportunites
+            od_flows = (
+                
+                # Compute the number of persons in each OD flow that could not find a 
+                # job because too many people chose the same destiation
+                od_flows
+                .join(base_sinks, on="to")
+                .with_columns((1.0 - pl.col("sink_volume").first().over("to")/pl.col("flow_volume").sum().over("to")).alias("p_jobless"))
+                .with_columns((pl.col("flow_volume")*pl.col("p_jobless").clip(0.0, 1.0)).alias("job_seekers"))
+                .with_columns((pl.col("flow_volume") - pl.col("job_seekers")).alias("flow_volume"))
+                .select(["from", "to", "flow_volume", "job_seekers"])
+                
+            )
+                
+            sources = (
+                od_flows
+                .group_by("from")
+                .agg(pl.col("job_seekers").sum().alias("source_volume"))
+                .filter(pl.col("source_volume") > 0.1)
+                .select(["from", "source_volume"])
+            )
+            
+            sinks = (
+                od_flows
+                .group_by("to")
+                .agg(pl.col("flow_volume").sum())
+                .join(base_sinks, on="to", how="outer", coalesce=True)
+                .with_columns((pl.col("sink_volume").fill_null(0.0) - pl.col("flow_volume").fill_null(0.0)).alias("sink_volume"))
+                .filter(pl.col("sink_volume") > 0.1)
+                .select(["to", "sink_volume"])
+            )
+            
+            od_flows = od_flows.select(["from", "to", "flow_volume"]).filter(pl.col("flow_volume") > 0.0)
+            
+            job_seekers_flows = apply_radiation_model(
+                sources,
+                sinks,
+                costs_values,
+                utilities_values,
+                selection_lambda=selection_lambda
+            )
+            
+            od_flows = (
+                od_flows
+                .join(job_seekers_flows, on=["from", "to"], how="full", coalesce=True)
+                .with_columns((pl.col("flow_volume").fill_null(0.0) + pl.col("flow_volume_right").fill_null(0.0)).alias("flow_volume"))
+                .select(["from", "to", "flow_volume"])
+                .filter(pl.col("flow_volume") > 0.1)
+            )
+            
+            od_flows = od_flows.to_pandas().set_index(["from", "to"])["flow_volume"]
+        
+            od_flows = od_flows.to_frame().reset_index()
+            
+            od_flows = pd.merge(od_flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="from", right_on="transport_zone_id")
+            od_flows = pd.merge(od_flows, transport_zones[["transport_zone_id", "local_admin_unit_id"]], left_on="to", right_on="transport_zone_id", suffixes=["_from", "_to"])
+            
+            od_flows = od_flows[["from", "to", "local_admin_unit_id_from", "local_admin_unit_id_to", "flow_volume"]]
+    
+                 
+            return od_flows
+
+    
+    
+    def prepare_reference_flows(self, transport_zones: gpd.GeoDataFrame):
+        
+        # Pas de flux de référence connus
+        pass
+        """admin_ids = transport_zones["local_admin_unit_id"].values
+        
+        if self.active_population is None:
+            ref_flows = self.reference_flows.get()
+        else:
+            ref_flows = self.reference_flows
+            
+        ref_flows = ref_flows[(ref_flows["local_admin_unit_id_from"].isin(admin_ids)) & (ref_flows["local_admin_unit_id_to"].isin(admin_ids))].copy()
+        ref_flows.rename({"flow_volume": "ref_flow_volume"}, axis=1, inplace=True)
+        
+        return ref_flows"""
+   
+    
+    def compute_utility_by_od_and_mode(
+            self,
+            transport_zones: gpd.GeoDataFrame,
+            travel_costs: pd.DataFrame
+        ):
+        
+        params = self.inputs["parameters"]
+        
+        travel_costs = pd.merge(
+            travel_costs,
+            transport_zones[["transport_zone_id", "country"]].rename({"transport_zone_id": "to"}, axis=1).set_index("to"),
+            left_index=True,
+            right_index=True
+        )
+
+        travel_costs["utility"] = travel_costs["country"].map(params.utility)
+        travel_costs["net_utility"] = travel_costs["utility"] - 2*travel_costs["cost"]
+        
+        return travel_costs
+    
+    
+    
+    def plot_flows(self):
+        
+        output_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "leisure-flows.svg"
+        
+        logging.info(f"Plotting flows (svg path: {output_path})")
+        
+        script = RScript(resources.files('mobility.r_utils').joinpath('plot_flows.R'))
+        script.run(
+            args=[
+                str(self.inputs["transport_zones"].cache_path),
+                str(self.cache_path["od_flows"]),
+                output_path
+            ]
+        )
+        
+        return None
+
+    
+
