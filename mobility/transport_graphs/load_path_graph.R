@@ -94,6 +94,15 @@ if (congestion == TRUE & file.exists(flows_fp)) {
   # Assign traffic 
   info(logger, "Assigning traffic...")
   
+  print(summary(cppr_graph$data))
+  print(summary(cppr_graph$dict))
+  print(summary(cppr_graph$attrib$cap))
+  
+  print(summary(od_flows$vertex_id_from))
+  print(summary(od_flows$vertex_id_to))
+  print(summary(od_flows$vehicle_volume))
+  
+  
   traffic <- assign_traffic(
     cppr_graph,
     from = od_flows$vertex_id_from,

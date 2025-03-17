@@ -47,7 +47,7 @@ class CongestedPathGraph(FileAsset):
 
     def create_and_get_asset(self, enable_congestion: bool = False) -> pathlib.Path:
         
-        logging.info("Modifying graph...")
+        logging.info("Loading graph with traffic...")
 
         self.load_graph(
             self.modified_graph.get(),
