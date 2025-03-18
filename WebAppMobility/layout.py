@@ -43,13 +43,12 @@ def create_layout():
                 ],
                 value="rayon"
             ),
-            html.Div([
-                html.Label("Zone 1"),
-                dcc.Input(id="text_zone1", type="text", value=""),
-                html.Label("Zone 2"),
-                dcc.Input(id="text_zone2", type="text", value="")
-            ], style={'margin': '10px'})
+            html.Div(id="dynamic_zone_input", style={'margin': '10px'})  # Contenu mis à jour dynamiquement
         ], style={'margin': '10px'}),
+
+        # Stockage de la liste des communes et départements
+        dcc.Store(id="commune_list", data=[]),
+        dcc.Store(id="departement_list", data=[]),
 
         # Boîte "Catégorie socio-professionnelle"
         html.Div([
