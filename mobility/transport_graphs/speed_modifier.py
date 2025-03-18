@@ -40,6 +40,17 @@ class BorderCrossingSpeedModifier(SpeedModifier):
         transport_zones = self.inputs["transport_zones"]
         transport_zones.get()
         boundary = gpd.read_file(transport_zones.inputs["study_area"].cache_path["boundary"]).geometry[0]
+        
+        if boundary.is_valid is False:
+            boundary = boundary.buffer(0.0)
+            
+        if boundary.is_valid is False:
+            raise ValueError(
+                """
+                The boundary of the study area created by StudyArea is not 
+                valid (and it could not be fixed with a 0.0 buffer).
+                """
+            )
 
         regions = GeofabrikRegions(extract_date=self.inputs["geofabrik_extract_date"]).get()
         regions = regions[regions.intersects(boundary)]
