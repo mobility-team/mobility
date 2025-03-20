@@ -12,14 +12,14 @@ library(FNN)
 
 args <- commandArgs(trailingOnly = TRUE)
 
-args <- c(
-  'D:\\dev\\mobility_oss\\mobility',
-  'D:\\data\\mobility\\projects\\grand-geneve\\97ceeb8b5878c6c73846ad83a7c465e0-transport_zones.gpkg',
-  'D:\\data\\mobility\\projects\\grand-geneve\\97b65f98a8ec26056b132e1d297c8a82-highway-osm_data.osm',
-  'car',
-  '{"motorway": {"capacity": 2000.0, "alpha": 0.15, "beta": 4.0}, "trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "service": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "ferry": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 300.0, "alpha": 0.15, "beta": 4.0}, "motorway_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}}',
-  'D:/data/mobility/projects/grand-geneve/path_graph_car/simplified/49adfaa59c6f535100d201e618521ddd-car-simplified-path-graph'
-)
+# args <- c(
+#   'D:\\dev\\mobility_oss\\mobility',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\97ceeb8b5878c6c73846ad83a7c465e0-transport_zones.gpkg',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\97b65f98a8ec26056b132e1d297c8a82-highway-osm_data.osm',
+#   'car',
+#   '{"motorway": {"capacity": 2000.0, "alpha": 0.15, "beta": 4.0}, "trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "service": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "ferry": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 300.0, "alpha": 0.15, "beta": 4.0}, "motorway_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}}',
+#   'D:/data/mobility/projects/grand-geneve/path_graph_car/simplified/49adfaa59c6f535100d201e618521ddd-car-simplified-path-graph'
+# )
 
 package_path <- args[1]
 tz_fp <- args[2]
