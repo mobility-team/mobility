@@ -90,7 +90,7 @@ class SimplifiedPathGraph(FileAsset):
                 str(osm_data_path),
                 mode,
                 json.dumps(dataclasses.asdict(osm_capacity_parameters)),
-                output_file_path
+                str(output_file_path)
             ]
         )
 

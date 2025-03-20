@@ -82,7 +82,6 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             reference_flows: pd.DataFrame = None,
             ssi_min_flow_volume: float = 200.0
         ):
-        """
         """Home-work destination choice model
         
         This model will infer what will be the flows between homes and workplaces, inferring it from location of the population
