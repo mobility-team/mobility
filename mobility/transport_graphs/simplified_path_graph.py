@@ -11,6 +11,7 @@ from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport_zones import TransportZones
+from mobility.transport_graphs.graph_gpkg_exporter import GraphGPKGExporter
 
 class SimplifiedPathGraph(FileAsset):
 
@@ -96,3 +97,6 @@ class SimplifiedPathGraph(FileAsset):
         return None
 
 
+    def convert_to_gpkg(self):
+        gpkg_fp = GraphGPKGExporter().export(self)
+        return gpkg_fp
