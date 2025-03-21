@@ -12,19 +12,21 @@ library(FNN)
 
 args <- commandArgs(trailingOnly = TRUE)
 
+# args <- c(
+#   'D:\\dev\\mobility_oss\\mobility',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\97ceeb8b5878c6c73846ad83a7c465e0-transport_zones.gpkg',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\97b65f98a8ec26056b132e1d297c8a82-highway-osm_data.osm',
+#   'car',
+#   '{"motorway": {"capacity": 2000.0, "alpha": 0.15, "beta": 4.0}, "trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "service": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "ferry": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 300.0, "alpha": 0.15, "beta": 4.0}, "motorway_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}}',
+#   'D:/data/mobility/projects/grand-geneve/path_graph_car/simplified/49adfaa59c6f535100d201e618521ddd-car-simplified-path-graph'
+# )
+
 package_path <- args[1]
 tz_fp <- args[2]
 osm_file_path <- args[3]
 mode <- args[4]
 osm_capacity_parameters <- args[5]
 output_file_path <- args[6]
-
-# package_path <- "D:/dev/mobility_oss/mobility"
-# tz_fp <- "D:/data/mobility/projects/haut-doubs/94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg"
-# osm_file_path <- "D:/data/mobility/projects/haut-doubs/75af783de17a27e29622afc2eeb1fc9a-highway-osm_data.osm"
-# mode <- "car"
-# osm_capacity_parameters <- '{"motorway": {"capacity": 2000.0, "alpha": 0.15, "beta": 4.0}, "trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "service": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "ferry": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 300.0, "alpha": 0.15, "beta": 4.0}, "motorway_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}}'
-# output_file_path <- "D:/data/mobility/projects/haut-doubs/path_graph_car/simplified/9a6f4500ffbf148bfe6aa215a322e045-done"
 
 buildings_sample_fp <- file.path(
   dirname(tz_fp),
@@ -183,16 +185,26 @@ info(logger, "Removing dead ends...")
 # has already removed all non junction nodes)
 edges <- as.data.table(cppr_graph_simple$data)
 
-n_nodes_deg_inf_3 <- 1
+nodes <- c(0)
 
-while(n_nodes_deg_inf_3 > 0) {
+while(length(nodes) > 0) {
+  
   n_incoming <- edges[, list(n_incoming = .N), by = list(index = to)]
   n_outgoing <- edges[, list(n_outgoing = .N), by = list(index = from)]
   degree <- merge(n_incoming, n_outgoing, by = "index")
   degree[, deg := n_incoming + n_outgoing]
-  node_deg_inf_3 <- degree[deg < 3, index]
-  n_nodes_deg_inf_3 <- length(node_deg_inf_3)
-  edges <- edges[!(from %in% node_deg_inf_3 | to %in% node_deg_inf_3)]
+  
+  one_way_dead_end_nodes <- degree[deg == 1, index]
+  
+  two_way_nodes <- degree[deg == 2, list(index)]
+  two_way_nodes <- merge(two_way_nodes, edges[, list(from, to)], by.x = "index", by.y = "from")
+  two_way_nodes <- merge(two_way_nodes, edges[, list(from, to)], by.x = "index", by.y = "to")
+  two_way_dead_end_nodes <- two_way_nodes[from == to, index]
+  
+  nodes <- unique(c(one_way_dead_end_nodes, two_way_dead_end_nodes))
+  
+  edges <- edges[!(from %in% nodes | to %in% nodes)]
+  
 }
 
 # Filter and reformea the cpprouting graph
@@ -222,6 +234,7 @@ cppr_graph_simple$attrib$cap <- cppr_graph_simple$attrib$cap[keep_index]
 cppr_graph_simple$data <- data
 cppr_graph_simple$dict <- dict
 cppr_graph_simple$nbnode <- nrow(dict)
+
 
 
 vertices_3035 <- vertices_3035[vertex_id %in% cppr_graph_simple$dict$ref]

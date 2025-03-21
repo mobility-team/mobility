@@ -3,12 +3,16 @@ import pathlib
 import logging
 import dataclasses
 import json
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import LineString
 
 from importlib import resources
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_graphs.simplified_path_graph import SimplifiedPathGraph
 from mobility.transport_graphs.speed_modifier import SpeedModifier
+from mobility.transport_graphs.graph_gpkg_exporter import GraphGPKGExporter
 
 from typing import List
 
@@ -69,4 +73,9 @@ class ModifiedPathGraph(FileAsset):
         )
 
         return None
+    
+
+    def convert_to_gpkg(self):
+        gpkg_fp = GraphGPKGExporter().export(self)
+        return gpkg_fp
     
