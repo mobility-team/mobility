@@ -12,6 +12,7 @@ from importlib import resources
 from mobility.choice_models.destination_choice_model import DestinationChoiceModel
 from mobility.choice_models.work_utilities import WorkUtilities
 from mobility.parsers.shops_turnover_distribution import ShopsTurnoverDistribution
+from mobility.parsers.households_expenses_distribution import HouseholdsExpensesDistribution
 from mobility.r_utils.r_script import RScript
 
 from mobility.radiation_model import radiation_model
@@ -29,21 +30,21 @@ class ShoppingDestinationChoiceModelParameters:
     
     model: Dict[str, Union[str, float]] = field(
         default_factory=lambda: {
-            "type": "radiation",
+            "type": "radiation_selection",
             "lambda": 0.99986,
-            "end_of_contract_rate": 0.00, # à supprimer ?
-            "job_change_utility_constant": -5.0, # à supprimer ?
-            "max_iterations": 10,
-            "tolerance": 0.01,
-            "cost_update": False,
-            "n_iter_cost_update": 3
+            #"end_of_contract_rate": 0.00, # à supprimer ?
+            #"job_change_utility_constant": -5.0, # à supprimer ?
+            #"max_iterations": 10,
+            #"tolerance": 0.01,
+            #"cost_update": False,
+            #"n_iter_cost_update": 3
         }
     )
     
     utility: Dict[str, float] = field(
         default_factory=lambda: {
-            "fr": 120.0,
-            "ch": 120.0
+            "fr": 70.0,
+            "ch": 50.0
         }
     )
     
@@ -102,101 +103,46 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         
     def prepare_sources_and_sinks(self, transport_zones: gpd.GeoDataFrame):
         
-        if self.shopping_sources_and_sinks is None:
         
-            jobs, active_population = self.jobs_active_population.get()
-            reference_flows = self.reference_flows.get()
-            
-        else:
-            
-            active_population = self.active_population
-            jobs = self.jobs
-            reference_flows = self.reference_flows
-        
-        sources = self.prepare_sources(transport_zones, active_population, reference_flows)
+        sources = self.prepare_sources(transport_zones)
         sinks = self.prepare_sinks(transport_zones)
         
         return sources, sinks
     
     def prepare_utilities(self, transport_zones, sinks):
+        print(sinks)
         utilities = WorkUtilities(transport_zones, sinks, self.inputs["parameters"].utility)
         return utilities
 
     
     def prepare_sources(
             self,
-            transport_zones: gpd.GeoDataFrame,
-            active_population: pd.DataFrame,
-            reference_flows: pd.DataFrame
+            transport_zones: gpd.GeoDataFrame
         ) -> pd.DataFrame:
         """
         Même code que work_destination_choice_model pour l'instant : on se base sur les domiciles
         """
         
-        tz_lau_ids = set(transport_zones["local_admin_unit_id"].unique())
+        hh_expenses = HouseholdsExpensesDistribution()
+        all_expenses = hh_expenses.get()
+        all_expenses = all_expenses["shops"]
+        transport_zones = transport_zones.merge(all_expenses, on="local_admin_unit_id")
+        zones_per_communes = transport_zones[["local_admin_unit_id"]]
+        # Compter le nombre de tz par communes
+        zones_per_communes = zones_per_communes.value_counts()
+        # Diviser le montant total par nombre de tz
+        transport_zones = transport_zones.merge(zones_per_communes, on="local_admin_unit_id")
+        transport_zones["expenses"] = transport_zones["expenses"].truediv(transport_zones["count"])
+        sources_expenses  = transport_zones[["local_admin_unit_id", "expenses"]].rename(columns = {"local_admin_unit_id": "from", "expenses": "source_volume"})
         
-        # Check if all admin units ids are in the source dataset and print warning if some are not
-        missing_ids = tz_lau_ids.difference(set(active_population.index.get_level_values(0)))
+        return sources_expenses
         
-        if len(missing_ids) > 0:
-            logging.info("No active population data available for the following admin units : " + ", ".join(missing_ids) + "")
-            tz_lau_ids = list(tz_lau_ids.difference(missing_ids))
-        else:
-            tz_lau_ids = list(tz_lau_ids)
-
-        # Filter the active population dataframe
-        active_population = active_population.loc[tz_lau_ids, "active_pop"].reset_index()
-        
-        # Remove the part of the active population that works outside of the transport zones
-        act_pop_ext = reference_flows.loc[
-            (reference_flows["local_admin_unit_id_from"].isin(tz_lau_ids)) &
-            (~reference_flows["local_admin_unit_id_to"].isin(tz_lau_ids))
-        ]
-        
-        act_pop_ext = act_pop_ext.groupby("local_admin_unit_id_from", as_index=False)["ref_flow_volume"].sum()
-        
-        active_population = pd.merge(
-            active_population,
-            act_pop_ext,
-            left_on="local_admin_unit_id",
-            right_on="local_admin_unit_id_from",
-            how = "left"
-        )
-        
-        active_population["ref_flow_volume"] = active_population["ref_flow_volume"].fillna(0.0)
-        active_population["active_pop"] -= active_population["ref_flow_volume"]
-        
-        # There are errors in the reference data that can lead to negative values
-        active_population = active_population[active_population["active_pop"] > 0.0]
-        
-        
-        
-        # Disaggregate the active population at transport zone level
-        active_population = pd.merge(
-            transport_zones[["transport_zone_id", "local_admin_unit_id", "weight"]],
-            active_population[["local_admin_unit_id", "active_pop"]],
-            on="local_admin_unit_id"
-        )
-        
-        active_population["active_pop"] *= active_population["weight"]
-    
-        active_population = active_population[["transport_zone_id", "active_pop"]]
-        active_population.columns = ["from", "source_volume"]
-        active_population.set_index("from", inplace=True)
-        
-        logging.info("Total active population count  : " + str(round(active_population["source_volume"].sum())))
-        
-        return active_population
-    
     
     def prepare_sinks(
             self,
             transport_zones_df
         ) -> pd.DataFrame:
         """
-        à adapter en fonction des données sources
-
-
         """
         
         #Get all shops turnover in FR and CH, they are in EPSG:4326
@@ -209,12 +155,10 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         #Find which stops are in the transport zone
         all_shops = transport_zones_df.sjoin(all_shops, how="left")
         all_shops = all_shops.groupby("transport_zone_id").sum("turnover")
-        all_shops = all_shops["turnover"]
+        all_shops = all_shops["turnover"].rename("to")
         print(all_shops)
-        all_shops = all_shops.to_frame().rename(columns={"turnover": "sink_volume"}, index={"transport_zone_id": "to"})
-        
-        print(all_shops)
-        
+        all_shops = all_shops.to_frame().rename(columns={"turnover": "sink_volume"})
+        print(all_shops)                
         return all_shops
     
     
@@ -227,7 +171,7 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
             utilities
         ):
         
-            if self.parameters.model["type"] == "radiation_selection":
+            if self.parameters.model["type"] == "radiation_universal":
                 # NOT TESTED
                 flows, source_rest_volume, sink_rest_volume = radiation_model(sources, sinks, costs, self.parameters.model["alpha"], self.parameters.model["beta"])
                 return flows

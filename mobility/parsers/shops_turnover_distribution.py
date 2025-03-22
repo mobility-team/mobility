@@ -8,6 +8,7 @@ import geopandas as gpd
 
 from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file
+from mobility.parsers.local_admin_units import LocalAdminUnits
 
 
 class ShopsTurnoverDistribution(FileAsset):
@@ -43,6 +44,7 @@ class ShopsTurnoverDistribution(FileAsset):
         
         # Combine datasets and save
         shops_turnover = pd.concat([shops_turnover_fr, shops_turnover_ch])
+        shops_turnover = shops_turnover.dropna(subset=["local_admin_unit_id"])
         shops_turnover.to_parquet(self.cache_path["shops_turnover"])
         return shops_turnover
 
@@ -126,7 +128,7 @@ class ShopsTurnoverDistribution(FileAsset):
         
         
         french_shops = pq.read_table(
-            insee_data_folder / "BPE23.parquet"
+            parquet_path
             )
         french_shops = french_shops.to_pandas()
         french_shops = french_shops.dropna(subset=["LONGITUDE"])
@@ -142,9 +144,12 @@ class ShopsTurnoverDistribution(FileAsset):
             )
         
         french_shops_turnover = french_shops_turnover[[
-            "naf_id", "LONGITUDE", "LATITUDE", "turnover_by_equipment"
+            "DEPCOM", "naf_id", "LONGITUDE", "LATITUDE", "turnover_by_equipment"
             ]]
-        french_shops_turnover.columns = ["naf_id", "lon", "lat", "turnover"]
+        french_shops_turnover.columns = ["local_admin_unit_id", "naf_id", "lon", "lat", "turnover"]
+        french_shops_turnover["local_admin_unit_id"] = "fr-" + french_shops_turnover["local_admin_unit_id"]
+
+        os.unlink(parquet_path)
 
         return french_shops_turnover
 
@@ -172,9 +177,12 @@ class ShopsTurnoverDistribution(FileAsset):
         ).columns.tolist() 
         selected_columns = [swiss_employees_colnames[i] for i in [1, 2, 3] + list(range(226, 311))]
 
+
+        statent_path= bfs_data_folder / "ag-b-00.03-22-STATENT2022" / "STATENT_2022.csv"
+
         # Lire uniquement les colonnes sélectionnées
         swiss_employees = pd.read_csv(
-            bfs_data_folder / "ag-b-00.03-22-STATENT2022" / "STATENT_2022.csv", 
+            statent_path, 
             sep=";", 
             usecols=selected_columns
         )
@@ -222,13 +230,25 @@ class ShopsTurnoverDistribution(FileAsset):
                                    swiss_shops_turnover["N_KOORD_center"]), 
                                crs="EPSG:2056"
                                )
+
+        swiss_shops_turnover = swiss_shops_turnover.to_crs(epsg=3035)
+        
+        local_admin_units = LocalAdminUnits().get()
+        swiss_shops_turnover = gpd.sjoin(swiss_shops_turnover, local_admin_units, how="left", predicate="within")
+        swiss_shops_turnover = swiss_shops_turnover.dropna(subset=["local_admin_unit_id"])
+        
         swiss_shops_turnover = swiss_shops_turnover.to_crs(epsg=4326)
         
         swiss_shops_turnover["lon"] = swiss_shops_turnover.geometry.x
         swiss_shops_turnover["lat"] = swiss_shops_turnover.geometry.y
-        swiss_shops_turnover = swiss_shops_turnover.drop(columns=["geometry"])
-    
-        swiss_shops_turnover = swiss_shops_turnover[["naf_id", "lon" , "lat", "turnover"]]
+        swiss_shops_turnover = pd.DataFrame(swiss_shops_turnover.drop(columns='geometry'))
+        
+        swiss_shops_turnover = swiss_shops_turnover[["local_admin_unit_id", "naf_id", "lon" , "lat", "turnover"]]
+
+        swiss_shops_turnover["local_admin_unit_id"] = "ch-" + swiss_shops_turnover["local_admin_unit_id"]
+
+        os.unlink(statent_zip_path)
+        os.unlink(statent_path)
 
         return swiss_shops_turnover  
 
