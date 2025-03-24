@@ -15,6 +15,16 @@ from .choice_models.work_destination_choice_model import (
     WorkDestinationChoiceModelParameters
 )
 
+from .choice_models.shopping_destination_choice_model import (
+    ShoppingDestinationChoiceModel,
+    ShoppingDestinationChoiceModelParameters
+)
+
+from .choice_models.leisure_destination_choice_model import (
+    LeisureDestinationChoiceModel,
+    LeisureDestinationChoiceModelParameters
+)
+
 from mobility.transport_modes.walk import WalkMode
 from mobility.transport_modes.bicycle import BicycleMode
 from mobility.transport_modes.car import CarMode
