@@ -110,7 +110,6 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         return sources, sinks
     
     def prepare_utilities(self, transport_zones, sinks):
-        print(sinks)
         utilities = WorkUtilities(transport_zones, sinks, self.inputs["parameters"].utility)
         return utilities
 
@@ -133,8 +132,7 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         # Diviser le montant total par nombre de tz
         transport_zones = transport_zones.merge(zones_per_communes, on="local_admin_unit_id")
         transport_zones["expenses"] = transport_zones["expenses"].truediv(transport_zones["count"])
-        sources_expenses  = transport_zones[["local_admin_unit_id", "expenses"]].rename(columns = {"local_admin_unit_id": "from", "expenses": "source_volume"})
-        
+        sources_expenses  = transport_zones[["transport_zone_id", "expenses"]].rename(columns = {"transport_zone_id": "from", "expenses": "source_volume"})
         return sources_expenses
         
     
@@ -155,10 +153,7 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         #Find which stops are in the transport zone
         all_shops = transport_zones_df.sjoin(all_shops, how="left")
         all_shops = all_shops.groupby("transport_zone_id").sum("turnover")
-        all_shops = all_shops["turnover"].rename("to")
-        print(all_shops)
-        all_shops = all_shops.to_frame().rename(columns={"turnover": "sink_volume"})
-        print(all_shops)                
+        all_shops = all_shops.reset_index()[["transport_zone_id", "turnover"]].rename(columns={"turnover": "sink_volume", "transport_zone_id": "to"})
         return all_shops
     
     
@@ -179,7 +174,11 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
             if self.parameters.model["type"] == "radiation_selection":
                 # NOT TESTED
                 selection_lambda = self.parameters.model["lambda"]
-                flows = apply_radiation_model(sources, sinks, costs, utilities, selection_lambda)
+                polar_sources = pl.from_pandas(sources).with_columns(pl.col("from").cast(pl.Int64))
+                polar_sinks = pl.from_pandas(sinks).with_columns(pl.col("to").cast(pl.Int64))
+                costs = costs.get()
+                utilities = utilities.get()
+                flows = apply_radiation_model(polar_sources, polar_sinks, costs, utilities, selection_lambda)
                 return flows
     
     
