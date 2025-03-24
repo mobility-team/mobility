@@ -6,6 +6,8 @@ from mobility.generalized_cost_parameters import GeneralizedCostParameters
 from mobility.cost_of_time_parameters import CostOfTimeParameters
 from mobility.transport_costs.path_generalized_cost import PathGeneralizedCost
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
+from mobility.transport_graphs.speed_modifier import SpeedModifier
+from typing import List
 
 class BicycleMode(TransportMode):
     
@@ -14,7 +16,8 @@ class BicycleMode(TransportMode):
         transport_zones: TransportZones,
         routing_parameters: PathRoutingParameters = None,
         osm_capacity_parameters: OSMCapacityParameters = None,
-        generalized_cost_parameters: GeneralizedCostParameters = None
+        generalized_cost_parameters: GeneralizedCostParameters = None,
+        speed_modifiers: List[SpeedModifier] = []
     ):
         
         if routing_parameters is None:
@@ -33,7 +36,7 @@ class BicycleMode(TransportMode):
                 cost_of_time=CostOfTimeParameters()
             )
         
-        travel_costs = PathTravelCosts("bicycle", transport_zones, routing_parameters, osm_capacity_parameters)
+        travel_costs = PathTravelCosts("bicycle", transport_zones, routing_parameters, osm_capacity_parameters, speed_modifiers=speed_modifiers)
         generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters)
         super().__init__("bicycle", travel_costs, generalized_cost)
         

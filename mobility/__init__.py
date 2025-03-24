@@ -41,5 +41,7 @@ from .localized_trips import LocalizedTrips
 
 from mobility.transport_graphs.speed_modifier import (
     BorderCrossingSpeedModifier,
-    LimitedSpeedZonesModifier
+    LimitedSpeedZonesModifier,
+    RoadLaneNumberModifier,
+    NewRoadModifier
 )

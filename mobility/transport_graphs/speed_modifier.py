@@ -99,3 +99,83 @@ class LimitedSpeedZonesModifier(SpeedModifier):
             "max_speed": self.max_speed,
             "zones_geometry_file_path": self.zones_geometry_file_path
         }
+    
+
+
+class RoadLaneNumberModifier(SpeedModifier):
+
+    def __init__(
+            self,
+            zones_geometry_file_path: pathlib.Path | str,
+            lane_delta: int = 0.0  
+        ):
+        """
+            Args:
+                - zones_geometry_file_path (pathlib.Path | str): 
+                    Path to a GIS file (geojson, gpkg, shp...) that defines the 
+                    geometries of the zones in which the road capacity should be 
+                    modified.
+                - lane_delta (int): road lane number variation (the minimum 
+                    number of lanes is set to one lane, so no road would be 
+                    "closed" by a lane number modification).
+        """
+
+        self.modifier_type = "lane_number_modification"
+        self.inputs = {
+            "lane_delta": lane_delta,
+            "zones_geometry_file_path": zones_geometry_file_path
+        }
+    
+    def get(self):
+
+        return {
+            "modifier_type": self.modifier_type,
+            "lane_delta": self.lane_delta,
+            "zones_geometry_file_path": self.zones_geometry_file_path
+        }
+    
+
+
+
+class NewRoadModifier(SpeedModifier):
+
+    def __init__(
+            self,
+            zones_geometry_file_path: pathlib.Path | str,
+            max_speed: float = 30.0,
+            capacity: float = 1800.0,
+            alpha: float = 0.15,
+            beta: float = 4.0
+        ):
+        """
+            Args:
+                - zones_geometry_file_path (pathlib.Path | str): 
+                    Path to a GIS file (geojson, gpkg, shp...) that defines the 
+                    geometries of the zones in which the max speed should be set.
+                - max_speed (float): max speed of the new road.
+                - capacity (float): capacity (vehicles/h) of the new road.
+                - alpha (float): 
+                    Parameter alpha of the volume decay function of the new road.
+                - beta (float): 
+                    Parameter beta of the volume decay function of the new road.
+        """
+
+        self.modifier_type = "new_road"
+        self.inputs = {
+            "capacity": capacity,
+            "alpha": alpha,
+            "beta": beta,
+            "max_speed": max_speed,
+            "zones_geometry_file_path": zones_geometry_file_path
+        }
+    
+    def get(self):
+
+        return {
+            "modifier_type": self.modifier_type,
+            "capacity": self.capacity,
+            "alpha": self.alpha,
+            "beta": self.beta,
+            "max_speed": self.max_speed,
+            "zones_geometry_file_path": self.zones_geometry_file_path
+        }
