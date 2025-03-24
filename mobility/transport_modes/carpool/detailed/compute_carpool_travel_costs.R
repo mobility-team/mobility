@@ -31,8 +31,7 @@ study_area_fp <- args[3]
 first_leg_graph_fp <- args[4]
 last_leg_graph_fp <- args[5]
 modal_shift <- args[6]
-congestion <- args[7]
-output_file_path <- args[8]
+output_file_path <- args[7]
 
 buildings_sample_fp <- file.path(
   dirname(tz_file_path),
@@ -43,7 +42,7 @@ buildings_sample_fp <- file.path(
 )
 
 modal_shift <- fromJSON(modal_shift)
-congestion <- as.logical(congestion)
+# congestion <- as.logical(congestion)
 
 source(file.path(package_path, "r_utils", "compute_gtfs_travel_costs.R"))
 source(file.path(package_path, "r_utils", "duplicate_cpprouting_graph.R"))
@@ -66,22 +65,9 @@ hash <- strsplit(basename(first_leg_graph_fp), "-")[[1]][1]
 start_graph <- read_cppr_graph(dirname(first_leg_graph_fp), hash)
 start_verts <- read_parquet(file.path(dirname(dirname(first_leg_graph_fp)), paste0(hash, "-vertices.parquet")))
 
-updated_times_fp <- file.path(dirname(first_leg_graph_fp), paste0(hash, "-updated-times.parquet"))
-
 hash <- strsplit(basename(last_leg_graph_fp), "-")[[1]][1]
 last_graph <- read_cppr_graph(dirname(last_leg_graph_fp), hash)
 last_verts <- read_parquet(file.path(dirname(dirname(last_leg_graph_fp)), paste0(hash, "-vertices.parquet")))
-
-
-# Update the travel times based on congestion if needed
-if (congestion == TRUE & file.exists(updated_times_fp)) {
-  
-  updated_times <- read_parquet(updated_times_fp)
-  start_graph$data <- as.data.table(updated_times)
-  last_graph$data <- as.data.table(updated_times)
-  
-}
-
 
 info(logger, "Concatenating graphs...")
 

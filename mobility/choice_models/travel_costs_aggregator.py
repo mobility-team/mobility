@@ -124,6 +124,17 @@ class TravelCostsAggregator(InMemoryAsset):
                         .select(["from", "to", "vehicle_volume"])
                     )
                     
+                elif mode.name == "car/public_transport/walk":
+                    
+                    logging.info(
+                        """
+                        Intermodal mode car/public_transport/walk has no flow 
+                        volume to vehicle volume for now : no vehicle will be 
+                        assigned to the road network and the congestion will
+                        not account for this specific transport mode.
+                        """
+                    )
+                    
                 else:
                     
                     raise ValueError("No flow volume to vehicle volume model for mode : " + mode.name)

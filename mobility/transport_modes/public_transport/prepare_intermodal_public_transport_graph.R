@@ -24,11 +24,11 @@ parameters <- args[8]
 output_fp <- args[9]
 
 # package_path <- 'D:/dev/mobility_oss/mobility'
-# tz_file_path <- 'D:/data/mobility/projects/haut-doubs/94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg'
-# pt_graph_fp <- "D:/data/mobility/projects/haut-doubs/public_transport_graph/simplified/27d7760b538be20bcd4e5c47c8f488d5-public-transport-graph"
-# first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-walk-contracted-path-graph"
-# last_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/3320481ff138926f18a6f45ced9d511e-walk-contracted-path-graph"
-# first_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
+# tz_file_path <- 'D:/data/mobility/projects/haut-doubs/9da6c9b51734ddd0278a650c3b00fe30-transport_zones.gpkg'
+# pt_graph_fp <- "D:/data/mobility/projects/haut-doubs/public_transport_graph/simplified/eccff52d016cc0495d509393a9958a31-public-transport-graph"
+# first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_car/contracted/8127ffcc94c29b249dcc2ccd101cddb8-car-contracted-path-graph"
+# last_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/659d8e57bce885c49ea11ec8f1fc0345-walk-contracted-path-graph"
+# first_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
 # last_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
 # parameters <- '{"start_time_min": 6.5, "start_time_max": 8.0, "target_time": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "max_wait_time_at_destination": 0.3333333333}'
 # output_fp <- 'D:\\data\\mobility\\projects\\haut-doubs\\walk_public_transport_walk_intermodal_transport_graph\\simplified\\dad2d53274998829d5a595ee27df908a-done'
@@ -175,6 +175,7 @@ first_leg <- merge(first_leg, mid_verts[vertex_type == "access", list(j = 1:.N, 
 
 first_leg <- first_leg[from != to]
 first_leg <- unique(first_leg[, list(from, to)])
+
 
 # Compute the time and distance 
 first_leg$time <- get_distance_pair(
