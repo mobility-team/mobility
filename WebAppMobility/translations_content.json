@@ -1,0 +1,46 @@
+{
+    "choice.simulation":{
+        "fr": "Simulation choisie",
+        "en": "Type of simulation",
+        "es": "Tipo de simulación"
+    },
+    "part.modale":{
+        "fr": "Part Modale"
+    },
+    "empreinte.carbone":{
+        "fr": "Empreinte Carbone"
+    },
+    "modes.transport":{
+        "fr": "Modes de transport"
+    },
+    "zone.etude":{
+        "fr": "Zone d'étude"
+    },
+    "m.research":{
+        "fr": "Recherche par : "
+    },
+    "r.origin":{
+        "fr": "Commune d'origine : "
+    },
+    "r.recherche":{
+        "fr": "Rayon de recherche : "
+    },
+    "r.km":{
+        "fr": "km"
+    },
+    "c.origin":{
+        "fr": "Commune d'origine"
+    },
+    "d.origin":{
+        "fr": "Département : "
+    },
+    "title.launch":{
+        "fr":"Lancer la simulation"
+    },
+    "title.csv":{
+        "fr":"Télécharger en CSV"
+    },
+    "title.svg":{
+        "fr":"Télécharger en SVG"
+    }
+  }
