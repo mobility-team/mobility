@@ -1,0 +1,87 @@
+{
+  "type_de_simulation": {
+    "id": "simulation_type",
+    "class": "div_box",
+    "label": "type.simulation",
+    "title": {
+        "name": "Simulation choisie",
+        "classe": "title_box"
+      },
+    "options" : [
+      {"id": "simulation1", "class": "simulation", "value": "Part modale"},
+      {"id": "simulation2", "class": "simulation", "value": "Empreinte Carbone"}
+      ]
+  },
+  "boites_a_remplir": {
+    "modes_de_transport": {
+      "id": "modes_transport",
+      "class": "div_box",
+      "label": "modes.transport",
+      "title": {
+        "name": "Mode de transport",
+        "classe": "title_box"
+      },
+      "options": [
+        {"id": "mode_marche", "class": "transport_checkbox", "value": "transport.marche"},
+        {"id": "mode_velo", "class": "transport_checkbox", "value": "transport.velo"},
+        {"id": "mode_voiture", "class": "transport_checkbox", "value": "transport.voiture"},
+        {"id": "mode_tc", "class": "transport_checkbox", "value": "transport.commun"},
+        {"id": "mode_avion", "class": "transport_checkbox", "value": "transport.avion"}
+      ]
+    },
+    "zone_d_etude": {
+      "id": "zone_etude",
+      "class": "div_box",
+      "label": "zone.etude",
+      "title": {
+        "name": "Zone d'étude",
+        "classe": "title_box"
+      },
+      "recherche_par": {
+        "Rayon": {
+          "id": "zone_rayon",
+          "class": "zone_radiobutton",
+          "label": "etude.rayon",
+          "commune_origine": {"id": "commune_origine_rayon", "class": "zone_input", "label": "commune.origine"},
+          "rayon_de_recherche": {"id": "rayon_recherche", "class": "zone_input", "label": "search.radius"}
+        },
+        "Communes": {
+          "id": "zone_communes",
+          "class": "zone_radiobutton",
+          "label": "etude.communes",
+          "commune_origine": {"id": "commune_origine_communes", "class": "zone_input", "label": "commune.origine"},
+          "liste_de_communes": {"id": "liste_communes", "class": "zone_input", "label": "communes.liste"}
+        },
+        "Départements": {
+          "id": "zone_departements",
+          "class": "zone_radiobutton",
+          "label": "etude.departements",
+          "liste_de_departement": {
+            "id": "liste_departements",
+            "class": "zone_input",
+            "label": "departements.liste"
+          }
+        }
+      }
+    },
+    "categorie_socio_professionnelle": {
+      "id": "csp",
+      "class": "div_box",
+      "label": "categorie.socio.professionnelle",
+      "title": {
+        "name": "Catégorie socio-professionnelle",
+        "classe": "title_box"
+      },
+      "options": [
+        {"id": "csp_agriculteurs", "class": "csp_checkbox", "value": "csp.agriculteurs"},
+        {"id": "csp_artisans", "class": "csp_checkbox", "value": "csp.artisans"},
+        {"id": "csp_employes", "class": "csp_checkbox", "value": "csp.employes"},
+        {"id": "csp_cadres", "class": "csp_checkbox", "value": "csp.cadres"},
+        {"id": "csp_intermediaires", "class": "csp_checkbox", "value": "csp.intermediaires"},
+        {"id": "csp_ouvriers", "class": "csp_checkbox", "value": "csp.ouvriers"},
+        {"id": "csp_retraites", "class": "csp_checkbox", "value": "csp.retraites"},
+        {"id": "csp_inactifs", "class": "csp_checkbox", "value": "csp.inactifs"}
+      ]
+    }
+  }
+}
