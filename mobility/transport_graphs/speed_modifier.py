@@ -91,6 +91,8 @@ class LimitedSpeedZonesModifier(SpeedModifier):
             "max_speed": max_speed,
             "zones_geometry_file_path": zones_geometry_file_path
         }
+
+        super().__init__(self.inputs)
     
     def get(self):
 
@@ -125,6 +127,8 @@ class RoadLaneNumberModifier(SpeedModifier):
             "lane_delta": lane_delta,
             "zones_geometry_file_path": zones_geometry_file_path
         }
+
+        super().__init__(self.inputs)
     
     def get(self):
 
@@ -168,6 +172,8 @@ class NewRoadModifier(SpeedModifier):
             "max_speed": max_speed,
             "zones_geometry_file_path": zones_geometry_file_path
         }
+
+        super().__init__(self.inputs)
     
     def get(self):
 
