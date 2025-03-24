@@ -141,4 +141,6 @@ class IntermodalTransportGraph(FileAsset):
         return None
     
 
-    
+    def update(self):
+        
+        self.create_and_get_asset()

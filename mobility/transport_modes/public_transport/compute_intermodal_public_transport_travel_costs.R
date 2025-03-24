@@ -22,10 +22,10 @@ parameters <- args[6]
 output_file_path <- args[7]
 
 # package_path <- 'D:/dev/mobility_oss/mobility'
-# tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg'
-# intermodal_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\walk_public_transport_walk_intermodal_transport_graph\\simplified\\7c82ea92215d91bfd4683479c70f9986-done"
-# first_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
-# last_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
+# tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\9da6c9b51734ddd0278a650c3b00fe30-transport_zones.gpkg'
+# intermodal_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\car_public_transport_walk_intermodal_transport_graph\\simplified\\6fd0213e2de92fa22327ffb4b8516529-done"
+# first_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
+# last_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
 # parameters <- '{"max_perceived_time": 2.0}'
 # output_file_path <- 'D:/data/mobility/projects/experiments/f65f378d4dc11f0929cf7f2aeaa2aaf5-public_transport_travel_costs.parquet'
 

@@ -76,14 +76,14 @@ class PublicTransportTravelCosts(FileAsset):
 
         super().__init__(inputs, cache_path)
 
-    def get_cached_asset(self) -> pd.DataFrame:
+    def get_cached_asset(self, congestion: bool = False) -> pd.DataFrame:
         
         logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
         costs = pd.read_parquet(self.cache_path)
 
         return costs
 
-    def create_and_get_asset(self) -> pd.DataFrame:
+    def create_and_get_asset(self, congestion: bool = False) -> pd.DataFrame:
         
         costs = self.compute_travel_costs(
             self.inputs["transport_zones"],
@@ -139,3 +139,8 @@ class PublicTransportTravelCosts(FileAsset):
 
         return costs
     
+    
+    def update(self, od_flows):
+        
+        self.intermodal_graph.update()
+        self.create_and_get_asset()

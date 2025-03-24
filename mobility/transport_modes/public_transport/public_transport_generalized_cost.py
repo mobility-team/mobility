@@ -16,7 +16,7 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
         super().__init__(inputs)
         
         
-    def get(self, metrics=["cost"]) -> pd.DataFrame:
+    def get(self, metrics=["cost"], congestion: bool = True) -> pd.DataFrame:
         
         costs = self.travel_costs.get()
         
