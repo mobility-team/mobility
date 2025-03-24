@@ -25,6 +25,8 @@ output_fp <- args[4]
 source(file.path(package_fp, "r_utils", "cpprouting_io.R"))
 source(file.path(package_fp, "transport_graphs", "graph_modifiers", "apply_limited_speed_zones_modifier.R"))
 source(file.path(package_fp, "transport_graphs", "graph_modifiers", "apply_border_crossing_speed_modifier.R"))
+source(file.path(package_fp, "transport_graphs", "graph_modifiers", "apply_road_lane_number_modifier.R"))
+source(file.path(package_fp, "transport_graphs", "graph_modifiers", "apply_new_road_modifier.R"))
 
 logger <- logger(appenders = console_appender())
 
@@ -50,7 +52,7 @@ modifiers <- list(
 for (sm in speed_modifiers) {
   cppr_graph <- do.call(
     what = modifiers[[sm[["modifier_type"]]]],
-    args = c(list(cppr_graph), sm)
+    args = c(list(cppr_graph), list(vertices), sm)
   )
 }
 

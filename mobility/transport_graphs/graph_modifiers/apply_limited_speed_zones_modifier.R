@@ -1,5 +1,6 @@
 apply_limited_speed_zones_modifier <- function(
     cppr_graph,
+    vertices,
     modifier_type,
     zones_geometry_file_path,
     max_speed
@@ -37,8 +38,8 @@ apply_limited_speed_zones_modifier <- function(
   
   max_speed <- max_speed/3.6
   
-  data[, speed := pmin(max_speed, speed)]
-  data[, dist := cppr_graph$attrib$aux/speed]
+  data[from %in% mod_vertex_ids & to %in% mod_vertex_ids, speed := pmin(max_speed, speed)]
+  data[from %in% mod_vertex_ids & to %in% mod_vertex_ids, dist := cppr_graph$attrib$aux/speed]
   
   cppr_graph$data <- data[, list(from, to, dist)]
   

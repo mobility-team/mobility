@@ -1,6 +1,7 @@
 
 apply_border_crossing_speed_modifier <- function(
     cppr_graph,
+    vertices,
     modifier_type,
     max_speed,
     time_penalty,
