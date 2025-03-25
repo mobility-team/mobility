@@ -46,7 +46,9 @@ vertices <- read_parquet(file.path(dirname(dirname(cppr_graph_fp)), paste0(hash,
 # If speed modifiers are provided, update the speed of the links in the graph
 modifiers <- list(
   border_crossing = apply_border_crossing_speed_modifier,
-  limited_speed_zones = apply_limited_speed_zones_modifier
+  limited_speed_zones = apply_limited_speed_zones_modifier,
+  lane_number_modification = apply_road_lane_number_modifier,
+  new_road = apply_new_road_modifier
 )
 
 for (sm in speed_modifiers) {

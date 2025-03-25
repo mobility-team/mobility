@@ -17,7 +17,7 @@ apply_new_road_modifier <- function(
     stop(paste0("Road modifier file '", zones_geometry_file_path, "' does not exist."))
   }
   
-  info(logger, "Applying road lane number delta modifier...")
+  info(logger, "Applying new road modifier...")
   
   # cppr_graph_fp <- "D:/data/mobility/projects/grand-geneve/path_graph_bicycle/simplified/3b2ce3bbbd69a5a911eaf1bf367e581c-bicycle-simplified-path-graph"
   # hash <- strsplit(basename(cppr_graph_fp), "-")[[1]][1]
@@ -49,7 +49,7 @@ apply_new_road_modifier <- function(
   max_speed <- max_speed/3.6
   
   data[from %in% mod_vertex_ids & to %in% mod_vertex_ids, speed := pmin(max_speed, speed)]
-  data[from %in% mod_vertex_ids & to %in% mod_vertex_ids, dist := cppr_graph$attrib$aux/speed]
+  data[, dist := cppr_graph$attrib$aux/speed]
   
   cppr_graph$data <- data[, list(from, to, dist)]
   

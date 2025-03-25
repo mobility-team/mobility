@@ -179,7 +179,7 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
                 costs = costs.get()
                 utilities = utilities.get()
                 flows = apply_radiation_model(polar_sources, polar_sinks, costs, utilities, selection_lambda)
-                return flows
+                return flows.to_pandas()
     
     
     def prepare_reference_flows(self, transport_zones: gpd.GeoDataFrame):

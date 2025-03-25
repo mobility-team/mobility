@@ -170,6 +170,15 @@ class FileAsset(Asset):
         with open(self.hash_path, "w") as f:
             f.write(new_hash)
             
+
+    def remove(self):
+
+        if isinstance(self.cache_path, dict):
+            for k, v in self.cache_path:
+                pathlib.Path(v).unlink()
+        else:
+            pathlib.Path(self.cache_path).unlink()
+            
             
     def update_ui_db(self, file_name: str, inputs_hash: str, cache_path: pathlib.Path) -> None:
         

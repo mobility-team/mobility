@@ -145,7 +145,7 @@ class LeisureDestinationChoiceModel(DestinationChoiceModel):
         
         # easy solution : use a file from Overpass with leisure facilities
         # 
-        leisure_facilities = gpd.read_file("C:/Users/dubrocac/Downloads/leisures_grand_geneve_20250324.geojson")
+        leisure_facilities = gpd.read_file("D:/data/mobility/projects/grand-geneve/leisures_grand_geneve_20250324.geojson")
         #Convert them in EPSG:3035 (used by TransportZones)
         leisure_facilities = leisure_facilities.to_crs(epsg=3035)
         
@@ -178,7 +178,7 @@ class LeisureDestinationChoiceModel(DestinationChoiceModel):
                 costs = costs.get()
                 utilities = utilities.get()
                 flows = apply_radiation_model(polar_sources, polar_sinks, costs, utilities, selection_lambda)
-                return flows
+                return flows.to_pandas()
     
     
     def prepare_reference_flows(self, transport_zones: gpd.GeoDataFrame):
