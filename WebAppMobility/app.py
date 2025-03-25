@@ -1,4 +1,5 @@
 from dash import Dash, html, Input, Output, State, callback, dcc, Patch
+import dash_bootstrap_components as dbc
 import json
 
 
@@ -6,7 +7,7 @@ with open('interface_content.json', 'r') as file:
     app_content = json.load(file)
 
 
-app = Dash()
+app = Dash(suppress_callback_exceptions=True)
 
 app.layout = html.Div(
     [
@@ -30,10 +31,10 @@ app.layout = html.Div(
          html.Div(
              [
                  html.H2("Zone d'étude", className='title_box'),
-                 dcc.Tabs(id="tabs_study_zone", value='tab-commune', children=[
-                     dcc.Tab(label='Rayon', value='tab-rayon'),
-                     dcc.Tab(label='Commune', value='tab-commune'),
-                     dcc.Tab(label='Départements', value='tab-departement')
+                 dcc.Tabs(id="tabs_study_zone", value='tab-rayon', children=[
+                     dcc.Tab(label='Rayon', value='tab-rayon', className="zone_tab"),
+                     dcc.Tab(label='Commune', value='tab-commune', className="zone_tab"),
+                     dcc.Tab(label='Départements', value='tab-county', className="zone_tab")
                  ]),
                  html.Div(id="study_zone_content")
              ], className='div_box'),
@@ -53,7 +54,10 @@ app.layout = html.Div(
                      id='dl_CSV'),
          
          html.Button('Télécharger le SVF', 
-                     id='dl_SVF')
+                     id='dl_SVF'),
+         
+         html.Button('Paramètres',
+                     id='settings')
     ])
 
 
@@ -61,19 +65,58 @@ app.layout = html.Div(
           Input("tabs_study_zone", "value"))
 
 def update_study_zone(value):
-    if value == "Rayon":
-        new_input_1 = dcc.Input(id='input_rayon_commune')
-        new_input_2 = dcc.Input(id='input_rayon_value')
+    if value == "tab-rayon":
+        text_input_1 = html.P("Commune d'origine")
+        text_input_2 = html.P("Rayon de recherche")
+        new_input_1 = dcc.Input(id='input_radius_municipality', className='zone_input')
+        new_input_2 = dcc.Input(id='input_radius_value', className='zone_input')
         
-        return html.Div([dcc.Input(id='input_rayon_commune'), dcc.Input(id='input_rayon_value')])
+        return html.Div([text_input_1, new_input_1, text_input_2, new_input_2])
         
 
+    elif value == "tab-commune":        
+        text_input_1 = html.P("Commune d'origine")
+        text_input_2 = html.P("Liste de communes")
+        new_input_1 = dcc.Input(id='input_municipality_value')
+        new_div_commune = html.Div(id="div_container_municipality", children=[])
+        button = html.Button("+", id="add_input_municipality", className='zone_button')
+        
+        return html.Div([text_input_1, new_input_1, text_input_2, new_div_commune, button])
+        
+    
+    elif value == "tab-county":        
+        text_input_1 = html.P("Liste de départements")
+        new_div_commune = html.Div(id="div_container_county", children=[])
+        button = html.Button("+", id="add_input_county", className='zone_button')
+        
+        return html.Div([text_input_1, new_div_commune, button])
 
 
 
 
+@callback(Output("div_container_municipality", "children"),
+          Input("add_input_municipality", "n_clicks"))
 
 
+def add_municipality_input(n_clicks):
+    patched_children = Patch()
+    new_input = dcc.Input(id={"type": "input_municipality", "index": "n_clicks"})
+    
+    patched_children.append(new_input)
+    return patched_children
+
+
+
+@callback(Output("div_container_county", "children"),
+          Input("add_input_county", "n_clicks"))
+
+
+def add_county_input(n_clicks):
+    patched_children = Patch()
+    new_input = dcc.Input(id={"type": "input_county", "index": "n_clicks"})
+    
+    patched_children.append(new_input)
+    return patched_children
 
 
 
