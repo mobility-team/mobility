@@ -75,7 +75,7 @@
         "label": "m.research"
       },
       "choix":{
-        "class": "zone_radiobutton",
+        "class": "zone_tab",
 
         "rayon": {
           "title": {
@@ -131,7 +131,7 @@
           "label": "d.title"
           },
 
-          "infobulle5":{
+          "infobulle7":{
           "id":"infobulle7",
           "label":"i.7"
           },
@@ -153,12 +153,12 @@
     "categorie_socio_professionnelle": {
       "id": "csp_div_box",
       "title": {
-        "id": "Catégorie socio-professionnelle",
+        "id": "csp_title",
         "class": "title_box",
         "label": "categorie.socio.professionnelle"
       },
       "csp": {
-        "id": "",
+        "id": "csp_choice",
         "options":[
           "csp.agriculteurs",
           "csp.artisans",
@@ -176,23 +176,23 @@
   "launch":{
     "id":"sim_button",
     "title": {
-        "class": "title_launch",
+        "id": "title_launch",
         "label": "title.launch"
       }
   },
 
   "download_csv":{
-    "id": "dl_button",
+    "class": "dl_button",
     "title": {
-        "class": "title_download_csv",
+        "id": "title_download_csv",
         "label": "title.csv"
       }
   },
 
   "download_svg":{
-    "id": "dl_button",
+    "class": "dl_button",
     "title": {
-        "class": "title_download_svg",
+        "id": "title_download_svg",
         "label": "title.svg"
       }
   },
