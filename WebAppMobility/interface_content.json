@@ -3,6 +3,11 @@
     "id": "mobility",
     "label": "mobility_logo"
   },
+
+  "infobulle1":{
+    "id":"infobulle1",
+    "label":"i.1"
+  },
   
   "div_box": {
     "class": "div_box",
@@ -14,6 +19,12 @@
         "class": "title_box",
         "label": "choice.simulation"
       },
+
+      "infobulle2":{
+        "id":"infobulle2",
+        "label":"i.2"
+      },
+
       "dropdown" : {
         "id": "sim_dropdown",
         "options" : [
@@ -30,6 +41,12 @@
         "class": "title_box",
         "label": "modes.transport"
       },
+
+      "infobulle3":{
+        "id":"infobulle3",
+        "label":"i.3"
+      },
+
       "transport_mode": {
         "id": "transport_mode",
         "options": ["transport.marche",
@@ -47,6 +64,12 @@
         "class": "title_box",
         "label": "zone.etude"
       },
+
+      "infobulle4":{
+        "id":"infobulle4",
+        "label":"i.4"
+      },
+
       "recherche": {
         "class": "zone_txt",
         "label": "m.research"
@@ -55,6 +78,16 @@
         "class": "zone_radiobutton",
 
         "rayon": {
+          "title": {
+          "id": "title_r",
+          "label": "r.title"
+          },
+
+          "infobulle5":{
+          "id":"infobulle5",
+          "label":"i.5"
+          },
+
           "commune_origine":{
             "class": "zone_txt",
             "label": "r.origin"
@@ -70,6 +103,16 @@
         },
 
         "communes": {
+          "title": {
+          "id": "title_c",
+          "label": "c.title"
+          },
+
+          "infobulle6":{
+          "id":"infobulle6",
+          "label":"i.6"
+          },
+
           "commune_origine":{
             "class": "zone_txt",
             "label": "c.origin"
@@ -83,6 +126,16 @@
         },
 
         "departements": {
+          "title": {
+          "id": "title_d",
+          "label": "d.title"
+          },
+
+          "infobulle5":{
+          "id":"infobulle7",
+          "label":"i.7"
+          },
+
           "departement_origine":{
             "class": "zone_txt",
             "label": "d.origin"

@@ -19,6 +19,9 @@
     "m.research":{
         "fr": "Recherche par : "
     },
+    "r.title":{
+        "fr": "Rayon"
+    },
     "r.origin":{
         "fr": "Commune d'origine : "
     },
@@ -31,6 +34,12 @@
     "c.origin":{
         "fr": "Commune d'origine"
     },
+    "c.title":{
+        "fr": "Commune"
+    },
+    "d.title":{
+        "fr": "Département"
+    },
     "d.origin":{
         "fr": "Département : "
     },
@@ -42,5 +51,29 @@
     },
     "title.svg":{
         "fr":"Télécharger en SVG"
+    },
+    "infobulle1":{
+        "fr": "La bibliothèque Mobility a pour but de permettre l’étude de la mobilité de différentes personnes pour divers motifs à des échelles multiples, de l’individu à la population, du bâtiment au territoire. https://github.com/mobility-team/mobility "
+    },
+    "infobulle2":{
+        "fr": "Part Modale : Qu’est-ce que c’est ? La part modale est la répartition d’utilisateurs dans chaque mode de transport pour une mobilité donnée. Pourquoi est-ce utile ? La répartition modale permet d’analyser quels transports vont être théoriquement privilégiés par les utilisateurs pour une mobilité donnée. Cela permet notamment d’identifier les infrastructures à développer ou à améliorer pour que les utilisateurs se tournent vers des modes de transport moins polluants."
+    },
+    "infobulle3":{
+        "fr": "Qu’est-ce que c’est ? Les modes de transports sont les moyens et véhicules utilisés lors de mobilités. Ils incluent notamment la marche, le vélo, les véhicules motorisés ainsi que les transports en commun (TEC). Pourquoi est-ce utile ? Le mode de transport a une influence directe sur la production de CO2 des utilisateurs. De plus, les habitudes de déplacement ne sont pas les mêmes entre les voitures et les vélos par exemple. Ce paramètre permet d’affiner la modélisation. Par exemple, un utilisateur ayant accès à la marche et à un véhicule motorisé privilégiera certainement le second mode de transport sur de longues distances."
+    },
+    "infobulle4":{
+        "fr": "Qu’est-ce que c’est ? La zone d’étude correspond à l’espace dans lequel on souhaite faire notre analyse. Pourquoi est-ce utile ? Définir une zone d’étude permet d’analyser les mobilités plus localement, mais également plus précisément étant donné que l’on se concentre sur un plus petit nombre d’individus."
+    },
+    "infobulle5":{
+        "fr": "La recherche par rayon propose de saisir une commune origine centre d’un cercle de rayon choisi depuis laquelle les probabilités de mobilité par part modale seront calculées."
+    },
+    "infobulle6":{
+        "fr": "La recherche par communes propose de saisir toutes les communes (par code INSEE de commune ou de communauté de communes) d’intérêt pour la recherche."
+    },
+    "infobulle7":{
+        "fr": "La recherche par départements permet de saisir différents départements dans lesquels l’étude sera réalisée."
+    },
+    "infobulle8":{
+        "fr": "Qu’est-ce que c’est ? La nomenclature des catégories socioprofessionnelles (CSP) permet de classer la population selon la profession, le statut, etc. Ainsi, elle permet de distinguer un agriculteur exploitant d’un retraité, ou d’un cadre supérieur. https://www.insee.fr/fr/metadonnees/definition/c1493 Pourquoi est-ce utile ? Selon la catégorie socioprofessionnelle de la population, certaines habitudes peuvent être prédominantes. Renseigner cette information permet une modélisation plus précise."
     }
   }
