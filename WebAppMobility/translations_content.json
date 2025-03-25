@@ -7,50 +7,92 @@
     "part.modale":{
         "fr": "Part Modale"
     },
-    "empreinte.carbone":{
-        "fr": "Empreinte Carbone"
+    "carbon.footprint":{
+        "fr": "Empreinte Carbone",
+        "en": "Carbon Footprint"
     },
-    "modes.transport":{
-        "fr": "Modes de transport"
+
+
+    "means.transport":{
+        "fr": "Modes de transport",
+        "en": "Means of transport"
     },
-    "zone.etude":{
-        "fr": "Zone d'étude"
+    "transport.walk":{
+        "fr": "Marche",
+        "en": "Walk"
     },
-    "m.research":{
-        "fr": "Recherche par : "
+    "transport.bike":{
+        "fr": "Vélo",
+        "en": "Bike"
+    },
+    "transport.car":{
+        "fr": "Voiture",
+        "en": "Car"
+    },
+    "transport.public":{
+        "fr": "Transport en commun",
+        "en": "Public Transport"
+    },
+    "transport.plane":{
+        "fr": "Avion",
+        "en": "Plane"
+    },
+
+
+    "area.study":{
+        "fr": "Zone d'étude",
+        "en": "Study Area"
+    },
+    "search.by":{
+        "fr": "Recherche par : ",
+        "en": "Search by: "
     },
     "r.title":{
-        "fr": "Rayon"
+        "fr": "Rayon",
+        "en": "Radius"
     },
     "r.origin":{
-        "fr": "Commune d'origine : "
+        "fr": "Commune d'origine : ",
+        "en": "Municipality of origin"
     },
-    "r.recherche":{
-        "fr": "Rayon de recherche : "
+    "r.research":{
+        "fr": "Rayon de recherche : ",
+        "en": "Radius research"
     },
     "r.km":{
-        "fr": "km"
+        "fr": "km",
+        "en": "km"
     },
-    "c.origin":{
-        "fr": "Commune d'origine"
+    "m.origin":{
+        "fr": "Commune d'origine",
+        "en": "Municipality of origin"
+    },
+    "m.title":{
+        "fr": "Commune",
+        "en": "Municipality"
     },
     "c.title":{
-        "fr": "Commune"
+        "fr": "Département",
+        "en": "County"
     },
-    "d.title":{
-        "fr": "Département"
+    "c.origin":{
+        "fr": "Département : ",
+        "en": "County: "
     },
-    "d.origin":{
-        "fr": "Département : "
-    },
+
+
+
     "title.launch":{
-        "fr":"Lancer la simulation"
+        "fr":"Lancer la simulation",
+        "en": "Start the simulation"
     },
     "title.csv":{
-        "fr":"Télécharger en CSV"
+        "fr":"Télécharger en .CSV",
+        "en": "Download in .CSV"
     },
     "title.svg":{
-        "fr":"Télécharger en SVG"
+        "fr":"Télécharger en .SVG",
+        "en": "Download in .SVG"
     },
     "infobulle1":{
         "fr": "La bibliothèque Mobility a pour but de permettre l’étude de la mobilité de différentes personnes pour divers motifs à des échelles multiples, de l’individu à la population, du bâtiment au territoire. https://github.com/mobility-team/mobility "
@@ -75,5 +117,9 @@
     },
     "infobulle8":{
         "fr": "Qu’est-ce que c’est ? La nomenclature des catégories socioprofessionnelles (CSP) permet de classer la population selon la profession, le statut, etc. Ainsi, elle permet de distinguer un agriculteur exploitant d’un retraité, ou d’un cadre supérieur. https://www.insee.fr/fr/metadonnees/definition/c1493 Pourquoi est-ce utile ? Selon la catégorie socioprofessionnelle de la population, certaines habitudes peuvent être prédominantes. Renseigner cette information permet une modélisation plus précise."
+    },
+    "title.settings":{
+        "fr": "Autres paramètres",
+        "en": "More settings"
     }
   }

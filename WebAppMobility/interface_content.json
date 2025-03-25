@@ -1,7 +1,7 @@
 {
-  "mobility_logo":{
+  "logo":{
     "id": "mobility",
-    "label": "mobility_logo"
+    "label": "mobility.logo"
   },
 
   "infobulle1":{
@@ -12,9 +12,9 @@
   "div_box": {
     "class": "div_box",
 
-    "simulation": {
+    "box simulation": {
       "id": "simulation_div_box",
-      "titre": {
+      "title": {
         "id": "title_div_box",
         "class": "title_box",
         "label": "choice.simulation"
@@ -29,17 +29,17 @@
         "id": "sim_dropdown",
         "options" : [
           "part.modale",
-          "empreinte.carbone"
+          "carbon.footprint"
         ]
       }
     },
 
-    "modes_de_transport": {
-      "id": "modes_transport_div_box",
+    "box means transport": {
+      "id": "means_transport_div_box",
       "title": {
         "id":"title_transport",
         "class": "title_box",
-        "label": "modes.transport"
+        "label": "means.transport"
       },
 
       "infobulle3":{
@@ -47,22 +47,22 @@
         "label":"i.3"
       },
 
-      "transport_mode": {
-        "id": "transport_mode",
-        "options": ["transport.marche",
-        "transport.velo",
-        "transport.voiture",
-        "transport.commun",
-        "transport.avion"]
+      "transport_means": {
+        "id": "transport_means",
+        "options": ["transport.walk",
+        "transport.bike",
+        "transport.car",
+        "transport.public",
+        "transport.plane"]
       }
     },
 
-    "zone_d_etude": {
-      "id": "zone_etude_div_box",
+    "box study area": {
+      "id": "study_area_div_box",
       "title": {
         "id": "title_area",
         "class": "title_box",
-        "label": "zone.etude"
+        "label": "area.study"
       },
 
       "infobulle4":{
@@ -70,42 +70,54 @@
         "label":"i.4"
       },
 
-      "recherche": {
+      "txt search by :": {
         "class": "zone_txt",
-        "label": "m.research"
+        "label": "search.by"
       },
-      "choix":{
+      "choice":{
         "class": "zone_tab",
 
-        "rayon": {
+        "radius": {
+          "municipality input area":{
+            "id":"input_radius_municipality"
+          },
+
+          "radius input area":{
+            "id":"input_radius_value"
+          },
+
           "title": {
-          "id": "title_r",
-          "label": "r.title"
+            "id": "title_r",
+            "label": "r.title"
           },
 
           "infobulle5":{
-          "id":"infobulle5",
-          "label":"i.5"
+            "id":"infobulle5",
+            "label":"i.5"
           },
 
-          "commune_origine":{
+          "municipality origin txt":{
             "class": "zone_txt",
             "label": "r.origin"
           },
-          "rayon_recherche":{
+          "radius research txt":{
             "class": "zone_txt",
-            "label": "r.recherche"
+            "label": "r.research"
           },
-          "km":{
+          "km txt":{
             "class": "zone_txt",
             "label": "r.km"
           }
         },
 
-        "communes": {
+        "municipality": {
+          "municipality input area":{
+            "id":"input_municipality_value"
+          },
+
           "title": {
-          "id": "title_c",
-          "label": "c.title"
+          "id": "title_m",
+          "label": "m.title"
           },
 
           "infobulle6":{
@@ -113,22 +125,24 @@
           "label":"i.6"
           },
 
-          "commune_origine":{
+          "municipality origin txt":{
             "class": "zone_txt",
-            "label": "c.origin"
+            "label": "m.origin"
           },
-          "list_commune":{
-            "class": "input"
+          "list municipality":{
+            "class": "input",
+            "id": "div_container_municipality"
           },
-          "button_add":{
-            "classe": "zone_button"
+          "button add municipality":{
+            "classe": "zone_button",
+            "id":"add_input_community"
           }
         },
 
-        "departements": {
+        "county": {
           "title": {
-          "id": "title_d",
-          "label": "d.title"
+          "id": "title_c",
+          "label": "c.title"
           },
 
           "infobulle7":{
@@ -136,28 +150,30 @@
           "label":"i.7"
           },
 
-          "departement_origine":{
+          "county origin txt":{
             "class": "zone_txt",
-            "label": "d.origin"
+            "label": "c.origin"
           },
-          "list_departement":{
-            "class": "input"
+          "list county":{
+            "class": "input",
+            "id": "div_container_county"
           },
-          "button_add":{
-            "classe": "zone_button"
+          "button add county":{
+            "classe": "zone_button",
+            "id":"add_input_county"
           }
         }
       }
     },
 
-    "categorie_socio_professionnelle": {
+    "box csp": {
       "id": "csp_div_box",
       "title": {
         "id": "csp_title",
         "class": "title_box",
         "label": "categorie.socio.professionnelle"
       },
-      "csp": {
+      "choice csp": {
         "id": "csp_choice",
         "options":[
           "csp.agriculteurs",
@@ -173,7 +189,7 @@
     }
   },
 
-  "launch":{
+  "button launch simulation":{
     "id":"sim_button",
     "title": {
         "id": "title_launch",
@@ -181,7 +197,7 @@
       }
   },
 
-  "download_csv":{
+  "button dl csv":{
     "class": "dl_button",
     "title": {
         "id": "title_download_csv",
@@ -189,7 +205,7 @@
       }
   },
 
-  "download_svg":{
+  "button dl svg":{
     "class": "dl_button",
     "title": {
         "id": "title_download_svg",
@@ -199,6 +215,14 @@
 
   "graph":{
     "id":"graph"
+  },
+
+  "button settings":{
+    "id": "settings",
+    "title": {
+        "id": "title_settings",
+        "label": "title.settings"
+      }
   }
 }
 
