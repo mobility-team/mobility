@@ -116,13 +116,13 @@
           },
 
           "title": {
-          "id": "title_m",
-          "label": "m.title"
+            "id": "title_m",
+            "label": "m.title"
           },
 
           "infobulle6":{
-          "id":"infobulle6",
-          "label":"i.6"
+            "id":"infobulle6",
+            "label":"i.6"
           },
 
           "municipality origin txt":{
@@ -134,20 +134,20 @@
             "id": "div_container_municipality"
           },
           "button add municipality":{
-            "classe": "zone_button",
+            "class": "zone_button",
             "id":"add_input_community"
           }
         },
 
         "county": {
           "title": {
-          "id": "title_c",
-          "label": "c.title"
+            "id": "title_c",
+            "label": "c.title"
           },
 
           "infobulle7":{
-          "id":"infobulle7",
-          "label":"i.7"
+            "id":"infobulle7",
+            "label":"i.7"
           },
 
           "county origin txt":{
@@ -159,7 +159,7 @@
             "id": "div_container_county"
           },
           "button add county":{
-            "classe": "zone_button",
+            "class": "zone_button",
             "id":"add_input_county"
           }
         }

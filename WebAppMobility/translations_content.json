@@ -1,125 +1,195 @@
 {
-    "choice.simulation":{
-        "fr": "Simulation choisie",
-        "en": "Type of simulation",
-        "es": "Tipo de simulación"
+    "choice.simulation": {
+        "fr": "Choix de la simulation",
+        "en": "Simulation choice",
+        "es": "Elección de simulación"
     },
-    "part.modale":{
-        "fr": "Part Modale"
+    "part.modale": {
+        "fr": "Part Modale",
+        "en": "Modal Share",
+        "es": "Reparto modal"
     },
-    "carbon.footprint":{
+    "carbon.footprint": {
         "fr": "Empreinte Carbone",
-        "en": "Carbon Footprint"
+        "en": "Carbon Footprint",
+        "es": "Huella de Carbono"
     },
 
 
-    "means.transport":{
-        "fr": "Modes de transport",
-        "en": "Means of transport"
+    "means.transport": {
+        "fr": "Moyens de transport",
+        "en": "Means of Transport",
+        "es": "Medios de transporte"
     },
-    "transport.walk":{
+    "transport.walk": {
         "fr": "Marche",
-        "en": "Walk"
+        "en": "Walking",
+        "es": "Caminar"
     },
-    "transport.bike":{
+    "transport.bike": {
         "fr": "Vélo",
-        "en": "Bike"
+        "en": "Bicycle",
+        "es": "Bicicleta"
     },
-    "transport.car":{
+    "transport.car": {
         "fr": "Voiture",
-        "en": "Car"
+        "en": "Car",
+        "es": "Coche"
     },
-    "transport.public":{
+    "transport.public": {
         "fr": "Transport en commun",
-        "en": "Public Transport"
+        "en": "Public Transport",
+        "es": "Transporte público"
     },
-    "transport.plane":{
+    "transport.plane": {
         "fr": "Avion",
-        "en": "Plane"
+        "en": "Airplane",
+        "es": "Avión"
     },
 
 
-    "area.study":{
+    "area.study": {
         "fr": "Zone d'étude",
-        "en": "Study Area"
+        "en": "Study Area",
+        "es": "Zona de estudio"
     },
-    "search.by":{
-        "fr": "Recherche par : ",
-        "en": "Search by: "
+    "search.by": {
+        "fr": "Recherche par :",
+        "en": "Search by:",
+        "es": "Búsqueda por:"
     },
-    "r.title":{
+    "r.title": {
         "fr": "Rayon",
-        "en": "Radius"
+        "en": "Radius",
+        "es": "Radio"
     },
-    "r.origin":{
-        "fr": "Commune d'origine : ",
-        "en": "Municipality of origin"
+    "r.origin": {
+        "fr": "Commune d'origine :",
+        "en": "Origin Municipality:",
+        "es": "Municipio de origen:"
     },
     "r.research":{
         "fr": "Rayon de recherche : ",
-        "en": "Radius research"
+        "en": "Search Radius",
+        "es": "Radio de búsqueda:"
     },
     "r.km":{
         "fr": "km",
-        "en": "km"
+        "en": "km",
+        "es": "km"
     },
     "m.origin":{
         "fr": "Commune d'origine",
-        "en": "Municipality of origin"
+        "en": "Origin Municipality",
+        "es": "Municipio de origen:"
     },
     "m.title":{
         "fr": "Commune",
-        "en": "Municipality"
+        "en": "Municipality",
+        "es": "Municipio"
     },
     "c.title":{
         "fr": "Département",
-        "en": "County"
+        "en": "County",
+        "es": "Departamento"
     },
     "c.origin":{
         "fr": "Département : ",
-        "en": "County: "
+        "en": "County: ",
+        "es": "Departamento:"
     },
 
 
 
-    "title.launch":{
-        "fr":"Lancer la simulation",
-        "en": "Start the simulation"
+    "title.launch": {
+        "fr": "Lancer la simulation",
+        "en": "Start Simulation",
+        "es": "Iniciar la simulación"
     },
-    "title.csv":{
-        "fr":"Télécharger en .CSV",
-        "en": "Download in .CSV"
+    "title.csv": {
+        "fr": "Télécharger en .CSV",
+        "en": "Download as .CSV",
+        "es": "Descargar como .CSV"
     },
-    "title.svg":{
-        "fr":"Télécharger en .SVG",
-        "en": "Download in .SVG"
+    "title.svg": {
+        "fr": "Télécharger en .SVG",
+        "en": "Download as .SVG",
+        "es": "Descargar como .SVG"
     },
-    "infobulle1":{
+
+    "i.1":{
         "fr": "La bibliothèque Mobility a pour but de permettre l’étude de la mobilité de différentes personnes pour divers motifs à des échelles multiples, de l’individu à la population, du bâtiment au territoire. https://github.com/mobility-team/mobility "
     },
-    "infobulle2":{
+    "i.2":{
         "fr": "Part Modale : Qu’est-ce que c’est ? La part modale est la répartition d’utilisateurs dans chaque mode de transport pour une mobilité donnée. Pourquoi est-ce utile ? La répartition modale permet d’analyser quels transports vont être théoriquement privilégiés par les utilisateurs pour une mobilité donnée. Cela permet notamment d’identifier les infrastructures à développer ou à améliorer pour que les utilisateurs se tournent vers des modes de transport moins polluants."
     },
-    "infobulle3":{
+    "i.3":{
         "fr": "Qu’est-ce que c’est ? Les modes de transports sont les moyens et véhicules utilisés lors de mobilités. Ils incluent notamment la marche, le vélo, les véhicules motorisés ainsi que les transports en commun (TEC). Pourquoi est-ce utile ? Le mode de transport a une influence directe sur la production de CO2 des utilisateurs. De plus, les habitudes de déplacement ne sont pas les mêmes entre les voitures et les vélos par exemple. Ce paramètre permet d’affiner la modélisation. Par exemple, un utilisateur ayant accès à la marche et à un véhicule motorisé privilégiera certainement le second mode de transport sur de longues distances."
     },
-    "infobulle4":{
+    "i.4":{
         "fr": "Qu’est-ce que c’est ? La zone d’étude correspond à l’espace dans lequel on souhaite faire notre analyse. Pourquoi est-ce utile ? Définir une zone d’étude permet d’analyser les mobilités plus localement, mais également plus précisément étant donné que l’on se concentre sur un plus petit nombre d’individus."
     },
-    "infobulle5":{
+    "i.5":{
         "fr": "La recherche par rayon propose de saisir une commune origine centre d’un cercle de rayon choisi depuis laquelle les probabilités de mobilité par part modale seront calculées."
     },
-    "infobulle6":{
+    "i.6":{
         "fr": "La recherche par communes propose de saisir toutes les communes (par code INSEE de commune ou de communauté de communes) d’intérêt pour la recherche."
     },
-    "infobulle7":{
+    "i.7":{
         "fr": "La recherche par départements permet de saisir différents départements dans lesquels l’étude sera réalisée."
     },
-    "infobulle8":{
+    "i.8":{
         "fr": "Qu’est-ce que c’est ? La nomenclature des catégories socioprofessionnelles (CSP) permet de classer la population selon la profession, le statut, etc. Ainsi, elle permet de distinguer un agriculteur exploitant d’un retraité, ou d’un cadre supérieur. https://www.insee.fr/fr/metadonnees/definition/c1493 Pourquoi est-ce utile ? Selon la catégorie socioprofessionnelle de la population, certaines habitudes peuvent être prédominantes. Renseigner cette information permet une modélisation plus précise."
     },
-    "title.settings":{
+
+    "title.settings": {
         "fr": "Autres paramètres",
-        "en": "More settings"
+        "en": "Other Settings",
+        "es": "Otros parámetros"
+    },
+    "categorie.socio.professionnelle": {
+        "fr": "Catégorie socio-professionnelle",
+        "en": "Socio-professional Category",
+        "es": "Categoría socio-profesional"
+    },
+    "csp.agriculteurs": {
+        "fr": "Agriculteurs",
+        "en": "Farmers",
+        "es": "Agricultores"
+    },
+    "csp.artisans": {
+        "fr": "Artisans, commerçants et chefs d'entreprise",
+        "en": "Craftsmen, shopkeepers and business owners",
+        "es": "Artesanos, comerciantes y empresarios"
+    },
+    "csp.employes": {
+        "fr": "Employés",
+        "en": "Employees",
+        "es": "Empleados"
+    },
+    "csp.cadres": {
+        "fr": "Cadres et professions intellectuelles supérieures",
+        "en": "Executives and higher intellectual professions",
+        "es": "Ejecutivos y profesiones intelectuales superiores"
+    },
+    "csp.intermediaires": {
+        "fr": "Professions intermédiaires",
+        "en": "Intermediate professions",
+        "es": "Profesiones intermedias"
+    },
+    "csp.ouvriers": {
+        "fr": "Ouvriers",
+        "en": "Workers",
+        "es": "Obreros"
+    },
+    "csp.retraites": {
+        "fr": "Retraités",
+        "en": "Retirees",
+        "es": "Jubilados"
+    },
+    "csp.inactifs": {
+        "fr": "Personnes sans activité professionnelle",
+        "en": "Unemployed or inactive people",
+        "es": "Personas sin actividad profesional"
     }
   }
