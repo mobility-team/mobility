@@ -1,87 +1,204 @@
 {
-  "type_de_simulation": {
-    "id": "simulation_type",
-    "class": "div_box",
-    "label": "type.simulation",
-    "title": {
-        "name": "Simulation choisie",
-        "classe": "title_box"
-      },
-    "options" : [
-      {"id": "simulation1", "class": "simulation", "value": "Part modale"},
-      {"id": "simulation2", "class": "simulation", "value": "Empreinte Carbone"}
-      ]
+  "mobility_logo":{
+    "id": "mobility",
+    "label": "mobility_logo"
   },
-  "boites_a_remplir": {
-    "modes_de_transport": {
-      "id": "modes_transport",
-      "class": "div_box",
-      "label": "modes.transport",
-      "title": {
-        "name": "Mode de transport",
-        "classe": "title_box"
+
+  "infobulle1":{
+    "id":"infobulle1",
+    "label":"i.1"
+  },
+  
+  "div_box": {
+    "class": "div_box",
+
+    "simulation": {
+      "id": "simulation_div_box",
+      "titre": {
+        "id": "title_div_box",
+        "class": "title_box",
+        "label": "choice.simulation"
       },
-      "options": [
-        {"id": "mode_marche", "class": "transport_checkbox", "value": "transport.marche"},
-        {"id": "mode_velo", "class": "transport_checkbox", "value": "transport.velo"},
-        {"id": "mode_voiture", "class": "transport_checkbox", "value": "transport.voiture"},
-        {"id": "mode_tc", "class": "transport_checkbox", "value": "transport.commun"},
-        {"id": "mode_avion", "class": "transport_checkbox", "value": "transport.avion"}
-      ]
+
+      "infobulle2":{
+        "id":"infobulle2",
+        "label":"i.2"
+      },
+
+      "dropdown" : {
+        "id": "sim_dropdown",
+        "options" : [
+          "part.modale",
+          "empreinte.carbone"
+        ]
+      }
     },
-    "zone_d_etude": {
-      "id": "zone_etude",
-      "class": "div_box",
-      "label": "zone.etude",
+
+    "modes_de_transport": {
+      "id": "modes_transport_div_box",
       "title": {
-        "name": "Zone d'étude",
-        "classe": "title_box"
+        "id":"title_transport",
+        "class": "title_box",
+        "label": "modes.transport"
       },
-      "recherche_par": {
-        "Rayon": {
-          "id": "zone_rayon",
-          "class": "zone_radiobutton",
-          "label": "etude.rayon",
-          "commune_origine": {"id": "commune_origine_rayon", "class": "zone_input", "label": "commune.origine"},
-          "rayon_de_recherche": {"id": "rayon_recherche", "class": "zone_input", "label": "search.radius"}
+
+      "infobulle3":{
+        "id":"infobulle3",
+        "label":"i.3"
+      },
+
+      "transport_mode": {
+        "id": "transport_mode",
+        "options": ["transport.marche",
+        "transport.velo",
+        "transport.voiture",
+        "transport.commun",
+        "transport.avion"]
+      }
+    },
+
+    "zone_d_etude": {
+      "id": "zone_etude_div_box",
+      "title": {
+        "id": "title_area",
+        "class": "title_box",
+        "label": "zone.etude"
+      },
+
+      "infobulle4":{
+        "id":"infobulle4",
+        "label":"i.4"
+      },
+
+      "recherche": {
+        "class": "zone_txt",
+        "label": "m.research"
+      },
+      "choix":{
+        "class": "zone_radiobutton",
+
+        "rayon": {
+          "title": {
+          "id": "title_r",
+          "label": "r.title"
+          },
+
+          "infobulle5":{
+          "id":"infobulle5",
+          "label":"i.5"
+          },
+
+          "commune_origine":{
+            "class": "zone_txt",
+            "label": "r.origin"
+          },
+          "rayon_recherche":{
+            "class": "zone_txt",
+            "label": "r.recherche"
+          },
+          "km":{
+            "class": "zone_txt",
+            "label": "r.km"
+          }
         },
-        "Communes": {
-          "id": "zone_communes",
-          "class": "zone_radiobutton",
-          "label": "etude.communes",
-          "commune_origine": {"id": "commune_origine_communes", "class": "zone_input", "label": "commune.origine"},
-          "liste_de_communes": {"id": "liste_communes", "class": "zone_input", "label": "communes.liste"}
+
+        "communes": {
+          "title": {
+          "id": "title_c",
+          "label": "c.title"
+          },
+
+          "infobulle6":{
+          "id":"infobulle6",
+          "label":"i.6"
+          },
+
+          "commune_origine":{
+            "class": "zone_txt",
+            "label": "c.origin"
+          },
+          "list_commune":{
+            "class": "input"
+          },
+          "button_add":{
+            "classe": "zone_button"
+          }
         },
-        "Départements": {
-          "id": "zone_departements",
-          "class": "zone_radiobutton",
-          "label": "etude.departements",
-          "liste_de_departement": {
-            "id": "liste_departements",
-            "class": "zone_input",
-            "label": "departements.liste"
+
+        "departements": {
+          "title": {
+          "id": "title_d",
+          "label": "d.title"
+          },
+
+          "infobulle5":{
+          "id":"infobulle7",
+          "label":"i.7"
+          },
+
+          "departement_origine":{
+            "class": "zone_txt",
+            "label": "d.origin"
+          },
+          "list_departement":{
+            "class": "input"
+          },
+          "button_add":{
+            "classe": "zone_button"
           }
         }
       }
     },
+
     "categorie_socio_professionnelle": {
-      "id": "csp",
-      "class": "div_box",
-      "label": "categorie.socio.professionnelle",
+      "id": "csp_div_box",
       "title": {
-        "name": "Catégorie socio-professionnelle",
-        "classe": "title_box"
+        "id": "Catégorie socio-professionnelle",
+        "class": "title_box",
+        "label": "categorie.socio.professionnelle"
       },
-      "options": [
-        {"id": "csp_agriculteurs", "class": "csp_checkbox", "value": "csp.agriculteurs"},
-        {"id": "csp_artisans", "class": "csp_checkbox", "value": "csp.artisans"},
-        {"id": "csp_employes", "class": "csp_checkbox", "value": "csp.employes"},
-        {"id": "csp_cadres", "class": "csp_checkbox", "value": "csp.cadres"},
-        {"id": "csp_intermediaires", "class": "csp_checkbox", "value": "csp.intermediaires"},
-        {"id": "csp_ouvriers", "class": "csp_checkbox", "value": "csp.ouvriers"},
-        {"id": "csp_retraites", "class": "csp_checkbox", "value": "csp.retraites"},
-        {"id": "csp_inactifs", "class": "csp_checkbox", "value": "csp.inactifs"}
-      ]
+      "csp": {
+        "id": "",
+        "options":[
+          "csp.agriculteurs",
+          "csp.artisans",
+          "csp.employes",
+          "csp.cadres",
+          "csp.intermediaires",
+          "csp.ouvriers",
+          "csp.retraites",
+          "csp.inactifs"          
+        ]
+      }    
     }
+  },
+
+  "launch":{
+    "id":"sim_button",
+    "title": {
+        "class": "title_launch",
+        "label": "title.launch"
+      }
+  },
+
+  "download_csv":{
+    "id": "dl_button",
+    "title": {
+        "class": "title_download_csv",
+        "label": "title.csv"
+      }
+  },
+
+  "download_svg":{
+    "id": "dl_button",
+    "title": {
+        "class": "title_download_svg",
+        "label": "title.svg"
+      }
+  },
+
+  "graph":{
+    "id":"graph"
   }
 }
+
