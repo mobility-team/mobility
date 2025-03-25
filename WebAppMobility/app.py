@@ -1,4 +1,4 @@
-from dash import Dash, html, Input, Output, State, callback, dcc, Patch
+from dash import Dash, html, Input, Output, State, callback, dcc, Patch, ALL
 import dash_bootstrap_components as dbc
 import json
 
@@ -33,7 +33,7 @@ app.layout = html.Div(
                  html.H2("Zone d'étude", className='title_box'),
                  dcc.Tabs(id="tabs_study_zone", value='tab-rayon', children=[
                      dcc.Tab(label='Rayon', value='tab-rayon', className="zone_tab"),
-                     dcc.Tab(label='Commune', value='tab-commune', className="zone_tab"),
+                     dcc.Tab(label='Commune', value='tab-municipality', className="zone_tab"),
                      dcc.Tab(label='Départements', value='tab-county', className="zone_tab")
                  ]),
                  html.Div(id="study_zone_content")
@@ -57,8 +57,11 @@ app.layout = html.Div(
                      id='dl_SVF'),
          
          html.Button('Paramètres',
-                     id='settings')
-    ])
+                     id='settings'),
+         
+         html.P(id='text')
+    ], id="global_container")
+
 
 
 @callback(Output("study_zone_content", "children"),
@@ -74,22 +77,22 @@ def update_study_zone(value):
         return html.Div([text_input_1, new_input_1, text_input_2, new_input_2])
         
 
-    elif value == "tab-commune":        
+    elif value == "tab-municipality":        
         text_input_1 = html.P("Commune d'origine")
         text_input_2 = html.P("Liste de communes")
         new_input_1 = dcc.Input(id='input_municipality_value')
-        new_div_commune = html.Div(id="div_container_municipality", children=[])
+        new_div_municipality = html.Div(id="div_container_municipality", children=[])
         button = html.Button("+", id="add_input_municipality", className='zone_button')
         
-        return html.Div([text_input_1, new_input_1, text_input_2, new_div_commune, button])
+        return html.Div([text_input_1, new_input_1, text_input_2, new_div_municipality, button])
         
     
     elif value == "tab-county":        
-        text_input_1 = html.P("Liste de départements")
-        new_div_commune = html.Div(id="div_container_county", children=[])
+        text_input = html.P("Liste de départements")
+        new_div_county = html.Div(id="div_container_county", children=[])
         button = html.Button("+", id="add_input_county", className='zone_button')
         
-        return html.Div([text_input_1, new_div_commune, button])
+        return html.Div([text_input, new_div_county, button])
 
 
 
@@ -100,7 +103,7 @@ def update_study_zone(value):
 
 def add_municipality_input(n_clicks):
     patched_children = Patch()
-    new_input = dcc.Input(id={"type": "input_municipality", "index": "n_clicks"})
+    new_input = dcc.Input(id={"type": "input_municipality", "index": n_clicks})
     
     patched_children.append(new_input)
     return patched_children
@@ -113,12 +116,37 @@ def add_municipality_input(n_clicks):
 
 def add_county_input(n_clicks):
     patched_children = Patch()
-    new_input = dcc.Input(id={"type": "input_county", "index": "n_clicks"})
+    new_input = dcc.Input(id={"type": "input_county", "index": n_clicks})
     
     patched_children.append(new_input)
     return patched_children
 
 
+@callback(Output("text", "children"),
+          Input("sim_button", "n_clicks"),
+          State("tabs_study_zone", "value"),
+          
+          State("input_radius_municipality", "value"),
+          State("input_radius_value", "value"),
+          
+          State({"type": "input_county", "index": ALL}, "value"),
+          
+          State({"type": "input_municipality", "index": ALL}, "value"),
+          State("input_municipality_value", "value")
+          
+)
+          
+
+
+def start_sim(n_clicks, current_tab, input_radius_municipality, input_radius_value, input_county, input_municipality, value_input_municipality):
+    if current_tab == "tab-rayon" :
+        return f"Ville d'origine choisie {input_radius_municipality}"
+    
+    if current_tab == "tab-municipality":
+        pass
+    
+    if current_tab == "tab-county":
+        pass
 
 
 
