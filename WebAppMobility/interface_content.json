@@ -1,12 +1,20 @@
 {
-  "logo":{
-    "id": "mobility",
-    "label": "mobility.logo"
-  },
+  "box mobility": {
+    "id": "div_mobility",
+    "logo":{
+      "id": "mobility",
+      "label": "mobility.logo"
+    },
 
-  "infobulle1":{
-    "id":"infobulle1",
-    "label":"i.1"
+    "button infobulle1": {
+      "id": "b_infobulle1",
+      "class": "button_infobulle",
+      "infobulle1":{
+        "id":"infobulle1",
+        "class": "infobulle",
+        "label":"i.1"
+      }
+    }
   },
   
   "div_box": {
@@ -20,9 +28,14 @@
         "label": "choice.simulation"
       },
 
-      "infobulle2":{
-        "id":"infobulle2",
-        "label":"i.2"
+      "button infobulle2": {
+            "id": "b_infobulle2",
+            "class": "button_infobulle",
+            "infobulle3":{
+              "id":"infobulle2",
+              "class": "infobulle",
+              "label":"i.2"
+            }
       },
 
       "dropdown" : {
@@ -42,9 +55,14 @@
         "label": "means.transport"
       },
 
-      "infobulle3":{
-        "id":"infobulle3",
-        "label":"i.3"
+      "button infobulle3": {
+            "id": "b_infobulle3",
+            "class": "button_infobulle",
+            "infobulle3":{
+              "id":"infobulle3",
+              "class": "infobulle",
+              "label":"i.3"
+            }
       },
 
       "transport_means": {
@@ -65,9 +83,14 @@
         "label": "area.study"
       },
 
-      "infobulle4":{
-        "id":"infobulle4",
-        "label":"i.4"
+      "button infobulle4": {
+            "id": "b_infobulle4",
+            "class": "button_infobulle",
+            "infobulle6":{
+              "id":"infobulle4",
+              "class": "infobulle",
+              "label":"i.4"
+            }
       },
 
       "txt search by :": {
@@ -91,9 +114,14 @@
             "label": "r.title"
           },
 
-          "infobulle5":{
-            "id":"infobulle5",
-            "label":"i.5"
+          "button infobulle5": {
+            "id": "b_infobulle5",
+            "class": "button_infobulle",
+            "infobulle6":{
+              "id":"infobulle5",
+              "class": "infobulle",
+              "label":"i.5"
+            }
           },
 
           "municipality origin txt":{
@@ -120,9 +148,14 @@
             "label": "m.title"
           },
 
-          "infobulle6":{
-            "id":"infobulle6",
-            "label":"i.6"
+          "button infobulle6": {
+            "id": "b_infobulle6",
+            "class": "button_infobulle",
+            "infobulle6":{
+              "id":"infobulle6",
+              "class": "infobulle",
+              "label":"i.6"
+            }
           },
 
           "municipality origin txt":{
@@ -145,9 +178,14 @@
             "label": "c.title"
           },
 
-          "infobulle7":{
-            "id":"infobulle7",
-            "label":"i.7"
+          "button infobulle7": {
+            "id": "b_infobulle7",
+            "class": "button_infobulle",
+            "infobulle8":{
+              "id":"infobulle7",
+              "class": "infobulle",
+              "label":"i.7"
+            }
           },
 
           "county origin txt":{
@@ -173,6 +211,18 @@
         "class": "title_box",
         "label": "categorie.socio.professionnelle"
       },
+
+      "button infobulle8": {
+        "id": "b_infobulle8",
+        "class": "button_infobulle",
+        "infobulle8":{
+          "id":"infobulle8",
+          "class": "infobulle",
+          "label":"i.8"
+        }
+      },
+    
+
       "choice csp": {
         "id": "csp_choice",
         "options":[
@@ -191,26 +241,19 @@
 
   "button launch simulation":{
     "id":"sim_button",
-    "title": {
-        "id": "title_launch",
-        "label": "title.launch"
-      }
+    "label": "title.launch"
   },
 
   "button dl csv":{
+    "id": "dl_CSV",
     "class": "dl_button",
-    "title": {
-        "id": "title_download_csv",
-        "label": "title.csv"
-      }
+    "label": "title.csv"
   },
 
   "button dl svg":{
+    "id": "dl_SVG",
     "class": "dl_button",
-    "title": {
-        "id": "title_download_svg",
-        "label": "title.svg"
-      }
+    "label": "title.svg"
   },
 
   "graph":{
@@ -219,10 +262,7 @@
 
   "button settings":{
     "id": "settings",
-    "title": {
-        "id": "title_settings",
-        "label": "title.settings"
-      }
+    "label": "title.settings"
   }
 }
 
