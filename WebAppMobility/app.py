@@ -2,54 +2,130 @@ from dash import Dash, html, Input, Output, State, callback, dcc, Patch, ALL
 import dash_bootstrap_components as dbc
 import json
 
+language='fr'
+
 
 with open('interface_content.json', 'r') as file:
     app_content = json.load(file)
+    
+with open('translations_content.json', 'r') as file:
+    app_translation = json.load(file)
 
+key = [app_translation[o][language] for o in app_content['div_box']['box simulation']['dropdown']['options']]
+print(key)
 
 app = Dash(suppress_callback_exceptions=True)
 
 app.layout = html.Div(
     [   
-         html.Div([
-         html.H1("Mobility", id="mobility"),
-         html.Button("?", className="button_infobulle", disabled=True, id="b_infobulle1"),
-         dbc.Tooltip(children="Mobility est l'application de mobilité", target="b_infobulle1", id="infobulle1", className="infobulle")
-         ], id="div_mobility"),
+         html.Div([ #Div contenant le logo mobility
+         html.H1("Mobility", id=app_content['box mobility']['logo']['id']),
          
-         html.Div(
+         html.Button(children="?",
+                     className=app_content['box mobility']['button infobulle1']['class'],
+                     id=app_content['box mobility']['button infobulle1']['id'],
+                     disabled=True),
+         
+         dbc.Tooltip(children=app_translation[app_content['box mobility']['button infobulle1']['infobulle1']['label']][language],
+                     target=app_content['box mobility']['button infobulle1']['id'],
+                     className=app_content['box mobility']['button infobulle1']['infobulle1']['class'], 
+                     id=app_content['box mobility']['button infobulle1']['infobulle1']['id'])
+         ], id=app_content['box mobility']['id']),
+         
+         html.Div( #Div conrenant le menu déroulant du mode de simulation
              [
-                 html.H2('Simulation choisie', className='title_box'),
-                 html.Button("?", className="button_infobulle", disabled=True, id="b_infobulle2"),
-                 dbc.Tooltip(children="Choix simulation", target="b_infobulle2", id="infobulle2", className="infobulle"),
-                 dcc.Dropdown(["Probabilité de destination", "Choix B ?"], "Probabilité de destination", 
-                              id="sim_dropdown", 
+                 html.H2(children=app_translation[app_content['div_box']['box simulation']['title']['label']][language], 
+                         className=app_content['div_box']['box simulation']['title']['class'],
+                         id=app_content['div_box']['box simulation']['title']['id']),
+                 
+                 html.Button("?", 
+                             className=app_content['div_box']['box simulation']['button infobulle2']['class'], 
+                             id=app_content['div_box']['box simulation']['button infobulle2']['id'], 
+                             disabled=True),
+                 
+                 dbc.Tooltip(children=app_translation[app_content['div_box']['box simulation']['button infobulle2']['infobulle3']['label']][language], 
+                             target=app_content['div_box']['box simulation']['button infobulle2']['id'], 
+                             id=app_content['div_box']['box simulation']['button infobulle2']['infobulle3']['id'],
+                             className=app_content['div_box']['box simulation']['button infobulle2']['infobulle3']['class']),
+                 
+                 dcc.Dropdown([app_translation[o][language] for o in app_content['div_box']['box simulation']['dropdown']['options']],
+                              value=app_translation[app_content['div_box']['box simulation']['dropdown']['options'][0]]['fr'], 
+                              id=app_content['div_box']['box simulation']['dropdown']['id'], 
                               searchable=False,
                               clearable=False)
-             ], className='div_box'),
+             ], className=app_content['div_box']['class']),
          
-         html.Div(
+         html.Div( #Div contenant le choix du mode de transport 
              [
-                 html.H2('Modes de transports', className='title_box'),
-                 html.Button("?", className="button_infobulle", disabled=True, id="b_infobulle3"),
-                 dbc.Tooltip(children="Choix mode de transport", target="b_infobulle3", id="infobulle3", className="infobulle"),
-                 dcc.Checklist(['Marche', 'Vélo', 'Avion', 'Voiture', 'Transport en commun'],
-                               [], 
-                               id='transport_mode')
-             ], className='div_box'),
-         
-         html.Div(
-             [
-                 html.H2("Zone d'étude", className='title_box'),
-                 html.Button("?", className="button_infobulle", disabled=True, id="b_infobulle4"),
-                 dbc.Tooltip(children="Choix zone d'étude", target="b_infobulle4", id="infobulle4", className="infobulle"),
+                 html.H2(app_translation[app_content['div_box']['box means transport']['title']['label']][language], 
+                         className=app_content['div_box']['box means transport']['title']['class'],
+                         id=app_content['div_box']['box means transport']['title']['id']),
                  
-                 html.Button("?", className="button_infobulle", disabled=True, id="b_infobulle5"),
-                 dbc.Tooltip(children="Info rayon", target="b_infobulle5", id="infobulle5", className="infobulle"),
-                 html.Button("?", className="button_infobulle", disabled=True, id="b_infobulle6"),
-                 dbc.Tooltip(children="Info communes", target="b_infobulle6", id="infobulle6", className="infobulle"),
-                 html.Button("?", className="button_infobulle", disabled=True, id="b_infobulle7"),
-                 dbc.Tooltip(children="Info départements", target="b_infobulle7", id="infobulle7", className="infobulle"),
+                 html.Button("?",
+                             className=app_content['div_box']['box means transport']['button infobulle3']['class'], 
+                             id=app_content['div_box']['box means transport']['button infobulle3']['id'],
+                             disabled=True
+                             ),
+                 
+                 dbc.Tooltip(children=app_translation[app_content['div_box']['box means transport']['button infobulle3']['infobulle3']['label']][language], 
+                             target=app_content['div_box']['box means transport']['button infobulle3']['id'],
+                             id=app_content['div_box']['box means transport']['button infobulle3']['infobulle3']['id'], 
+                             className=app_content['div_box']['box means transport']['button infobulle3']['infobulle3']['class']
+                             ),
+                 
+                 dcc.Checklist([app_translation[o][language] for o in app_content['div_box']['box means transport']['transport_means']['options']],
+                               [app_translation[o][language] for o in app_content['div_box']['box means transport']['transport_means']['options']], 
+                               id=app_content['div_box']['box means transport']['transport_means']['id'])
+             ], className=app_content['div_box']['class']),
+         
+         html.Div( #Div contenant le choix de la zone d'étude
+             [
+                 html.H2(app_translation[app_content['div_box']['box study area']['title']['label']][language],
+                         className=app_content['div_box']['box study area']['title']['class'],
+                         id=app_content['div_box']['box study area']['title']['id']),
+                 
+                 html.Button("?", 
+                             className=app_content['div_box']['box study area']['button infobulle4']['class'], 
+                             id=app_content['div_box']['box study area']['button infobulle4']['id'], 
+                             disabled=True),
+                 
+                 dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['button infobulle4']['infobulle6']['label']][language], 
+                             target=app_content['div_box']['box study area']['button infobulle4']['id'], 
+                             id=app_content['div_box']['box study area']['button infobulle4']['infobulle6']['id'], 
+                             className=app_content['div_box']['box study area']['button infobulle4']['infobulle6']['class']),
+               
+                 
+                 html.Button("?", 
+                             className=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['class'], 
+                             id=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['id'], 
+                             disabled=True),
+                 
+                 dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['label']][language], 
+                             target=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['id'], 
+                             id=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['id'], 
+                             className=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['class']),
+                 
+                 
+                 html.Button("?", 
+                             className=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['class'], 
+                             id=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['id'], 
+                             disabled=True),
+                 
+                 dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['label']][language],
+                             target=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['id'], 
+                             id=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['id'], 
+                             className=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['class']),
+                 
+                 
+                 html.Button("?", 
+                             className=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['class'],
+                             id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['id'],
+                             disabled=True),
+                 
+                 dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['label']][language],
+                             target=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['id'], 
+                             id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['id'], 
+                             className=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['class']),
                  
                  dcc.Tabs(id="tabs_study_zone", value='tab-rayon', children=[
                      dcc.Tab(label='Rayon', 
@@ -81,13 +157,18 @@ app.layout = html.Div(
                                      ]
                      )
                  ])
-             ], className='div_box'),
+             ], className=app_content['div_box']['class']),
 
-         html.Div(
+         html.Div( #Div contenant le choix des catégories S-P
              [
                  html.H2("Catégories socio-professionnelles", className='title_box'),
-                 html.Button("?", className="button_infobulle", disabled=True, id="b_infobulle8"),
+                 
+                 html.Button("?", className=app_content['div_box']['box csp']['button infobulle8']['class'],
+                             id=app_content['div_box']['box csp']['button infobulle8']['id'],
+                             disabled=True),
+                 
                  dbc.Tooltip(children="Choix catégories SP", target="b_infobulle8", id="infobulle8", className="infobulle"),
+                 
                  dcc.Checklist(['Agriculteur', 'Artisants', 'Ouvriers'], 
                                [],
                                id='csp_checkbox')
@@ -96,13 +177,14 @@ app.layout = html.Div(
          html.Button('Lancer la simulation', 
                      id='sim_button'),
          
-         html.Div(children=[
-         html.Button('Télécharger le CSV', 
-                     id='dl_CSV'),
-         
-         html.Button('Télécharger le SVF', 
-                     id='dl_SVF'),
-         ], id="dl_container"),
+         html.Div( #Div contenant les bouton de téléchargement
+             children=[
+                 html.Button('Télécharger le CSV', 
+                             id='dl_CSV'),
+                 
+                 html.Button('Télécharger le SVF', 
+                         id='dl_SVF'),
+             ], id="dl_container"),
          
          html.Button('Paramètres',
                      id='settings')
