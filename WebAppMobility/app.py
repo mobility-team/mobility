@@ -127,35 +127,46 @@ app.layout = html.Div(
                              id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['id'], 
                              className=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['class']),
                  
-                 dcc.Tabs(id="tabs_study_zone", value='tab-rayon', children=[
-                     dcc.Tab(label='Rayon', 
-                             value='tab-rayon', 
-                             className="zone_tab", 
-                             children = [html.P("Commune d'origine"), 
-                                         dcc.Input(id='input_radius_municipality', className='zone_input'), 
-                                         html.P("Rayon de recherche"),
-                                         dcc.Input(id='input_radius_value', className='zone_input')
-                                     ]
-                     ),
-                     
-                     dcc.Tab(label='Commune',
-                             value='tab-municipality',
-                             className="zone_tab",
-                             children=[html.P("Commune d'origine"),
-                                       dcc.Input(id='input_municipality_value'),
-                                       html.P("Liste de communes"),
-                                       html.Div(id="div_container_municipality", children=[]),
-                                       html.Button("+", id="add_input_municipality", className='zone_button', n_clicks=0)      
-                                     ]
-                     ),
-                     dcc.Tab(label='Départements', 
-                             value='tab-county',
-                             className="zone_tab",
-                             children=[html.P("Liste de départements"),
-                                       html.Div(id="div_container_county", children=[]),
-                                       html.Button("+", id="add_input_county", className='zone_button', n_clicks=0)
-                                     ]
-                     )
+                 dcc.Tabs(id="tabs_study_zone", 
+                          value='tab-rayon', 
+                          children=[
+                                 dcc.Tab(label=app_translation[app_content['div_box']['box study area']['choice']['radius']['title']['label']][language], 
+                                         value='tab-rayon', 
+                                         className=app_content['div_box']['box study area']['choice']['class'], 
+                                         children = [html.P(app_translation[app_content['div_box']['box study area']['choice']['radius']['municipality origin txt']['label']][language]),                                                     
+                                                     dcc.Input(id=app_content['div_box']['box study area']['choice']['radius']['municipality input area']['id'], 
+                                                               className='zone_input'), 
+                                                     
+                                                     html.P(app_translation[app_content['div_box']['box study area']['choice']['radius']['radius research txt']['label']][language]),
+                                                     dcc.Input(id=app_content['div_box']['box study area']['choice']['radius']['radius input area']['id'], 
+                                                               className='zone_input')
+                                                 ]
+                                 ),
+                                 
+                                 dcc.Tab(label=app_translation[app_content['div_box']['box study area']['choice']['municipality']['title']['label']][language],
+                                         value='tab-municipality',
+                                         className=app_content['div_box']['box study area']['choice']['class'],
+                                         children=[html.P(app_translation[app_content['div_box']['box study area']['choice']['municipality']['municipality origin txt']['label']][language]),
+                                                   dcc.Input(id=app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'],
+                                                             className='zone_input'),
+                                                   
+                                                   html.P("Liste de communes"),
+                                                   html.Div(id=app_content['div_box']['box study area']['choice']['municipality']['list municipality']['id'],
+                                                            children=[]),
+                                                   html.Button(children="+", 
+                                                               id=app_content['div_box']['box study area']['choice']['municipality']['button add municipality']['id'], 
+                                                               className=app_content['div_box']['box study area']['choice']['municipality']['button add municipality']['class'],
+                                                               n_clicks=0)      
+                                                 ]
+                                 ),
+                                 dcc.Tab(label=app_translation[app_content['div_box']['box study area']['choice']['county']['title']['label']][language], 
+                                         value='tab-county',
+                                         className=app_content['div_box']['box study area']['choice']['class'],
+                                         children=[html.P("Liste de départements"),
+                                                   html.Div(id="div_container_county", children=[]),
+                                                   html.Button("+", id="add_input_county", className='zone_button', n_clicks=0)
+                                                 ]
+                                 )
                  ])
              ], className=app_content['div_box']['class']),
 
@@ -187,14 +198,16 @@ app.layout = html.Div(
              ], id="dl_container"),
          
          html.Button('Paramètres',
-                     id='settings')
+                     id='settings'),
+         
+         html.P(id="text")
     ], id="global_container")
 
 
 
 
 @callback(Output("div_container_municipality", "children"),
-          Input("add_input_municipality", "n_clicks"))
+          Input("add_input_community", "n_clicks"))
 
 
 def add_municipality_input(n_clicks):
