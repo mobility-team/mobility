@@ -73,8 +73,8 @@ app.layout = html.Div(
                              className=app_content['div_box']['box means transport']['button infobulle3']['infobulle3']['class']
                              ),
                  
-                 dcc.Checklist([app_translation[o][language] for o in app_content['div_box']['box means transport']['transport_means']['options']],
-                               [app_translation[o][language] for o in app_content['div_box']['box means transport']['transport_means']['options']], 
+                 dcc.Checklist(options=[app_translation[o][language] for o in app_content['div_box']['box means transport']['transport_means']['options']],
+                               value=[app_translation[o][language] for o in app_content['div_box']['box means transport']['transport_means']['options']], 
                                id=app_content['div_box']['box means transport']['transport_means']['id'])
              ], className=app_content['div_box']['class']),
          
@@ -93,39 +93,6 @@ app.layout = html.Div(
                              target=app_content['div_box']['box study area']['button infobulle4']['id'], 
                              id=app_content['div_box']['box study area']['button infobulle4']['infobulle6']['id'], 
                              className=app_content['div_box']['box study area']['button infobulle4']['infobulle6']['class']),
-               
-                 
-                 html.Button("?", 
-                             className=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['class'], 
-                             id=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['id'], 
-                             disabled=True),
-                 
-                 dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['label']][language], 
-                             target=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['id'], 
-                             id=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['id'], 
-                             className=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['class']),
-                 
-                 
-                 html.Button("?", 
-                             className=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['class'], 
-                             id=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['id'], 
-                             disabled=True),
-                 
-                 dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['label']][language],
-                             target=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['id'], 
-                             id=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['id'], 
-                             className=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['class']),
-                 
-                 
-                 html.Button("?", 
-                             className=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['class'],
-                             id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['id'],
-                             disabled=True),
-                 
-                 dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['label']][language],
-                             target=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['id'], 
-                             id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['id'], 
-                             className=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['class']),
                  
                  dcc.Tabs(id="tabs_study_zone", 
                           value='tab-rayon', 
@@ -134,6 +101,17 @@ app.layout = html.Div(
                                          value='tab-rayon', 
                                          className=app_content['div_box']['box study area']['choice']['class'], 
                                          children = [html.P(app_translation[app_content['div_box']['box study area']['choice']['radius']['municipality origin txt']['label']][language]),                                                     
+                                                     
+                                                     html.Button("?", 
+                                                                 className=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['class'], 
+                                                                 id=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['id'], 
+                                                                 disabled=True),
+                                                     
+                                                     dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['label']][language], 
+                                                                 target=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['id'], 
+                                                                 id=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['id'], 
+                                                                 className=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['class']),
+                                                     
                                                      dcc.Input(id=app_content['div_box']['box study area']['choice']['radius']['municipality input area']['id'], 
                                                                className='zone_input'), 
                                                      
@@ -147,6 +125,17 @@ app.layout = html.Div(
                                          value='tab-municipality',
                                          className=app_content['div_box']['box study area']['choice']['class'],
                                          children=[html.P(app_translation[app_content['div_box']['box study area']['choice']['municipality']['municipality origin txt']['label']][language]),
+                                                   
+                                                   html.Button("?", 
+                                                               className=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['class'], 
+                                                               id=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['id'], 
+                                                               disabled=True),
+                                                   
+                                                   dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['label']][language],
+                                                               target=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['id'], 
+                                                               id=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['id'], 
+                                                               className=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['class']),
+                                                   
                                                    dcc.Input(id=app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'],
                                                              className='zone_input'),
                                                    
@@ -160,9 +149,22 @@ app.layout = html.Div(
                                                  ]
                                  ),
                                  dcc.Tab(label=app_translation[app_content['div_box']['box study area']['choice']['county']['title']['label']][language], 
+                                         
+                                         
                                          value='tab-county',
                                          className=app_content['div_box']['box study area']['choice']['class'],
                                          children=[html.P("Liste de départements"),
+                                                   
+                                                   html.Button("?", 
+                                                               className=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['class'],
+                                                               id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['id'],
+                                                               disabled=True),
+                                                   
+                                                   dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['label']][language],
+                                                               target=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['id'], 
+                                                               id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['id'], 
+                                                               className=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['class']),
+                                                   
                                                    html.Div(id="div_container_county", children=[]),
                                                    html.Button("+", id="add_input_county", className='zone_button', n_clicks=0)
                                                  ]
@@ -178,23 +180,28 @@ app.layout = html.Div(
                              id=app_content['div_box']['box csp']['button infobulle8']['id'],
                              disabled=True),
                  
-                 dbc.Tooltip(children="Choix catégories SP", target="b_infobulle8", id="infobulle8", className="infobulle"),
+                 dbc.Tooltip(children=app_translation[app_content['div_box']['box csp']['button infobulle8']['infobulle8']['label']][language], 
+                             target=app_content['div_box']['box csp']['button infobulle8']['id'], 
+                             id=app_content['div_box']['box csp']['button infobulle8']['infobulle8']['id'], 
+                             className=app_content['div_box']['box csp']['button infobulle8']['infobulle8']['class']),
                  
-                 dcc.Checklist(['Agriculteur', 'Artisants', 'Ouvriers'], 
-                               [],
-                               id='csp_checkbox')
-             ], className='div_box'),
+                 dcc.Checklist(options=[app_translation[o][language] for o in app_content['div_box']['box csp']['choice csp']['options']], 
+                               value=[app_translation[o][language] for o in app_content['div_box']['box csp']['choice csp']['options']],
+                               id=app_content['div_box']['box csp']['choice csp']['id'])
+             ], className=app_content['div_box']['class']),
 
-         html.Button('Lancer la simulation', 
-                     id='sim_button'),
+         html.Button(children=app_translation[app_content['button launch simulation']['label']][language], 
+                     id=app_content['button launch simulation']['id']),
          
          html.Div( #Div contenant les bouton de téléchargement
              children=[
-                 html.Button('Télécharger le CSV', 
-                             id='dl_CSV'),
+                 html.Button(children=app_translation[app_content['button dl csv']['label']][language], 
+                             id=app_content['button dl csv']['id'],
+                             className=app_content['button dl csv']['class']),
                  
-                 html.Button('Télécharger le SVF', 
-                         id='dl_SVF'),
+                 html.Button(children=app_translation[app_content['button dl svg']['label']][language], 
+                             id=app_content['button dl svg']['id'],
+                             className=app_content['button dl svg']['class'])
              ], id="dl_container"),
          
          html.Button('Paramètres',
@@ -235,13 +242,14 @@ def add_county_input(n_clicks):
           Input("sim_button", "n_clicks"),
           State("tabs_study_zone", "value"),
           
-          State("input_radius_municipality", "value"),
-          State("input_radius_value", "value"),
+          State(app_content['div_box']['box study area']['choice']['radius']['municipality input area']['id'], "value"),
+          State(app_content['div_box']['box study area']['choice']['radius']['radius input area']['id'], "value"),
           
           State({"type": "input_county", "index": ALL}, "value"),
           
           State({"type": "input_municipality", "index": ALL}, "value"),
-          State("input_municipality_value", "value")
+          State(app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'], "value"),
+          State(app_content['div_box']['box means transport']['transport_means']['id'], "value")
 )
           
 
@@ -249,12 +257,13 @@ def add_county_input(n_clicks):
 def start_sim(n_clicks, current_tab, 
               input_radius_municipality, input_radius_value, 
               input_county, 
-              input_municipality, input_municipality_value):
+              input_municipality, input_municipality_value,
+              input_transport_means):
     
     
     
     if current_tab == "tab-rayon" :
-        return f"Ville d'origine choisie : {input_radius_municipality} Rayon choisi : {input_radius_value}"
+        return f"Ville d'origine choisie : {input_radius_municipality} Rayon choisi : {input_radius_value}, Moyen de transport choisis:{input_transport_means}"
     
     if current_tab == "tab-municipality":
         return f"Ville d'origine choisie : {input_municipality_value} Liste des villes choisies : {input_municipality}"
