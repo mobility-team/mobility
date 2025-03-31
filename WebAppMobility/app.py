@@ -1,6 +1,8 @@
 from dash import Dash, html, Input, Output, State, callback, dcc, Patch, ALL
+from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 import json
+import pandas as pd
 
 language='fr'
 
@@ -11,15 +13,24 @@ with open('interface_content.json', 'r') as file:
 with open('translations_content.json', 'r') as file:
     app_translation = json.load(file)
 
-key = [app_translation[o][language] for o in app_content['div_box']['box simulation']['dropdown']['options']]
-print(key)
+
+df_municipality = pd.read_csv('data\donneesCommunesFrance.csv')
+df_county = pd.read_csv('data/departements-france.csv')
+
+list_municipality = df_municipality['NOM_COM'].tolist()
+list_municipality.sort()
+
+list_county = [a+' ('+b+')' for a,b in zip(df_county['nom_departement'].tolist(), df_county['code_departement'].tolist())]
+list_county.sort()
+
 
 app = Dash(suppress_callback_exceptions=True)
 
 app.layout = html.Div(
     [   
          html.Div([ #Div contenant le logo mobility
-         html.H1("Mobility", id=app_content['box mobility']['logo']['id']),
+         html.H1("Mobility", 
+                 id=app_content['box mobility']['logo']['id']),
          
          html.Button(children="?",
                      className=app_content['box mobility']['button infobulle1']['class'],
@@ -48,7 +59,7 @@ app.layout = html.Div(
                              id=app_content['div_box']['box simulation']['button infobulle2']['infobulle3']['id'],
                              className=app_content['div_box']['box simulation']['button infobulle2']['infobulle3']['class']),
                  
-                 dcc.Dropdown([app_translation[o][language] for o in app_content['div_box']['box simulation']['dropdown']['options']],
+                 dcc.Dropdown(options=[app_translation[o][language] for o in app_content['div_box']['box simulation']['dropdown']['options']],
                               value=app_translation[app_content['div_box']['box simulation']['dropdown']['options'][0]]['fr'], 
                               id=app_content['div_box']['box simulation']['dropdown']['id'], 
                               searchable=False,
@@ -112,8 +123,8 @@ app.layout = html.Div(
                                                                  id=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['id'], 
                                                                  className=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['class']),
                                                      
-                                                     dcc.Input(id=app_content['div_box']['box study area']['choice']['radius']['municipality input area']['id'], 
-                                                               className='zone_input'), 
+                                                     dcc.Dropdown(id=app_content['div_box']['box study area']['choice']['radius']['municipality input area']['id'], 
+                                                                  className='zone_input'), 
                                                      
                                                      html.P(app_translation[app_content['div_box']['box study area']['choice']['radius']['radius research txt']['label']][language]),
                                                      dcc.Input(id=app_content['div_box']['box study area']['choice']['radius']['radius input area']['id'], 
@@ -136,16 +147,14 @@ app.layout = html.Div(
                                                                id=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['id'], 
                                                                className=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['class']),
                                                    
-                                                   dcc.Input(id=app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'],
-                                                             className='zone_input'),
+                                                   dcc.Dropdown(options=list_municipality,
+                                                                id=app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'],
+                                                                className='zone_input'),
                                                    
                                                    html.P("Liste de communes"),
-                                                   html.Div(id=app_content['div_box']['box study area']['choice']['municipality']['list municipality']['id'],
-                                                            children=[]),
-                                                   html.Button(children="+", 
-                                                               id=app_content['div_box']['box study area']['choice']['municipality']['button add municipality']['id'], 
-                                                               className=app_content['div_box']['box study area']['choice']['municipality']['button add municipality']['class'],
-                                                               n_clicks=0)      
+                                                   dcc.Dropdown(options=list_municipality,
+                                                                id=app_content['div_box']['box study area']['choice']['municipality']['list municipality']['id'],
+                                                                className='zone_input'),     
                                                  ]
                                  ),
                                  dcc.Tab(label=app_translation[app_content['div_box']['box study area']['choice']['county']['title']['label']][language], 
@@ -165,8 +174,9 @@ app.layout = html.Div(
                                                                id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['id'], 
                                                                className=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['class']),
                                                    
-                                                   html.Div(id="div_container_county", children=[]),
-                                                   html.Button("+", id="add_input_county", className='zone_button', n_clicks=0)
+                                                   dcc.Dropdown(options=list_county,
+                                                                id="div_container_county",
+                                                                className='zone_input'),
                                                  ]
                                  )
                  ])
@@ -212,30 +222,23 @@ app.layout = html.Div(
 
 
 
-
-@callback(Output("div_container_municipality", "children"),
-          Input("add_input_community", "n_clicks"))
-
-
-def add_municipality_input(n_clicks):
-    patched_children = Patch()
-    new_input = dcc.Input(id={"type": "input_municipality", "index": n_clicks})
-    
-    patched_children.append(new_input)
-    return patched_children
-
-
-
-@callback(Output("div_container_county", "children"),
-          Input("add_input_county", "n_clicks"))
+@callback(
+    Output(app_content['div_box']['box study area']['choice']['radius']['municipality input area']['id'], "options"),
+    Input(app_content['div_box']['box study area']['choice']['radius']['municipality input area']['id'], "search_value"),
+    State(app_content['div_box']['box study area']['choice']['radius']['municipality input area']['id'], "value")
+)
+def update_multi_options(search_value, value):
+    if not search_value:
+        raise PreventUpdate
+    # Make sure that the set values are in the option list, else they will disappear
+    # from the shown select list, but still part of the `value`.
+    return [
+        o for o in list_municipality if search_value in o or o in (value or [])
+    ]
 
 
-def add_county_input(n_clicks):
-    patched_children = Patch()
-    new_input = dcc.Input(id={"type": "input_county", "index": n_clicks})
-    
-    patched_children.append(new_input)
-    return patched_children
+
+
 
 
 @callback(Output("text", "children"),
@@ -249,7 +252,10 @@ def add_county_input(n_clicks):
           
           State({"type": "input_municipality", "index": ALL}, "value"),
           State(app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'], "value"),
-          State(app_content['div_box']['box means transport']['transport_means']['id'], "value")
+          
+          State(app_content['div_box']['box means transport']['transport_means']['id'], "value"),
+          
+          State(app_content['div_box']['box csp']['choice csp']['id'], "value")
 )
           
 
@@ -258,12 +264,12 @@ def start_sim(n_clicks, current_tab,
               input_radius_municipality, input_radius_value, 
               input_county, 
               input_municipality, input_municipality_value,
-              input_transport_means):
-    
+              input_transport_means,
+              input_csp):
     
     
     if current_tab == "tab-rayon" :
-        return f"Ville d'origine choisie : {input_radius_municipality} Rayon choisi : {input_radius_value}, Moyen de transport choisis:{input_transport_means}"
+        return f"Ville d'origine choisie : {input_radius_municipality} Rayon choisi : {input_radius_value}, Moyen de transport choisis:{input_transport_means}, CSP choisies: {input_csp}"
     
     if current_tab == "tab-municipality":
         return f"Ville d'origine choisie : {input_municipality_value} Liste des villes choisies : {input_municipality}"
