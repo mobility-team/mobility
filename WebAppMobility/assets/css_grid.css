@@ -35,7 +35,7 @@ body > div {
 	grid-template-columns: 1fr 1fr 1fr;
 	grid-template-rows: auto auto auto auto auto;
 	grid-template-areas: 				/* On donne des noms aux zones pour améliorer la clarté du code */
-			"header header header"
+			"header1 header2 header3"
 			"choix_sim header_button header_button_dl"
 			"transport simulation simulation"
 			"zone_etude simulation simulation"
@@ -51,7 +51,7 @@ body > div {
 
 /* Logo + Bouton paramètres */
 .div_box:nth-of-type(1) {
-	grid-area: header;
+	grid-area: header1;
 	background-color: white;			/*ici orange quand debug*/
 	max-width: auto;
 	display: flex;
@@ -61,8 +61,15 @@ body > div {
 	margin: 5px;
 }
 
+#language {
+	grid-area: header2;
+	height: auto;
+	width: 15vw;
+	place-self: center center;
+}
+
 #settings {								/* Le bouton de Paramètres */
-	grid-area: header;
+	grid-area: header3;
 	place-self: center end;
 	height: 50%;
 	width: auto;
