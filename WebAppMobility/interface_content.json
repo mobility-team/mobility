@@ -31,7 +31,7 @@
       "button infobulle2": {
             "id": "b_infobulle2",
             "class": "button_infobulle",
-            "infobulle3":{
+            "infobulle2":{
               "id":"infobulle2",
               "class": "infobulle",
               "label":"i.2"
@@ -86,7 +86,7 @@
       "button infobulle4": {
             "id": "b_infobulle4",
             "class": "button_infobulle",
-            "infobulle6":{
+            "infobulle4":{
               "id":"infobulle4",
               "class": "infobulle",
               "label":"i.4"
@@ -117,7 +117,7 @@
           "button infobulle5": {
             "id": "b_infobulle5",
             "class": "button_infobulle",
-            "infobulle6":{
+            "infobulle5":{
               "id":"infobulle5",
               "class": "infobulle",
               "label":"i.5"
@@ -181,7 +181,7 @@
           "button infobulle7": {
             "id": "b_infobulle7",
             "class": "button_infobulle",
-            "infobulle8":{
+            "infobulle7":{
               "id":"infobulle7",
               "class": "infobulle",
               "label":"i.7"
@@ -263,6 +263,17 @@
   "button settings":{
     "id": "settings",
     "label": "title.settings"
+  },
+  
+  "dropdown language":{
+	  "id": "language",
+	  "label": "title.language",
+	  "languages":{
+		  "fr": "Français",
+		  "en": "English",
+		  "es": "Spanish"
+
+	  }
   }
 }
 
