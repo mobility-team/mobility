@@ -124,7 +124,8 @@ app.layout = html.Div(
                                                                  className=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['class']),
                                                      
                                                      dcc.Dropdown(id=app_content['div_box']['box study area']['choice']['radius']['municipality input area']['id'], 
-                                                                  className='zone_input'), 
+                                                                  className='zone_input',
+                                                                  multi=True), 
                                                      
                                                      html.P(app_translation[app_content['div_box']['box study area']['choice']['radius']['radius research txt']['label']][language]),
                                                      dcc.Input(id=app_content['div_box']['box study area']['choice']['radius']['radius input area']['id'], 
