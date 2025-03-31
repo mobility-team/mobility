@@ -41,7 +41,7 @@ app.layout = html.Div(
                      target=app_content['box mobility']['button infobulle1']['id'],
                      className=app_content['box mobility']['button infobulle1']['infobulle1']['class'], 
                      id=app_content['box mobility']['button infobulle1']['infobulle1']['id'])
-         ], id=app_content['box mobility']['id']),
+         ], className=app_content['div_box']['class']),
          
          html.Div( #Div conrenant le menu déroulant du mode de simulation
              [
@@ -148,9 +148,9 @@ app.layout = html.Div(
                                                                id=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['id'], 
                                                                className=app_content['div_box']['box study area']['choice']['municipality']['button infobulle6']['infobulle6']['class']),
                                                    
-                                                   dcc.Dropdown(options=list_municipality,
-                                                                id=app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'],
-                                                                className='zone_input'),
+                                                   dcc.Dropdown(id=app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'],
+                                                                className='zone_input',
+                                                                multi=True),
                                                    
                                                    html.P("Liste de communes"),
                                                    dcc.Dropdown(options=list_municipality,
@@ -234,9 +234,24 @@ def update_multi_options(search_value, value):
     # Make sure that the set values are in the option list, else they will disappear
     # from the shown select list, but still part of the `value`.
     return [
-        o for o in list_municipality if search_value in o or o in (value or [])
+        o for o in list_municipality if o.lower().startswith(search_value.lower()) or o in (value or [])
     ]
 
+
+
+@callback(
+    Output(app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'], "options"),
+    Input(app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'], "search_value"),
+    State(app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'], "value")
+)
+def update_multi_options(search_value, value):
+    if not search_value:
+        raise PreventUpdate
+    # Make sure that the set values are in the option list, else they will disappear
+    # from the shown select list, but still part of the `value`.
+    return [
+        o for o in list_municipality if o.lower().startswith(search_value.lower()) or o in (value or [])
+    ]
 
 
 
