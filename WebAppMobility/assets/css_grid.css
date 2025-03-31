@@ -57,8 +57,9 @@ body > div {
 	display: flex;
 }
 
-#mobility {								/* La zone de texte avec "Mobility" */
-	margin: 5px;
+#mobility {								/* L'image avec le logo Mobility' */
+	width: 25vw;
+	height: 10vh;
 }
 
 #language {
