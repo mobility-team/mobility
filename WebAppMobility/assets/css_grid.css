@@ -6,6 +6,8 @@ Gris "foncé" : #545454
     --text-color: #545454;				/* On définit une variable pour la couleur du texte, on peut changer sa couleur rapidement ici */
     --box-color: #d9d9d9;				/* On définit une variable pour la couleur des boites, on peut changer leurs couleurs rapidement ici */
     --font-text: "Verdana", sans-serif;
+    --button-color-hover: #9af3fe;
+    --button-color-active: #00b3e1;
 }
 
 body {
@@ -64,9 +66,19 @@ body > div {
 	place-self: center end;
 	height: 50%;
 	width: auto;
+	border: 1px solid;
 	border-radius: 5px;
 	color: var(--text-color);
 	font-family: var(--font-text);
+}
+
+#settings:hover {
+    background-color: var(--button-color-hover);
+}
+
+#settings:active {
+    background-color: var(--button-color-active);
+    transform: scale(0.95);
 }
 
 /* Boite Choix Simulation */
@@ -218,19 +230,39 @@ Sans doute pas idéal mais ça fonctionne	*/
 #dl_CSV, #dl_SVG {								/* Boutons de téléchargement */
 	height: 40%;
 	width: 35%;
+	border: 1px solid;
 	border-radius: 5px;
 	color: var(--text-color);
 	font-family: var(--font-text);
+}
+
+#dl_CSV:hover, #dl_SVG:hover {
+    background-color: var(--button-color-hover);
+}
+
+#dl_CSV:active, #dl_SVG:active {
+    background-color: var(--button-color-active);
+    transform: scale(0.95);
 }
 
 #sim_button {									/* Bouton de lancement de la simulation */
 	grid-area: header_button;
 	height: 40%;
 	width: auto;
+	border: 1px solid;
 	place-self: center;
 	border-radius: 5px;
 	color: var(--text-color);
 	font-family: var(--font-text);
+}
+
+#sim_button:hover {
+    background-color: var(--button-color-hover);
+}
+
+#sim_button:active {
+    background-color: var(--button-color-active);
+    transform: scale(0.95);
 }
 
 /* Titre des sections */
