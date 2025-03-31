@@ -125,8 +125,7 @@ body > div {
 			"zone_button zone_button";
 	grid-gap: 5px 5px;
 
-	max-height: 22vh;
-	overflow-y: auto;
+	max-height: auto;
 }
 
 	/* Titre de la boite*/
@@ -156,7 +155,7 @@ Sans doute pas idéal mais ça fonctionne	*/
 #tabs_study_zone-parent {						/* Contient les boutons et les champs qu'ils affichent */
 	height: 100%;
 	width: 100%;
-	overflow: hidden;
+	overflow: visible;
 }
 #tabs_study_zone {								/* La zone qui contient les 3 boutons */
 	height: auto;
@@ -164,7 +163,7 @@ Sans doute pas idéal mais ça fonctionne	*/
 	display:flex;
 }
 .tab-content {									/* Les champs affichés par les boutons */
-	overflow-y: auto;
+	overflow: visible;
 }
 .tab-content p {
 	margin: 3px;
@@ -185,8 +184,7 @@ Sans doute pas idéal mais ça fonctionne	*/
 			"csp_button csp_button";
 	grid-gap: 5px 5px;
 
-	max-height: 22vh;
-	overflow-y: auto;
+	max-height: auto;
 }
 
 	/* Titre de la boite*/
