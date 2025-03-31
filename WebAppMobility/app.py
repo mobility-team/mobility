@@ -150,12 +150,12 @@ app.layout = html.Div(
                                                    
                                                    dcc.Dropdown(id=app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'],
                                                                 className='zone_input',
-                                                                multi=True),
+                                                                multi=False),
                                                    
                                                    html.P("Liste de communes"),
-                                                   dcc.Dropdown(options=list_municipality,
-                                                                id=app_content['div_box']['box study area']['choice']['municipality']['list municipality']['id'],
-                                                                className='zone_input'),     
+                                                   dcc.Dropdown(id=app_content['div_box']['box study area']['choice']['municipality']['list municipality']['id'],
+                                                                className='zone_input',
+                                                                multi=True),     
                                                  ]
                                  ),
                                  dcc.Tab(label=app_translation[app_content['div_box']['box study area']['choice']['county']['title']['label']][language], 
@@ -175,9 +175,9 @@ app.layout = html.Div(
                                                                id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['id'], 
                                                                className=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['class']),
                                                    
-                                                   dcc.Dropdown(options=list_county,
-                                                                id="div_container_county",
-                                                                className='zone_input'),
+                                                   dcc.Dropdown(id=app_content['div_box']['box study area']['choice']['county']['list county']['id'],
+                                                                className='zone_input',
+                                                                multi=True),
                                                  ]
                                  )
                  ])
@@ -241,8 +241,22 @@ def update_multi_options(search_value, value):
 
 @callback(
     Output(app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'], "options"),
-    Input(app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'], "search_value"),
-    State(app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'], "value")
+    Input(app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'], "search_value")
+)
+def update_options(search_value):
+    if not search_value:
+        raise PreventUpdate
+    # Make sure that the set values are in the option list, else they will disappear
+    # from the shown select list, but still part of the `value`.
+    return [
+        o for o in list_municipality if o.lower().startswith(search_value.lower())
+    ]
+
+
+@callback(
+    Output(app_content['div_box']['box study area']['choice']['municipality']['list municipality']['id'], "options"),
+    Input(app_content['div_box']['box study area']['choice']['municipality']['list municipality']['id'], "search_value"),
+    State(app_content['div_box']['box study area']['choice']['municipality']['list municipality']['id'], "value")
 )
 def update_multi_options(search_value, value):
     if not search_value:
@@ -254,7 +268,19 @@ def update_multi_options(search_value, value):
     ]
 
 
-
+@callback(
+    Output(app_content['div_box']['box study area']['choice']['county']['list county']['id'], "options"),
+    Input(app_content['div_box']['box study area']['choice']['county']['list county']['id'], "search_value"),
+    State(app_content['div_box']['box study area']['choice']['county']['list county']['id'], "value")
+)
+def update_multi_options(search_value, value):
+    if not search_value:
+        raise PreventUpdate
+    # Make sure that the set values are in the option list, else they will disappear
+    # from the shown select list, but still part of the `value`.
+    return [
+        o for o in list_municipality if o.lower().startswith(search_value.lower()) or o in (value or [])
+    ]
 
 
 @callback(Output("text", "children"),
@@ -264,9 +290,9 @@ def update_multi_options(search_value, value):
           State(app_content['div_box']['box study area']['choice']['radius']['municipality input area']['id'], "value"),
           State(app_content['div_box']['box study area']['choice']['radius']['radius input area']['id'], "value"),
           
-          State({"type": "input_county", "index": ALL}, "value"),
+          State(app_content['div_box']['box study area']['choice']['county']['list county']['id'], "value"),
           
-          State({"type": "input_municipality", "index": ALL}, "value"),
+          State(app_content['div_box']['box study area']['choice']['municipality']['list municipality']['id'], "value"),
           State(app_content['div_box']['box study area']['choice']['municipality']['municipality input area']['id'], "value"),
           
           State(app_content['div_box']['box means transport']['transport_means']['id'], "value"),
