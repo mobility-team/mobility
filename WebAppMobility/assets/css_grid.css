@@ -3,10 +3,10 @@ Gris "foncé" : #545454
 */
 
 body {
-	width: 100vw - 10px; /*calc(100% - 20px);*/
-	height: 100vh - 10px; /*calc(100% - 20px);*/
-	padding: 10px;  /* Ajoute un espace interne sans agrandir le body */
-    box-sizing: border-box; /* Assure que padding ne change pas la taille totale */
+	width: 100vw;
+	height: 100vh;
+	padding: 10px;
+    box-sizing: border-box; 			/*Pour que le padding ne "dépasse" pas de l'écran*/
     margin: 0;
 }
 
@@ -21,16 +21,16 @@ body > div {
 	height: 100%;
 	margin: 0;
 	background-color: white;			/*ici green quand debug*/
-	display:grid;
-	grid-template-columns: 1fr 1fr 1fr; /* Crée 3 colonnes égales */
-	grid-template-rows: auto auto auto auto auto/*0.5fr 0.5fr 1fr 1fr 1fr*/;
-	grid-template-areas: 
+	display:grid;						/* On utilise un affichage en grille pour gérer nos éléments */
+	grid-template-columns: 1fr 1fr 1fr;
+	grid-template-rows: auto auto auto auto auto;
+	grid-template-areas: 				/* On donne des noms aux zones pour améliorer la clarté du code */
 			"header header header"
 			"choix_sim header_button header_button_dl"
 			"transport simulation simulation"
 			"zone_etude simulation simulation"
 			"csp simulation simulation";
-    grid-gap: 15px 25px; /* Espacement entre les éléments */
+    grid-gap: 15px 25px;
 }
 
 .div_box{
@@ -38,17 +38,25 @@ body > div {
 	padding: 5px;
 }
 
+/* Logo + Bouton paramètres */
 #div_mobility {
 	grid-area: header;
 	background-color: white;			/*ici orange quand debug*/
 	max-width: 100%;
 }
 
-#mobility {
+#mobility {								/* La zone de texte avec "Mobility" */
 	margin: 10px;
 }
 
-/* Choix Simulation */
+#settings {								/* Le bouton de Paramètres */
+	grid-area: header;
+	place-self: start end;
+	height: 33%;
+	width: 15%;
+}
+
+/* Boite Choix Simulation */
 .div_box:nth-of-type(2) {
 	grid-area: choix_sim;
 	background-color: #d9d9d9;			/*ici pink quand debug*/
@@ -56,7 +64,7 @@ body > div {
 	height: 100%;
 
 	display:grid;
-	grid-template-columns: 4fr 1fr; /* Crée 3 colonnes égales */
+	grid-template-columns: 4fr 1fr;
 	grid-template-rows: 0.5fr 1.5fr;
 	grid-template-areas: 
 			"sim_header sim_infobulle"
@@ -64,16 +72,18 @@ body > div {
 	grid-gap: 5px 5px;
 }
 
+	/* Titre de la boite*/
 .div_box:nth-of-type(2) h2 {
 	grid-area: sim_header;
 	text-align: left;
 }
 
+	/* "?" de l'infobulle */
 .div_box:nth-of-type(2) .button_infobulle {
 	grid-area: sim_infobulle;
 }
 
-/* Transport */
+/* Boite Transport */
 .div_box:nth-of-type(3) {
 	grid-area: transport;
 	background-color: #d9d9d9;			/*ici yellow quand debug*/
@@ -82,7 +92,7 @@ body > div {
 	height: auto;
 
 	display:grid;
-	grid-template-columns: 4fr 1fr; /* Crée 3 colonnes égales */
+	grid-template-columns: 4fr 1fr;
 	grid-template-rows: 0.5fr 1.5fr;
 	grid-template-areas: 
 			"transp_header transp_infobulle"
@@ -90,11 +100,13 @@ body > div {
 	grid-gap: 5px 5px;
 }
 
+	/* Titre de la boite*/
 .div_box:nth-of-type(3) h2 {
 	grid-area: transp_header;
 	text-align: left;
 }
 
+	/* "?" de l'infobulle */
 .div_box:nth-of-type(3) .button_infobulle {
 	grid-area: transp_infobulle;
 }
@@ -103,31 +115,57 @@ body > div {
 .div_box:nth-of-type(4) {
 	grid-area: zone_etude;
 	background-color: #d9d9d9;			/*ici red quand debug*/
-	overflow: hidden;
 	border-radius: 5px;
 
 	display:grid;
-	grid-template-columns: 4fr 1fr; /* Crée 3 colonnes égales */
+	grid-template-columns: 4fr 1fr;
 	grid-template-rows: 0.5fr 1.5fr;
 	grid-template-areas: 
 			"zone_header zone_infobulle"
 			"zone_button zone_button";
 	grid-gap: 5px 5px;
+
+	max-height: 22vh;
+	overflow-y: auto;
 }
 
+	/* Titre de la boite*/
 .div_box:nth-of-type(4) h2 {
 	grid-area: zone_header;
 	text-align: left;
 }
 
+	/* "?" de l'infobulle */
 .div_box:nth-of-type(4) .button_infobulle {
 	grid-area: zone_infobulle;
 }
 
+/* Gestion un peu étrange des boutons avec Dash
+Sans doute pas idéal mais ça fonctionne	*/
 .div_box:nth-of-type(4) #tabs_study_zone-parent {
 	grid-area: zone_button;
 }
-
+.jsx-2137964197.tab.zone_tab {					/* Boutons "Rayon", "Commune", "Département" */
+	height: 100%;
+	flex-grow: 1;
+    flex-shrink: 1;
+    min-width: fit-content;
+	padding: 3px;
+	text-align: center;
+}
+#tabs_study_zone-parent {						/* Contient les boutons et les champs qu'ils affichent */
+	height: 100%;
+	width: 100%;
+	overflow: hidden;
+}
+#tabs_study_zone {								/* La zone qui contient les 3 boutons */
+	height: auto;
+	width: auto;
+	display:flex;
+}
+.tab-content {									/* Les champs affichés par les boutons */
+	overflow-y: auto;
+}
 .tab-content p {
 	margin: 3px;
 }
@@ -140,7 +178,7 @@ body > div {
 	border-radius: 5px;
 
 	display:grid;
-	grid-template-columns: 4fr 1fr; /* Crée 3 colonnes égales */
+	grid-template-columns: 4fr 1fr;
 	grid-template-rows: 0.5fr 1.5fr;
 	grid-template-areas: 
 			"csp_header csp_infobulle"
@@ -151,29 +189,19 @@ body > div {
 	overflow-y: auto;
 }
 
+	/* Titre de la boite*/
 .div_box:nth-of-type(5) h2 {
 	grid-area: csp_header;
 	text-align: left;
 }
 
+	/* "?" de l'infobulle */
 .div_box:nth-of-type(5) .button_infobulle {
 	grid-area: csp_infobulle;
 }
 
-#settings {
-	grid-area: header;
-	place-self: start end;
-	height: 33%;
-	width: 15%;
-}
-/*#container-button {
-	grid-area: header_button;
-	display: flex;
-	justify-content: space-between;
-	align-items: flex-end;
-}*/
-
-#dl_container {
+/* Boutons */
+#dl_container {									/* Contient les boutons de téléchargement */
 	grid-area: header_button_dl;
 	display:flex;
 	align-items: center;
@@ -181,12 +209,12 @@ body > div {
 	gap: 10px;
 }
 
-#dl_CSV, #dl_SVG {
+#dl_CSV, #dl_SVG {								/* Boutons de téléchargement */
 	height: 40%;
 	width: 35%;
 }
 
-#sim_button {
+#sim_button {									/* Bouton de lancement de la simulation */
 	grid-area: header_button;
 	height: 40%;
 	width: 30%;
@@ -203,46 +231,14 @@ body > div {
 	text-align: center;
 }
 
-#tabs_study_zone-parent {
-	height: 100%;
-	width: 100%;
-	overflow: hidden;
-
-}
-
-#tabs_study_zone {
-	height: auto;
-	width: auto;
-	display:flex;
-}
-
-.jsx-2137964197.tab.zone_tab {
-	height: 100%;
-	flex-grow: 1;
-    flex-shrink: 1;
-    min-width: fit-content;
-	padding: 3px;
-	text-align: center;
-}
-
-#study_zone_content {
-	height: 80%;
-	display: flex;
-	align-items: flex-start;
-}
-
-#study_zone_content p {
-	margin: 0;
-}
-
-.button_infobulle {
+/* Infobulles */
+.button_infobulle {								/* "?" des infobulles */
 	position: relative;
   	display: inline-block;
   	place-self: center;
 }
-.infobulle {
+.infobulle {									/* Infobulle en elle-même */
 	background-color: #f0e6e6;			/*ici beige quand debug*/
-  	/* Adaptation à la taille du texte */
   	white-space: nowrap;
   	max-width: 300px;
 
@@ -252,7 +248,6 @@ body > div {
   	word-wrap: break-word;
   	padding: 10px;
 
-
   	height: auto;
-  	overflow-y: auto; /* Active le défilement vertical si besoin */
+  	overflow-y: auto;
 }
