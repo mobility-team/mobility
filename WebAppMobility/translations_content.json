@@ -117,29 +117,45 @@
         "es": "Descargar como .SVG"
     },
 
-    "i.1":{
-        "fr": "La bibliothèque Mobility a pour but de permettre l’étude de la mobilité de différentes personnes pour divers motifs à des échelles multiples, de l’individu à la population, du bâtiment au territoire. https://github.com/mobility-team/mobility "
+    "i.1": {
+        "fr": "La bibliothèque Mobility a pour but de permettre l’étude de la mobilité de différentes personnes pour divers motifs à des échelles multiples, de l’individu à la population, du bâtiment au territoire. https://github.com/mobility-team/mobility",
+        "en": "The Mobility library aims to enable the study of people's mobility for various reasons at multiple scales, from individuals to the population, from buildings to territories. https://github.com/mobility-team/mobility",
+        "es": "La biblioteca Mobility tiene como objetivo permitir el estudio de la movilidad de diferentes personas por diversos motivos y a múltiples escalas, desde el individuo hasta la población, desde los edificios hasta el territorio. https://github.com/mobility-team/mobility"
     },
-    "i.2":{
-        "fr": "Part Modale : Qu’est-ce que c’est ? La part modale est la répartition d’utilisateurs dans chaque mode de transport pour une mobilité donnée. Pourquoi est-ce utile ? La répartition modale permet d’analyser quels transports vont être théoriquement privilégiés par les utilisateurs pour une mobilité donnée. Cela permet notamment d’identifier les infrastructures à développer ou à améliorer pour que les utilisateurs se tournent vers des modes de transport moins polluants."
+    "i.2": {
+        "fr": "Part Modale : Qu’est-ce que c’est ? La part modale est la répartition d’utilisateurs dans chaque mode de transport pour une mobilité donnée. Pourquoi est-ce utile ? La répartition modale permet d’analyser quels transports vont être théoriquement privilégiés par les utilisateurs pour une mobilité donnée. Cela permet notamment d’identifier les infrastructures à développer ou à améliorer pour que les utilisateurs se tournent vers des modes de transport moins polluants.",
+        "en": "Modal share: What is it? Modal share is the distribution of users across different modes of transport for a given mobility. Why is it useful? Modal distribution helps analyze which modes of transport will theoretically be preferred by users for a given mobility. This allows for identifying infrastructures that need to be developed or improved so that users opt for less polluting modes of transport.",
+        "es": "Participación modal: ¿Qué es? La participación modal es la distribución de los usuarios en los diferentes modos de transporte para una movilidad determinada. ¿Por qué es útil? La distribución modal permite analizar qué modos de transporte serán teóricamente preferidos por los usuarios para una movilidad específica. Esto permite identificar infraestructuras que deben desarrollarse o mejorarse para que los usuarios opten por modos de transporte menos contaminantes."
     },
-    "i.3":{
-        "fr": "Qu’est-ce que c’est ? Les modes de transports sont les moyens et véhicules utilisés lors de mobilités. Ils incluent notamment la marche, le vélo, les véhicules motorisés ainsi que les transports en commun (TEC). Pourquoi est-ce utile ? Le mode de transport a une influence directe sur la production de CO2 des utilisateurs. De plus, les habitudes de déplacement ne sont pas les mêmes entre les voitures et les vélos par exemple. Ce paramètre permet d’affiner la modélisation. Par exemple, un utilisateur ayant accès à la marche et à un véhicule motorisé privilégiera certainement le second mode de transport sur de longues distances."
+    "i.3": {
+        "fr": "Qu’est-ce que c’est ? Les modes de transports sont les moyens et véhicules utilisés lors de mobilités. Ils incluent notamment la marche, le vélo, les véhicules motorisés ainsi que les transports en commun (TEC). Pourquoi est-ce utile ? Le mode de transport a une influence directe sur la production de CO2 des utilisateurs. De plus, les habitudes de déplacement ne sont pas les mêmes entre les voitures et les vélos par exemple. Ce paramètre permet d’affiner la modélisation. Par exemple, un utilisateur ayant accès à la marche et à un véhicule motorisé privilégiera certainement le second mode de transport sur de longues distances.",
+        "en": "What is it? Transport modes are the means and vehicles used for mobility. They include walking, cycling, motorized vehicles, and public transport (PT). Why is it useful? The mode of transport directly influences users' CO2 emissions. Moreover, travel habits differ between cars and bicycles, for example. This parameter helps refine modeling. For instance, a user with access to both walking and a motorized vehicle will likely prefer the latter for long distances.",
+        "es": "¿Qué es? Los modos de transporte son los medios y vehículos utilizados para la movilidad. Incluyen caminar, andar en bicicleta, vehículos motorizados y transporte público (TP). ¿Por qué es útil? El modo de transporte influye directamente en la producción de CO2 de los usuarios. Además, los hábitos de desplazamiento no son los mismos entre automóviles y bicicletas, por ejemplo. Este parámetro permite refinar la modelización. Por ejemplo, un usuario con acceso tanto a caminar como a un vehículo motorizado probablemente preferirá este último para largas distancias."
     },
-    "i.4":{
-        "fr": "Qu’est-ce que c’est ? La zone d’étude correspond à l’espace dans lequel on souhaite faire notre analyse. Pourquoi est-ce utile ? Définir une zone d’étude permet d’analyser les mobilités plus localement, mais également plus précisément étant donné que l’on se concentre sur un plus petit nombre d’individus."
+    "i.4": {
+        "fr": "Qu’est-ce que c’est ? La zone d’étude correspond à l’espace dans lequel on souhaite faire notre analyse. Pourquoi est-ce utile ? Définir une zone d’étude permet d’analyser les mobilités plus localement, mais également plus précisément étant donné que l’on se concentre sur un plus petit nombre d’individus.",
+        "en": "What is it? The study area corresponds to the space in which we want to conduct our analysis. Why is it useful? Defining a study area allows for a more localized and precise mobility analysis since it focuses on a smaller number of individuals.",
+        "es": "¿Qué es? La zona de estudio corresponde al espacio en el que queremos realizar nuestro análisis. ¿Por qué es útil? Definir una zona de estudio permite analizar la movilidad de manera más local y precisa, ya que nos enfocamos en un menor número de individuos."
     },
-    "i.5":{
-        "fr": "La recherche par rayon propose de saisir une commune origine centre d’un cercle de rayon choisi depuis laquelle les probabilités de mobilité par part modale seront calculées."
+    "i.5": {
+        "fr": "La recherche par rayon propose de saisir une commune origine centre d’un cercle de rayon choisi depuis laquelle les probabilités de mobilité par part modale seront calculées.",
+        "en": "Search by radius allows entering a central municipality within a selected radius from which mobility probabilities by modal share will be calculated.",
+        "es": "La búsqueda por radio permite ingresar un municipio central dentro de un radio seleccionado desde el cual se calcularán las probabilidades de movilidad por participación modal."
     },
-    "i.6":{
-        "fr": "La recherche par communes propose de saisir toutes les communes (par code INSEE de commune ou de communauté de communes) d’intérêt pour la recherche."
+    "i.6": {
+        "fr": "La recherche par communes propose de saisir toutes les communes (par code INSEE de commune ou de communauté de communes) d’intérêt pour la recherche.",
+        "en": "Search by municipalities allows entering all municipalities (by INSEE code of the municipality or community of municipalities) of interest for the research.",
+        "es": "La búsqueda por municipios permite ingresar todos los municipios (por código INSEE del municipio o comunidad de municipios) de interés para la investigación."
     },
-    "i.7":{
-        "fr": "La recherche par départements permet de saisir différents départements dans lesquels l’étude sera réalisée."
+    "i.7": {
+        "fr": "La recherche par départements permet de saisir différents départements dans lesquels l’étude sera réalisée.",
+        "en": "Search by departments allows entering different departments where the study will be conducted.",
+        "es": "La búsqueda por departamentos permite ingresar diferentes departamentos donde se realizará el estudio."
     },
-    "i.8":{
-        "fr": "Qu’est-ce que c’est ? La nomenclature des catégories socioprofessionnelles (CSP) permet de classer la population selon la profession, le statut, etc. Ainsi, elle permet de distinguer un agriculteur exploitant d’un retraité, ou d’un cadre supérieur. https://www.insee.fr/fr/metadonnees/definition/c1493 Pourquoi est-ce utile ? Selon la catégorie socioprofessionnelle de la population, certaines habitudes peuvent être prédominantes. Renseigner cette information permet une modélisation plus précise."
+    "i.8": {
+        "fr": "Qu’est-ce que c’est ? La nomenclature des catégories socioprofessionnelles (CSP) permet de classer la population selon la profession, le statut, etc. Ainsi, elle permet de distinguer un agriculteur exploitant d’un retraité, ou d’un cadre supérieur. https://www.insee.fr/fr/metadonnees/definition/c1493 Pourquoi est-ce utile ? Selon la catégorie socioprofessionnelle de la population, certaines habitudes peuvent être prédominantes. Renseigner cette information permet une modélisation plus précise.",
+        "en": "What is it? The classification of socio-professional categories (SPC) allows grouping the population based on profession, status, etc. This makes it possible to distinguish a self-employed farmer from a retiree or an executive. https://www.insee.fr/fr/metadonnees/definition/c1493 Why is it useful? Depending on the socio-professional category of the population, certain habits may be predominant. Providing this information enables more precise modeling.",
+        "es": "¿Qué es? La nomenclatura de categorías socioprofesionales (CSP) permite clasificar a la población según la profesión, el estatus, etc. Así, permite distinguir entre un agricultor autónomo, un jubilado o un alto ejecutivo. https://www.insee.fr/fr/metadonnees/definition/c1493 ¿Por qué es útil? Según la categoría socioprofesional de la población, ciertos hábitos pueden ser predominantes. Proporcionar esta información permite una modelización más precisa."
     },
 
     "title.settings": {
@@ -147,6 +163,11 @@
         "en": "Other Settings",
         "es": "Otros parámetros"
     },
+	"title.language": {
+		"fr": "Langue",
+		"en": "Language",
+		"es": "Langua"
+	},
     "categorie.socio.professionnelle": {
         "fr": "Catégorie socio-professionnelle",
         "en": "Socio-professional Category",

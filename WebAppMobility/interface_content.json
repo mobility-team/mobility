@@ -263,6 +263,17 @@
   "button settings":{
     "id": "settings",
     "label": "title.settings"
+  },
+  
+  "dropdown language":{
+	  "id": "language",
+	  "label": "title.language",
+	  "languages":{
+		  "fr": "Français",
+		  "en": "English",
+		  "es": "Spanish"
+
+	  }
   }
 }
 
