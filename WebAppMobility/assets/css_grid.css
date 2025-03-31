@@ -36,6 +36,7 @@ body > div {
 .div_box{
 	max-width: 25vw;
 	padding: 5px;
+	border-radius: 5px;
 }
 
 /* Logo + Bouton paramètres */
@@ -54,15 +55,14 @@ body > div {
 	grid-area: header;
 	place-self: center end;
 	height: 50%;
-	width: 15%;
+	width: auto;
+	border-radius: 5px;
 }
 
 /* Boite Choix Simulation */
 .div_box:nth-of-type(2) {
 	grid-area: choix_sim;
 	background-color: #d9d9d9;			/*ici pink quand debug*/
-	border-radius: 5px;
-	height: 100%;
 
 	display:grid;
 	grid-template-columns: 4fr 1fr;
@@ -88,8 +88,6 @@ body > div {
 .div_box:nth-of-type(3) {
 	grid-area: transport;
 	background-color: #d9d9d9;			/*ici yellow quand debug*/
-	border-radius: 5px;
-	height: auto;
 
 	display:grid;
 	grid-template-columns: 4fr 1fr;
@@ -115,7 +113,6 @@ body > div {
 .div_box:nth-of-type(4) {
 	grid-area: zone_etude;
 	background-color: #d9d9d9;			/*ici red quand debug*/
-	border-radius: 5px;
 
 	display:grid;
 	grid-template-columns: 4fr 1fr;
@@ -125,7 +122,7 @@ body > div {
 			"zone_button zone_button";
 	grid-gap: 5px 5px;
 
-	max-height: auto;
+	
 }
 
 	/* Titre de la boite*/
@@ -174,7 +171,6 @@ Sans doute pas idéal mais ça fonctionne	*/
 .div_box:nth-of-type(5) {
 	grid-area: csp;
 	background-color: #d9d9d9;			/*ici blue quand debug*/
-	border-radius: 5px;
 
 	display:grid;
 	grid-template-columns: 4fr 1fr;
@@ -211,6 +207,7 @@ Sans doute pas idéal mais ça fonctionne	*/
 #dl_CSV, #dl_SVG {								/* Boutons de téléchargement */
 	height: 40%;
 	width: 35%;
+	border-radius: 5px;
 }
 
 #sim_button {									/* Bouton de lancement de la simulation */
@@ -218,6 +215,7 @@ Sans doute pas idéal mais ça fonctionne	*/
 	height: 40%;
 	width: 30%;
 	place-self: center;
+	border-radius: 5px;
 }
 
 /* Titre des sections */
