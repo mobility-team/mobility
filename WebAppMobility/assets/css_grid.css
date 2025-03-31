@@ -120,7 +120,7 @@ body > div {
 /* Boite Transport */
 .div_box:nth-of-type(3) {
 	grid-area: transport;
-	background-color: #d9d9d9;			/*ici yellow quand debug*/
+	background-color: var(--box-color);			/*ici yellow quand debug*/
 
 	display:grid;
 	grid-template-columns: 4fr 1fr;
