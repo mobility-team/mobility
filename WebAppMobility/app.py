@@ -6,7 +6,7 @@ import pandas as pd
 import layout
 
 
-language='fr'
+
 
 
 with open('interface_content.json', 'r') as file:
@@ -28,7 +28,7 @@ list_county.sort()
 
 app = Dash(suppress_callback_exceptions=True)
 
-app.layout = html.Div(children=layout.Layout(language), id="global_container")
+app.layout = html.Div(children=layout.Layout('fr'), id="global_container")
 
 
 

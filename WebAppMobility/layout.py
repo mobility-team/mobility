@@ -204,7 +204,7 @@ def Layout(language):
              
              dcc.Dropdown(options=[{'label': app_content['dropdown language']['languages'][key],
                                      'value': key} for key in app_content['dropdown language']['languages'].keys()],
-                          value='fr',
+                          value=language,
                           id=app_content['dropdown language']['id']),
              
              html.P(id="text")
