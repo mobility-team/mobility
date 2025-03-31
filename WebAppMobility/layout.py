@@ -1,6 +1,7 @@
 from dash import html, dcc
 import dash_bootstrap_components as dbc
 import json
+import pandas as pd
 
 
 with open('interface_content.json', 'r') as file:
@@ -8,7 +9,9 @@ with open('interface_content.json', 'r') as file:
     
 with open('translations_content.json', 'r') as file:
     app_translation = json.load(file)
-    
+
+
+
 
 def Layout(language):
     return[   
@@ -205,6 +208,7 @@ def Layout(language):
              dcc.Dropdown(options=[{'label': app_content['dropdown language']['languages'][key],
                                      'value': key} for key in app_content['dropdown language']['languages'].keys()],
                           value=language,
+                          clearable=False,
                           id=app_content['dropdown language']['id']),
              
              html.P(id="text")

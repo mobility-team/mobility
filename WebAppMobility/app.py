@@ -88,7 +88,7 @@ def update_multi_options(search_value, value):
     # Make sure that the set values are in the option list, else they will disappear
     # from the shown select list, but still part of the `value`.
     return [
-        o for o in list_municipality if o.lower().startswith(search_value.lower()) or o in (value or [])
+        o for o in list_county if o.lower().startswith(search_value.lower()) or o in (value or [])
     ]
 
 
