@@ -212,5 +212,6 @@
         "fr": "Personnes sans activité professionnelle",
         "en": "Unemployed or inactive people",
         "es": "Personas sin actividad profesional"
-    }
+    },
+	"mobility.logo": "assets/logo_Mobility_transparent.png"
   }

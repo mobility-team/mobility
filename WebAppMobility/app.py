@@ -4,6 +4,7 @@ import dash_bootstrap_components as dbc
 import json
 import pandas as pd
 import layout
+from sim import simulation_launch
 
 
 
@@ -17,7 +18,7 @@ with open('translations_content.json', 'r') as file:
 
 
 df_municipality = pd.read_csv('data\donneesCommunesFrance.csv')
-df_county = pd.read_csv('data/departements-france.csv')
+df_county = pd.read_csv('data\departements-france.csv')
 
 list_municipality = df_municipality['NOM_COM'].tolist()
 list_municipality.sort()
@@ -28,7 +29,7 @@ list_county.sort()
 
 app = Dash(suppress_callback_exceptions=True)
 
-app.layout = html.Div(children=layout.Layout('fr'), id="global_container")
+app.layout = html.Div(children=layout.Layout('fr', app_translation[app_content['box mobility']['logo']['label']]), id="global_container")
 
 
 
@@ -85,8 +86,6 @@ def update_multi_options(search_value, value):
 def update_multi_options(search_value, value):
     if not search_value:
         raise PreventUpdate
-    # Make sure that the set values are in the option list, else they will disappear
-    # from the shown select list, but still part of the `value`.
     return [
         o for o in list_county if o.lower().startswith(search_value.lower()) or o in (value or [])
     ]
@@ -94,9 +93,10 @@ def update_multi_options(search_value, value):
 
 @callback(
     Output("global_container", "children"),
-    Input(app_content['dropdown language']['id'], 'value'))
+    Input(app_content['dropdown language']['id'], 'value')
+)
 def change_language(value):
-    return layout.Layout(value)
+    return layout.Layout(value, app_translation[app_content['box mobility']['logo']['label']])
 
 
 
@@ -128,6 +128,9 @@ def start_sim(n_clicks, current_tab,
     
     
     if current_tab == "tab-rayon" :
+        if ((input_radius_municipality!= None and input_radius_value!= None) or input_county!=None or (input_municipality!=None and input_municipality_value!=None)) and input_transport_means!=None and input_csp!=None:
+                
+            simulation_launch(n_clicks, current_tab,input_radius_municipality, input_radius_value, input_county, input_municipality, input_municipality_value, input_transport_means, input_csp)
         return f"Ville d'origine choisie : {input_radius_municipality} Rayon choisi : {input_radius_value}, Moyen de transport choisis:{input_transport_means}, CSP choisies: {input_csp}"
     
     if current_tab == "tab-municipality":

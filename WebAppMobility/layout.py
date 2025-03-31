@@ -13,10 +13,10 @@ with open('translations_content.json', 'r') as file:
 
 
 
-def Layout(language):
+def Layout(language, image):
     return[   
              html.Div([ #Div contenant le logo mobility
-             html.H1("Mobility", 
+             html.Img(src=image, 
                      id=app_content['box mobility']['logo']['id']),
              
              html.Button(children="?",
@@ -172,7 +172,9 @@ def Layout(language):
 
              html.Div( #Div contenant le choix des catégories S-P
                  [
-                     html.H2("Catégories socio-professionnelles", className='title_box'),
+                     html.H2(children=app_translation[app_content['div_box']['box csp']['title']['label']][language], 
+                             className=app_content['div_box']['box csp']['title']['class'],
+                             id=app_content['div_box']['box csp']['title']['id']),
                      
                      html.Button("?", className=app_content['div_box']['box csp']['button infobulle8']['class'],
                                  id=app_content['div_box']['box csp']['button infobulle8']['id'],
