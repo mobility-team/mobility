@@ -54,10 +54,10 @@ app.layout = html.Div(
                              id=app_content['div_box']['box simulation']['button infobulle2']['id'], 
                              disabled=True),
                  
-                 dbc.Tooltip(children=app_translation[app_content['div_box']['box simulation']['button infobulle2']['infobulle3']['label']][language], 
+                 dbc.Tooltip(children=app_translation[app_content['div_box']['box simulation']['button infobulle2']['infobulle2']['label']][language], 
                              target=app_content['div_box']['box simulation']['button infobulle2']['id'], 
-                             id=app_content['div_box']['box simulation']['button infobulle2']['infobulle3']['id'],
-                             className=app_content['div_box']['box simulation']['button infobulle2']['infobulle3']['class']),
+                             id=app_content['div_box']['box simulation']['button infobulle2']['infobulle2']['id'],
+                             className=app_content['div_box']['box simulation']['button infobulle2']['infobulle2']['class']),
                  
                  dcc.Dropdown(options=[app_translation[o][language] for o in app_content['div_box']['box simulation']['dropdown']['options']],
                               value=app_translation[app_content['div_box']['box simulation']['dropdown']['options'][0]]['fr'], 
@@ -100,10 +100,10 @@ app.layout = html.Div(
                              id=app_content['div_box']['box study area']['button infobulle4']['id'], 
                              disabled=True),
                  
-                 dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['button infobulle4']['infobulle6']['label']][language], 
+                 dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['button infobulle4']['infobulle4']['label']][language], 
                              target=app_content['div_box']['box study area']['button infobulle4']['id'], 
-                             id=app_content['div_box']['box study area']['button infobulle4']['infobulle6']['id'], 
-                             className=app_content['div_box']['box study area']['button infobulle4']['infobulle6']['class']),
+                             id=app_content['div_box']['box study area']['button infobulle4']['infobulle4']['id'], 
+                             className=app_content['div_box']['box study area']['button infobulle4']['infobulle4']['class']),
                  
                  dcc.Tabs(id="tabs_study_zone", 
                           value='tab-rayon', 
@@ -118,10 +118,10 @@ app.layout = html.Div(
                                                                  id=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['id'], 
                                                                  disabled=True),
                                                      
-                                                     dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['label']][language], 
+                                                     dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle5']['label']][language], 
                                                                  target=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['id'], 
-                                                                 id=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['id'], 
-                                                                 className=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle6']['class']),
+                                                                 id=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle5']['id'], 
+                                                                 className=app_content['div_box']['box study area']['choice']['radius']['button infobulle5']['infobulle5']['class']),
                                                      
                                                      dcc.Dropdown(id=app_content['div_box']['box study area']['choice']['radius']['municipality input area']['id'], 
                                                                   className='zone_input',
@@ -170,10 +170,10 @@ app.layout = html.Div(
                                                                id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['id'],
                                                                disabled=True),
                                                    
-                                                   dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['label']][language],
+                                                   dbc.Tooltip(children=app_translation[app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle7']['label']][language],
                                                                target=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['id'], 
-                                                               id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['id'], 
-                                                               className=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle8']['class']),
+                                                               id=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle7']['id'], 
+                                                               className=app_content['div_box']['box study area']['choice']['county']['button infobulle7']['infobulle7']['class']),
                                                    
                                                    dcc.Dropdown(id=app_content['div_box']['box study area']['choice']['county']['list county']['id'],
                                                                 className='zone_input',
