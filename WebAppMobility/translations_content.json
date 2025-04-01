@@ -68,9 +68,14 @@
         "en": "Origin Municipality:",
         "es": "Municipio de origen:"
     },
+	"r.comm": {
+		"fr": "Liste de communes",
+		"en": "List of municipalities",
+		"es": "Listo de municipio"
+	},
     "r.research":{
         "fr": "Rayon de recherche : ",
-        "en": "Search Radius",
+        "en": "Search Radius:",
         "es": "Radio de búsqueda:"
     },
     "r.km":{
@@ -79,8 +84,8 @@
         "es": "km"
     },
     "m.origin":{
-        "fr": "Commune d'origine",
-        "en": "Origin Municipality",
+        "fr": "Commune d'origine :",
+        "en": "Origin Municipality:",
         "es": "Municipio de origen:"
     },
     "m.title":{
