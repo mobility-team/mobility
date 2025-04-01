@@ -179,7 +179,7 @@ def Layout(language, image):
                                                                     multi=False),
                                                        
                                                        #Texte input
-                                                       html.P("Liste de communes"),
+                                                       html.P(app_translation[app_content['div_box']['box study area']['choice']['municipality']['list municipality']['label']][language]),
                                                        
                                                        #Menu déroulant liste des communes
                                                        dcc.Dropdown(id=app_content['div_box']['box study area']['choice']['municipality']['list municipality']['id'],

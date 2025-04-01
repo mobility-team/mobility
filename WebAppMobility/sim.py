@@ -1,108 +1,100 @@
-# -----------------------------------------------------------------------------
-# Set up
-
 import mobility
 import pandas as pd
+mobility.set_params()
 
-mobility.set_params(debug=False)
+# -----------------------------------------------------------------------------
+# Transport modes
 
-
-df_municipality = pd.read_csv('data\donneesCommunesFrance.csv')
-df_county = pd.read_csv('data/departements-france.csv')
-
-
-
-
-
-
-def simulation_launch(n_clicks, current_tab,input_radius_municipality, input_radius_value, input_county, input_municipality, input_municipality_value, input_transport_means, input_csp):
-    if current_tab == "tab-rayon" :
-        
-        #local_admin_unit_id = ['fr-' + df_municipality.loc[df_municipality["NOM_COM"]==i, "INSEE_COM"].iloc[0] for i in input_radius_municipality]
-        
-        
-        
-        local_admin_unit_id = 'fr-' + df_municipality.loc[df_municipality["NOM_COM"]==input_radius_municipality, "INSEE_COM"].iloc[0]
-        
-        print('liste communes ', local_admin_unit_id)
-        print('rayon', float(input_radius_value))
-        
-        """transport_zones = mobility.TransportZones(
-            local_admin_unit_id=local_admin_unit_id,
-            radius= float(input_radius_value),
-            level_of_detail=0
-            )
-        transport_zones.get().plot()"""
-        
-        
-    if current_tab == "tab-municipality":
-        return f"Ville d'origine choisie : {input_municipality_value} Liste des villes choisies : {input_municipality}"
-    
-    if current_tab == "tab-county":
-        return f"Liste des départments : {input_county}"
-
-
-
-
-# Prepare transport zones
-transport_zones = mobility.TransportZones("fr-21231", level_of_detail=1, radius=10)
-
-# Choice model params
-work_dest_parms = mobility.WorkDestinationChoiceModelParameters(
-    model={
-        "type": "radiation",
-        "lambda": 0.99986,
-        "end_of_contract_rate": 0.00,
-        "job_change_utility_constant": -5.0,
-        "max_iterations": 6,
-        "tolerance": 0.01,
-        "cost_update": True,
-        "n_iter_cost_update": 3
-    },
-    utility={
-        "fr": 0.0,
-        "ch": 5.0
-    }
+transport_zones = mobility.TransportZones(
+    local_admin_unit_id="fr-21231",
+    radius=40,
+    level_of_detail=0
 )
+tz = transport_zones.get()
 
-# Mode constants
-constants = {
-    "walk": 0.0,
-    "bicycle": 2.0,
-    "public_transport": 0.0,
-    "car": 1.0,
-    "carpool": 0.0
-}
-
-
-
-walk = mobility.WalkMode(
-    transport_zones,
-    generalized_cost_parameters=mobility.GeneralizedCostParameters(
-        cost_constant=constants["walk"]))
-
+# -----------------------------------------------------------------------------
+# Transport modes
 
 car = mobility.CarMode(
-    transport_zones,
+    transport_zones=transport_zones,
     generalized_cost_parameters=mobility.GeneralizedCostParameters(
-        cost_constant=constants["car"]))
-
+        cost_of_distance=0.1
+    )
+)
 
 bicycle = mobility.BicycleMode(
-    transport_zones,
+    transport_zones=transport_zones,
     generalized_cost_parameters=mobility.GeneralizedCostParameters(
-        cost_constant=constants["bicycle"]))
+        cost_of_distance=0.0
+    )
+)
 
+modes = [
+    car,
+    bicycle
+]
 
-public_transport = mobility.PublicTransportMode(
+# -----------------------------------------------------------------------------
+# Work destination and mode choice models
+
+work_choice_model = mobility.WorkDestinationChoiceModel(
     transport_zones,
-    generalized_cost_parameters=mobility.GeneralizedCostParameters(
-        cost_constant=constants["public_transport"]))
+    modes=modes
+)
+
+mode_choice_model = mobility.TransportModeChoiceModel(
+    destination_choice_model=work_choice_model
+)
+
+work_choice_model.get()
+mode_choice_model.get()
+
+mc = mode_choice_model.get()
+
+# -----------------------------------------------------------------------------
+# Comparing to reference data
+
+comparison = work_choice_model.get_comparison()
+
+work_choice_model.plot_model_fit(comparison)
+
+work_choice_model.compute_ssi(comparison, 200)
+work_choice_model.compute_ssi(comparison, 400)
+work_choice_model.compute_ssi(comparison, 1000)
+
+# -----------------------------------------------------------------------------
+# Extracting metrics
+
+# Average travel time by origin
+car_travel_costs = car.travel_costs.get()
+car_travel_costs["mode"] = "car"
+
+bicycle_travel_costs = bicycle.travel_costs.get()
+bicycle_travel_costs["mode"] = "bicycle"
+
+travel_costs = pd.concat([
+    car_travel_costs,
+    bicycle_travel_costs]
+)
 
 
+# -----------------------------------------------------------------------------
+# Sample trips
 
+population = mobility.Population(
+    transport_zones=transport_zones,
+    sample_size=1000
+)
 
+# Raw trips directly sampled from survey data
+trips = mobility.Trips(population)
 
+# Localized trips taking the local choice models into account
+loc_trips = mobility.LocalizedTrips(
+    trips=trips,
+    work_dest_cm=work_choice_model,
+    mode_cm=mode_choice_model
+)
 
-
-
+trips.get()
+df_trips = loc_trips.get()

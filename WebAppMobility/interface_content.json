@@ -164,7 +164,8 @@
           },
           "list municipality":{
             "class": "input",
-            "id": "div_container_municipality"
+            "id": "div_container_municipality",
+			"label":"r.comm"
           },
           "button add municipality":{
             "class": "zone_button",

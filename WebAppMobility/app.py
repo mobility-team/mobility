@@ -31,7 +31,7 @@ list_county.sort()
 app = Dash(suppress_callback_exceptions=True)
 
 #Démarrage de l'affichage de l'application (côté client)
-app.layout = html.Div(children=layout.Layout('fr', app_translation[app_content['box mobility']['logo']['label']]), id="global_container")
+app.layout = html.Div(children=layout.Layout('fr', 'assets/logo_Mobility_transparent.png'), id="global_container")
 
 
 
