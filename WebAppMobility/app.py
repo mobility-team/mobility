@@ -9,7 +9,7 @@ import layout
 
 
 
-#Importation des fichiers json pour les classes et la traduction
+#Importation des fichiers json pour les contenus et la traduction
 with open('interface_content.json', 'r') as file:
     app_content = json.load(file)
     
