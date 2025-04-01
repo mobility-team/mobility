@@ -26,7 +26,6 @@ def create_modes(transport_zones, constants, congestion, gtfs_paths, speed_modif
 
     bicycle = mobility.BicycleMode(
         transport_zones,
-        speed_modifiers=bicycle_speed_modifiers,
         generalized_cost_parameters=mobility.GeneralizedCostParameters(
             cost_constant=constants["bicycle"],
             cost_of_distance=0.0,
@@ -48,27 +47,15 @@ def create_modes(transport_zones, constants, congestion, gtfs_paths, speed_modif
         max_value=29.7 - 1.0
     )
     
-    car_speed_modifiers = [
-        mobility.BorderCrossingSpeedModifier(
-            transport_zones=transport_zones,
-            max_speed=30.0,
-            time_penalty=10.0001
-        )
-    ]
-    
-    if "car" in speed_modifiers.keys():
-        car_speed_modifiers.extend(speed_modifiers["car"])
 
     car = mobility.CarMode(
         transport_zones,
         congestion=congestion,
-        congestion_flows_scaling_factor=1.0,
         generalized_cost_parameters=mobility.GeneralizedCostParameters(
             cost_constant=car_cost_constant,
             cost_of_distance=car_cost_of_distance,
             cost_of_time=car_cost_of_time
-        ),
-        speed_modifiers=car_speed_modifiers
+        )
     )
 
 
