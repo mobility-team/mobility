@@ -70,7 +70,7 @@
     },
     "r.research":{
         "fr": "Rayon de recherche : ",
-        "en": "Search Radius",
+        "en": "Search Radius:",
         "es": "Radio de búsqueda:"
     },
     "r.km":{
@@ -79,8 +79,8 @@
         "es": "km"
     },
     "m.origin":{
-        "fr": "Commune d'origine",
-        "en": "Origin Municipality",
+        "fr": "Commune d'origine :",
+        "en": "Origin Municipality:",
         "es": "Municipio de origen:"
     },
     "m.title":{
@@ -212,6 +212,5 @@
         "fr": "Personnes sans activité professionnelle",
         "en": "Unemployed or inactive people",
         "es": "Personas sin actividad profesional"
-    },
-	"mobility.logo": "assets/logo_Mobility_transparent.png"
+    }
   }
