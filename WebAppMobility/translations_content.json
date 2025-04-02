@@ -74,14 +74,14 @@
 		"es": "Listo de municipio"
 	},
     "r.research":{
-        "fr": "Rayon de recherche : ",
-        "en": "Search Radius:",
-        "es": "Radio de búsqueda:"
+        "fr": "Rayon de recherche (km) : ",
+        "en": "Search Radius(km):",
+        "es": "Radio de búsqueda(km):"
     },
     "r.km":{
-        "fr": "km",
-        "en": "km",
-        "es": "km"
+        "fr": "(km)",
+        "en": "(km)",
+        "es": "(km)"
     },
     "m.origin":{
         "fr": "Commune d'origine :",
