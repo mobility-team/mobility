@@ -12,33 +12,26 @@ from mobility.parsers.local_admin_units import LocalAdminUnits
 
 class StudyArea(FileAsset):
     """
-    A class for managing transport zones, inheriting from the Asset class.
-
-    This class is responsible for creating, caching, and retrieving transport
-    zones based on specified criteria such as city ID, method, and radius.
+    A FileAsset class that manages study areas.
+    
+    Works for either a set of communes, or for a center commune + a radius (by default 40 km).
+    
+    The inputs are LocalAdminUnits, the local admin unit id and the radius:
+    if the LocalAdminUnits asset, the list of communes or the centre commune+radius did not change, the class will reuse the existing asset.
 
     Attributes:
-        insee_city_id (str): The INSEE code of the city.
-        radius (int): The radius around the city to define transport zones, applicable if method is 'radius'.
+        local_admin_unit_id (str or list of str): The geographical code of the centre commune, or of all the communes to include.
+        radius (int): Communes within this radius (in km) of the center commune will be included. Only used when local_admin_unit_id contains a single geographical code. Default is 40.
 
     Methods:
         get_cached_asset: Retrieve a cached transport zones GeoDataFrame.
         create_and_get_asset: Create and retrieve transport zones based on the current inputs.
-        filter_cities_within_radius: Filter cities within a specified radius.
-        prepare_transport_zones_df: Prepare the transport zones GeoDataFrame.
+        filter_within_radius: Filter communes within a specified radius.
+        ids_to_countries: 
+        create_study_area_boundary:
     """
 
     def __init__(self, local_admin_unit_id: Union[str, List[str]], radius: int = 40):
-        """
-        Initializes a TransportZones object based on a list of local admin unit 
-        ids or one local admin unit id and a radius within which all local admin 
-        unit ids should be included.
-
-        Args:
-            local_admin_unit_id (str or list): id or ids of the local admin unit(s).
-            radius (int, optional): Radius in kilometers (defaults to 40 km).
-        """
-
         inputs = {
             "local_admin_units": LocalAdminUnits(),
             "local_admin_unit_id": local_admin_unit_id,
@@ -54,15 +47,15 @@ class StudyArea(FileAsset):
 
     def get_cached_asset(self) -> gpd.GeoDataFrame:
         """
-        Retrieves the transport zones from the cache.
+        Retrieves the study area from the cache.
 
         Returns:
-            gpd.GeoDataFrame: The cached transport zones.
+            gpd.GeoDataFrame: The cached study area.
         """
         
         if self.value is None:
             
-            logging.info("Transport zones already created. Reusing the file " + str(self.cache_path))
+            logging.info("Study area already created. Reusing the file " + str(self.cache_path))
             local_admin_units = gpd.read_file(self.cache_path["polygons"])
             self.value = local_admin_units
             return local_admin_units
@@ -74,13 +67,13 @@ class StudyArea(FileAsset):
 
     def create_and_get_asset(self) -> gpd.GeoDataFrame:
         """
-        Creates transport zones based on the current inputs and retrieves them.
-
+        Creates study area based on the current inputs and retrieves it.
+ 
         Returns:
             gpd.GeoDataFrame: The newly created transport zones.
         """
 
-        logging.info("Creating transport zones...")
+        logging.info("Creating study area...")
 
         local_admin_unit_id = self.inputs["local_admin_unit_id"]
         local_admin_units = self.inputs["local_admin_units"].get()
@@ -153,11 +146,10 @@ class StudyArea(FileAsset):
         GeoJSON file to be used in subsequent operations.
 
         Args:
-            transport_zones (gpd.GeoDataFrame): A GeoDataFrame containing the geometries of transport zones.
+            study_area (gpd.GeoDataFrame): A GeoDataFrame containing the geometries of the study area.
 
         Returns:
-            Tuple[shapely.geometry.Polygon, str]: A tuple containing the combined boundary polygon 
-            and the path to the saved GeoJSON file.
+            Returns nothing but saves the GeoJSON in the project folder as "study_area_boundary.geojson"
         """
         
         # Merge all transport zones into one polygon

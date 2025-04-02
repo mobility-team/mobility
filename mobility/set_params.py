@@ -27,13 +27,15 @@ def set_params(
     for package and project data folders.
 
     Parameters:
-    gtfs_download_date (str): the download date of the GTFS files.
     package_data_folder_path (str, optional): The file path for storing common datasets used by all projects.
     project_data_folder_path (str, optional): The file path for storing project-specific datasets.
     path_to_pem_file (str, optional): The file path to the PEM file for SSL certification.
     http_proxy_url (str, optional): The URL for the HTTP proxy.
     https_proxy_url (str, optional): The URL for the HTTPS proxy.
-    r_packages (boolean, optional): wether to install R packages or not by running RScript (does not work for github actions so is handled by a separate r-lib github action)
+    r_packages (boolean, optional): whether to install R packages or not by running RScript (does not work for github actions so is handled by a separate r-lib github action)
+    r_packages_force_reinstall (bool, optional)
+    r_packages_download_method (str, optional): set this parameter to "wininet" to be able to install packages on some proxies. See the installation.md page for details.
+    debug (bool, optional): set debug to True to see the R logs, including error messages
     """
 
     setup_logging()
