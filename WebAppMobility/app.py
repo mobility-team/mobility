@@ -1,14 +1,9 @@
 from dash import Dash, html, Input, Output, State, callback, dcc, Patch, ALL
 from dash.exceptions import PreventUpdate
-import dash_bootstrap_components as dbc
 import json
 import pandas as pd
-import geopandas as gpd
 import layout
 from sim import compute_by_radius
-import plotly.express as px
-import plotly.graph_objects as go
-from shapely.geometry import Polygon, MultiPolygon
 
 
 
@@ -214,10 +209,10 @@ def start_sim(n_clicks, current_tab,
                 local_admin_unit_id = 'fr-' + df_municipality.loc[df_municipality['NOM_COM'] == input_radius_municipality]['INSEE_COM'].values[0]
             
             
-                # print('BBBBBBBBBBBBBBBBBB')
-                # # compute_value = compute_by_radius(local_admin_unit_id, int(input_radius_value))
-                # compute_by_radius('fr-21231', 7)
-                # print('AAAAAAAAAA')
+                # print('Thread')
+                # compute_value = compute_by_radius(local_admin_unit_id, int(input_radius_value))
+                
+                # compute_by_radius('fr-21231', )
                 
                 
                 return html.Img(src='assets/map.png')                
@@ -236,4 +231,4 @@ def start_sim(n_clicks, current_tab,
 
 
 if __name__ == '__main__':
-    app.run(debug=False)
+    app.run(debug=True)

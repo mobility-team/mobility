@@ -44,6 +44,8 @@ def compute_by_radius(local_admin_unit_id, radius):
         )
     )
     
+    
+    
     modes = [
         car,
         bicycle,
@@ -91,6 +93,7 @@ def compute_by_radius(local_admin_unit_id, radius):
     walk_travel_costs = bicycle.travel_costs.get()
     walk_travel_costs["mode"] = "walk"
     
+   
     travel_costs = pd.concat([
         car_travel_costs,
         bicycle_travel_costs,
@@ -103,7 +106,7 @@ def compute_by_radius(local_admin_unit_id, radius):
     print('Sample trips -----------------------------')
     population = mobility.Population(
         transport_zones=transport_zones,
-        sample_size=2000
+        sample_size=10000
     )
     
     print('Raw trips')
