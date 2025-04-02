@@ -230,6 +230,10 @@ Sans doute pas idéal mais ça fonctionne	*/
 	grid-area: csp_infobulle;
 }
 
+#text {
+	grid-area : simulation;
+}
+
 /* Boutons */
 #dl_container {									/* Contient les boutons de téléchargement */
 	grid-area: header_button_dl;
