@@ -268,5 +268,5 @@ def Layout(language, image):
                           id=app_content['dropdown language']['id']),
             
             #Affichage temporaire des résultats
-             html.P(id="text")
+             html.Div(id="text")
         ]

@@ -3,7 +3,12 @@ from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 import json
 import pandas as pd
+import geopandas as gpd
 import layout
+from sim import compute_by_radius
+import plotly.express as px
+import plotly.graph_objects as go
+from shapely.geometry import Polygon, MultiPolygon
 
 
 
@@ -201,13 +206,30 @@ def start_sim(n_clicks, current_tab,
 
     #Affichage 
     if current_tab == "tab-rayon" :
-        return f"Ville d'origine choisie : {input_radius_municipality} Rayon choisi : {input_radius_value}, Moyen de transport choisis:{input_transport_means}, CSP choisies: {input_csp}"
+        if input_radius_value != None and input_radius_municipality != None and input_radius_value.isdigit():
+            if int(input_radius_value) < 7 or int(input_radius_value )> 20:
+                return "Please input a radius between 7 and 20"
+            
+            else :
+                # local_admin_unit_id = 'fr-' + df_municipality.loc[df_municipality['NOM_COM'] == input_radius_municipality]['INSEE_COM'].values[0]
+            
+            
+                # print('BBBBBBBBBBBBBBBBBB')
+                # # compute_value = compute_by_radius(local_admin_unit_id, int(input_radius_value))
+                # compute_by_radius('fr-21231', 7)
+                # print('AAAAAAAAAA')
+                
+                
+                return html.Img(src='assets/map.png')                
+        
+        else :
+            return f"Ville d'origine choisie : {input_radius_municipality} Rayon choisi : {input_radius_value}, Moyen de transport choisis:{input_transport_means}, CSP choisies: {input_csp}"
     
     if current_tab == "tab-municipality":
-        return f"Ville d'origine choisie : {input_municipality_value} Liste des villes choisies : {input_municipality}"
+        return html.P(f"Ville d'origine choisie : {input_municipality_value} Liste des villes choisies : {input_municipality}")
     
     if current_tab == "tab-county":
-        return f"Liste des départments : {input_county}"
+        return html.P(f"Liste des départments : {input_county}")
 
 
 
