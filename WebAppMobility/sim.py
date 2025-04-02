@@ -106,7 +106,7 @@ def compute_by_radius(local_admin_unit_id, radius):
     print('Sample trips -----------------------------')
     population = mobility.Population(
         transport_zones=transport_zones,
-        sample_size=10000
+        sample_size=1000
     )
     
     print('Raw trips')
@@ -153,6 +153,8 @@ def compute_by_radius(local_admin_unit_id, radius):
     fig, ax = plt.subplots(figsize=(8, 8))
     geo_df.plot(ax=ax, column='mode_id', cmap='viridis', legend=True)  # Remplace 'valeur' par ta colonne
     plt.axis("off")  # Cache les axes
+    
+    print("Sauvegarde de l'image")
     plt.savefig("assets/map.png", bbox_inches="tight")  # Sauvegarde dans le dossier 'assets' pour Dash
     plt.close(fig)  # Ferme la figure pour éviter les doublons
     

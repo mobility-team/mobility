@@ -4,6 +4,14 @@ import json
 import pandas as pd
 import layout
 from sim import compute_by_radius
+from flask import Flask
+
+
+
+server = Flask(__name__)
+server.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Optionnel (désactive le cache)
+
+app = Dash(__name__, server=server)
 
 
 
@@ -209,12 +217,12 @@ def start_sim(n_clicks, current_tab,
                 local_admin_unit_id = 'fr-' + df_municipality.loc[df_municipality['NOM_COM'] == input_radius_municipality]['INSEE_COM'].values[0]
             
             
-                # print('Thread')
-                # compute_value = compute_by_radius(local_admin_unit_id, int(input_radius_value))
                 
-                # compute_by_radius('fr-21231', )
+                compute_value = compute_by_radius(local_admin_unit_id, int(input_radius_value))
                 
                 
+                
+                print('fin')
                 return html.Img(src='assets/map.png')                
         
         else :
@@ -231,4 +239,4 @@ def start_sim(n_clicks, current_tab,
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False)

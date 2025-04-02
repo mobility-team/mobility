@@ -152,9 +152,6 @@ def Layout(language, image):
                                                          dcc.Input(id=app_content['div_box']['box study area']['choice']['radius']['radius input area']['id'], 
                                                                    className='zone_input'),
                                                          
-                                                         #Texte unité
-                                                         html.P(children=app_translation[app_content['div_box']['box study area']['choice']['radius']['km txt']['label']][language],
-                                                                className=app_content['div_box']['box study area']['choice']['radius']['km txt']['class'])
                                                      ]
                                      ),
                                      
