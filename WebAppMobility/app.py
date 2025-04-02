@@ -211,7 +211,7 @@ def start_sim(n_clicks, current_tab,
                 return "Please input a radius between 7 and 20"
             
             else :
-                # local_admin_unit_id = 'fr-' + df_municipality.loc[df_municipality['NOM_COM'] == input_radius_municipality]['INSEE_COM'].values[0]
+                local_admin_unit_id = 'fr-' + df_municipality.loc[df_municipality['NOM_COM'] == input_radius_municipality]['INSEE_COM'].values[0]
             
             
                 # print('BBBBBBBBBBBBBBBBBB')

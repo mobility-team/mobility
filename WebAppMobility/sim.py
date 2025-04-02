@@ -26,20 +26,28 @@ def compute_by_radius(local_admin_unit_id, radius):
     car = mobility.CarMode(
         transport_zones=transport_zones,
         generalized_cost_parameters=mobility.GeneralizedCostParameters(
-            cost_of_distance=0.8
+            cost_of_distance=6
         )
     )
     
     bicycle = mobility.BicycleMode(
         transport_zones=transport_zones,
         generalized_cost_parameters=mobility.GeneralizedCostParameters(
-            cost_of_distance=0.0
+            cost_of_distance=5
+        )
+    )
+    
+    walk = mobility.WalkMode(
+        transport_zones=transport_zones,
+        generalized_cost_parameters=mobility.GeneralizedCostParameters(
+            cost_of_distance=-1
         )
     )
     
     modes = [
         car,
-        bicycle
+        bicycle,
+        walk
     ]
     
     # -----------------------------------------------------------------------------
@@ -80,9 +88,13 @@ def compute_by_radius(local_admin_unit_id, radius):
     bicycle_travel_costs = bicycle.travel_costs.get()
     bicycle_travel_costs["mode"] = "bicycle"
     
+    walk_travel_costs = bicycle.travel_costs.get()
+    walk_travel_costs["mode"] = "walk"
+    
     travel_costs = pd.concat([
         car_travel_costs,
-        bicycle_travel_costs]
+        bicycle_travel_costs,
+        walk_travel_costs]
     )
     
     
@@ -91,7 +103,7 @@ def compute_by_radius(local_admin_unit_id, radius):
     print('Sample trips -----------------------------')
     population = mobility.Population(
         transport_zones=transport_zones,
-        sample_size=1000
+        sample_size=2000
     )
     
     print('Raw trips')
@@ -115,18 +127,19 @@ def compute_by_radius(local_admin_unit_id, radius):
 
     print('Traitement de dataframe ---------------------------')
     clean_loc_trip = df_loc_trips.dropna()
-    
+    print('A')
     local_id = tz.loc[tz["local_admin_unit_id"] == local_admin_unit_id, "transport_zone_id"].values[0]
     
+    print("B")
     id_from_selected = clean_loc_trip.loc[clean_loc_trip["from_transport_zone_id"] == local_id, ["to_transport_zone_id", "mode_id"]]
     
-    
+    print("C")
     df_grouped_by_zone = id_from_selected.value_counts().reset_index(name='Count')
-    
+    print("D")
     df_with_geometry = df_grouped_by_zone.merge(tz[['local_admin_unit_id', 'transport_zone_id', 'geometry']], left_on='to_transport_zone_id', right_on='transport_zone_id', how='left')
     df_with_geometry.reset_index(drop=True)
     
-    
+    print("E")
     df_mode_max = df_with_geometry.loc[df_with_geometry.groupby('transport_zone_id')['Count'].idxmax()]
     
     
