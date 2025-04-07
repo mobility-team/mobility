@@ -23,13 +23,30 @@ class OSMData(FileAsset):
     """
     A class for managing OpenStreetMap (OSM) data, inheriting from the Asset class.
 
-    This class handles the downloading, processing, and caching of OSM data 
-    based on specified transport zones and modes.
+    This class handles the downloading, processing, and caching of specific OSM data within the study area.
 
-    Attributes:
-        transport_zones (gpd.GeoDataFrame): The geographical areas for which OSM data is needed.
+        Parameters
+        ----------
+        study_area : StudyArea
+            The area for which OSM data is needed.
+        object_type : str
+            OSM types to query. "a" for areas, "n" for nodes, "w" for ways, "r" for relations, "nwr" for everything.
+            See https://docs.osmcode.org/osmium/latest/osmium-tags-filter.html for the precise doc
+        key : str
+            OSM key to query, for instance "building".
+            See https://docs.osmcode.org/osmium/latest/osmium-tags-filter.html for the precise doc
+        tags : List[str], default=None
+            OSM tag(s) to query.
+            See https://docs.osmcode.org/osmium/latest/osmium-tags-filter.html for the precise doc
+        split_local_admin_units : bool, default=False
+            To describe.
+        geofabrik_extract_date : str, default="240101"
+            Reference date of the OSM data to use (date at which it has been extracted on Geofabrik).
+        file_format : str, default="pbf"
+            To describe.
 
-    Methods:
+    Methods
+    -------
         get_cached_asset: Retrieve a cached OSM data file path.
         create_and_get_asset: Download, process, and cache OSM data, then return the file path.
         create_transport_zones_boundary: Create a boundary polygon for the transport zones.
@@ -49,13 +66,6 @@ class OSMData(FileAsset):
             geofabrik_extract_date: str = "240101",
             file_format: str = "pbf"
         ):
-        """
-        Initializes an OSMData object with the given transport zones and dodgr modes.
-
-        Args:
-            transport_zones (gpd.GeoDataFrame): GeoDataFrame defining the transport zones.
-        """
-        
         if tags is None:
             tags = []
         
@@ -204,7 +214,10 @@ class OSMData(FileAsset):
 
         Args:
             cropped_region_path (pathlib.Path): The file path of the cropped OSM region data.
-            osm_tags (List[str]): A list of OSM tags to filter the data.
+            object_type (str): OSM types to query. "a" for areas, "n" for nodes, "w" for ways, "r" for relations, "nwr" for everything
+            key (str): OSM key to query, for instance "building"
+            tags (list of str): OSM tag(s) to query
+                For the parameters "object_type", "key" and "tags", see https://docs.osmcode.org/osmium/latest/osmium-tags-filter.html for the precise doc            
 
         Returns:
             pathlib.Path: The file path of the filtered OSM region.

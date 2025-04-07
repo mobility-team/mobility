@@ -14,19 +14,19 @@ class StudyArea(FileAsset):
     """
     A FileAsset class that manages study areas.
     
-    Works for either a set of communes, or for a center commune + a radius (by default 40 km).
+    Works for either a set of local admin units, or for a center commune + a radius (by default 40 km).
     
     The inputs are LocalAdminUnits, the local admin unit id and the radius:
-    if the LocalAdminUnits asset, the list of communes or the centre commune+radius did not change, the class will reuse the existing asset.
+    if the LocalAdminUnits asset, the list of local admin units or the centre commune+radius did not change, the class will reuse the existing asset.
 
     Attributes:
-        local_admin_unit_id (str or list of str): The geographical code of the centre commune, or of all the communes to include.
-        radius (int): Communes within this radius (in km) of the center commune will be included. Only used when local_admin_unit_id contains a single geographical code. Default is 40.
+        local_admin_unit_id (str or list of str): The geographical code of the centre commune, or of all the local admin units to include.
+        radius (int): Local admin units within this radius (in km) of the center commune will be included. Only used when local_admin_unit_id contains a single geographical code. Default is 40.
 
     Methods:
         get_cached_asset: Retrieve a cached transport zones GeoDataFrame.
         create_and_get_asset: Create and retrieve transport zones based on the current inputs.
-        filter_within_radius: Filter communes within a specified radius.
+        filter_within_radius: Filter local admin units within a specified radius.
         ids_to_countries: 
         create_study_area_boundary:
     """
@@ -105,12 +105,12 @@ class StudyArea(FileAsset):
 
     def filter_within_radius(self, local_admin_units: gpd.GeoDataFrame, local_admin_unit_id: str, radius: int) -> gpd.GeoDataFrame:
         """
-        Filters cities within a specified radius from a given city. It selects cities within the
-        specified radius from the centroid of the target city.
+        Filters local admin units within a specified radius from a given city. It selects local admin units within the
+        specified radius from the centroid of the target local admin unit.
 
         Args:
-            cities (gpd.GeoDataFrame): The GeoDataFrame containing city data.
-            insee_city_id (str): The INSEE code of the target city.
+            local_admin_units (gpd.GeoDataFrame): The GeoDataFrame containing city data.
+            local_admin_unit_id (str): The geographic code of the target city.
             radius (int): The radius in kilometers around the target city.
 
         Returns:
@@ -128,6 +128,7 @@ class StudyArea(FileAsset):
 
     
     def ids_to_countries(self, local_admin_unit_ids):
+        #Where is this used?
         local_admin_units = self.get()
         id_country_map = local_admin_units[["local_admin_unit_id", "country"]].set_index("local_admin_unit_id").to_dict()
         return pd.Series(local_admin_unit_ids).map(id_country_map)
