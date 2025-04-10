@@ -13,7 +13,7 @@ from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_modes.carpool.detailed.detailed_carpool_routing_parameters import DetailedCarpoolRoutingParameters
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
-from mobility.path_travel_costs import PathTravelCosts
+from mobility.transport_costs.path_travel_costs import PathTravelCosts
 
 class DetailedCarpoolTravelCosts(FileAsset):
 
@@ -83,13 +83,18 @@ class DetailedCarpoolTravelCosts(FileAsset):
         
         script = RScript(resources.files('mobility.transport_modes.carpool.detailed').joinpath('compute_carpool_travel_costs.R'))
         
+        if congestion is True:
+            graph = car_travel_costs.congested_path_graph.get()
+        else:
+            graph = car_travel_costs.modified_path_graph.get()
+        
         script.run(
             args=[
                 str(car_travel_costs.transport_zones.cache_path),
-                str(car_travel_costs.simplified_path_graph.get()),
-                str(car_travel_costs.simplified_path_graph.get()),
+                str(car_travel_costs.transport_zones.study_area.cache_path["polygons"]),
+                str(graph),
+                str(graph),
                 json.dumps(asdict(modal_transfer)),
-                str(congestion),
                 output_path
             ]
         )

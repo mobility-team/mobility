@@ -17,6 +17,7 @@ def set_params(
     https_proxy_url=None,
     r_packages=True,
     r_packages_force_reinstall=False,
+    r_packages_download_method="auto",
     debug=False
 ):
     """
@@ -26,13 +27,15 @@ def set_params(
     for package and project data folders.
 
     Parameters:
-    gtfs_download_date (str): the download date of the GTFS files.
     package_data_folder_path (str, optional): The file path for storing common datasets used by all projects.
     project_data_folder_path (str, optional): The file path for storing project-specific datasets.
     path_to_pem_file (str, optional): The file path to the PEM file for SSL certification.
     http_proxy_url (str, optional): The URL for the HTTP proxy.
     https_proxy_url (str, optional): The URL for the HTTPS proxy.
-    r_packages (boolean, optional): wether to install R packages or not by running RScript (does not work for github actions so is handled by a separate r-lib github action)
+    r_packages (boolean, optional): whether to install R packages or not by running RScript (does not work for github actions so is handled by a separate r-lib github action)
+    r_packages_force_reinstall (bool, optional)
+    r_packages_download_method (str, optional): set this parameter to "wininet" to be able to install packages on some proxies. See the installation.md page for details.
+    debug (bool, optional): set debug to True to see the R logs, including error messages
     """
 
     setup_logging()
@@ -47,7 +50,7 @@ def set_params(
     setup_package_data_folder_path(package_data_folder_path)
     setup_project_data_folder_path(project_data_folder_path)
 
-    install_r_packages(r_packages, r_packages_force_reinstall)
+    install_r_packages(r_packages, r_packages_force_reinstall, r_packages_download_method)
 
 
 def set_env_variable(key, value):
@@ -146,7 +149,7 @@ def setup_project_data_folder_path(project_data_folder_path):
                 raise ValueError("Please re run setup_mobility with the project_data_folder_path pointed to your desired location.")
 
 
-def install_r_packages(r_packages, r_packages_force_reinstall):
+def install_r_packages(r_packages, r_packages_force_reinstall, r_packages_download_method):
 
     if r_packages is True:
     
@@ -177,6 +180,7 @@ def install_r_packages(r_packages, r_packages_force_reinstall):
             {'source': 'CRAN', 'name': 'geos'},
             {'source': 'CRAN', 'name': 'FNN'},
             {'source': 'CRAN', 'name': 'cluster'},
+            {'source': 'CRAN', 'name': 'dbscan'}
         ]
         
         if platform.system() == "Windows":
@@ -190,12 +194,11 @@ def install_r_packages(r_packages, r_packages_force_reinstall):
             packages.append({'source': 'CRAN', 'name': 'osmdata'})
             
             
-        args = {
-            "packages": packages,
-            "force_reinstall": r_packages_force_reinstall
-        }
-            
-        args = json.dumps(args)
+        args = [
+            json.dumps(packages),
+            str(r_packages_force_reinstall),
+            r_packages_download_method
+        ]
             
         script = RScript(resources.files('mobility.r_utils').joinpath('install_packages.R'))
-        script.run(args=[args])
+        script.run(args)

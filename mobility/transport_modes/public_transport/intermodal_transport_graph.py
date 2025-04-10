@@ -11,10 +11,10 @@ from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
-from mobility.transport_modes import TransportMode
+from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
 from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportGraph
-from mobility.path_graph import ContractedPathGraph
+from mobility.transport_graphs.path_graph import ContractedPathGraph
 
 class IntermodalTransportGraph(FileAsset):
     """
@@ -76,7 +76,7 @@ class IntermodalTransportGraph(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pd.DataFrame:
-        logging.info("Intermodal grpah already created. Reusing the file : " + str(self.cache_path))
+        logging.info("Intermodal graph already created. Reusing the file : " + str(self.cache_path))
         return self.cache_path
 
     def create_and_get_asset(self) -> pd.DataFrame:
@@ -133,6 +133,7 @@ class IntermodalTransportGraph(FileAsset):
                 str(last_leg_graph.get()),
                 json.dumps(asdict(first_modal_transfer)),
                 json.dumps(asdict(last_modal_transfer)),
+                json.dumps(asdict(parameters)),
                 str(self.cache_path)
             ]
         )
@@ -140,4 +141,6 @@ class IntermodalTransportGraph(FileAsset):
         return None
     
 
-    
+    def update(self):
+        
+        self.create_and_get_asset()

@@ -13,22 +13,24 @@ library(jsonlite)
 
 args <- commandArgs(trailingOnly = TRUE)
 
+
 # args <- c(
-#   'D:\\dev\\mobility_oss\\mobility', # package_path
-#   'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg', # tz_file_path
-#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\9a6f4500ffbf148bfe6aa215a322e045-done', # graph_fp
-#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\9a6f4500ffbf148bfe6aa215a322e045-done', # modal_shift
-#   '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "shift_time": 10.0, "shortcuts_shift_time": null, "shortcuts_locations": null}', # congestion
-#   'True',
-#   'D:\\data\\mobility\\projects\\haut-doubs\\7418f0652ae728684d6e6acc42da802d-carpool_travel_costs.parquet' # output_file_path
+#   'D:\\dev\\mobility_oss\\mobility',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg',
+#   'D:/data/mobility/projects/haut-doubs/a25b56abc681fdfbf95b35a21c4b59db-study_area.gpkg',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\ffd1b0a5590d2b4781792dfe0549182f-car-simplified-path-graph',
+#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\ffd1b0a5590d2b4781792dfe0549182f-car-simplified-path-graph',
+#   '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 10.0, "shortcuts_transfer_time": 4.0, "shortcuts_locations": [[5.439751353407316, 47.0683887064354]]}',
+#   'False',
+#   'D:/data/mobility/projects/haut-doubs/f8755d0523b785bfe9ff3c93d1b7e393-travel_costs_free_flow_carpool.parquet'
 # )
 
 package_path <- args[1]
 tz_file_path <- args[2]
-first_leg_graph_fp <- args[3]
-last_leg_graph_fp <- args[4]
-modal_shift <- args[5]
-congestion <- args[6]
+study_area_fp <- args[3]
+first_leg_graph_fp <- args[4]
+last_leg_graph_fp <- args[5]
+modal_shift <- args[6]
 output_file_path <- args[7]
 
 buildings_sample_fp <- file.path(
@@ -40,7 +42,7 @@ buildings_sample_fp <- file.path(
 )
 
 modal_shift <- fromJSON(modal_shift)
-congestion <- as.logical(congestion)
+# congestion <- as.logical(congestion)
 
 source(file.path(package_path, "r_utils", "compute_gtfs_travel_costs.R"))
 source(file.path(package_path, "r_utils", "duplicate_cpprouting_graph.R"))
@@ -53,6 +55,7 @@ logger <- logger(appenders = console_appender())
 
 # Load transport zones and selected buildings in each transport zone
 transport_zones <- st_read(tz_file_path)
+transport_zones$country <- unlist(lapply(strsplit(transport_zones$local_admin_unit_id, "-"), "[[", 1))
 
 buildings_sample <- as.data.table(read_parquet(buildings_sample_fp))
 buildings_sample[, building_id := 1:.N]
@@ -65,19 +68,6 @@ start_verts <- read_parquet(file.path(dirname(dirname(first_leg_graph_fp)), past
 hash <- strsplit(basename(last_leg_graph_fp), "-")[[1]][1]
 last_graph <- read_cppr_graph(dirname(last_leg_graph_fp), hash)
 last_verts <- read_parquet(file.path(dirname(dirname(last_leg_graph_fp)), paste0(hash, "-vertices.parquet")))
-
-
-# Update the travel times based on congestion if needed
-if (congestion == TRUE) {
-  
-  hash <- strsplit(basename(first_leg_graph_fp), "-")[[1]][1]
-  updated_times <- read_parquet(file.path(dirname(first_leg_graph_fp), paste0(hash, "-updated-times.parquet")))
-  
-  start_graph$data <- as.data.table(updated_times)
-  last_graph$data <- as.data.table(updated_times)
-  
-}
-
 
 info(logger, "Concatenating graphs...")
 

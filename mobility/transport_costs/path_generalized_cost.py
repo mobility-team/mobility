@@ -22,13 +22,20 @@ class PathGeneralizedCost(InMemoryAsset):
         
         costs = pd.merge(
             costs,
-            transport_zones[["transport_zone_id", "local_admin_unit_id", "country"]].rename({"transport_zone_id": "from"}, axis=1).set_index("from"),
+            transport_zones[["transport_zone_id", "country"]].rename({"transport_zone_id": "from"}, axis=1).set_index("from"),
             on="from"
+        )
+        
+        costs = pd.merge(
+            costs,
+            transport_zones[["transport_zone_id", "country"]].rename({"transport_zone_id": "to"}, axis=1).set_index("to"),
+            on="to",
+            suffixes=["_from", "_to"]
         )
         
         gen_cost = self.parameters.cost_constant
         gen_cost += self.parameters.cost_of_distance*costs["distance"]
-        gen_cost += self.parameters.cost_of_time.compute(costs["distance"], costs["country"])*costs["time"]
+        gen_cost += self.parameters.cost_of_time.compute(costs["distance"], costs["country_from"])*costs["time"]
         
         costs["cost"] = gen_cost
         

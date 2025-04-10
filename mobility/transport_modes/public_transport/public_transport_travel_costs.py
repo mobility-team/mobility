@@ -13,9 +13,9 @@ from mobility.transport_zones import TransportZones
 from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportGraph
 from mobility.transport_modes.public_transport.intermodal_transport_graph import IntermodalTransportGraph
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
-from mobility.transport_modes import TransportMode
+from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
-from mobility.path_graph import SimplifiedPathGraph, ContractedPathGraph
+from mobility.transport_graphs import SimplifiedPathGraph, ContractedPathGraph
 
 class PublicTransportTravelCosts(FileAsset):
     """
@@ -67,7 +67,8 @@ class PublicTransportTravelCosts(FileAsset):
             "intermodal_graph": intermodal_graph,
             "transport_zones": transport_zones,
             "first_modal_transfer": first_modal_transfer,
-            "last_modal_transfer": last_modal_transfer
+            "last_modal_transfer": last_modal_transfer,
+            "parameters": parameters
         }
 
         file_name = first_leg_mode.name + "_public_transport_" + last_leg_mode.name + "_travel_costs.parquet"
@@ -75,20 +76,21 @@ class PublicTransportTravelCosts(FileAsset):
 
         super().__init__(inputs, cache_path)
 
-    def get_cached_asset(self) -> pd.DataFrame:
+    def get_cached_asset(self, congestion: bool = False) -> pd.DataFrame:
         
         logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
         costs = pd.read_parquet(self.cache_path)
 
         return costs
 
-    def create_and_get_asset(self) -> pd.DataFrame:
+    def create_and_get_asset(self, congestion: bool = False) -> pd.DataFrame:
         
         costs = self.compute_travel_costs(
             self.inputs["transport_zones"],
             self.inputs["intermodal_graph"],
             self.inputs["first_modal_transfer"],
-            self.inputs["last_modal_transfer"]
+            self.inputs["last_modal_transfer"],
+            self.inputs["parameters"]
         )
         
         costs.to_parquet(self.cache_path)
@@ -101,7 +103,8 @@ class PublicTransportTravelCosts(FileAsset):
             transport_zones: TransportZones,
             intermodal_graph: IntermodalTransportGraph,
             first_modal_transfer: IntermodalTransfer,
-            last_modal_transfer: IntermodalTransfer
+            last_modal_transfer: IntermodalTransfer,
+            parameters: PublicTransportRoutingParameters
         ) -> pd.DataFrame:
         """
         Calculates travel costs for public transport between transport zones.
@@ -127,8 +130,8 @@ class PublicTransportTravelCosts(FileAsset):
                 str(intermodal_graph.get()),
                 json.dumps(asdict(first_modal_transfer)),
                 json.dumps(asdict(last_modal_transfer)),
-                str(self.cache_path),
-                
+                json.dumps(asdict(parameters)),
+                str(self.cache_path)
             ]
         )
 
@@ -136,3 +139,8 @@ class PublicTransportTravelCosts(FileAsset):
 
         return costs
     
+    
+    def update(self, od_flows):
+        
+        self.intermodal_graph.update()
+        self.create_and_get_asset()

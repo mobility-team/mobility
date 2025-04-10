@@ -15,8 +15,8 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\2e3f146ec4314657eda8c102d316cb49-transport_zones.gpkg',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\contracted\\a2db17f162b1bd6ea3a7cb5704595621-done',
+#   'D:/data/mobility/projects/haut-doubs/94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg',
+#   'D:/data/mobility/projects/haut-doubs/path_graph_car/contracted/06286153448029573ab8e0fe272fc303-car-contracted-path-graph',
 #   '60.0',
 #   '1.0',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\d6b65fe9bbe771cc5991b958d4f6cf95-travel_costs_congested_car.parquet'
@@ -110,7 +110,6 @@ buildings_sample[, vertex_id := vertices$vertex_id[knn$nn.index]]
 
 travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, vertex_id)], by.x = "building_id_from_cluster", by.y = "building_id")
 travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, vertex_id)], by.x = "building_id_to_cluster", by.y = "building_id", suffixes = c("_from", "_to"))
-
 
 
 # Compute the distances between clusters

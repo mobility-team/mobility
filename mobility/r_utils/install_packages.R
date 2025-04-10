@@ -1,13 +1,28 @@
 # -----------------------------------------------------------------------------
+# Parse arguments
+args <- commandArgs(trailingOnly = TRUE)
+
+packages <- args[2]
+
+force_reinstall <- args[3]
+force_reinstall <- as.logical(force_reinstall)
+
+download_method <- args[4]
+
+# -----------------------------------------------------------------------------
 # Install pak if needed
 if (!("pak" %in% installed.packages())) {
-  install.packages("pak", repos = sprintf(
-    "https://r-lib.github.io/p/pak/%s/%s/%s/%s",
-    "stable",
-    .Platform$pkgType,
-    R.Version()$os,
-    R.Version()$arch
-  ))
+  install.packages(
+    "pak",
+    method = download_method,
+    repos = sprintf(
+      "https://r-lib.github.io/p/pak/%s/%s/%s/%s",
+      "stable",
+      .Platform$pkgType,
+      R.Version()$os,
+      R.Version()$arch
+    )
+  )
 }
 library(pak)
 
@@ -24,12 +39,8 @@ if (!("jsonlite" %in% installed.packages())) {
 }
 library(jsonlite)
 
-# -----------------------------------------------------------------------------
-# Parse arguments
-args <- commandArgs(trailingOnly = TRUE)
-args <- fromJSON(args[2], simplifyVector = FALSE)
-packages <- args[["packages"]]
-force_reinstall <- args[["force_reinstall"]]
+# Parse the packages list
+packages <- fromJSON(packages, simplifyDataFrame = FALSE)
 
 # -----------------------------------------------------------------------------
 # Local packages
@@ -41,8 +52,6 @@ if (length(local_packages) > 0) {
 } else {
   local_packages <- c()
 }
-
-
 
 if (force_reinstall == FALSE) {
   local_packages <- local_packages[!(local_packages %in% rownames(installed.packages()))]

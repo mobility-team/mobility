@@ -26,6 +26,8 @@ Vous trouverez un court descriptif de la première [ici](https://python.doctor/p
 * commenter le code en anglais,
 * utiliser les docstrings.
 
+Nous utilisons les [conventions numpy](https://numpydoc.readthedocs.io/en/latest/format.html) pour les docstrings.
+
 Cette utilisation a été décidée [ici](https://github.com/mobility-team/mobility/issues/20). Des tests automatiques vérifient que la convention est suivie (mais restent assez permissifs pour les erreurs mineures).
 
 ## Gestion des données externes

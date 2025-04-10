@@ -7,11 +7,15 @@ import pandas as pd
 import geopandas as gpd
 
 from importlib import resources
-from mobility.path_graph import PathGraph
+from mobility.transport_graphs.path_graph import PathGraph
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
 from mobility.path_routing_parameters import PathRoutingParameters
+from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
+from mobility.transport_graphs.speed_modifier import SpeedModifier
+
+from typing import List
 
 class PathTravelCosts(FileAsset):
     """
@@ -36,9 +40,12 @@ class PathTravelCosts(FileAsset):
     def __init__(
             self,
             mode_name: str,
-            transport_zones: gpd.GeoDataFrame,
+            transport_zones: TransportZones,
             routing_parameters: PathRoutingParameters,
-            congestion: bool = False
+            osm_capacity_parameters: OSMCapacityParameters,
+            congestion: bool = False,
+            congestion_flows_scaling_factor: float = 1.0,
+            speed_modifiers: List[SpeedModifier] = []
         ):
         """
         Initializes a TravelCosts object with the given transport zones and travel mode.
@@ -48,12 +55,21 @@ class PathTravelCosts(FileAsset):
             mode (str): Mode of transportation for calculating travel costs.
         """
 
-        path_graph = PathGraph(mode_name, transport_zones, congestion)
+        path_graph = PathGraph(
+            mode_name,
+            transport_zones,
+            osm_capacity_parameters,
+            congestion,
+            congestion_flows_scaling_factor,
+            speed_modifiers
+        )
         
         inputs = {
             "transport_zones": transport_zones,
             "mode_name": mode_name,
             "simplified_path_graph": path_graph.simplified,
+            "modified_path_graph": path_graph.modified,
+            "congested_path_graph": path_graph.congested,
             "contracted_path_graph": path_graph.contracted,
             "routing_parameters": routing_parameters
         }

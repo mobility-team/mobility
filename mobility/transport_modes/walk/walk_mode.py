@@ -1,10 +1,11 @@
 from mobility.transport_zones import TransportZones
-from mobility.path_travel_costs import PathTravelCosts
+from mobility.transport_costs.path_travel_costs import PathTravelCosts
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.path_routing_parameters import PathRoutingParameters
 from mobility.generalized_cost_parameters import GeneralizedCostParameters
 from mobility.cost_of_time_parameters import CostOfTimeParameters
-from mobility.path_generalized_cost import PathGeneralizedCost
+from mobility.transport_costs.path_generalized_cost import PathGeneralizedCost
+from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 
 class WalkMode(TransportMode):
     
@@ -12,6 +13,7 @@ class WalkMode(TransportMode):
         self,
         transport_zones: TransportZones,
         routing_parameters: PathRoutingParameters = None,
+        osm_capacity_parameters: OSMCapacityParameters = None,
         generalized_cost_parameters: GeneralizedCostParameters = None
     ):
         
@@ -20,6 +22,9 @@ class WalkMode(TransportMode):
                 filter_max_time=1.0,
                 filter_max_speed=5.0
             )
+            
+        if osm_capacity_parameters is None:
+            osm_capacity_parameters = OSMCapacityParameters("walk")
         
         if generalized_cost_parameters is None:
             generalized_cost_parameters = GeneralizedCostParameters(
@@ -28,7 +33,7 @@ class WalkMode(TransportMode):
                 cost_of_time=CostOfTimeParameters()
             )
         
-        travel_costs = PathTravelCosts("walk", transport_zones, routing_parameters)
+        travel_costs = PathTravelCosts("walk", transport_zones, routing_parameters, osm_capacity_parameters)
         generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters)
         super().__init__("walk", travel_costs, generalized_cost)
         

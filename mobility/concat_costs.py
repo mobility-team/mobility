@@ -86,7 +86,7 @@ def concat_travel_costs(modes, year):
     if "car/public_transport/walk" in mode_names or "bicycle/public_transport/walk" in mode_names  or "walk/public_transport/walk" in mode_names :
         costs["time"] = np.where(
             costs["mode"].str.contains("public_transport"),
-            costs["start_time"] + costs["mid_time"] + costs["last_time"],
+            costs["start_real_time"] + costs["mid_real_time"] + costs["last_real_time"],
             costs["time"]
         )
         
@@ -103,7 +103,13 @@ def concat_travel_costs(modes, year):
 
 def concat_generalized_cost(modes):
     
-    costs = {m.name: m.generalized_cost.get() for m in modes}
+    def get_gen_costs(mode):
+        if mode.congestion:
+            return mode.generalized_cost.get(congestion=mode.congestion)
+        else:
+            return mode.generalized_cost.get()
+    
+    costs = {m.name: get_gen_costs(m) for m in modes}
     costs = [gc.assign(mode=m) for m, gc in costs.items()]
     costs = pd.concat(costs)
     

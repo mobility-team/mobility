@@ -1,19 +1,25 @@
 import os
 import pathlib
 import logging
+import dataclasses
+import json
 import geopandas as gpd
 
 from importlib import resources
 from mobility.parsers.osm import OSMData
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
+from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
+from mobility.transport_zones import TransportZones
+from mobility.transport_graphs.graph_gpkg_exporter import GraphGPKGExporter
 
 class SimplifiedPathGraph(FileAsset):
 
     def __init__(
             self,
             mode_name: str,
-            transport_zones: gpd.GeoDataFrame
+            transport_zones: TransportZones,
+            osm_capacity_parameters: OSMCapacityParameters
         ):
         
         available_modes = ["car", "bicycle", "walk"]
@@ -24,22 +30,18 @@ class SimplifiedPathGraph(FileAsset):
             )
 
         osm = OSMData(
-            transport_zones,
+            transport_zones.study_area,
             object_type="w",
             key="highway",
-            tags = [
-                "primary", "secondary", "tertiary", "unclassified", "residential",
-                "service", "track", "cycleway", "path", "steps", "ferry",
-                "living_street", "bridleway", "footway", "pedestrian",
-                "primary_link", "secondary_link", "tertiary_link"
-            ],
-            geofabrik_extract_date="240101",
+            tags = osm_capacity_parameters.get_highway_tags(),
+            geofabrik_extract_date="250101",
             file_format="osm"
         )
         
         inputs = {
             "transport_zones": transport_zones,
             "osm": osm,
+            "osm_capacity_parameters": osm_capacity_parameters,
             "mode_name": mode_name
         }
         
@@ -62,6 +64,7 @@ class SimplifiedPathGraph(FileAsset):
             self.transport_zones,
             self.osm.get(),
             self.mode_name,
+            self.osm_capacity_parameters,
             self.cache_path
         )
 
@@ -72,23 +75,28 @@ class SimplifiedPathGraph(FileAsset):
             transport_zones: gpd.GeoDataFrame,
             osm_data_path: pathlib.Path,
             mode: str,
+            osm_capacity_parameters: OSMCapacityParameters,
             output_file_path: pathlib.Path
         ) -> None:
 
     
         logging.info("Creating a routable graph with dodgr and cpp routing this might take a while...")
          
-        script = RScript(resources.files('mobility.r_utils').joinpath('prepare_path_graph.R'))
+        script = RScript(resources.files('mobility.transport_graphs').joinpath('prepare_path_graph.R'))
 
         script.run(
             args=[
                 str(transport_zones.cache_path),
                 str(osm_data_path),
                 mode,
-                output_file_path
+                json.dumps(dataclasses.asdict(osm_capacity_parameters)),
+                str(output_file_path)
             ]
         )
 
         return None
 
 
+    def convert_to_gpkg(self):
+        gpkg_fp = GraphGPKGExporter().export(self)
+        return gpkg_fp

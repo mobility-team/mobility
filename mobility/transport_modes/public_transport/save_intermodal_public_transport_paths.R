@@ -22,14 +22,14 @@ from_ids <- args[6]
 to_ids <- args[7]
 output_file_path <- args[8]
 
-package_path <- 'D:/dev/mobility_oss/mobility'
-tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\1f2ab44e21d117bef05387137ec9aefc-transport_zones.gpkg'
-intermodal_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\walk_public_transport_walk_intermodal_transport_graph\\simplified\\9fb7b8ff16ce7c1934a83c342ede6161-done"
-first_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
-last_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
-from_ids <- 213:219
-to_ids <- 330:331
-output_file_path <- 'D:/data/mobility/projects/haut-doubs/paths.gpkg'
+# package_path <- 'D:/dev/mobility_oss/mobility'
+# tz_file_path <- 'D:/data/mobility/projects/haut-doubs/94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg'
+# intermodal_graph_fp <- "D:/data/mobility/projects/haut-doubs/car_public_transport_walk_intermodal_transport_graph/simplified/aa1f3be279a76522333f0d5e37e850a8-done"
+# first_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 5.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
+# last_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
+# from_ids <- 885
+# to_ids <- 1034
+# output_file_path <- 'D:/data/mobility/projects/haut-doubs/paths_2.gpkg'
 
 
 first_modal_transfer <- fromJSON(first_modal_transfer)

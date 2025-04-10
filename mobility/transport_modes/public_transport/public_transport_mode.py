@@ -43,6 +43,8 @@ class PublicTransportMode(TransportMode):
             last_intermodal_transfer
         )
         
+        congestion = first_leg_mode.congestion or last_leg_mode.congestion
+        
         if generalized_cost_parameters is None:
             generalized_cost_parameters = GeneralizedCostParameters(
                 cost_constant=0.0,
@@ -59,4 +61,4 @@ class PublicTransportMode(TransportMode):
         
         name = first_leg_mode.name + "/public_transport/" + last_leg_mode.name
         
-        super().__init__(name, travel_costs, generalized_cost)    
+        super().__init__(name, travel_costs, generalized_cost, congestion)    

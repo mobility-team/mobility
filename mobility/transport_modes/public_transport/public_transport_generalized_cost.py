@@ -16,7 +16,7 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
         super().__init__(inputs)
         
         
-    def get(self, metrics=["cost"]) -> pd.DataFrame:
+    def get(self, metrics=["cost"], congestion: bool = True) -> pd.DataFrame:
         
         costs = self.travel_costs.get()
         
@@ -31,17 +31,17 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
             on="from"
         )
         
-        gen_cost = self.start_parameters.cost_constant
-        gen_cost += self.start_parameters.cost_of_distance*costs["start_distance"]
-        gen_cost += self.start_parameters.cost_of_time.compute(costs["start_distance"], costs["country"])*costs["start_time"]
+        # gen_cost = self.start_parameters.cost_constant
+        gen_cost = self.start_parameters.cost_of_distance*costs["start_distance"]
+        gen_cost += self.start_parameters.cost_of_time.compute(costs["start_distance"], costs["country"])*costs["start_real_time"]
         
         gen_cost += self.mid_parameters.cost_constant
         gen_cost += self.mid_parameters.cost_of_distance*costs["mid_distance"]
-        gen_cost += self.mid_parameters.cost_of_time.compute(costs["mid_distance"], costs["country"])*costs["mid_time"]
+        gen_cost += self.mid_parameters.cost_of_time.compute(costs["mid_distance"], costs["country"])*costs["mid_perceived_time"]
         
-        gen_cost += self.last_parameters.cost_constant
+        # gen_cost += self.last_parameters.cost_constant
         gen_cost += self.last_parameters.cost_of_distance*costs["last_distance"]
-        gen_cost += self.last_parameters.cost_of_time.compute(costs["last_distance"], costs["country"])*costs["last_time"]
+        gen_cost += self.last_parameters.cost_of_time.compute(costs["last_distance"], costs["country"])*costs["last_real_time"]
         
         costs["cost"] = gen_cost
         

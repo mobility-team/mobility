@@ -77,7 +77,7 @@ save_cppr_graph <- function(graph, path, hash) {
   )
   
   for (var in names(graph$attrib)) {
-    attrib[[var]] <- graph$attrib[[var]]
+    attrib[, (var) := graph$attrib[[var]]]
   }
   
   if (!dir.exists(path)) {
@@ -112,9 +112,9 @@ read_cppr_graph <- function(path, hash) {
   )
   
   graph[["data"]] <- duckdb_parquet_to_df(con, file.path(path, paste0(hash, "data.parquet")))
-  graph[["dict"]] <- duckdb_parquet_to_df(con, file.path(path, paste0(hash,"dict.parquet")))
+  graph[["dict"]] <- duckdb_parquet_to_df(con, file.path(path, paste0(hash, "dict.parquet")))
   
-  attrib <- duckdb_parquet_to_df(con, file.path(path, paste0(hash,"attrib.parquet")))
+  attrib <- duckdb_parquet_to_df(con, file.path(path, paste0(hash, "attrib.parquet")))
   
   for (var in colnames(attrib)) {
     graph$attrib[[var]] <- attrib[[var]]

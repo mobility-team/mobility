@@ -8,6 +8,18 @@ import os
 from importlib import resources
 
 class RScript:
+    """
+    Class to run the R scripts from the Python code.
+    
+    Use the run() method to actually run the script with arguments.
+    
+    Parameters
+    ----------
+    script_path : str | contextlib._GeneratorContextManager
+        Path of the R script. Mobility R scripts are stored in the r_utils folder.
+    
+    """
+    
     def __init__(self, script_path: str | contextlib._GeneratorContextManager):
         if isinstance(script_path, contextlib._GeneratorContextManager):
             with script_path as p:
@@ -23,7 +35,20 @@ class RScript:
             raise ValueError("Rscript not found : " + self.script_path)
 
     def run(self, args: list) -> None:
-        
+        """
+        Run the R script.
+
+        Parameters
+        ----------
+        args : list
+            List of arguments to pass to the R function.
+
+        Raises
+        ------
+        RScriptError
+            Exception when the R script returns an error.
+
+        """  
         # Prepend the package path to the argument list so the R script can
         # know where it is run (useful when sourcing other R scripts).
         with resources.files('mobility') as p:
@@ -54,6 +79,17 @@ class RScript:
             )
 
     def print_output(self, stream, is_error=False):
+        """
+        Log all R messages if debug=True in set_params, log only important messages if not.
+
+        Parameters
+        ----------
+        stream : 
+            R message.
+        is_error : bool, default=False
+            If the R message is an error or not.
+
+        """
         for line in iter(stream.readline, b""):
             msg = line.decode("utf-8", errors="replace")
 
@@ -70,4 +106,6 @@ class RScript:
 
 
 class RScriptError(Exception):
+    """Exception for R errors."""
+
     pass

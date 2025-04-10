@@ -30,7 +30,8 @@ dependencies = [
   "psutil",
   "dash",
   "dash-leaflet[all]",
-  "dash-bootstrap-components"
+  "dash-bootstrap-components",
+  "networkx"
 ]
 
 requires-python = ">=3.11"

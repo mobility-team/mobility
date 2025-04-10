@@ -12,6 +12,16 @@ from mobility.parsers.download_file import download_file
 from mobility.parsers.local_admin_units_categories import LocalAdminUnitsCategories
 
 class LocalAdminUnits(FileAsset):
+    """FileAsset class preparing local admin units in France and Switzerland.
+    
+    Use .get() method to get its content (under Parquet format).
+    
+    In France, uses adminexpress base from IGN, stored on cquest.org. For Paris, Lyon and Marseille, each 'arrondissement' is considered a distinct admin unit.
+    
+    In Switzerland, uses swisstopo data stored on geo.admin.ch
+    
+    Data from both countries is merged and stored in Parquet format under coordinates system EPSG:3035.
+    """
     
     def __init__(self):
         

@@ -14,8 +14,8 @@ from rich.progress import Progress
 from typing import Tuple, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from mobility.parsers.download_file import download_file
-from mobility.parsers.geofabrik_regions import GeofabrikRegions
+from mobility.parsers.osm.geofabrik_extract import GeofabrikExtract
+from mobility.parsers.osm.geofabrik_regions import GeofabrikRegions
 from mobility.file_asset import FileAsset
 from mobility.study_area import StudyArea
 
@@ -23,13 +23,30 @@ class OSMData(FileAsset):
     """
     A class for managing OpenStreetMap (OSM) data, inheriting from the Asset class.
 
-    This class handles the downloading, processing, and caching of OSM data 
-    based on specified transport zones and modes.
+    This class handles the downloading, processing, and caching of specific OSM data within the study area.
 
-    Attributes:
-        transport_zones (gpd.GeoDataFrame): The geographical areas for which OSM data is needed.
+        Parameters
+        ----------
+        study_area : StudyArea
+            The area for which OSM data is needed.
+        object_type : str
+            OSM types to query. "a" for areas, "n" for nodes, "w" for ways, "r" for relations, "nwr" for everything.
+            See https://docs.osmcode.org/osmium/latest/osmium-tags-filter.html for the precise doc
+        key : str
+            OSM key to query, for instance "building".
+            See https://docs.osmcode.org/osmium/latest/osmium-tags-filter.html for the precise doc
+        tags : List[str], default=None
+            OSM tag(s) to query.
+            See https://docs.osmcode.org/osmium/latest/osmium-tags-filter.html for the precise doc
+        split_local_admin_units : bool, default=False
+            To describe.
+        geofabrik_extract_date : str, default="240101"
+            Reference date of the OSM data to use (date at which it has been extracted on Geofabrik).
+        file_format : str, default="pbf"
+            To describe.
 
-    Methods:
+    Methods
+    -------
         get_cached_asset: Retrieve a cached OSM data file path.
         create_and_get_asset: Download, process, and cache OSM data, then return the file path.
         create_transport_zones_boundary: Create a boundary polygon for the transport zones.
@@ -49,13 +66,6 @@ class OSMData(FileAsset):
             geofabrik_extract_date: str = "240101",
             file_format: str = "pbf"
         ):
-        """
-        Initializes an OSMData object with the given transport zones and dodgr modes.
-
-        Args:
-            transport_zones (gpd.GeoDataFrame): GeoDataFrame defining the transport zones.
-        """
-        
         if tags is None:
             tags = []
         
@@ -108,8 +118,10 @@ class OSMData(FileAsset):
         logging.info("Downloading and pre-processing OSM data.")
         
         study_area = self.inputs["study_area"].get()
+        
+        boundary_path = self.inputs["study_area"].cache_path["boundary"]
+        boundary = gpd.read_file(boundary_path).to_crs(3035).buffer(10000.0).to_crs(4326).geometry[0]
     
-        boundary, boundary_path = self.create_study_area_boundary(study_area)
         regions_paths = self.get_osm_regions(boundary)
         
         filtered_regions_paths = []
@@ -133,38 +145,6 @@ class OSMData(FileAsset):
             return self.cache_path.parent
     
     
-    
-    def create_study_area_boundary(
-            self, study_area: StudyArea
-        ) -> Tuple[shapely.Polygon, str]:
-        """
-        Creates a combined boundary polygon for all transport zones and saves it as a GeoJSON file.
-
-        This method merges the geometries of all provided transport zones into a single polygon, 
-        which represents the combined boundary of these zones. It then saves this boundary as a 
-        GeoJSON file to be used in subsequent operations.
-
-        Args:
-            transport_zones (gpd.GeoDataFrame): A GeoDataFrame containing the geometries of transport zones.
-
-        Returns:
-            Tuple[shapely.geometry.Polygon, str]: A tuple containing the combined boundary polygon 
-            and the path to the saved GeoJSON file.
-        """
-        
-        # Merge all transport zones into one polygon
-        boundary = study_area.to_crs(4326).unary_union.buffer(0.1)
-        
-        # Store the boundary as a temporary geojson file
-        boundary_geojson = geojson.Feature(geometry=boundary, properties={})
-        boundary_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "transport_zones_boundary.geojson"
-        
-        with open(boundary_path, "w") as f:
-            geojson.dump(boundary_geojson, f)
-            
-        return boundary, boundary_path
-    
-    
     def get_osm_regions(self, transport_zones_boundary: shapely.Polygon) -> List[pathlib.Path]:
         """
         Downloads OpenStreetMap (OSM) data for French regions intersecting with the specified transport zones boundary.
@@ -184,13 +164,8 @@ class OSMData(FileAsset):
         
         for index, region in regions.iterrows():
             
-            logging.info("Downloading Geofabrik data : " + region.url)
-            
-            file = pathlib.Path(region.url).name
-            path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "osm" / file
-            download_file(region.url, path)
-                    
-            osm_regions.append(path)
+            logging.info("Downloading Geofabrik data : " + region.url)               
+            osm_regions.append(GeofabrikExtract(region.url).get())
             
         return osm_regions
     
@@ -239,7 +214,10 @@ class OSMData(FileAsset):
 
         Args:
             cropped_region_path (pathlib.Path): The file path of the cropped OSM region data.
-            osm_tags (List[str]): A list of OSM tags to filter the data.
+            object_type (str): OSM types to query. "a" for areas, "n" for nodes, "w" for ways, "r" for relations, "nwr" for everything
+            key (str): OSM key to query, for instance "building"
+            tags (list of str): OSM tag(s) to query
+                For the parameters "object_type", "key" and "tags", see https://docs.osmcode.org/osmium/latest/osmium-tags-filter.html for the precise doc            
 
         Returns:
             pathlib.Path: The file path of the filtered OSM region.
