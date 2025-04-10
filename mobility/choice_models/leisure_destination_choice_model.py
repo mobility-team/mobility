@@ -10,7 +10,7 @@ import polars as pl
 from importlib import resources
 
 from mobility.choice_models.destination_choice_model import DestinationChoiceModel
-from mobility.choice_models.work_utilities import WorkUtilities
+from mobility.choice_models.utilities import Utilities
 from mobility.parsers.shops_turnover_distribution import ShopsTurnoverDistribution
 from mobility.parsers.households_expenses_distribution import HouseholdsExpensesDistribution
 from mobility.r_utils.r_script import RScript

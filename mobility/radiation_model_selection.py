@@ -61,6 +61,10 @@ def apply_radiation_model(sources, sinks, costs, utilities, selection_lambda):
         offset_costs(costs, +1.0, 0.24),
         offset_costs(costs, +2.0, 0.07)
     ])
+    
+    # Remove zero sources / sinks transport zones
+    sources = sources.filter(pl.col("source_volume") > 0.0)
+    sinks = sinks.filter(pl.col("sink_volume") > 0.0)
 
     # Merge sources, sinks, costs and utilities
     od = (
@@ -68,8 +72,7 @@ def apply_radiation_model(sources, sinks, costs, utilities, selection_lambda):
         .join(costs, on="from")
         .join(sinks, on="to")
         .join(utilities, on="to")
-        .with_columns([(pl.col("sink_volume")*pl.col("prob")).alias("sink_volume")])
-        
+        .with_columns([(pl.col("sink_volume")*pl.col("prob")).alias("sink_volume")])    
     )
     
     # Compute the net utility for each OD
