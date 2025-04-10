@@ -110,7 +110,7 @@ class LeisureDestinationChoiceModel(DestinationChoiceModel):
         return sources, sinks
     
     def prepare_utilities(self, transport_zones, sinks):
-        utilities = WorkUtilities(transport_zones, sinks, self.inputs["parameters"].utility)
+        utilities = Utilities(transport_zones, sinks, self.inputs["parameters"].utility)
         return utilities
 
     
