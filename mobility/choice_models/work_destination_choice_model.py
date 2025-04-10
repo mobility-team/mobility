@@ -43,8 +43,8 @@ class WorkDestinationChoiceModelParameters:
             "ch": 120.0
         }
     )
-    
-    
+
+
 
 class WorkDestinationChoiceModel(DestinationChoiceModel):
     
