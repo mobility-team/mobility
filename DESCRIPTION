@@ -23,4 +23,5 @@ Imports:
     lubridate,
     readxl,
     pbapply,
-    future
+    future,
+    future.apply
