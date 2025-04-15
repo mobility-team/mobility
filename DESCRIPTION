@@ -10,6 +10,7 @@ Imports:
     gtfsrouter,
     sf,
     geodist,
+    geos,
     dplyr,
     sfheaders,
     nngeo,
