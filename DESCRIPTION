@@ -22,4 +22,5 @@ Imports:
     hms,
     lubridate,
     readxl,
-    pbapply
+    pbapply,
+    future
