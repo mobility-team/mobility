@@ -15,9 +15,16 @@ from mobility.parsers.admin_boundaries import get_french_regions_boundaries, get
 
 class Population(FileAsset):
     
-    def __init__(self, transport_zones: gpd.GeoDataFrame, sample_size: int):
+    def __init__(
+            self,
+            transport_zones: gpd.GeoDataFrame,
+            sample_size: int,
+            swiss_census_data_path: str | pathlib.Path
+        ):
         
         inputs = {"transport_zones": transport_zones, "sample_size": sample_size}
+        
+        self.swiss_census_data_path = swiss_census_data_path
 
         file_name = "population.parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name    
@@ -38,9 +45,16 @@ class Population(FileAsset):
         sample_size = self.inputs["sample_size"]
         
         sample_sizes = self.get_sample_sizes(transport_zones, sample_size)
-        census_data = self.get_census_data(transport_zones)
-        individuals = self.get_individuals(sample_sizes, census_data)
-    
+        
+        swiss_census_data = self.get_swiss_census_data(transport_zones)
+        swiss_individuals = self.get_swiss_individuals(sample_sizes, swiss_census_data)
+        
+        french_census_data = self.get_french_census_data(transport_zones)
+        french_individuals = self.get_french_individuals(sample_sizes, french_census_data) 
+
+        
+        individuals = pd.concat([french_individuals, swiss_individuals])
+        
         individuals.to_parquet(self.cache_path)
 
         return individuals
@@ -58,6 +72,8 @@ class Population(FileAsset):
             on="local_admin_unit_id",
             how="left"
         )
+        
+        population["legal_population"] = population["legal_population"]*population["weight"]
         
         if population["legal_population"].isnull().any():
             logging.info(
@@ -83,16 +99,17 @@ class Population(FileAsset):
         return population
     
     
-    def get_census_data(self, transport_zones: gpd.GeoDataFrame):
+    def get_french_census_data(self, transport_zones: gpd.GeoDataFrame):
         
-        logging.info("Loading census data...")
+        logging.info("Loading french census data...")
         
         regions = get_french_regions_boundaries()
         
+        transport_zones = transport_zones[transport_zones["local_admin_unit_id"].str.contains("fr-")]
         transport_zones = gpd.sjoin(transport_zones, regions[["INSEE_REG", "geometry"]], predicate="intersects") 
         transport_zones_regions = transport_zones["INSEE_REG"].drop_duplicates().tolist()
         
-        census_data = [CensusLocalizedIndividuals(transport_zones).get() for tz_region in transport_zones_regions]
+        census_data = [CensusLocalizedIndividuals(tz_region).get() for tz_region in transport_zones_regions]
         census_data = pd.concat(census_data)
         
         census_data.set_index(["CANTVILLE"], inplace=True)
@@ -100,7 +117,7 @@ class Population(FileAsset):
         return census_data
     
     
-    def get_individuals(self, sample_sizes: pd.DataFrame, census_data: pd.DataFrame):
+    def get_french_individuals(self, sample_sizes: pd.DataFrame, census_data: pd.DataFrame):
         
         cantons = get_french_cities_boundaries()
         cantons = cantons[["INSEE_COM", "INSEE_CAN"]]
@@ -108,7 +125,7 @@ class Population(FileAsset):
         
         sample_sizes = pd.merge(sample_sizes, cantons, on="local_admin_unit_id")
 
-        logging.info("Sampling census data in each transport zone...")
+        logging.info("Sampling census data in each french transport zone...")
         
         cities = sample_sizes.to_dict(orient="records")
         
@@ -135,5 +152,69 @@ class Population(FileAsset):
         
         return individuals
     
-
     
+    
+    def get_swiss_census_data(self, transport_zones: gpd.GeoDataFrame):
+        
+        if transport_zones["local_admin_unit_id"].str.contains("ch-").sum() > 0:
+            
+            if self.swiss_census_data_path is None:
+                raise ValueError(
+                    ("Some transport zones are in Switzerland and no path to "
+                     "a preprocessed swiss census dataset (which is not openly "
+                     "available at the moment).")
+                )
+                
+            if self.swiss_census_data_path.exists() is False:
+                raise ValueError(
+                    "The preprocessed census dataset provided does not exist at the location " + str(self.swiss_census_data_path)
+                )
+                
+            census_data = pd.read_parquet(self.swiss_census_data_path)
+        
+        else:
+            
+            census_data = pd.DataFrame(
+                columns=[
+                    "age", "socio_pro_category", "ref_pers_socio_pro_category",
+                    "n_pers_household", "n_cars", "local_admin_unit_id"
+                ]
+            )
+            
+        census_data = census_data.set_index("local_admin_unit_id")
+        
+        return census_data
+    
+
+    def get_swiss_individuals(self, sample_sizes: pd.DataFrame, census_data: pd.DataFrame):
+        
+        print(sample_sizes.columns)
+        
+        sample_sizes = sample_sizes[sample_sizes["local_admin_unit_id"].str.contains("ch-")]
+
+        logging.info("Sampling census data in each swiss transport zone...")
+        
+        cities = sample_sizes[["local_admin_unit_id", "n_persons", "transport_zone_id"]].to_dict(orient="records")
+        
+        individuals = []
+
+        with Progress() as progress:
+            
+            task = progress.add_task("[green]Sampling individuals...", total=len(cities))
+        
+            for city in cities:
+                
+                indiv = census_data.loc[city["local_admin_unit_id"]].sample(city["n_persons"], weights="weight")
+                indiv = indiv.reset_index()
+                indiv = indiv[["age", "socio_pro_category", "ref_pers_socio_pro_category", "n_pers_household"]]
+                indiv["transport_zone_id"] = city["transport_zone_id"]
+                individuals.append(indiv)
+                
+                progress.update(task, advance=1)
+        
+            
+        individuals = pd.concat(individuals)
+        
+        individuals["individual_id"] = [shortuuid.uuid() for _ in range(individuals.shape[0])]
+        
+        return individuals
