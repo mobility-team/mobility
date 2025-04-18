@@ -1,3 +1,4 @@
+"""A module to manage home-work flows data in France and Switzerland."""
 import os
 import pathlib
 import logging
@@ -11,6 +12,10 @@ from mobility.parsers.local_admin_units import LocalAdminUnits
 from mobility.parsers.jobs_active_population_distribution import JobsActivePopulationDistribution
 
 class JobsActivePopulationFlows(FileAsset):
+    """Class managing home-work flows data in France and Switzerland.
+    
+    Use the .get() method to get a dataframe with those flows.
+    """
     
     def __init__(self):
         
@@ -19,7 +24,15 @@ class JobsActivePopulationFlows(FileAsset):
         super().__init__(inputs, cache_path)
         
     def get_cached_asset(self) -> pd.DataFrame:
+        """
+        Get the already prepared flows.
 
+        Returns
+        -------
+        flows : pd.DataFrame
+            Dataframe with flows.
+
+        """
         logging.info("Active population <-> jobs flows already prepared. Reusing the file : " + str(self.cache_path))
         flows = pd.read_parquet(self.cache_path)
 
@@ -27,7 +40,15 @@ class JobsActivePopulationFlows(FileAsset):
     
     
     def create_and_get_asset(self) -> pd.DataFrame:
-        
+        """
+        Prepare the flows in France and Switzerland.
+
+        Returns
+        -------
+        flows : pd.DataFrame
+            Dataframe with flows.
+
+        """      
         logging.info("Preparing active population <-> jobs flows.")
         
         local_admin_units = LocalAdminUnits().get().drop(columns="geometry")
@@ -43,7 +64,23 @@ class JobsActivePopulationFlows(FileAsset):
     
     
     def prepare_jobs_active_population_flows_fr(self, local_admin_units):
+        """
+        Prepare the flows in France.
         
+        Uses two files stored on data.gouv.fr.
+
+        Parameters
+        ----------
+        local_admin_units :
+            Not used?
+
+
+        Returns
+        -------
+        flows : pd.DataFrame
+            Dataframe with flows.
+
+        """     
         url = "https://www.data.gouv.fr/fr/datasets/r/f3f22487-22d0-45f4-b250-af36fc56ccd0"
         
         data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "insee"
@@ -114,7 +151,25 @@ class JobsActivePopulationFlows(FileAsset):
     
     
     def prepare_jobs_active_population_flows_ch(self, local_admin_units):
+        """
+        Prepare the flows in Switzerland.
         
+        Uses one files stored on data.gouv.fr.
+        
+        No mode available in Swiss data so we put them to the dominant mode: car.
+
+
+        Parameters
+        ----------
+        local_admin_units :
+            pd.DataFrame
+
+        Returns
+        -------
+        flows : pd.DataFrame
+            Dataframe with flows.
+
+        """          
         url = "https://www.data.gouv.fr/fr/datasets/r/9376a647-69d5-4f3d-b2ac-e9421425608d"
         
         data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "bfs"
