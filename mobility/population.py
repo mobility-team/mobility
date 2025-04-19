@@ -19,7 +19,7 @@ class Population(FileAsset):
             self,
             transport_zones: gpd.GeoDataFrame,
             sample_size: int,
-            swiss_census_data_path: str | pathlib.Path
+            swiss_census_data_path: str | pathlib.Path = None
         ):
         
         inputs = {"transport_zones": transport_zones, "sample_size": sample_size}
