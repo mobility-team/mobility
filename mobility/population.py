@@ -46,14 +46,20 @@ class Population(FileAsset):
         
         sample_sizes = self.get_sample_sizes(transport_zones, sample_size)
         
-        swiss_census_data = self.get_swiss_census_data(transport_zones)
-        swiss_individuals = self.get_swiss_individuals(sample_sizes, swiss_census_data)
-        
-        french_census_data = self.get_french_census_data(transport_zones)
-        french_individuals = self.get_french_individuals(sample_sizes, french_census_data) 
+        country_codes = transport_zones["local_admin_unit_id"].str[:2].unique().tolist()
 
+        if "ch" in country_codes:
+            swiss_census_data = self.get_swiss_census_data(transport_zones)
+            swiss_individuals = self.get_swiss_individuals(sample_sizes, swiss_census_data)
+            individuals = swiss_individuals
         
-        individuals = pd.concat([french_individuals, swiss_individuals])
+        if "fr" in country_codes:
+            french_census_data = self.get_french_census_data(transport_zones)
+            french_individuals = self.get_french_individuals(sample_sizes, french_census_data)
+            individuals = french_individuals
+
+        if "ch" in country_codes and "fr" in country_codes:
+                individuals = pd.concat([french_individuals, swiss_individuals])
         
         individuals.to_parquet(self.cache_path)
 
