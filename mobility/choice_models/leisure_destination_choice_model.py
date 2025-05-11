@@ -5,6 +5,7 @@ import numpy as np
 import pathlib
 import os
 import polars as pl
+import matplotlib.pyplot as plt
 
 
 from importlib import resources
