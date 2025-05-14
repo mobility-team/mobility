@@ -101,7 +101,7 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         )
         
         
-    def prepare_sources_and_sinks(self, transport_zones: gpd.GeoDataFrame):
+    def prepare_sources_and_sinks(self, transport_zones: TransportZones):
         
         
         sources = self.prepare_sources(transport_zones)
@@ -116,7 +116,7 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
     
     def prepare_sources(
             self,
-            transport_zones: gpd.GeoDataFrame
+            transport_zones: TransportZones
         ) -> pd.DataFrame:
         """
         Même code que work_destination_choice_model pour l'instant : on se base sur les domiciles
@@ -125,20 +125,22 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         hh_expenses = HouseholdsExpensesDistribution()
         all_expenses = hh_expenses.get()
         all_expenses = all_expenses["shops"]
-        transport_zones = transport_zones.merge(all_expenses, on="local_admin_unit_id")
-        zones_per_communes = transport_zones[["local_admin_unit_id"]]
+        transport_zones_df = transport_zones.get().drop(columns="geometry")
+        transport_zones_expenses = transport_zones_df.merge(all_expenses, on="local_admin_unit_id")
+        zones_per_communes = transport_zones_expenses[["local_admin_unit_id"]]
         # Compter le nombre de tz par communes
         zones_per_communes = zones_per_communes.value_counts()
         # Diviser le montant total par nombre de tz
-        transport_zones = transport_zones.merge(zones_per_communes, on="local_admin_unit_id")
-        transport_zones["expenses"] = transport_zones["expenses"].truediv(transport_zones["count"])
-        sources_expenses  = transport_zones[["transport_zone_id", "expenses"]].rename(columns = {"transport_zone_id": "from", "expenses": "source_volume"})
+        transport_zones_expenses = transport_zones_expenses.merge(zones_per_communes, on="local_admin_unit_id")
+        transport_zones_expenses["expenses"] = transport_zones_expenses["expenses"].truediv(transport_zones_expenses["count"])
+        sources_expenses  = transport_zones_expenses[["transport_zone_id", "expenses"]].rename(columns = {"transport_zone_id": "from", "expenses": "source_volume"})
+        
         return sources_expenses
         
     
     def prepare_sinks(
             self,
-            transport_zones_df
+            transport_zones: TransportZones
         ) -> pd.DataFrame:
         """
         """
@@ -150,10 +152,11 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         #Convert them in EPSG:3035 (used by TransportZones)
         all_shops = all_shops.to_crs(epsg=3035)
         
-        #Find which stops are in the transport zone
-        all_shops = transport_zones_df.sjoin(all_shops, how="left")
+        # Find which stops are in the transport zone
+        all_shops = transport_zones.get().sjoin(all_shops, how="left")
         all_shops = all_shops.groupby("transport_zone_id").sum("turnover")
         all_shops = all_shops.reset_index()[["transport_zone_id", "turnover"]].rename(columns={"turnover": "sink_volume", "transport_zone_id": "to"})
+        
         return all_shops
     
     

@@ -5,7 +5,7 @@ import numpy as np
 import pathlib
 import os
 import polars as pl
-
+import mobility
 
 from importlib import resources
 
@@ -14,6 +14,8 @@ from mobility.choice_models.utilities import Utilities
 from mobility.parsers.shops_turnover_distribution import ShopsTurnoverDistribution
 from mobility.parsers.households_expenses_distribution import HouseholdsExpensesDistribution
 from mobility.r_utils.r_script import RScript
+from mobility.choice_models.utilities import Utilities
+
 
 from mobility.radiation_model import radiation_model
 from mobility.radiation_model_selection import apply_radiation_model
@@ -110,7 +112,7 @@ class LeisureDestinationChoiceModel(DestinationChoiceModel):
         return sources, sinks
     
     def prepare_utilities(self, transport_zones, sinks):
-        utilities = WorkUtilities(transport_zones, sinks, self.inputs["parameters"].utility)
+        utilities = Utilities(transport_zones, sinks, self.inputs["parameters"].utility)
         return utilities
 
     
