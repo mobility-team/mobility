@@ -92,7 +92,7 @@ class Population(FileAsset):
         transport_zones = gpd.sjoin(transport_zones, regions[["INSEE_REG", "geometry"]], predicate="intersects") 
         transport_zones_regions = transport_zones["INSEE_REG"].drop_duplicates().tolist()
         
-        census_data = [CensusLocalizedIndividuals(transport_zones).get() for tz_region in transport_zones_regions]
+        census_data = [CensusLocalizedIndividuals(tz_region).get() for tz_region in transport_zones_regions]
         census_data = pd.concat(census_data)
         
         census_data.set_index(["CANTVILLE"], inplace=True)
