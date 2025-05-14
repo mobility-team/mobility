@@ -13,6 +13,8 @@ class PathGeneralizedCost(InMemoryAsset):
         
     def get(self, metrics=["cost"], congestion: bool = False) -> pd.DataFrame:
         
+        print("get distance")
+        
         costs = self.travel_costs.get(congestion)
         
         study_area = self.travel_costs.transport_zones.study_area.get()
