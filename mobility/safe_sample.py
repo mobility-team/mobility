@@ -2,6 +2,29 @@ import pandas as pd
 
 # /!\ A default minimum_sample_size remains to be determined
 
+def filter_database(data_base, minimum_sample_size=10, **kwargs):
+    
+    # Filter by the kwargs
+    for key in kwargs.keys():
+        sample_size = (data_base.index.get_level_values(key) == kwargs[key]).sum()
+        if sample_size < minimum_sample_size:
+            # Sample size too small -> Relax the current criteria
+            data_base.reset_index(level=key, inplace=True)
+            # print('The '+key+' criteria has been relaxed.')
+
+        else:
+            if isinstance(data_base.index, pd.MultiIndex):
+                data_base = data_base.xs(kwargs[key], level=key)
+
+            else:
+                data_base = data_base.xs(kwargs[key])
+
+    if type(data_base) == pd.Series:
+        # The database to sample from is just one row
+        data_base = pd.DataFrame([data_base])
+
+    return data_base
+
 
 def safe_sample(
     data_base, n_sample, weights="pondki", minimum_sample_size=10, **kwargs
@@ -30,23 +53,10 @@ def safe_sample(
     Example :
         safe_sample(days_trip_db, 10, csp="3", n_cars="2+", weekday=True, city_category='C')
     """
-    # Filter by the kwargs
-    for key in kwargs.keys():
-        sample_size = (data_base.index.get_level_values(key) == kwargs[key]).sum()
-        if sample_size < minimum_sample_size:
-            # Sample size too small -> Relax the current criteria
-            data_base.reset_index(level=key, inplace=True)
-            # print('The '+key+' criteria has been relaxed.')
-
-        else:
-            if isinstance(data_base.index, pd.MultiIndex):
-                data_base = data_base.xs(kwargs[key], level=key)
-
-            else:
-                data_base = data_base.xs(kwargs[key])
-
-    if type(data_base) == pd.Series:
-        # The database to sample from is just one row
-        data_base = pd.DataFrame([data_base])
+    
+    data_base = filter_database(data_base, minimum_sample_size, **kwargs)
+    
+    print("---")
+    print(data_base)
 
     return data_base.sample(n_sample, weights=weights, replace=True, axis=0)

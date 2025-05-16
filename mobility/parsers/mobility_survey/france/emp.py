@@ -174,6 +174,8 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "MMOTIFDES": str,
                 "MOTPREC": str,
                 "mtp": str,
+                "MDATE_jour": str,
+                "MDATE_mois": str
             },
             usecols=[
                 "IDENT_DEP",
@@ -187,6 +189,8 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "mtp",
                 "MACCOMPM",
                 "MACCOMPHM",
+                "MDATE_jour",
+                "MDATE_mois"
             ],
         )
 
@@ -205,9 +209,34 @@ class EMPMobilitySurvey(MobilitySurvey):
 
         # Remove trips with an unknown or zero distance
         df = df[(df["MDISTTOT_fin"] > 0.0) | (~df["MDISTTOT_fin"].isnull())]
+        
+        # Map months and day of week to integers
+        df["MDATE_mois"] = df["MDATE_mois"].replace({
+            'janvier': 1,
+            'février': 2,
+            'mars': 3,
+            'avril': 4,
+            'mai': 5,
+            'juin': 6,
+            'juillet': 7,
+            'août': 8,
+            'septembre': 9,
+            'octobre': 10,
+            'novembre': 11,
+            'décembre': 12
+        })
+        
+        df["MDATE_jour"] = df["MDATE_jour"].replace({
+            'lundi': 0,
+            'mardi': 1,
+            'mercredi': 2,
+            'jeudi': 3,
+            'vendredi': 4,
+            'samedi': 5,
+            'dimanche': 6
+        })
 
         # Convert the mode id from the EMP terminology to the ENTD one
-
         data = np.array(
             [
                 ["1.1", "1.10"],
@@ -327,8 +356,18 @@ class EMPMobilitySurvey(MobilitySurvey):
 
         # Data base of days trip : group the trips by days
         days_trip = df[
-            ["IDENT_DEP", "weekday", "city_category", "csp", "n_cars", "POND_JOUR"]
+            [
+                "IDENT_DEP",
+                "weekday",
+                "city_category",
+                "csp",
+                "n_cars",
+                "POND_JOUR",
+                "MDATE_mois",
+                "MDATE_jour"
+            ]
         ].copy()
+        
         days_trip.columns = [
             "day_id",
             "weekday",
@@ -336,6 +375,8 @@ class EMPMobilitySurvey(MobilitySurvey):
             "csp",
             "n_cars",
             "pondki",
+            "month",
+            "day_of_week"
         ]
 
         # Keep only the first trip of each day to have one row per day
@@ -358,7 +399,7 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "mtp",
                 "MDISTTOT_fin",
                 "n_other_passengers",
-                "POND_JOUR",
+                "POND_JOUR"
             ]
         ]
         df.columns = [
@@ -374,7 +415,7 @@ class EMPMobilitySurvey(MobilitySurvey):
             "mode_id",
             "distance",
             "n_other_passengers",
-            "pondki",
+            "pondki"
         ]
         df.set_index(["day_id"], inplace=True)
 
@@ -396,6 +437,8 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "nbaccomp",
                 "STATUTCOM_UU_DES",
                 "poids_annuel",
+                "NBJOURS_DEP",
+                "NUITEE_DEST_DEP"
             ],
         )
 
@@ -403,6 +446,8 @@ class EMPMobilitySurvey(MobilitySurvey):
         df_long["OLDVMH"] = df_long["OLDVMH"].astype(float)
         df_long["OLDKM_fin"] = df_long["OLDKM_fin"].astype(float)
         df_long["n_other_passengers"] = df_long["nbaccomp"].astype(int)
+        df_long["NBJOURS_DEP"] = df_long["NBJOURS_DEP"].astype(float)
+        df_long["NUITEE_DEST_DEP"] = df_long["NUITEE_DEST_DEP"].astype(float)
 
         # the R category of the ENTD corresponds to the H category of the EMP 2019
         df_long.loc[df_long["STATUTCOM_UU_DES"] == "H", "STATUTCOM_UU_DES"] = "R"
@@ -447,6 +492,8 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "OLDKM_fin",
                 "n_other_passengers",
                 "poids_annuel",
+                "NBJOURS_DEP",
+                "NUITEE_DEST_DEP"
             ]
         ]
         df_long.columns = [
@@ -462,6 +509,8 @@ class EMPMobilitySurvey(MobilitySurvey):
             "distance",
             "n_other_passengers",
             "pondki",
+            "n_days_in_travel",
+            "n_nights_at_destination"
         ]
 
         df_long.set_index("travel_id", inplace=True)
@@ -485,6 +534,8 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "mtp",
                 "STATUTCOM_UU_VOY_DES",
                 "poids_annuel",
+                "OLDDEBJ_mois",
+                "OLDDEBJ_jour"
             ],
         )
 
@@ -518,6 +569,33 @@ class EMPMobilitySurvey(MobilitySurvey):
         travels.loc[
             travels["STATUTCOM_UU_VOY_DES"].isna(), "STATUTCOM_UU_VOY_DES"
         ] = travels.loc[travels["STATUTCOM_UU_VOY_DES"].isna(), "city_category"]
+        
+        # Map months and day of week to integers
+        travels["OLDDEBJ_mois"] = travels["OLDDEBJ_mois"].replace({
+            'janvier': 1,
+            'février': 2,
+            'mars': 3,
+            'avril': 4,
+            'mai': 5,
+            'juin': 6,
+            'juillet': 7,
+            'août': 8,
+            'septembre': 9,
+            'octobre': 10,
+            'novembre': 11,
+            'décembre': 12
+        })
+        
+        travels["OLDDEBJ_jour"] = travels["OLDDEBJ_jour"].replace({
+            'lundi': 0,
+            'mardi': 1,
+            'mercredi': 2,
+            'jeudi': 3,
+            'vendredi': 4,
+            'samedi': 5,
+            'dimanche': 6
+        })
+         
         travels = travels.loc[
             :,
             [
@@ -529,6 +607,8 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "OLDVMH",
                 "OLDMOT",
                 "poids_annuel",
+                "OLDDEBJ_mois",
+                "OLDDEBJ_jour"
             ],
         ]
         travels.columns = [
@@ -540,6 +620,8 @@ class EMPMobilitySurvey(MobilitySurvey):
             "n_nights",
             "motive",
             "pondki",
+            "month",
+            "weekday"
         ]
         travels.set_index(["csp", "n_cars", "city_category"], inplace=True)
 

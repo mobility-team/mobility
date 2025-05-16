@@ -185,7 +185,7 @@ class Population(FileAsset):
         
             for city in cities:
                 
-                indiv = census_data.loc[city["CANTVILLE"]].sample(city["n_persons"], weights="weight")
+                indiv = census_data.loc[city["CANTVILLE"]].sample(city["n_persons"], weights="weight", replace=True)
                 indiv = indiv.reset_index()
                 indiv = indiv[["age", "socio_pro_category", "ref_pers_socio_pro_category", "n_pers_household", "n_cars"]]
                 indiv["transport_zone_id"] = city["transport_zone_id"]
@@ -243,26 +243,37 @@ class Population(FileAsset):
         
         cities = sample_sizes[["local_admin_unit_id", "n_persons", "transport_zone_id"]].to_dict(orient="records")
         
-        individuals = []
-
-        with Progress() as progress:
-            
-            task = progress.add_task("[green]Sampling individuals...", total=len(cities))
+        if len(cities) > 0:
         
-            for city in cities:
+            individuals = []
+    
+            with Progress() as progress:
                 
-                indiv = census_data.loc[city["local_admin_unit_id"]].sample(city["n_persons"], weights="weight")
-                indiv = indiv.reset_index()
-                indiv = indiv[["age", "socio_pro_category", "ref_pers_socio_pro_category", "n_pers_household"]]
-                indiv["transport_zone_id"] = city["transport_zone_id"]
-                individuals.append(indiv)
-                
-                progress.update(task, advance=1)
-        
+                task = progress.add_task("[green]Sampling individuals...", total=len(cities))
             
-        individuals = pd.concat(individuals)
-        
-        individuals["individual_id"] = [shortuuid.uuid() for _ in range(individuals.shape[0])]
-        individuals["country"] = "ch"
+                for city in cities:
+                    
+                    indiv = census_data.loc[city["local_admin_unit_id"]].sample(city["n_persons"], weights="weight")
+                    indiv = indiv.reset_index()
+                    indiv = indiv[["age", "socio_pro_category", "ref_pers_socio_pro_category", "n_pers_household", "n_cars"]]
+                    indiv["transport_zone_id"] = city["transport_zone_id"]
+                    individuals.append(indiv)
+                    
+                    progress.update(task, advance=1)
+            
+                
+            individuals = pd.concat(individuals)
+            
+            individuals["individual_id"] = [shortuuid.uuid() for _ in range(individuals.shape[0])]
+            individuals["country"] = "ch"
+            
+        else:
+            
+            individuals = pd.DataFrame(
+                columns=[
+                    "age", "socio_pro_category", "ref_pers_socio_pro_category",
+                    "n_pers_household", "transport_zone_id", "individual_id"
+                ]
+            )
         
         return individuals
