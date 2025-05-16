@@ -134,7 +134,8 @@ class Trips(FileAsset):
                     csp_household=individual["ref_pers_socio_pro_category"],
                     urban_unit_category=individual["urban_unit_category"],
                     n_pers=individual["n_pers_household"],
-                    n_cars=individual["n_cars"]
+                    n_cars=individual["n_cars"],
+                    country=individual["country"]
                 )
                 
                 trips["individual_id"] = individual["individual_id"]
@@ -152,7 +153,8 @@ class Trips(FileAsset):
         
         
     def get_individual_trips(
-        self, csp, csp_household, urban_unit_category, n_pers, n_cars, n_years=1
+        self, csp, csp_household, urban_unit_category, n_pers, n_cars,
+        n_years=1, country="fr"
     ) -> pd.DataFrame:
         """
         Samples long distance trips and short distance trips from survey data (prepared with prepare_survey_data),
@@ -220,7 +222,11 @@ class Trips(FileAsset):
         # and the number of persons in the household.
         # If there is no data for this combination, only urban unit category and CSP are used.
 
-        filtered_p_immobility = self.p_immobility.xs(csp)
+        filtered_p_immobility = ( 
+            self.p_immobility
+            .xs(country, level="country")
+            .xs(csp)
+        )
 
         all_trips = []
 
@@ -228,7 +234,7 @@ class Trips(FileAsset):
         # 1/ ---------------------------------------
         # Compute the number of travels during n_years given the socio-pro category.
 
-        n_travel = n_years * self.n_travels_db.xs(csp).squeeze().astype(int)
+        n_travel = n_years * self.n_travels_db.xs(country, level="country").xs(csp).squeeze().astype(int)
 
         # 2/ ---------------------------------------
         # Sample n_travel travels.

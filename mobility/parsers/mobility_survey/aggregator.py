@@ -31,7 +31,11 @@ class MobilitySurveyAggregator(InMemoryAsset):
             for country in countries:
                 for key, df in survey_data[country].items():
                     if not df.empty:
-                        combined[key].append(df.assign(country=country))
+                        combined[key].append(
+                            df
+                            .assign(country=country)
+                            .set_index('country', append=True)
+                        )
             
             survey_data = {k: pd.concat(v) for k, v in combined.items()}
                 
