@@ -1,6 +1,5 @@
 import pathlib
 import os
-import sqlite3
 import networkx as nx
 
 from mobility.asset import Asset

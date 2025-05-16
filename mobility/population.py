@@ -101,7 +101,7 @@ class Population(FileAsset):
             individuals = french_individuals
 
         if "ch" in country_codes and "fr" in country_codes:
-                individuals = pd.concat([french_individuals, swiss_individuals])
+            individuals = pd.concat([french_individuals, swiss_individuals])
         
         individuals.to_parquet(self.cache_path)
 
@@ -197,6 +197,7 @@ class Population(FileAsset):
         individuals = pd.concat(individuals)
         
         individuals["individual_id"] = [shortuuid.uuid() for _ in range(individuals.shape[0])]
+        individuals["country"] = "fr"
         
         return individuals
     
@@ -262,5 +263,6 @@ class Population(FileAsset):
         individuals = pd.concat(individuals)
         
         individuals["individual_id"] = [shortuuid.uuid() for _ in range(individuals.shape[0])]
+        individuals["country"] = "ch"
         
         return individuals

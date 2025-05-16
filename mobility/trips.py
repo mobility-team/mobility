@@ -10,7 +10,8 @@ from rich.progress import Progress
 from mobility.file_asset import FileAsset
 
 from mobility.safe_sample import safe_sample
-from mobility.parsers import MobilitySurvey
+from mobility.parsers.mobility_survey import MobilitySurveyAggregator
+from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
 
 class Trips(FileAsset):
     """
@@ -29,9 +30,13 @@ class Trips(FileAsset):
         get_individual_trips: Samples trips for an individual based on their profile.
     """
     
-    def __init__(self, population: FileAsset, source: str = "EMP-2019"):
+    def __init__(
+            self,
+            population: FileAsset,
+            surveys={"fr": EMPMobilitySurvey}
+        ):
         
-        mobility_survey = MobilitySurvey(source)
+        mobility_survey = MobilitySurveyAggregator(population, surveys)
         
         inputs = {"population": population, "mobility_survey": mobility_survey}
 
