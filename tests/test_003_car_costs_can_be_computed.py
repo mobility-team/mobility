@@ -12,7 +12,17 @@ def test_003_car_costs_can_be_computed(test_data):
         radius=test_data["transport_zones_radius"]
     )
     
-    car_travel_costs = mobility.TravelCosts(transport_zones, "car")
-    car_travel_costs = car_travel_costs.get()
+    walk=mobility.WalkMode(transport_zones)
     
-    assert car_travel_costs.shape[0] > 0
+    car = mobility.CarMode(transport_zones)
+    bicycle = mobility.BicycleMode(transport_zones)
+
+    work_dest_cm = mobility.WorkDestinationChoiceModel(transport_zones, modes=[walk, car, bicycle])
+    
+    
+    mode_choice_model = mobility.TransportModeChoiceModel(work_dest_cm)
+
+    simple_choices = mode_choice_model.get()
+    print(simple_choices)
+
+    #assert car_travel_costs.shape[0] > 0

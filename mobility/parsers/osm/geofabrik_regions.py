@@ -8,15 +8,32 @@ from shapely.geometry import Polygon
 from mobility.file_asset import FileAsset
 
 class GeofabrikRegions(FileAsset):
+    """
+    Manage data for the GeoFabrik regions in France and Switzerland.
     
-    def __init__(self, extract_date: str = "240101"):
+    Parameters
+    ----------
+    extract_date : str, default="240101"
+        Date of export of the OSM data, in format YYMMDD.
+    """
         
+    def __init__(self, extract_date: str = "240101"): 
         inputs = {"extract_date": extract_date}
         cache_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "geofabrik_regions.gpkg"
         super().__init__(inputs, cache_path)
         
     def get_cached_asset(self) -> gpd.GeoDataFrame:
+        """
+        Get the already stored data about GeoFabrik regions in France and Switzerland with the given extract_date.
 
+        Returns
+        -------
+        regions : geopandas.geodataframe.GeoDataFrame
+            Returns the data already stored:
+            geometries of the boundaries of all the GeoFabrik regions in France and Switzerland, and URLs to download them with the data at the given extract_date.
+
+
+        """
         logging.info("Geofabrik regions already prepared. Reusing the file : " + str(self.cache_path))
         regions = gpd.read_file(self.cache_path)
 
@@ -24,7 +41,15 @@ class GeofabrikRegions(FileAsset):
     
     
     def create_and_get_asset(self) -> pd.DataFrame:
-        
+        """
+        Create the data about GeoFabrik regions in France and Switzerland with the given extract_date.
+
+        Returns
+        -------
+        regions : geopandas.geodataframe.GeoDataFrame
+            Geometries of the boundaries of all the GeoFabrik regions in France and Switzerland, and URLs to download them with the data at the given extract_date.
+
+        """        
         logging.info("Preparing Geofabrik regions boundaries.")
         
         regions_urls = [
@@ -62,6 +87,7 @@ class GeofabrikRegions(FileAsset):
             
             logging.info("Fetching region boundary : " + region_url)
         
+            #Grabs 
             region = pd.read_table(region_url, skiprows=1, skipfooter=2, engine="python")
             
             region = pd.DataFrame({
@@ -81,5 +107,3 @@ class GeofabrikRegions(FileAsset):
         regions.to_file(self.cache_path)
 
         return regions
-    
-    

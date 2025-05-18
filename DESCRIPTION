@@ -10,6 +10,7 @@ Imports:
     gtfsrouter,
     sf,
     geodist,
+    geos,
     dplyr,
     sfheaders,
     nngeo,
@@ -21,4 +22,6 @@ Imports:
     hms,
     lubridate,
     readxl,
-    pbapply
+    pbapply,
+    future,
+    future.apply

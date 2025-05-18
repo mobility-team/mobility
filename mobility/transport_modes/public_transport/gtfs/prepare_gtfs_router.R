@@ -97,8 +97,12 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
       # Keep only routes passing in the region
       route_ids <- unique(gtfs$trips$route_id)
       
-      if ("agency" %in% colnames(gtfs$routes) == FALSE) {
-        gtfs$routes$agency_id <- gtfs$agency$agency_id[1]
+      if (!"agency_id" %in% colnames(gtfs$routes)) {
+        if ("agency_id" %in% colnames(gtfs$agency)) {
+          gtfs$routes$agency_id <- gtfs$agency$agency_id[1]
+        } else {
+          gtfs$routes$agency_id <- "default"
+        }
       }
 
       gtfs$routes <- gtfs$routes[route_id %in% route_ids, list(route_id, agency_id, route_short_name, route_type)]

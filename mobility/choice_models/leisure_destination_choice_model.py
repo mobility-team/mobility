@@ -6,6 +6,8 @@ import pathlib
 import os
 import polars as pl
 import mobility
+import matplotlib.pyplot as plt
+
 
 from importlib import resources
 
@@ -49,6 +51,12 @@ class LeisureDestinationChoiceModelParameters:
             "ch": 40.0
         }
     )
+    
+    motive_ids: List[str] = field(
+        default_factory=lambda: ["7.71", "7.72", "7.73", "7.74", 
+                                 "7.75", "7.76", "7.77", "7.78"]
+    )
+    
     
     
 
@@ -129,30 +137,46 @@ class LeisureDestinationChoiceModel(DestinationChoiceModel):
         all_expenses = all_expenses["hobbies"]
         transport_zones = transport_zones.merge(all_expenses, on="local_admin_unit_id")
         zones_per_communes = transport_zones[["local_admin_unit_id"]]
+        
         # Compter le nombre de tz par communes
         zones_per_communes = zones_per_communes.value_counts()
+        
         # Diviser le montant total par nombre de tz
         transport_zones = transport_zones.merge(zones_per_communes, on="local_admin_unit_id")
         transport_zones["expenses"] = transport_zones["expenses"].truediv(transport_zones["count"])
+        #When debug=True, plot a map of the sources
+        if os.environ.get("MOBILITY_DEBUG") == "1":
+            print("Plotting sources for leisure")
+            transport_zones.plot(column="expenses", legend=True)
+            plt.title("Leisure sources")
+            plt.show()
         sources_expenses  = transport_zones[["transport_zone_id", "expenses"]].rename(columns = {"transport_zone_id": "from", "expenses": "source_volume"})
         return sources_expenses
         
     
     def prepare_sinks(
             self,
-            transport_zones_df
+            transport_zones
         ) -> pd.DataFrame:
         """
         """
         
         # easy solution : use a file from Overpass with leisure facilities
         # 
-        leisure_facilities = gpd.read_file("D:/data/mobility/projects/grand-geneve/leisures_grand_geneve_20250324.geojson")
+        leisure_facilities = gpd.read_file("D:/data/mobility/projects/grand-geneve/leisures_grand_geneve_20250506.geojson")
         #Convert them in EPSG:3035 (used by TransportZones)
         leisure_facilities = leisure_facilities.to_crs(epsg=3035)
         
         #Find which stops are in the transport zone
-        leisure_facilities = transport_zones_df.sjoin(leisure_facilities, how="left")
+        leisure_facilities = transport_zones.sjoin(leisure_facilities, how="left")
+        lsd = leisure_facilities.dissolve(by="transport_zone_id", aggfunc='count')
+        
+        #When debug=True, plot a map of the sinks
+        if os.environ.get("MOBILITY_DEBUG") == "1":
+            print("Plotting sinks for leisure")
+            lsd.plot(column="id", legend=True)
+            plt.title("Leisure sinks")
+            plt.show()
         leisure_facilities = leisure_facilities.groupby("transport_zone_id").count()
         leisure_facilities = leisure_facilities.reset_index().rename(columns={"id": "sink_volume", "transport_zone_id": "to"})
         return leisure_facilities

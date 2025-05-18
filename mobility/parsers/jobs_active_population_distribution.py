@@ -1,3 +1,5 @@
+"""Module to prepare (or get the already prepared) jobs and active population distribution in France and Switzerland."""
+
 import os
 import pathlib
 import logging
@@ -9,6 +11,12 @@ from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file
 
 class JobsActivePopulationDistribution(FileAsset):
+    """
+    Get the jobs and population distribution in France and Switzerland.
+    
+    Use the .get() method to get two dataframes, one with the jobs and the other with the active population.
+    
+    """
     
     def __init__(self):
         
@@ -22,7 +30,17 @@ class JobsActivePopulationDistribution(FileAsset):
         super().__init__(inputs, cache_path)
         
     def get_cached_asset(self) -> pd.DataFrame:
+        """
+        Get already prepared jobs and active population.
 
+        Returns
+        -------
+        jobs : pd.DataFrame
+            Jobs per commune in France and Switzerland.
+        active_population : pd.DataFrame
+            Active population per commune in France and Switzerland.
+
+        """
         logging.info("Jobs and active population spatial distribution already prepared. Reusing the files : " + str(self.cache_path))
         
         active_population = pd.read_parquet(self.cache_path["active_population"])
@@ -32,7 +50,17 @@ class JobsActivePopulationDistribution(FileAsset):
     
     
     def create_and_get_asset(self) -> pd.DataFrame:
-        
+        """
+        Prepare jobs and active population in France and Switzerland.
+
+        Returns
+        -------
+        jobs : pd.DataFrame
+            Jobs per commune in France and Switzerland.
+        act : pd.DataFrame
+            Active population per commune in France and Switzerland.
+
+        """
         jobs_fr, act_fr = self.prepare_french_jobs_active_population_distribution()
         jobs_ch, act_ch = self.prepare_swiss_jobs_active_population_distribution()
         
@@ -46,7 +74,20 @@ class JobsActivePopulationDistribution(FileAsset):
         
     
     def prepare_french_jobs_active_population_distribution(self):
+        """
+        Prepare two dataframes with jobs and active populations per commune in France.
         
+        Uses a dataset produced by INSEE (base-cc-emploi-pop-active-2019) and stored by the Mobility team on data.gouv.fr.
+        Provides details for six "CSP" (social-professional categories).
+
+        Returns
+        -------
+        jobs : pd.DataFrame
+            Jobs per commune in France.
+        active_population : pd.DataFrame
+            Active population per commune in France.
+
+        """   
         url = "https://www.data.gouv.fr/fr/datasets/r/02653cc4-76c0-4c3a-bc17-d5485c7ea2b9"
         
         data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "insee"
@@ -147,7 +188,23 @@ class JobsActivePopulationDistribution(FileAsset):
     
     
     def prepare_swiss_jobs_active_population_distribution(self):
+        """
+        Prepare two dataframes with jobs and active populations per commune in Switzerland.
         
+        Uses a dataset produced by OFS but stored by the Mobility team on data.gouv.fr.
+        Adapts the 2021 populations to the 2024 commune limits.
+        Considers that the active population is 79% of the population between 20 and 64 years, plus 20% (79%*25%) of the population under 20 (based on Swiss average).
+        
+        No classification by socio-professional categories.
+        
+        Returns
+        -------
+        jobs : pd.DataFrame
+            Jobs per commune in Switzerland.
+        active_population : pd.DataFrame
+            Active population per commune in Switzerland.
+
+        """        
         url = "https://www.data.gouv.fr/fr/datasets/r/5529f7f8-7a00-4890-b453-0d215c7a5726"
         file_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "bfs" / "je-f-21.03.01.xlsx"
         download_file(url, file_path)

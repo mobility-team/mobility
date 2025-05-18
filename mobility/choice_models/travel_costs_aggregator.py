@@ -14,7 +14,7 @@ class TravelCostsAggregator(InMemoryAsset):
         
     def get(
             self,
-            metrics=["cost"],
+            metrics=["cost", "distance"],
             congestion: bool = False,
             aggregate_by_od: bool = True
         ):

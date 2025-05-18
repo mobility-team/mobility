@@ -245,8 +245,6 @@ class ShopsTurnoverDistribution(FileAsset):
         
         swiss_shops_turnover = swiss_shops_turnover[["local_admin_unit_id", "naf_id", "lon" , "lat", "turnover"]]
 
-        swiss_shops_turnover["local_admin_unit_id"] = "ch-" + swiss_shops_turnover["local_admin_unit_id"]
-
         os.unlink(statent_zip_path)
         os.unlink(statent_path)
 

@@ -5,10 +5,11 @@ import numpy as np
 import pathlib
 import os
 import polars as pl
+import matplotlib.pyplot as plt
 
 
 from importlib import resources
-
+import mobility
 from mobility.choice_models.destination_choice_model import DestinationChoiceModel
 from mobility.choice_models.utilities import Utilities
 from mobility.parsers.shops_turnover_distribution import ShopsTurnoverDistribution
@@ -38,14 +39,18 @@ class ShoppingDestinationChoiceModelParameters:
             #"tolerance": 0.01,
             #"cost_update": False,
             #"n_iter_cost_update": 3
-        }
-    )
+            }
+        )
     
     utility: Dict[str, float] = field(
         default_factory=lambda: {
             "fr": 70.0,
             "ch": 50.0
-        }
+            }
+        )
+    
+    motive_ids: List[str] = field(
+        default_factory=lambda: ["2.20", "2.21"]
     )
     
     
@@ -125,14 +130,25 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         hh_expenses = HouseholdsExpensesDistribution()
         all_expenses = hh_expenses.get()
         all_expenses = all_expenses["shops"]
-        transport_zones_df = transport_zones.get().drop(columns="geometry")
-        transport_zones_expenses = transport_zones_df.merge(all_expenses, on="local_admin_unit_id")
+        transport_zones = transport_zones.drop(columns="geometry")
+        transport_zones_expenses = transport_zones.merge(all_expenses, on="local_admin_unit_id")
         zones_per_communes = transport_zones_expenses[["local_admin_unit_id"]]
+        
         # Compter le nombre de tz par communes
         zones_per_communes = zones_per_communes.value_counts()
+        
         # Diviser le montant total par nombre de tz
         transport_zones_expenses = transport_zones_expenses.merge(zones_per_communes, on="local_admin_unit_id")
         transport_zones_expenses["expenses"] = transport_zones_expenses["expenses"].truediv(transport_zones_expenses["count"])
+        sources_expenses  = transport_zones_expenses[["transport_zone_id", "expenses"]].rename(columns = {"transport_zone_id": "from", "expenses": "source_volume"})
+        
+        #When debug=True, plot a map of the sources
+        if os.environ.get("MOBILITY_DEBUG") == "1":
+            print("Plotting sources for shopping")
+            transport_zones_expenses.plot(column="expenses", legend=True)
+            plt.title("Shopping sources")
+            plt.show()
+            
         sources_expenses  = transport_zones_expenses[["transport_zone_id", "expenses"]].rename(columns = {"transport_zone_id": "from", "expenses": "source_volume"})
         
         return sources_expenses
@@ -153,8 +169,15 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         all_shops = all_shops.to_crs(epsg=3035)
         
         # Find which stops are in the transport zone
-        all_shops = transport_zones.get().sjoin(all_shops, how="left")
+        all_shops = transport_zones.sjoin(all_shops, how="left")
+        asd = all_shops.dissolve(by="transport_zone_id", aggfunc='sum')
         all_shops = all_shops.groupby("transport_zone_id").sum("turnover")
+        #When debug=True, plot a map of the sinks
+        if os.environ.get("MOBILITY_DEBUG") == "1":
+            print("Plotting sinks for shopping")
+            asd.plot(column="turnover", legend=True)
+            plt.title("Shopping sinks")
+            plt.show()
         all_shops = all_shops.reset_index()[["transport_zone_id", "turnover"]].rename(columns={"turnover": "sink_volume", "transport_zone_id": "to"})
         
         return all_shops

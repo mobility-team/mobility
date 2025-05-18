@@ -71,6 +71,11 @@ class WorkDestinationChoiceModelParameters:
             "ch": 120.0
         }
     )
+    
+    motive_ids: List[str] = field(
+        default_factory=lambda: ["9.91"]
+    )
+    
 
 
 

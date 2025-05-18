@@ -35,6 +35,7 @@ class DetailedCarpoolGeneralizedCost(InMemoryAsset):
             suffixes=["_from", "_to"]
         )
         
+        costs["distance"] = costs["car_distance"] + costs["carpooling_distance"]
 
         gen_cost = self.parameters.car_cost_constant
         gen_cost += self.parameters.car_cost_of_distance*costs["car_distance"]
