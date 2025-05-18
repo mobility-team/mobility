@@ -9,8 +9,13 @@ import numpy as np
 from rich.progress import Progress
 from mobility.file_asset import FileAsset
 
-from mobility.safe_sample import safe_sample
-from mobility.parsers import MobilitySurvey
+from mobility.safe_sample import safe_sample, filter_database
+from mobility.sample_travels import sample_travels
+from mobility.parsers.mobility_survey import MobilitySurveyAggregator
+from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
+
+
+from typing import Callable
 
 class Trips(FileAsset):
     """
@@ -29,11 +34,18 @@ class Trips(FileAsset):
         get_individual_trips: Samples trips for an individual based on their profile.
     """
     
-    def __init__(self, population: FileAsset, source: str = "EMP-2019"):
+    def __init__(
+            self,
+            population: FileAsset,
+            surveys={"fr": EMPMobilitySurvey},
+            filter_population: Callable[[pd.DataFrame], pd.DataFrame] = None
+        ):
         
-        mobility_survey = MobilitySurvey(source)
+        mobility_survey = MobilitySurveyAggregator(population, surveys)
         
         inputs = {"population": population, "mobility_survey": mobility_survey}
+        
+        self.filter_population = filter_population
 
         file_name = "trips.parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
@@ -68,6 +80,9 @@ class Trips(FileAsset):
         study_area = self.inputs["population"].inputs["transport_zones"].study_area.get()
         
         population = self.inputs["population"].get()
+        
+        if self.filter_population is not None:
+            population = self.filter_population(population)
         
         mobility_survey = self.inputs["mobility_survey"].get()
         self.short_trips_db = mobility_survey["short_trips"]
@@ -129,7 +144,8 @@ class Trips(FileAsset):
                     csp_household=individual["ref_pers_socio_pro_category"],
                     urban_unit_category=individual["urban_unit_category"],
                     n_pers=individual["n_pers_household"],
-                    n_cars=individual["n_cars"]
+                    n_cars=individual["n_cars"],
+                    country=individual["country"]
                 )
                 
                 trips["individual_id"] = individual["individual_id"]
@@ -147,7 +163,8 @@ class Trips(FileAsset):
         
         
     def get_individual_trips(
-        self, csp, csp_household, urban_unit_category, n_pers, n_cars, n_years=1
+        self, csp, csp_household, urban_unit_category, n_pers, n_cars,
+        n_years=1, country="fr"
     ) -> pd.DataFrame:
         """
         Samples long distance trips and short distance trips from survey data (prepared with prepare_survey_data),
@@ -215,52 +232,83 @@ class Trips(FileAsset):
         # and the number of persons in the household.
         # If there is no data for this combination, only urban unit category and CSP are used.
 
-        filtered_p_immobility = self.p_immobility.xs(csp)
+        filtered_p_immobility = ( 
+            self.p_immobility
+            .xs(country, level="country")
+            .xs(csp)
+        )
 
         all_trips = []
 
         # === TRAVELS ===
         # 1/ ---------------------------------------
         # Compute the number of travels during n_years given the socio-pro category.
-
-        n_travel = n_years * self.n_travels_db.xs(csp).squeeze().astype(int)
+        # Force n_years to 1 to be able to use the date assignment logic
+        if n_years > 1:
+            raise ValueError("It is no longer possible to model several years of trips. The n_years parameter will be removed o future versions, please set n_years = 1 for now.")
+        
+        n_travel = (
+            self.n_travels_db
+            .xs(country, level="country")
+            .xs(csp)
+            .squeeze().astype(int)
+        )
+        n_travel = n_years * n_travel
 
         # 2/ ---------------------------------------
         # Sample n_travel travels.
-
-        sampled_travels = safe_sample(
-            self.travels_db, 
-            n_travel, 
-            weights="pondki",
+        travels_db = filter_database(
+            self.travels_db.xs(country, level="country"),
             csp=csp,
             n_cars=n_cars,
-            city_category=urban_unit_category,
+            city_category=urban_unit_category
         )
-
+        
+        travels_db["n_days"] = travels_db["n_nights"] + 1
+        
+        # Expand the travel database and match it to actual dates
+        # TO DO : does not work if n_years > 1 !
+        year = 2025
+        dates = pd.date_range(start=f'{year}-01-01', end=f'{year}-12-31', freq='D')
+        df_days = pd.DataFrame({'date': dates})
+        df_days['month'] = df_days['date'].dt.month
+        df_days['weekday'] = df_days['date'].dt.weekday
+        df_days['day_of_year'] = df_days['date'].dt.dayofyear
+        travels_db = pd.merge(travels_db, df_days, on=["month", "weekday"])
+        
+        # Sample travels 
+        travels_index = sample_travels(
+            travels_db,
+            start_col="day_of_year",
+            length_col="n_nights",
+            weight_col="pondki",
+            burnin=100,
+            k=n_travel,
+            num_samples=1
+        )
+        
+        sampled_travels = travels_db.iloc[travels_index[0]].copy()
+        
         # 3/ ---------------------------------------
         # Compute the number of days spent in travel, for professional reasons and personal reasons.
-
-        travel_pro_bool = sampled_travels["motive"].str.slice(0, 1) == "9"
-        travel_perso_bool = np.logical_not(travel_pro_bool)
-
         sampled_travels["n_nights"] = sampled_travels["n_nights"].fillna(0)
-
-        # Number of days spent in travel = number of nights + one day per travel.
-        n_days_travel_pro = int(
-            sampled_travels.loc[travel_pro_bool]["n_nights"].sum()
-            + travel_pro_bool.sum()
-        )
-        n_days_travel_perso = int(
-            sampled_travels.loc[travel_perso_bool]["n_nights"].sum()
-            + travel_perso_bool.sum()
-        )
 
         # 4/ ---------------------------------------
         # Get the long trips corresponding to the travels sampled.
 
         travels_id = sampled_travels["travel_id"].to_numpy()
-        sampled_long_trips = self.long_trips_db.loc[travels_id].reset_index()
-
+        
+        sampled_long_trips = ( 
+            self.long_trips_db
+            .xs(country, level="country")
+            .loc[travels_id]
+            .reset_index()
+        )
+        
+        sampled_long_trips["n_nights_at_destination"] = sampled_long_trips["n_nights_at_destination"].fillna(0)
+        sampled_long_trips["n_days_from_departure"] = sampled_long_trips.groupby("travel_id")["n_nights_at_destination"].cumsum()
+        sampled_long_trips["n_days_from_departure"] = sampled_long_trips.groupby("travel_id")["n_days_from_departure"].shift(1, fill_value=0)
+        
         # Filter the columns.
         sampled_long_trips = sampled_long_trips.loc[
             :,
@@ -271,10 +319,24 @@ class Trips(FileAsset):
                 "mode_id",
                 "distance",
                 "n_other_passengers",
+                "n_days_from_departure"
             ],
         ]
+        
+        # Associate each trip with a date given the departure date of the travels
+        sampled_long_trips = pd.merge(
+            sampled_long_trips,
+            sampled_travels[["travel_id", "date"]],
+            on="travel_id"
+        )
+        
+        sampled_long_trips["date"] = sampled_long_trips["date"] + pd.to_timedelta(sampled_long_trips['n_days_from_departure'], unit='D')
+        
+        # Remove days that do not occur within the modelled year
+        sampled_long_trips = sampled_long_trips[sampled_long_trips["date"] < pd.Timestamp('2026-01-01')]
+
         sampled_long_trips.rename({"travel_id": "trip_id"}, axis=1, inplace=True)
-        sampled_long_trips["trip_type"]="long"
+        sampled_long_trips["trip_type"] = "long"
         all_trips.append(sampled_long_trips)
 
         # 5/ ---------------------------------------
@@ -287,48 +349,53 @@ class Trips(FileAsset):
         #   filtered by the urban category of the destination of the travel.
 
         days_id = []
+        
         for i in range(sampled_travels.shape[0]):
-            # Travel for professional reasons.
-            if sampled_travels.iloc[i]["motive"] == "9":
-                n_days_in_travel_pro = int(sampled_travels.iloc[i]["n_nights"] + 1)
-                destination_city_category = sampled_travels.iloc[i][
-                    "destination_city_category"
-                ]
-                sampled_days_in_travel_pro = safe_sample(
-                    self.days_trip_db,
-                    n_days_in_travel_pro,
-                    weights="pondki",
-                    csp=csp,
-                    n_cars=n_cars,
-                    weekday=True,
-                    city_category=destination_city_category,
-                )
-
-                days_id.append(sampled_days_in_travel_pro["day_id"])
-
-            # Travel for personal reasons.
-            else:
-                n_days_in_travel_perso = int(sampled_travels.iloc[i]["n_nights"] + 1)
-                destination_city_category = sampled_travels.iloc[i][
-                    "destination_city_category"
-                ]
-                sampled_days_in_travel_perso = safe_sample(
-                    self.days_trip_db,
-                    n_days_in_travel_perso,
-                    weights="pondki",
-                    csp=csp,
-                    n_cars=n_cars,
-                    weekday=False,
-                    city_category=destination_city_category,
-                )
-
-                days_id.append(sampled_days_in_travel_perso["day_id"])
+            
+            n_days_in_travel = int(sampled_travels.iloc[i]["n_nights"] + 1)
+            
+            weekday = sampled_travels.iloc[i]["motive"][0:1] == "9"
+        
+            destination_city_category = sampled_travels.iloc[i][
+                "destination_city_category"
+            ]
+            
+            sampled_days_in_travel_pro = safe_sample(
+                self.days_trip_db.xs(country, level="country"),
+                n_days_in_travel,
+                weights="pondki",
+                csp=csp,
+                n_cars=n_cars,
+                weekday=weekday,
+                city_category=destination_city_category,
+            )
+            
+            dates = pd.date_range(
+                start=sampled_travels.iloc[i]["date"],
+                periods=n_days_in_travel,
+                freq='D'
+            )
+            
+            days_id.append(
+                pd.DataFrame({
+                    "date": dates,
+                    "day_id": sampled_days_in_travel_pro["day_id"].reset_index(drop=True)
+                })
+            )
+                
         days_id = pd.concat(days_id)
+        
+        # Remove days that do not occur within the modelled year
+        days_id = days_id[days_id["date"] < pd.Timestamp('2026-01-01')]
 
         # 6/ ---------------------------------------
         # Get the short trips corresponding to the days sampled.
 
-        sampled_short_trips_in_travel = self.short_trips_db.loc[days_id]
+        sampled_short_trips_in_travel = pd.merge( 
+            days_id,
+            self.short_trips_db.xs(country, level="country"),
+            on="day_id"
+        )
 
         # Filter the columns.
         sampled_short_trips_in_travel = sampled_short_trips_in_travel.reset_index().loc[
@@ -340,21 +407,28 @@ class Trips(FileAsset):
                 "mode_id",
                 "distance",
                 "n_other_passengers",
+                "date"
             ],
         ]
+        
         sampled_short_trips_in_travel.rename(
             {"day_id": "trip_id"}, axis=1, inplace=True
         )
         sampled_short_trips_in_travel["trip_type"] = "short"
         all_trips.append(sampled_short_trips_in_travel)
+        
+        all_trips = pd.concat(all_trips)
 
         # === DAILY MOBILITY ===
         # 7/ ---------------------------------------
         # Compute the number of immobility days during the week and during the week-end.
 
         # Compute the number of days where there is no travel.
-        n_week_day = n_years * (52 * 5 - n_days_travel_pro)
-        n_weekend_day = n_years * (52 * 2 - n_days_travel_perso)
+        n_week_days_travel = np.sum(pd.to_datetime(all_trips["date"].unique()).weekday < 5)
+        n_weekend_days_travel = np.sum(pd.to_datetime(all_trips["date"].unique()).weekday > 4)
+        
+        n_week_day = n_years * (52 * 5 - n_week_days_travel)
+        n_weekend_day = n_years * (52 * 2 - n_weekend_days_travel)
 
         n_immobility_week_day = np.round(
             n_week_day * filtered_p_immobility["immobility_weekday"]
@@ -365,17 +439,23 @@ class Trips(FileAsset):
 
         # Compute the number of days where the person is not in travel nor immobile.
         n_mobile_week_day = max(
-            0, n_years * (52 * 5 - n_days_travel_pro - n_immobility_week_day)
+            0, n_years * (52 * 5 - n_week_days_travel - n_immobility_week_day)
         )
         n_mobile_weekend = max(
-            0, n_years * (52 * 2 - n_days_travel_perso - n_immobility_weekend)
+            0, n_years * (52 * 2 - n_weekend_days_travel - n_immobility_weekend)
         )
 
         # 8/ ---------------------------------------
         # Sample n_mob_week_day week days and n_mob_weekend week-end days.
-
+        remaining_days = df_days[
+            (~df_days["date"].isin(sampled_long_trips["date"])) & 
+            (~df_days["date"].isin(sampled_short_trips_in_travel["date"]))
+        ].copy()
+        
+        remaining_days["is_weekday"] = remaining_days["weekday"] < 5
+        
         sampled_week_days = safe_sample(
-            self.days_trip_db,
+            self.days_trip_db.xs(country, level="country"),
             n_mobile_week_day,
             weights="pondki",
             csp=csp,
@@ -383,9 +463,16 @@ class Trips(FileAsset):
             weekday=True,
             city_category=urban_unit_category,
         )
+        
+        week_days_dates = remaining_days.loc[remaining_days["is_weekday"] == True].sample(n_mobile_week_day, replace=False)["date"]
+        
+        sampled_week_days = pd.DataFrame({
+            "date": week_days_dates.reset_index(drop=True),
+            "day_id": sampled_week_days["day_id"].reset_index(drop=True)
+        })
 
         sampled_weekend_days = safe_sample(
-            self.days_trip_db,
+            self.days_trip_db.xs(country, level="country"),
             n_mobile_weekend,
             weights="pondki",
             csp=csp,
@@ -393,14 +480,30 @@ class Trips(FileAsset):
             weekday=False,
             city_category=urban_unit_category,
         )
+        
+        weekend_days_dates = remaining_days.loc[remaining_days["is_weekday"] == False].sample(n_mobile_weekend, replace=False)["date"]
+        
+        sampled_weekend_days = pd.DataFrame({
+            "date": weekend_days_dates.reset_index(drop=True),
+            "day_id": sampled_weekend_days["day_id"].reset_index(drop=True)
+        })
 
         # 9/ ---------------------------------------
         # Get the short trips corresponding to the days sampled.
 
         days_id = pd.concat(
-            [sampled_week_days["day_id"], sampled_weekend_days["day_id"]]
+            [
+                sampled_week_days,
+                sampled_weekend_days
+            ]
         )
-        sampled_short_trips = self.short_trips_db.loc[days_id]
+        
+        sampled_short_trips = pd.merge( 
+            days_id,
+            self.short_trips_db.xs(country, level="country"),
+            on="day_id"
+        )
+        
         # Filter the columns.
         sampled_short_trips = sampled_short_trips.reset_index().loc[
             :,
@@ -411,13 +514,13 @@ class Trips(FileAsset):
                 "mode_id",
                 "distance",
                 "n_other_passengers",
+                "date"
             ],
         ]
         sampled_short_trips.rename({"day_id": "trip_id"}, axis=1, inplace=True)
         sampled_short_trips["trip_type"] = "short"
-        all_trips.append(sampled_short_trips)
 
-        all_trips = pd.concat(all_trips)
+        all_trips = pd.concat([all_trips, sampled_short_trips])
 
         return all_trips
     

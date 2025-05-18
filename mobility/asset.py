@@ -1,5 +1,6 @@
 import json
 import hashlib
+import pathlib
 
 from abc import ABC, abstractmethod
 from dataclasses import is_dataclass, fields
@@ -64,6 +65,9 @@ class Asset(ABC):
             
             elif isinstance(value, set):
                 return list(value)
+            
+            elif isinstance(value, pathlib.Path):
+                return str(value)
             
             else:
                 return value

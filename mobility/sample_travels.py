@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 import random
 
 def sample_travels(df, start_col, length_col, weight_col, k,
