@@ -43,13 +43,10 @@ class Population(FileAsset):
             self,
             transport_zones,
             sample_size: int,
-            swiss_census_data_path: str | pathlib.Path = None
+            switzerland_census: CensusLocalizedIndividuals = None
         ):
 
-        
-        inputs = {"transport_zones": transport_zones, "sample_size": sample_size}
-        
-        self.swiss_census_data_path = swiss_census_data_path
+        inputs = {"transport_zones": transport_zones, "sample_size": sample_size, "switzerland_census": switzerland_census}
 
         file_name = "population.parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name    
@@ -205,31 +202,15 @@ class Population(FileAsset):
     
     def get_swiss_census_data(self, transport_zones: gpd.GeoDataFrame):
         """Check that a swiss census has been provided and use its data."""
-        if transport_zones["local_admin_unit_id"].str.contains("ch-").sum() > 0:
             
-            if self.swiss_census_data_path is None:
-                raise ValueError(
-                    ("Some transport zones are in Switzerland and no path to "
-                     "a preprocessed swiss census dataset (which is not openly "
-                     "available at the moment).")
-                )
-                
-            if self.swiss_census_data_path.exists() is False:
-                raise ValueError(
-                    "The preprocessed census dataset provided does not exist at the location " + str(self.swiss_census_data_path)
-                )
-                
-            census_data = pd.read_parquet(self.swiss_census_data_path)
-        
-        else:
-            
-            census_data = pd.DataFrame(
-                columns=[
-                    "age", "socio_pro_category", "ref_pers_socio_pro_category",
-                    "n_pers_household", "n_cars", "local_admin_unit_id"
-                ]
+        if self.switzerland_census is None:
+            raise ValueError(
+                ("Some transport zones are in Switzerland and no parser for "
+                 "the swiss census dataset was provided (which is not openly "
+                 "available at the moment).")
             )
             
+        census_data = self.inputs["switzerland_census"].get()
         census_data = census_data.set_index("local_admin_unit_id")
         
         return census_data
