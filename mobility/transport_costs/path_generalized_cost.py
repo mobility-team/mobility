@@ -20,6 +20,9 @@ class PathGeneralizedCost(InMemoryAsset):
         study_area = self.travel_costs.transport_zones.study_area.get()
         transport_zones = self.travel_costs.transport_zones.get()
         
+        study_area["country"] = study_area["local_admin_unit_id"].astype(str).str[:2]
+        study_area["country"] = study_area["country"].astype(str)
+        
         transport_zones = pd.merge(transport_zones, study_area[["local_admin_unit_id", "country"]], on="local_admin_unit_id")
         
         costs = pd.merge(

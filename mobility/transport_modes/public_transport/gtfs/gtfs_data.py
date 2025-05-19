@@ -62,6 +62,10 @@ class GTFSData(FileAsset):
             logging.info("Downloaded file size is inferior to 1 ko, it will not be used by mobility.")
             return False
         
+        if "e8f2aceaaaa2493f6041dc7f0251f325-5d7ae44c16ad373ca1afbc4590f53256_gtfs-2015-chamonix-mobilit" in path.name:
+            logging.info("Manual exception, GTFS not used from path", path)
+            return False
+        
         try:
             with zipfile.ZipFile(path, 'r') as zip_ref:
                 zip_contents = zip_ref.namelist()              

@@ -72,7 +72,12 @@ class WorkDestinationChoiceModelParameters:
         }
     )
     
+    motive_ids: List[str] = field(
+        default_factory=lambda: ["9.91"]
+    )
     
+
+
 
 class WorkDestinationChoiceModel(DestinationChoiceModel):
     """Home-work destination choice model.
