@@ -55,8 +55,5 @@ def safe_sample(
     """
     
     data_base = filter_database(data_base, minimum_sample_size, **kwargs)
-    
-    print("---")
-    print(data_base)
 
     return data_base.sample(n_sample, weights=weights, replace=True, axis=0)

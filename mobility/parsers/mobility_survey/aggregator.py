@@ -22,7 +22,19 @@ class MobilitySurveyAggregator(InMemoryAsset):
         }
         
         if len(countries) == 1:
-            survey_data = survey_data[countries[0]]
+            survey_data = ( 
+                survey_data[countries[0]]
+                
+            )
+            
+            survey_data = {
+                k: ( 
+                    v
+                    .assign(country=countries[0])
+                    .set_index('country', append=True)
+                )
+                for k, v in survey_data.items()
+            }
             
         else:
             
