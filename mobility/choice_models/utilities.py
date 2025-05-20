@@ -22,13 +22,18 @@ class Utilities:
         Utilities for each transport zone.
     """
 
-    def __init__(self, transport_zones, sinks, utility_by_country):        
-        transport_zones = pl.DataFrame(
-            transport_zones[["transport_zone_id", "country"]].rename({"transport_zone_id": "to"}, axis=1)
-        ).with_columns(
-            pl.col("to").cast(pl.Int64)
-        )
+    def __init__(self, transport_zones, sinks, utility_by_country):    
         
+        transport_zones["country"] = transport_zones["local_admin_unit_id"].astype(str).str[:2]
+        transport_zones["country"] = transport_zones["country"].astype(str)
+        
+        transport_zones = pl.DataFrame(
+           transport_zones[["transport_zone_id", "country"]].rename({"transport_zone_id": "to"}, axis=1)
+       ).with_columns(
+           pl.col("to").cast(pl.Int64)
+       )
+       
+
         utility_by_country = pl.DataFrame({
             "country": utility_by_country.keys(),
             "base_utility": utility_by_country.values()

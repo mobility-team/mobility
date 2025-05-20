@@ -1,6 +1,5 @@
 import pathlib
 import os
-import sqlite3
 import networkx as nx
 
 from mobility.asset import Asset
@@ -174,10 +173,14 @@ class FileAsset(Asset):
     def remove(self):
 
         if isinstance(self.cache_path, dict):
-            for k, v in self.cache_path:
-                pathlib.Path(v).unlink()
+            for k, v in self.cache_path.items():
+                path = pathlib.Path(v)
+                if path.exists():
+                    path.unlink()
         else:
-            pathlib.Path(self.cache_path).unlink()
+            path = pathlib.Path(self.cache_path)
+            if path.exists():
+                path.unlink()
             
             
     def update_ui_db(self, file_name: str, inputs_hash: str, cache_path: pathlib.Path) -> None:
