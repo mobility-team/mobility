@@ -35,6 +35,11 @@ jobs:
         echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig" >> $GITHUB_ENV
     - name: Install gfortran
       run: brew install gcc
+    - name: Link gfortran where R expects it
+      run: |
+        GFORTRAN_PATH=$(which gfortran)
+        sudo mkdir -p /opt/R/arm64/bin
+        sudo ln -sf "$GFORTRAN_PATH" /opt/R/arm64/bin/gfortran
     - name: Install R packages
       uses: r-lib/actions/setup-r-dependencies@v2
       with:
