@@ -8,9 +8,8 @@ import pytest
 def test_004_public_transport_costs_can_be_computed(test_data):
     
     transport_zones = mobility.TransportZones(
-        insee_city_id=test_data["transport_zones_insee_city_id"],
-        method="radius",
-        radius=test_data["transport_zones_radius"],
+        local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
+        radius=test_data["transport_zones_radius"]
     )
     
     pub_trans_travel_costs = mobility.PublicTransportTravelCosts(transport_zones)

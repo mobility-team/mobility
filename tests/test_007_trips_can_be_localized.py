@@ -8,9 +8,8 @@ import pytest
 def test_007_trips_can_be_localized(test_data):
     
     transport_zones = mobility.TransportZones(
-        insee_city_id=test_data["transport_zones_insee_city_id"],
-        method="radius",
-        radius=test_data["transport_zones_radius"],
+        local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
+        radius=test_data["transport_zones_radius"]
     )
     
     population = mobility.Population(
