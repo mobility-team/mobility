@@ -133,6 +133,13 @@ class Trips(FileAsset):
         individuals = population.to_dict(orient="records")
         all_trips = []
         
+        year = 2025
+        dates = pd.date_range(start=f'{year}-01-01', end=f'{year}-12-31', freq='D')
+        df_days = pd.DataFrame({'date': dates})
+        df_days['month'] = df_days['date'].dt.month
+        df_days['weekday'] = df_days['date'].dt.weekday
+        df_days['day_of_year'] = df_days['date'].dt.dayofyear
+        
         with Progress() as progress:
             
             task = progress.add_task("[green]Generating trips...", total=len(individuals))
@@ -145,7 +152,8 @@ class Trips(FileAsset):
                     urban_unit_category=individual["urban_unit_category"],
                     n_pers=individual["n_pers_household"],
                     n_cars=individual["n_cars"],
-                    country=individual["country"]
+                    country=individual["country"],
+                    df_days=df_days
                 )
                 
                 trips["individual_id"] = individual["individual_id"]
@@ -163,8 +171,7 @@ class Trips(FileAsset):
         
         
     def get_individual_trips(
-        self, csp, csp_household, urban_unit_category, n_pers, n_cars,
-        n_years=1, country="fr"
+        self, csp, csp_household, urban_unit_category, n_pers, n_cars, country, df_days
     ) -> pd.DataFrame:
         """
         Samples long distance trips and short distance trips from survey data (prepared with prepare_survey_data),
@@ -203,8 +210,6 @@ class Trips(FileAsset):
                 The number of cars of the household ("0", "1", or "2+").
             urban_unit_category (str):
                 The urban unit category ("C", "B", "I", "R").
-            n_years (int):
-                The number of years of trips to sample (1 to N, defaults to 1).
             source (str) :
                 The source of the travels and trips data ("ENTD-2008" or "EMP-2019", the default).
 
@@ -243,17 +248,12 @@ class Trips(FileAsset):
         # === TRAVELS ===
         # 1/ ---------------------------------------
         # Compute the number of travels during n_years given the socio-pro category.
-        # Force n_years to 1 to be able to use the date assignment logic
-        if n_years > 1:
-            raise ValueError("It is no longer possible to model several years of trips. The n_years parameter will be removed o future versions, please set n_years = 1 for now.")
-        
         n_travel = (
             self.n_travels_db
             .xs(country, level="country")
             .xs(csp)
             .squeeze().astype(int)
         )
-        n_travel = n_years * n_travel
 
         # 2/ ---------------------------------------
         # Sample n_travel travels.
@@ -264,16 +264,6 @@ class Trips(FileAsset):
             city_category=urban_unit_category
         )
         
-        travels_db["n_days"] = travels_db["n_nights"] + 1
-        
-        # Expand the travel database and match it to actual dates
-        # TO DO : does not work if n_years > 1 !
-        year = 2025
-        dates = pd.date_range(start=f'{year}-01-01', end=f'{year}-12-31', freq='D')
-        df_days = pd.DataFrame({'date': dates})
-        df_days['month'] = df_days['date'].dt.month
-        df_days['weekday'] = df_days['date'].dt.weekday
-        df_days['day_of_year'] = df_days['date'].dt.dayofyear
         travels_db = pd.merge(travels_db, df_days, on=["month", "weekday"])
         
         # Sample travels 
@@ -427,8 +417,8 @@ class Trips(FileAsset):
         n_week_days_travel = np.sum(pd.to_datetime(all_trips["date"].unique()).weekday < 5)
         n_weekend_days_travel = np.sum(pd.to_datetime(all_trips["date"].unique()).weekday > 4)
         
-        n_week_day = n_years * (52 * 5 - n_week_days_travel)
-        n_weekend_day = n_years * (52 * 2 - n_weekend_days_travel)
+        n_week_day = 52 * 5 - n_week_days_travel
+        n_weekend_day = 52 * 2 - n_weekend_days_travel
 
         n_immobility_week_day = np.round(
             n_week_day * filtered_p_immobility["immobility_weekday"]
@@ -439,10 +429,10 @@ class Trips(FileAsset):
 
         # Compute the number of days where the person is not in travel nor immobile.
         n_mobile_week_day = max(
-            0, n_years * (52 * 5 - n_week_days_travel - n_immobility_week_day)
+            0, 52 * 5 - n_week_days_travel - n_immobility_week_day
         )
         n_mobile_weekend = max(
-            0, n_years * (52 * 2 - n_weekend_days_travel - n_immobility_weekend)
+            0, 52 * 2 - n_weekend_days_travel - n_immobility_weekend
         )
 
         # 8/ ---------------------------------------

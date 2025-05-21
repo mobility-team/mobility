@@ -169,10 +169,10 @@ class Population(FileAsset):
         cantons.columns = ["local_admin_unit_id", "CANTVILLE"]
         
         sample_sizes = pd.merge(sample_sizes, cantons, on="local_admin_unit_id")
-
-        logging.info("Sampling census data in each french transport zone...")
-        
+        census_data = census_data.loc[sample_sizes["CANTVILLE"]]
         cities = sample_sizes.to_dict(orient="records")
+        
+        logging.info("Sampling census data in each french transport zone...")
         
         individuals = []
 
@@ -222,6 +222,7 @@ class Population(FileAsset):
 
         logging.info("Sampling census data in each swiss transport zone...")
         
+        census_data = census_data.loc[sample_sizes["local_admin_unit_id"]]
         cities = sample_sizes[["local_admin_unit_id", "n_persons", "transport_zone_id"]].to_dict(orient="records")
         
         if len(cities) > 0:
