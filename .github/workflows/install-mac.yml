@@ -29,6 +29,10 @@ jobs:
       with:
         r-version: '4.1.3'
         use-public-rspm: true
+    - name: Install PROJ via Homebrew
+      run: |
+        brew install proj
+        echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig" >> $GITHUB_ENV
     - name: Install R packages
       uses: r-lib/actions/setup-r-dependencies@v2
       with:
