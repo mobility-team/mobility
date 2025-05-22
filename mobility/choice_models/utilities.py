@@ -1,5 +1,4 @@
-"""Module for utilities management."""
-import polars as pl
+import pandas as pd
 
 class Utilities:
     """
@@ -13,87 +12,74 @@ class Utilities:
         Sinks of the model.
     utility_by_country : Dict[str, float]
         Dictionary containing one utility value for each country.
-        
+
     Attributes
     ----------
-    sinks: pl.DataFrame
+    sinks: pd.DataFrame
         Sinks of the model.
-    utilities: pl.DataFrame
+    utilities: pd.DataFrame
         Utilities for each transport zone.
     """
 
-    def __init__(self, transport_zones, sinks, utility_by_country):    
+    def __init__(self, transport_zones, sinks, utility_by_country):
         
-        transport_zones["country"] = transport_zones["local_admin_unit_id"].astype(str).str[:2]
-        transport_zones["country"] = transport_zones["country"].astype(str)
+        # Assurer que country est bien string pour la jointure
+        transport_zones = transport_zones.drop(columns="geometry")
+        transport_zones = transport_zones[["transport_zone_id", "country"]].rename(columns={"transport_zone_id": "to"})
         
-        transport_zones = pl.DataFrame(
-           transport_zones[["transport_zone_id", "country"]].rename({"transport_zone_id": "to"}, axis=1)
-       ).with_columns(
-           pl.col("to").cast(pl.Int64)
-       )
-       
-
-        utility_by_country = pl.DataFrame({
-            "country": utility_by_country.keys(),
-            "base_utility": utility_by_country.values()
+        utility_by_country_df = pd.DataFrame({
+            "country": list(utility_by_country.keys()),
+            "base_utility": list(utility_by_country.values())
         })
+        sinks_df = sinks.reset_index()
+        sinks_df["to"] = sinks_df["to"].astype(int)
+        sinks_df["country"] = sinks_df["country"].astype(str)
         
-        sinks = pl.DataFrame(sinks.reset_index()).with_columns([
-            pl.col("to").cast(pl.Int64)
-        ])
-        
-        utilities = (
-            sinks
-            .join(transport_zones, on="to")
-            .join(utility_by_country, on="country")
-            .with_columns([pl.col("base_utility").alias("utility")])
-            .select(["to", "base_utility", "utility"])
-        )
-        
-        self.sinks = sinks        
-        self.utilities = utilities
-        
-        
-    def get(self, congestion: bool = False):
-        if congestion is True:
-            return self.utilities.select(["to", "utility"])
-        else:
-            return self.utilities.with_columns([pl.col("base_utility").alias("utility")]).select(["to", "utility"])
-        
-        
-    def update(self, flows):
-        
-        sink_occupation = flows.group_by("to").agg(
-            pl.col("flow_volume").sum().alias("sink_occupation")
-        )
+        utilities_df = sinks_df.merge(transport_zones, on=["to", "country"], how="left")
+        utilities_df = pd.merge(utilities_df, utility_by_country_df, on="country", how="left")
 
-        sink_occupation = self.sinks.join(
-            sink_occupation,
-            on="to",
-            how="left",
-            coalesce=True
-        ).with_columns(
-            pl.col("sink_occupation").fill_null(0.0)
-        )
-        
-        # sink_occupation = sink_occupation.with_columns([
-        #     pl.when(
-        #         pl.col("sink_occupation")/pl.col("sink_volume") > 1.0
-        #     ).then(
-        #         pl.col("sink_volume")/pl.col("sink_occupation")
-        #     ).otherwise(
-        #         1.0
-        #     ).alias("k_utility")
-        # ])   
-                
-        # sink_occupation = sink_occupation.with_columns([
-        #     (1.0/(1.0 + 0.5*(pl.col("sink_occupation")/pl.col("sink_volume")).pow(8))).alias("k_utility")
-        # ])  
-        
-        self.utilities = ( 
-            self.utilities
-            .join(sink_occupation.select(["to", "k_utility"]), on="to")
-            .with_columns([(pl.col("base_utility") * pl.col("k_utility")).alias("utility")])
-            .drop("k_utility")
-        )
+
+        utilities_df["utility"] = utilities_df["base_utility"]
+        utilities_df = utilities_df[["to", "base_utility", "utility"]]
+
+        self.sinks = sinks_df
+        self.utilities = utilities_df
+
+    def get(self, congestion: bool = False):
+        """
+        Returns a DataFrame with utility values per transport zone.
+        If congestion=True, returns utility as-is.
+        If congestion=False, returns base_utility as utility.
+        """
+        if congestion:
+            return self.utilities[["to", "utility"]]
+        else:
+            df = self.utilities.copy()
+            df["utility"] = df["base_utility"]
+            return df[["to", "utility"]]
+
+    def update(self, flows: pd.DataFrame):
+        """
+        Updates the utilities based on congestion level from flows.
+
+        Parameters
+        ----------
+        flows : pd.DataFrame
+            DataFrame with columns ['to', 'flow_volume']
+        """
+        # Calculer l’occupation par zone
+        sink_occupation = flows.groupby("to", as_index=False)["flow_volume"].sum()
+        sink_occupation = sink_occupation.rename(columns={"flow_volume": "sink_occupation"})
+
+        # Joindre avec les sinks d'origine (contenant sink_volume)
+        sink_data = self.sinks.merge(sink_occupation, on="to", how="left")
+        sink_data["sink_occupation"] = sink_data["sink_occupation"].fillna(0.0)
+
+        # Calcul du facteur d'ajustement (k_utility) — exemple non-linéaire
+        sink_data["k_utility"] = 1.0 / (1.0 + 0.5 * ((sink_data["sink_occupation"] / sink_data["sink_volume"]).pow(8)))
+
+        # Mise à jour des utilités
+        updated_utilities = self.utilities.merge(sink_data[["to", "k_utility"]], on="to", how="left")
+        updated_utilities["utility"] = updated_utilities["base_utility"] * updated_utilities["k_utility"]
+
+        self.utilities = updated_utilities[["to", "base_utility", "utility"]]

@@ -17,23 +17,23 @@ class PathGeneralizedCost(InMemoryAsset):
         
         costs = self.travel_costs.get(congestion)
         
-        study_area = self.travel_costs.transport_zones.study_area.get()
-        transport_zones = self.travel_costs.transport_zones.get()
+        # study_area = self.travel_costs.transport_zones.study_area.get()
+        transport_zones_df = self.travel_costs.transport_zones.get().drop(columns="geometry")
         
-        study_area["country"] = study_area["local_admin_unit_id"].astype(str).str[:2]
-        study_area["country"] = study_area["country"].astype(str)
         
-        transport_zones = pd.merge(transport_zones, study_area[["local_admin_unit_id", "country"]], on="local_admin_unit_id")
+        # transport_zones = pd.merge(transport_zones, study_area[["local_admin_unit_id", "country"]], on="local_admin_unit_id")
+        transport_zones_df["country"] = transport_zones_df["local_admin_unit_id"].astype(str).str[:2]
+        transport_zones_df["country"] = transport_zones_df["country"].astype(str)
         
         costs = pd.merge(
             costs,
-            transport_zones[["transport_zone_id", "country"]].rename({"transport_zone_id": "from"}, axis=1).set_index("from"),
+            transport_zones_df[["transport_zone_id", "country"]].rename({"transport_zone_id": "from"}, axis=1).set_index("from"),
             on="from"
         )
         
         costs = pd.merge(
             costs,
-            transport_zones[["transport_zone_id", "country"]].rename({"transport_zone_id": "to"}, axis=1).set_index("to"),
+            transport_zones_df[["transport_zone_id", "country"]].rename({"transport_zone_id": "to"}, axis=1).set_index("to"),
             on="to",
             suffixes=["_from", "_to"]
         )

@@ -91,6 +91,7 @@ class DestinationChoiceModel(FileAsset):
             study_area[["local_admin_unit_id", "country"]],
             on="local_admin_unit_id"
         )
+        transport_zones["country"] = transport_zones["country"].astype(str)
         
         sources, sinks = self.prepare_sources_and_sinks(transport_zones)
         utilities = self.prepare_utilities(transport_zones, sinks)
@@ -122,6 +123,10 @@ class DestinationChoiceModel(FileAsset):
     
     @abstractmethod
     def prepare_sources_and_sinks(self):
+        pass
+    
+    @abstractmethod
+    def prepare_utilities(self):
         pass
     
 
