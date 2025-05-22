@@ -10,7 +10,6 @@ def filter_database(data_base, minimum_sample_size=10, **kwargs):
         if sample_size < minimum_sample_size:
             # Sample size too small -> Relax the current criteria
             data_base.reset_index(level=key, inplace=True)
-            # print('The '+key+' criteria has been relaxed.')
 
         else:
             if isinstance(data_base.index, pd.MultiIndex):
@@ -22,6 +21,8 @@ def filter_database(data_base, minimum_sample_size=10, **kwargs):
     if type(data_base) == pd.Series:
         # The database to sample from is just one row
         data_base = pd.DataFrame([data_base])
+        
+    data_base.reset_index(drop=True, inplace=True)
 
     return data_base
 
@@ -53,7 +54,9 @@ def safe_sample(
     Example :
         safe_sample(days_trip_db, 10, csp="3", n_cars="2+", weekday=True, city_category='C')
     """
+    db_sample = (
+        filter_database(data_base, minimum_sample_size, **kwargs)
+        .sample(n_sample, weights=weights, replace=True, axis=0, random_state=0)
+    )
     
-    data_base = filter_database(data_base, minimum_sample_size, **kwargs)
-
-    return data_base.sample(n_sample, weights=weights, replace=True, axis=0)
+    return db_sample

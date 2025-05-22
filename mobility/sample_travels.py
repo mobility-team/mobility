@@ -1,9 +1,36 @@
 import numpy as np
 import random
 
-def sample_travels(df, start_col, length_col, weight_col, k,
-                                      burnin=10000, thinning=1000, num_samples=1,
-                                      random_seed=None):
+def _max_non_overlap_k(starts, ends):
+    """
+    Compute the maximum number of non-overlapping intervals.
+    Uses the classic interval‐scheduling greedy: sort by end time, then pick.
+    """
+    # sort indices by their end times (earliest-ending first)
+    idx = np.argsort(ends)
+    last_end = -np.inf
+    count = 0
+
+    for i in idx:
+        # if this interval starts after or exactly when the last one ended, we can take it
+        if starts[i] >= last_end:
+            count += 1
+            last_end = ends[i]
+
+    return count
+
+
+def sample_travels(
+    df,
+    start_col,
+    length_col,
+    weight_col,
+    k,
+    burnin=10000,
+    thinning=1000,
+    num_samples=1,
+    random_seed=None
+):
     """
     Weighted MCMC sampling of k non-overlapping travels via swap-move Metropolis-Hastings.
 
@@ -21,55 +48,73 @@ def sample_travels(df, start_col, length_col, weight_col, k,
     Returns:
     - List of `num_samples` lists of DataFrame indices.
     """
+    # 0) Optional: set random seeds for reproducibility
     if random_seed is not None:
         random.seed(random_seed)
         np.random.seed(random_seed)
 
+    # 1) Extract helper arrays from the DataFrame
     n = len(df)
     indices = np.arange(n)
     starts = df[start_col].to_numpy()
+    # compute end day = start day + duration
     ends = starts + df[length_col].to_numpy()
     weights = df[weight_col].to_numpy()
 
-    def is_compatible(v, sample_idxs):
-        """Vectorized check: interval v vs. intervals in sample_idxs."""
-        sv, ev = starts[v], ends[v]
-        s = starts[sample_idxs]
-        e = ends[sample_idxs]
-        return np.all((ev <= s) | (sv >= e))
+    # 2) Cap k to the true maximum non-overlapping set size
+    #    Ensures it's always possible to find k intervals
+    K_max = _max_non_overlap_k(starts, ends)
+    if k > K_max:
+        k = K_max
 
-    # 1. Initialize S with a random-greedy valid set
-    perm = np.random.permutation(n)
-    S = []
-    for idx in perm:
-        if len(S) < k and is_compatible(idx, S):
-            S.append(idx)
-    if len(S) < k:
-        raise ValueError("Initialization failed: cannot find size-k non-overlapping set")
+    # 3) Deterministic greedy initialization
+    #    Always succeeds for k ≤ K_max
+    idx_by_end = np.argsort(ends)  # intervals sorted by end time
+    S = []                         # will hold chosen indices
+    last_end = -np.inf
 
+    for i in idx_by_end:
+        # if interval i doesn't overlap the last picked one, take it
+        if starts[i] >= last_end and len(S) < k:
+            S.append(i)
+            last_end = ends[i]
+            
+    if len(S) == 0:
+        return [[]]
+
+    # 4) Prepare for the MCMC swap moves
     all_set = set(indices)
     samples = []
     total_steps = burnin + thinning * num_samples
 
-    # 2. MCMC loop with weighted MH swap moves
-    for t in range(total_steps):
-        # pick a member u to remove, and a candidate v to add
-        u = random.choice(S)
-        v = random.choice(list(all_set - set(S)))
-        # check non-overlap if we swap u->v
-        S_without_u = [x for x in S if x != u]
-        if is_compatible(v, S_without_u):
-            # compute MH acceptance ratio
-            ratio = weights[v] / weights[u]
-            if random.random() < min(1, ratio):
-                # accept swap
-                S[S.index(u)] = v
+    def is_compatible(v, sample_idxs):
+        """
+        Check if interval v does not overlap any in sample_idxs.
+        Vectorized using NumPy.
+        """
+        sv, ev = starts[v], ends[v]
+        s = starts[sample_idxs]
+        e = ends[sample_idxs]
+        # no overlap if v ends before all start, or starts after all end
+        return np.all((ev <= s) | (sv >= e))
 
-        # record sample after burn-in and respecting thinning
+    # 5) MCMC loop: at each step, propose swapping one chosen interval for an outside one
+    for t in range(total_steps):
+        # pick a random element u from current set S to remove
+        u = random.choice(S)
+        # pick a random candidate v from outside S to potentially add
+        v = random.choice(list(all_set - set(S)))
+
+        # only consider swap if v is compatible with S without u
+        if is_compatible(v, [x for x in S if x != u]):
+            ratio = weights[v] / weights[u]             # weight ratio
+            if random.random() < min(1, ratio):         # MH accept/reject
+                S[S.index(u)] = v                       # accept swap
+
+        # after burn-in and at thinning intervals, record the sample
         if t >= burnin and (t - burnin) % thinning == 0:
             samples.append(list(S))
 
-    # 3. Map back to original DataFrame indices and return
+    # 6) Map back from integer positions to DataFrame indices
     df_index = df.index.to_list()
     return [[df_index[i] for i in sample] for sample in samples]
-

@@ -623,7 +623,9 @@ class EMPMobilitySurvey(MobilitySurvey):
             "month",
             "weekday"
         ]
+        
         travels.set_index(["csp", "n_cars", "city_category"], inplace=True)
+        
 
         # ------------------------------------------
         # Population by csp in 2019 from the weigths in the data base k_individu
