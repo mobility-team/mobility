@@ -13,7 +13,7 @@ from mobility.safe_sample import safe_sample, filter_database
 from mobility.sample_travels import sample_travels
 from mobility.parsers.mobility_survey import MobilitySurveyAggregator
 from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
-
+from mobility.transport_modes.default_gwp import DefaultGWP
 
 from typing import Callable
 
@@ -38,12 +38,17 @@ class Trips(FileAsset):
             self,
             population: FileAsset,
             surveys={"fr": EMPMobilitySurvey},
-            filter_population: Callable[[pd.DataFrame], pd.DataFrame] = None
+            filter_population: Callable[[pd.DataFrame], pd.DataFrame] = None,
+            gwp: DefaultGWP = DefaultGWP()
         ):
         
         mobility_survey = MobilitySurveyAggregator(population, surveys)
         
-        inputs = {"population": population, "mobility_survey": mobility_survey}
+        inputs = {
+            "population": population,
+            "mobility_survey": mobility_survey,
+            "gwp": gwp
+        }
         
         self.filter_population = filter_population
 
@@ -163,6 +168,10 @@ class Trips(FileAsset):
                 progress.update(task, advance=1)
             
         trips = pd.concat(all_trips)
+        
+        # Compute default GWP values
+        trips = pd.merge(trips, self.inputs["gwp"].as_dataframe(), on="mode_id")
+        trips["gwp"] *= trips["distance"]
         
         # Replace trip_ids by unique values
         trips["trip_id"] = [shortuuid.uuid() for _ in range(trips.shape[0])]
@@ -515,4 +524,3 @@ class Trips(FileAsset):
         return all_trips
     
     
-   

@@ -118,7 +118,7 @@ class EMPMobilitySurvey(MobilitySurvey):
         hh.columns = ["IDENT_MEN", "n_pers", "csp", "city_category"]
 
         # the R category of the ENTD correspond to the H category of the EMP 2019
-        hh["city_category"].loc[hh["city_category"] == "H"] = "R"
+        hh.loc[hh["city_category"] == "H", "city_category"] = "R"
 
         hh["csp"] = hh["csp"].str.slice(0, 1)
         hh["csp_household"] = hh["csp"]
