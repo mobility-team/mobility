@@ -111,7 +111,7 @@ class LeisureDestinationChoiceModel(DestinationChoiceModel):
         )
         
         
-    def prepare_sources_and_sinks(self, transport_zones: gpd.GeoDataFrame):
+    def prepare_sources_and_sinks(self, transport_zones):
         
         
         sources = self.prepare_sources(transport_zones)
@@ -126,31 +126,36 @@ class LeisureDestinationChoiceModel(DestinationChoiceModel):
     
     def prepare_sources(
             self,
-            transport_zones: gpd.GeoDataFrame
+            transport_zones
         ) -> pd.DataFrame:
         """
         Même code que work_destination_choice_model pour l'instant : on se base sur les domiciles
         """
         
+        transport_zones_df = transport_zones.drop(columns="geometry")
+
         hh_expenses = HouseholdsExpensesDistribution()
         all_expenses = hh_expenses.get()
         all_expenses = all_expenses["hobbies"]
-        transport_zones = transport_zones.merge(all_expenses, on="local_admin_unit_id")
-        zones_per_communes = transport_zones[["local_admin_unit_id"]]
+        transport_zones_df = transport_zones_df.merge(all_expenses, on="local_admin_unit_id")
+        zones_per_communes = transport_zones_df[["local_admin_unit_id"]]
         
         # Compter le nombre de tz par communes
         zones_per_communes = zones_per_communes.value_counts()
         
         # Diviser le montant total par nombre de tz
-        transport_zones = transport_zones.merge(zones_per_communes, on="local_admin_unit_id")
-        transport_zones["expenses"] = transport_zones["expenses"].truediv(transport_zones["count"])
+        transport_zones_df = transport_zones_df.merge(zones_per_communes, on="local_admin_unit_id")
+        
+
+        transport_zones_df["expenses"] = transport_zones_df["expenses"].truediv(transport_zones_df["count"])
         #When debug=True, plot a map of the sources
         if os.environ.get("MOBILITY_DEBUG") == "1":
             print("Plotting sources for leisure")
-            transport_zones.plot(column="expenses", legend=True)
+            transport_zones_df.plot(column="expenses", legend=True)
             plt.title("Leisure sources")
             plt.show()
-        sources_expenses  = transport_zones[["transport_zone_id", "expenses"]].rename(columns = {"transport_zone_id": "from", "expenses": "source_volume"})
+        sources_expenses  = transport_zones_df[["transport_zone_id", "expenses"]].rename(columns = {"transport_zone_id": "from", "expenses": "source_volume"})
+        
         return sources_expenses
         
     
@@ -203,6 +208,7 @@ class LeisureDestinationChoiceModel(DestinationChoiceModel):
                 polar_sinks = pl.from_pandas(sinks).with_columns(pl.col("to").cast(pl.Int64))
                 costs = costs.get()
                 utilities = utilities.get()
+                utilities = pl.from_pandas(utilities)
                 flows = apply_radiation_model(polar_sources, polar_sinks, costs, utilities, selection_lambda)
                 return flows.to_pandas()
     

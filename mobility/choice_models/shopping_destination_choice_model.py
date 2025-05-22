@@ -130,8 +130,8 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         hh_expenses = HouseholdsExpensesDistribution()
         all_expenses = hh_expenses.get()
         all_expenses = all_expenses["shops"]
-        transport_zones = transport_zones.drop(columns="geometry")
-        transport_zones_expenses = transport_zones.merge(all_expenses, on="local_admin_unit_id")
+        transport_zones_df = transport_zones.drop(columns="geometry")
+        transport_zones_expenses = transport_zones_df.merge(all_expenses, on="local_admin_unit_id")
         zones_per_communes = transport_zones_expenses[["local_admin_unit_id"]]
         
         # Compter le nombre de tz par communes
@@ -171,14 +171,14 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
         # Find which stops are in the transport zone
         all_shops = transport_zones.sjoin(all_shops, how="left")
         asd = all_shops.dissolve(by="transport_zone_id", aggfunc='sum')
-        all_shops = all_shops.groupby("transport_zone_id").sum("turnover")
+        all_shops = all_shops.groupby(["transport_zone_id", "country"]).sum("turnover")
         #When debug=True, plot a map of the sinks
         if os.environ.get("MOBILITY_DEBUG") == "1":
             print("Plotting sinks for shopping")
             asd.plot(column="turnover", legend=True)
             plt.title("Shopping sinks")
             plt.show()
-        all_shops = all_shops.reset_index()[["transport_zone_id", "turnover"]].rename(columns={"turnover": "sink_volume", "transport_zone_id": "to"})
+        all_shops = all_shops.reset_index()[["transport_zone_id", "turnover", "country"]].rename(columns={"turnover": "sink_volume", "transport_zone_id": "to"})
         
         return all_shops
     
@@ -204,6 +204,7 @@ class ShoppingDestinationChoiceModel(DestinationChoiceModel):
                 polar_sinks = pl.from_pandas(sinks).with_columns(pl.col("to").cast(pl.Int64))
                 costs = costs.get()
                 utilities = utilities.get()
+                utilities = pl.from_pandas(utilities)
                 flows = apply_radiation_model(polar_sources, polar_sinks, costs, utilities, selection_lambda)
                 return flows.to_pandas()
     

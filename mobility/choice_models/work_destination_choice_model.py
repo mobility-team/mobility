@@ -313,7 +313,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         
         # Disaggregate the jobs counts at transport zone level
         jobs = pd.merge(
-            transport_zones[["transport_zone_id", "local_admin_unit_id", "weight"]],
+            transport_zones[["transport_zone_id", "local_admin_unit_id", "country", "weight"]],
             jobs[["local_admin_unit_id", "n_jobs_total"]],
             on="local_admin_unit_id"
         )
@@ -321,8 +321,8 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
         jobs["n_jobs_total"] *= jobs["weight"]
     
         
-        jobs = jobs[["transport_zone_id", "n_jobs_total"]]
-        jobs.columns = ["to", "sink_volume"]
+        jobs = jobs[["transport_zone_id", "country", "n_jobs_total"]]
+        jobs.columns = ["to", "country", "sink_volume"]
         jobs.set_index("to", inplace=True)
         
         logging.info("Total job count : " + str(round(jobs["sink_volume"].sum())))
@@ -362,6 +362,8 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             # Compute the flows given costs and utilities before any congestion effect
             costs_values = costs.get(congestion=False)
             utilities_values = utilities.get(congestion=False)
+            utilities_values = pl.from_pandas(utilities_values)
+
 
             
             i = 0
