@@ -20,6 +20,8 @@ class BicycleMode(TransportMode):
         speed_modifiers: List[SpeedModifier] = []
     ):
         
+        mode_name = "bicycle"
+        
         if routing_parameters is None:
             routing_parameters = PathRoutingParameters(
                 filter_max_time=1.0,
@@ -27,7 +29,7 @@ class BicycleMode(TransportMode):
             )
             
         if osm_capacity_parameters is None:
-            osm_capacity_parameters = OSMCapacityParameters("bicycle")
+            osm_capacity_parameters = OSMCapacityParameters(mode_name)
         
         if generalized_cost_parameters is None:
             generalized_cost_parameters = GeneralizedCostParameters(
@@ -36,7 +38,7 @@ class BicycleMode(TransportMode):
                 cost_of_time=CostOfTimeParameters()
             )
         
-        travel_costs = PathTravelCosts("bicycle", transport_zones, routing_parameters, osm_capacity_parameters, speed_modifiers=speed_modifiers)
-        generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters)
-        super().__init__("bicycle", travel_costs, generalized_cost)
+        travel_costs = PathTravelCosts(mode_name, transport_zones, routing_parameters, osm_capacity_parameters, speed_modifiers=speed_modifiers)
+        generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters, mode_name)
+        super().__init__(mode_name, travel_costs, generalized_cost)
         

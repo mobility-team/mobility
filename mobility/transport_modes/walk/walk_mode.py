@@ -17,6 +17,8 @@ class WalkMode(TransportMode):
         generalized_cost_parameters: GeneralizedCostParameters = None
     ):
         
+        mode_name = "walk"
+        
         if routing_parameters is None:
             routing_parameters = PathRoutingParameters(
                 filter_max_time=1.0,
@@ -24,7 +26,7 @@ class WalkMode(TransportMode):
             )
             
         if osm_capacity_parameters is None:
-            osm_capacity_parameters = OSMCapacityParameters("walk")
+            osm_capacity_parameters = OSMCapacityParameters(mode_name)
         
         if generalized_cost_parameters is None:
             generalized_cost_parameters = GeneralizedCostParameters(
@@ -33,8 +35,8 @@ class WalkMode(TransportMode):
                 cost_of_time=CostOfTimeParameters()
             )
         
-        travel_costs = PathTravelCosts("walk", transport_zones, routing_parameters, osm_capacity_parameters)
-        generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters)
-        super().__init__("walk", travel_costs, generalized_cost)
+        travel_costs = PathTravelCosts(mode_name, transport_zones, routing_parameters, osm_capacity_parameters)
+        generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters, mode_name)
+        super().__init__(mode_name, travel_costs, generalized_cost)
         
 

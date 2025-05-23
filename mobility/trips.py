@@ -401,6 +401,7 @@ class Trips(FileAsset):
             :,
             [
                 "day_id",
+                "daily_trip_index",
                 "previous_motive",
                 "motive",
                 "mode_id",
@@ -508,6 +509,7 @@ class Trips(FileAsset):
             :,
             [
                 "day_id",
+                "daily_trip_index",
                 "previous_motive",
                 "motive",
                 "mode_id",

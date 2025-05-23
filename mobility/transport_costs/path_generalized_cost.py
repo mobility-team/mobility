@@ -3,16 +3,18 @@ from mobility.in_memory_asset import InMemoryAsset
 
 class PathGeneralizedCost(InMemoryAsset):
     
-    def __init__(self, travel_costs, parameters):
+    def __init__(self, travel_costs, parameters, mode_name):
         inputs = {
             "travel_costs": travel_costs,
-            "parameters": parameters
+            "parameters": parameters,
+            "mode_name": mode_name
         }
         super().__init__(inputs)
         
         
-    def get(self, metrics=["cost"], congestion: bool = False) -> pd.DataFrame:
+    def get(self, metrics=["cost"], congestion: bool = False, detail_distances: bool = False) -> pd.DataFrame:
         
+        metrics = list(metrics)
         costs = self.travel_costs.get(congestion)
         
         # study_area = self.travel_costs.transport_zones.study_area.get()
@@ -41,6 +43,11 @@ class PathGeneralizedCost(InMemoryAsset):
         gen_cost += self.parameters.cost_of_time.compute(costs["distance"], costs["country_from"])*costs["time"]
         
         costs["cost"] = gen_cost
+        
+        if detail_distances is True:
+            col = self.inputs["mode_name"] + "_distance"
+            costs[col] = costs["distance"]
+            metrics.append(col)
         
         metrics = ["from", "to"] + metrics
         costs = costs[metrics]

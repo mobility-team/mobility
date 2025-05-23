@@ -30,6 +30,8 @@ class CarMode(TransportMode):
         speed_modifiers: List[SpeedModifier] = []
     ):
         
+        mode_name = "car"
+        
         if routing_parameters is None:
             routing_parameters = PathRoutingParameters(
                 filter_max_time=1.0,
@@ -37,7 +39,7 @@ class CarMode(TransportMode):
             )
             
         if osm_capacity_parameters is None:
-            osm_capacity_parameters = OSMCapacityParameters("car")
+            osm_capacity_parameters = OSMCapacityParameters(mode_name)
         
         if generalized_cost_parameters is None:
             generalized_cost_parameters = GeneralizedCostParameters(
@@ -48,7 +50,7 @@ class CarMode(TransportMode):
             
         
         travel_costs = PathTravelCosts(
-            "car", 
+            mode_name, 
             transport_zones, 
             routing_parameters, 
             osm_capacity_parameters,
@@ -59,8 +61,9 @@ class CarMode(TransportMode):
         
         generalized_cost = PathGeneralizedCost(
             travel_costs,
-            generalized_cost_parameters
+            generalized_cost_parameters,
+            mode_name=mode_name
         )
         
-        super().__init__("car", travel_costs, generalized_cost, congestion)
+        super().__init__(mode_name, travel_costs, generalized_cost, congestion)
         

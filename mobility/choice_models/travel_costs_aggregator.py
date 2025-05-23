@@ -16,7 +16,8 @@ class TravelCostsAggregator(InMemoryAsset):
             self,
             metrics=["cost", "distance"],
             congestion: bool = False,
-            aggregate_by_od: bool = True
+            aggregate_by_od: bool = True,
+            detail_distances: bool = False
         ):
         
         logging.info("Aggregating costs...")
@@ -24,14 +25,14 @@ class TravelCostsAggregator(InMemoryAsset):
         if aggregate_by_od is True:
             costs = self.get_costs_by_od(metrics, congestion)
         else:
-            costs = self.get_costs_by_od_and_mode(metrics, congestion)
+            costs = self.get_costs_by_od_and_mode(metrics, congestion, detail_distances)
         
         return costs
     
     
     def get_costs_by_od(self, metrics: List, congestion: bool):
         
-        costs = self.get_costs_by_od_and_mode(metrics, congestion)
+        costs = self.get_costs_by_od_and_mode(metrics, congestion, detail_distances=False)
         
         costs = costs.with_columns([
             (pl.col("cost").neg().exp()).alias("prob")
@@ -52,7 +53,7 @@ class TravelCostsAggregator(InMemoryAsset):
         return costs
         
         
-    def get_costs_by_od_and_mode(self, metrics: List, congestion: bool):
+    def get_costs_by_od_and_mode(self, metrics: List, congestion: bool, detail_distances: bool):
         
         costs = []
         
@@ -62,16 +63,16 @@ class TravelCostsAggregator(InMemoryAsset):
         for mode in modes:
             
             if mode.congestion:
-                gc = pl.DataFrame(mode.generalized_cost.get(metrics, congestion))
+                gc = pl.DataFrame(mode.generalized_cost.get(metrics, congestion, detail_distances=detail_distances))
             else:
-                gc = pl.DataFrame(mode.generalized_cost.get(metrics))
+                gc = pl.DataFrame(mode.generalized_cost.get(metrics, detail_distances=detail_distances))
                 
             costs.append(
                 pl.DataFrame(gc)
                 .with_columns(pl.lit(mode.name).alias("mode"))
             )
         
-        costs = pl.concat(costs)
+        costs = pl.concat(costs, how="diagonal").fill_null(0.0)
         
         costs = costs.with_columns([
             pl.col("from").cast(pl.Int64),
@@ -83,7 +84,7 @@ class TravelCostsAggregator(InMemoryAsset):
     
     def get_prob_by_od_and_mode(self, metrics: List, congestion: bool):
         
-        costs = self.get_costs_by_od_and_mode(metrics, congestion)
+        costs = self.get_costs_by_od_and_mode(metrics, congestion, detail_distances=False)
         
         prob = (
             costs

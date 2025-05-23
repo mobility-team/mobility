@@ -27,7 +27,8 @@ class DestinationChoiceModel(FileAsset):
             modes,
             sources_sinks,
             parameters,
-            ssi_min_flow_volume: float
+            ssi_min_flow_volume: float,
+            n_possible_destinations: int = 1
         ):
         """Retrieves destination choice model if it already exists for these transport zones, travel costs, motive and other parameters.
         Otherwise, creates it and saves it.
@@ -58,6 +59,8 @@ class DestinationChoiceModel(FileAsset):
             "parameters": parameters,
             "ssi_min_flow_volume": ssi_min_flow_volume
         }
+        
+        self.n_possible_destinations = n_possible_destinations
         
         data_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
         od_flows_filename = motive + "_od_flows.parquet"

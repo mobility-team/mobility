@@ -54,6 +54,8 @@ class PublicTransportMode(TransportMode):
         
         generalized_cost = PublicTransportGeneralizedCost(
             travel_costs,
+            first_leg_mode_name=first_leg_mode.name,
+            last_leg_mode_name=last_leg_mode.name,
             start_parameters=first_leg_mode.generalized_cost.parameters,
             mid_parameters=generalized_cost_parameters,
             last_parameters=last_leg_mode.generalized_cost.parameters

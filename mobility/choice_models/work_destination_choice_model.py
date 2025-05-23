@@ -112,7 +112,8 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             active_population: pd.DataFrame = None,
             jobs: pd.DataFrame = None,
             reference_flows: pd.DataFrame = None,
-            ssi_min_flow_volume: float = 200.0
+            ssi_min_flow_volume: float = 200.0,
+            n_possible_destinations: int = 1
         ):
 
         
@@ -147,7 +148,8 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             modes,
             self.jobs_active_population,
             parameters,
-            ssi_min_flow_volume
+            ssi_min_flow_volume,
+            n_possible_destinations
         )
         
         

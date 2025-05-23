@@ -96,7 +96,11 @@ class EMPMobilitySurvey(MobilitySurvey):
             data_folder_path / "tcm_ind_kish_public_V2.csv",
             encoding="latin-1",
             sep=";",
-            dtype=str,
+            dtype={
+                "ident_men": int,
+                "ident_ind": int,
+                "CS24": str
+            },
             usecols=["ident_men", "ident_ind", "CS24"],
         )
 
@@ -112,7 +116,12 @@ class EMPMobilitySurvey(MobilitySurvey):
             data_folder_path / "tcm_men_public_V2.csv",
             encoding="latin-1",
             sep=";",
-            dtype=str,
+            dtype={
+                "ident_men": int,
+                "STATUTCOM_UU_RES": str,
+                "CS24PR": str,
+                "NPERS": str
+            },
             usecols=["ident_men", "STATUTCOM_UU_RES", "NPERS", "CS24PR"],
         )
         hh.columns = ["IDENT_MEN", "n_pers", "csp", "city_category"]
@@ -129,8 +138,12 @@ class EMPMobilitySurvey(MobilitySurvey):
             data_folder_path / "q_menage_public_V2.csv",
             encoding="latin-1",
             sep=";",
-            dtype=str,
-            usecols=["IDENT_MEN", "JNBVEH","BLOGDIST"],
+            dtype={
+                "IDENTMEN": int,
+                "JNBVEH": str,
+                "BLOGDIST": str
+            },
+            usecols=["IDENT_MEN", "JNBVEH", "BLOGDIST"],
         )
 
         cars["n_cars"] = "0"
@@ -144,7 +157,7 @@ class EMPMobilitySurvey(MobilitySurvey):
             data_folder_path / "k_individu_public_V2.csv",
             encoding="latin-1",
             sep=";",
-            dtype={"IDENT_IND": str, "pond_indC": float},
+            dtype={"IDENT_IND": int, "pond_indC": float},
             usecols=[
                 "IDENT_IND",
                 "pond_indC",
@@ -167,8 +180,8 @@ class EMPMobilitySurvey(MobilitySurvey):
             encoding="latin-1",
             sep=";",
             dtype={
-                "IDENT_DEP": str,
-                "IDENT_IND": str,
+                "IDENT_DEP": int,
+                "IDENT_IND": int,
                 "mobloc": str,
                 "TYPEJOUR": str,
                 "MMOTIFDES": str,
@@ -193,6 +206,8 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "MDATE_mois"
             ],
         )
+        
+        df["daily_trip_index"] = df.groupby("IDENT_IND").cumcount() + 1
 
         df["POND_JOUR"] = df["POND_JOUR"].astype(float)
         df["MDISTTOT_fin"] = df["MDISTTOT_fin"].astype(float)
@@ -352,7 +367,7 @@ class EMPMobilitySurvey(MobilitySurvey):
         df = pd.merge(df, cars, on="IDENT_MEN")
 
         # Transform the deplacement id into a day id
-        df["IDENT_DEP"] = df["IDENT_DEP"].str.slice(0, 14)
+        df["IDENT_DEP"] = df["IDENT_DEP"].astype(str).str.slice(0, 14).astype(int)
 
         # Data base of days trip : group the trips by days
         days_trip = df[
@@ -389,6 +404,7 @@ class EMPMobilitySurvey(MobilitySurvey):
             [
                 "IDENT_IND",
                 "IDENT_DEP",
+                "daily_trip_index",
                 "weekday",
                 "city_category",
                 "csp",
@@ -405,6 +421,7 @@ class EMPMobilitySurvey(MobilitySurvey):
         df.columns = [
             "individual_id",
             "day_id",
+            "daily_trip_index",
             "weekday",
             "city_category",
             "csp",
@@ -426,7 +443,19 @@ class EMPMobilitySurvey(MobilitySurvey):
             data_folder_path / "k_voy_depdet_public_V2.csv",
             encoding="latin-1",
             sep=";",
-            dtype=str,
+            dtype={
+                "IDENTIND": int,
+                "IDENT_VOY": str,
+                "OLDVMH": str,
+                "OLDMOT": str,
+                "OLDKM_fin": str,
+                "mtp": str,
+                "nbaccomp": str,
+                "STATUTCOM_UU_DES": str,
+                "poids_annuel": str,
+                "NBJOURS_DEP": str,
+                "NUITEE_DEST_DEP": str
+            },
             usecols=[
                 "IDENT_IND",
                 "IDENT_VOY",
@@ -525,7 +554,17 @@ class EMPMobilitySurvey(MobilitySurvey):
             data_folder_path / "k_voyage_public_V2.csv",
             encoding="latin-1",
             sep=";",
-            dtype=str,
+            dtype={
+                "IDENT_IND": int,
+                "IDENT_VOY": str,
+                "OLDVMH": str,
+                "OLDMOT": str,
+                "mtp": str,
+                "STATUTCOM_UU_VOY_DES": str,
+                "poids_annuel": str,
+                "OLDDEBJ_mois": str,
+                "OLDDEBJ_jour": str
+            },
             usecols=[
                 "IDENT_IND",
                 "IDENT_VOY",
