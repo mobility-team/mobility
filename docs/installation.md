@@ -4,10 +4,18 @@
 - Installer [git](https://git-scm.com/), pour pouvoir récupérer le code de mobility.
 - Installer un environnement de développement, pour pouvoir utiliser la librairie dans des scripts. Vous pouvez par exemple utiliser [spyder](https://www.spyder-ide.org/) (idéalement dans un environnement mamba, voir les [instructions d'installation de spyder](https://docs.spyder-ide.org/current/installation.html#conda-environment)) ou [vs code](https://code.visualstudio.com/).
 
-## Récuperer le code avec git
-- Ouvrir une invite de commande, puis allez dans le dossier dans lequel vous souhaitez stocker le code de Mobility : `cd path/to/mobility-repo`
+## Récupérer le code avec git
+Vous pouvez soit utiliser git directement soit GitHub Desktop.
+
+### Avec git
+- Ouvrir une invite de commande, puis allez dans le dossier dans lequel vous souhaitez stocker le code de Mobility : `cd path/to/mobility-repo`. Sous Windows, choisissez un dossier standard (par exemple "C:\Users\username\Documents\GitHub\mobility"), l'utilisation de dossiers système peut bloquer l'installation.
 - Récupérer le code avec la commande : `git clone https://github.com/mobility-team/mobility.git`
 - Passer sur la branche carpool : `git checkout carpool`
+
+### Avec GitHub Desktop
+- Installer et ouvrir GitHub Desktop
+- File > Clone repository > URL > `mobility-team/mobility`. Sous Windows, choisissez un dossier standard (par exemple `C:\Users\username\Documents\GitHub\mobility`), l'utilisation de dossiers système peut bloquer l'installation.
+- Passer sur la branche carpool grâce au sélecteur en haut de l'interface
 
 ## Créer un environnement dédié et installer les dépendances de mobility
 - Créer un environnement pour mobility à partir du fichier environment.yml : `mamba env create -n mobility -f environment.yml`
