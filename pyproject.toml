@@ -71,5 +71,10 @@ Issues = "https://github.com/mobility-team/mobility/issues"
 Changelog = "https://github.com/mobility-team/mobility/releases"
 
 [tool.setuptools.package-data]
-mobility = ["data/gtfs/gtfs_route_types.xlsx", "resources/*", "r_utils/*"]
+mobility = [
+    "data/gtfs/gtfs_route_types.xlsx",
+    "resources/*",
+    "r_utils/*",
+    "**/*.R"
+]
 
