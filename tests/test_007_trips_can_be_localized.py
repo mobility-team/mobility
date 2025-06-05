@@ -3,10 +3,11 @@ import pytest
 
 # Uncomment the next lines if you want to test interactively, outside of pytest, 
 # but still need the setup phase and input data defined in conftest.py
+# Don't forget to recomment or the tests will not pass !
 
-from conftest import get_test_data, do_mobility_setup
-do_mobility_setup(True, False, False)
-test_data = get_test_data()
+# from conftest import get_test_data, do_mobility_setup
+# do_mobility_setup(True, False, False)
+# test_data = get_test_data()
 
 @pytest.mark.dependency(
     depends=["tests/test_006_trips_can_be_sampled.py::test_006_trips_can_be_sampled"],
