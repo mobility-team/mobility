@@ -47,6 +47,10 @@ def do_mobility_setup(local, clear_inputs, clear_results):
             r_packages=False
         )
 
+        # Set the env var directly for now
+        # TO DO : see how could do this differently...
+        os.environ["MOBILITY_GTFS_DOWNLOAD_DATE"] = "2025-01-01"
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_mobility(local, clear_inputs, clear_results):
     do_mobility_setup(local, clear_inputs, clear_results)
