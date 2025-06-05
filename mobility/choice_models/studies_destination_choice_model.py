@@ -76,7 +76,7 @@ class StudiesDestinationChoiceModel(DestinationChoiceModel):
         if students_distribution is None:
             self.students_distribution = StudentsDistribution()
             self.school_capacities = SchoolsCapacityDistribution()
-            self.reference_flows = SchoolStudentsFlows()
+            self.reference_flows = None # SchoolStudentsFlows() : class does not exist ?
         else:
             self.students_distribution = students_distribution
             self.school_capacities = school_capacities
