@@ -227,29 +227,29 @@ class EMPMobilitySurvey(MobilitySurvey):
         
         # Map months and day of week to integers
         df["MDATE_mois"] = df["MDATE_mois"].replace({
-            'janvier': 1,
-            'février': 2,
-            'mars': 3,
-            'avril': 4,
-            'mai': 5,
-            'juin': 6,
-            'juillet': 7,
-            'août': 8,
-            'septembre': 9,
-            'octobre': 10,
-            'novembre': 11,
-            'décembre': 12
-        })
-        
+            'janvier': "1",
+            'février': "2",
+            'mars': "3",
+            'avril': "4",
+            'mai': "5",
+            'juin': "6",
+            'juillet': "7",
+            'août': "8",
+            'septembre': "9",
+            'octobre': "10",
+            'novembre': "11",
+            'décembre': "12"
+        }).astype(int)
+
         df["MDATE_jour"] = df["MDATE_jour"].replace({
-            'lundi': 0,
-            'mardi': 1,
-            'mercredi': 2,
-            'jeudi': 3,
-            'vendredi': 4,
-            'samedi': 5,
-            'dimanche': 6
-        })
+            'lundi': "0",
+            'mardi': "1",
+            'mercredi': "2",
+            'jeudi': "3",
+            'vendredi': "4",
+            'samedi': "5",
+            'dimanche': "6"
+        }).astype(int)
 
         # Convert the mode id from the EMP terminology to the ENTD one
         data = np.array(
@@ -611,29 +611,29 @@ class EMPMobilitySurvey(MobilitySurvey):
         
         # Map months and day of week to integers
         travels["OLDDEBJ_mois"] = travels["OLDDEBJ_mois"].replace({
-            'janvier': 1,
-            'février': 2,
-            'mars': 3,
-            'avril': 4,
-            'mai': 5,
-            'juin': 6,
-            'juillet': 7,
-            'août': 8,
-            'septembre': 9,
-            'octobre': 10,
-            'novembre': 11,
-            'décembre': 12
-        })
-        
+            'janvier': "1",
+            'février': "2",
+            'mars': "3",
+            'avril': "4",
+            'mai': "5",
+            'juin': "6",
+            'juillet': "7",
+            'août': "8",
+            'septembre': "9",
+            'octobre': "10",
+            'novembre': "11",
+            'décembre': "12"
+        }).astype(int)
+
         travels["OLDDEBJ_jour"] = travels["OLDDEBJ_jour"].replace({
-            'lundi': 0,
-            'mardi': 1,
-            'mercredi': 2,
-            'jeudi': 3,
-            'vendredi': 4,
-            'samedi': 5,
-            'dimanche': 6
-        })
+            'lundi': "0",
+            'mardi': "1",
+            'mercredi': "2",
+            'jeudi': "3",
+            'vendredi': "4",
+            'samedi': "5",
+            'dimanche': "6"
+        }).astype(int)
          
         travels = travels.loc[
             :,
