@@ -80,7 +80,7 @@ class SimplifiedPathGraph(FileAsset):
         ) -> None:
 
     
-        logging.info("Creating a routable graph with dodgr and cpp routing this might take a while...")
+        logging.info("Creating a routable graph, this might take a while...")
          
         script = RScript(resources.files('mobility.transport_graphs').joinpath('prepare_path_graph.R'))
 

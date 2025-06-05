@@ -14,11 +14,11 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\97ceeb8b5878c6c73846ad83a7c465e0-transport_zones.gpkg',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\97b65f98a8ec26056b132e1d297c8a82-highway-osm_data.osm',
-#   'car',
-#   '{"motorway": {"capacity": 2000.0, "alpha": 0.15, "beta": 4.0}, "trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "service": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "ferry": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 300.0, "alpha": 0.15, "beta": 4.0}, "motorway_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}}',
-#   'D:/data/mobility/projects/grand-geneve/path_graph_car/simplified/49adfaa59c6f535100d201e618521ddd-car-simplified-path-graph'
+#   'D:\\data\\mobility\\tests\\results\\bf3917ee1ea0b4a20320314e1ec9367e-transport_zones.gpkg',
+#   'D:\\data\\mobility\\tests\\results\\ba829d40c59e629559af055ee0c88776-highway-osm_data.osm',
+#   'walk',
+#   '{"trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "service": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "track": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "cycleway": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "path": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "steps": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "ferry": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "bridleway": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "footway": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "pedestrian": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}}',
+#   'D:\\data\\mobility\\tests\\results\\path_graph_walk\\simplified\\dbfd8646c9f6ea09d092675dde9a1d83-walk-simplified-path-graph'
 # )
 
 package_path <- args[1]

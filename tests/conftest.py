@@ -22,8 +22,7 @@ def clear_results(request):
 def local(request):
     return request.config.getoption("--local")
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_mobility(local, clear_inputs, clear_results):
+def do_mobility_setup(local, clear_inputs, clear_results):
     
     if local:
         
@@ -47,12 +46,19 @@ def setup_mobility(local, clear_inputs, clear_results):
             project_data_folder_path=pathlib.Path.home() / ".mobility/projects/tests",
             r_packages=False
         )
-        
-        
-@pytest.fixture
-def test_data():
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_mobility(local, clear_inputs, clear_results):
+    do_mobility_setup(local, clear_inputs, clear_results)
+
+
+def get_test_data():
     return {
         "transport_zones_local_admin_unit_id": "fr-12202",
         "transport_zones_radius": 10.0,
         "population_sample_size": 100
     }
+        
+@pytest.fixture
+def test_data():
+    return get_test_data()

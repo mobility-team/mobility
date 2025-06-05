@@ -62,6 +62,7 @@ class OSMData(FileAsset):
             object_type: str,
             key: str,
             tags: List[str] = None,
+            boundary_buffer: float = 10000.0,
             split_local_admin_units: bool = False,
             geofabrik_extract_date: str = "240101",
             file_format: str = "pbf"
@@ -74,6 +75,7 @@ class OSMData(FileAsset):
             "object_type": object_type,
             "key": key,
             "tags": tags,
+            "boundary_buffer": boundary_buffer,
             "split_local_admin_units": split_local_admin_units,
             "geofabrik_extract_date": geofabrik_extract_date,
             "file_format": file_format
@@ -119,16 +121,23 @@ class OSMData(FileAsset):
         
         study_area = self.inputs["study_area"].get()
         
+        # Create a buffered version of the boundary
         boundary_path = self.inputs["study_area"].cache_path["boundary"]
-        boundary = gpd.read_file(boundary_path).to_crs(3035).buffer(10000.0).to_crs(4326).geometry[0]
+        boundary = gpd.read_file(boundary_path).to_crs(3035)
+        boundary_buffered = boundary.buffer(self.inputs["boundary_buffer"]).to_crs(4326).geometry[0]
+        boundary_buffered_geojson = geojson.Feature(geometry=boundary_buffered, properties={})
+        boundary_buffered_path = self.cache_path.parents[1] / (self.key + "-study-area-buffered-boundary.geojson")
+        
+        with open(boundary_buffered_path, "w") as f:
+            geojson.dump(boundary_buffered_geojson, f)
     
-        regions_paths = self.get_osm_regions(boundary)
+        regions_paths = self.get_osm_regions(boundary_buffered)
         
         filtered_regions_paths = []
         
         for region_path in regions_paths:
             
-            cropped_region_path = self.crop_region(region_path, boundary_path)
+            cropped_region_path = self.crop_region(region_path, boundary_buffered_path)
             filtered_region_path = self.filter_region(cropped_region_path, self.object_type, self.key, self.tags)
             filtered_regions_paths.append(filtered_region_path)
             

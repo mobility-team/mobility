@@ -31,7 +31,12 @@ class StudyArea(FileAsset):
         create_study_area_boundary:
     """
 
-    def __init__(self, local_admin_unit_id: Union[str, List[str]], radius: int = 40):
+    def __init__(
+            self,
+            local_admin_unit_id: Union[str, List[str]],
+            radius: int = 40
+        ):
+
         inputs = {
             "local_admin_units": LocalAdminUnits(),
             "local_admin_unit_id": local_admin_unit_id,
@@ -156,12 +161,12 @@ class StudyArea(FileAsset):
         # Merge all transport zones into one polygon
         boundary = study_area.to_crs(4326).geometry.union_all()
         
-        # Store the boundary as a temporary geojson file
+        # Store the boundary as a geojson file
         boundary_geojson = geojson.Feature(geometry=boundary, properties={})
         
         with open(self.cache_path["boundary"], "w") as f:
             geojson.dump(boundary_geojson, f)
-            
+        
         return None
     
         

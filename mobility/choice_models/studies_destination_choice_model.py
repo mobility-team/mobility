@@ -63,8 +63,8 @@ class StudiesDestinationChoiceModel(DestinationChoiceModel):
             transport_zones: TransportZones,
             modes: List[TransportMode],
             parameters: StudiesDestinationChoiceModelParameters = StudiesDestinationChoiceModelParameters(),
-            students_distribution, 
-            school_capacities, 
+            students_distribution: pd.DataFrame = None, 
+            school_capacities: pd.DataFrame = None, 
             reference_flows: pd.DataFrame = None,
             ssi_min_flow_volume: float = 200.0
         ):

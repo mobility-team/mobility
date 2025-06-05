@@ -12,8 +12,8 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\congested\\6666b03c21c085dfa46927e0a578b0aa-car-congested-path-graph',
-#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\contracted\\e961a67471ec3319dfc1bf20553cdf1a-car-contracted-path-graph'
+#   'D:\\data\\mobility\\tests\\results\\path_graph_walk\\congested\\ec755f08e92f3a8b7694f3317a3767a7-walk-congested-path-graph',
+#   'D:\\data\\mobility\\tests\\results\\path_graph_walk\\contracted\\256237bc2e369cc08469187b3891b2e6-walk-contracted-path-graph'
 # )
 
 package_fp <- args[1]
