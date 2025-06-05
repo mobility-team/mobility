@@ -439,7 +439,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
                     od_flows
                     .group_by("to")
                     .agg(pl.col("flow_volume").sum())
-                    .join(base_sinks, on="to", how="outer", coalesce=True)
+                    .join(base_sinks, on="to", how="full", coalesce=True)
                     .with_columns((pl.col("sink_volume").fill_null(0.0) - pl.col("flow_volume").fill_null(0.0)).alias("sink_volume"))
                     .select(["to", "sink_volume"])
                 )
@@ -451,7 +451,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
                 else:
                     d_flows = (
                         previous_od_flows
-                        .join(od_flows, on=["from", "to"], how="outer", coalesce=True)
+                        .join(od_flows, on=["from", "to"], how="full", coalesce=True)
                         .with_columns((pl.col("flow_volume").fill_null(0.0) - pl.col("flow_volume_right").fill_null(0.0)).alias("d_flow"))
                         .select(pl.col("d_flow").abs().sum()/pl.col("flow_volume").sum())
                         .item()

@@ -50,6 +50,7 @@ class Asset(ABC):
             """
             Recursively serializes a value, handling nested dataclasses and sets.
             """
+
             if isinstance(value, Asset):
                 return value.get_cached_hash()
             

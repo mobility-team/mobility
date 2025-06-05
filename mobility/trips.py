@@ -11,11 +11,11 @@ from mobility.file_asset import FileAsset
 
 from mobility.safe_sample import safe_sample, filter_database
 from mobility.sample_travels import sample_travels
-from mobility.parsers.mobility_survey import MobilitySurveyAggregator
+from mobility.parsers.mobility_survey import MobilitySurvey, MobilitySurveyAggregator
 from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
 from mobility.transport_modes.default_gwp import DefaultGWP
 
-from typing import Callable
+from typing import Callable, Dict
 
 class Trips(FileAsset):
     """
@@ -37,10 +37,13 @@ class Trips(FileAsset):
     def __init__(
             self,
             population: FileAsset,
-            surveys={"fr": EMPMobilitySurvey},
+            surveys: Dict[str, MobilitySurvey] = None,
             filter_population: Callable[[pd.DataFrame], pd.DataFrame] = None,
             gwp: DefaultGWP = DefaultGWP()
         ):
+
+        if surveys is None:
+            surveys = {"fr": EMPMobilitySurvey()}
         
         mobility_survey = MobilitySurveyAggregator(population, surveys)
         

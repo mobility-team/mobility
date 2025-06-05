@@ -60,7 +60,7 @@ def get_test_data():
     return {
         "transport_zones_local_admin_unit_id": "fr-12202",
         "transport_zones_radius": 10.0,
-        "population_sample_size": 100
+        "population_sample_size": 10
     }
         
 @pytest.fixture

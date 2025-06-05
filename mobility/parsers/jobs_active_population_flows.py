@@ -132,14 +132,14 @@ class JobsActivePopulationFlows(FileAsset):
         
         flows.rename({"IPONDI": "ref_flow_volume", "TRANS": "mode"}, axis=1, inplace=True)
         
-        flows["mode"].replace({
+        flows["mode"] = flows["mode"].replace({
             "1": "no-transport",
             "2": "walk",
             "3": "bicycle",
             "4": "motorcycle",
             "5": "car",
             "6": "public-transport"
-        }, inplace=True)
+        })
 
         flows = flows.groupby(["local_admin_unit_id_from", "local_admin_unit_id_to", "mode"], as_index=False)[["ref_flow_volume"]].sum()
         
