@@ -137,7 +137,7 @@ class StudyArea(FileAsset):
         
     def create_study_area_boundary(
             self,
-            study_area
+            study_area: gpd.GeoDataFrame
         ):
         """
         Creates a combined boundary polygon for all transport zones and saves it as a GeoJSON file.
@@ -154,7 +154,7 @@ class StudyArea(FileAsset):
         """
         
         # Merge all transport zones into one polygon
-        boundary = study_area.to_crs(4326).unary_union
+        boundary = study_area.to_crs(4326).geometry.union_all()
         
         # Store the boundary as a temporary geojson file
         boundary_geojson = geojson.Feature(geometry=boundary, properties={})

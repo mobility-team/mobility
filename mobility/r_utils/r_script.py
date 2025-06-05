@@ -51,9 +51,7 @@ class RScript:
         """  
         # Prepend the package path to the argument list so the R script can
         # know where it is run (useful when sourcing other R scripts).
-        with resources.files('mobility') as p:
-            args = [str(p)] + args
-        
+        args = [str(resources.files('mobility'))] + args
         cmd = ["Rscript", self.script_path] + args
         
         if os.environ.get("MOBILITY_DEBUG") == "1":
