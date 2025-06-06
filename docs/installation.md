@@ -18,6 +18,7 @@ Vous pouvez soit utiliser git directement soit GitHub Desktop.
 - Passer sur la branche carpool grâce au sélecteur en haut de l'interface
 
 ## Créer un environnement dédié et installer les dépendances de mobility
+- Ouvrir Miniforge Prompt et se placer dans le dossier où a été installé mobility ( `cd path/to/mobility-repo`)
 - Créer un environnement pour mobility à partir du fichier environment.yml : `mamba env create -n mobility -f environment.yml`
 - Activer l'environnement mobility : `mamba activate mobility`
 - Installer mobility avec pip : `pip install -e .`
