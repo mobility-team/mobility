@@ -7,9 +7,15 @@ For now, it is mainly focused on French territories.
 
 .. toctree::
 
-   trip_sampler
+   install
+   quickstart
+   set_params
+   transport_zones
+   population
    radiation_model
+   modes
    carbon
+   levers
    data
    presentation
    quickstart/quickstart

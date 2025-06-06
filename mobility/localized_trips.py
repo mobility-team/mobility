@@ -3,178 +3,410 @@ import pathlib
 import logging
 import pandas as pd
 import numpy as np
+import random
 
-from mobility.asset import Asset
+from typing import List
 
-from mobility.transport_mode_choice_model import TransportModeChoiceModel
-from mobility.work_destination_choice_model import WorkDestinationChoiceModel
-from mobility.multimodal_travel_costs import MultimodalTravelCosts
+from mobility.file_asset import FileAsset
+from mobility.choice_models.destination_choice_model import DestinationChoiceModel
+from mobility.choice_models.transport_mode_choice_model import TransportModeChoiceModel
 
 
-class LocalizedTrips(Asset):
-    
+class LocalizedTrips(FileAsset):
+    """
+    Localizes trips by assigning origin, destination, and transport mode.
+
+    This class uses destination and mode choice models to assign plausible
+    from/to transport zones and a mode of transport to each trip, based on
+    individual-level attributes and OD probabilities.
+
+    Parameters
+    ----------
+    dest_cm_list : list of DestinationChoiceModel
+        List of destination choice models, each tied to specific motives.
+    mode_cm_list : list of TransportModeChoiceModel
+        List of transport mode choice models, aligned with the destination models.
+    trips : FileAsset
+        File containing the base trips to localize (must include individual_id, 
+        trip_id, motive, previous_motive).
+
+    Returns
+    -------
+    pd.DataFrame
+        Localized trips with updated from/to zones, mode_id, and travel distance.
+    """
+
+
     def __init__(
-            self, trips: Asset, cost_of_time: float = 20.0,
-            work_alpha: float = 0.2, work_beta: float = 0.8
+            self, 
+            dest_cm_list: List[TransportModeChoiceModel], 
+            mode_cm_list: List[DestinationChoiceModel], 
+            trips: FileAsset,
+            keep_survey_cols: bool = False
         ):
         
-        transport_zones = trips.inputs["population"].inputs["transport_zones"]
-        
-        travel_costs = MultimodalTravelCosts(transport_zones)
-        trans_mode_cm = TransportModeChoiceModel(travel_costs, cost_of_time)
-        work_dest_cm = WorkDestinationChoiceModel(transport_zones, travel_costs, cost_of_time, work_alpha, work_beta)
-        
         inputs = {
-            "travel_costs": travel_costs,
-            "trans_mode_cm": trans_mode_cm,
-            "work_dest_cm": work_dest_cm,
-            "trips": trips
+            "dest_cm_list": dest_cm_list,
+            "mode_cm_list": mode_cm_list,
+            "trips": trips,
+            "keep_survey_cols": keep_survey_cols
         }
-
+        
         file_name = "trips_localized.parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
-
+        
         super().__init__(inputs, cache_path)
         
-        
+
     def get_cached_asset(self) -> pd.DataFrame:
+        """
+        Load cached localized trips.
 
-        logging.info("Trips already localized. Reusing the file : " + str(self.cache_path))
-        trips = pd.read_parquet(self.cache_path)
+        Returns
+        -------
+        pd.DataFrame
+            Cached localized trips.
+        """
+        logging.info(f"Trips already localized. Reusing the file: {self.cache_path}")
+        return pd.read_parquet(self.cache_path)
 
-        return trips
-    
     def create_and_get_asset(self) -> pd.DataFrame:
-        
+        """
+        Run the localization process (origin, destination, and mode),
+        cache the result, and return the final trips.
+
+        Returns
+        -------
+        pd.DataFrame
+            Localized and cached trips.
+        """
         logging.info("Localizing each trip...")
         
         trips = self.inputs["trips"].get()
         population = self.inputs["trips"].inputs["population"].get()
-        travel_costs = self.inputs["travel_costs"].get()
-        trans_mode_cm = self.inputs["trans_mode_cm"].get()
-        work_dest_cm = self.inputs["work_dest_cm"].get()
-        
-        trips = self.localize_trips(trips, population, travel_costs, trans_mode_cm, work_dest_cm)
+        dest_cm_list = self.inputs["dest_cm_list"]
+        mode_cm_list = self.inputs["mode_cm_list"]
+        keep_survey_cols = self.inputs["keep_survey_cols"]
+
+        trips = self.localize_trips(trips, population, dest_cm_list, mode_cm_list, keep_survey_cols)
         trips.to_parquet(self.cache_path)
-
         return trips
-    
-    
+
     def localize_trips(
-            self, trips: pd.DataFrame, population: pd.DataFrame,
-            travel_costs: pd.DataFrame,
-            trans_mode_cm: pd.DataFrame, work_dest_cm: pd.DataFrame
-        ):
-        
-        trips = self.sample_origins_destinations(trips, population, work_dest_cm)
-        trips = self.sample_modes(trips, trans_mode_cm)
-        trips = self.replace_distances(trips, travel_costs)
+            self, 
+            trips: pd.DataFrame, 
+            population: pd.DataFrame,
+            dest_cm_list: List[DestinationChoiceModel], 
+            mode_cm_list: List[TransportModeChoiceModel],
+            keep_survey_cols: bool
+        ) -> pd.DataFrame:
+        """
+        Apply all localization steps:
+        - Assign origin/destination zones
+        - Sample a transport mode
+        - Replace distances
 
+        Parameters
+        ----------
+        trips : pd.DataFrame
+            Input trips to localize.
+        population : pd.DataFrame
+            Population table linked to individuals.
+        dest_cm_list : list of DestinationChoiceModel
+            List of destination choice models.
+        mode_cm_list : list of TransportModeChoiceModel
+            List of transport mode choice models.
+
+        Returns
+        -------
+        pd.DataFrame
+            Fully localized trips.
+        """
+
+        trips = self.sample_origins_destinations(trips, population, dest_cm_list)
+        trips = self.sample_modes(trips, mode_cm_list, dest_cm_list, keep_survey_cols)
+        trips = self.compute_new_distances(trips, dest_cm_list, keep_survey_cols)
+        
         return trips
-    
 
-    
-    def sample_origins_destinations(self, trips, population, work_dest_cm):
+    def sample_origins_destinations(
+            self, 
+            trips: pd.DataFrame, 
+            population: pd.DataFrame,
+            dest_cm_list: List[TransportModeChoiceModel]
+            ) -> pd.DataFrame:
+        """
+        Assign origin and destination zones to each trip.
+
+        Uses probabilistic destination choice based on:
+        - home zone for the first trip
+        - previous destination for chained trips
+
+        Returns
+        -------
+        pd.DataFrame
+            Trips with added 'from_transport_zone_id' and 'to_transport_zone_id'.
+        """
+        logging.info("Assigning origins and destinations to transport zones...")
         
-        logging.info("Sampling origins and destinations by applying the choice models...")
-        
-        # Individual -> home mapping
         home = population[["individual_id", "transport_zone_id"]].copy()
-        home["motive"] = "1.1"
-        home["p"] = 1.0
+        home["model_id"] = "home"
+        home["prob"] = 1.0
         
-        # Individual -> work mapping
-        work = work_dest_cm.copy()
-        work.columns = ["transport_zone_id", "to_transport_zone_id", "p"]
-        work = pd.merge(population[["individual_id", "transport_zone_id"]], work, on=["transport_zone_id"])
-        work = work[["individual_id", "to_transport_zone_id", "p"]]
-        work.columns = ["individual_id", "transport_zone_id", "p"]
-        work["motive"] = "9.91"
-        work = work.sample(frac=1.0, weights="p").groupby("individual_id", as_index=False).head(1)
-        work["p"] = 1.0
+        # Assign motive ids to models and assemble a dataframe with destination 
+        # probabilities for all models
+        motive_id_to_model_id = {"1.1": "home"}
         
-        # Concat all mappings
-        motive_mappings = pd.concat([home, work])
+        for dest_cm in dest_cm_list:
+            for motive_id in dest_cm.inputs["parameters"].motive_ids:
+                motive_id_to_model_id[motive_id] = dest_cm.inputs_hash
         
-        # Localize trips origins and destinations
+        dest_probs = [
+            ( 
+                dest_cm
+                .get()
+                .assign(model_id=dest_cm.inputs_hash)
+                .assign(n_possible_destinations=dest_cm.n_possible_destinations)
+                .rename({"from": "from_transport_zone_id", "to": "to_transport_zone_id"}, axis=1)
+            )
+            for dest_cm in dest_cm_list
+        ]
+        
+        dest_probs = pd.concat(dest_probs)
+        
+        # Choose n destinations for each model as if every origin was the home
+        potential_dests = pd.merge(
+            population[["individual_id", "transport_zone_id"]].rename({"transport_zone_id": "from_transport_zone_id"}, axis=1),
+            dest_probs,
+            on="from_transport_zone_id"
+        )
+        
+        potential_dests = potential_dests.sample(frac=1.0, weights="prob")
+        mask = potential_dests.groupby(["individual_id", "model_id"]).cumcount() < potential_dests["n_possible_destinations"]
+        potential_dests = potential_dests[mask]
+        
+        potential_dests = pd.concat([
+            potential_dests[["individual_id", "model_id", "to_transport_zone_id", "prob"]].rename({"to_transport_zone_id": "transport_zone_id"}, axis=1),
+            home
+        ])
+        
+        # Map motives to models in the trips dataframe
+        loc_trips = trips.copy()
+        loc_trips["from_model_id"] = loc_trips["previous_motive"].map(motive_id_to_model_id)
+        loc_trips["to_model_id"] = loc_trips["motive"].map(motive_id_to_model_id)
+        loc_trips = loc_trips[(~loc_trips["from_model_id"].isnull()) & (~loc_trips["to_model_id"].isnull())]
+        
+        # Sample origins
+        loc_trips = pd.merge(
+            loc_trips,
+            potential_dests.rename({"model_id": "from_model_id", "transport_zone_id": "from_transport_zone_id"}, axis=1),
+            on=["individual_id", "from_model_id"]
+        )
+        
+        loc_trips = loc_trips.sample(frac=1.0, weights="prob", ignore_index=True).drop_duplicates("trip_id", keep="first")
+        loc_trips.drop("prob", axis=1, inplace=True)
+        
+        # Sample destinations
+        loc_trips = pd.merge(
+            loc_trips,
+            potential_dests.rename({"model_id": "to_model_id", "transport_zone_id": "to_transport_zone_id"}, axis=1),
+            on=["individual_id", "to_model_id"]
+        )
+        
+        loc_trips = loc_trips.sample(frac=1.0, weights="prob", ignore_index=True).drop_duplicates("trip_id", keep="first")
+
+        # Assign the trip origins and destinations in the trips dataframe
         trips = pd.merge(
             trips,
-            motive_mappings.rename({
-                "motive": "previous_motive",
-                "transport_zone_id": "from_transport_zone_id",
-                "p": "p_from"
-            }, axis=1),
-            on=["individual_id", "previous_motive"],
+            loc_trips[["trip_id", "from_transport_zone_id", "to_transport_zone_id"]],
+            on="trip_id",
+            how="left"
+        )
+
+        return trips
+    
+    
+    
+    def sample_modes(
+            self,
+            trips: pd.DataFrame,
+            mode_cm_list: List[TransportModeChoiceModel],
+            dest_cm_list: List[TransportModeChoiceModel],
+            keep_survey_cols: bool
+        ) -> pd.DataFrame:
+        """
+        Assign transport modes to trips based on origin-destination pairs and motive.
+    
+        Each transport mode model is applied only to the subset of trips associated
+        with the motives it is calibrated for.
+    
+        Parameters
+        ----------
+        trips : pd.DataFrame
+            DataFrame containing the trips to be updated with transport modes.
+        mode_cm_list : list of TransportModeChoiceModel
+            List of transport mode choice models.
+        dest_cm_list : list of DestinationChoiceModel
+            List of destination choice models (used to retrieve relevant motives).
+    
+        Returns
+        -------
+        pd.DataFrame
+            Trips with an additional column 'mode_id' representing the selected mode.
+        """
+        logging.info("Assigning transport modes for localized trips...")
+        
+        # Assign motive ids to models and assemble a dataframe with mode 
+        # probabilities for all models
+        motive_id_to_model_id = {"1.1": mode_cm_list[0].inputs_hash}
+        
+        for mode_cm, dest_cm in zip(mode_cm_list, dest_cm_list):
+            for motive_id in dest_cm.inputs["parameters"].motive_ids:
+                motive_id_to_model_id[motive_id] = mode_cm.inputs_hash
+        
+        mode_probs = [
+            ( 
+                mode_cm
+                .get()
+                .assign(model_id=mode_cm.inputs_hash)
+                .rename({"from": "from_transport_zone_id", "to": "to_transport_zone_id"}, axis=1)
+            )
+            for mode_cm in mode_cm_list
+        ]
+        
+        mode_probs = pd.concat(mode_probs)
+        
+        # Find the unique OD pairs that each individual travels
+        ods = ( 
+            trips
+            .groupby(["individual_id", "motive", "from_transport_zone_id", "to_transport_zone_id"], as_index=False)
+            .head(1)
+            [["individual_id", "motive", "from_transport_zone_id", "to_transport_zone_id"]]
+            .dropna()
+        )
+        
+        # Map them to the available models and mode probabilities
+        ods["model_id"] = ods["motive"].map(motive_id_to_model_id)
+        
+        # !!! BUG :
+        # A small number of ODs (like 5 out of 100 000) have no mode_probs,
+        # which makes the next sampling step crash.
+        # This should not happen because ODs are sampled based on destination 
+        # probabilities, which are based on mode costs (so there should be at
+        # least one mode available).
+        ods = pd.merge(
+            ods,
+            mode_probs,
+            on=["model_id", "from_transport_zone_id", "to_transport_zone_id"]
+        )
+        
+        # Sample one mode for each OD pair
+        ods = (
+            ods
+            .sample(frac=1.0, weights="prob", random_state=42)
+            .groupby(
+                [
+                    "individual_id", "motive",
+                    "from_transport_zone_id", "to_transport_zone_id"
+                ],
+                as_index=False
+            )
+            .first()
+        )
+        
+        # Assign the modes to each of the OD pairs that could be sampled,
+        # and use the survey modes otherwise
+        trips = pd.merge(
+            trips,
+            ods,
+            on=[
+                "individual_id", "motive",
+                "from_transport_zone_id", "to_transport_zone_id"
+            ],
             how="left"
         )
         
-        trips = pd.merge(
-            trips,
-            motive_mappings.rename({
-                "transport_zone_id": "to_transport_zone_id",
-                "p": "p_to"
-            }, axis=1),
-            on=["individual_id", "motive"],
-            how="left"
+        trips["mode"] = trips["mode_id"].where(
+            trips["mode"].isnull(),
+            trips["mode"]
         )
         
-        trips["p"] = trips["p_from"]*trips["p_to"]
-        trips["p"].fillna(1.0, inplace=True)
+        trips.drop(["model_id", "prob"], axis=1, inplace=True)
         
-        trips = trips.sample(frac=1.0, weights="p").groupby("trip_id", as_index=False).head(1)
-        
-        trips = trips.drop(["p_from", "p_to", "p"], axis=1)
-        
-        return trips
-    
-    
-    def sample_modes(self, trips, trans_mode_cm):
-        
-        # Individual -> origin, destination, mode mapping
-        logging.info("Replacing modes for localized trips...")
-        
-        modes = trans_mode_cm.reset_index()[["from", "to", "mode", "prob"]]
-        modes.columns = ["from_transport_zone_id", "to_transport_zone_id", "mode", "p"]
-        
-        localized_trips = trips[(~trips["from_transport_zone_id"].isnull()) & (~trips["to_transport_zone_id"].isnull())].copy()
-        localized_trips = localized_trips[["individual_id", "trip_id", "from_transport_zone_id", "to_transport_zone_id"]]
-        
-        localized_trips = localized_trips.melt(["individual_id", "trip_id"])
-        localized_trips["value"] = localized_trips["value"].astype(int).astype(str)
-        localized_trips = localized_trips.sort_values("value")
-        
-        trip_routes = localized_trips.groupby(["individual_id", "trip_id"], as_index=False)["value"].apply("-".join)
-        
-        unique_routes = trip_routes.groupby(["individual_id", "value"], as_index=False).first()
-        unique_routes[["from_transport_zone_id", "to_transport_zone_id"]] = unique_routes["value"].str.split("-", expand=True)
-        unique_routes["from_transport_zone_id"] = unique_routes["from_transport_zone_id"].astype(int)
-        unique_routes["to_transport_zone_id"] = unique_routes["to_transport_zone_id"].astype(int)
+        # If the user wants to keep the original mode (the one from the survey),
+        # create a new survey_mode_id column, otherwise replace the survey mode
+        # with the modelled/survey modes
+        if keep_survey_cols is True:
+            trips["survey_mode_id"] = trips["mode_id"]
+            trips.drop("mode_id", axis=1, inplace=True)  
+            trips.rename({"mode": "mode_id"}, axis=1, inplace=True)
+        else:
+            trips.drop("mode_id", axis=1, inplace=True)   
+            trips.rename({"mode": "mode_id"}, axis=1, inplace=True)
 
-        unique_routes = pd.merge(unique_routes, modes, on=["from_transport_zone_id", "to_transport_zone_id"])
-        
-        unique_routes = unique_routes.sample(frac=1.0, weights="p").groupby(["individual_id", "value"], as_index=False).head(1)
-        
-        trip_routes = pd.merge(trip_routes, unique_routes[["individual_id", "value", "mode"]], on=["individual_id", "value"])
-        trip_routes = trip_routes[["trip_id", "mode"]]
-        trip_routes = trip_routes.rename({"mode": "mode_id"}, axis=1)
-        
-        trips = pd.merge(trips, trip_routes, on="trip_id", how="left")
-        trips["mode_id"] = np.where(trips["mode_id_y"].isnull(), trips["mode_id_x"], trips["mode_id_y"])
-        
         return trips
-    
-    
-    def replace_distances(self, trips, costs):
-        
-        logging.info("Replacing distances for localized trips...")
-        
-        distances = costs.reset_index()[["from", "to", "mode", "distance"]]
-        distances.columns = ["from_transport_zone_id", "to_transport_zone_id", "mode_id", "distance"]
-        
-        trips = pd.merge(trips, distances, on=["from_transport_zone_id", "to_transport_zone_id", "mode_id"], how="left")
-        trips["distance"] = np.where(trips["distance_y"].isnull(), trips["distance_x"], trips["distance_y"])
 
-        trips = trips.drop(["distance_x", "distance_y", "mode_id_x", "mode_id_y"], axis=1)
-        
-        return trips
             
+        
+    def compute_new_distances(
+            self,
+            trips: pd.DataFrame,
+            dest_cm_list: List[DestinationChoiceModel],
+            keep_survey_cols: bool
+        ) -> pd.DataFrame:
+        """
+        Replace or add travel distances to trips using OD-specific distance matrices
+        by transport mode and motive.
+    
+        Parameters
+        ----------
+        trips : pd.DataFrame
+            Trips DataFrame with at least from/to zones, mode, and motive.
+        dest_cm_list : list of DestinationChoiceModel
+            Destination models containing access to OD travel costs (distance).
+    
+        Returns
+        -------
+        pd.DataFrame
+            Trips with the column 'distance' updated where new values are available.
+        """
+        logging.info("Replacing distances for localized trips...")
+
+        
+        mode_dists = ( 
+            dest_cm_list[0].inputs["costs"]
+            .get(
+                metrics=["distance"],
+                congestion=True,
+                aggregate_by_od=False,
+                detail_distances=True
+            )
+            .to_pandas()
+            .rename(
+                {
+                    "from": "from_transport_zone_id",
+                    "to": "to_transport_zone_id",
+                    "mode": "mode_id"
+                },
+                axis=1
+            )
+        )
+        
+        
+        trips = pd.merge(
+            trips,
+            mode_dists,
+            on=["from_transport_zone_id", "to_transport_zone_id", "mode_id"],
+            how="left",
+            suffixes=["_survey", ""]
+        )
+        
+        trips["distance"] = trips["distance_survey"].where(
+            trips["distance"].isnull(),
+            trips["distance"]
+        )
+        
+        if keep_survey_cols is False:
+            trips.drop("distance_survey", axis=1, inplace=True)    
+    
+        return trips
