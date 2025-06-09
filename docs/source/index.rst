@@ -7,7 +7,7 @@ For now, it is mainly focused on French territories.
 
 .. toctree::
 
-   install
+   installation
    quickstart
    set_params
    transport_zones
