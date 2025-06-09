@@ -34,10 +34,9 @@ class TransportZones(FileAsset):
             ["fr-09122", "fr-09121"", "fr-09130"", "fr-09273",  "fr-09329"] (set of adjacent communes)
     level_of_detail : Literal[0, 1], default=0
         If 0, uses the communal level.
-        If 1, creates intra-communal transport zones to enable more precision in calculations.
-            If there are more than 20 000 m² of building within the commune, one sub-zone is created for every 20 000 m².
-            These buildings are then grouped using k-medoids to ensure consistent clusters.
-            We use Voronoi constellations around the clusters centers to finally create these sub-communal transport zones.
+        If 1, creates intra-communal transport zones to enable more precision in calculations. If there are more than 20 000 m² of building
+        within the commune, one sub-zone is created for every 20 000 m². These buildings are then grouped using k-medoids to ensure consistent clusters.
+        We use Voronoi constellations around the clusters centers to finally create these sub-communal transport zones.
             
     radius : int, default=40
         Local admin units within this radius (in km) of the center admin unit will be included.
@@ -84,7 +83,7 @@ class TransportZones(FileAsset):
 
         Returns
         -------
-        geopandas.geodataframe.GeoDataFrame
+        transport_zones : geopandas.geodataframe.GeoDataFrame
             Transport zones for the given local admin unit(s), radius, and level of detail.
 
         """        

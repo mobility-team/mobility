@@ -10,8 +10,10 @@ For now, it is mainly focused on French territories.
    installation
    quickstart
    set_params
+   definitions
    transport_zones
    population
+   trip_sampler
    radiation_model
    modes
    carbon
