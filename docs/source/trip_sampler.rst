@@ -7,7 +7,7 @@ using the ``get_trips`` method.
 
 You can find an example of this model in <https://github.com/mobility-team/mobility/tree/main/examples/Millau>.
 
- .. automodule:: mobility.trip_sampler
+ .. automodule:: mobility.trips
     :members:
 
 The trip sampler uses the ``safe_sample`` module to ensure we do not use non-reprentative data
@@ -16,12 +16,3 @@ The trip sampler uses the ``safe_sample`` module to ensure we do not use non-rep
  .. automodule:: mobility.safe_sample
     :members:
 
-The surveys data (from INSEE) is retrieved thanks to the get_survey_data module.
-
- .. automodule:: mobility.get_survey_data
-    :members:
-
-It is completed by the get_insee_data module for other INSEE data.
-
- .. automodule:: mobility.get_insee_data
-    :members:
