@@ -61,7 +61,7 @@ def radiation_model(sources, sinks, costs, alpha=0, beta=1):
                 sink_volume (float): rest of the volume of oopportunities of the transport zone.
     """
 
-    # The pseudo-code is in the documentation. 
+    # The pseudo-code is in the documentation.
 
     # Epsilon value under which values are set to 0 in order to avoid numerical errors
     # during the successive iterations
@@ -104,7 +104,7 @@ def radiation_model(sources, sinks, costs, alpha=0, beta=1):
     )
 
     # Keep only the first 95% of the distribution ?
-    
+
     # Normalize the probabilities such that the sum for each origin is equal to one
     temp = matrix_origin_destinations.groupby("from")["p_ij"].sum()
     temp.name = "p_i"
@@ -121,7 +121,6 @@ def radiation_model(sources, sinks, costs, alpha=0, beta=1):
         matrix_origin_destinations["p_ij"].notna(), 0, inplace=True
     )
 
-    
     # The flow volume is calibrated to respect the total source volume
     # (not the total sink volume)
     matrix_origin_destinations["flow_volume"] = (
@@ -261,7 +260,7 @@ def iter_radiation_model(
             Name:
                 sink_volume (float): rest of the volume of oopportunities of the transport zone.
     """
-    
+
     # First iteration of the radiation model
     iteration = 1
     flows, source_volume, sink_volume = radiation_model(
@@ -303,7 +302,7 @@ def iter_radiation_model(
         plt.xticks(np.arange(1, iteration + 1))
         plt.xlabel("n° itérations")
         plt.ylabel("Demand volume not fulfilled")
-        
+
         print("Total demand volume : {}".format(sources["source_volume"].sum()))
         print(
             "Rest of demand volume after {} iterations : {}".format(
@@ -323,7 +322,7 @@ def iter_radiation_model(
                 iteration, rest_sink[-1]
             )
         )
-    
+
     # Remove possible null flows
     total_flows = total_flows[total_flows > 0.0]
 
@@ -384,7 +383,7 @@ def plot_flow(
     flows, coordinates, sources=None, n_flows=100, n_locations=5, size=1, title=""
 ):
     """
-    Plots the flows between the locations.
+    Plot the flows between the locations.
 
     The bigger the flow is, the bigger the plot line
     will be. THe points are the locations. If sources=None, then the size of each location
@@ -410,13 +409,11 @@ def plot_flow(
                 CODGEO (str): geographic code of the location
             Columns:
                 source_volume (float): the source volume at the location
-        n_flows (int): plot only the n_flows biggest flows (to avoid too heavy computationss)
-            If n_flows=-1 then plot all the flows
-        n_locations (int): display the labels of only the biggest n_locations locations
-            according to the volume from sources
+        n_flows (int): plot only the n_flows biggest flows (to avoid too heavy computations).
+        If n_flows=-1 then plot all the flows
+        n_locations (int): display the labels of only the biggest n_locations locations according to the volume from sources
         size (int): determines the size of the figure (size>=1). Default is 1.
     """
-
     # Normalization
     flows["flow_volume"] = (
         size
