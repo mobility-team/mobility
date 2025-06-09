@@ -15,5 +15,5 @@ The TransportZones will call the StudyArea class to manage data in the area.
 
 StudyArea will itself call the LocalAdminUnits class to grab data from the local admin units.
 
- .. automodule:: mobility.local_admin_units
+ .. automodule:: mobility.parsers.local_admin_units
     :members:
