@@ -20,7 +20,7 @@ class RScript:
     
     """
     
-    def __init__(self, script_path: str | contextlib._GeneratorContextManager):
+    def __init__(self, script_path):
         if isinstance(script_path, contextlib._GeneratorContextManager):
             with script_path as p:
                 self.script_path = p
