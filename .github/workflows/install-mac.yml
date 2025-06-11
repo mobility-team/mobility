@@ -2,7 +2,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-ubuntu:
+  build-mac:
     runs-on: macos-latest
     strategy:
       max-parallel: 5
