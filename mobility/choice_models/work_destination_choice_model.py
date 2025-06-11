@@ -507,7 +507,7 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
                 od_flows
                 .group_by("to")
                 .agg(pl.col("flow_volume").sum())
-                .join(base_sinks, on="to", how="outer", coalesce=True)
+                .join(base_sinks, on="to", how="full", coalesce=True)
                 .with_columns((pl.col("sink_volume").fill_null(0.0) - pl.col("flow_volume").fill_null(0.0)).alias("sink_volume"))
                 .filter(pl.col("sink_volume") > 0.1)
                 .select(["to", "sink_volume"])

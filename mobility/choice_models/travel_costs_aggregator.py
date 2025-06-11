@@ -78,6 +78,9 @@ class TravelCostsAggregator(InMemoryAsset):
             pl.col("from").cast(pl.Int64),
             pl.col("to").cast(pl.Int64)
         ])
+
+        # Filter very high costs to avoid overflow
+        costs = costs.filter(pl.col("cost") < 60.0)
         
         return costs
     
