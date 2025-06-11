@@ -7,6 +7,7 @@ The mobility behavior of a population depends in part on the perceived cost of t
 To be able to compute these perceived costs, Mobility estimates trips distances and travel times between all possible origin * destinations pairs for all transport zones under study (with a travel time threshold so we avoid computing unlikely trips such as 3 hour walks).
 
 The available modes of transports that can be used in Mobility are : 
+
 * Unimodal modes:
 
     * Walk.
@@ -41,7 +42,9 @@ Transport Graph Creation
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 OpenStreetMap data is converted into a transport graph and simplified to accelerate computations:
+
 * **Successive road segments without intersections are merged** by summing their distances and travel times, and averaging their capacities and congestion parameters.
+
 * **Dead-end segments** are removed. It is assumed that buildings representing transport zones are located near roads that are not dead ends, and that dead ends will never be used for routing between transport zones.
 
 The following table indicates which OSM road categories are retained for each of the three modes:
@@ -71,11 +74,12 @@ track                No    Yes    Yes
 trunk                Yes   Yes    Yes  
 trunk_link           Yes   Yes    Yes  
 unclassified         Yes   Yes    Yes  
+===================  ====  =====  =====
 
 
----------------
+----------------
 Public transport
----------------
+----------------
 
 ^^^^^^^^^^^^^^^^^^^^^
 GTFS Data Preparation
@@ -96,12 +100,19 @@ Public Transport Graph Creation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The public transport offer is converted into an equivalent transport graph, allowing the construction of multimodal graphs by combining it with access and egress mode graphs (walking, biking, driving):
+
 * **Creation of entry and exit nodes** in the public transport network by grouping nearby stops (within 40 meters) to reduce their number.
+
 * **Computation of average travel times** between two stops on the same line, and of **waiting times** between arrivals and departures of the same line at a stop.
+
 * **Computation of average minimum transfer times** between each arrival and the next departures of the other accessible services. Transfers exceeding 20 minutes are discarded.
+
 * **Calculation of initial waiting time**, based on average headway: 50% of the headway if under 10 minutes, otherwise 5 minutes.
+
 * **Calculation of perceived waiting time**, modeling the risk that the expected service is missed and the user must wait for the next one. This is derived from the line's average headway and a perceived probability of missed service.
+
 * **Calculation of arrival time differences**, between the target arrival time and all possible actual arrival times at the destination stop.
+
 * **Calculation of straight-line distances between stops**, used for distance-based metrics.
 
 The resulting travel times are therefore approximations of actual travel times. In reality, the **departure time** impacts travel duration, as several factors vary throughout the day: transfer times, vehicle speeds, etc.
@@ -111,9 +122,13 @@ Travel Time
 ^^^^^^^^^^^
 
 The total travel time is composed of:
+
 * A **waiting time at the access node** of departure (precautionary time).
+
 * (Optional) A **travel time to an intermediate stop** for a transfer.
+
 * (Optional) A **waiting time for the transfer**.
+
 * A **travel time to the egress node**.
 
 The number of transfers is **not limited** by the model, but a **maximum travel time** is enforced to exclude unlikely trips.
@@ -123,7 +138,7 @@ The number of transfers is **not limited** by the model, but a **maximum travel 
 Functions
 ---------
 
-You must describe the transport modes that you wand to model. Most usual modes are available, and you can use a combination of any mode with public transport.
+You must describe the transport modes that you want to model. Most usual modes are available, and you can use a combination of any mode with public transport.
 Available modes : walk, bicycle, car, carpool, public transport (+any mode before or after using public transport).
 
  .. automodule:: mobility.transport_modes
