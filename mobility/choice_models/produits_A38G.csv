@@ -1,0 +1,63 @@
+expense_id,expense_label,nad_id,naf_label
+138G_A01Z,Produits de l'agriculture et de la chasse et services annexes,011,Culture et production animale
+138G_A02Z,Produits sylvicoles et services annexes,021,Sylviculture et exploitation forestière
+138G_A03Z,Produits de la pêche et de l'aquaculture ; services de soutien à la pêche,031,Pêche et aquaculture
+138G_B08Z,Autres produits des industries extractives,089,Autres industries extractives
+138G_D35A,"Électricité, transport et distribution d'électricité",351,Production et distribution d'électricité
+138G_D35B,"Gaz manufacturé ; distribution de combustibles gazeux, de vapeur et d'air conditionné",352,Production et distribution de gaz
+138G_E36Z,Eau naturelle ; traitement et distribution d'eau,360,"Captage, traitement et distribution d'eau"
+138G_E37Z,Collecte et traitement des eaux usées ; boues d'épuration,370,Collecte et traitement des eaux usées
+138G_E38Z,"Collecte, traitement et élimination des déchets ; récupération de matériaux",381,Collecte et traitement des déchets
+138G_C10A,Viande et produits à base de viande,101,Transformation et conservation de la viande
+138G_C10B,Préparations et conserves à base de poisson et de produits de la pêche,102,Transformation et conservation du poisson
+138G_C10C,Produits à base de fruits et légumes,103,Transformation et conservation de fruits et légumes
+138G_C10D,Huiles et graisses végétales et animales,104,Fabrication d'huiles et graisses
+138G_C10E,Produits laitiers,105,Fabrication de produits laitiers
+138G_C10F,Produits du travail des grains et produits amylacés,106,Meunerie et amidonnerie
+138G_C10G,Produits de boulangerie-pâtisserie et pâtes alimentaires,107,"Boulangerie, pâtisserie, biscuiterie"
+138G_C10H,Autres produits alimentaires,108,Autres industries alimentaires
+138G_C10K,Aliments pour animaux,109,Fabrication d'aliments pour animaux
+138G_C11Z,Boissons,110,Fabrication de boissons
+138G_C12Z,Produits à base de tabac,120,Fabrication de tabac
+138G_C13Z,Produits de l'industrie textile,131,Industrie textile
+138G_C14Z,Articles d'habillement,141,Fabrication de vêtements
+138G_C15Z,Cuir et articles en cuir,151,Industrie du cuir et de la chaussure
+138G_C16Z,"Bois, articles en bois et en liège, à l'exclusion des meubles ; articles de vannerie et de sparterie",161,Travail du bois
+138G_C17B,Articles en papier ou en carton,171,Industrie du papier et du carton
+138G_C20A,Produits chimiques de base,201,Fabrication de produits chimiques de base
+138G_C20B,"Savons, produits d'entretien et parfums",202,Fabrication de savons et produits d'entretien
+138G_C20C,Autres produits chimiques et fibres synthétiques,203,Autres fabrications chimiques
+138G_C21Z,Produits pharmaceutiques de base et préparations pharmaceutiques,211,Fabrication de produits pharmaceutiques
+138G_C22A,Produits en caoutchouc,221,Fabrication de produits en caoutchouc
+138G_C22B,Produits en plastique,222,Fabrication de produits en plastique
+138G_C23A,Verre et articles en verre,231,Fabrication de verre et d'articles en verre
+138G_C23B,Autres produits minéraux non métalliques hors verre,239,Autres produits minéraux non métalliques
+138G_C24B,Métaux précieux et autres métaux non ferreux communs,244,Métallurgie des métaux non ferreux
+138G_C25C,Armes et munitions,252,Fabrication d'armes et de munitions
+138G_C25E,"Coutellerie, outillage et quincaillerie",257,Fabrication d'outillage
+138G_C26A,Composants et cartes électroniques,261,Fabrication de composants électroniques
+138G_C26B,Ordinateurs et équipements périphériques,262,Fabrication d'ordinateurs
+138G_C27A,Appareils ménagers,275,Fabrication d'appareils ménagers
+138G_C28B,Machines agricoles et forestières,283,Fabrication de machines agricoles
+138G_C29A,"Véhicules automobiles, carrosseries et remorques",291,Construction automobile
+138G_C30E,Matériels de transport n.c.a.,309,Fabrication d'autres matériels de transport
+138G_F43Z,Travaux de construction spécialisés,439,Travaux de construction spécialisés
+138G_G45Z,Commerce et réparation d'automobiles et de motocycles,451,Commerce et réparation automobile
+138G_H49A,Transport ferroviaire,491,Transport ferroviaire
+138G_H49B,Autres transports terrestres de voyageurs,492,Autres transports terrestres
+138G_H50Z,Transport par eau,501,Transport maritime et fluvial
+138G_H51Z,Transports aériens,511,Transports aériens
+138G_I55Z,Services d'hébergement,551,Hôtels et hébergements
+138G_I56Z,Services de restauration et de débits de boissons,561,Restauration traditionnelle
+138G_J58Z,Édition,581,Édition
+138G_J61Z,Services de télécommunications,611,Télécommunications
+138G_K64H,Autres services bancaires,641,Activités bancaires
+138G_K65Z,Services d'assurance,651,Assurances
+138G_L68A,Transactions sur biens immobiliers,681,Transactions immobilières
+138G_M69Z,Services juridiques et comptables,691,Activités juridiques
+138G_N77Z,Location et location-bail,771,Location de véhicules
+138G_O84Z,Services d'administration publique,841,Administration publique
+138G_P85M,Services de l'enseignement,851,Enseignement primaire et secondaire
+138G_Q86M,Services de santé humaine,861,Activités hospitalières
+138G_R92Z,Jeux de hasard et d'argent,920,Jeux d'argent
+138G_S95Z,Services de réparation d'ordinateurs et de biens personnels,951,Réparation d'ordinateurs
