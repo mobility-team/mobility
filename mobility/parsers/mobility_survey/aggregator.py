@@ -13,7 +13,7 @@ class MobilitySurveyAggregator(InMemoryAsset):
         
     def get(self):
         
-        population = self.inputs["population"].get()
+        population = pd.read_parquet(self.inputs["population"].get()["individuals"])
         countries = list(population["country"].unique())
         
         survey_data = {

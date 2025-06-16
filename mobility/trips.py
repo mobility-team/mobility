@@ -86,8 +86,7 @@ class Trips(FileAsset):
 
         transport_zones = self.inputs["population"].inputs["transport_zones"].get()
         study_area = self.inputs["population"].inputs["transport_zones"].study_area.get()
-
-        population = self.inputs["population"].get()
+        population = pd.read_parquet(self.inputs["population"].get()["individuals"])
 
         if self.filter_population is not None:
             population = self.filter_population(population)
