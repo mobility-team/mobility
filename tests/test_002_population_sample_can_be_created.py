@@ -1,4 +1,5 @@
 import mobility
+import pandas as pd
 import pytest
 
 @pytest.mark.dependency(
@@ -17,6 +18,6 @@ def test_002_population_sample_can_be_created(test_data):
         sample_size=test_data["population_sample_size"]
     )
     
-    population = population.get()
+    population = pd.read_parquet(population.get()["individuals"])
     
     assert population.shape[0] > 0
