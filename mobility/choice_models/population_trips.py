@@ -34,11 +34,11 @@ class PopulationTrips(FileAsset):
             random_switch: float = 4.0
         ):
 
-        costs = TravelCostsAggregator(modes)
+        costs_aggregator = TravelCostsAggregator(modes)
         
         inputs = {
             "population": population,
-            "costs": costs,
+            "costs_aggregator": costs_aggregator,
             "motives": motives,
             "surveys": surveys,
             "n_samples": n_samples,
@@ -63,7 +63,7 @@ class PopulationTrips(FileAsset):
     def create_and_get_asset(self):
         
         population = self.inputs["population"]
-        costs = self.inputs["costs"]
+        costs_aggregator = self.inputs["costs_aggregator"]
         motives = self.inputs["motives"]
         surveys = self.inputs["surveys"]
         n_samples = self.inputs["n_samples"]
@@ -82,29 +82,21 @@ class PopulationTrips(FileAsset):
 
         chains = self.get_chains(population, surveys, motives)
         sinks = self.get_sinks(chains, motives, population.transport_zones)
+        costs = self.get_current_costs(costs_aggregator, congestion=False)
 
         random_switch_rate = 1.0/(1.0+random_switch*np.arange(1, n_samples+1))
-        previous_flows = None
-        od_flows = None
+        previous_flows = None        
         remaining_sinks = sinks.clone()
         
         for i in range(0, n_samples):
             
             logging.info(f"Sampling step n°{i}")
             
-            current_costs = (
-                costs.get(congestion=True)
-                .with_columns([
-                    pl.col("from").cast(pl.Int32()),
-                    pl.col("to").cast(pl.Int32())
-                ])
-            )
-
             utilities = self.get_utilities(
                 motives,
                 population.transport_zones,
                 remaining_sinks,
-                current_costs,
+                costs,
                 cost_uncertainty_sd
             )
             
@@ -116,17 +108,14 @@ class PopulationTrips(FileAsset):
             self.spatialize_trip_chains(i, chains, dest_prob, motives, alpha, chains_path)
             
             flows, od_flows = self.assign_flow_volumes(i, chains, chains_path, previous_flows, flows_path)
-            
-            # if cost_update is True and i > 0 and i % n_iter_cost_update == 0: 
-            #     costs.update(od_flows)
-            
+            costs = self.update_costs(costs, cost_update, i, n_iter_cost_update, od_flows, costs_aggregator)
             flows = self.unassign_overflow(flows, remaining_sinks)
-            flows = self.unassign_optim(flows, current_costs, delta_cost_change)
+            flows = self.unassign_optim(flows, costs, delta_cost_change)
             flows = self.unassign_random(flows, random_switch_rate[i])
             
             previous_flows, remaining_sinks, chains = self.prepare_next_iteration_vars(flows, sinks)
             
-        flows = self.disaggregate_by_mode(flows_path, n_samples, costs)
+        flows = self.disaggregate_by_mode(flows_path, n_samples, costs_aggregator)
         
         flows.sink_parquet(self.cache_path)
             
@@ -271,7 +260,17 @@ class PopulationTrips(FileAsset):
 
         return sinks
 
-            
+    def get_current_costs(self, costs, congestion):
+
+        current_costs = (
+            costs.get(congestion=congestion)
+            .with_columns([
+                pl.col("from").cast(pl.Int32()),
+                pl.col("to").cast(pl.Int32())
+            ])
+        )
+
+        return current_costs
 
         
     def spatialize_trip_chains(self, i, chains, dest_prob, motives, alpha, chains_path):
@@ -502,6 +501,15 @@ class PopulationTrips(FileAsset):
         )
         
         return flows, od_flows
+    
+
+    def update_costs(self, costs, cost_update, i, n_iter_cost_update, od_flows, costs_aggregator):
+
+        if cost_update is True and i > 0 and i % n_iter_cost_update == 0: 
+            costs_aggregator.update(od_flows)
+            costs = self.get_current_costs(costs_aggregator, congestion=False)
+
+        return costs
         
         
     def unassign_overflow(self, flows, sinks):
@@ -682,7 +690,7 @@ class PopulationTrips(FileAsset):
             )
         )
         
-        return previous_flows, od_flows, remaining_sinks, chains
+        return previous_flows, remaining_sinks, chains
         
         
         
