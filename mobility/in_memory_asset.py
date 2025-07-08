@@ -9,6 +9,6 @@ class InMemoryAsset(Asset):
     def get_cached_hash(self):
         return self.inputs_hash
     
-    @abstractmethod
+    # @abstractmethod
     def get(self):
         pass

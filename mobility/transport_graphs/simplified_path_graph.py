@@ -33,9 +33,10 @@ class SimplifiedPathGraph(FileAsset):
             transport_zones.study_area,
             object_type="w",
             key="highway",
-            tags = osm_capacity_parameters.get_highway_tags(),
+            tags=osm_capacity_parameters.get_highway_tags(),
             geofabrik_extract_date="250101",
-            file_format="osm"
+            file_format="osm",
+            boundary_buffer=10000.0
         )
         
         inputs = {

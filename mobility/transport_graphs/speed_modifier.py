@@ -1,4 +1,5 @@
 import pathlib
+import json
 import geopandas as gpd
 
 from mobility.in_memory_asset import InMemoryAsset
@@ -56,17 +57,22 @@ class BorderCrossingSpeedModifier(SpeedModifier):
         regions = regions[regions.intersects(boundary)]
 
         borders = []
+        has_borders = False
 
         for index, region in regions.iterrows():
             extract = GeofabrikExtract(region.url)
             border = OSMCountryBorder(extract)
             borders.append(str(border.get()))
+            border_geometry = gpd.read_file(border.get())
+            has_borders = bool(border_geometry.intersects(boundary).any())
+            
 
         return {
             "modifier_type": self.modifier_type,
             "max_speed": self.inputs["max_speed"],
             "time_penalty": self.inputs["time_penalty"],
-            "borders": borders
+            "borders": borders,
+            "has_borders": has_borders
         }
 
     

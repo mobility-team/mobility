@@ -177,63 +177,63 @@ if (mode == "car") {
 }
 
 
-# Remove all dead ends
-info(logger, "Removing dead ends...")
-
-# Remove all nodes that have a degree that is less than 3
-# (which means all nodes that are dead ends because the simplification step
-# has already removed all non junction nodes)
-edges <- as.data.table(cppr_graph_simple$data)
-
-nodes <- c(0)
-
-while(length(nodes) > 0) {
-  
-  n_incoming <- edges[, list(n_incoming = .N), by = list(index = to)]
-  n_outgoing <- edges[, list(n_outgoing = .N), by = list(index = from)]
-  degree <- merge(n_incoming, n_outgoing, by = "index")
-  degree[, deg := n_incoming + n_outgoing]
-  
-  one_way_dead_end_nodes <- degree[deg == 1, index]
-  
-  two_way_nodes <- degree[deg == 2, list(index)]
-  two_way_nodes <- merge(two_way_nodes, edges[, list(from, to)], by.x = "index", by.y = "from")
-  two_way_nodes <- merge(two_way_nodes, edges[, list(from, to)], by.x = "index", by.y = "to")
-  two_way_dead_end_nodes <- two_way_nodes[from == to, index]
-  
-  nodes <- unique(c(one_way_dead_end_nodes, two_way_dead_end_nodes))
-  
-  edges <- edges[!(from %in% nodes | to %in% nodes)]
-  
-}
-
-# Filter and reformea the cpprouting graph
-remaining_node_index <- unique(c(edges$from, edges$to))
-
-data <- as.data.table(cppr_graph_simple$data)
-data[, keep_from := from %in% remaining_node_index]
-data[, keep_to := to %in% remaining_node_index]
-
-keep_index <- data[, keep_from & keep_to]
-
-dict <- as.data.table(cppr_graph_simple$dict)
-dict[, keep := id %in% remaining_node_index]
-dict[, new_index := 1:.N, by = keep]
-
-data <- merge(data, dict[keep == TRUE, list(id, new_index)], by.x = "from", by.y = "id", sort = FALSE)
-data <- merge(data, dict[keep == TRUE, list(id, new_index)], by.x = "to", by.y = "id", sort = FALSE)
-data <- data[, list(from = new_index.x, to = new_index.y, dist)]
-
-dict <- dict[keep == TRUE, list(ref, id = new_index)]
-
-cppr_graph_simple$attrib$aux <- cppr_graph_simple$attrib$aux[keep_index]
-cppr_graph_simple$attrib$alpha <- cppr_graph_simple$attrib$alpha[keep_index]
-cppr_graph_simple$attrib$beta <- cppr_graph_simple$attrib$beta[keep_index]
-cppr_graph_simple$attrib$cap <- cppr_graph_simple$attrib$cap[keep_index]
-
-cppr_graph_simple$data <- data
-cppr_graph_simple$dict <- dict
-cppr_graph_simple$nbnode <- nrow(dict)
+# # Remove all dead ends
+# info(logger, "Removing dead ends...")
+# 
+# # Remove all nodes that have a degree that is less than 3
+# # (which means all nodes that are dead ends because the simplification step
+# # has already removed all non junction nodes)
+# edges <- as.data.table(cppr_graph_simple$data)
+# 
+# nodes <- c(0)
+# 
+# while(length(nodes) > 0) {
+#   
+#   n_incoming <- edges[, list(n_incoming = .N), by = list(index = to)]
+#   n_outgoing <- edges[, list(n_outgoing = .N), by = list(index = from)]
+#   degree <- merge(n_incoming, n_outgoing, by = "index")
+#   degree[, deg := n_incoming + n_outgoing]
+#   
+#   one_way_dead_end_nodes <- degree[deg == 1, index]
+#   
+#   two_way_nodes <- degree[deg == 2, list(index)]
+#   two_way_nodes <- merge(two_way_nodes, edges[, list(from, to)], by.x = "index", by.y = "from")
+#   two_way_nodes <- merge(two_way_nodes, edges[, list(from, to)], by.x = "index", by.y = "to")
+#   two_way_dead_end_nodes <- two_way_nodes[from == to, index]
+#   
+#   nodes <- unique(c(one_way_dead_end_nodes, two_way_dead_end_nodes))
+#   
+#   edges <- edges[!(from %in% nodes | to %in% nodes)]
+#   
+# }
+# 
+# # Filter and reformea the cpprouting graph
+# remaining_node_index <- unique(c(edges$from, edges$to))
+# 
+# data <- as.data.table(cppr_graph_simple$data)
+# data[, keep_from := from %in% remaining_node_index]
+# data[, keep_to := to %in% remaining_node_index]
+# 
+# keep_index <- data[, keep_from & keep_to]
+# 
+# dict <- as.data.table(cppr_graph_simple$dict)
+# dict[, keep := id %in% remaining_node_index]
+# dict[, new_index := 1:.N, by = keep]
+# 
+# data <- merge(data, dict[keep == TRUE, list(id, new_index)], by.x = "from", by.y = "id", sort = FALSE)
+# data <- merge(data, dict[keep == TRUE, list(id, new_index)], by.x = "to", by.y = "id", sort = FALSE)
+# data <- data[, list(from = new_index.x, to = new_index.y, dist)]
+# 
+# dict <- dict[keep == TRUE, list(ref, id = new_index)]
+# 
+# cppr_graph_simple$attrib$aux <- cppr_graph_simple$attrib$aux[keep_index]
+# cppr_graph_simple$attrib$alpha <- cppr_graph_simple$attrib$alpha[keep_index]
+# cppr_graph_simple$attrib$beta <- cppr_graph_simple$attrib$beta[keep_index]
+# cppr_graph_simple$attrib$cap <- cppr_graph_simple$attrib$cap[keep_index]
+# 
+# cppr_graph_simple$data <- data
+# cppr_graph_simple$dict <- dict
+# cppr_graph_simple$nbnode <- nrow(dict)
 
 
 

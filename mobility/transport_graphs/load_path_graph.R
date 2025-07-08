@@ -9,15 +9,15 @@ library(jsonlite)
 library(data.table)
 
 args <- commandArgs(trailingOnly = TRUE)
-
+# 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\modified\\7e93e3fe005c640299f4a3c23d2c8ab0-car-modified-path-graph',
-#   'D:\\data\\mobility\\projects\\haut-doubs\\9da6c9b51734ddd0278a650c3b00fe30-transport_zones.gpkg',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\modified\\a4d8d9065e1217e8f5ef1ca48cca4789-car-modified-path-graph',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\07506b75cdf292b33559375be3029b0c-transport_zones.gpkg',
 #   'True',
-#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\simplified\\flows.parquet',
-#   '1.0',
-#   'D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\congested\\6666b03c21c085dfa46927e0a578b0aa-car-congested-path-graph'
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\flows.parquet',
+#   '0.1',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\congested\\7e5144cf3db620565c9a9797be8a6df0-car-congested-path-graph'
 # )
 
 package_fp <- args[1]
@@ -93,15 +93,6 @@ if (congestion == TRUE & file.exists(flows_fp)) {
   
   # Assign traffic 
   info(logger, "Assigning traffic...")
-  
-  print(summary(cppr_graph$data))
-  print(summary(cppr_graph$dict))
-  print(summary(cppr_graph$attrib$cap))
-  
-  print(summary(od_flows$vertex_id_from))
-  print(summary(od_flows$vertex_id_to))
-  print(summary(od_flows$vehicle_volume))
-  
   
   traffic <- assign_traffic(
     cppr_graph,

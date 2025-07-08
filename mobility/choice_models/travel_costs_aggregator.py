@@ -118,8 +118,8 @@ class TravelCostsAggregator(InMemoryAsset):
                     flows = (
                         od_flows_by_mode
                         .filter(pl.col("mode").is_in(["car", "carpool"]))
-                        .with_columns((pl.when(pl.col("mode") == "car").then(1.0).otherwise(0.5)).alias("pers_per_veh"))
-                        .with_columns((pl.col("flow_volume")*pl.col("pers_per_veh")).alias("vehicle_volume"))
+                        .with_columns((pl.when(pl.col("mode") == "car").then(1.0).otherwise(0.5)).alias("veh_per_pers"))
+                        .with_columns((pl.col("flow_volume")*pl.col("veh_per_pers")).alias("vehicle_volume"))
                         .group_by(["from", "to"])
                         .agg(pl.col("vehicle_volume").sum())
                         .select(["from", "to", "vehicle_volume"])

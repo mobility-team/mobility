@@ -27,7 +27,8 @@ class ENTDMobilitySurvey(MobilitySurvey):
     
     def __init__(self):
         inputs = {
-            "survey_name": "fr-ENTD-2008"
+            "survey_name": "fr-ENTD-2008",
+            "country": "fr"
         }
         super().__init__(inputs)
         

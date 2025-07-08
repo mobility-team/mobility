@@ -12,9 +12,10 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\49adfaa59c6f535100d201e618521ddd-car-simplified-path-graph',
-#   '[{"modifier_type": "border_crossing", "max_speed": 30.0, "time_penalty": 10.0001, "borders": ["D:\\\\data\\\\mobility\\\\data\\\\osm\\\\5a2241d7b589441aaa0dd526ff9f6b76-osm_border.geojson", "D:\\\\data\\\\mobility\\\\data\\\\osm\\\\ea821fc280b095b2c724694daa7d66e6-osm_border.geojson", "D:\\\\data\\\\mobility\\\\data\\\\osm\\\\367d0c697a383c1bf3a7f47178a986e4-osm_border.geojson"]}]',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\modified\\fe11ef58a9941c3087636aeb3e1383ec-car-modified-path-graph'
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\775c688bc00234ed3f9b04ec86bbd9d6-car-simplified-path-graph',
+#   '[{"modifier_type": "border_crossing", "max_speed": 30.0, "time_penalty": 10.0001, "borders": ["D:\\\\data\\\\mobility\\\\data\\\\osm\\\\286ac9c64e6fa7cbdcef27183624db8e-osm_border.geojson",
+#   "D:\\\\data\\\\mobility\\\\data\\\\osm\\\\5a2241d7b589441aaa0dd526ff9f6b76-osm_border.geojson"]}]',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\modified\\a4d8d9065e1217e8f5ef1ca48cca4789-car-modified-path-graph'
 # )
 
 package_fp <- args[1]

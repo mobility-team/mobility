@@ -26,7 +26,7 @@ class CarMode(TransportMode):
         osm_capacity_parameters: OSMCapacityParameters = None,
         generalized_cost_parameters: GeneralizedCostParameters = None,
         congestion: bool = False,
-        congestion_flows_scaling_factor: float = 1.0,
+        congestion_flows_scaling_factor: float = 0.1,
         speed_modifiers: List[SpeedModifier] = []
     ):
         

@@ -27,7 +27,8 @@ class EMPMobilitySurvey(MobilitySurvey):
     
     def __init__(self):
         inputs = {
-            "survey_name": "fr-EMP-2019"
+            "survey_name": "fr-EMP-2019",
+            "country": "fr"
         }
         super().__init__(inputs)
         
@@ -188,7 +189,9 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "MOTPREC": str,
                 "mtp": str,
                 "MDATE_jour": str,
-                "MDATE_mois": str
+                "MDATE_mois": str,
+                "MORIHDEP": str,
+                "MDESHARR": str
             },
             usecols=[
                 "IDENT_DEP",
@@ -203,8 +206,10 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "MACCOMPM",
                 "MACCOMPHM",
                 "MDATE_jour",
-                "MDATE_mois"
-            ],
+                "MDATE_mois",
+                "MORIHDEP",
+                "MDESHARR"
+            ]
         )
         
         df["daily_trip_index"] = df.groupby("IDENT_IND").cumcount() + 1
@@ -215,6 +220,9 @@ class EMPMobilitySurvey(MobilitySurvey):
         df.loc[df["MACCOMPHM"].isnull(), "MACCOMPHM"] = 0
         df["n_other_passengers"] = df["MACCOMPM"].astype(int) + df["MACCOMPHM"].astype(int)
         df["weekday"] = np.where(df["TYPEJOUR"] == "1", True, False)
+        
+        df["departure_time"] = pd.to_timedelta(df["MORIHDEP"]).astype('timedelta64[s]').astype(int)
+        df["arrival_time"] = pd.to_timedelta(df["MDESHARR"]).astype('timedelta64[s]').astype(int)
 
         # the day weight is divided by 5 if it's a weekday and 2 otherwise in order to be consistent with the ENTD
         df["POND_JOUR"] = np.where(df["weekday"], df["POND_JOUR"] / 5, df["POND_JOUR"] / 2)
@@ -406,6 +414,8 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "IDENT_DEP",
                 "daily_trip_index",
                 "weekday",
+                "departure_time",
+                "arrival_time",
                 "city_category",
                 "csp",
                 "n_cars",
@@ -423,6 +433,8 @@ class EMPMobilitySurvey(MobilitySurvey):
             "day_id",
             "daily_trip_index",
             "weekday",
+            "departure_time",
+            "arrival_time",
             "city_category",
             "csp",
             "n_cars",
@@ -940,6 +952,10 @@ class EMPMobilitySurvey(MobilitySurvey):
 
         p_det_mode = p_det_mode / p_det_mode_tot
         p_det_mode.dropna(inplace=True)
+        
+        
+        
+        df = df.drop("pondki", axis=1)
 
         # ------------------------------------------
         # Write datasets to parquet files
