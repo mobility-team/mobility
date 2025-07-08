@@ -13,6 +13,18 @@ library(jsonlite)
 
 args <- commandArgs(trailingOnly = TRUE)
 
+# args <- c(
+#   'D:\\dev\\mobility_oss\\mobility',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\public_transport_graph\\simplified\\4d58f32de6ef9c586aedacf9a5af0096-public-transport-graph',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\contracted\\6e92ea1e35280a9d83e44d4215a99577-car-contracted-path-graph',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_walk\\contracted\\04c2f420aa4f610af7491b56aa785402-walk-contracted-path-graph',
+#   '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 15.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}', '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\50eecd2208341b15bb1d8dd9d8dddfd2-parking-osm_data.pbf',
+#   '{"start_time_min": 6.5, "start_time_max": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "transfer_time_coeff": 2.0, "no_show_perceived_prob": 0.2, "target_time": 8.0, "max_wait_time_at_destination": 0.25, "max_perceived_time": 2.0, "additional_gtfs_files": [], "expected_agencies": null}',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\car_public_transport_walk_intermodal_transport_graph\\simplified\\3f3638d83394dfb6b24d4e8cb3e1ec91-done'
+# )
+
 package_path <- args[1]
 tz_file_path <- args[2]
 pt_graph_fp <- args[3]
@@ -20,18 +32,9 @@ first_leg_graph_fp <- args[4]
 last_leg_graph_fp <- args[5]
 first_modal_shift <- args[6]
 last_modal_shift <- args[7]
-parameters <- args[8]
-output_fp <- args[9]
-
-# package_path <- 'D:/dev/mobility_oss/mobility'
-# tz_file_path <- 'D:/data/mobility/projects/haut-doubs/9da6c9b51734ddd0278a650c3b00fe30-transport_zones.gpkg'
-# pt_graph_fp <- "D:/data/mobility/projects/haut-doubs/public_transport_graph/simplified/eccff52d016cc0495d509393a9958a31-public-transport-graph"
-# first_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_car/contracted/8127ffcc94c29b249dcc2ccd101cddb8-car-contracted-path-graph"
-# last_leg_graph_fp <- "D:/data/mobility/projects/haut-doubs/path_graph_walk/contracted/659d8e57bce885c49ea11ec8f1fc0345-walk-contracted-path-graph"
-# first_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
-# last_modal_shift <- '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "shift_time": 1.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
-# parameters <- '{"start_time_min": 6.5, "start_time_max": 8.0, "target_time": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "max_wait_time_at_destination": 0.3333333333}'
-# output_fp <- 'D:\\data\\mobility\\projects\\haut-doubs\\walk_public_transport_walk_intermodal_transport_graph\\simplified\\dad2d53274998829d5a595ee27df908a-done'
+osm_parkings_fp <- args[8]
+parameters <- args[9]
+output_fp <- args[10]
 
 first_modal_shift <- fromJSON(first_modal_shift)
 last_modal_shift <- fromJSON(last_modal_shift)
@@ -58,6 +61,49 @@ transport_zones <- st_read(tz_file_path)
 
 buildings_sample <- as.data.table(read_parquet(buildings_sample_fp))
 buildings_sample[, building_id := 1:.N]
+
+# Prepare parkings suitable for park + ride (if needed that is when the first leg mode is car)
+if (osm_parkings_fp == "") {
+  
+  parkings <- NULL
+  
+} else {
+  
+  parkings <- st_read(osm_parkings_fp, layer = "multipolygons")
+  
+  # Keep only parkigns with more than 10 spots
+  parkings <- st_transform(parkings, 3035)
+  parkings <- parkings[as.numeric(st_area(parkings)) > 25.0*30.0, ]
+  
+  # Exclude parkings based on OSM tags
+  # (keeping only park+ride parkings filters too much parkings)
+  excluded_tags <- list(
+    c("access", "no"),
+    c("access", "employees"),
+    c("access", "private"),
+    c("access", "customers"),
+    c("access", "destination"),
+    c("access", "military"),
+    c("access", "designated"),
+    c("access", "delivery"),
+    c("access", "hgv"),
+    c("hgv", "designated"),
+    c("park_ride", "no")
+  )
+  excluded_tags <- paste0(
+    '"', sapply(excluded_tags, `[`, 1),
+    '"=>"',
+    sapply(excluded_tags, `[`, 2),
+    '"',
+    collapse = "|"
+  )
+  
+  parkings <- parkings[!grepl(excluded_tags, parkings$other_tags), ]
+  
+  parkings <- st_geometry(st_centroid(parkings))
+  
+}
+
 
 # Create a three layer routing graph
 # Layer 1 : original graph
@@ -160,8 +206,24 @@ info(logger, "Computing the first leg travel times and distances...")
 pt_start_verts <- start_verts[vertex_id %in% unique(travel_costs$vertex_id_from)]
 pt_start_verts_sf <- sfheaders::sf_point(pt_start_verts, x = "x", y = "y", keep = TRUE)
 pt_start_verts_sf <- st_buffer(pt_start_verts_sf, dist = 1.1*1000.0*first_modal_shift$average_speed*first_modal_shift$max_travel_time)
+st_crs(pt_start_verts_sf) <- 3035
 
 access_mid_verts_sf <- sfheaders::sf_point(mid_verts[vertex_type == "access"], x = "x", y = "y", keep = TRUE)
+st_crs(access_mid_verts_sf) <- 3035
+
+# Keep only public transport stops that have at least a nearby parking available for park+ride
+# Threshold is 800 m - 10 min walk
+# (if the first leg mode is car)
+if (!is.null(parkings)) {
+  
+  is_parking_nearby <- st_intersects(
+    st_buffer(access_mid_verts_sf, 400),
+    parkings
+  )
+  is_parking_nearby <- lengths(is_parking_nearby) > 0
+  access_mid_verts_sf <- access_mid_verts_sf[is_parking_nearby, ]
+  
+}
 
 first_leg <- st_intersects(pt_start_verts_sf, access_mid_verts_sf)
 

@@ -27,8 +27,7 @@ class PopulationTrips(FileAsset):
             surveys: List[MobilitySurvey] = [],
             n_samples: int = 10,
             alpha: float = 0.5,
-            cost_update: bool = False,
-            n_iter_cost_update: int = 3,
+            n_iter_per_cost_update: int = 3,
             cost_uncertainty_sd: float = 1.0,
             delta_cost_change: float = 0.0,
             random_switch: float = 4.0
@@ -43,44 +42,62 @@ class PopulationTrips(FileAsset):
             "surveys": surveys,
             "n_samples": n_samples,
             "alpha": alpha,
-            "cost_update": cost_update,
-            "n_iter_cost_update": n_iter_cost_update,
+            "n_iter_per_cost_update": n_iter_per_cost_update,
             "cost_uncertainty_sd": cost_uncertainty_sd,
             "delta_cost_change": delta_cost_change,
             "random_switch": random_switch
         }
         
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
-        cache_path = project_folder / "population_trips" / "flows.parquet"
+        cache_path = {
+            "weekday_flows": project_folder / "population_trips" / "weekday" / "weekday_flows.parquet",
+            "weekend_flows": project_folder / "population_trips" / "weekend" / "weekend_flows.parquet"
+        }
         
         super().__init__(inputs, cache_path)
         
         
     def get_cached_asset(self):
-        return pl.scan_parquet(self.cache_path)
+        return {
+            "weekday_flows": pl.scan_parquet(self.cache_path["weekday_flows"]),
+            "weekend_flows": pl.scan_parquet(self.cache_path["weekend_flows"])
+        }
         
         
     def create_and_get_asset(self):
         
+        weekday_flows = self.compute_flows(is_weekday=True)
+        weekend_flows = self.compute_flows(is_weekday=False)
+        
+        weekday_flows.sink_parquet(self.cache_path["weekday_flows"])
+        weekend_flows.sink_parquet(self.cache_path["weekend_flows"])
+            
+        return {
+            "weekday_flows": weekday_flows,
+            "weekend_flows": weekend_flows
+        }
+
+    def compute_flows(self, is_weekday):
+
         population = self.inputs["population"]
         costs_aggregator = self.inputs["costs_aggregator"]
         motives = self.inputs["motives"]
         surveys = self.inputs["surveys"]
         n_samples = self.inputs["n_samples"]
         alpha = self.inputs["alpha"]
-        cost_update = self.inputs["cost_update"]
-        n_iter_cost_update = self.inputs["n_iter_cost_update"]
+        n_iter_per_cost_update = self.inputs["n_iter_per_cost_update"]
         cost_uncertainty_sd = self.inputs["cost_uncertainty_sd"]
         delta_cost_change = self.inputs["delta_cost_change"]
         random_switch = self.inputs["random_switch"]
         
-        inputs_hash = str(self.cache_path.stem).split("-")[0]
-        chains_path = self.cache_path.parent / (inputs_hash + "-chains")
-        flows_path = self.cache_path.parent / (inputs_hash + "-flows")
+        cache_path = self.cache_path["weekday_flows"] if is_weekday is True else self.cache_path["weekend_flows"]
+        inputs_hash = str(cache_path.stem).split("-")[0]
+        chains_path = cache_path.parent / (inputs_hash + "-chains")
+        flows_path = cache_path.parent / (inputs_hash + "-flows")
         
         self.prepare_folders(chains_path, flows_path)
 
-        chains = self.get_chains(population, surveys, motives)
+        chains = self.get_chains(population, surveys, motives, is_weekday)
         sinks = self.get_sinks(chains, motives, population.transport_zones)
         costs = self.get_current_costs(costs_aggregator, congestion=False)
 
@@ -108,7 +125,7 @@ class PopulationTrips(FileAsset):
             self.spatialize_trip_chains(i, chains, dest_prob, motives, alpha, chains_path)
             
             flows, od_flows = self.assign_flow_volumes(i, chains, chains_path, previous_flows, flows_path)
-            costs = self.update_costs(costs, cost_update, i, n_iter_cost_update, od_flows, costs_aggregator)
+            costs = self.update_costs(costs, i, n_iter_per_cost_update, od_flows, costs_aggregator)
             flows = self.unassign_overflow(flows, remaining_sinks)
             flows = self.unassign_optim(flows, costs, delta_cost_change)
             flows = self.unassign_random(flows, random_switch_rate[i])
@@ -116,21 +133,23 @@ class PopulationTrips(FileAsset):
             previous_flows, remaining_sinks, chains = self.prepare_next_iteration_vars(flows, sinks)
             
         flows = self.disaggregate_by_mode(flows_path, n_samples, costs_aggregator)
-        
-        flows.sink_parquet(self.cache_path)
-            
+
+        flows = flows.with_columns(
+            is_weekday=pl.lit(is_weekday)
+        )
+
         return flows
     
-    
+
     def prepare_folders(self, chains_path, flows_path):
         
         shutil.rmtree(chains_path, ignore_errors=True)
         shutil.rmtree(flows_path, ignore_errors=True)
-        os.mkdir(chains_path)
-        os.mkdir(flows_path)
-    
+        os.makedirs(chains_path)
+        os.makedirs(flows_path)
 
-    def get_chains(self, population, surveys, motives):
+
+    def get_chains(self, population, surveys, motives, is_weekday):
 
         # Map local admin units to urban unit categories (C, B, I, R) to be able
         # to get population counts by urban unit category
@@ -195,7 +214,7 @@ class PopulationTrips(FileAsset):
 
             pop_groups
             .join(p_chain, on=["country", "city_category", "csp", "n_cars"])
-            .filter(pl.col("is_weekday") == True)
+            .filter(pl.col("is_weekday") == is_weekday)
             .drop("is_weekday")
             .with_columns(n_subseq=pl.col("weight")*pl.col("p_subseq")) 
             
@@ -503,9 +522,9 @@ class PopulationTrips(FileAsset):
         return flows, od_flows
     
 
-    def update_costs(self, costs, cost_update, i, n_iter_cost_update, od_flows, costs_aggregator):
+    def update_costs(self, costs, i, n_iter_per_cost_update, od_flows, costs_aggregator):
 
-        if cost_update is True and i > 0 and i % n_iter_cost_update == 0: 
+        if n_iter_per_cost_update > 0 and i > 0 and i % n_iter_per_cost_update == 0: 
             costs_aggregator.update(od_flows)
             costs = self.get_current_costs(costs_aggregator, congestion=False)
 
@@ -521,7 +540,7 @@ class PopulationTrips(FileAsset):
         # A given chain is "overflowing" opportunities at destination if 
         # at soon as one of the destinations is "overflowing", so :
         # p_overflow = max(p_overflow_motive)
-        print("Correcting flows for sink saturation...")
+        logging.info("Correcting flows for sink saturation...")
         
         flows_overflow = (
             
@@ -547,10 +566,6 @@ class PopulationTrips(FileAsset):
             
         )
         
-        # n_subseq = flows_overflow["n_subseq"].sum()
-        # overflow = flows_overflow["overflow"].sum()
-        # print(f"Total number of subsequences in the system: {n_subseq+overflow}")
-        
         return flows_overflow
     
     
@@ -560,7 +575,7 @@ class PopulationTrips(FileAsset):
         # Compute the number of persons switching destinations after comparing their 
         # utility to the average utility of persons living in the same place
         # (adding X € to the no switch decision to account for transition costs)
-        print("Correcting flows for persons optimizing their cost...")
+        logging.info("Correcting flows for persons optimizing their cost...")
         
         p_seq_change = (
             
@@ -609,10 +624,6 @@ class PopulationTrips(FileAsset):
             
         )
         
-        # n_subseq = seq_flows_change["n_subseq"].sum()
-        # change = seq_flows_change["change"].sum()
-        # print(f"Total number of subsequences in the system: {n_subseq+change+overflow}")
-        
         return flows_change
     
     
@@ -635,10 +646,6 @@ class PopulationTrips(FileAsset):
             )
             
         )        
-        
-        # n_subseq = seq_flows_rand_switch["n_subseq"].sum()
-        # delta_n_subseq = seq_flows_rand_switch["delta_n_subseq"].sum()
-        # print(f"Total number of persons in the system: {n_subseq+delta_n_subseq}")
         
         return flows_rand_switch
 

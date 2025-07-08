@@ -220,18 +220,12 @@ class MobilitySurvey(FileAsset):
             
         )
         
-        
-        # p = p_subseq.filter(pl.col("is_weekday") == True).filter(pl.col("city_category") == "C").filter(pl.col("csp") == "3").filter(pl.col("n_cars") == "0").to_pandas()
-
         sequences = (
 
             sequences.drop("pondki")
             .join(p_subseq, on=["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "motive_subseq"])    
             
         )
-        
-        # s = sequences.filter(pl.col("is_weekday") == True).filter(pl.col("city_category") == "C").filter(pl.col("csp") == "3").filter(pl.col("n_cars") == "0").to_pandas()
-        # sequences.group_by(["is_weekday", "city_category", "csp", "n_cars"]).agg(pl.col("p_subseq").sum()).filter(pl.col("is_weekday") == False)["p_subseq"].hist()
         
         return sequences
             

@@ -15,6 +15,7 @@ from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
 from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportGraph
 from mobility.transport_graphs.path_graph import ContractedPathGraph
+from mobility.parsers.osm import OSMData
 
 class IntermodalTransportGraph(FileAsset):
     """
@@ -36,7 +37,8 @@ class IntermodalTransportGraph(FileAsset):
             first_leg_mode: TransportMode,
             last_leg_mode: TransportMode,
             first_modal_transfer: IntermodalTransfer = None,
-            last_modal_transfer: IntermodalTransfer = None
+            last_modal_transfer: IntermodalTransfer = None,
+            parkings_geofabrik_extract_date: str = "250101"
     ):
         """
         Retrieves public transport travel costs if they already exist for these transport zones and parameters,
@@ -51,6 +53,7 @@ class IntermodalTransportGraph(FileAsset):
             start_time_max : float containing the end hour to consider for cost determination, should be superior to start_time_min
             max_traveltime : float with the maximum travel time to consider for public transport, in hours
             additional_gtfs_files : list of additional GTFS files to include in the calculations
+            parkings_geofabrik_extract_date:
 
         """
         
@@ -66,6 +69,15 @@ class IntermodalTransportGraph(FileAsset):
             "last_modal_transfer": last_modal_transfer,
             "parameters": parameters
         }
+
+        if first_leg_mode.name == "car":
+            inputs["osm_parkings"] = OSMData(
+                transport_zones.study_area,
+                object_type="a",
+                key="parking",
+                boundary_buffer=0.0,
+                geofabrik_extract_date=parkings_geofabrik_extract_date
+            )
         
         self.first_leg_mode = first_leg_mode
         self.last_leg_mode = last_leg_mode
@@ -80,17 +92,7 @@ class IntermodalTransportGraph(FileAsset):
         return self.cache_path
 
     def create_and_get_asset(self) -> pd.DataFrame:
-        
-        self.prepare_intermodal_graph(
-            self.inputs["transport_zones"],
-            self.inputs["public_transport_graph"],
-            self.inputs["first_leg_graph"],
-            self.inputs["last_leg_graph"],
-            self.inputs["first_modal_transfer"],
-            self.inputs["last_modal_transfer"],
-            self.inputs["parameters"]
-        )
-
+        self.prepare_intermodal_graph(**self.inputs)
         return self.cache_path
 
     
@@ -102,7 +104,8 @@ class IntermodalTransportGraph(FileAsset):
             last_leg_graph: ContractedPathGraph,
             first_modal_transfer: IntermodalTransfer,
             last_modal_transfer: IntermodalTransfer,
-            parameters: PublicTransportRoutingParameters
+            parameters: PublicTransportRoutingParameters,
+            osm_parkings: OSMData = None
         ) -> pd.DataFrame:
         """
         Calculates intermodal travel costs between transport zones. Uses the R script called prepare_intermodal_public_transport_graph.R
@@ -114,6 +117,7 @@ class IntermodalTransportGraph(FileAsset):
             last_leg_graph: graph for the last leg mode
             first_modal_transfer: transfer parameters between the first mode and public transport
             last_modal_transfer: transfer parameters between public transport and the last mode
+            osm_parkings: 
             parameters: PublicTransportRoutingParameters
 
 
@@ -133,6 +137,7 @@ class IntermodalTransportGraph(FileAsset):
                 str(last_leg_graph.get()),
                 json.dumps(asdict(first_modal_transfer)),
                 json.dumps(asdict(last_modal_transfer)),
+                "" if osm_parkings is None else str(osm_parkings.get()),
                 json.dumps(asdict(parameters)),
                 str(self.cache_path)
             ]

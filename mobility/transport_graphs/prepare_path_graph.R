@@ -14,11 +14,11 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\data\\mobility\\tests\\results\\bf3917ee1ea0b4a20320314e1ec9367e-transport_zones.gpkg',
-#   'D:\\data\\mobility\\tests\\results\\ba829d40c59e629559af055ee0c88776-highway-osm_data.osm',
-#   'walk',
-#   '{"trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "service": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "track": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "cycleway": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "path": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "steps": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "ferry": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "bridleway": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "footway": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "pedestrian": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}}',
-#   'D:\\data\\mobility\\tests\\results\\path_graph_walk\\simplified\\dbfd8646c9f6ea09d092675dde9a1d83-walk-simplified-path-graph'
+#   'D:\\data\\mobility\\projects\\grand-geneve\\9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\3fd01ce982bfb700a979327cb34822e6-highway-osm_data.osm',
+#   'car',
+#   '{"motorway": {"capacity": 2000.0, "alpha": 0.15, "beta": 4.0}, "trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "service": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "ferry": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 300.0, "alpha": 0.15, "beta": 4.0}, "motorway_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}}',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\36630180a6ecb8a3d76de517c9c6a130-car-simplified-path-graph'
 # )
 
 package_path <- args[1]
@@ -177,63 +177,63 @@ if (mode == "car") {
 }
 
 
-# # Remove all dead ends
-# info(logger, "Removing dead ends...")
-# 
-# # Remove all nodes that have a degree that is less than 3
-# # (which means all nodes that are dead ends because the simplification step
-# # has already removed all non junction nodes)
-# edges <- as.data.table(cppr_graph_simple$data)
-# 
-# nodes <- c(0)
-# 
-# while(length(nodes) > 0) {
-#   
-#   n_incoming <- edges[, list(n_incoming = .N), by = list(index = to)]
-#   n_outgoing <- edges[, list(n_outgoing = .N), by = list(index = from)]
-#   degree <- merge(n_incoming, n_outgoing, by = "index")
-#   degree[, deg := n_incoming + n_outgoing]
-#   
-#   one_way_dead_end_nodes <- degree[deg == 1, index]
-#   
-#   two_way_nodes <- degree[deg == 2, list(index)]
-#   two_way_nodes <- merge(two_way_nodes, edges[, list(from, to)], by.x = "index", by.y = "from")
-#   two_way_nodes <- merge(two_way_nodes, edges[, list(from, to)], by.x = "index", by.y = "to")
-#   two_way_dead_end_nodes <- two_way_nodes[from == to, index]
-#   
-#   nodes <- unique(c(one_way_dead_end_nodes, two_way_dead_end_nodes))
-#   
-#   edges <- edges[!(from %in% nodes | to %in% nodes)]
-#   
-# }
-# 
-# # Filter and reformea the cpprouting graph
-# remaining_node_index <- unique(c(edges$from, edges$to))
-# 
-# data <- as.data.table(cppr_graph_simple$data)
-# data[, keep_from := from %in% remaining_node_index]
-# data[, keep_to := to %in% remaining_node_index]
-# 
-# keep_index <- data[, keep_from & keep_to]
-# 
-# dict <- as.data.table(cppr_graph_simple$dict)
-# dict[, keep := id %in% remaining_node_index]
-# dict[, new_index := 1:.N, by = keep]
-# 
-# data <- merge(data, dict[keep == TRUE, list(id, new_index)], by.x = "from", by.y = "id", sort = FALSE)
-# data <- merge(data, dict[keep == TRUE, list(id, new_index)], by.x = "to", by.y = "id", sort = FALSE)
-# data <- data[, list(from = new_index.x, to = new_index.y, dist)]
-# 
-# dict <- dict[keep == TRUE, list(ref, id = new_index)]
-# 
-# cppr_graph_simple$attrib$aux <- cppr_graph_simple$attrib$aux[keep_index]
-# cppr_graph_simple$attrib$alpha <- cppr_graph_simple$attrib$alpha[keep_index]
-# cppr_graph_simple$attrib$beta <- cppr_graph_simple$attrib$beta[keep_index]
-# cppr_graph_simple$attrib$cap <- cppr_graph_simple$attrib$cap[keep_index]
-# 
-# cppr_graph_simple$data <- data
-# cppr_graph_simple$dict <- dict
-# cppr_graph_simple$nbnode <- nrow(dict)
+# Remove all dead ends
+info(logger, "Removing dead ends...")
+
+# Remove all nodes that have a degree that is less than 3
+# (which means all nodes that are dead ends because the simplification step
+# has already removed all non junction nodes)
+edges <- as.data.table(cppr_graph_simple$data)
+
+nodes <- c(0)
+
+while(length(nodes) > 0) {
+
+  n_incoming <- edges[, list(n_incoming = .N), by = list(index = to)]
+  n_outgoing <- edges[, list(n_outgoing = .N), by = list(index = from)]
+  degree <- merge(n_incoming, n_outgoing, by = "index")
+  degree[, deg := n_incoming + n_outgoing]
+
+  one_way_dead_end_nodes <- degree[deg == 1, index]
+
+  two_way_nodes <- degree[deg == 2, list(index)]
+  two_way_nodes <- merge(two_way_nodes, edges[, list(from, to)], by.x = "index", by.y = "from")
+  two_way_nodes <- merge(two_way_nodes, edges[, list(from, to)], by.x = "index", by.y = "to")
+  two_way_dead_end_nodes <- two_way_nodes[from == to, index]
+
+  nodes <- unique(c(one_way_dead_end_nodes, two_way_dead_end_nodes))
+
+  edges <- edges[!(from %in% nodes | to %in% nodes)]
+
+}
+
+# Filter and recreate the cpprouting graph
+remaining_node_index <- unique(c(edges$from, edges$to))
+
+data <- as.data.table(cppr_graph_simple$data)
+data[, keep_from := from %in% remaining_node_index]
+data[, keep_to := to %in% remaining_node_index]
+
+keep_index <- data[, keep_from & keep_to]
+
+dict <- as.data.table(cppr_graph_simple$dict)
+dict <- dict[id %in% remaining_node_index]
+dict[, new_index := 0:(.N-1)]
+
+data <- merge(data, dict[, list(id, new_index)], by.x = "from", by.y = "id", sort = FALSE)
+data <- merge(data, dict[, list(id, new_index)], by.x = "to", by.y = "id", sort = FALSE)
+data <- data[, list(from = new_index.x, to = new_index.y, dist)]
+
+dict <- dict[, list(ref, id = new_index)]
+
+cppr_graph_simple$attrib$aux <- cppr_graph_simple$attrib$aux[keep_index]
+cppr_graph_simple$attrib$alpha <- cppr_graph_simple$attrib$alpha[keep_index]
+cppr_graph_simple$attrib$beta <- cppr_graph_simple$attrib$beta[keep_index]
+cppr_graph_simple$attrib$cap <- cppr_graph_simple$attrib$cap[keep_index]
+
+cppr_graph_simple$data <- data
+cppr_graph_simple$dict <- dict
+cppr_graph_simple$nbnode <- nrow(dict)
 
 
 
