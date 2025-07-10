@@ -73,6 +73,8 @@ class DetailedCarpoolGeneralizedCost(InMemoryAsset):
         
         metrics = ["from", "to"] + metrics
         costs = costs[metrics]
+
+        costs["mode"] = "carpool"
         
         return costs
             

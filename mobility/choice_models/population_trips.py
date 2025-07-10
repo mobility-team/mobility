@@ -218,7 +218,7 @@ class PopulationTrips(FileAsset):
             .drop("is_weekday")
             .with_columns(n_subseq=pl.col("weight")*pl.col("p_subseq")) 
             
-            .group_by(["transport_zone_id", "motive_subseq", "subseq_step_index", "motive"])
+            .group_by(["transport_zone_id", "csp", "motive_subseq", "subseq_step_index", "motive"])
             .agg(
                 n_subseq=pl.col("n_subseq").sum(),
                 duration=(
@@ -329,10 +329,10 @@ class PopulationTrips(FileAsset):
                 .join(
                     (
                         spatialized_step
-                        .select(["home_zone_id", "motive_subseq", "to"])
+                        .select(["home_zone_id", "csp", "motive_subseq", "to"])
                         .rename({"to": "from"})
                     ),
-                    on=["home_zone_id", "motive_subseq"]
+                    on=["home_zone_id", "csp", "motive_subseq"]
                 )
             )
             
@@ -356,7 +356,7 @@ class PopulationTrips(FileAsset):
             
             chains_step.lazy()
             .filter(pl.col("motive") != "home")
-            .select(["home_zone_id", "motive_subseq", "motive", "from"])
+            .select(["home_zone_id", "csp", "motive_subseq", "motive", "from"])
             
             .join(
                 dest_prob.lazy(),
@@ -384,17 +384,17 @@ class PopulationTrips(FileAsset):
                     .otherwise(pl.col("p_ij").pow(1-alpha)*pl.col("p_ij_home").pow(alpha))
                 )
             )
-            .with_columns(p_ij=pl.col("p_ij")/pl.col("p_ij").sum().over(["motive_subseq", "motive", "home_zone_id", "from"]))
+            .with_columns(p_ij=pl.col("p_ij")/pl.col("p_ij").sum().over(["motive_subseq", "motive", "home_zone_id", "csp", "from"]))
             
             # Keep only the first 99 % of the distribution
             .sort("p_ij", descending=True)
             .with_columns(
-                p_ij_cum=pl.col("p_ij").cum_sum().over(["motive_subseq", "home_zone_id", "from", "motive"]),
-                p_ij_count=pl.col("p_ij").cum_count().over(["motive_subseq", "home_zone_id", "from", "motive"])
+                p_ij_cum=pl.col("p_ij").cum_sum().over(["motive_subseq", "home_zone_id", "csp", "from", "motive"]),
+                p_ij_count=pl.col("p_ij").cum_count().over(["motive_subseq", "home_zone_id", "csp", "from", "motive"])
             )
             .filter((pl.col("p_ij_cum") < 0.99) | (pl.col("p_ij_count") == 1))
             .with_columns(
-                p_ij=pl.col("p_ij")/pl.col("p_ij").sum().over(["motive_subseq", "home_zone_id", "from", "motive"])
+                p_ij=pl.col("p_ij")/pl.col("p_ij").sum().over(["motive_subseq", "home_zone_id", "csp", "from", "motive"])
             )
             
             .collect(engine="streaming")
@@ -417,10 +417,10 @@ class PopulationTrips(FileAsset):
             )
             
             .sort(["sample_score"])
-            .group_by(["home_zone_id", "motive_subseq", "motive", "from"])
+            .group_by(["home_zone_id", "csp", "motive_subseq", "motive", "from"])
             .head(1)
             
-            .select(["home_zone_id", "motive_subseq", "motive", "from", "to", "p_ij"])
+            .select(["home_zone_id", "csp", "motive_subseq", "motive", "from", "to", "p_ij"])
             .collect(engine="streaming")
             
         )
@@ -433,7 +433,7 @@ class PopulationTrips(FileAsset):
                 p_ij=1.0,
                 to=pl.col("home_zone_id")
             )
-            .select(["home_zone_id", "motive_subseq", "motive", "from", "to", "p_ij"])
+            .select(["home_zone_id", "csp", "motive_subseq", "motive", "from", "to", "p_ij"])
         )
         
         steps = pl.concat([steps, steps_home])
@@ -451,31 +451,31 @@ class PopulationTrips(FileAsset):
             pl.scan_parquet(str(chains_path) + "/*.parquet")
             .filter(pl.col("subseq_step_index") == 1)
             .with_columns(
-                p_seq=pl.col("p_ij").log().sum().over(["home_zone_id", "motive_subseq"]).exp()
+                p_seq=pl.col("p_ij").log().sum().over(["home_zone_id", "csp", "motive_subseq"]).exp()
             )
             .with_columns(
-                p_seq=pl.col('p_seq') / pl.col('p_seq').sum().over(["home_zone_id", "motive_subseq"])
+                p_seq=pl.col('p_seq') / pl.col('p_seq').sum().over(["home_zone_id", "csp", "motive_subseq"])
             )
-            .select(["home_zone_id", "motive_subseq", "i", "p_seq"])
+            .select(["home_zone_id", "csp", "motive_subseq", "i", "p_seq"])
             
         )
         
         flows = (
             
             pl.scan_parquet(str(chains_path) + "/*.parquet")
-            .join(p_seq, on=["home_zone_id", "motive_subseq", "i"])
+            .join(p_seq, on=["home_zone_id", "csp", "motive_subseq", "i"])
             
             # Compute the number of persons at each destination, for each motive
             .join(
                 chains.rename({"transport_zone_id": "home_zone_id"}).lazy(),
-                on=["home_zone_id", "motive_subseq", "motive", "subseq_step_index"]
+                on=["home_zone_id", "csp", "motive_subseq", "motive", "subseq_step_index"]
             )
             .with_columns(
                 n_subseq=pl.col("n_subseq")*pl.col("p_seq"),
                 duration=pl.col("duration")*pl.col("p_seq")
             )
             .select([
-                'home_zone_id', 'motive_subseq', 'motive', 'from', 'to',
+                'home_zone_id', "csp", 'motive_subseq', 'motive', 'from', 'to',
                 'subseq_step_index', 'i', 'n_subseq', 'duration', "duration_per_subseq"
             ])
             
@@ -491,7 +491,7 @@ class PopulationTrips(FileAsset):
             flows = pl.concat([flows, previous_flows])
             flows = (
                 flows
-                .group_by(["home_zone_id", "motive_subseq", "motive", "from", "to", "subseq_step_index", "i"])
+                .group_by(["home_zone_id", "csp", "motive_subseq", "motive", "from", "to", "subseq_step_index", "i"])
                 .agg(
                     n_subseq=pl.col("n_subseq").sum(),
                     duration=pl.col("duration").sum()
@@ -555,7 +555,7 @@ class PopulationTrips(FileAsset):
                 )
             )
             .with_columns(
-                p_overflow_max=pl.col("p_overflow").max().over(["home_zone_id", "motive_subseq", "i"])
+                p_overflow_max=pl.col("p_overflow").max().over(["home_zone_id", "csp", "motive_subseq", "i"])
             )
             .with_columns(
                 overflow=pl.col("n_subseq")*pl.col("p_overflow_max")
@@ -582,7 +582,7 @@ class PopulationTrips(FileAsset):
             flows
         
             .join(costs, on=["from", "to"])
-            .group_by(["home_zone_id", "motive_subseq", "i"])
+            .group_by(["home_zone_id", "csp", "motive_subseq", "i"])
             .agg(
                 cost=pl.col("cost").sum(),
                 n_subseq=pl.col("n_subseq").first()
@@ -590,10 +590,10 @@ class PopulationTrips(FileAsset):
             .with_columns(
                 average_cost=(
                     (pl.col("cost")*pl.col("n_subseq"))
-                    .sum().over(["home_zone_id", "motive_subseq"])
+                    .sum().over(["home_zone_id", "csp", "motive_subseq"])
                     /
                     pl.col("n_subseq")
-                    .sum().over(["home_zone_id", "motive_subseq"])
+                    .sum().over(["home_zone_id", "csp", "motive_subseq"])
                 )
             )
             .with_columns(
@@ -607,14 +607,14 @@ class PopulationTrips(FileAsset):
                 )
             )
         
-            .select(["home_zone_id", "motive_subseq", "i", "p_seq_change"])
+            .select(["home_zone_id", "csp", "motive_subseq", "i", "p_seq_change"])
             
         )
         
         flows_change = (
         
             flows
-            .join(p_seq_change, on=["home_zone_id", "motive_subseq", "i"])
+            .join(p_seq_change, on=["home_zone_id", "csp", "motive_subseq", "i"])
             .with_columns(
                 change=pl.col("n_subseq")*pl.col("p_seq_change")
             )
@@ -675,7 +675,7 @@ class PopulationTrips(FileAsset):
         # Compute the number of unassigned persons by motive sequence and transport zone
         chains = (
             flows
-            .group_by(["home_zone_id", "motive_subseq", "motive", "subseq_step_index"])
+            .group_by(["home_zone_id", "csp", "motive_subseq", "motive", "subseq_step_index"])
             .agg(
                 n_subseq=pl.col("delta_n_subseq").sum(),
                 duration=pl.col("delta_duration").sum()
@@ -691,7 +691,7 @@ class PopulationTrips(FileAsset):
             flows
             .select(
                 [
-                    'home_zone_id', 'motive_subseq', 'motive', 'from', 'to',
+                    'home_zone_id', "csp", 'motive_subseq', 'motive', 'from', 'to',
                     'subseq_step_index', 'i', 'n_subseq', "duration", "duration_per_subseq"
                 ]
             )

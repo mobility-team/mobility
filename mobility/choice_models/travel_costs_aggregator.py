@@ -69,11 +69,18 @@ class TravelCostsAggregator(InMemoryAsset):
                 
             costs.append(
                 pl.DataFrame(gc)
-                .with_columns(pl.lit(mode.name).alias("mode"))
+                # .with_columns(pl.lit(mode.name).alias("mode"))
             )
         
-        costs = pl.concat(costs, how="diagonal").fill_null(0.0)
+        costs = pl.concat(costs, how="diagonal")
         
+        # Replace null distances by zeros
+        if detail_distances is True:
+            dist_cols = [col for col in costs.columns if "_distance" in col]
+            dist_cols = {col: pl.col(col).fill_null(0.0) for col in dist_cols}
+            costs = costs.with_columns(**dist_cols)
+
+        # Not sure if we need this anymore ?
         costs = costs.with_columns([
             pl.col("from").cast(pl.Int64),
             pl.col("to").cast(pl.Int64)

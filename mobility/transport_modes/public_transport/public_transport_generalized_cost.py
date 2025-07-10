@@ -20,7 +20,7 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
             "mid_parameters": mid_parameters,
             "last_parameters": last_parameters,
             "first_leg_mode_name": first_leg_mode_name,
-            "last_leg_mode_name": first_leg_mode_name
+            "last_leg_mode_name": last_leg_mode_name
         }
         
         super().__init__(inputs)
@@ -32,6 +32,9 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
             congestion: bool = True,
             detail_distances: bool = False
         ) -> pd.DataFrame:
+
+        first_leg_mode_name = self.inputs["first_leg_mode_name"]
+        last_leg_mode_name = self.inputs["last_leg_mode_name"]
         
         metrics = list(metrics)
         costs = self.travel_costs.get()
@@ -63,8 +66,8 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
         
         if detail_distances is True:
             
-            first_mode_col = self.inputs["first_leg_mode_name"] + "_distance"
-            last_mode_col = self.inputs["last_leg_mode_name"] + "_distance"
+            first_mode_col = first_leg_mode_name + "_distance"
+            last_mode_col = last_leg_mode_name + "_distance"
             
             if first_mode_col == last_mode_col:
                 
@@ -87,6 +90,21 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
         
         metrics = ["from", "to"] + metrics
         costs = costs[metrics]
+
+        costs["mode"] = first_leg_mode_name + "/public_transport/" + last_leg_mode_name
+
+        # If the access/egress modes are asymetrical, we need to add the return trip
+        # ie if we computed a car/PT/walk travel cost between two transport zones,
+        # we have to add a walk/PT/car cost, so that both trips are possible in the model.
+        # We make the hypothesis that costs are symetrical.
+        if first_leg_mode_name != last_leg_mode_name:
+            ret_costs = costs.copy()
+            ret_costs["mode"] = last_leg_mode_name + "/public_transport/" + first_leg_mode_name
+            ret_costs["ret_from"] = ret_costs["to"]
+            ret_costs["ret_to"] = ret_costs["from"]
+            ret_costs.drop(["from", "to"], axis=1, inplace=True)
+            ret_costs.rename({"ret_from": "from", "ret_to": "to"}, axis=1, inplace=True)
+            costs = pd.concat([costs, ret_costs])
         
         return costs
             

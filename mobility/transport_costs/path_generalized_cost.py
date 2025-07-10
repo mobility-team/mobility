@@ -51,5 +51,7 @@ class PathGeneralizedCost(InMemoryAsset):
         
         metrics = ["from", "to"] + metrics
         costs = costs[metrics]
+
+        costs["mode"] = self.inputs["mode_name"]
         
         return costs
