@@ -1,7 +1,12 @@
+from numpy.random import default_rng
+import numpy as np
+
 # From Marsaglia's Fast Generation of Discrete Random Variables
 # https://www.jstatsoft.org/article/view/v011i03
+
+
 def get_5tbls(P, offset=0):
-    
+
     # Convert to 30-bit fixed-point integers
     P = np.asarray(P)
     P = np.round(P * (1 << 30)).astype(np.uint32)
@@ -30,8 +35,8 @@ def get_5tbls(P, offset=0):
     }
 
 
-from numpy.random import default_rng
 rng = default_rng(seed=1234)
+
 
 def dran(rng, tables):
     j = rng.integers(0, 1 << 30, dtype=np.uint32)
@@ -45,6 +50,7 @@ def dran(rng, tables):
     if j < t['t4']:
         return t['DD'][(j - t['t3']) >> 6]
     return t['EE'][j - t['t4']]
+
 
 def dran_many(rng, tables, n):
     j = rng.integers(0, 1 << 30, size=n, dtype=np.uint32)
@@ -66,7 +72,8 @@ def dran_many(rng, tables, n):
 
     return out
 
-p = cost_bin_to_dest.filter(pl.col("motive") == "work").filter(pl.col("from") == 479).filter(pl.col("cost_bin") == 1.0)["p_to"]
+
+"""p = cost_bin_to_dest.filter(pl.col("motive") == "work").filter(pl.col("from") == 479).filter(pl.col("cost_bin") == 1.0)["p_to"]
 tbls = get_5tbls(p)
 dran(rng, tbls)
-dran_many(rng, tbls, 100)
+dran_many(rng, tbls, 100)"""
