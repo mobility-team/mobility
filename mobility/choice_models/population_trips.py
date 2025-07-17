@@ -836,7 +836,37 @@ class PopulationTrips(FileAsset):
     
     def disaggregate_by_mode(self, flows_path, n_samples, costs):
         
+        
         p_od_to_mode = costs.get_prob_by_od_and_mode(["cost"], congestion=True)
+        
+        # Add symetrical mode names for multimodal modes
+        mode_names =  [m.name for m in costs.modes]
+        sym_mode_names = []
+        for name in mode_names:
+            if "public_transport" in name:
+                legs = name.split("/")
+                if legs[0] != legs[2]:
+                    sym_mode_names.append(legs[2] + "/public_transport/" + legs[0])
+        mode_names.extend(sym_mode_names)
+        
+        f = ( 
+            pl.read_parquet(flows_path / f"flows_{n_samples-1}.parquet")
+            .with_row_index()
+            .select(["index", "from", "to"])
+            .join(p_od_to_mode, ["from", "to"])
+            .pivot(on="mode", index=["index", "from", "to"])
+        )
+        
+        p_mat = f.select(mode_names).fill_null(1e-6).to_numpy()
+        p_mat = np.repeat(p_mat[:, :, np.newaxis], 10, axis=2)
+        E = -np.log(np.random.uniform(0, 1, size=p_mat.shape))/p_mat
+        samples = np.argmin(E, axis=1)
+        samples = pl.DataFrame(samples)
+        samples.columns = [f"sample_{i}" for i in range(len(samples.columns))]
+        
+        mode_names
+        
+        
             
         flows = ( 
             pl.scan_parquet(flows_path / f"flows_{n_samples-1}.parquet")

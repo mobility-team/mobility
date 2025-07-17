@@ -13,6 +13,16 @@ library(jsonlite)
 
 args <- commandArgs(trailingOnly = TRUE)
 
+# args <- c(
+#   'D:\\dev\\mobility_oss\\mobility',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\car_public_transport_walk_intermodal_transport_graph\\simplified\\3f3638d83394dfb6b24d4e8cb3e1ec91-done',
+#   '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 15.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
+#   '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
+#   '{"start_time_min": 6.5, "start_time_max": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "transfer_time_coeff": 2.0, "no_show_perceived_prob": 0.2, "target_time": 8.0, "max_wait_time_at_destination": 0.25, "max_perceived_time": 2.0, "additional_gtfs_files": [], "expected_agencies": null}',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\5db7e79ec0d1e0ebc0b3104ca8e73117-car_public_transport_walk_travel_costs.parquet'
+# )
+
 package_path <- args[1]
 tz_file_path <- args[2]
 intermodal_graph_fp <- args[3]
@@ -20,15 +30,6 @@ first_modal_transfer <- args[4]
 last_modal_transfer <- args[5]
 parameters <- args[6]
 output_file_path <- args[7]
-
-# package_path <- 'D:/dev/mobility_oss/mobility'
-# tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\9da6c9b51734ddd0278a650c3b00fe30-transport_zones.gpkg'
-# intermodal_graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\car_public_transport_walk_intermodal_transport_graph\\simplified\\6fd0213e2de92fa22327ffb4b8516529-done"
-# first_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
-# last_modal_transfer <- '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}'
-# parameters <- '{"max_perceived_time": 2.0}'
-# output_file_path <- 'D:/data/mobility/projects/experiments/f65f378d4dc11f0929cf7f2aeaa2aaf5-public_transport_travel_costs.parquet'
-
 
 first_modal_transfer <- fromJSON(first_modal_transfer)
 last_modal_transfer <- fromJSON(last_modal_transfer)
@@ -122,25 +123,31 @@ travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_
 travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_to = weight, vertex_id_to)], by.x = "building_id_to_cluster", by.y = "building_id")
 
 
-info(logger, "Contracting graphs travel costs...")
-
-graph_c <- cpp_contract(intermodal_graph)
-
-
 # Compute the travel costs
 info(logger, "Computing travel costs between representative buildings in transport zones...")
 
 od_pairs <- unique(travel_costs[distance > 0.0, list(vertex_id_from, vertex_id_to)])
 
-od_pairs$perceived_time <- get_distance_pair(
-  graph_c,
-  od_pairs$vertex_id_from,
-  od_pairs$vertex_id_to,
-  algorithm = "NBA",
-  constant = 0.1
+from <- od_pairs[, unique(vertex_id_from)]
+to <- od_pairs[, unique(vertex_id_to)]
+
+perceived_time_mat <- get_distance_matrix(
+  intermodal_graph,
+  from = from,
+  to = to
 )
 
-od_pairs <- od_pairs[!is.na(perceived_time)]
+values <- as.vector(perceived_time_mat)
+idx <- which(!is.na(values) & values < 3600.0)
+
+perceived_time <- data.table(
+  vertex_id_from = from[((idx - 1) %% nrow(perceived_time_mat)) + 1],
+  vertex_id_to = to[((idx - 1) %/% nrow(perceived_time_mat)) + 1],
+  perceived_time = values[idx]
+)
+
+od_pairs <- merge(od_pairs, perceived_time, by = c("vertex_id_from", "vertex_id_to"))
+
 
 modal_transfer_time <- 60*(first_modal_transfer$transfer_time + last_modal_transfer$transfer_time)
 od_pairs[, perceived_time := perceived_time + modal_transfer_time]
@@ -150,7 +157,7 @@ od_pairs <- od_pairs[perceived_time < 3600.0*parameters[["max_perceived_time"]]]
 info(logger, "Reconstructing detailed distances and travel times for each leg...")
 
 paths <- get_path_pair(
-  graph_c,
+  intermodal_graph,
   from = od_pairs$vertex_id_from,
   to = od_pairs$vertex_id_to,
   algorithm = "NBA",

@@ -319,8 +319,6 @@ arrival_times[, arrival_time := round(arrival_time/60.0)*60.0]
 arrival_times <- arrival_times[, list(vertex_id_from = arrival_stop_index, arrival_time)]
 
 
-
-
 # Combine the 3 graphs into one
 info(logger, "Combining the three routing graphs...")
 
@@ -434,7 +432,6 @@ mid_leg <- rbindlist(
   )
 )
 
-
 # Concatenate all graphs
 all_legs <- rbindlist(
   list(
@@ -482,4 +479,5 @@ save_cppr_graph(cppr_graph, dirname(output_fp), hash)
 write_parquet(all_verts, file.path(dirname(dirname(output_fp)), paste0(hash, "-vertices.parquet")))
 
 file.create(output_fp)
+
 

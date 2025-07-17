@@ -42,7 +42,6 @@ buildings_sample_fp <- file.path(
 )
 
 modal_shift <- fromJSON(modal_shift)
-# congestion <- as.logical(congestion)
 
 source(file.path(package_path, "r_utils", "compute_gtfs_travel_costs.R"))
 source(file.path(package_path, "r_utils", "duplicate_cpprouting_graph.R"))

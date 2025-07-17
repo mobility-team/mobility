@@ -94,9 +94,22 @@ class TravelCostsAggregator(InMemoryAsset):
         costs = self.get_costs_by_od_and_mode(metrics, congestion, detail_distances=False)
         
         prob = (
+            
             costs
-            .with_columns(pl.col("cost").neg().exp().alias("exp_u"))
-            .with_columns((pl.col("exp_u")/pl.col("exp_u").sum().over(["from", "to"])).alias("prob"))
+            .with_columns(exp_u=pl.col("cost").neg().exp())
+            .with_columns(prob=pl.col("exp_u")/pl.col("exp_u").sum().over(["from", "to"]))
+            
+            # Keep only the first 99.9 % of the distribution
+            # (or one mode has 100% probability for a given destination, which can happen)
+            .sort(["prob"], descending=True)
+            .with_columns(
+                prob_cum=pl.col("prob").cum_sum().over(["from", "to"]),
+                p_count=pl.col("prob").cum_count().over(["from", "to"])
+            )
+            
+            .filter((pl.col("prob_cum") < 0.999) | (pl.col("p_count") == 1))
+            .with_columns(prob=pl.col("prob")/pl.col("prob").sum().over(["from", "to"]))
+            
             .select(["from", "to", "mode", "prob"])
         )
         
