@@ -40,5 +40,11 @@ class BicycleMode(TransportMode):
         
         travel_costs = PathTravelCosts(mode_name, transport_zones, routing_parameters, osm_capacity_parameters, speed_modifiers=speed_modifiers)
         generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters, mode_name)
-        super().__init__(mode_name, travel_costs, generalized_cost)
+        
+        super().__init__(
+            mode_name,
+            travel_costs,
+            generalized_cost,
+            vehicle="car"
+        )
         

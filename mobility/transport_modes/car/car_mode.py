@@ -65,5 +65,11 @@ class CarMode(TransportMode):
             mode_name=mode_name
         )
         
-        super().__init__(mode_name, travel_costs, generalized_cost, congestion)
+        super().__init__(
+            mode_name,
+            travel_costs,
+            generalized_cost,
+            congestion,
+            vehicle="car"
+        )
         

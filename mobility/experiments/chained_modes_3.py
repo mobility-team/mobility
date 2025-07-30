@@ -1,8 +1,76 @@
-import itertools
-import random
-import pandas as pd
 import numpy as np
-from itertools import combinations
+from collections import defaultdict
+import pathlib
+import polars as pl
+import heapq
+from concurrent.futures import ProcessPoolExecutor
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
+
+
+flows_path = pathlib.Path('D:/data/mobility/projects/grand-geneve/population_trips/weekday/ad9e23a3f5e9d535b153c7fa30afb3ae-flows')
+
+flows = ( 
+    pl.read_parquet(flows_path / "flows_0.parquet")
+    .sort("subseq_step_index")
+    .group_by(["i", "home_zone_id", "csp", "motive_subseq"])
+    .agg(locations=pl.col("from").implode())
+    .with_row_index()
+)
+
+location_chains = [(l[0], l[1][0] + [l[1][0][0]]) for l in zip(flows["index"].to_list(), flows["locations"].to_list())]
+
+modes = {
+    
+    "car": {"vehicle": "car", "multimodal": False, "is_return_mode": False, "return_mode": None},
+    "bicycle": {"vehicle": "bicycle", "multimodal": False, "is_return_mode": False, "return_mode": None},
+    
+    "bicycle/public_transport/walk": {"vehicle": "bicycle", "multimodal": True, "is_return_mode": False, "return_mode": "walk/public_transport/bicycle"},
+    "walk/public_transport/bicycle": {"vehicle": "bicycle", "multimodal": True, "is_return_mode": True, "return_mode": None},
+    
+    "car/public_transport/walk": {"vehicle": "car", "multimodal": True, "is_return_mode": False, "return_mode": "walk/public_transport/car"},
+    "walk/public_transport/car": {"vehicle": "car", "multimodal": True, "is_return_mode": True, "return_mode": None},
+    
+    "walk": {"vehicle": None, "multimodal": False, "is_return_mode": False, "return_mode": None},
+    "walk/public_transport/walk": {"vehicle": None, "multimodal": True, "is_return_mode": False, "return_mode": None},
+    
+    "carpool": {"vehicle": "car", "multimodal": True, "is_return_mode": False, "return_mode": "carpool_return"},
+    "carpool_return": {"vehicle": "car", "multimodal": True, "is_return_mode": True, "return_mode": None} 
+    
+}
+
+
+mode_id = {n:i for i, n in enumerate(modes)}
+id_to_mode = {v: k for k, v in mode_id.items()}
+
+needs_vehicle = {mode_id[k]: not v["vehicle"] is None for  k, v in modes.items()}
+
+multimodal = {mode_id[k]: v["multimodal"] for  k, v in modes.items()}
+return_mode = {mode_id[k]: mode_id[v["return_mode"]] for k, v in modes.items() if not v["return_mode"] is None}
+non_return_mode_ids = [mode_id[k] for k, v in modes.items() if not v["is_return_mode"]]
+is_return_mode = {mode_id[k]: v["is_return_mode"] for  k, v in modes.items()}
+
+vehicles = set([v["vehicle"] for v in modes.values() if not v["vehicle"] is None])
+vehicles = {v: i for i, v in enumerate(vehicles)}
+vehicle_for_mode = {mode_id[k]: vehicles[v["vehicle"]] for k, v in modes.items() if not v["vehicle"] is None}
+n_vehicles = len(vehicles)
+
+
+costs = ( 
+    pl.read_parquet("d:/data/mobility/costs.parquet")
+    .with_columns(
+        mode_id=pl.col("mode").replace_strict(mode_id, return_dtype=pl.UInt8())
+    )
+)
+
+costs = {(row["from"], row["to"], row["mode_id"]): row["cost"] for row in costs.to_dicts()}
+
+
+leg_modes = defaultdict(list)
+for (from_, to_, mode) in costs.keys():
+    if not is_return_mode[mode]:
+        leg_modes[(from_, to_)].append(mode)
+
+
 
 
 
@@ -10,227 +78,159 @@ def get_possible_subtours_from_locations(locations):
     
     last_seen = {}
     subtours = []
+    n_locations = len(locations)
     for end_idx, place in enumerate(locations):
         if place in last_seen:
             start_idx = last_seen[place]
-            subtours.append(list(range(start_idx, end_idx+1)))
+            if start_idx != 0 or end_idx != n_locations-1:
+                subtours.append(np.arange(start_idx, end_idx+1))
         last_seen[place] = end_idx
         
     return subtours
-   
 
-def get_subtours_combinations(subtours):
-    
-    n_subtours = len(subtours)
-    subtour_index = list(range(n_subtours))
-    
-    n_perm = 2**n_subtours-1
-    
-    if n_perm < 20:
-        
-        subtour_combinations = list(itertools.permutations(subtour_index, 3))
-            
-    else:
-        
-        n_samples = int(20.0*(n_perm/20.0)**0.5)
-        subtour_combinations = [np.random.choice(subtour_index, size=3, replace=False) for k in range(n_samples)]
-        
-    return subtour_combinations
-
-
-def get_costs(locations, modes):
-    
-    modes = [m["name"] for m in modes]
-
-    base_costs = list(combinations(set(locations), 2))
-    base_costs = pd.DataFrame(base_costs, columns=["from", "to"])
-    
-    all_costs = []
-    
-    for m in modes:
-        costs = base_costs.copy()
-        costs["mode"] = m
-        costs["cost"] = np.random.uniform(size=base_costs.shape[0])
-        all_costs.append(costs)
-        ret_costs = costs.copy()
-        ret_costs.rename({"from": "to", "to": "from"}, axis=1, inplace=True)
-        all_costs.append(ret_costs)
-    
-    all_costs = pd.concat(all_costs)
-    
-    return all_costs
-
-def get_mode_probabilities(costs):
-    
-    probs = costs.copy()
-    
-    probs["exp_u"] = np.exp(-probs["cost"])
-    
-    probs = pd.merge(probs, probs.groupby(["from", "to"], as_index=False)["exp_u"].sum(), on=["from", "to"])
-    probs["p"] = probs["exp_u_x"]/probs["exp_u_y"]
-    
-    probs = probs.reset_index()
-    probs = probs[["from", "to", "mode", "p"]]
-    
-    probs = { (row['from'], row['to'], row['mode']) : row['p'] for _, row in probs.iterrows() }
-    
-    return probs
-     
-
-def is_mode_available(locations, modes_seq, subtour, subtour_mode):
-
-    new_modes_seq = modes_seq.copy()
-    
-    # Change the modes of the subtour to the mode that we want to test
-    for j in subtour[:-1]:
-        new_modes_seq[j] = subtour_mode
-    
-    # Initialize vehicle locations
-    vehicle_locations = {m["name"]: locations[0] for m in modes if m["needs_vehicle"] is True}
-    
-    # Follow the trip sequences to check for consistency (vehicle availability for each trip)
-    for i in range(len(new_modes_seq)):
-        
-        mode = new_modes_seq[i]["name"]
-        
-        if mode in vehicle_locations.keys():
-            
-            # Check if the vehicle is available for the trip
-            if vehicle_locations[mode] != locations[i]:
-                return False
-            
-            # Move the vehicle to the destination of the trip
-            vehicle_locations[mode] = locations[i+1]
-            
-            
-    return True
-            
-
-
-def sample_modes(legs, modes, mode_probs):
-    
-    n_legs = len(legs)
-    modes_wo_vehicle = [mode for mode in modes if mode["needs_vehicle"] is False]
-    
-    mode = random.choice(modes)
-    
-    if mode["needs_vehicle"] is True:
-        modes = [mode]*n_legs
-        
-    else:
-        
-        p = np.zeros((n_legs, len(modes_wo_vehicle)))
-        for i, (from_, to_) in enumerate(legs):
-            for j, mode in enumerate(modes_wo_vehicle):
-                p[i, j] = mode_probs.get((from_, to_, mode["name"]), 0.0)
-                
-        e = -np.log(np.random.uniform(0, 1, size=p.shape))
-        index = np.argmax(e/p, axis=1)
-        modes = [modes_wo_vehicle[i] for i in index]
-
-    return modes
-
-
-
-def get_modes_seq_after_subtours_modifications(legs, init_modes_seq, subtours, subtour_combinations, modes, mode_probs):
-    
-    all_new_modes_seq = []
-    
-    for sc in subtour_combinations:
-        
-        modes_seq = init_modes_seq.copy()
-        
-        for subtour_index in sc:
-            
-            subtour = subtours[subtour_index]
-            
-            available_modes = []
-            
-            for mode in modes:
-                if is_mode_available(locations, modes_seq, subtour, mode):
-                    available_modes.append(mode)
-            
-            if len(available_modes) > 0:    
-                
-                subtour_legs = legs[subtour[0]:subtour[-1]]
-                subtour_modes = sample_modes(subtour_legs, available_modes, mode_probs)
-                
-                for j in range(len(subtour)-1):
-                    modes_seq[subtour[j]] = subtour_modes[j]
-            
-                all_new_modes_seq.append(list(modes_seq))
-            
-    return all_new_modes_seq
-        
-
-def get_modes_sequences(locations, modes, mode_probs):
+def run_top_k_search(index, locations, k=10):
     
     subtours = get_possible_subtours_from_locations(locations)
-    subtours_combs = get_subtours_combinations(subtours)
+        
+    n_legs = len(locations) - 1
+    vehicle_locations = [locations[0]] * n_vehicles
+    mode_sequence = []
+    return_mode_constraints = {}
+    state = (0, vehicle_locations, mode_sequence, return_mode_constraints)
+    heap = [(0.0, state)]
+    results = []
+    
+    # Create a map between start and end destinations of subtours, when they 
+    # have a length > 2 and that their first and last leg are symetrical 
+    # (ie a->b and b->a)
+    subtour_first_leg_eq_last_leg = {s[0]: (locations[s[0]] == locations[s[-1]] and locations[s[1]] == locations[s[-2]], s[-1]) for s in subtours if len(s) > 2}
+    subtour_first_leg_eq_last_leg = {k: v[1] for k, v in subtour_first_leg_eq_last_leg.items() if v[0] is True}
 
-    legs = [(locations[i], locations[i+1]) for i in range(len(locations)-1)]
-    n_legs = len(legs)
-    
-    modes_seq = []
-    
-    for i in range(100):
+    while heap and len(results) < k:
         
-        mode = random.choice(modes)
+        cost, (leg_idx, vehicle_locations, mode_sequence, return_mode_constraints) = heapq.heappop(heap)
         
-        init_modes_seq = [mode]*n_legs
-        mod_modes_seq = get_modes_seq_after_subtours_modifications(
-            legs,
-            init_modes_seq,
-            subtours,
-            subtours_combs,
-            modes,
-            mode_probs
+        # If we reached the end of the tour and all vehicle are at home,
+        # push the result and go to the next value on the heap
+        if leg_idx == n_legs:
+            if all(vl == locations[0] for vl in vehicle_locations):
+                results.append((cost, mode_sequence))
+            continue
+        
+        current_location = locations[leg_idx]
+        next_location = locations[leg_idx+1]
+        
+        enforced_mode = return_mode_constraints.get(leg_idx, None)
+        available_mode_ids = leg_modes[(current_location, next_location)] if enforced_mode is None else [enforced_mode]
+            
+        for m_id in available_mode_ids:
+                
+            mode_cost = costs[(current_location, next_location, m_id)]
+            
+            next_vehicle_locations = list(vehicle_locations)
+            next_return_mode_constraints = dict(return_mode_constraints)
+            
+            if needs_vehicle[m_id]:
+                
+                v_id = vehicle_for_mode[m_id]
+    
+                # Check if the vehicle needed is available for the trip,
+                # if not go to the next value on the heap
+                if vehicle_locations[v_id] != current_location and enforced_mode is None:
+                    continue
+                
+                # Move the vehicle to next location
+                next_vehicle_locations[v_id] = next_location
+                
+                # Special case for multimodal modes
+                if multimodal[m_id] and not is_return_mode[m_id]:
+                    
+                    # Check if the leg is the start of a subtour that is compatible
+                    # with a multimodal mode with vehicle (ie the vehicle has to 
+                    # be retrieved at the end of the subtour)
+                    if leg_idx not in subtour_first_leg_eq_last_leg:
+                        continue
+                    
+                    # Force the return mode on the last leg of the subtour
+                    subtour_last_leg_index = subtour_first_leg_eq_last_leg[leg_idx]-1
+                    next_return_mode_constraints[subtour_last_leg_index] = return_mode[m_id]
+                        
+            
+            # Push the new state to the heap
+            state = (leg_idx+1, next_vehicle_locations, mode_sequence + [m_id], next_return_mode_constraints)
+            heapq.heappush(heap, (cost+mode_cost, state))
+    
+    
+    c = np.array([r[0] for r in results])
+    p = np.exp(-c)
+    p /= p.sum()
+    i_max = np.argmax(p.cumsum() > 0.98)
+      
+    rows = []
+    for i, (total_cost, mode_seq) in enumerate(results):
+        if i < i_max+1:
+            for leg_idx, m_id in enumerate(mode_seq):
+                rows.append([i, leg_idx+1, m_id, p[i]])
+    
+    results = ( 
+        pl.DataFrame(
+            rows,
+            schema=["mode_seq_index", "subseq_step_index", "mode_index", "p_mode_seq"],
+            orient="row"
+        )
+        .with_columns(
+            index=pl.lit(index)
+        )
+    )
+    
+    return results
+    
+
+def process_batch(batch_of_locations, k=10):
+    return [
+        run_top_k_search(
+            index=loc[0],
+            locations=loc[1],
+            k=k
+        ) for loc in batch_of_locations
+    ]
+
+def chunked(seq, batch_size):
+    for i in range(0, len(seq), batch_size):
+        yield seq[i:i+batch_size]
+
+
+if __name__ == "__main__":
+    
+    batch_size = 2000
+    batches = list(chunked(location_chains, batch_size))
+    total = len(batches)
+    all_results = []
+    
+    with Progress(
+        SpinnerColumn(),
+        "[progress.percentage]{task.percentage:>3.0f}%",
+        BarColumn(),
+        TimeRemainingColumn(),
+        TextColumn("{task.completed}/{task.total} batches"),
+    ) as progress:
+        
+        task = progress.add_task("[green]Processing...", total=total)
+        
+        with ProcessPoolExecutor() as executor:
+            for batch_results in executor.map(process_batch, batches):
+                all_results.extend(batch_results)
+                progress.update(task, advance=1)
+
+
+        all_results = pl.concat(all_results)
+        all_results = all_results.with_columns(mode=pl.col("mode_index").replace_strict(id_to_mode))
+        
+        res = ( 
+            all_results
+            .join(flows.select(["index", "home_zone_id", "csp", "motive_subseq", "i"]), on=["index"])
+            .join(pl.read_parquet(flows_path / "flows_0.parquet"), on=["i", "home_zone_id", "csp", "motive_subseq", "subseq_step_index"])
         )
         
-        modes_seq.append(init_modes_seq)
-        modes_seq.extend(mod_modes_seq)
+        res.group_by("mode").agg(n=(pl.col("n_subseq")*pl.col("p_mode_seq")).sum()).with_columns(share=pl.col("n")/pl.col("n").sum())
         
-    modes_seq = [[m["name"] for m in s] for s in modes_seq]
-    modes_seq = pd.DataFrame(modes_seq).drop_duplicates()
-    modes_seq["seq_index"] = np.arange(0, modes_seq.shape[0])
-    
-    modes_seq = modes_seq.melt("seq_index")
-    modes_seq.columns = ["seq_index", "leg_index", "mode"]
-        
-    return modes_seq
-
-
-locations = ["home_start", "a", "b", "a", "b", "a", "home_end"]
-
-modes = [
-    {"name": "car", "needs_vehicle": True},
-    {"name": "bicycle", "needs_vehicle": True},
-    {"name": "walk", "needs_vehicle": False},
-    {"name": "walk/pt/walk", "needs_vehicle": False}
-]
-
-mode_costs = get_costs(locations, modes)
-mode_probs = get_mode_probabilities(mode_costs)
-
-modes_sequences = get_modes_sequences(locations, modes, mode_probs)
-
-legs = pd.DataFrame([(locations[i], locations[i+1]) for i in range(len(locations)-1)], columns=["from", "to"])
-legs["leg_index"] = np.arange(0, legs.shape[0])
-
-modes_sequences = pd.merge(modes_sequences, legs, on="leg_index")
-modes_sequences = pd.merge(modes_sequences, mode_costs, on=["from", "to", "mode"])
-
-modes_seq_prob = modes_sequences.groupby("seq_index", as_index=False)["cost"].sum()
-modes_seq_prob["exp_u"] = np.exp(-5*modes_seq_prob["cost"])
-modes_seq_prob["p"] = modes_seq_prob["exp_u"]/modes_seq_prob["exp_u"].sum()
-
-modes_sequences = pd.merge(modes_sequences, modes_seq_prob[["seq_index", "p"]], on="seq_index")
-
-print(modes_sequences.groupby(["from", "to", "mode"])["p"].count())
-
-
-
-
-
-
-

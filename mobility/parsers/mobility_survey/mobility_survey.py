@@ -137,6 +137,7 @@ class MobilitySurvey(FileAsset):
                 pondki=pl.col("pondki").sum(),
                 departure_time=(pl.col("departure_time")*pl.col("pondki")).sum()/pl.col("pondki").sum()/3600.0,
                 arrival_time=(pl.col("arrival_time")*pl.col("pondki")).sum()/pl.col("pondki").sum()/3600.0,
+                distance=(pl.col("distance")*pl.col("pondki")).sum()/pl.col("pondki").sum()
             )
             .sort(["seq_step_index"])
             
@@ -194,10 +195,16 @@ class MobilitySurvey(FileAsset):
                 "motive_seq", "motive_subseq", "motive_subseq_id", "motive",
                 "seq_step_index", "subseq_step_index",
                 "duration_morning", "duration_midday", "duration_evening",
+                "distance",
                 "pondki"
             ])
             
         )
+        
+        # Compute the probability of each subsequence, keeping only the first 
+        # 95 % of the contribution to the average distance for each population 
+        # group
+        cutoff = 0.95
 
         p_subseq = (
             
@@ -206,7 +213,8 @@ class MobilitySurvey(FileAsset):
             sequences
             .group_by(["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "motive_subseq"])
             .agg(
-                pondki=pl.col("pondki").first()
+                pondki=pl.col("pondki").first(),
+                distance=pl.col("distance").sum()
             )
             
             .with_columns(
@@ -216,9 +224,48 @@ class MobilitySurvey(FileAsset):
                     pl.col("pondki").sum().over(["is_weekday", "city_category", "csp", "n_cars"])
                 )
             )
-            .select(["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "motive_subseq", "p_subseq"])
+            
+            .with_columns(
+                distance_p=pl.col("distance")*pl.col("p_subseq")
+            )
+            
+            .sort("distance_p", descending=True)
+            
+            .with_columns(
+                distance_p_cum_share=(
+                    pl.col("distance_p").cum_sum().over(["is_weekday", "city_category", "csp", "n_cars"])
+                    /
+                    pl.col("distance_p").sum().over(["is_weekday", "city_category", "csp", "n_cars"])
+                )
+            )
+            
+            # Filter subsequences
+            .with_columns(
+                group_count=pl.count().over(["is_weekday", "city_category", "csp", "n_cars"]),
+                cross_threshold=(
+                    (pl.col("distance_p_cum_share") >= cutoff) & 
+                    (pl.col("distance_p_cum_share").shift(1).over(["is_weekday", "city_category", "csp", "n_cars"]) < cutoff)
+                )
+            )
+            
+            .filter(
+                (pl.col("distance_p_cum_share") < cutoff)
+                | (pl.col("cross_threshold"))
+                | (pl.col("group_count") == 1)
+            )
+            
+            # Rescale propbabilities
+            .with_columns(
+                p_subseq=pl.col("p_subseq")/pl.col("p_subseq").sum().over(["is_weekday", "city_category", "csp", "n_cars"])
+            )
+            
+            .select([
+                "is_weekday", "city_category", "csp", "n_cars", "motive_seq",
+                "motive_subseq", "p_subseq"
+            ])
             
         )
+
         
         sequences = (
 

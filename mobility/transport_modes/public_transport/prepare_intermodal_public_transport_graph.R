@@ -17,12 +17,13 @@ args <- commandArgs(trailingOnly = TRUE)
 #   'D:\\dev\\mobility_oss\\mobility',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\public_transport_graph\\simplified\\4d58f32de6ef9c586aedacf9a5af0096-public-transport-graph',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\contracted\\6e92ea1e35280a9d83e44d4215a99577-car-contracted-path-graph',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_bicycle\\contracted\\a3001196ce680c9e218d05093418c1cd-bicycle-contracted-path-graph',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_walk\\contracted\\04c2f420aa4f610af7491b56aa785402-walk-contracted-path-graph',
-#   '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 15.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}', '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\50eecd2208341b15bb1d8dd9d8dddfd2-parking-osm_data.pbf',
+#   '{"max_travel_time": 0.3333333333333333, "average_speed": 15.0, "transfer_time": 2.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
+#   '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
+#   '',
 #   '{"start_time_min": 6.5, "start_time_max": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "transfer_time_coeff": 2.0, "no_show_perceived_prob": 0.2, "target_time": 8.0, "max_wait_time_at_destination": 0.25, "max_perceived_time": 2.0, "additional_gtfs_files": [], "expected_agencies": null}',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\car_public_transport_walk_intermodal_transport_graph\\simplified\\3f3638d83394dfb6b24d4e8cb3e1ec91-done'
+#   'D:\\data\\mobility\\projects\\grand-geneve\\bicycle_public_transport_walk_intermodal_transport_graph\\simplified\\d313450666183d193cda1298f3b9f310-done'
 # )
 
 package_path <- args[1]
