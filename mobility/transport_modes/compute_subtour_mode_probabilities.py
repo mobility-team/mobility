@@ -1,30 +1,27 @@
-import heapq
 import logging
 import argparse
 import json
 import os
 
 import polars as pl
-import numpy as np
 
-from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
+from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
 
 from mobility.transport_modes.compute_subtour_mode_probs_parallel_utilities import process_batch, worker_init, chunked
 
-def compute_subtour_mode_probabilities(flows_path, costs_path, modes_path, tmp_path, output_path):
+def compute_subtour_mode_probabilities(chains_path, costs_path, modes_path, tmp_path, output_path):
     
     logging.info("Computing subtour mode probabilities...")
     
     logging.info("Formatting data for processing...")
     
     # Prepare a list of location chains
-    flows_loc_groups = ( 
-        pl.scan_parquet(flows_path)
-        .select(["i", "home_zone_id", "csp", "motive_subseq", "subseq_step_index", "from"])
+    chains_groups = ( 
+        pl.scan_parquet(chains_path)
+        .select(["home_zone_id", "csp", "motive_subseq", "subseq_step_index", "from"])
         .sort("subseq_step_index")
-        .group_by(["i", "home_zone_id", "csp", "motive_subseq"])
+        .group_by(["home_zone_id", "csp", "motive_subseq"])
         .agg(
             locations=pl.col("from"),
             locations_str=pl.col("from").str.join("-")
@@ -33,7 +30,7 @@ def compute_subtour_mode_probabilities(flows_path, costs_path, modes_path, tmp_p
     )
     
     unique_location_chains = ( 
-        flows_loc_groups
+        chains_groups
         .group_by("locations_str")
         .agg(
             locations=pl.col("locations").first()
@@ -56,7 +53,7 @@ def compute_subtour_mode_probabilities(flows_path, costs_path, modes_path, tmp_p
     logging.info("Running the mode sequence search in parallel...")
     
     batch_size = 3000
-    batches = list(chunked(location_chains, batch_size))
+    batches = list(chunked(location_chains, batch_size))[0:20]
     total = len(batches)
     
     with Progress(
@@ -92,15 +89,9 @@ def compute_subtour_mode_probabilities(flows_path, costs_path, modes_path, tmp_p
             .with_columns(
                 mode=pl.col("mode_index").replace_strict(id_to_mode)
             )
-            .join(flows_loc_groups.select(["location_str", "home_zone_id", "csp", "motive_subseq", "i"]), on=["location_str"])
-            .join(pl.read_parquet(flows_path), on=["i", "home_zone_id", "csp", "motive_subseq", "subseq_step_index"])
-            .with_columns(
-                n_subseq=pl.col("n_subseq")*pl.col("p_mode_seq")
-            )
-            .group_by(["from", "to", "mode"])
-            .agg(
-                flow_volume=pl.col("n_subseq").sum()
-            )
+            .join(unique_location_chains.select(["index", "locations_str"]), on=["index"])
+            .join(chains_groups.select(["locations_str", "home_zone_id", "csp", "motive_subseq"]), on=["locations_str"])
+            .join(pl.read_parquet(chains_path), on=["home_zone_id", "csp", "motive_subseq", "subseq_step_index"])
         )
         
         all_results.write_parquet(output_path)
@@ -140,7 +131,7 @@ def modes_list_to_dict(modes_list):
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--flows_path")
+    parser.add_argument("--chains_path")
     parser.add_argument("--costs_path")
     parser.add_argument("--modes_path")
     parser.add_argument("--tmp_path")
@@ -148,7 +139,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     compute_subtour_mode_probabilities(
-        args.flows_path,
+        args.chains_path,
         args.costs_path,
         args.modes_path,
         args.tmp_path,

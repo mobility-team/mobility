@@ -4,7 +4,7 @@ library(log4r)
 library(data.table)
 library(arrow)
 library(lubridate)
-library(readxl)
+# library(readxl)
 library(future.apply)
 library(lubridate)
 library(FNN)
@@ -72,7 +72,7 @@ if (osm_parkings_fp == "") {
   
   parkings <- st_read(osm_parkings_fp, layer = "multipolygons")
   
-  # Keep only parkigns with more than 10 spots
+  # Keep only parkigns with more than 30 spots
   parkings <- st_transform(parkings, 3035)
   parkings <- parkings[as.numeric(st_area(parkings)) > 25.0*30.0, ]
   

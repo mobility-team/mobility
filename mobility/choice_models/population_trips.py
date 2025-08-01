@@ -127,7 +127,7 @@ class PopulationTrips(FileAsset):
             self.spatialize_trip_chains(i, chains, dest_prob, motives, alpha, chains_path)
             
             flows = self.assign_flow_volumes(i, chains, chains_path, previous_flows, flows_path)
-            costs = self.update_costs(costs, i, n_iter_per_cost_update, flows_path, costs_aggregator)
+            costs = self.update_costs(costs, i, n_iter_per_cost_update, chains_path, flows_path, costs_aggregator)
             flows = self.unassign_overflow(flows, remaining_sinks)
             flows = self.unassign_optim(flows, costs, delta_cost_change)
             flows = self.unassign_random(flows, random_switch_rate[i])
@@ -514,11 +514,11 @@ class PopulationTrips(FileAsset):
     
     
     
-    def update_costs(self, costs, i, n_iter_per_cost_update, flows_path, costs_aggregator):
+    def update_costs(self, costs, i, n_iter_per_cost_update, chains_path, flows_path, costs_aggregator):
 
         if n_iter_per_cost_update > 0 and i > 0 and i % n_iter_per_cost_update == 0:
             
-            od_flows_by_mode = self.assign_modes(i, flows_path, costs_aggregator)
+            od_flows_by_mode = self.assign_modes(i, chains_path, costs_aggregator)
             
             costs_aggregator.update(od_flows_by_mode)
             costs = self.get_current_costs(costs_aggregator, congestion=False)
@@ -527,14 +527,16 @@ class PopulationTrips(FileAsset):
         
     
     
-    def assign_modes(self, i, flows_path, costs_aggregator):
+    def assign_modes(self, i, chains_path, costs_aggregator):
         
         logging.info("Assigning modes...")
         
-        flows_path = flows_path / f"flows_{i}.parquet"
+        folder_path = chains_path.parent
+        
+        chains_path = chains_path / f"chains_{i}.parquet"
         
         # Save costs to a temp file
-        costs_path = flows_path.parent / "tmp-costs.parquet"
+        costs_path = folder_path / "tmp-costs.parquet"
         
         ( 
             costs_aggregator.get_costs_by_od_and_mode(
@@ -546,15 +548,15 @@ class PopulationTrips(FileAsset):
         )
         
         # Format the modes info as a dict and save the result in a temp file
-        modes_path = flows_path.parent / "tmp-modes.json"
+        modes_path = folder_path / "tmp-modes.json"
         
         with open(modes_path, "w") as f:
             f.write(modes_list_to_dict(costs_aggregator.modes))
         
         # Launch the mode sequence porbability calculation
-        output_path = flows_path.parent / "od-flows-by-mode.parquet"
+        output_path = folder_path / "od-flows-by-mode.parquet"
         
-        tmp_path = flows_path.parent / "tmp_results"
+        tmp_path = folder_path / "tmp_results"
         shutil.rmtree(tmp_path, ignore_errors=True)
         os.makedirs(tmp_path)
         
@@ -563,7 +565,7 @@ class PopulationTrips(FileAsset):
                 "python",
                 "-u",
                 str(resources.files('mobility') / "transport_modes" / "compute_subtour_mode_probabilities.py"),
-                "--flows_path", str(flows_path),
+                "--chains_path", str(chains_path),
                 "--costs_path", str(costs_path),
                 "--modes_path", str(modes_path),
                 "--output_path", str(output_path),
@@ -571,8 +573,8 @@ class PopulationTrips(FileAsset):
             ],
             text=True,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Merge stderr with stdout (optional)
-            bufsize=1  # Line-buffered
+            stderr=subprocess.STDOUT,
+            bufsize=1
         )
         
         

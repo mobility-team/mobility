@@ -21,16 +21,8 @@ dependencies = [
   "matplotlib",
   "seaborn",
   "pyogrio",
-  "sphinxcontrib-napoleon",
-  "myst_parser",
-  "streamlit",
-  "streamlit_lottie",
-  "streamlit_option_menu",
   "polars",
   "psutil",
-  "dash",
-  "dash-leaflet[all]",
-  "dash-bootstrap-components",
   "networkx"
 ]
 
@@ -44,7 +36,6 @@ authors = [
 maintainers = []
 description = "A tool to simulate the mobility behaviours of the inhabitants of a given region."
 readme = "README.md"
-license = { file = "LICENSE" }
 keywords = ["mobility", "transport systems"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -56,7 +47,9 @@ dev = [
     "flake8",
     "pytest",
     "pytest-cov",
-    "pytest-dependency"
+    "pytest-dependency",
+    "sphinxcontrib-napoleon",
+     "myst_parser"
 ]
 
 spyder = [
@@ -78,3 +71,5 @@ mobility = [
     "**/*.R"
 ]
 
+[tool.setuptools.packages.find]
+exclude = ["certs", "certs.*"]
