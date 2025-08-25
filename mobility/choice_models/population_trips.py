@@ -4,6 +4,8 @@ import logging
 import shutil
 import subprocess
 
+import geopandas as gpd
+import matplotlib.pyplot as plt
 import polars as pl
 import numpy as np
 
@@ -943,3 +945,150 @@ class PopulationTrips(FileAsset):
         )
         
         return flows
+
+
+    def plot_modal_share(self, zone="origin", mode="car", period="weekdays"):
+        """
+        Plot modal share for the given mode in the origin or destination zones during weekdays or weekends.
+
+        Parameters
+        ----------
+        zone : string, optional
+            "origin" or "destination" zones. The default is "origin".
+        mode : string, optional
+            Mode for which you want to see the share. Could be one of the modes previously defined (such as "bicycle")
+            or "public_transport" (will show all the journeys at least partly made with public transport. The default is "car".
+        period : string, optional
+            "weekdays" or ""weekends". The default is "weekdays".
+
+        Returns
+        -------
+        mode_share : pd.DataFrame
+            Mode share for the given mode in each transport zone.
+
+        """
+        logging.info(f"🗺️ Plotting {mode} modal share for {zone} zones during {period}")
+
+        if period == "weekdays":
+            population_df = self.get()["weekday_flows"].collect().to_pandas()
+        elif period == "weekends":
+            population_df = self.get()["weekend_flows"].collect().to_pandas()
+        else:
+            logging.info(f"{period} not implemented yet!")
+            return NotImplemented
+
+        if zone == "origin":
+            left_column = "from"
+        elif zone == "destination":
+            left_column = "to"
+
+        mode_share = population_df.groupby([left_column, "mode"]).sum("flow_volume")
+        mode_share = mode_share.reset_index().set_index([left_column])
+        mode_share["total"] = mode_share.groupby([left_column])["flow_volume"].sum()
+        mode_share["modal_share"] = mode_share["flow_volume"] / mode_share["total"]
+
+        if mode == "public_transport":
+            mode_name = "Public transport"
+            mode_share["mode"] = mode_share["mode"].replace("\S+\/public_transport\/\S+", "public_transport", regex=True)
+        else:
+            mode_name = mode.capitalize()
+        mode_share = mode_share[mode_share["mode"] == mode]
+
+        transport_zones_df = self.population.transport_zones.get()
+        gc = gpd.GeoDataFrame(
+            mode_share.merge(transport_zones_df, left_on=left_column, right_on="transport_zone_id", suffixes=('', '_z')))
+        gcp = gc.plot("modal_share", legend=True)
+        gcp.set_axis_off()
+        plt.title(f"{mode_name} share per {zone} transport zone ({period})")
+        plt.show()
+
+        return mode_share
+
+    def plot_od_flows(self, mode="all", motive="all", period="weekdays", level_of_detail=0,
+                      n_largest=2000, color="blue", transparency=0.2, zones_color="gray"):
+        """
+        Plot flows between the different zones for the given mode, motive, period and level of detail.
+
+        Number of OD shows, colors and transparency are configurable.
+
+        Parameters
+        ----------
+            mode : TYPE, optional
+                DESCRIPTION. The default is "all".
+            motive : TYPE, optional
+                DESCRIPTION. The default is "all".
+            period : TYPE, optional
+                DESCRIPTION. The default is "weekdays".
+            level_of_detail : TYPE, optional
+                DESCRIPTION. The default is 0.
+            n_largest : TYPE, optional
+                DESCRIPTION. The default is 2000.
+            color : TYPE, optional
+                DESCRIPTION. The default is "blue".
+            transparency : TYPE, optional
+                DESCRIPTION. The default is 0.2.
+            zones_color : TYPE, optional
+            DESCRIPTION. The default is "gray".
+
+        Returns
+        -------
+        biggest_flows : pd.DataFrame
+            Biggest flows between different transport zones.
+
+        """
+        if level_of_detail == 0:
+            logging.info("OD between communes not implemented yet")
+            return NotImplemented
+        elif level_of_detail != 1:
+            logging.info("Level of detail should be 0 or 1")
+            return NotImplemented
+        else:
+            logging.info(f"🗺️ Plotting {mode} origin-destination flows during {period}")
+
+        if motive != "all":
+            logging.info("Speficic motives not implemented yet")
+            return NotImplemented
+
+        if period == "weekdays":
+            population_df = self.get()["weekday_flows"].collect().to_pandas()
+        elif period == "weekends":
+            population_df = self.get()["weekend_flows"].collect().to_pandas()
+
+        mode_name = mode.capitalize()
+
+        if mode != "all":
+            if mode == "public_transport":
+                mode_name = "Public transport"
+                population_df = population_df[population_df["mode"].str.contains("public_transport")]
+            else:
+                population_df = population_df[population_df["mode"] == mode]
+
+        # Find all biggest origin-destination between different transport zones
+        biggest_flows = population_df.groupby(["from", "to"]).sum("flow_volume").reset_index()
+        biggest_flows = biggest_flows.where(biggest_flows["from"] != biggest_flows["to"]).nlargest(n_largest, "flow_volume")
+        transport_zones_df = self.population.transport_zones.get()
+        biggest_flows = biggest_flows.merge(
+            transport_zones_df, left_on="from", right_on="transport_zone_id", suffixes=('', '_from'))
+        biggest_flows = biggest_flows.merge(
+            transport_zones_df, left_on="to", right_on="transport_zone_id", suffixes=('', '_to'))
+
+        # Add all the transport zones in gray, as background
+        gc = gpd.GeoDataFrame(transport_zones_df)
+        gcp = gc.plot(color=zones_color)
+        gcp.set_axis_off()
+
+        # Put a legend for width on bottom right, title on the top
+        x_min = float(biggest_flows[["x"]].min().iloc[0])
+        y_min = float(biggest_flows[["y"]].min().iloc[0])
+        plt.plot([x_min, x_min+4000], [y_min, y_min], linewidth=2, color=color)
+        plt.text(x_min+6000, y_min-1000, "1 000", color=color)
+        plt.title(f"{mode_name} flows between transport zones on {period}")
+
+        # Draw all origin-destinations
+        for index, row in biggest_flows.iterrows():
+            plt.plot([row["x"], row["x_to"]], [row["y"], row["y_to"]],
+                     linewidth=row["flow_volume"]/500, color=color, alpha=transparency)
+
+        plt.show()
+
+        return biggest_flows
