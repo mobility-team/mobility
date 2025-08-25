@@ -20,13 +20,19 @@ class TransportMode:
         name: str,
         travel_costs,
         generalized_cost,
-        congestion: bool = False
+        congestion: bool = False,
+        vehicle: str = None,
+        multimodal: bool = False,
+        return_mode: str = None
     ):
         
         self.name = name
         self.travel_costs = travel_costs
         self.generalized_cost = generalized_cost
         self.congestion = congestion
+        self.vehicle = vehicle
+        self.multimodal = multimodal
+        self.return_mode = return_mode
         
         
     def clone(self):
@@ -35,7 +41,9 @@ class TransportMode:
             self.name,
             self.travel_costs.clone(),
             self.generalized_cost,
-            self.congestion
+            self.congestion,
+            self.vehicle,
+            self.multimodal
         )
         
     

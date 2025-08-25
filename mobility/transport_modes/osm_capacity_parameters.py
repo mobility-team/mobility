@@ -88,7 +88,12 @@ class BicycleOSMCapacityParameters(BaseOSMCapacityParameters):
     # Parameters not actually used used for now because we don't compute congestion for this mode :
     # Default capacity of 1000 pers/h .
     # Typical values for the BPR volume decay function parameters (same as car).
-    
+
+    # track, path, steps ways are included in the default dodgr weighting profile, 
+    # but we disable them here because they lead to large graphs, with ways that 
+    # are not very likely to be selected because they match hinking trails and 
+    # dirt roads in OSM
+         
     trunk: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     primary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     secondary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
@@ -96,10 +101,10 @@ class BicycleOSMCapacityParameters(BaseOSMCapacityParameters):
     unclassified: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     residential: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     service: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    track: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
+    # track: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)   
     cycleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    path: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    steps: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
+    # path: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
+    # steps: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     ferry: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     living_street: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     bridleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)

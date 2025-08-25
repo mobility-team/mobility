@@ -4,7 +4,7 @@ library(log4r)
 library(data.table)
 library(arrow)
 library(lubridate)
-library(readxl)
+# library(readxl)
 library(future.apply)
 library(lubridate)
 library(FNN)
@@ -16,11 +16,11 @@ args <- commandArgs(trailingOnly = TRUE)
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\car_public_transport_walk_intermodal_transport_graph\\simplified\\3f3638d83394dfb6b24d4e8cb3e1ec91-done',
-#   '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 15.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\bicycle_public_transport_walk_intermodal_transport_graph\\simplified\\d313450666183d193cda1298f3b9f310-done',
+#   '{"max_travel_time": 0.3333333333333333, "average_speed": 15.0, "transfer_time": 2.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
 #   '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
 #   '{"start_time_min": 6.5, "start_time_max": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "transfer_time_coeff": 2.0, "no_show_perceived_prob": 0.2, "target_time": 8.0, "max_wait_time_at_destination": 0.25, "max_perceived_time": 2.0, "additional_gtfs_files": [], "expected_agencies": null}',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\5db7e79ec0d1e0ebc0b3104ca8e73117-car_public_transport_walk_travel_costs.parquet'
+#   'D:\\data\\mobility\\projects\\grand-geneve\\736bf4c14d4c16327896fb7fc88ec511-bicycle_public_transport_walk_travel_costs.parquet'
 # )
 
 package_path <- args[1]
@@ -106,7 +106,7 @@ knn_start <- get.knnx(
 )
 
 buildings_sample[, vertex_id_from := start_verts$vertex_id[knn_start$nn.index]]
-
+buildings_sample[, vertex_id_from_dist := knn_start$nn.dist[,1]]
 
 last_verts <- intermodal_verts[grepl("l2-", vertex_id), list(vertex_id, x, y)]
 
@@ -117,6 +117,14 @@ knn_last <- get.knnx(
 )
 
 buildings_sample[, vertex_id_to := last_verts$vertex_id[knn_last$nn.index]]
+buildings_sample[, vertex_id_to_dist := knn_last$nn.dist[,1]]
+
+# Keep only buildings that are close enough of starting and end points on the intermodal graph
+# TO DO
+# Check if the filtering logic is OK here, as we already do some filtering when creating
+# the intermodal graph.
+buildings_sample <- buildings_sample[vertex_id_from_dist/1000/first_modal_transfer$average_speed < first_modal_transfer$max_travel_time]
+buildings_sample <- buildings_sample[vertex_id_to_dist/1000/last_modal_transfer$average_speed < last_modal_transfer$max_travel_time]
 
 
 travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_from = weight, vertex_id_from)], by.x = "building_id_from_cluster", by.y = "building_id")
@@ -211,6 +219,28 @@ paths[, mid_real_time := ifelse(is_mid_leg, real_time, 0.0)]
 paths[, start_perceived_time := ifelse(is_first_leg, perceived_time, 0.0)]
 paths[, last_perceived_time := ifelse(is_last_leg, perceived_time, 0.0)]
 paths[, mid_perceived_time := ifelse(is_mid_leg, perceived_time, 0.0)]
+
+# DEBUG
+# Save the paths as gpkg
+# paths_geo <- merge(paths, intermodal_verts, by.x = "prev_node", by.y = "vertex_id", sort = FALSE)
+# paths_geo[, linestring_id := paste0(from.x, to.x)]
+# 
+# paths_geo <- sfheaders::sf_linestring(paths_geo, x = "x", y = "y", keep = TRUE, linestring_id = "linestring_id")
+# st_crs(paths_geo) <- 3035
+# paths_geo_fp <- paste0(dirname(output_file_path), "/", paste0(hash, "-geo-paths.gpkg"))
+# st_write(paths_geo, paths_geo_fp, delete_dsn = TRUE)
+# 
+# verts <- sfheaders::sf_point(intermodal_verts, x = "x", y = "y", keep = TRUE)
+# st_crs(verts) <- 3035
+# verts_fp <- paste0(dirname(output_file_path), "/", paste0(hash, "-intermodal-verts.gpkg"))
+# st_write(verts, verts_fp, delete_dsn = TRUE)
+# 
+# 
+# bldgs <- sfheaders::sf_point(buildings_sample, x = "x", y = "y", keep = TRUE)
+# st_crs(bldgs) <- 3035
+# bldgs_fp <- paste0(dirname(output_file_path), "/", paste0(hash, "-buildings.gpkg"))
+# st_write(bldgs, bldgs_fp, delete_dsn = TRUE)
+
 
 paths <- paths[, 
                list(

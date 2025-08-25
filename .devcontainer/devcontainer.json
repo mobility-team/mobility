@@ -1,0 +1,8 @@
+{
+    "name": "mobility",
+    "build": {
+      "dockerfile": "Dockerfile",
+      "context": ".."
+    },
+    "postCreateCommand": "micromamba run -n mobility uv pip install -e ."
+}

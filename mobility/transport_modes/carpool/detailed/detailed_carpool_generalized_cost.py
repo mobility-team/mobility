@@ -75,6 +75,15 @@ class DetailedCarpoolGeneralizedCost(InMemoryAsset):
         costs = costs[metrics]
 
         costs["mode"] = "carpool"
+
+        # Add the return cost (symetrical by hypothesis)
+        ret_costs = costs.copy()
+        ret_costs["mode"] = "carpool_return"
+        ret_costs["ret_from"] = ret_costs["to"]
+        ret_costs["ret_to"] = ret_costs["from"]
+        ret_costs.drop(["from", "to"], axis=1, inplace=True)
+        ret_costs.rename({"ret_from": "from", "ret_to": "to"}, axis=1, inplace=True)
+        costs = pd.concat([costs, ret_costs])
         
         return costs
             

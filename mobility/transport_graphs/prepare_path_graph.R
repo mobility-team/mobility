@@ -65,9 +65,21 @@ modes <- list(
   bicycle = "bicycle"
 )
 
+dodgr_mode <- modes[[mode]]
+
+# Restrict OSM ways to the ones specified in the OSMCapacityParameters object
+wt_profiles <- dodgr::weighting_profiles
+df <- wt_profiles$weighting_profiles
+df <- df[df$way %in% osm_capacity_parameters$highway, ]
+wt_profiles$weighting_profiles <- df
+hash <- strsplit(basename(output_file_path), "-")[[1]][1]
+wt_fp <- paste0(dirname(output_file_path), "/", paste0(hash, "-dodgr-wt_profile.json"))
+write(toJSON(wt_profiles), wt_fp)
+
 graph <- weight_streetnet(
   osm_data,
-  wt_profile = modes[[mode]],
+  wt_profile = dodgr_mode,
+  wt_profile_file = wt_fp,
   turn_penalty = FALSE
 )
 

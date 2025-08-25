@@ -100,14 +100,16 @@ class TravelCostsAggregator(InMemoryAsset):
             .with_columns(prob=pl.col("exp_u")/pl.col("exp_u").sum().over(["from", "to"]))
             
             # Keep only the first 99.9 % of the distribution
-            # (or one mode has 100% probability for a given destination, which can happen)
             .sort(["prob"], descending=True)
             .with_columns(
                 prob_cum=pl.col("prob").cum_sum().over(["from", "to"]),
                 p_count=pl.col("prob").cum_count().over(["from", "to"])
             )
+            .with_columns(
+                prob_cum=pl.col("prob_cum").shift(1, fill_value=0.0).over(["from", "to"])
+            )
             
-            .filter((pl.col("prob_cum") < 0.999) | (pl.col("p_count") == 1))
+            .filter((pl.col("prob_cum") < 0.999))
             .with_columns(prob=pl.col("prob")/pl.col("prob").sum().over(["from", "to"]))
             
             .select(["from", "to", "mode", "prob"])
@@ -116,18 +118,18 @@ class TravelCostsAggregator(InMemoryAsset):
         return prob
         
         
-    def update(self, od_flows):
+    def update(self, od_flows_by_mode):
         
         logging.info("Updating travel costs given OD flows...")
         
-        prob_by_od_and_mode = self.get_prob_by_od_and_mode(["cost"], congestion=True)
+        # prob_by_od_and_mode = self.get_prob_by_od_and_mode(["cost"], congestion=True)
         
-        od_flows_by_mode = (
-            od_flows
-            .join(prob_by_od_and_mode, on=["from", "to"])
-            .with_columns((pl.col("flow_volume")*pl.col("prob")).alias("flow_volume"))
-            .select(["from", "to", "mode", "flow_volume"])
-        )
+        # od_flows_by_mode = (
+        #     od_flows
+        #     .join(prob_by_od_and_mode, on=["from", "to"])
+        #     .with_columns((pl.col("flow_volume")*pl.col("prob")).alias("flow_volume"))
+        #     .select(["from", "to", "mode", "flow_volume"])
+        # )
         
         for mode in self.modes:
             

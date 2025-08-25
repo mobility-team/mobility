@@ -2,13 +2,14 @@ import os
 import pathlib
 import logging
 import shutil
+import subprocess
 
 import polars as pl
-import pandas as pd
 import numpy as np
 
 from scipy.stats import norm
 from typing import List
+from importlib import resources
 
 from mobility.file_asset import FileAsset
 from mobility.population import Population
@@ -16,6 +17,7 @@ from mobility.choice_models.travel_costs_aggregator import TravelCostsAggregator
 from mobility.motives import Motive
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.parsers.mobility_survey import MobilitySurvey
+from mobility.transport_modes.compute_subtour_mode_probabilities import modes_list_to_dict
 
 class PopulationTrips(FileAsset):
     
@@ -124,8 +126,8 @@ class PopulationTrips(FileAsset):
             
             self.spatialize_trip_chains(i, chains, dest_prob, motives, alpha, chains_path)
             
-            flows, od_flows = self.assign_flow_volumes(i, chains, chains_path, previous_flows, flows_path)
-            costs = self.update_costs(costs, i, n_iter_per_cost_update, od_flows, costs_aggregator)
+            flows = self.assign_flow_volumes(i, chains, chains_path, previous_flows, flows_path)
+            costs = self.update_costs(costs, i, n_iter_per_cost_update, chains_path, flows_path, costs_aggregator)
             flows = self.unassign_overflow(flows, remaining_sinks)
             flows = self.unassign_optim(flows, costs, delta_cost_change)
             flows = self.unassign_random(flows, random_switch_rate[i])
@@ -336,7 +338,7 @@ class PopulationTrips(FileAsset):
                 )
             )
             
-        chains = ( 
+        ( 
             pl.concat(spatialized_chains)
             .with_columns(i=pl.lit(i).cast(pl.UInt32))
             .write_parquet(chains_path / f"chains_{i}.parquet")
@@ -448,7 +450,7 @@ class PopulationTrips(FileAsset):
         # Compute the probability of each sequence
         p_seq = (
             
-            pl.scan_parquet(str(chains_path) + "/*.parquet")
+            pl.scan_parquet(str(chains_path) + f"/chains_{i}.parquet")
             .filter(pl.col("subseq_step_index") == 1)
             .with_columns(
                 p_seq=pl.col("p_ij").log().sum().over(["home_zone_id", "csp", "motive_subseq"]).exp()
@@ -462,7 +464,7 @@ class PopulationTrips(FileAsset):
         
         flows = (
             
-            pl.scan_parquet(str(chains_path) + "/*.parquet")
+            pl.scan_parquet(str(chains_path) + f"/chains_{i}.parquet")
             .join(p_seq, on=["home_zone_id", "csp", "motive_subseq", "i"])
             
             # Compute the number of persons at each destination, for each motive
@@ -504,32 +506,90 @@ class PopulationTrips(FileAsset):
         
         ( 
             flows
-            .with_columns(i=pl.lit(i).cast(pl.UInt32))
+            # .with_columns(i=pl.lit(i).cast(pl.UInt32))
             .write_parquet(flows_path / f"flows_{i}.parquet")
         )
         
-        # Compute the origin - destination flows
-        od_flows = (
-            
-            flows
-            .group_by(["from", "to"])
-            .agg(
-                flow_volume=pl.col("n_subseq").sum()
-            )
-            
-        )
-        
-        return flows, od_flows
+        return flows
     
+    
+    
+    def update_costs(self, costs, i, n_iter_per_cost_update, chains_path, flows_path, costs_aggregator):
 
-    def update_costs(self, costs, i, n_iter_per_cost_update, od_flows, costs_aggregator):
-
-        if n_iter_per_cost_update > 0 and i > 0 and i % n_iter_per_cost_update == 0: 
-            costs_aggregator.update(od_flows)
+        if n_iter_per_cost_update > 0 and i > 0 and i % n_iter_per_cost_update == 0:
+            
+            od_flows_by_mode = self.assign_modes(i, chains_path, costs_aggregator)
+            
+            costs_aggregator.update(od_flows_by_mode)
             costs = self.get_current_costs(costs_aggregator, congestion=False)
 
         return costs
         
+    
+    
+    def assign_modes(self, i, chains_path, costs_aggregator):
+        
+        logging.info("Assigning modes...")
+        
+        folder_path = chains_path.parent
+        
+        chains_path = chains_path / f"chains_{i}.parquet"
+        
+        # Save costs to a temp file
+        costs_path = folder_path / "tmp-costs.parquet"
+        
+        ( 
+            costs_aggregator.get_costs_by_od_and_mode(
+                ["cost"],
+                congestion=True,
+                detail_distances=False
+            )
+            .write_parquet(costs_path)
+        )
+        
+        # Format the modes info as a dict and save the result in a temp file
+        modes_path = folder_path / "tmp-modes.json"
+        
+        with open(modes_path, "w") as f:
+            f.write(modes_list_to_dict(costs_aggregator.modes))
+        
+        # Launch the mode sequence porbability calculation
+        output_path = folder_path / "od-flows-by-mode.parquet"
+        
+        tmp_path = folder_path / "tmp_results"
+        shutil.rmtree(tmp_path, ignore_errors=True)
+        os.makedirs(tmp_path)
+        
+        process = subprocess.Popen(
+            [
+                "python",
+                "-u",
+                str(resources.files('mobility') / "transport_modes" / "compute_subtour_mode_probabilities.py"),
+                "--chains_path", str(chains_path),
+                "--costs_path", str(costs_path),
+                "--modes_path", str(modes_path),
+                "--output_path", str(output_path),
+                "--tmp_path", str(tmp_path)
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1
+        )
+        
+        
+        for line in process.stdout:
+            print(line, end='')
+        
+        process.wait()
+        
+        # Compute the origin - destination flows
+        od_flows = pl.read_parquet(output_path)
+        
+        return od_flows
+        
+    
+
         
     def unassign_overflow(self, flows, sinks):
         
@@ -839,6 +899,13 @@ class PopulationTrips(FileAsset):
         
         p_od_to_mode = costs.get_prob_by_od_and_mode(["cost"], congestion=True)
         
+        # c = costs.get_costs_by_od_and_mode(["cost"], congestion=True, detail_distances=True)
+        # c = c.filter(pl.col("from") == 71).filter(pl.col("to") == 492).to_pandas()
+        # c = c.filter(pl.col("from") == 571).filter(pl.col("to") == 348).to_pandas()
+        
+        # costs.get_costs_by_od_and_mode(["cost"], congestion=True, detail_distances=False).write_parquet("d:/data/mobility/costs.parquet")
+        # costs.get_prob_by_od_and_mode(["cost"], congestion=True).write_parquet("d:/data/mobility/probs.parquet")
+        
         # Add symetrical mode names for multimodal modes
         mode_names =  [m.name for m in costs.modes]
         sym_mode_names = []
@@ -864,9 +931,7 @@ class PopulationTrips(FileAsset):
         samples = pl.DataFrame(samples)
         samples.columns = [f"sample_{i}" for i in range(len(samples.columns))]
         
-        mode_names
-        
-        
+
             
         flows = ( 
             pl.scan_parquet(flows_path / f"flows_{n_samples-1}.parquet")

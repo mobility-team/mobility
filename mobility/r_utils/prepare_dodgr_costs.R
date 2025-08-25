@@ -3,7 +3,7 @@ library(log4r)
 library(sfheaders)
 library(nngeo)
 library(data.table)
-library(reshape2)
+# library(reshape2)
 library(arrow)
 library(cppRouting)
 library(DBI)
@@ -15,11 +15,11 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:/data/mobility/projects/haut-doubs/94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg',
-#   'D:/data/mobility/projects/haut-doubs/path_graph_car/contracted/06286153448029573ab8e0fe272fc303-car-contracted-path-graph',
-#   '60.0',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_walk\\contracted\\04c2f420aa4f610af7491b56aa785402-walk-contracted-path-graph',
+#   '5.0',
 #   '1.0',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\d6b65fe9bbe771cc5991b958d4f6cf95-travel_costs_congested_car.parquet'
+#   'D:\\data\\mobility\\projects\\grand-geneve\\1b8a32aa54d7ce59db7f7a9f4c9da87e-travel_costs_free_flow_walk.parquet'
 # )
 
 package_path <- args[1]

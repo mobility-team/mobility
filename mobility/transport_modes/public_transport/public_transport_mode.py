@@ -62,5 +62,16 @@ class PublicTransportMode(TransportMode):
         )
         
         name = first_leg_mode.name + "/public_transport/" + last_leg_mode.name
+        vehicle = first_leg_mode.vehicle
+        return_mode_name = last_leg_mode.name + "/public_transport/" + first_leg_mode.name
         
-        super().__init__(name, travel_costs, generalized_cost, congestion)    
+        
+        super().__init__(
+            name,
+            travel_costs,
+            generalized_cost,
+            congestion,
+            vehicle=vehicle,
+            multimodal=True,
+            return_mode=return_mode_name
+        )    
