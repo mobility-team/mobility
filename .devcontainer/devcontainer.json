@@ -1,8 +1,16 @@
 {
-    "name": "mobility",
-    "build": {
-      "dockerfile": "Dockerfile",
-      "context": ".."
-    },
-    "postCreateCommand": "micromamba run -n mobility uv pip install -e ."
+  "name": "mobility",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "postCreateCommand": "uv pip install --system -e .",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter"
+      ]
+    }
+  }
 }

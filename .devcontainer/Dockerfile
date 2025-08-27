@@ -1,47 +1,66 @@
-FROM ubuntu:22.04
+# -------- BUILDER STAGE --------
+FROM python:3.12-slim AS builder
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=Etc/UTC
-
-RUN apt-get update && apt-get install -y \
-    curl ca-certificates bzip2 
-
-# Add proxy certificate
+# Add optional proxy certificate
 COPY certs/ /tmp/certs/
-
 RUN if [ -d /tmp/certs ] && [ "$(ls -A /tmp/certs)" ]; then \
       cp /tmp/certs/* /usr/local/share/ca-certificates/ && \
       update-ca-certificates; \
     fi && rm -rf /tmp/certs
 
-# Install micromamba
-ENV MAMBA_ROOT_PREFIX=/opt/conda
-ENV PATH=$MAMBA_ROOT_PREFIX/bin:$PATH
-RUN mkdir -p $MAMBA_ROOT_PREFIX && \
-    curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C $MAMBA_ROOT_PREFIX
+# System packages for compiling osmium + R/Python deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git curl pkg-config libcurl4-openssl-dev \
+    libosmium2-dev libprotozero-dev nlohmann-json3-dev \
+    libboost-program-options-dev libbz2-dev zlib1g-dev libexpat1-dev \
+    libutfcpp-dev liblz4-dev \
+    r-base r-base-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy environment and project files
-WORKDIR /workspaces/mobility
-COPY environment.yml . 
-COPY DESCRIPTION . 
+# Build osmium-tool from source (v1.18.0)
+RUN git clone --branch v1.18.0 https://github.com/osmcode/osmium-tool.git /tmp/osmium \
+    && cd /tmp/osmium && mkdir build && cd build \
+    && cmake .. && make -j$(nproc) && make install
 
-# Create and activate environment
-RUN micromamba create -y -f environment.yml
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
 
-# Install pak and R dependencies from DESCRIPTION
-RUN echo "\
-    options(\
-        async_http_cainfo = '/etc/ssl/certs/ca-certificates.crt',\
-        repos = c(CRAN = 'https://packagemanager.posit.co/cran/__linux__/jammy/latest')\
-    )" > .Rprofile
+# Copy only dependency metadata for caching
+WORKDIR /build
+COPY pyproject.toml uv.lock* ./
+RUN uv pip install --system .
+RUN uv pip install --system ipykernel
 
-ENV CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+# Install R deps with pak
+RUN echo "options(async_http_cainfo = '/etc/ssl/certs/ca-certificates.crt', repos = c(CRAN = 'https://packagemanager.posit.co/cran/__linux__/bookworm/latest'))" > .Rprofile
+RUN Rscript -e "install.packages('pak', repos = 'https://cloud.r-project.org')"
+COPY DESCRIPTION .
+RUN Rscript -e "pak::pkg_install('deps::.', dependencies = TRUE)"
 
-RUN micromamba run -n mobility Rscript -e "\
-  install.packages('pak', repos = 'https://cloud.r-project.org/'); \
-  pak::pkg_install('deps::.', dependencies = TRUE); \
-"
+# -------- RUNTIME STAGE --------
+FROM python:3.12-slim
 
-# Set bash as default shell
-RUN echo 'eval "$(micromamba shell hook -s bash)"' >> /etc/bash.bashrc && \
-    echo "micromamba activate mobility" >> /etc/bash.bashrc
+# Add optional proxy certificate
+COPY certs/ /tmp/certs/
+RUN if [ -d /tmp/certs ] && [ "$(ls -A /tmp/certs)" ]; then \
+      cp /tmp/certs/* /usr/local/share/ca-certificates/ && \
+      update-ca-certificates; \
+    fi && rm -rf /tmp/certs
+
+# Runtime libs only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libboost-program-options-dev \
+    libbz2-1.0 \
+    zlib1g \
+    libexpat1 \
+    liblz4-1 \
+    r-base \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy osmium / python / uv /  R from the build stage
+COPY --from=builder /usr/local/bin/osmium /usr/local/bin/osmium
+COPY --from=builder /usr/local/lib/python3.12 /usr/local/lib/python3.12
+COPY --from=builder /root/.local/bin/uv /usr/local/bin/uv
+COPY --from=builder /usr/local/lib/R /usr/local/lib/R
