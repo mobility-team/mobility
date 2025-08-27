@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Build osmium-tool from source (v1.18.0)
 RUN git clone --branch v1.18.0 https://github.com/osmcode/osmium-tool.git /tmp/osmium \
     && cd /tmp/osmium && mkdir build && cd build \
-    && cmake .. && make -j$(nproc) && make install
+    && cmake .. && make -j2 && make install
 
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -56,6 +56,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g \
     libexpat1 \
     liblz4-1 \
+    libosmium2-dev \
+    libprotozero-dev \
     r-base \
     && rm -rf /var/lib/apt/lists/*
 
