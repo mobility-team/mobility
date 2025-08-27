@@ -53,7 +53,7 @@ class TravelCostsAggregator(InMemoryAsset):
         return costs
         
         
-    def get_costs_by_od_and_mode(self, metrics: List, congestion: bool, detail_distances: bool):
+    def get_costs_by_od_and_mode(self, metrics: List, congestion: bool, detail_distances: bool = False):
         
         costs = []
         

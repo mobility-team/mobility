@@ -11,6 +11,9 @@ from scipy.stats import norm
 from typing import List
 from importlib import resources
 
+from rich.spinner import Spinner
+from rich.live import Live
+
 from mobility.file_asset import FileAsset
 from mobility.population import Population
 from mobility.choice_models.travel_costs_aggregator import TravelCostsAggregator
@@ -24,16 +27,20 @@ class PopulationTrips(FileAsset):
     def __init__(
             self,
             population: Population,
-            modes: List[TransportMode] = [],
-            motives: List[Motive] = [],
-            surveys: List[MobilitySurvey] = [],
-            n_samples: int = 10,
+            modes: List[TransportMode] = None,
+            motives: List[Motive] = None,
+            surveys: List[MobilitySurvey] = None,
+            n_iterations: int = 10,
             alpha: float = 0.5,
             n_iter_per_cost_update: int = 3,
             cost_uncertainty_sd: float = 1.0,
             delta_cost_change: float = 0.0,
             random_switch: float = 4.0
         ):
+        
+        modes = [] if modes is None else modes
+        motives = [] if motives is None else motives
+        surveys = [] if surveys is None else surveys
 
         costs_aggregator = TravelCostsAggregator(modes)
         
@@ -42,7 +49,7 @@ class PopulationTrips(FileAsset):
             "costs_aggregator": costs_aggregator,
             "motives": motives,
             "surveys": surveys,
-            "n_samples": n_samples,
+            "n_iterations": n_iterations,
             "alpha": alpha,
             "n_iter_per_cost_update": n_iter_per_cost_update,
             "cost_uncertainty_sd": cost_uncertainty_sd,
@@ -85,7 +92,7 @@ class PopulationTrips(FileAsset):
         costs_aggregator = self.inputs["costs_aggregator"]
         motives = self.inputs["motives"]
         surveys = self.inputs["surveys"]
-        n_samples = self.inputs["n_samples"]
+        n_iterations = self.inputs["n_iterations"]
         alpha = self.inputs["alpha"]
         n_iter_per_cost_update = self.inputs["n_iter_per_cost_update"]
         cost_uncertainty_sd = self.inputs["cost_uncertainty_sd"]
@@ -93,23 +100,19 @@ class PopulationTrips(FileAsset):
         random_switch = self.inputs["random_switch"]
         
         cache_path = self.cache_path["weekday_flows"] if is_weekday is True else self.cache_path["weekend_flows"]
-        inputs_hash = str(cache_path.stem).split("-")[0]
-        chains_path = cache_path.parent / (inputs_hash + "-chains")
-        flows_path = cache_path.parent / (inputs_hash + "-flows")
-        
-        self.prepare_folders(chains_path, flows_path)
+        tmp_folders = self.prepare_tmp_folders(cache_path)
 
         chains = self.get_chains(population, surveys, motives, is_weekday)
         sinks = self.get_sinks(chains, motives, population.transport_zones)
         costs = self.get_current_costs(costs_aggregator, congestion=False)
 
-        random_switch_rate = 1.0/(1.0+random_switch*np.arange(1, n_samples+1))
+        random_switch_rate = 1.0/(1.0+random_switch*np.arange(1, n_iterations+1))
         previous_flows = None        
         remaining_sinks = sinks.clone()
         
-        for i in range(0, n_samples):
+        for iteration in range(0, n_iterations):
             
-            logging.info(f"Sampling step n°{i}")
+            logging.info(f"Sampling step n°{iteration}")
             
             utilities = self.get_utilities(
                 motives,
@@ -124,17 +127,23 @@ class PopulationTrips(FileAsset):
                 motives
             )
             
-            self.spatialize_trip_chains(i, chains, dest_prob, motives, alpha, chains_path)
+            self.spatialize_trip_chains(iteration, chains, dest_prob, motives, alpha, tmp_folders)
+            self.search_top_k_mode_sequences(iteration, costs_aggregator, tmp_folders)
             
-            flows = self.assign_flow_volumes(i, chains, chains_path, previous_flows, flows_path)
-            costs = self.update_costs(costs, i, n_iter_per_cost_update, chains_path, flows_path, costs_aggregator)
+            flows = self.assign_flow_volumes(iteration, chains, previous_flows, tmp_folders)
+            flows = self.assign_modes(iteration, flows, costs_aggregator, tmp_folders)
+            
+            if previous_flows is not None:
+                flows = pl.concat([flows, previous_flows])
+            
+            costs = self.update_costs(costs, iteration, n_iter_per_cost_update, flows, costs_aggregator)
             flows = self.unassign_overflow(flows, remaining_sinks)
             flows = self.unassign_optim(flows, costs, delta_cost_change)
-            flows = self.unassign_random(flows, random_switch_rate[i])
+            flows = self.unassign_random(flows, random_switch_rate[iteration])
             
             previous_flows, remaining_sinks, chains = self.prepare_next_iteration_vars(flows, sinks)
             
-        flows = self.disaggregate_by_mode(flows_path, n_samples, costs_aggregator)
+        flows = self.disaggregate_by_mode(flows_path, n_iterations, costs_aggregator)
 
         flows = flows.with_columns(
             is_weekday=pl.lit(is_weekday)
@@ -143,15 +152,28 @@ class PopulationTrips(FileAsset):
         return flows
     
 
-    def prepare_folders(self, chains_path, flows_path):
+    def prepare_tmp_folders(self, cache_path):
         
-        shutil.rmtree(chains_path, ignore_errors=True)
-        shutil.rmtree(flows_path, ignore_errors=True)
-        os.makedirs(chains_path)
-        os.makedirs(flows_path)
-
+        inputs_hash = str(cache_path.stem).split("-")[0]
+        
+        def rm_then_mkdirs(folder_name):
+            path = cache_path.parent / (inputs_hash + "-" + folder_name)
+            shutil.rmtree(path, ignore_errors=True)
+            os.makedirs(path)
+            return path
+        
+        folders = ["spatialized-chains", "modes", "flows"]
+        folders = {f: rm_then_mkdirs(f) for f in folders}
+        
+        return folders
+        
 
     def get_chains(self, population, surveys, motives, is_weekday):
+        """
+            Get the count of trip chains per person and per day for all transport 
+            zones and socio professional categories (0.8 "home -> work -> home" 
+            chains per day for employees in the transport zone "123", for example)
+        """
 
         # Map local admin units to urban unit categories (C, B, I, R) to be able
         # to get population counts by urban unit category
@@ -258,7 +280,8 @@ class PopulationTrips(FileAsset):
             pl.concat(
                 [
                     (
-                        motive.get_opportunities(transport_zones)
+                        motive
+                        .get_opportunities(transport_zones)
                         .with_columns(
                             motive=pl.lit(motive.name),
                             sink_saturation_coeff=pl.lit(motive.sink_saturation_coeff)
@@ -294,7 +317,7 @@ class PopulationTrips(FileAsset):
         return current_costs
 
         
-    def spatialize_trip_chains(self, i, chains, dest_prob, motives, alpha, chains_path):
+    def spatialize_trip_chains(self, iteration, chains, dest_prob, motives, alpha, tmp_folders):
         
         
         chains_step = ( 
@@ -340,8 +363,8 @@ class PopulationTrips(FileAsset):
             
         ( 
             pl.concat(spatialized_chains)
-            .with_columns(i=pl.lit(i).cast(pl.UInt32))
-            .write_parquet(chains_path / f"chains_{i}.parquet")
+            .with_columns(iteration=pl.lit(iteration).cast(pl.UInt32))
+            .write_parquet(tmp_folders["spatialized-chains"] / f"spatialized_chains_{iteration}.parquet")
         )
         
         
@@ -361,12 +384,12 @@ class PopulationTrips(FileAsset):
             .select(["home_zone_id", "csp", "motive_subseq", "motive", "from"])
             
             .join(
-                dest_prob.lazy(),
+                dest_prob,
                 on=["motive", "from"]
             )
             
             .join(
-                dest_prob.lazy()
+                dest_prob
                 .select(["motive", "from", "to", "p_ij"])
                 .rename({"from": "home_zone_id", "p_ij": "p_ij_home"}),
                 on=["home_zone_id", "motive", "to"],
@@ -441,103 +464,22 @@ class PopulationTrips(FileAsset):
         steps = pl.concat([steps, steps_home])
         
         return steps
-
-        
-    def assign_flow_volumes(self, i, chains, chains_path, previous_flows, flows_path):
-        
-        logging.info("Computing the number of persons on each possible chain...")
-        
-        # Compute the probability of each sequence
-        p_seq = (
-            
-            pl.scan_parquet(str(chains_path) + f"/chains_{i}.parquet")
-            .filter(pl.col("subseq_step_index") == 1)
-            .with_columns(
-                p_seq=pl.col("p_ij").log().sum().over(["home_zone_id", "csp", "motive_subseq"]).exp()
-            )
-            .with_columns(
-                p_seq=pl.col('p_seq') / pl.col('p_seq').sum().over(["home_zone_id", "csp", "motive_subseq"])
-            )
-            .select(["home_zone_id", "csp", "motive_subseq", "i", "p_seq"])
-            
-        )
-        
-        flows = (
-            
-            pl.scan_parquet(str(chains_path) + f"/chains_{i}.parquet")
-            .join(p_seq, on=["home_zone_id", "csp", "motive_subseq", "i"])
-            
-            # Compute the number of persons at each destination, for each motive
-            .join(
-                chains.rename({"transport_zone_id": "home_zone_id"}).lazy(),
-                on=["home_zone_id", "csp", "motive_subseq", "motive", "subseq_step_index"]
-            )
-            .with_columns(
-                n_subseq=pl.col("n_subseq")*pl.col("p_seq"),
-                duration=pl.col("duration")*pl.col("p_seq")
-            )
-            .select([
-                'home_zone_id', "csp", 'motive_subseq', 'motive', 'from', 'to',
-                'subseq_step_index', 'i', 'n_subseq', 'duration', "duration_per_subseq"
-            ])
-            
-            .collect(engine="streaming")
-            
-        )
-        
-        
-        if previous_flows is not None:
-            
-            logging.info("Combining with the flows from the previous steps...")
-            
-            flows = pl.concat([flows, previous_flows])
-            flows = (
-                flows
-                .group_by(["home_zone_id", "csp", "motive_subseq", "motive", "from", "to", "subseq_step_index", "i"])
-                .agg(
-                    n_subseq=pl.col("n_subseq").sum(),
-                    duration=pl.col("duration").sum()
-                )
-                .with_columns(
-                    duration_per_subseq=pl.col("duration")/pl.col("n_subseq")
-                )
-            )
-            
-        
-        ( 
-            flows
-            # .with_columns(i=pl.lit(i).cast(pl.UInt32))
-            .write_parquet(flows_path / f"flows_{i}.parquet")
-        )
-        
-        return flows
     
     
-    
-    def update_costs(self, costs, i, n_iter_per_cost_update, chains_path, flows_path, costs_aggregator):
-
-        if n_iter_per_cost_update > 0 and i > 0 and i % n_iter_per_cost_update == 0:
-            
-            od_flows_by_mode = self.assign_modes(i, chains_path, costs_aggregator)
-            
-            costs_aggregator.update(od_flows_by_mode)
-            costs = self.get_current_costs(costs_aggregator, congestion=False)
-
-        return costs
+    def search_top_k_mode_sequences(self, iteration, costs_aggregator, tmp_folders):
         
-    
-    
-    def assign_modes(self, i, chains_path, costs_aggregator):
+        parent_folder_path = tmp_folders["spatialized-chains"].parent
         
-        logging.info("Assigning modes...")
+        chains_path = tmp_folders["spatialized-chains"] / f"spatialized_chains_{iteration}.parquet"
+        costs_path = parent_folder_path / "tmp-costs.parquet"
+        modes_props_path = parent_folder_path / "modes-props.json"
+        tmp_path = parent_folder_path / "tmp_results"
+        output_path = tmp_folders["modes"] / f"mode_sequences_{iteration}.parquet"
         
-        folder_path = chains_path.parent
+        shutil.rmtree(tmp_path, ignore_errors=True)
+        os.makedirs(tmp_path)
         
-        chains_path = chains_path / f"chains_{i}.parquet"
-        
-        # Save costs to a temp file
-        costs_path = folder_path / "tmp-costs.parquet"
-        
+        # Write the costs as parquet so the parallel processes can use them
         ( 
             costs_aggregator.get_costs_by_od_and_mode(
                 ["cost"],
@@ -548,46 +490,134 @@ class PopulationTrips(FileAsset):
         )
         
         # Format the modes info as a dict and save the result in a temp file
-        modes_path = folder_path / "tmp-modes.json"
-        
-        with open(modes_path, "w") as f:
+        with open(modes_props_path, "w") as f:
             f.write(modes_list_to_dict(costs_aggregator.modes))
         
-        # Launch the mode sequence porbability calculation
-        output_path = folder_path / "od-flows-by-mode.parquet"
+        # Launch the mode sequence probability calculation
+        with Live(Spinner("dots", text="Finding probable mode sequences for the spatialized trip chains..."), refresh_per_second=10):
         
-        tmp_path = folder_path / "tmp_results"
-        shutil.rmtree(tmp_path, ignore_errors=True)
-        os.makedirs(tmp_path)
+            process = subprocess.Popen(
+                [
+                    "python",
+                    "-u",
+                    str(resources.files('mobility') / "transport_modes" / "compute_subtour_mode_probabilities.py"),
+                    "--chains_path", str(chains_path),
+                    "--costs_path", str(costs_path),
+                    "--modes_path", str(modes_props_path),
+                    "--output_path", str(output_path),
+                    "--tmp_path", str(tmp_path)
+                ]
+            )
+            
+            process.wait()
+
         
-        process = subprocess.Popen(
-            [
-                "python",
-                "-u",
-                str(resources.files('mobility') / "transport_modes" / "compute_subtour_mode_probabilities.py"),
-                "--chains_path", str(chains_path),
-                "--costs_path", str(costs_path),
-                "--modes_path", str(modes_path),
-                "--output_path", str(output_path),
-                "--tmp_path", str(tmp_path)
-            ],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            bufsize=1
+        
+        
+    def assign_flow_volumes(self, iteration, chains, previous_flows, tmp_folders):
+        
+        logging.info("Computing the number of persons on each possible chain...")
+        
+        
+        flows = (
+            
+            pl.scan_parquet(tmp_folders["spatialized-chains"] / f"spatialized_chains_{iteration}.parquet")
+            .join(
+                chains.rename({"transport_zone_id": "home_zone_id"}).lazy(),
+                on=["home_zone_id", "csp", "motive_subseq", "motive", "subseq_step_index"]
+            )
+            .select([
+                'home_zone_id', "csp", 'motive_subseq', 'motive', 'from', 'to',
+                'subseq_step_index', 'iteration', 'n_subseq', 'duration', "duration_per_subseq"
+            ])
+            
+            .collect(engine="streaming")
+            
         )
         
+        return flows
+    
+    
         
-        for line in process.stdout:
-            print(line, end='')
+    
+    def assign_modes(self, iteration, flows, costs_aggregator, tmp_folders):
         
-        process.wait()
+        logging.info("Assigning modes...")
         
-        # Compute the origin - destination flows
-        od_flows = pl.read_parquet(output_path)
+        mode_sequences = pl.read_parquet(tmp_folders["modes"] / f"mode_sequences_{iteration}.parquet")
         
-        return od_flows
+        costs = costs_aggregator.get_costs_by_od_and_mode(["cost"], congestion=True, detail_distances=False)
         
+        flows = (
+            flows
+            .join(mode_sequences, on=["home_zone_id", "csp", "motive_subseq", "subseq_step_index"])
+        )
+        
+        p_mode_seq = ( 
+            flows
+            .join(costs, on=["from", "to", "mode"])
+            .group_by(["home_zone_id", "csp", "motive_subseq", "mode_seq_index"])
+            .agg(pl.col("cost").sum())
+            .with_columns(
+                p_mode_seq=pl.col("cost").neg().exp()/pl.col("cost").neg().exp().sum().over(["home_zone_id", "csp", "motive_subseq"])
+            )
+            
+            # Keep only the first 99 % of the distribution
+            .sort("p_mode_seq", descending=True)
+            .with_columns(
+                p_mode_seq_cum=pl.col("p_mode_seq").cum_sum().over(["home_zone_id", "csp", "motive_subseq"]),
+                p_mode_seq_count=pl.col("p_mode_seq").cum_count().over(["home_zone_id", "csp", "motive_subseq"])
+            )
+            .filter((pl.col("p_mode_seq_cum") < 0.99) | (pl.col("p_mode_seq_count") == 1))
+            .with_columns(
+                p_ij=pl.col("p_mode_seq")/pl.col("p_mode_seq").sum().over(["home_zone_id", "csp", "motive_subseq"])
+            )
+            
+            .select(["home_zone_id", "csp", "motive_subseq", "mode_seq_index", "p_mode_seq"])
+        )
+        
+        flows = (
+            flows 
+            .join(p_mode_seq, on=["home_zone_id", "csp", "motive_subseq", "subseq_step_index", "mode_seq_index"])
+            .with_columns(
+                n_subseq=pl.col("n_subseq")*pl.col("p_mode_seq")
+            )
+            .select([
+                'home_zone_id', 'csp', 'motive_subseq', "mode_seq_index",
+                'motive', 'from', 'to', 'subseq_step_index', 'iteration',
+                'n_subseq', 'duration', 'duration_per_subseq'
+            ])
+        )
+
+        return flows
+    
+        
+    
+    
+    def update_costs(self, iteration, n_iter_per_cost_update, flows, costs_aggregator):
+        """
+            If a cost update is needed, aggregate the flows by origin, destination
+            and mode, compute the user equilibrium on the road network and 
+            recompute the travel times and distances of the shortest paths 
+            in after congestion.
+        """
+        
+        if n_iter_per_cost_update > 0 and iteration > 0 and iteration % n_iter_per_cost_update == 0:
+            
+            od_flows_by_mode = (
+                flows
+                .group_by(["from", "to", "mode"])
+                .agg(
+                    flow_volume=pl.col("n_subseq").sum()
+                )
+            )
+            
+            costs_aggregator.update(od_flows_by_mode)
+            costs = self.get_current_costs(costs_aggregator, congestion=True)
+
+        return costs
+        
+
     
 
         
@@ -598,7 +628,7 @@ class PopulationTrips(FileAsset):
         # p_overflow_motive = 1.0 - duration/available duration
         
         # A given chain is "overflowing" opportunities at destination if 
-        # at soon as one of the destinations is "overflowing", so :
+        # any one of the destinations is "overflowing", so :
         # p_overflow = max(p_overflow_motive)
         logging.info("Correcting flows for sink saturation...")
         
@@ -615,7 +645,7 @@ class PopulationTrips(FileAsset):
                 )
             )
             .with_columns(
-                p_overflow_max=pl.col("p_overflow").max().over(["home_zone_id", "csp", "motive_subseq", "i"])
+                p_overflow_max=pl.col("p_overflow").max().over(["home_zone_id", "csp", "motive_subseq", "mode_seq_index", "iteration"])
             )
             .with_columns(
                 overflow=pl.col("n_subseq")*pl.col("p_overflow_max")
@@ -810,7 +840,6 @@ class PopulationTrips(FileAsset):
             costs
             .with_columns(p_to=pl.col("sink_duration")/pl.col("sink_duration").sum().over(["from", "motive", "cost_bin"]))
             .select(["motive", "from", "cost_bin", "to", "p_to"])
-            .collect()
         )
 
         costs_bin = (
@@ -871,7 +900,7 @@ class PopulationTrips(FileAsset):
             .with_columns(p_ij=pl.col("p_ij")/pl.col("p_ij").sum().over(["from", "motive"]))
             
             # Disaggregate bins -> destinations
-            .join(cost_bin_to_dest.lazy(), on=["motive", "from", "cost_bin"])
+            .join(cost_bin_to_dest, on=["motive", "from", "cost_bin"])
             .with_columns(p_ij=pl.col("p_ij")*pl.col("p_to"))
             .group_by(["motive", "from", "to"])
             .agg(pl.col("p_ij").sum())
@@ -888,7 +917,7 @@ class PopulationTrips(FileAsset):
             
             .select(["motive", "from", "to", "p_ij"])
             
-            .collect(engine="streaming")
+            # .collect(engine="streaming")
         )
         
         return prob

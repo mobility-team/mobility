@@ -155,7 +155,6 @@ def run_top_k_search(
                         subtour_last_leg_index = subtour_first_leg_eq_last_leg[leg_idx]-1
                         next_return_mode_constraints[subtour_last_leg_index] = return_mode[m_id]
                             
-                
                 # Push the new state to the heap
                 state = (leg_idx+1, next_vehicle_locations, mode_sequence + [m_id], next_return_mode_constraints)
                 heapq.heappush(heap, (cost+mode_cost, state))
@@ -169,12 +168,12 @@ def run_top_k_search(
     for i, (total_cost, mode_seq) in enumerate(results):
         if i < i_max+1:
             for leg_idx, m_id in enumerate(mode_seq):
-                rows.append([i, leg_idx+1, m_id, p[i]])
+                rows.append([i, locations[leg_idx], leg_idx+1, m_id])
     
     results = ( 
         pl.DataFrame(
             rows,
-            schema=["mode_seq_index", "subseq_step_index", "mode_index", "p_mode_seq"],
+            schema=["mode_seq_index", "location", "subseq_step_index", "mode_index"],
             orient="row"
         )
         .with_columns(

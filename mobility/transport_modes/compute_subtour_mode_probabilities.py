@@ -26,6 +26,7 @@ def compute_subtour_mode_probabilities(chains_path, costs_path, modes_path, tmp_
             locations=pl.col("from"),
             locations_str=pl.col("from").str.join("-")
         )
+        .sort(["home_zone_id", "csp", "motive_subseq"])
         .collect(engine="streaming")
     )
     
@@ -53,7 +54,7 @@ def compute_subtour_mode_probabilities(chains_path, costs_path, modes_path, tmp_
     logging.info("Running the mode sequence search in parallel...")
     
     batch_size = 3000
-    batches = list(chunked(location_chains, batch_size))[0:20]
+    batches = list(chunked(location_chains, batch_size))
     total = len(batches)
     
     with Progress(
@@ -86,12 +87,11 @@ def compute_subtour_mode_probabilities(chains_path, costs_path, modes_path, tmp_
    
         all_results = (
             pl.read_parquet(tmp_path)
-            .with_columns(
-                mode=pl.col("mode_index").replace_strict(id_to_mode)
-            )
-            .join(unique_location_chains.select(["index", "locations_str"]), on=["index"])
-            .join(chains_groups.select(["locations_str", "home_zone_id", "csp", "motive_subseq"]), on=["locations_str"])
-            .join(pl.read_parquet(chains_path), on=["home_zone_id", "csp", "motive_subseq", "subseq_step_index"])
+            # .with_columns(
+            #     mode=pl.col("mode_index").replace_strict(id_to_mode)
+            # )
+            # .join(unique_location_chains.select(["index", "locations_str"]), on=["index"])
+            # .join(chains_groups.select(["locations_str", "home_zone_id", "csp", "motive_subseq"]), on=["locations_str"])
         )
         
         all_results.write_parquet(output_path)
