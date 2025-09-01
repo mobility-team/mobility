@@ -33,7 +33,13 @@ RUN uv pip install --system .
 RUN uv pip install --system ipykernel
 
 # Install R deps with pak
-RUN echo "options(async_http_cainfo = '/etc/ssl/certs/ca-certificates.crt', repos = c(CRAN = 'https://packagemanager.posit.co/cran/__linux__/bookworm/latest'))" > .Rprofile
+RUN echo "options( \
+    async_http_cainfo = '/etc/ssl/certs/ca-certificates.crt', \
+    repos = c( \
+        P3M  = 'https://p3m.dev/cran/__linux__/bookworm/latest', \
+        CRAN = 'https://cloud.r-project.org' \
+    ))" \
+    > .Rprofile
 RUN Rscript -e "install.packages('pak', repos = 'https://cloud.r-project.org')"
 COPY DESCRIPTION .
 RUN Rscript -e "pak::pkg_install('deps::.', dependencies = TRUE)"
