@@ -3,7 +3,7 @@ Mobility builds on the incredibly valuable ecosystem of open source projects of 
 
 We also try to limit build and installation times, so we should try to take on a dependency only when it's really needed. We probably have some clean up to do in the lists below...
 
-If you still want to add a dependency : 
+If you still want to add a dependency :
 - Make your case in an issue.
 - Add it to the lists here.
 - If it's a python package, add it to the [pyproject.toml](./pyproject.toml) dependencies list so it's installed when installing Mobility.
@@ -29,6 +29,7 @@ List from [pyproject.toml](./pyproject.toml) :
 - [seaborn](https://seaborn.pydata.org/)
 - [pyogrio](https://github.com/geopandas/pyogrio)
 - [sphinxcontrib-napoleon](https://github.com/sphinx-doc/sphinxcontrib-napoleon)
+- [sphinx_copybutton](https://sphinx-copybutton.readthedocs.io/)
 - [myst-parser](https://github.com/executablebooks/MyST-Parser)
 - [streamlit](https://github.com/streamlit/streamlit)
 - [streamlit-lottie](https://github.com/andfanilo/streamlit-lottie)
