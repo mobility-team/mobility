@@ -87,7 +87,7 @@ work_choice_model.get()
 mode_df = mode_choice_model.get()
 ```
 
-# Comparing to reference data
+## Comparing to reference data
 
 We can see how well the model matches the home - work place pair counts estimated by INSEE and OFS, by comparing them directly on a log-log plot (so we don't only see big counts) or by computing their Sorensen Similarity Index (SSI) at different minimum count thresholds (the SSI goes from 0 to 1, 1 being a perfect fit).
 
