@@ -3,6 +3,9 @@ import pathlib
 import logging
 import shutil
 import subprocess
+import pickle
+import json
+import random
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -12,6 +15,7 @@ import numpy as np
 from scipy.stats import norm
 from typing import List
 from importlib import resources
+from collections import defaultdict
 
 from rich.spinner import Spinner
 from rich.live import Live
@@ -33,11 +37,13 @@ class PopulationTrips(FileAsset):
             motives: List[Motive] = None,
             surveys: List[MobilitySurvey] = None,
             n_iterations: int = 10,
-            alpha: float = 0.5,
+            alpha: float = 0.01,
+            k_mode_sequences: int = 6,
+            dest_prob_cutoff: float = 0.99,
+            activity_utility_coeff: float = 2.0,
+            stay_home_utility_coeff: float = 1.0,
             n_iter_per_cost_update: int = 3,
-            cost_uncertainty_sd: float = 1.0,
-            delta_cost_change: float = 0.0,
-            random_switch: float = 4.0
+            cost_uncertainty_sd: float = 1.0
         ):
         
         modes = [] if modes is None else modes
@@ -53,10 +59,12 @@ class PopulationTrips(FileAsset):
             "surveys": surveys,
             "n_iterations": n_iterations,
             "alpha": alpha,
+            "k_mode_sequences": k_mode_sequences,
+            "dest_prob_cutoff": dest_prob_cutoff,
+            "activity_utility_coeff": activity_utility_coeff,
+            "stay_home_utility_coeff": stay_home_utility_coeff,
             "n_iter_per_cost_update": n_iter_per_cost_update,
-            "cost_uncertainty_sd": cost_uncertainty_sd,
-            "delta_cost_change": delta_cost_change,
-            "random_switch": random_switch
+            "cost_uncertainty_sd": cost_uncertainty_sd
         }
         
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
@@ -80,8 +88,8 @@ class PopulationTrips(FileAsset):
         weekday_flows = self.compute_flows(is_weekday=True)
         weekend_flows = self.compute_flows(is_weekday=False)
         
-        weekday_flows.sink_parquet(self.cache_path["weekday_flows"])
-        weekend_flows.sink_parquet(self.cache_path["weekend_flows"])
+        weekday_flows.write_parquet(self.cache_path["weekday_flows"])
+        weekend_flows.write_parquet(self.cache_path["weekend_flows"])
             
         return {
             "weekday_flows": weekday_flows,
@@ -96,25 +104,29 @@ class PopulationTrips(FileAsset):
         surveys = self.inputs["surveys"]
         n_iterations = self.inputs["n_iterations"]
         alpha = self.inputs["alpha"]
+        dest_prob_cutoff = self.inputs["dest_prob_cutoff"]
+        k_mode_sequences = self.inputs["k_mode_sequences"]
+        activity_utility_coeff = self.inputs["activity_utility_coeff"]
+        stay_home_utility_coeff = self.inputs["stay_home_utility_coeff"]
         n_iter_per_cost_update = self.inputs["n_iter_per_cost_update"]
         cost_uncertainty_sd = self.inputs["cost_uncertainty_sd"]
-        delta_cost_change = self.inputs["delta_cost_change"]
-        random_switch = self.inputs["random_switch"]
         
         cache_path = self.cache_path["weekday_flows"] if is_weekday is True else self.cache_path["weekend_flows"]
         tmp_folders = self.prepare_tmp_folders(cache_path)
 
-        chains = self.get_chains(population, surveys, motives, is_weekday)
+        chains, demand_groups, motive_seqs = self.get_chains(population, surveys, motives, is_weekday)
+        motive_dur, home_night_dur = self.get_mean_activity_durations(chains, demand_groups)
+        current_states = self.get_initial_states(chains, demand_groups)
         sinks = self.get_sinks(chains, motives, population.transport_zones)
         costs = self.get_current_costs(costs_aggregator, congestion=False)
-
-        random_switch_rate = 1.0/(1.0+random_switch*np.arange(1, n_iterations+1))
-        previous_flows = None        
+        
         remaining_sinks = sinks.clone()
         
         for iteration in range(0, n_iterations):
             
             logging.info(f"Sampling step n°{iteration}")
+            
+            iteration = 0
             
             utilities = self.get_utilities(
                 motives,
@@ -126,32 +138,37 @@ class PopulationTrips(FileAsset):
             
             dest_prob = self.get_destination_probability(
                 utilities,
-                motives
+                motives,
+                dest_prob_cutoff
             )
             
-            self.spatialize_trip_chains(iteration, chains, dest_prob, motives, alpha, tmp_folders)
-            self.search_top_k_mode_sequences(iteration, costs_aggregator, tmp_folders)
+            self.spatialize_trip_chains(iteration, chains, demand_groups, dest_prob, motives, costs, alpha, tmp_folders)
+            self.search_top_k_mode_sequences(iteration, costs_aggregator, k_mode_sequences, tmp_folders)
             
-            flows = self.assign_flow_volumes(iteration, chains, previous_flows, tmp_folders)
-            flows = self.assign_modes(iteration, flows, costs_aggregator, tmp_folders)
+            possible_states_steps = self.get_possible_states_steps(demand_groups, chains, costs_aggregator, motive_dur, iteration, activity_utility_coeff, tmp_folders)
+            possible_states_utility = self.get_possible_states_utility(possible_states_steps, home_night_dur, stay_home_utility_coeff)
             
-            if previous_flows is not None:
-                flows = pl.concat([flows, previous_flows])
+            transition_prob = self.get_transition_probabilities(current_states, possible_states_utility)
+            current_states = self.apply_transitions(current_states, transition_prob)
+            current_states_steps = self.get_current_states_steps(current_states, possible_states_steps)
             
-            costs = self.update_costs(costs, iteration, n_iter_per_cost_update, flows, costs_aggregator)
-            flows = self.unassign_overflow(flows, remaining_sinks)
-            flows = self.unassign_optim(flows, costs, delta_cost_change)
-            flows = self.unassign_random(flows, random_switch_rate[iteration])
+            costs = self.update_costs(costs, iteration, n_iter_per_cost_update, current_states_steps, costs_aggregator)
             
-            previous_flows, remaining_sinks, chains = self.prepare_next_iteration_vars(flows, sinks)
-            
-        flows = self.disaggregate_by_mode(flows_path, n_iterations, costs_aggregator)
+            current_states_steps = self.fix_overflow(current_states_steps, sinks)
+            remaining_sinks = self.get_remaining_sinks(current_states_steps, sinks)
+        
+        
+        current_states_steps = (
+            current_states_steps
+            .join(demand_groups, on=["demand_group_id"])
+            .drop("demand_group_id")
+        )
 
-        flows = flows.with_columns(
+        current_states_steps = current_states_steps.with_columns(
             is_weekday=pl.lit(is_weekday)
         )
 
-        return flows
+        return current_states_steps
     
 
     def prepare_tmp_folders(self, cache_path):
@@ -195,13 +212,17 @@ class PopulationTrips(FileAsset):
 
         # Aggregate population groups by transport zone, city category, socio pro 
         # category and number of cars in the household
-        pop_groups = (
+        demand_groups = (
             
             pl.scan_parquet(population.get()["population_groups"])
-            .rename({"socio_pro_category": "csp"})
+            .rename({
+                "socio_pro_category": "csp",
+                "transport_zone_id": "home_zone_id",
+                "weight": "n_persons"
+            })
             .join(lau_to_city_cat.lazy(), on=["local_admin_unit_id"])
-            .group_by(["country", "transport_zone_id", "city_category", "csp", "n_cars"])
-            .agg(pl.col("weight").sum())
+            .group_by(["country", "home_zone_id", "city_category", "csp", "n_cars"])
+            .agg(pl.col("n_persons").sum())
 
             # Cast strings to enums to speed things up
             .with_columns(
@@ -210,6 +231,7 @@ class PopulationTrips(FileAsset):
                 csp=pl.col("csp").cast(pl.Enum(["1", "2", "3", "4", "5", "6", "7", "8", "no_csp"])),
                 n_cars=pl.col("n_cars").cast(pl.Enum(["0", "1", "2+"]))
             )
+            .with_row_count("demand_group_id")
 
             .collect(engine="streaming")
             
@@ -236,34 +258,170 @@ class PopulationTrips(FileAsset):
             )
         )
         
+        # Create an index for motive sequences to avoid moving giant strings around
+        motive_seqs = ( 
+            p_chain
+            .select(["motive_seq", "seq_step_index", "motive"])
+            .unique()
+            .with_columns(
+                motive_seq_id=pl.col("motive_seq").hash()
+            )
+        )
+        
+        p_chain = (
+            p_chain
+            .join(motive_seqs.select(["motive_seq", "motive_seq_id"]), on="motive_seq")
+            .drop("motive_seq")
+        )
+        
+        motive_seqs = motive_seqs.select(["motive_seq_id", "seq_step_index", "motive"])
+        
+        # Compute the amount of demand (= duration) per demand group and motive sequence
+        anchors = {m.name: m.is_anchor for m in motives}
+        
         chains = (
 
-            pop_groups
+            demand_groups
             .join(p_chain, on=["country", "city_category", "csp", "n_cars"])
             .filter(pl.col("is_weekday") == is_weekday)
             .drop("is_weekday")
-            .with_columns(n_subseq=pl.col("weight")*pl.col("p_subseq")) 
-            
-            .group_by(["transport_zone_id", "csp", "motive_subseq", "subseq_step_index", "motive"])
-            .agg(
-                n_subseq=pl.col("n_subseq").sum(),
+            .with_columns(
+                n_persons=pl.col("n_persons")*pl.col("p_seq")
+            )
+            .with_columns(
                 duration=(
                     (
                         pl.col("duration_morning")
                         + pl.col("duration_midday")
                         + pl.col("duration_evening")
                     )
-                    * pl.col("n_subseq")
+                )
+            )
+            
+            .group_by(["demand_group_id", "motive_seq_id", "seq_step_index", "motive"])
+            .agg(
+                n_persons=pl.col("n_persons").sum(),
+                duration=(
+                    (
+                        pl.col("duration_morning")
+                        + pl.col("duration_midday")
+                        + pl.col("duration_evening")
+                    )
+                    * pl.col("n_persons")
                 ).sum()
             )
+            
+            .sort(["demand_group_id", "motive_seq_id",  "seq_step_index"])
             .with_columns(
-                duration_per_subseq=pl.col("duration")/pl.col("n_subseq")
+                is_anchor=pl.col("motive").replace_strict(anchors)
             )
         
         )
+        
+        # Add an empty schedule for each demand group
+        # This schedule is identfied later on because its id is the max id,
+        # which might not be very robust... The schedule has a zero duration 
+        # dummy home activity, which does nothing but is necessary because
+        # we can't have zero activity schedules for now.
+        
+        motive_seqs = pl.concat([
+            motive_seqs,
+            pl.DataFrame(
+                data=[{
+                    "motive_seq_id": 0,
+                    "seq_step_index": 1,
+                    "motive": "home"
+                }],
+                schema={
+                    "motive_seq_id": chains["motive_seq_id"].dtype,
+                    "seq_step_index": chains["seq_step_index"].dtype,
+                    "motive":chains["motive"].dtype
+                }
+            )
+        ])
+        
+        empty_schedule = (
+            demand_groups.select(["demand_group_id"])
+            .with_columns(
+                motive_seq_id=pl.lit(0, chains["motive_seq_id"].dtype),
+                seq_step_index=pl.lit(1, chains["seq_step_index"].dtype),
+                motive=pl.lit("home", chains["motive"].dtype),
+                n_persons=1e-9,
+                duration=0.0,
+                is_anchor=True
+            )
+        )
+        
+        chains = pl.concat([chains, empty_schedule])
+        
+        # Drop unecessary columns from demand groups
+        demand_groups = (
+            demand_groups
+            .drop(["country", "city_category"])
+        )
 
-
-        return chains
+        return chains, demand_groups, motive_seqs
+    
+    
+    def get_mean_activity_durations(self, chains, demand_groups):
+        
+        two_minutes = 120.0/3600.0
+        
+        chains = ( 
+            chains
+            .join(demand_groups.select(["demand_group_id", "csp"]), on="demand_group_id")
+            .with_columns(duration_per_pers=pl.col("duration")/pl.col("n_persons"))
+        )
+        
+        mean_motive_durations = (
+            chains
+            .filter(pl.col("seq_step_index") != pl.col("seq_step_index").max().over(["demand_group_id", "motive_seq_id"]))
+            .group_by(["csp", "motive"])
+            .agg(
+                mean_duration_per_pers=pl.max_horizontal([
+                    (pl.col("duration_per_pers")*pl.col("n_persons")).sum()/pl.col("n_persons").sum(),
+                    pl.lit(two_minutes)
+                ])
+            )
+        )
+        
+        mean_home_night_durations = (
+            chains
+            .group_by(["demand_group_id", "csp", "motive_seq_id"])
+            .agg(
+                n_persons=pl.col("n_persons").first(),
+                home_night_per_pers=24.0 - pl.col("duration_per_pers").sum()
+            )
+            .group_by("csp")
+            .agg(
+                 mean_home_night_per_pers=pl.max_horizontal([
+                     (pl.col("home_night_per_pers")*pl.col("n_persons")).sum()/pl.col("n_persons").sum(),
+                     pl.lit(two_minutes)
+                  ])
+            )
+        )
+        
+        return mean_motive_durations, mean_home_night_durations
+    
+    
+    def get_initial_states(self, chains, demand_groups):
+        
+        initial_states = (
+            chains 
+            .select(["demand_group_id", "motive_seq_id"])
+            .filter(pl.col("motive_seq_id") == 0)
+            .join(
+                demand_groups.select(["demand_group_id", "n_persons"]),
+                on="demand_group_id"
+            )
+            .with_columns(
+                dest_seq_id=pl.lit(0, dtype=pl.UInt64()),
+                mode_seq_id=pl.lit(0, dtype=pl.UInt64()),
+                utility=pl.lit(-1e6)
+            )
+        )
+        
+        return initial_states
     
 
     def get_sinks(self, chains, motives, transport_zones):
@@ -317,29 +475,212 @@ class PopulationTrips(FileAsset):
         )
 
         return current_costs
+    
+
+    def get_destination_probability(self, utilities, motives, dest_prob_cutoff):
+        
+        # Compute the probability of choosing a destination, given a trip motive, an 
+        # origin and the costs to get to destinations
+        logging.info("Computing the probability of choosing a destination based on current location, potential destinations, and motive (with radiation models)...")
+        
+        costs_bin = utilities[0]
+        cost_bin_to_dest = utilities[1]
+
+        motives_lambda = {motive.name: motive.radiation_lambda for motive in motives}
+        
+        prob = (
+                
+            # Apply the radiation model for each motive and origin
+            costs_bin
+            .with_columns(
+                s_ij=pl.col("sink_duration").cum_sum().over(["from", "motive"]),
+                selection_lambda=pl.col("motive").replace_strict(motives_lambda)
+            )
+            .with_columns(
+                p_a = (1 - pl.col("selection_lambda")**(1+pl.col('s_ij'))) / (1+pl.col('s_ij')) / (1-pl.col("selection_lambda"))
+            )
+            .with_columns(
+                p_a_lag=( 
+                    pl.col('p_a')
+                    .shift(fill_value=1.0)
+                    .over(["from", "motive"])
+                    .alias('p_a_lag')
+                )
+            )
+            .with_columns(
+                p_ij=pl.col('p_a_lag') - pl.col('p_a')
+            )
+            .with_columns(
+                p_ij=pl.col('p_ij') / pl.col('p_ij').sum().over(["from", "motive"])
+            )
+            .filter(pl.col("p_ij") > 0.0)
+            
+            # Keep only the first 99 % of the distribution
+            .sort("p_ij", descending=True)
+            .with_columns(
+                p_ij_cum=pl.col("p_ij").cum_sum().over(["from", "motive"]),
+                p_count=pl.col("p_ij").cum_count().over(["from", "motive"])
+            )
+            .filter((pl.col("p_ij_cum") < dest_prob_cutoff) | (pl.col("p_count") == 1))
+            .with_columns(p_ij=pl.col("p_ij")/pl.col("p_ij").sum().over(["from", "motive"]))
+            
+            # Disaggregate bins -> destinations
+            .join(cost_bin_to_dest, on=["motive", "from", "cost_bin"])
+            .with_columns(p_ij=pl.col("p_ij")*pl.col("p_to"))
+            .group_by(["motive", "from", "to"])
+            .agg(pl.col("p_ij").sum())
+            
+            # Keep only the first 99 % of the distribution
+            # (or the destination that has a 100% probability, which can happen)
+            .sort("p_ij", descending=True)
+            .with_columns(
+                p_ij_cum=pl.col("p_ij").cum_sum().over(["from", "motive"]),
+                p_count=pl.col("p_ij").cum_count().over(["from", "motive"])
+            )
+            .filter((pl.col("p_ij_cum") < dest_prob_cutoff) | (pl.col("p_count") == 1))
+            .with_columns(p_ij=pl.col("p_ij")/pl.col("p_ij").sum().over(["from", "motive"]))
+            
+            .select(["motive", "from", "to", "p_ij"])
+            
+            .collect(engine="streaming")
+        )
+        
+        return prob
+    
+    
+        
+    def spatialize_trip_chains(self, iteration, chains, demand_groups, dest_prob, motives, costs, alpha, tmp_folders):
 
         
-    def spatialize_trip_chains(self, iteration, chains, dest_prob, motives, alpha, tmp_folders):
+        if iteration > 0:
+            chains = chains.filter(pl.col("motive_seq_id") != 0)
         
+        chains = (
+            chains
+            .join(demand_groups.select(["demand_group_id", "home_zone_id"]), on="demand_group_id")
+            .select(["demand_group_id", "home_zone_id", "motive_seq_id", "motive", "is_anchor", "seq_step_index"])
+        )
+        
+        
+        chains = self.spatialize_anchor_motives(chains, dest_prob)
+        chains = self.spatialize_other_motives(chains, dest_prob, costs, alpha)
+        
+        dest_seq_index = ( 
+            chains
+            .sort("seq_step_index")
+            .group_by(["demand_group_id", "motive_seq_id"])
+            .agg(
+                to=pl.col("to")
+            )
+            .with_columns(
+                dest_seq_id=pl.col("to").hash()
+            )
+        )
+        
+        chains = (
+            chains
+            .join(
+                dest_seq_index.select(["demand_group_id", "motive_seq_id", "dest_seq_id"]),
+                on=["demand_group_id", "motive_seq_id"]
+            )
+        )
+
+        ( 
+            chains
+            .drop(["home_zone_id", "motive"])
+            .with_columns(iteration=pl.lit(iteration).cast(pl.UInt32))
+            .write_parquet(tmp_folders["spatialized-chains"] / f"spatialized_chains_{iteration}.parquet")
+        )
+        
+        
+    def spatialize_anchor_motives(self, chains, dest_prob):
+        
+        logging.info("Spatializing anchor motives...")
+        
+        seed = random.getrandbits(64)
+        
+        spatialized_anchors = ( 
+            
+            chains
+            .filter((pl.col("is_anchor")) & (pl.col("motive") != "home"))
+            .select(["demand_group_id", "home_zone_id", "motive_seq_id", "motive"])
+            .unique()
+            
+            .join(
+                dest_prob,
+                left_on=["home_zone_id", "motive"],
+                right_on=["from", "motive"]
+            )
+            
+            .with_columns(
+                noise=( 
+                    pl.struct(["demand_group_id", "motive_seq_id", "to"])
+                    .hash(seed=seed)
+                    .cast(pl.Float64) 
+                    .truediv(pl.lit(18446744073709551616.0))
+                    .log()
+                    .neg()
+                )
+            )
+            
+            .with_columns(
+                sample_score=pl.col("noise")/pl.col("p_ij")
+            )
+            
+            .with_columns(
+                min_score=pl.col("sample_score").min().over(["demand_group_id", "motive_seq_id"])
+            )
+            .filter(pl.col("sample_score") == pl.col("min_score"))
+            .select(["demand_group_id", "motive_seq_id", "motive", "to"])
+            
+        )
+        
+        chains = (
+            
+            chains
+            .join(
+                spatialized_anchors.rename({"to": "anchor_to"}),
+                on=["demand_group_id", "motive_seq_id", "motive"],
+                how="left"
+            )
+            .with_columns(
+                anchor_to=pl.when(
+                    pl.col("motive") == "home"
+                ).then(
+                    pl.col("home_zone_id")
+                ).otherwise(
+                    pl.col("anchor_to")
+                )
+            )
+            .sort(["demand_group_id", "motive_seq_id", "seq_step_index"])
+            .with_columns(
+                anchor_to=pl.col("anchor_to").backward_fill()
+            )
+            
+        ) 
+                    
+        return chains
+    
+    
+    def spatialize_other_motives(self, chains, dest_prob, costs, alpha):
         
         chains_step = ( 
             chains
-            .filter(pl.col("subseq_step_index") == 1)
-            .with_columns(pl.col("transport_zone_id").alias("from"))
-            .rename({"transport_zone_id": "home_zone_id"})
+            .filter(pl.col("seq_step_index") == 1)
+            .with_columns(pl.col("home_zone_id").alias("from"))
         )
         
-        subseq_step_index = 1
+        seq_step_index = 1
         spatialized_chains = []
         
         while chains_step.height > 0:
             
-            logging.info(f"Estimating flows sequence step n°{subseq_step_index}...")
+            logging.info(f"Spatializing motives for motive sequence step n°{seq_step_index}...")
             
             spatialized_step = ( 
-                self.spatialize_trip_chains_step(chains_step, dest_prob, alpha)
+                self.spatialize_trip_chains_step(seq_step_index, chains_step, dest_prob, costs, alpha)
                 .with_columns(
-                    subseq_step_index=pl.lit(subseq_step_index).cast(pl.UInt32)
+                    seq_step_index=pl.lit(seq_step_index).cast(pl.UInt32)
                 )
             )
             
@@ -347,153 +688,165 @@ class PopulationTrips(FileAsset):
             
             # Create the next steps in the chains, using the latest locations as 
             # origins for the next trip
-            subseq_step_index += 1
+            seq_step_index += 1
             
             chains_step = ( 
                 chains
-                .filter(pl.col("subseq_step_index") == subseq_step_index)
-                .rename({"transport_zone_id": "home_zone_id"})
+                .filter(pl.col("seq_step_index") == seq_step_index)
                 .join(
                     (
                         spatialized_step
-                        .select(["home_zone_id", "csp", "motive_subseq", "to"])
+                        .select(["demand_group_id", "home_zone_id", "motive_seq_id", "to"])
                         .rename({"to": "from"})
                     ),
-                    on=["home_zone_id", "csp", "motive_subseq"]
+                    on=["demand_group_id", "home_zone_id", "motive_seq_id"]
                 )
             )
             
-        ( 
-            pl.concat(spatialized_chains)
-            .with_columns(iteration=pl.lit(iteration).cast(pl.UInt32))
-            .write_parquet(tmp_folders["spatialized-chains"] / f"spatialized_chains_{iteration}.parquet")
-        )
+            
+        return pl.concat(spatialized_chains)
         
         
+    def spatialize_trip_chains_step(self, seq_step_index, chains_step, dest_prob, costs, alpha):
         
-    def spatialize_trip_chains_step(self, chains_step, dest_prob, alpha):
-        
-        # Blend the probability to choose a destination based on current location
-        # with the probability to choose this destination from home
-        # When alpha = 0, people ignore where they live when they choose a destination (except for the first trip)
-        # When alpha = 1, people ignore where they currently and only consider where they live when they choose a destination
-        # When 0 < alpha < 1, people take the two into account
-
-        steps = (
-            
-            chains_step.lazy()
-            .filter(pl.col("motive") != "home")
-            .select(["home_zone_id", "csp", "motive_subseq", "motive", "from"])
-            
-            .join(
-                dest_prob,
-                on=["motive", "from"]
-            )
-            
-            .join(
-                dest_prob
-                .select(["motive", "from", "to", "p_ij"])
-                .rename({"from": "home_zone_id", "p_ij": "p_ij_home"}),
-                on=["home_zone_id", "motive", "to"],
-                how="left"
-            )
-            
-            # Some low probability destinations have no probability because
-            # of the 99 % cutoff applied when computing p_ij, so we set them to zero
-            .with_columns(
-                p_ij_home=pl.col("p_ij_home").fill_null(0.0)
-            )
-            
-            .with_columns(
-                p_ij=( 
-                    pl.when(pl.col("home_zone_id") == pl.col("from"))
-                    .then(pl.col("p_ij"))
-                    .otherwise(pl.col("p_ij").pow(1-alpha)*pl.col("p_ij_home").pow(alpha))
-                )
-            )
-            .with_columns(p_ij=pl.col("p_ij")/pl.col("p_ij").sum().over(["motive_subseq", "motive", "home_zone_id", "csp", "from"]))
-            
-            # Keep only the first 99 % of the distribution
-            .sort("p_ij", descending=True)
-            .with_columns(
-                p_ij_cum=pl.col("p_ij").cum_sum().over(["motive_subseq", "home_zone_id", "csp", "from", "motive"]),
-                p_ij_count=pl.col("p_ij").cum_count().over(["motive_subseq", "home_zone_id", "csp", "from", "motive"])
-            )
-            .filter((pl.col("p_ij_cum") < 0.99) | (pl.col("p_ij_count") == 1))
-            .with_columns(
-                p_ij=pl.col("p_ij")/pl.col("p_ij").sum().over(["motive_subseq", "home_zone_id", "csp", "from", "motive"])
-            )
-            
-            .collect(engine="streaming")
-            
-        )
-        
+        # Tweak the destination probabilities so that the sampling takes into
+        # account the cost of travel to the next anchor (so we avoid drifting
+        # away too far).
         
         # Use the exponential sort trick to sample destinations based on their probabilities
         # (because polars cannot do weighted sampling like pandas)
         # https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
         
-        noise = -np.log(np.random.rand(steps.height))
+        seed = random.getrandbits(64)
         
         steps = (
+        
+            chains_step
+            .filter(pl.col("is_anchor").not_())
             
-            steps.lazy()
-            .with_columns(pl.Series("noise", noise))
+            .join(dest_prob, on=["from", "motive"])
+            
+            .join(
+                costs,
+                left_on=["to", "anchor_to"],
+                right_on=["from", "to"]
+            )
+            
+            .with_columns(
+                p_ij_corr=(pl.col("p_ij").log() - alpha*pl.col("cost")).exp(),
+                noise=( 
+                    pl.struct(["demand_group_id", "motive_seq_id", "to"])
+                    .hash(seed=seed)
+                    .cast(pl.Float64) 
+                    .truediv(pl.lit(18446744073709551616.0))
+                    .log()
+                    .neg()
+                )
+            )
+            
             .with_columns(
                 sample_score=pl.col("noise")/pl.col("p_ij")
             )
             
-            .sort(["sample_score"])
-            .group_by(["home_zone_id", "csp", "motive_subseq", "motive", "from"])
-            .head(1)
-            
-            .select(["home_zone_id", "csp", "motive_subseq", "motive", "from", "to", "p_ij"])
-            .collect(engine="streaming")
-            
-        )
-        
-        # Add the back to home step
-        steps_home = (
-            chains_step
-            .filter(pl.col("motive") == "home")
             .with_columns(
-                p_ij=1.0,
-                to=pl.col("home_zone_id")
+                min_score=pl.col("sample_score").min().over(["demand_group_id", "motive_seq_id"])
             )
-            .select(["home_zone_id", "csp", "motive_subseq", "motive", "from", "to", "p_ij"])
+            .filter(pl.col("sample_score") == pl.col("min_score"))
+            
+            .select(["demand_group_id", "home_zone_id", "motive_seq_id", "motive", "anchor_to", "from", "to"])
+            
         )
         
-        steps = pl.concat([steps, steps_home])
+        
+        # Add the steps that end end up at anchor destinations
+        steps_anchor = (
+            chains_step
+            .filter(pl.col("is_anchor"))
+            .with_columns(
+                to=pl.col("anchor_to")
+            )
+            .select(["demand_group_id", "home_zone_id", "motive_seq_id", "motive", "anchor_to", "from", "to"])
+        )
+        
+        steps = pl.concat([steps, steps_anchor])
+            
         
         return steps
     
     
-    def search_top_k_mode_sequences(self, iteration, costs_aggregator, tmp_folders):
+    def search_top_k_mode_sequences(self, iteration, costs_aggregator, k_mode_sequences, tmp_folders):
         
         parent_folder_path = tmp_folders["spatialized-chains"].parent
         
         chains_path = tmp_folders["spatialized-chains"] / f"spatialized_chains_{iteration}.parquet"
-        costs_path = parent_folder_path / "tmp-costs.parquet"
-        modes_props_path = parent_folder_path / "modes-props.json"
+        costs_path = parent_folder_path / "tmp-costs.pkl"
+        leg_modes_path = parent_folder_path / "tmp-leg-modes.pkl"
+        modes_path = parent_folder_path / "modes-props.json"
+        location_chains_path = parent_folder_path / "tmp-location-chains.parquet"
         tmp_path = parent_folder_path / "tmp_results"
         output_path = tmp_folders["modes"] / f"mode_sequences_{iteration}.parquet"
         
         shutil.rmtree(tmp_path, ignore_errors=True)
         os.makedirs(tmp_path)
         
-        # Write the costs as parquet so the parallel processes can use them
-        ( 
+        # Format the modes info as a dict and save the result in a temp file
+        modes = modes_list_to_dict(costs_aggregator.modes)
+        
+        with open(modes_path, "w") as f:
+            f.write(json.dumps(modes))
+        
+        # Format the costs as dict and save it as pickle to be ready for the parallel workers
+        mode_id = {n: i for i, n in enumerate(modes)}
+        id_to_mode = {i: n for i, n in enumerate(modes)}
+    
+        costs = ( 
             costs_aggregator.get_costs_by_od_and_mode(
                 ["cost"],
                 congestion=True,
                 detail_distances=False
             )
-            .write_parquet(costs_path)
+            .with_columns(
+                mode_id=pl.col("mode").replace_strict(mode_id, return_dtype=pl.UInt8())
+            )
+        )
+
+        costs = {(row["from"], row["to"], row["mode_id"]): row["cost"] for row in costs.to_dicts()}
+        
+        with open(costs_path, "wb") as f:
+            pickle.dump(costs, f, protocol=pickle.HIGHEST_PROTOCOL)  
+        
+        # Format the available modes list for each OD as dict and save it as pickle to be ready for the parallel workers
+        is_return_mode = {mode_id[k]: v["is_return_mode"] for  k, v in modes.items()}
+        
+        leg_modes = defaultdict(list)
+        for (from_, to_, mode) in costs.keys():
+            if not is_return_mode[mode]:
+                leg_modes[(from_, to_)].append(mode)
+        
+        with open(leg_modes_path, "wb") as f:
+            pickle.dump(leg_modes, f, protocol=pickle.HIGHEST_PROTOCOL)
+            
+        
+        # Prepare a list of location chains
+        spat_chains = ( 
+            pl.scan_parquet(chains_path)
+            .group_by(["demand_group_id", "motive_seq_id", "dest_seq_id"])
+            .agg(
+                locations=pl.col("from").sort_by("seq_step_index"),
+                locations_index=pl.col("from").str.join("-").hash()
+            )
+            .collect()
         )
         
-        # Format the modes info as a dict and save the result in a temp file
-        with open(modes_props_path, "w") as f:
-            f.write(modes_list_to_dict(costs_aggregator.modes))
+        unique_location_chains = ( 
+            spat_chains
+            .group_by(["locations_index"])
+            .agg(
+                pl.col("locations").first()
+            )
+        )
+        
+        unique_location_chains.write_parquet(location_chains_path)
         
         # Launch the mode sequence probability calculation
         with Live(Spinner("dots", text="Finding probable mode sequences for the spatialized trip chains..."), refresh_per_second=10):
@@ -503,9 +856,11 @@ class PopulationTrips(FileAsset):
                     "python",
                     "-u",
                     str(resources.files('mobility') / "transport_modes" / "compute_subtour_mode_probabilities.py"),
-                    "--chains_path", str(chains_path),
+                    "--k_sequences", str(k_mode_sequences),
+                    "--location_chains_path", str(location_chains_path),
                     "--costs_path", str(costs_path),
-                    "--modes_path", str(modes_props_path),
+                    "--leg_modes_path", str(leg_modes_path),
+                    "--modes_path", str(modes_path),
                     "--output_path", str(output_path),
                     "--tmp_path", str(tmp_path)
                 ]
@@ -514,89 +869,227 @@ class PopulationTrips(FileAsset):
             process.wait()
 
         
+        # Agregate all mode sequences chunks
+        all_results = (
+            spat_chains.select(["demand_group_id", "motive_seq_id", "dest_seq_id", "locations_index"])
+            .join(pl.read_parquet(tmp_path), left_on="locations_index", right_on="index")
+            .with_columns(
+                mode=pl.col("mode_index").replace_strict(id_to_mode)
+            )
+        )
         
+        mode_seq_index = (
+            all_results
+            .sort(["seq_step_index"])
+            .group_by(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+            .agg(
+                pl.col("mode_index")
+            )
+            .with_columns(
+                mode_seq_id_hash=pl.col("mode_index").hash()
+            )
+            .drop("mode_index")
+        )
         
-    def assign_flow_volumes(self, iteration, chains, previous_flows, tmp_folders):
+        all_results = (
+            all_results
+            .join(mode_seq_index, on=["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+            .drop("mode_seq_id")
+            .rename({"mode_seq_id_hash": "mode_seq_id"})
+            .select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id", "seq_step_index", "mode"])
+            .with_columns(iteration=pl.lit(iteration).cast(pl.UInt32))
+        )
         
-        logging.info("Computing the number of persons on each possible chain...")
-        
-        
-        flows = (
+        all_results.write_parquet(output_path)
             
-            pl.scan_parquet(tmp_folders["spatialized-chains"] / f"spatialized_chains_{iteration}.parquet")
+        
+    def get_possible_states_steps(
+            self,
+            demand_groups,
+            chains,
+            costs_aggregator,
+            motive_dur,
+            iteration,
+            activity_utility_coeff,
+            tmp_folders
+        ):
+        
+        spat_chains = pl.read_parquet(tmp_folders['spatialized-chains'])
+        modes = pl.read_parquet(tmp_folders["modes"])
+        
+        cost_by_od_and_modes = ( 
+            costs_aggregator.get_costs_by_od_and_mode(
+                ["cost"],
+                congestion=True,
+                detail_distances=False
+            )
+        )
+        
+        chains = ( 
+            chains
+            .join(demand_groups.select(["demand_group_id", "csp"]), on="demand_group_id")
+            .with_columns(duration_per_pers=pl.col("duration")/pl.col("n_persons"))
+        )
+        
+        # Keep only one mode / row per empty activity schedule.
+        # The mode search returns multiple rows because we use a dummy home motive
+        # for this empty schedule. We should find a better way to handle this.
+        modes = pl.concat([
+            modes.filter(pl.col("motive_seq_id") != 0),
+            modes.filter(pl.col("motive_seq_id") == 0).group_by(["demand_group_id", "motive_seq_id"]).head(1)
+        ])
+        
+        states = (
+            modes
+            .join(spat_chains, on=["iteration", "demand_group_id", "motive_seq_id", "seq_step_index"])
+            .join(chains, on=["demand_group_id", "motive_seq_id", "seq_step_index"])
+            .join(cost_by_od_and_modes, on=["from", "to", "mode"])
+            .join(motive_dur, on=["csp", "motive"])
+            .with_columns(
+                duration_per_pers=pl.max_horizontal([
+                    pl.col("duration_per_pers"),
+                    pl.col("mean_duration_per_pers")*0.1
+                 ])
+            )
+            .with_columns(
+                utility=activity_utility_coeff*pl.col("mean_duration_per_pers")*(pl.col("duration_per_pers")/0.1/pl.col("mean_duration_per_pers")).log() - pl.col("cost")
+            )
+            
+            # Set the utility of the home activity of the stay at home activity to zero
+            # (utility is computed directly at the day level in the compute_states_probability function)
+            .with_columns(
+                utility=(
+                    pl.when(pl.col("motive_seq_id") != 0)
+                    .then(pl.col("utility"))
+                    .otherwise(0.0)
+                )
+            )
+            
+        )
+        
+        return states
+        
+    
+    def get_possible_states_utility(self, possible_states_steps, home_night_dur, stay_home_utility_coeff):
+                    
+        possible_states_utility = (
+            
+            possible_states_steps
+            .group_by(["demand_group_id", "csp", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+            .agg(
+                utility=pl.col("utility").sum(),
+                home_night_per_pers=24.0 - pl.col("duration_per_pers").sum()
+            )
+            
+            .join(home_night_dur, on="csp")
+            .with_columns(
+                home_night_per_pers=pl.max_horizontal([
+                    pl.col("home_night_per_pers"),
+                    pl.col("mean_home_night_per_pers")*0.1
+                ])
+            )
+            .with_columns(
+                utility_stay_home=stay_home_utility_coeff*pl.col("mean_home_night_per_pers")*(pl.col("home_night_per_pers")/0.1/pl.col("mean_home_night_per_pers")).log()
+            )
+            
+            .with_columns(
+                utility=pl.col("utility") + pl.col("utility_stay_home")
+            )
+            
+            .select(["demand_group_id", "motive_seq_id", "mode_seq_id", "dest_seq_id", "utility"])
+        )
+        
+        
+        return possible_states_utility
+    
+    
+    
+    def get_transition_probabilities(self, current_states, possible_states_utility): 
+        
+        transition_probabilities = (
+            
+            current_states
+            .select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id", "utility"])
+            
+            .join_where(
+                possible_states_utility,
+                pl.col("demand_group_id") == pl.col("demand_group_id_trans"),
+                pl.col("utility") < pl.col("utility_trans"),
+                suffix="_trans"
+            )
+            
+            .with_columns(
+                delta_utility=pl.col("utility_trans") - pl.col("utility")
+            )
+            
+            .with_columns(
+                delta_utility=pl.col("delta_utility") - pl.col("delta_utility").max().over(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+            )
+            .filter(pl.col("delta_utility") > -5.0)
+            
+            .with_columns(
+                p_transition=pl.col("delta_utility").exp()/pl.col("delta_utility").exp().sum().over(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+            )
+            
+            .select([
+                "demand_group_id",
+                "motive_seq_id", "dest_seq_id", "mode_seq_id",
+                "motive_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans",
+                "utility_trans", "p_transition"]
+            )
+        
+        )
+        
+        return transition_probabilities
+    
+    
+    def apply_transitions(self, current_states, transition_probabilities):
+        
+        new_states = (
+            
+            current_states
             .join(
-                chains.rename({"transport_zone_id": "home_zone_id"}).lazy(),
-                on=["home_zone_id", "csp", "motive_subseq", "motive", "subseq_step_index"]
+                transition_probabilities,
+                on=["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"],
+                how="left"
             )
-            .select([
-                'home_zone_id', "csp", 'motive_subseq', 'motive', 'from', 'to',
-                'subseq_step_index', 'iteration', 'n_subseq', 'duration', "duration_per_subseq"
-            ])
-            
-            .collect(engine="streaming")
-            
+            .with_columns(
+                p_transition=pl.col("p_transition").fill_null(1.0),
+                utility=pl.coalesce([pl.col("utility_trans", "utility")]),
+                motive_seq_id=pl.coalesce([pl.col("motive_seq_id_trans", "motive_seq_id")]),
+                dest_seq_id=pl.coalesce([pl.col("dest_seq_id_trans", "dest_seq_id")]),
+                mode_seq_id=pl.coalesce([pl.col("mode_seq_id_trans", "mode_seq_id")])
+            )
+            .with_columns(
+                n_persons=pl.col("n_persons")*pl.col("p_transition")
+            )
+            .select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id", "n_persons", "utility"])
         )
         
-        return flows
+        return new_states
     
     
+    def get_current_states_steps(self, current_states, possible_states_steps):
         
-    
-    def assign_modes(self, iteration, flows, costs_aggregator, tmp_folders):
-        
-        logging.info("Assigning modes...")
-        
-        mode_sequences = pl.read_parquet(tmp_folders["modes"] / f"mode_sequences_{iteration}.parquet")
-        
-        costs = costs_aggregator.get_costs_by_od_and_mode(["cost"], congestion=True, detail_distances=False)
-        
-        flows = (
-            flows
-            .join(mode_sequences, on=["home_zone_id", "csp", "motive_subseq", "subseq_step_index"])
+        current_states_steps = (
+            current_states
+            .join(
+                possible_states_steps.select([
+                    "demand_group_id", "motive_seq_id", "dest_seq_id",
+                    "mode_seq_id", "motive", "from", "to", "mode", "duration_per_pers"
+                ]),
+                on=["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
+            )
+            .with_columns(
+                duration=pl.col("duration_per_pers")*pl.col("n_persons")
+            )
+            .drop("duration_per_pers")
         )
         
-        p_mode_seq = ( 
-            flows
-            .join(costs, on=["from", "to", "mode"])
-            .group_by(["home_zone_id", "csp", "motive_subseq", "mode_seq_index"])
-            .agg(pl.col("cost").sum())
-            .with_columns(
-                p_mode_seq=pl.col("cost").neg().exp()/pl.col("cost").neg().exp().sum().over(["home_zone_id", "csp", "motive_subseq"])
-            )
-            
-            # Keep only the first 99 % of the distribution
-            .sort("p_mode_seq", descending=True)
-            .with_columns(
-                p_mode_seq_cum=pl.col("p_mode_seq").cum_sum().over(["home_zone_id", "csp", "motive_subseq"]),
-                p_mode_seq_count=pl.col("p_mode_seq").cum_count().over(["home_zone_id", "csp", "motive_subseq"])
-            )
-            .filter((pl.col("p_mode_seq_cum") < 0.99) | (pl.col("p_mode_seq_count") == 1))
-            .with_columns(
-                p_ij=pl.col("p_mode_seq")/pl.col("p_mode_seq").sum().over(["home_zone_id", "csp", "motive_subseq"])
-            )
-            
-            .select(["home_zone_id", "csp", "motive_subseq", "mode_seq_index", "p_mode_seq"])
-        )
-        
-        flows = (
-            flows 
-            .join(p_mode_seq, on=["home_zone_id", "csp", "motive_subseq", "subseq_step_index", "mode_seq_index"])
-            .with_columns(
-                n_subseq=pl.col("n_subseq")*pl.col("p_mode_seq")
-            )
-            .select([
-                'home_zone_id', 'csp', 'motive_subseq', "mode_seq_index",
-                'motive', 'from', 'to', 'subseq_step_index', 'iteration',
-                'n_subseq', 'duration', 'duration_per_subseq'
-            ])
-        )
-
-        return flows
-    
-        
+        return current_states_steps
     
     
-    def update_costs(self, iteration, n_iter_per_cost_update, flows, costs_aggregator):
+    def update_costs(self, costs, iteration, n_iter_per_cost_update, current_states_steps, costs_aggregator):
         """
             If a cost update is needed, aggregate the flows by origin, destination
             and mode, compute the user equilibrium on the road network and 
@@ -607,10 +1100,11 @@ class PopulationTrips(FileAsset):
         if n_iter_per_cost_update > 0 and iteration > 0 and iteration % n_iter_per_cost_update == 0:
             
             od_flows_by_mode = (
-                flows
+                current_states_steps
+                .filter(pl.col("motive_seq_id") != 0)
                 .group_by(["from", "to", "mode"])
                 .agg(
-                    flow_volume=pl.col("n_subseq").sum()
+                    flow_volume=pl.col("n_persons").sum()
                 )
             )
             
@@ -623,7 +1117,7 @@ class PopulationTrips(FileAsset):
     
 
         
-    def unassign_overflow(self, flows, sinks):
+    def fix_overflow(self, states_steps, sinks):
         
         # Compute the share of persons in each OD flow that could not find an
         # opportunity because too many people chose the same destiation
@@ -634,9 +1128,9 @@ class PopulationTrips(FileAsset):
         # p_overflow = max(p_overflow_motive)
         logging.info("Correcting flows for sink saturation...")
         
-        flows_overflow = (
+        overflow = (
             
-            flows
+            states_steps
             
             .join(sinks, on=["motive", "to"], how="left")
             .with_columns(
@@ -647,108 +1141,51 @@ class PopulationTrips(FileAsset):
                 )
             )
             .with_columns(
-                p_overflow_max=pl.col("p_overflow").max().over(["home_zone_id", "csp", "motive_subseq", "mode_seq_index", "iteration"])
+                p_overflow_max=pl.col("p_overflow").max().over(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
             )
             .with_columns(
-                overflow=pl.col("n_subseq")*pl.col("p_overflow_max")
+                n_persons_overflow=pl.col("n_persons")*pl.col("p_overflow_max")
             )
-            .with_columns(
-                n_subseq=pl.col("n_subseq") - pl.col("overflow")
-            )
+            
+            .group_by(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+            .agg(pl.col("n_persons_overflow").first())
+            
+            .group_by(["demand_group_id"])
+            .agg(pl.col("n_persons_overflow").sum())
             
         )
         
-        return flows_overflow
-    
-    
-    
-    def unassign_optim(self, flows, costs, delta_cost_change):
-        
-        # Compute the number of persons switching destinations after comparing their 
-        # utility to the average utility of persons living in the same place
-        # (adding X € to the no switch decision to account for transition costs)
-        logging.info("Correcting flows for persons optimizing their cost...")
-        
-        p_seq_change = (
+        states_stay_home = (
             
-            flows
-        
-            .join(costs, on=["from", "to"])
-            .group_by(["home_zone_id", "csp", "motive_subseq", "i"])
-            .agg(
-                cost=pl.col("cost").sum(),
-                n_subseq=pl.col("n_subseq").first()
-            )
+            states_steps
+            .filter(pl.col("motive_seq_id") == 0)
+            .join(overflow, on="demand_group_id")
             .with_columns(
-                average_cost=(
-                    (pl.col("cost")*pl.col("n_subseq"))
-                    .sum().over(["home_zone_id", "csp", "motive_subseq"])
-                    /
-                    pl.col("n_subseq")
-                    .sum().over(["home_zone_id", "csp", "motive_subseq"])
-                )
+                n_persons=pl.col("n_persons") + pl.col("n_persons_overflow")
             )
-            .with_columns(
-                delta_cost=pl.col("average_cost") - (pl.col("cost") + delta_cost_change)
-            )
-            .with_columns(
-                p_seq_change=(
-                    pl.when(pl.col("delta_cost").abs() > 10.0)
-                    .then(pl.when(pl.col("delta_cost") > 0.0).then(0.0).otherwise(1.0))
-                    .otherwise(1.0/(1.0+pl.col("delta_cost").exp()))
-                )
-            )
-        
-            .select(["home_zone_id", "csp", "motive_subseq", "i", "p_seq_change"])
+            .drop("n_persons_overflow")
             
         )
         
-        flows_change = (
+        states_steps_fixed = pl.concat([
+            states_steps.filter(pl.col("motive_seq_id") != 0),
+            states_stay_home
+        ])
         
-            flows
-            .join(p_seq_change, on=["home_zone_id", "csp", "motive_subseq", "i"])
-            .with_columns(
-                change=pl.col("n_subseq")*pl.col("p_seq_change")
-            )
-            .with_columns(
-                n_subseq=pl.col("n_subseq") - pl.col("change")
-            )
-            
-        )
-        
-        return flows_change
+        return states_steps_fixed
     
     
-    def unassign_random(self, flows, random_switch_rate):
-        
-        # Compute the share of persons switching destinations for random reasons
-        flows_rand_switch = (
-            
-            flows
-            .with_columns(
-                random_switch=pl.col("n_subseq")*random_switch_rate
-            )
-            .with_columns(
-                n_subseq=pl.col("n_subseq") - pl.col("random_switch"),
-                delta_n_subseq=pl.col("overflow") + pl.col("change") + pl.col("random_switch")
-            )
-            .with_columns(
-                duration=pl.col("n_subseq")*pl.col("duration_per_subseq"),
-                delta_duration=pl.col("delta_n_subseq")*pl.col("duration_per_subseq")
-            )
-            
-        )        
-        
-        return flows_rand_switch
 
 
-    def prepare_next_iteration_vars(self, flows, sinks):
+    def get_remaining_sinks(self, current_states_steps, sinks):
+        
+        logging.info("Computing remaining opportunities at destinations...")
 
         # Compute the remaining number of opportunities by motive and destination
         # once assigned flows are accounted for
         remaining_sinks = (
         
-            flows
+            current_states_steps
             .group_by(["to", "motive"])
             .agg(pl.col("duration").sum())
             .join(sinks, on=["to", "motive"], how="full", coalesce=True)
@@ -764,32 +1201,7 @@ class PopulationTrips(FileAsset):
             
         )
         
-        # Compute the number of unassigned persons by motive sequence and transport zone
-        chains = (
-            flows
-            .group_by(["home_zone_id", "csp", "motive_subseq", "motive", "subseq_step_index"])
-            .agg(
-                n_subseq=pl.col("delta_n_subseq").sum(),
-                duration=pl.col("delta_duration").sum()
-            )
-            .with_columns(
-                duration_per_subseq=pl.col("duration")/pl.col("n_subseq")
-            )
-            .rename({"home_zone_id": "transport_zone_id"})
-        )
-        
-        
-        previous_flows = (
-            flows
-            .select(
-                [
-                    'home_zone_id', "csp", 'motive_subseq', 'motive', 'from', 'to',
-                    'subseq_step_index', 'i', 'n_subseq', "duration", "duration_per_subseq"
-                ]
-            )
-        )
-        
-        return previous_flows, remaining_sinks, chains
+        return remaining_sinks
         
         
         
@@ -854,126 +1266,9 @@ class PopulationTrips(FileAsset):
         return costs_bin, cost_bin_to_dest
     
     
-    def get_destination_probability(self, utilities, motives):
-        
-        # Compute the probability of choosing a destination, given a trip motive, an 
-        # origin and the costs to get to destinations
-        logging.info("Computing the probability of choosing a destination based on current location, potential destinations, and motive (with radiation models)...")
-        
-        costs_bin = utilities[0]
-        cost_bin_to_dest = utilities[1]
 
-        motives_lambda = {motive.name: motive.radiation_lambda for motive in motives}
-        
-        prob = (
-                
-            # Apply the radiation model for each motive and origin
-            costs_bin
-            .with_columns(
-                s_ij=pl.col("sink_duration").cum_sum().over(["from", "motive"]),
-                selection_lambda=pl.col("motive").replace_strict(motives_lambda)
-            )
-            .with_columns(
-                p_a = (1 - pl.col("selection_lambda")**(1+pl.col('s_ij'))) / (1+pl.col('s_ij')) / (1-pl.col("selection_lambda"))
-            )
-            .with_columns(
-                p_a_lag=( 
-                    pl.col('p_a')
-                    .shift(fill_value=1.0)
-                    .over(["from", "motive"])
-                    .alias('p_a_lag')
-                )
-            )
-            .with_columns(
-                p_ij=pl.col('p_a_lag') - pl.col('p_a')
-            )
-            .with_columns(
-                p_ij=pl.col('p_ij') / pl.col('p_ij').sum().over(["from", "motive"])
-            )
-            .filter(pl.col("p_ij") > 0.0)
-            
-            # Keep only the first 99 % of the distribution
-            .sort("p_ij", descending=True)
-            .with_columns(
-                p_ij_cum=pl.col("p_ij").cum_sum().over(["from", "motive"]),
-                p_count=pl.col("p_ij").cum_count().over(["from", "motive"])
-            )
-            .filter((pl.col("p_ij_cum") < 0.99) | (pl.col("p_count") == 1))
-            .with_columns(p_ij=pl.col("p_ij")/pl.col("p_ij").sum().over(["from", "motive"]))
-            
-            # Disaggregate bins -> destinations
-            .join(cost_bin_to_dest, on=["motive", "from", "cost_bin"])
-            .with_columns(p_ij=pl.col("p_ij")*pl.col("p_to"))
-            .group_by(["motive", "from", "to"])
-            .agg(pl.col("p_ij").sum())
-            
-            # Keep only the first 99 % of the distribution
-            # (or the destination that has a 100% probability, which can happen)
-            .sort("p_ij", descending=True)
-            .with_columns(
-                p_ij_cum=pl.col("p_ij").cum_sum().over(["from", "motive"]),
-                p_count=pl.col("p_ij").cum_count().over(["from", "motive"])
-            )
-            .filter((pl.col("p_ij_cum") < 0.99) | (pl.col("p_count") == 1))
-            .with_columns(p_ij=pl.col("p_ij")/pl.col("p_ij").sum().over(["from", "motive"]))
-            
-            .select(["motive", "from", "to", "p_ij"])
-            
-            # .collect(engine="streaming")
-        )
-        
-        return prob
     
     
-    def disaggregate_by_mode(self, flows_path, n_samples, costs):
-        
-        
-        p_od_to_mode = costs.get_prob_by_od_and_mode(["cost"], congestion=True)
-        
-        # c = costs.get_costs_by_od_and_mode(["cost"], congestion=True, detail_distances=True)
-        # c = c.filter(pl.col("from") == 71).filter(pl.col("to") == 492).to_pandas()
-        # c = c.filter(pl.col("from") == 571).filter(pl.col("to") == 348).to_pandas()
-        
-        # costs.get_costs_by_od_and_mode(["cost"], congestion=True, detail_distances=False).write_parquet("d:/data/mobility/costs.parquet")
-        # costs.get_prob_by_od_and_mode(["cost"], congestion=True).write_parquet("d:/data/mobility/probs.parquet")
-        
-        # Add symetrical mode names for multimodal modes
-        mode_names =  [m.name for m in costs.modes]
-        sym_mode_names = []
-        for name in mode_names:
-            if "public_transport" in name:
-                legs = name.split("/")
-                if legs[0] != legs[2]:
-                    sym_mode_names.append(legs[2] + "/public_transport/" + legs[0])
-        mode_names.extend(sym_mode_names)
-        
-        f = ( 
-            pl.read_parquet(flows_path / f"flows_{n_samples-1}.parquet")
-            .with_row_index()
-            .select(["index", "from", "to"])
-            .join(p_od_to_mode, ["from", "to"])
-            .pivot(on="mode", index=["index", "from", "to"])
-        )
-        
-        p_mat = f.select(mode_names).fill_null(1e-6).to_numpy()
-        p_mat = np.repeat(p_mat[:, :, np.newaxis], 10, axis=2)
-        E = -np.log(np.random.uniform(0, 1, size=p_mat.shape))/p_mat
-        samples = np.argmin(E, axis=1)
-        samples = pl.DataFrame(samples)
-        samples.columns = [f"sample_{i}" for i in range(len(samples.columns))]
-        
-
-            
-        flows = ( 
-            pl.scan_parquet(flows_path / f"flows_{n_samples-1}.parquet")
-            .join(p_od_to_mode.lazy(), on=["from", "to"])
-            .with_columns(
-                flow_volume=pl.col("n_subseq")*pl.col("prob")
-            )
-            .drop(["prob", "n_subseq"])
-        )
-        
-        return flows
 
 
     def plot_modal_share(self, zone="origin", mode="car", period="weekdays"):

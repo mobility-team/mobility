@@ -12,7 +12,8 @@ class HomeMotive(Motive):
         super().__init__(
             name="home",
             survey_ids=survey_ids,
-            has_opportunities=False
+            has_opportunities=False,
+            is_anchor=True
         )
 
     def get_opportunities(self, transport_zones):

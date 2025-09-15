@@ -13,6 +13,7 @@ class Motive(InMemoryAsset):
             survey_ids: List[str] = None,
             radiation_lambda: float = None,
             has_opportunities: bool = True,
+            is_anchor: bool = False,
             opportunities: pd.DataFrame = None,
             utilities: pd.DataFrame = None,
             country_utilities: Dict = None,
@@ -23,6 +24,7 @@ class Motive(InMemoryAsset):
         self.survey_ids = survey_ids
         self.radiation_lambda = radiation_lambda
         self.has_opportunities = has_opportunities
+        self.is_anchor = is_anchor
         self.opportunities = opportunities
         self.utilities = utilities
         self.country_utilities = country_utilities

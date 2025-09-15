@@ -25,12 +25,12 @@ class EMPMobilitySurvey(MobilitySurvey):
         prepare_survey_data_EMP_2019: Processes and formats EMP-2019 survey data.
     """
     
-    def __init__(self):
+    def __init__(self, seq_prob_cutoff: float):
         inputs = {
             "survey_name": "fr-EMP-2019",
             "country": "fr"
         }
-        super().__init__(inputs)
+        super().__init__(inputs, seq_prob_cutoff)
         
     
     def create_and_get_asset(self) -> dict[str, pd.DataFrame]:

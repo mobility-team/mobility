@@ -27,6 +27,7 @@ class WorkMotive(Motive):
             name="work",
             survey_ids=survey_ids,
             radiation_lambda=radiation_lambda,
+            is_anchor=True,
             opportunities=opportunities,
             utilities=utilities,
             country_utilities=country_utilities
