@@ -270,7 +270,10 @@ class PopulationTrips(FileAsset):
         
         p_chain = (
             p_chain
-            .join(motive_seqs.select(["motive_seq", "motive_seq_id"]), on="motive_seq")
+            .join(
+                motive_seqs.select(["motive_seq", "motive_seq_id", "seq_step_index"]),
+                on=["motive_seq", "seq_step_index"]
+            )
             .drop("motive_seq")
         )
         
@@ -301,14 +304,7 @@ class PopulationTrips(FileAsset):
             .group_by(["demand_group_id", "motive_seq_id", "seq_step_index", "motive"])
             .agg(
                 n_persons=pl.col("n_persons").sum(),
-                duration=(
-                    (
-                        pl.col("duration_morning")
-                        + pl.col("duration_midday")
-                        + pl.col("duration_evening")
-                    )
-                    * pl.col("n_persons")
-                ).sum()
+                duration=(pl.col("n_persons")*pl.col("duration")).sum()
             )
             
             .sort(["demand_group_id", "motive_seq_id",  "seq_step_index"])
@@ -428,6 +424,7 @@ class PopulationTrips(FileAsset):
 
         demand = ( 
             chains
+            .filter(pl.col("motive_seq_id") != 0)
             .group_by(["motive"])
             .agg(pl.col("duration").sum())
         )
@@ -1117,7 +1114,7 @@ class PopulationTrips(FileAsset):
     
 
         
-    def fix_overflow(self, states_steps, sinks):
+    def fix_overflow(self, current_states_steps, sinks):
         
         # Compute the share of persons in each OD flow that could not find an
         # opportunity because too many people chose the same destiation
@@ -1130,7 +1127,7 @@ class PopulationTrips(FileAsset):
         
         overflow = (
             
-            states_steps
+            current_states_steps
             
             .join(sinks, on=["motive", "to"], how="left")
             .with_columns(
@@ -1157,7 +1154,7 @@ class PopulationTrips(FileAsset):
         
         states_stay_home = (
             
-            states_steps
+            current_states_steps
             .filter(pl.col("motive_seq_id") == 0)
             .join(overflow, on="demand_group_id")
             .with_columns(
@@ -1168,7 +1165,7 @@ class PopulationTrips(FileAsset):
         )
         
         states_steps_fixed = pl.concat([
-            states_steps.filter(pl.col("motive_seq_id") != 0),
+            current_states_steps.filter(pl.col("motive_seq_id") != 0),
             states_stay_home
         ])
         
