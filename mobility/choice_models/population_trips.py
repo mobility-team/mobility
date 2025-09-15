@@ -154,7 +154,10 @@ class PopulationTrips(FileAsset):
         
         current_states_steps = (
             current_states_steps
-            .join(demand_groups, on=["demand_group_id"])
+            .join(
+                demand_groups.select(["demand_group_id", "home_zone_id", "csp", "n_cars"]),
+                on=["demand_group_id"]
+            )
             .drop("demand_group_id")
         )
 
@@ -1070,7 +1073,8 @@ class PopulationTrips(FileAsset):
             .join(
                 possible_states_steps.select([
                     "demand_group_id", "motive_seq_id", "dest_seq_id",
-                    "mode_seq_id", "motive", "from", "to", "mode", "duration_per_pers"
+                    "mode_seq_id", "seq_step_index", "motive",
+                    "from", "to", "mode", "duration_per_pers"
                 ]),
                 on=["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
             )
@@ -1154,9 +1158,9 @@ class PopulationTrips(FileAsset):
             
             current_states_steps
             .filter(pl.col("motive_seq_id") == 0)
-            .join(overflow, on="demand_group_id")
+            .join(overflow, on="demand_group_id", how="left")
             .with_columns(
-                n_persons=pl.col("n_persons") + pl.col("n_persons_overflow")
+                n_persons=pl.col("n_persons") + pl.col("n_persons_overflow").fill_null(0.0)
             )
             .drop("n_persons_overflow")
             
