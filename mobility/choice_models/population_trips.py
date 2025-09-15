@@ -1271,7 +1271,8 @@ class PopulationTrips(FileAsset):
     
 
 
-    def plot_modal_share(self, zone="origin", mode="car", period="weekdays"):
+    def plot_modal_share(self, zone="origin", mode="car", period="weekdays",
+                         labels=None, labels_size=[10, 6, 4], labels_color="black"):
         """
         Plot modal share for the given mode in the origin or destination zones during weekdays or weekends.
 
@@ -1324,12 +1325,17 @@ class PopulationTrips(FileAsset):
         gcp = gc.plot("modal_share", legend=True)
         gcp.set_axis_off()
         plt.title(f"{mode_name} share per {zone} transport zone ({period})")
+
+        if isinstance(labels, gpd.GeoDataFrame):
+            self.__show_labels__(labels, labels_size, labels_color)        
+        
         plt.show()
 
         return mode_share
 
     def plot_od_flows(self, mode="all", motive="all", period="weekdays", level_of_detail=0,
-                      n_largest=2000, color="blue", transparency=0.2, zones_color="gray"):
+                      n_largest=2000, color="blue", transparency=0.2, zones_color="xkcd:light grey",
+                      labels=None, labels_size=[10, 6, 4], labels_color="black"):
         """
         Plot flows between the different zones for the given mode, motive, period and level of detail.
 
@@ -1413,6 +1419,80 @@ class PopulationTrips(FileAsset):
             plt.plot([row["x"], row["x_to"]], [row["y"], row["y_to"]],
                      linewidth=row["flow_volume"]/500, color=color, alpha=transparency)
 
+        if isinstance(labels, gpd.GeoDataFrame):
+            self.__show_labels__(labels, labels_size, labels_color)
+
         plt.show()
 
         return biggest_flows
+
+    def __show_labels__(self, labels, size, color):
+        for index, row in labels.iterrows():
+            if row["prominence"] == 1:
+                plt.annotate(row["local_admin_unit_name"], (row["x"], row["y"]),
+                             size=size[0], ha="center", va="center", color=color)
+            elif row["prominence"] <3:
+                plt.annotate(row["local_admin_unit_name"], (row["x"], row["y"]),
+                             size=size[1], ha="center", va="center", color=color)
+            else:
+                plt.annotate(row["local_admin_unit_name"], (row["x"], row["y"]),
+                             size=size[2], ha="center", va="center", color=color)
+
+    def get_prominent_cities(self, n_cities=20, n_levels=3, distance_km=2):
+        """
+        Get the most prominent cities, ie the biggest cities that are not close to a bigger city.
+
+        Useful to label a map and reducing the number of overlaps without mising an important city.
+
+        Parameters
+        ----------
+        n_cities : int, optional
+            Number of cities to include in the list. The default is 20.
+        n_levels : int, optional
+            Levels of prominence to consider.
+        distance_km : int, optional
+            If a city is closer than this distance to a bigger one, it will be considered less prominent.
+            The default is 2.
+
+        Returns
+        -------
+        None.
+
+        """
+        # Get the flows, the study area and the transport zones dataframes
+        population_df = self.get()["weekday_flows"].collect().to_pandas()
+        study_area_df = self.population.transport_zones.study_area.get()
+        tzdf = self.population.transport_zones.get()
+
+        # Group flows per local admin unit
+        flows_per_commune = population_df.merge(tzdf, left_on="from", right_on="transport_zone_id")
+        flows_per_commune = flows_per_commune.groupby("local_admin_unit_id")["flow_volume"].sum().reset_index()
+        flows_per_commune = flows_per_commune.merge(study_area_df)
+
+        # Keep the most important cities and five them an initial prominence depending on total flows
+        # Use n_levels here in the future
+        flows_per_commune = flows_per_commune.sort_values(by="flow_volume", ascending=False).head(n_cities*2).reset_index()
+        flows_per_commune.loc[0, "prominence"] = 1
+        flows_per_commune.loc[1:n_cities//2, "prominence"] = 2
+        flows_per_commune.loc[n_cities//2+1:n_cities, "prominence"] = 3
+        flows_per_commune.loc[n_cities+1:n_cities*2, "prominence"] = 3
+
+        # Transform them into a GeoDataFrame
+        geoflows = gpd.GeoDataFrame(flows_per_commune)
+
+        # If an admin unit is too close to a bigger admin unit, make it less prominent
+        for i in range(n_cities//2):
+            coords = flows_per_commune.loc[i, "geometry"]
+            geoflows["dists"] = geoflows["geometry"].distance(coords)
+            # Use distance_km here
+            geoflows.loc[
+                ((geoflows["dists"] < distance_km*1000) & (geoflows.index > i)), "prominence"
+                ] = geoflows["prominence"] + 2
+            geoflows = geoflows.sort_values(by="prominence").reset_index(drop=True)
+
+        # Keep only the most prominent admin units and add their centroids
+        geoflows = geoflows[geoflows["prominence"] <= n_levels]
+        xy_coords = geoflows["geometry"].centroid.get_coordinates()
+        geoflows = geoflows.merge(xy_coords, left_index=True, right_index=True)
+
+        return geoflows
