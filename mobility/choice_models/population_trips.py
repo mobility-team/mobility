@@ -77,10 +77,7 @@ class PopulationTrips(FileAsset):
         
         
     def get_cached_asset(self):
-        return {
-            "weekday_flows": pl.scan_parquet(self.cache_path["weekday_flows"]),
-            "weekend_flows": pl.scan_parquet(self.cache_path["weekend_flows"])
-        }
+        return {k: pl.scan_parquet(v) for k, v in self.cache_path.items()}
         
         
     def create_and_get_asset(self):
@@ -91,10 +88,7 @@ class PopulationTrips(FileAsset):
         weekday_flows.write_parquet(self.cache_path["weekday_flows"])
         weekend_flows.write_parquet(self.cache_path["weekend_flows"])
             
-        return {
-            "weekday_flows": weekday_flows,
-            "weekend_flows": weekend_flows
-        }
+        return {k: pl.scan_parquet(v) for k, v in self.cache_path.items()}
 
     def compute_flows(self, is_weekday):
 
@@ -661,6 +655,8 @@ class PopulationTrips(FileAsset):
     
     def spatialize_other_motives(self, chains, dest_prob, costs, alpha):
         
+        logging.info("Spatializing other motives...")
+        
         chains_step = ( 
             chains
             .filter(pl.col("seq_step_index") == 1)
@@ -671,8 +667,6 @@ class PopulationTrips(FileAsset):
         spatialized_chains = []
         
         while chains_step.height > 0:
-            
-            logging.info(f"Spatializing motives for motive sequence step n°{seq_step_index}...")
             
             spatialized_step = ( 
                 self.spatialize_trip_chains_step(seq_step_index, chains_step, dest_prob, costs, alpha)
@@ -1022,7 +1016,10 @@ class PopulationTrips(FileAsset):
             .with_columns(
                 delta_utility=pl.col("delta_utility") - pl.col("delta_utility").max().over(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
             )
-            .filter(pl.col("delta_utility") > -5.0)
+            .filter(
+                (pl.col("delta_utility") > -5.0 ) | 
+                (pl.col("motive_seq_id") == 0)
+            )
             
             .with_columns(
                 p_transition=pl.col("delta_utility").exp()/pl.col("delta_utility").exp().sum().over(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
@@ -1032,8 +1029,8 @@ class PopulationTrips(FileAsset):
                 "demand_group_id",
                 "motive_seq_id", "dest_seq_id", "mode_seq_id",
                 "motive_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans",
-                "utility_trans", "p_transition"]
-            )
+                "utility_trans", "p_transition"
+            ])
         
         )
         
@@ -1128,6 +1125,7 @@ class PopulationTrips(FileAsset):
         overflow = (
             
             current_states_steps
+            .filter(pl.col("motive_seq_id") != 0)
             
             .join(sinks, on=["motive", "to"], how="left")
             .with_columns(
