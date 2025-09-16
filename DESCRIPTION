@@ -10,6 +10,7 @@ Imports:
     data.table,
     dbscan,
     dodgr,
+    dplyr,
     duckdb,
     FNN,
     future,
