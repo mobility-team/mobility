@@ -1,3 +1,6 @@
+# Presentation
+Sorry, only available in French for now!
+
 # Présentation de Mobility
 ## Concepts de base
 Mobility est un outil qui permet d'obtenir des échantillons de **déplacements** pour une population d'**usagers** d'un **territoire** d'étude. Ces déplacements peuvent être effectués pour différents **motifs**, avec différents **modes de transport**, dans le cadre de **voyages** ou d'une **mobilité quotidienne**.
@@ -18,7 +21,7 @@ Le croisement de ces informations donne des types d'usager, comme par exemple : 
 ### Méthode d'échantillonnage des déplacements
 Pour chacun de ces types d'usagers, Mobility utilise les données détaillées des enquêtes nationales sur les déplacements des personnes (ENDT 2008 ou EMP 2018/2019) pour échantillonner un ensemble de déplacements pendant une ou plusieurs années.
 
-La stratégie d'échantillonnage consiste à distinguer plusieurs types de déplacements personnels et professionnels : 
+La stratégie d'échantillonnage consiste à distinguer plusieurs types de déplacements personnels et professionnels :
 - Les déplacements effectués pour des voyages, pour aller à la destination et revenir au point d'origine.
 - Les déplacements effectués au sein d'un voyage, une fois à destination.
 - Les déplacements quotidiens, en distinguant mobilité de semaine et du week-end.
@@ -27,7 +30,7 @@ La méthode commence par fixer un nombre de voyages sur la période étudiée, s
 
 Au sein de chaque voyage, la méthode échantillonne ensuite chaque jour que dure le voyage des journées de déplacements, composée de chaînes de déplacements effectués pour différents motifs par l'usager (faire des courses, se rendre dans un lieu de loisir...). Si le voyage a un motif professionnel, on échantillonne uniquement des journées de semaine. Si le voyage a un motif personnel, on échantillonne uniquement des journées de week-end. On reflète ainsi les différences de motifs de déplacements au lieu de destination entre voyages professionnels et personnels, même si cela reste une approximation.
 
-La méthode calcule ensuite un nombre de jours de semaine et de week-end hors voyages, pour lesquels l'usager peut être immobile ou mobile (au moins un déplacement dans la journée). Le nombre de jours d'immobilité dépend de la catégorie socio-professionnelle de l'usager. Pour les jours où l'usager est mobile, la méthode échantillonne enfin un ensemble de journées de déplacements de semaine et de week-end. 
+La méthode calcule ensuite un nombre de jours de semaine et de week-end hors voyages, pour lesquels l'usager peut être immobile ou mobile (au moins un déplacement dans la journée). Le nombre de jours d'immobilité dépend de la catégorie socio-professionnelle de l'usager. Pour les jours où l'usager est mobile, la méthode échantillonne enfin un ensemble de journées de déplacements de semaine et de week-end.
 
 On s'assure de la cohérence quotidienne des chaines de déplacement en faisant ce tirage au niveau de la journée, plutôt que directement au niveau du déplacement : le fait que l'usager part de chez lui le matin et revient chez lui le soir la plupart des jours est par exemple bien représenté.
 
@@ -47,7 +50,7 @@ Il est alors possible d'agréger les résultats pour calculer des distances parc
 
 ## Adaptation de l'échantillon de déplacements aux caractéristiques urbaines et de transport du territoire
 ### Limites de l'échantillonnage des données d'enquête
-Les résultats obtenus sont incertains, avec une méthode qui s'appuie sur des enquêtes forcément incertaines et datées. L'échantillonnage des déplacements donne une vision statistiquement correcte pour une population mais individuellement très peu probable pour certains types de trajet : un actif voit par exemple sa distance domicile-travail et le mode de transport utilisé pour ce motif varier potentiellement tous les jours. 
+Les résultats obtenus sont incertains, avec une méthode qui s'appuie sur des enquêtes forcément incertaines et datées. L'échantillonnage des déplacements donne une vision statistiquement correcte pour une population mais individuellement très peu probable pour certains types de trajet : un actif voit par exemple sa distance domicile-travail et le mode de transport utilisé pour ce motif varier potentiellement tous les jours.
 
 Nous faisons cependant l'hypothèse que nous pouvons réduire cette incertitude, pour les déplacements quotidiens, en ajoutant une seconde étape au modèle, de territorialisation.
 
