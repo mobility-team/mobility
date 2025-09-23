@@ -58,7 +58,7 @@ def setup_mobility(local, clear_inputs, clear_results):
 
 def get_test_data():
     return {
-        "transport_zones_local_admin_unit_id": "fr-09122", #Foix instead of Rodez 12202
+        "transport_zones_local_admin_unit_id": "fr-09261", #fails with Foix 09122 and Rodez 12202, let's test Saint-Girons
         "transport_zones_radius": 10.0,
         "population_sample_size": 10
     }
