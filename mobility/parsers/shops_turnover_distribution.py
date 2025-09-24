@@ -41,7 +41,7 @@ class ShopsTurnoverDistribution(FileAsset):
         shops_turnover_ratio = self.prepare_shops_turnover_ratio()
         shops_turnover_fr = self.prepare_french_shops_turnover_distribution(shops_turnover_ratio)
         shops_turnover_ch = self.prepare_swiss_shops_turnover_distribution(shops_turnover_ratio)
-        
+
         # Combine datasets and save
         shops_turnover = pd.concat([shops_turnover_fr, shops_turnover_ch])
         shops_turnover = shops_turnover.dropna(subset=["local_admin_unit_id"])
@@ -69,7 +69,7 @@ class ShopsTurnoverDistribution(FileAsset):
         facilities_turnover_ratio["turnover"] = pd.to_numeric(
             facilities_turnover_ratio["turnover"], errors="coerce"
         ) * 1e6
-        
+
         facilities_turnover_ratio["n_employees"] = pd.to_numeric(
             facilities_turnover_ratio["n_employees"], errors="coerce"
         )
@@ -102,14 +102,14 @@ class ShopsTurnoverDistribution(FileAsset):
         facilities_turnover_ratio_grouped = facilities_turnover_ratio.groupby(
             ["code_equipement", "libelle_equipement", "size", "naf_id"]
         )[["turnover_by_employee", "turnover_by_equipment"]].mean().reset_index()
-        
+
         # Filter for relevant shop-related categories
         shops_turnover_ratio = facilities_turnover_ratio_grouped[
             facilities_turnover_ratio_grouped["code_equipement"].str.startswith("B")
         ]
         shops_turnover_ratio = shops_turnover_ratio.dropna(subset=["turnover_by_employee", "turnover_by_equipment"])
         shops_turnover_ratio = shops_turnover_ratio[
-            (shops_turnover_ratio["code_equipement"].str.startswith("B")) & 
+            (shops_turnover_ratio["code_equipement"].str.startswith("B")) &
             (shops_turnover_ratio["size"] == "all")
         ]
         return shops_turnover_ratio
@@ -118,31 +118,31 @@ class ShopsTurnoverDistribution(FileAsset):
         """
         Prepares turnover data for shops in France.
         """
-        
+
         insee_data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "insee"
 
         # Download shop location data
-        url = "https://www.insee.fr/fr/statistiques/fichier/8217525/BPE23.parquet"
-        parquet_path = insee_data_folder / "BPE23.parquet"
+        url = "https://www.insee.fr/fr/statistiques/fichier/8217525/BPE24.parquet"
+        parquet_path = insee_data_folder / "BPE24.parquet"
         download_file(url, parquet_path)
-        
-        
+
+
         french_shops = pq.read_table(
             parquet_path
             )
         french_shops = french_shops.to_pandas()
         french_shops = french_shops.dropna(subset=["LONGITUDE"])
         french_shops = french_shops[french_shops["TYPEQU"].str.startswith("B")]
-        
-        
+
+
         french_shops_turnover = pd.merge(
             french_shops,
-            shops_turnover_ratio, 
-            left_on="TYPEQU", 
-            right_on="code_equipement", 
+            shops_turnover_ratio,
+            left_on="TYPEQU",
+            right_on="code_equipement",
             how = "left"
             )
-        
+
         french_shops_turnover = french_shops_turnover[[
             "DEPCOM", "naf_id", "LONGITUDE", "LATITUDE", "turnover_by_equipment"
             ]]
@@ -157,7 +157,7 @@ class ShopsTurnoverDistribution(FileAsset):
         """
         Prepares turnover data for shops in Switzerland.
         """
-        
+
         bfs_data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "bfs"
 
         # Download Swiss employment data
@@ -168,13 +168,13 @@ class ShopsTurnoverDistribution(FileAsset):
         # Extract the archive
         with zipfile.ZipFile(statent_zip_path, "r") as zip_ref:
             zip_ref.extractall(bfs_data_folder)
-            
+
         swiss_employees_colnames = pd.read_csv(
-            bfs_data_folder / "ag-b-00.03-22-STATENT2022" / "STATENT_2022.csv", 
-            sep=";", 
-            index_col=0, 
+            bfs_data_folder / "ag-b-00.03-22-STATENT2022" / "STATENT_2022.csv",
+            sep=";",
+            index_col=0,
             nrows=0
-        ).columns.tolist() 
+        ).columns.tolist()
         selected_columns = [swiss_employees_colnames[i] for i in [1, 2, 3] + list(range(226, 311))]
 
 
@@ -182,8 +182,8 @@ class ShopsTurnoverDistribution(FileAsset):
 
         # Lire uniquement les colonnes sélectionnées
         swiss_employees = pd.read_csv(
-            statent_path, 
-            sep=";", 
+            statent_path,
+            sep=";",
             usecols=selected_columns
         )
 
@@ -205,8 +205,8 @@ class ShopsTurnoverDistribution(FileAsset):
         swiss_shop_employees = swiss_employees[swiss_employees["code_equipement"].str.startswith("B")]
         swiss_shops_turnover = pd.merge(
             swiss_shop_employees,
-            shops_turnover_ratio, 
-            on=["code_equipement", "naf_id"], 
+            shops_turnover_ratio,
+            on=["code_equipement", "naf_id"],
             how = "left"
             )
 
@@ -217,40 +217,40 @@ class ShopsTurnoverDistribution(FileAsset):
         }).reset_index()
 
         swiss_shops_turnover["turnover"] = swiss_shops_turnover["turnover_by_employee"] * swiss_shops_turnover["value"]
-        
+
         # Adjust point to the center of the grid
         grid_resolution = 100
         swiss_shops_turnover["E_KOORD_center"] = swiss_shops_turnover["E_KOORD"] + grid_resolution/2
         swiss_shops_turnover["N_KOORD_center"] = swiss_shops_turnover["N_KOORD"] + grid_resolution/2
 
         # transform in GeoDataFrame
-        swiss_shops_turnover = gpd.GeoDataFrame(swiss_shops_turnover, 
+        swiss_shops_turnover = gpd.GeoDataFrame(swiss_shops_turnover,
                                geometry=gpd.points_from_xy(
-                                   swiss_shops_turnover["E_KOORD_center"], 
-                                   swiss_shops_turnover["N_KOORD_center"]), 
+                                   swiss_shops_turnover["E_KOORD_center"],
+                                   swiss_shops_turnover["N_KOORD_center"]),
                                crs="EPSG:2056"
                                )
 
         swiss_shops_turnover = swiss_shops_turnover.to_crs(epsg=3035)
-        
+
         local_admin_units = LocalAdminUnits().get()
         swiss_shops_turnover = gpd.sjoin(swiss_shops_turnover, local_admin_units, how="left", predicate="within")
         swiss_shops_turnover = swiss_shops_turnover.dropna(subset=["local_admin_unit_id"])
-        
+
         swiss_shops_turnover = swiss_shops_turnover.to_crs(epsg=4326)
-        
+
         swiss_shops_turnover["lon"] = swiss_shops_turnover.geometry.x
         swiss_shops_turnover["lat"] = swiss_shops_turnover.geometry.y
         swiss_shops_turnover = pd.DataFrame(swiss_shops_turnover.drop(columns='geometry'))
-        
+
         swiss_shops_turnover = swiss_shops_turnover[["local_admin_unit_id", "naf_id", "lon" , "lat", "turnover"]]
 
         os.unlink(statent_zip_path)
         os.unlink(statent_path)
 
-        return swiss_shops_turnover  
+        return swiss_shops_turnover
 
-    
+
     def prepare_insee_to_naf(self):
 
         insee_to_naf = [
@@ -271,20 +271,20 @@ class ShopsTurnoverDistribution(FileAsset):
             ["A130", "Bureau d’aide juridictionnelle (BAJ)", "84.23Z", "Justice"],
             ["A131", "Tribunal judiciaire (TJ)", "84.23Z", "Justice"],
             ["A132", "Tribunal de proximité (TPRX)", "84.23Z", "Justice"],
-        
+
             # A2 - SERVICES GÉNÉRAUX
             ["A203", "Banque, Caisse d’Épargne", "64.19Z", "Autres intermédiations monétaires"],
             ["A205", "Services funéraires", "96.03Z", "Services funéraires"],
             ["A206", "Bureau de poste", "53.10Z", "Activités de poste dans le cadre d'une obligation de service universel"],
             ["A207", "Relais poste", "53.20Z", "Autres activités de poste et de courrier"],
             ["A208", "Agence postale", "53.10Z", "Activités de poste dans le cadre d'une obligation de service universel"],
-        
+
             # A3 - SERVICES AUTOMOBILES
             ["A301", "Réparation automobile et de matériel agricole", "45.20Z", "Entretien et réparation de véhicules automobiles"],
             ["A302", "Contrôle technique automobile", "71.20B", "Analyses, essais et inspections techniques"],
             ["A303", "Location d'automobiles et d'utilitaires légers", "77.11A", "Location de voitures et de véhicules automobiles légers"],
             ["A304", "École de conduite", "85.53Z", "Activités des écoles de conduite"],
-        
+
             # A4 - ARTISANAT DU BÂTIMENT
             ["A401", "Maçon", "43.99C", "Travaux de maçonnerie générale et gros œuvre de bâtiment"],
             ["A402", "Plâtrier, peintre", "43.34Z", "Travaux de peinture et vitrerie"],
@@ -292,7 +292,7 @@ class ShopsTurnoverDistribution(FileAsset):
             ["A404", "Plombier, couvreur, chauffagiste", "43.22A", "Travaux d'installation d'eau et de gaz en tous locaux"],
             ["A405", "Électricien", "43.21A", "Travaux d'installation électrique"],
             ["A406", "Entreprise générale du bâtiment", "41.20A", "Construction de bâtiments résidentiels et non résidentiels"],
-        
+
             # A5 - AUTRES SERVICES À LA POPULATION
             ["A501", "Coiffure", "96.02A", "Coiffure"],
             ["A502", "Vétérinaire", "75.00Z", "Activités vétérinaires"],
@@ -301,19 +301,19 @@ class ShopsTurnoverDistribution(FileAsset):
             ["A505", "Agence immobilière", "68.31Z", "Agences immobilières"],
             ["A506", "Pressing, laverie automatique", "96.01B", "Blanchisserie-teinturerie de détail"],
             ["A507", "Institut de beauté, onglerie", "96.02B", "Soins de beauté"],
-        
+
             # AR codes regroupés
             ["AR01", "Police, gendarmerie", "84.24Z", "Activités d'ordre public et de sécurité"],
             ["AR02", "Centre de finances publiques", "84.11Z", "Administration publique générale"],
             ["AR03", "Bureau de poste, relais poste, agence postale", "53.10Z", "Activités de poste dans le cadre d'une obligation de service universel"],
-        
+
             # B1 - GRANDES SURFACES
             ["B101", "Hypermarché", "47.11F", "Hypermarchés"],
             ["B102", "Supermarché", "47.11D", "Supermarchés"],
             ["B103", "Grande surface de bricolage", "47.52A", "Commerce de détail de quincaillerie, peintures et verres"],
             ["B104", "Hypermarché et grand magasin", "47.19A", "Grands magasins"],
             ["B105", "Magasin multi-commerces", "47.11E", "Magasins multi-commerces"],
-            
+
             # B2 - COMMERCES ALIMENTAIRES
             ["B201", "Supérette", "47.11B", "Commerce d'alimentation générale (surface < 400 m²)"],
             ["B202", "Épicerie", "47.11B", "Commerce d'alimentation générale"],
@@ -334,7 +334,7 @@ class ShopsTurnoverDistribution(FileAsset):
             ["B305", "Magasin d'électroménager et de mat. audio-vidéo", "47.54Z", "Commerce de détail d'appareils électroménagers"],
             ["B306", "Magasin de meubles", "47.59A", "Commerce de détail de meubles"],
             ["B307", "Magasin d'articles de sports et de loisirs", "47.64Z", "Commerce de détail d'articles de sport en magasin spécialisé"],
-            ["B308", "Magasin de revêtements murs et sols", "47.52B", "Commerce de détail de quincaillerie, peintures et verres"],  
+            ["B308", "Magasin de revêtements murs et sols", "47.52B", "Commerce de détail de quincaillerie, peintures et verres"],
             ["B309", "Droguerie, quincaillerie, bricolage (<400 m²)", "47.52B", "Commerce de détail de quincaillerie, peintures et verres"],
             ["B310", "Parfumerie, cosmétique", "47.75Z", "Commerce de détail de parfumerie et de produits de beauté"],
             ["B311", "Horlogerie, bijouterie", "47.77Z", "Commerce de détail d'articles d'horlogerie et de bijouterie"],
@@ -351,31 +351,31 @@ class ShopsTurnoverDistribution(FileAsset):
             ["B323", "Commerce de biens d’occasion", "47.79Z", "Commerce de détail de biens d'occasion en magasin"],
             ["B324", "Librairie", "47.61Z", "Commerce de détail de livres en magasin spécialisé"],
             ["B325", "Papeterie et presse", "47.62Z", "Commerce de détail de journaux et papeterie en magasin spécialisé"],
-        
+
             # BR01, BR02
             ["BR01", "Épicerie, supérette", "47.11B", "Commerce d'alimentation générale"],
             ["BR02", "Droguerie, quincaillerie, bricolage", "47.52B", "Commerce de détail de quincaillerie, peintures et verres"],
-        
-            # C - ENSEIGNEMENT 
+
+            # C - ENSEIGNEMENT
             ["C101", "École maternelle", "85.10Z", "Enseignement pré-primaire"],
             ["C102", "École maternelle RPI dispersé", "85.10Z", "Enseignement pré-primaire"],
             ["C104", "École élémentaire", "85.20Z", "Enseignement primaire"],
             ["C105", "École élémentaire RPI dispersé", "85.20Z", "Enseignement primaire"],
             ["C201", "Collège", "85.31Z", "Enseignement secondaire général"],
-            
+
             # C3 ENSEIGNEMENT DU SECOND DEGRÉ SECOND CYCLE
             ["C301", "Lycée d'enseignement général et/ou technologique", "85.31Z", "Enseignement secondaire général"],
             ["C302", "Lycée d'enseignement professionnel", "85.32Z", "Enseignement secondaire technique ou professionnel"],
             ["C303", "Lycée d’enseignement technique et/ou professionnel agricole", "85.32Z", "Enseignement secondaire technique ou professionnel"],
             ["C304", "SGT (Section d’enseignement général et technologique en lycée pro)", "85.31Z", "Enseignement secondaire général"],
             ["C305", "SEP (Section d’enseignement professionnel en lycée général/technologique)", "85.32Z", "Enseignement secondaire technique ou professionnel"],
-        
+
              # C4 ENSEIGNEMENT SUPÉRIEUR NON UNIVERSITAIRE
             ["C401", "STS (Section technicien supérieur), CPGE", "85.42Z", "Enseignement supérieur"],
             ["C402", "Formation santé", "85.42Z", "Enseignement supérieur"],
             ["C403", "Formation commerce", "85.42Z", "Enseignement supérieur"],
             ["C409", "Autre formation post bac non universitaire", "85.42Z", "Enseignement supérieur"],
-        
+
             # C5 ENSEIGNEMENT SUPÉRIEUR UNIVERSITAIRE
             ["C501", "UFR (Unité de formation et de recherche)", "85.42Z", "Enseignement supérieur"],
             ["C502", "Institut universitaire (IUP, IUT…)", "85.42Z", "Enseignement supérieur"],
@@ -383,19 +383,19 @@ class ShopsTurnoverDistribution(FileAsset):
             ["C504", "Enseignement général supérieur privé", "85.42Z", "Enseignement supérieur"],
             ["C505", "École d’enseignement supérieur agricole", "85.42Z", "Enseignement supérieur"],
             ["C509", "Autre enseignement supérieur", "85.42Z", "Enseignement supérieur"],
-        
+
             # C6 FORMATION CONTINUE
             ["C602", "GRETA", "85.59A", "Formation continue d’adultes"],
             ["C603", "Centre dispensant de la formation continue agricole", "85.59A", "Formation continue d’adultes"],
             ["C604", "Formation aux métiers du sport (INSEP, CREPS…)", "85.51Z", "Enseignement de disciplines sportives et d’activités de loisirs"],
             ["C605", "Centre dispensant des formations d’apprentissage agricole", "85.32Z", "Enseignement secondaire technique ou professionnel"],
             ["C609", "Autre formation continue", "85.59A", "Formation continue d’adultes"],
-        
+
             # C7 AUTRES SERVICES DE L’ÉDUCATION
             ["C701", "Résidence universitaire", "55.90Z", "Autres hébergements"],
             ["C702", "Restaurant universitaire", "56.29A", "Restauration collective sous contrat"],
             ["C601", "Centre de formation d'apprentis (hors agriculture)", "85.32Z", "Enseignement secondaire technique ou professionnel"],
-        
+
             # D - SANTÉ ET ACTION SOCIALE
             # D1 ÉTABLISSEMENTS ET SERVICES DE SANTÉ
             ["D101", "Établissement de santé de court séjour", "86.10Z", "Activités hospitalières"],
@@ -411,7 +411,7 @@ class ShopsTurnoverDistribution(FileAsset):
             ["D111", "Dialyse", "86.10Z", "Activités hospitalières (dialyse)"],
             ["D112", "Hospitalisation à domicile", "86.10Z", "Activités hospitalières (HAD)"],
             ["D113", "Maisons de santé pluridisciplinaire", "86.90", "Autres activités pour la santé humaine"],
-        
+
             # D2 PROFESSIONS LIBÉRALES DE SANTÉ
             ["D201", "Médecin généraliste", "86.21Z", "Activité des médecins généralistes"],
             ["D202", "Spécialiste en cardiologie", "86.22Z", "Activité des médecins spécialistes"],
@@ -438,26 +438,26 @@ class ShopsTurnoverDistribution(FileAsset):
             ["D242", "Diététicien", "86.90", "Autres activités pour la santé humaine"],
             ["D243", "Psychologue", "86.90", "Autres activités pour la santé humaine"],
             ["D244", "Infirmier", "86.90", "Autres activités pour la santé humaine"],
-        
+
             # D3 AUTRES ÉTABLISSEMENTS ET SERVICES À CARACTÈRE SANITAIRE
             ["D302", "Laboratoire d'analyses et de biologie médicale", "86.90B", "Laboratoires d'analyses médicales"],
             ["D303", "Ambulance", "86.90", "Autres activités pour la santé humaine (ambulances)"],
             ["D304", "Transfusion sanguine", "86.10Z", "Activités hospitalières (EFS)"],
             ["D305", "Établissement thermal", "96.04Z", "Entretien corporel (ou 86.90 si purement soins)"],
             ["D307", "Pharmacie", "47.73Z", "Commerce de détail de produits pharmaceutiques"],
-        
+
             # D4 ACTION SOCIALE POUR PERSONNES ÂGÉES
             ["D401", "Personnes âgées : hébergement", "87.30A", "Hébergement social pour personnes âgées"],
             ["D402", "Personnes âgées : soins à domicile", "88.10A", "Aide à domicile"],
             ["D403", "Personnes âgées : services d'aide", "88.10A", "Aide à domicile"],
-        
+
             # D5 ACTION SOCIALE POUR ENFANTS EN BAS ÂGE
             ["D502", "Établissement d’accueil du jeune enfant", "88.91A", "Accueil de jeunes enfants"],
             ["D503", "Lieu d’accueil enfants-parents", "88.91A", "Accueil de jeunes enfants"],
             ["D504", "Relais petite enfance", "88.91A", "Accueil de jeunes enfants"],
             ["D505", "Accueil de loisirs sans hébergement", "93.29Z", "Autres activités récréatives et de loisirs"],
             ["D506", "Centres sociaux", "88.99B", "Action sociale sans hébergement n.c.a."],
-        
+
             # D6 ACTION SOCIALE POUR HANDICAPÉS
             ["D601", "Enfants handicapés : hébergement", "87.20A", "Hébergement social pour enfants handicapés"],
             ["D602", "Enfants handicapés : services à domicile ou ambulatoires", "88.10B", "Aide à domicile"],
@@ -465,7 +465,7 @@ class ShopsTurnoverDistribution(FileAsset):
             ["D604", "Adultes handicapés : services d’aide", "88.10B", "Aide à domicile"],
             ["D605", "Travail protégé (ESAT, etc.)", "88.99B", "Action sociale sans hébergement n.c.a."],
             ["D606", "Adultes handicapés : services de soins à domicile", "88.10B", "Aide à domicile"],
-        
+
             # D7 AUTRES SERVICES D’ACTION SOCIALE
             ["D701", "Protection de l’enfance hébergement", "87.90A", "Hébergement social pour enfants en difficultés"],
             ["D702", "Protection de l’enfance : action éducative", "88.99B", "Autre action sociale sans hébergement n.c.a."],
@@ -473,14 +473,14 @@ class ShopsTurnoverDistribution(FileAsset):
             ["D704", "Centre provisoire d’hébergement (CPH)", "87.90B", "Hébergement social pour adultes en difficulté"],
             ["D705", "Centre accueil demandeur d’asile (CADA)", "87.90B", "Hébergement social pour adultes en difficulté"],
             ["D709", "Autres établissements pour adultes et familles en difficulté", "87.90B", "Hébergement social pour adultes en difficultés"],
-        
+
             # E TRANSPORTS ET DÉPLACEMENTS
             ["E101", "Taxi, VTC", "49.32Z", "Transports de voyageurs par taxis"],
             ["E102", "Aéroport", "52.23Z", "Services auxiliaires des transports aériens"],
             ["E107", "Gare de voyageurs d'intérêt national", "52.21Z", "Services auxiliaires des transports terrestres"],
             ["E108", "Gare de voyageurs d'intérêt régional", "52.21Z", "Services auxiliaires des transports terrestres"],
             ["E109", "Gare de voyageurs d'intérêt local", "52.21Z", "Services auxiliaires des transports terrestres"],
-        
+
             # F1 ÉQUIPEMENTS SPORTIFS
             ["F101", "Bassin de natation", "93.11Z", "Gestion d'installations sportives"],
             ["F102", "Boulodrome", "93.11Z", "Gestion d'installations sportives"],
@@ -502,12 +502,12 @@ class ShopsTurnoverDistribution(FileAsset):
             ["F119", "Bowling", "93.11Z", "Gestion d'installations sportives (ou 93.29Z)"],
             ["F120", "Salles de remise en forme", "93.13Z", "Activités des centres de fitness"],
             ["F121", "Salles multisports (gymnases)", "93.11Z", "Gestion d'installations sportives"],
-        
+
             # F2 ÉQUIPEMENTS DE LOISIRS
             ["F201", "Baignade aménagée", "93.29Z", "Autres activités récréatives et de loisirs"],
             ["F202", "Port de plaisance – mouillage", "93.29Z", "Autres activités récréatives et de loisirs"],
             ["F203", "Boucle de randonnée", "93.29Z", "Autres activités récréatives et de loisirs"],
-        
+
             # F3 ÉQUIPEMENTS CULTURELS ET SOCIOCULTURELS
             ["F303", "Cinéma", "59.14Z", "Projection de films cinématographiques"],
             ["F305", "Conservatoire", "85.52Z", "Enseignement culturel"],
@@ -517,24 +517,24 @@ class ShopsTurnoverDistribution(FileAsset):
             ["F313", "Espace remarquable et patrimoine", "91.03Z", "Gestion des sites et monuments historiques"],
             ["F314", "Archives", "91.01Z", "Gestion de bibliothèques et archives"],
             ["F315", "Arts du spectacle", "90.01Z", "Arts du spectacle vivant"],
-        
+
             # G TOURISME
             ["G101", "Agence de voyage", "79.11Z", "Activités des agences de voyage"],
             ["G102", "Hôtel", "55.10Z", "Hôtels et hébergement similaire"],
             ["G103", "Camping", "55.30Z", "Terrains de camping et parcs pour caravanes ou véhicules de loisirs"],
             ["G104", "Information touristique", "79.90Z", "Autres services de réservation et activités connexes"],
         ]
-        
+
         # Création du DataFrame
         insee_to_naf = pd.DataFrame(
-            insee_to_naf, 
+            insee_to_naf,
             columns=["code_equipement", "libelle_equipement", "code_naf", "libelle_naf"]
             )
-        
+
         return(insee_to_naf)
 
-    def prepare_noga_to_naf(self): 
-        
+    def prepare_noga_to_naf(self):
+
         # Liste des données NOGA (Suisse) → NAF
         data_noga_naf = [
             ["01", "Culture et production animale, chasse et services annexes", "01.10", "Culture et production animale"],
@@ -574,7 +574,7 @@ class ShopsTurnoverDistribution(FileAsset):
             ["37", "Collecte et traitement des eaux usées", "37.00", "Collecte et traitement des eaux usées"],
             ["38", "Collecte, traitement et élimination des déchets", "38.11", "Collecte, traitement et élimination des déchets"],
             ["39", "Dépollution et autres services de gestion des déchets", "39.00", "Dépollution et autres services de gestion des déchets"],
-        
+
             ["40", "Non utilisé dans NOGA", "Non applicable", "Non applicable"],
             ["41", "Construction de bâtiments", "41.10", "Construction de bâtiments"],
             ["42", "Génie civil", "42.10", "Génie civil"],
@@ -582,7 +582,7 @@ class ShopsTurnoverDistribution(FileAsset):
             ["45", "Commerce et réparation d'automobiles et de motocycles", "45.11", "Commerce et réparation d'automobiles et de motocycles"],
             ["46", "Commerce de gros, hors automobiles et motocycles", "46.11", "Commerce de gros, hors automobiles et motocycles"],
             ["47", "Commerce de détail, hors automobiles et motocycles", "47.11", "Commerce de détail, hors automobiles et motocycles"],
-        
+
             ["48", "Non utilisé dans NOGA", "Non applicable", "Non applicable"],
             ["49", "Transports terrestres et transport par conduites", "49.10", "Transports terrestres et transport par conduites"],
             ["50", "Transports par eau", "50.10", "Transports par eau"],
