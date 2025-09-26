@@ -36,7 +36,7 @@ class FileAsset(Asset):
             cache_path (pathlib.Path): The path where the Asset is cached.
         """
         
-        super().__init__(inputs)
+        super().__init__(inputs, cache_path)
         
         if isinstance(cache_path, dict):
             
