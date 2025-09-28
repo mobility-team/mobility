@@ -14,8 +14,8 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\3fd01ce982bfb700a979327cb34822e6-highway-osm_data.osm',
+#   'D:/data/mobility/projects/grand-geneve/9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
+#   'D:/data/mobility/projects/grand-geneve/3fd01ce982bfb700a979327cb34822e6-highway-osm_data.osm',
 #   'car',
 #   '{"motorway": {"capacity": 2000.0, "alpha": 0.15, "beta": 4.0}, "trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "service": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "ferry": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 300.0, "alpha": 0.15, "beta": 4.0}, "motorway_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}}',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\36630180a6ecb8a3d76de517c9c6a130-car-simplified-path-graph'
@@ -117,17 +117,6 @@ st_crs(vertices_3035) <- 4326
 vertices_3035 <- st_transform(vertices_3035, 3035)
 vertices_3035 <- as.data.table(cbind(st_drop_geometry(vertices_3035), st_coordinates(vertices_3035)))
 setnames(vertices_3035, c("vertex_id", "x", "y"))
-# 
-# buildings_sample <- as.data.table(read_parquet(buildings_sample_fp))
-# buildings_sample[, building_id := 1:.N]
-# 
-# knn <- get.knnx(
-#   vertices_3035[, list(x, y)],
-#   buildings_sample[, list(x, y)],
-#   k = 1
-# )
-# 
-# vertices_to_keep <- vertices_3035$vertex_id[knn$nn.index]
 
 
 # Create the cppRouting graph
@@ -203,7 +192,10 @@ while(length(nodes) > 0) {
 
   n_incoming <- edges[, list(n_incoming = .N), by = list(index = to)]
   n_outgoing <- edges[, list(n_outgoing = .N), by = list(index = from)]
-  degree <- merge(n_incoming, n_outgoing, by = "index")
+  # degree <- merge(n_incoming, n_outgoing, by = "index")
+  degree <- merge(n_incoming, n_outgoing, by = "index", all = TRUE)
+  degree[is.na(n_incoming), n_incoming := 0]
+  degree[is.na(n_outgoing), n_outgoing := 0]
   degree[, deg := n_incoming + n_outgoing]
 
   one_way_dead_end_nodes <- degree[deg == 1, index]

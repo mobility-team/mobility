@@ -20,7 +20,7 @@ def compute_subtour_mode_probabilities(
     location_chains = [
         (l[0], l[1] + [l[1][0]])
         for l in zip(
-            unique_location_chains["locations_index"].to_list(),
+            unique_location_chains["dest_seq_id"].to_list(),
             unique_location_chains["locations"].to_list()
         )
     ]
@@ -37,7 +37,8 @@ def compute_subtour_mode_probabilities(
     #     modes_path,
     #     tmp_path
     # )
-    # process_batch(batches[0][0:100], debug=True)
+    # process_batch(batches[0], debug=True)
+    # process_batch([(0, [585, 554, 472, 455, 585])], debug=True)
     
     ppe = ProcessPoolExecutor(
         max_workers=n_workers,

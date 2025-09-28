@@ -3,7 +3,6 @@ library(log4r)
 library(sfheaders)
 library(nngeo)
 library(data.table)
-# library(reshape2)
 library(arrow)
 library(cppRouting)
 library(DBI)
@@ -15,9 +14,9 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_walk\\contracted\\04c2f420aa4f610af7491b56aa785402-walk-contracted-path-graph',
-#   '5.0',
+#   'D:/data/mobility/projects/grand-geneve/9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
+#   'D:/data/mobility/projects/grand-geneve/path_graph_car/contracted/6e92ea1e35280a9d83e44d4215a99577-car-contracted-path-graph',
+#   '60.0',
 #   '1.0',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\1b8a32aa54d7ce59db7f7a9f4c9da87e-travel_costs_free_flow_walk.parquet'
 # )
@@ -28,12 +27,6 @@ graph_fp <- args[3]
 max_speed <- as.numeric(args[4])
 max_time <- as.numeric(args[5])
 output_fp <- args[6]
-
-# package_path <- "D:/dev/mobility_oss/mobility"
-# tz_fp <- "D:/data/mobility/projects/experiments/6250b72770c44a2e0776d242a7551226-transport_zones.gpkg"
-# max_speed <- 80.0
-# max_time <- 1.0
-# graph_fp <- "D:/data/mobility/projects/experiments/path_graph_car/contracted/43e9b13b899c59847afcf30d5ea79d8e-done"
 
 buildings_sample_fp <- file.path(
   dirname(tz_fp),

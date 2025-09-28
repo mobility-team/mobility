@@ -158,7 +158,7 @@ def install_r_packages(r_packages, r_packages_force_reinstall, r_packages_downlo
             {'source': 'CRAN', 'name': 'dodgr'},
             {'source': 'CRAN', 'name': 'sf'},
             # {'source': 'CRAN', 'name': 'geodist'},
-            # {'source': 'CRAN', 'name': 'dplyr'},
+            {'source': 'CRAN', 'name': 'dplyr'},
             {'source': 'CRAN', 'name': 'sfheaders'},
             {'source': 'CRAN', 'name': 'nngeo'},
             {'source': 'CRAN', 'name': 'data.table'},

@@ -89,25 +89,28 @@ def merge_mode_sequences_list(lists_of_lists, k):
 def process_batch(batch_of_locations, debug=False):
     
     try:
+        
+        mode_sequences = [
+            run_top_k_search(
+                loc[0],
+                loc[1],
+                n_vehicles,
+                leg_modes,
+                costs,
+                needs_vehicle,
+                vehicle_for_mode,
+                multimodal,
+                is_return_mode,
+                return_mode,
+                k=k_sequences,
+                debug=debug
+            ) for loc in batch_of_locations
+        ]
+        
+        mode_sequences = [ms for ms in mode_sequences if ms is not None]
+        
         ( 
-            pl.concat(
-                [
-                    run_top_k_search(
-                        loc[0],
-                        loc[1],
-                        n_vehicles,
-                        leg_modes,
-                        costs,
-                        needs_vehicle,
-                        vehicle_for_mode,
-                        multimodal,
-                        is_return_mode,
-                        return_mode,
-                        k=k_sequences,
-                        debug=debug
-                    ) for loc in batch_of_locations
-                ]
-            )
+            pl.concat(mode_sequences)
             .write_parquet(
                 tmp_path / (shortuuid.uuid() + ".parquet")
             )
@@ -120,7 +123,7 @@ def process_batch(batch_of_locations, debug=False):
 
 
 def run_top_k_search(
-        index,
+        dest_seq_id,
         locations_full,
         n_vehicles,
         leg_modes,
@@ -225,32 +228,37 @@ def run_top_k_search(
             
     results = merge_mode_sequences_list(all_results, k=k)
     
-    c = np.array([r[0] for r in results])
-    p = np.exp(-c)
-    p /= p.sum()
-    i_max = np.argmax(p.cumsum() > 0.98)
-      
-    rows = []
-    for i, (total_cost, mode_seq) in enumerate(results):
-        if i < i_max+1:
-            for leg_idx, m_id in enumerate(mode_seq):
-                rows.append([i, locations_full[leg_idx+1], leg_idx+1, m_id])
+    if len(results) == 0:
+        
+        results = None
     
-    results = ( 
-        pl.DataFrame(
-            rows,
-            schema=["mode_seq_id", "location", "seq_step_index", "mode_index"],
-            orient="row"
+    else:
+        
+        c = np.array([r[0] for r in results])
+        p = np.exp(-c)
+        p /= p.sum()
+        i_max = np.argmax(p.cumsum() > 0.98)
+          
+        rows = []
+        for i, (total_cost, mode_seq) in enumerate(results):
+            if i < i_max+1:
+                for leg_idx, m_id in enumerate(mode_seq):
+                    rows.append([i, locations_full[leg_idx+1], leg_idx+1, m_id])
+        
+        results = ( 
+            pl.DataFrame(
+                rows,
+                schema=["mode_seq_index", "location", "seq_step_index", "mode_index"],
+                orient="row"
+            )
+            .with_columns(
+                dest_seq_id=pl.lit(dest_seq_id, dtype=pl.UInt64())
+            )
         )
-        .with_columns(
-            index=pl.lit(index, dtype=pl.UInt64)
-        )
-    )
     
-    results["mode_index"].hash()
-    
-    if debug:
-        print(results)
+        if debug:
+            print(results)
+            
     
     return results
     

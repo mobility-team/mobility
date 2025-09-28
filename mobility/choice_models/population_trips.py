@@ -110,17 +110,17 @@ class PopulationTrips(FileAsset):
 
         chains, demand_groups, motive_seqs = self.get_chains(population, surveys, motives, is_weekday)
         motive_dur, home_night_dur = self.get_mean_activity_durations(chains, demand_groups)
-        current_states = self.get_initial_states(chains, demand_groups)
+        stay_home_state, current_states = self.get_stay_home_state(demand_groups, home_night_dur, stay_home_utility_coeff)
         sinks = self.get_sinks(chains, motives, population.transport_zones)
         costs = self.get_current_costs(costs_aggregator, congestion=False)
         
         remaining_sinks = sinks.clone()
         
-        for iteration in range(0, n_iterations):
+        n_iterations = 10
+        
+        for iteration in range(1, n_iterations+1):
             
-            logging.info(f"Sampling step n°{iteration}")
-            
-            iteration = 0
+            logging.info(f"Iteration n°{iteration}")
             
             utilities = self.get_utilities(
                 motives,
@@ -139,17 +139,26 @@ class PopulationTrips(FileAsset):
             self.spatialize_trip_chains(iteration, chains, demand_groups, dest_prob, motives, costs, alpha, tmp_folders)
             self.search_top_k_mode_sequences(iteration, costs_aggregator, k_mode_sequences, tmp_folders)
             
-            possible_states_steps = self.get_possible_states_steps(demand_groups, chains, costs_aggregator, motive_dur, iteration, activity_utility_coeff, tmp_folders)
-            possible_states_utility = self.get_possible_states_utility(possible_states_steps, home_night_dur, stay_home_utility_coeff)
+            possible_states_steps = self.get_possible_states_steps(current_states, demand_groups, chains, costs_aggregator, remaining_sinks, motive_dur, iteration, activity_utility_coeff, tmp_folders)
+            possible_states_utility = self.get_possible_states_utility(possible_states_steps, home_night_dur, stay_home_utility_coeff, stay_home_state)
             
             transition_prob = self.get_transition_probabilities(current_states, possible_states_utility)
             current_states = self.apply_transitions(current_states, transition_prob)
             current_states_steps = self.get_current_states_steps(current_states, possible_states_steps)
             
-            costs = self.update_costs(costs, iteration, n_iter_per_cost_update, current_states_steps, costs_aggregator)
+            print("-----")
+            print("Non moving persons")
+            print(current_states.filter(pl.col("motive_seq_id") == 0)["n_persons"].sum())
             
-            current_states_steps = self.fix_overflow(current_states_steps, sinks)
+            # costs = self.update_costs(costs, iteration, n_iter_per_cost_update, current_states_steps, costs_aggregator)
+            
+            # current_states, current_states_steps = self.fix_overflow(current_states, current_states_steps, sinks, stay_home_state)
             remaining_sinks = self.get_remaining_sinks(current_states_steps, sinks)
+            
+            # print("Non moving persons after overflow correction")
+            # print(current_states.filter(pl.col("motive_seq_id") == 0)["n_persons"].sum())
+            
+            
         
         
         current_states_steps = (
@@ -178,7 +187,7 @@ class PopulationTrips(FileAsset):
             os.makedirs(path)
             return path
         
-        folders = ["spatialized-chains", "modes", "flows"]
+        folders = ["spatialized-chains", "modes", "flows", "sequences-index"]
         folders = {f: rm_then_mkdirs(f) for f in folders}
         
         return folders
@@ -260,10 +269,19 @@ class PopulationTrips(FileAsset):
             p_chain
             .select(["motive_seq", "seq_step_index", "motive"])
             .unique()
-            .with_columns(
-                motive_seq_id=pl.col("motive_seq").hash()
-            )
         )
+        
+        motive_seq_index = (
+            motive_seqs.select("motive_seq")
+            .unique()
+            .with_row_index("motive_seq_id")
+        )
+        
+        motive_seqs = (
+            motive_seqs
+            .join(motive_seq_index, on="motive_seq")
+        )
+        
         
         p_chain = (
             p_chain
@@ -310,42 +328,6 @@ class PopulationTrips(FileAsset):
             )
         
         )
-        
-        # Add an empty schedule for each demand group
-        # This schedule is identfied later on because its id is the max id,
-        # which might not be very robust... The schedule has a zero duration 
-        # dummy home activity, which does nothing but is necessary because
-        # we can't have zero activity schedules for now.
-        
-        motive_seqs = pl.concat([
-            motive_seqs,
-            pl.DataFrame(
-                data=[{
-                    "motive_seq_id": 0,
-                    "seq_step_index": 1,
-                    "motive": "home"
-                }],
-                schema={
-                    "motive_seq_id": chains["motive_seq_id"].dtype,
-                    "seq_step_index": chains["seq_step_index"].dtype,
-                    "motive":chains["motive"].dtype
-                }
-            )
-        ])
-        
-        empty_schedule = (
-            demand_groups.select(["demand_group_id"])
-            .with_columns(
-                motive_seq_id=pl.lit(0, chains["motive_seq_id"].dtype),
-                seq_step_index=pl.lit(1, chains["seq_step_index"].dtype),
-                motive=pl.lit("home", chains["motive"].dtype),
-                n_persons=1e-9,
-                duration=0.0,
-                is_anchor=True
-            )
-        )
-        
-        chains = pl.concat([chains, empty_schedule])
         
         # Drop unecessary columns from demand groups
         demand_groups = (
@@ -397,24 +379,32 @@ class PopulationTrips(FileAsset):
         return mean_motive_durations, mean_home_night_durations
     
     
-    def get_initial_states(self, chains, demand_groups):
+    def get_stay_home_state(self, demand_groups, home_night_dur, stay_home_utility_coeff):
         
-        initial_states = (
-            chains 
-            .select(["demand_group_id", "motive_seq_id"])
-            .filter(pl.col("motive_seq_id") == 0)
-            .join(
-                demand_groups.select(["demand_group_id", "n_persons"]),
-                on="demand_group_id"
-            )
+        stay_home_state = (
+            
+            demand_groups.select(["demand_group_id", "csp", "n_persons"])
             .with_columns(
-                dest_seq_id=pl.lit(0, dtype=pl.UInt64()),
-                mode_seq_id=pl.lit(0, dtype=pl.UInt64()),
-                utility=pl.lit(-1e6)
+                iteration=pl.lit(0, pl.UInt32()),
+                motive_seq_id=pl.lit(0, pl.UInt32()),
+                mode_seq_id=pl.lit(0, pl.UInt32()),
+                dest_seq_id=pl.lit(0, pl.UInt32())
             )
+            .join(home_night_dur, on="csp")
+            .with_columns(
+                utility=stay_home_utility_coeff*pl.col("mean_home_night_per_pers")*(pl.col("mean_home_night_per_pers")/0.1/pl.col("mean_home_night_per_pers")).log()
+            )
+            
+            .select(["demand_group_id", "iteration", "motive_seq_id", "mode_seq_id", "dest_seq_id", "utility", "n_persons"])
         )
         
-        return initial_states
+        current_states = ( 
+            stay_home_state
+            .select(["demand_group_id", "iteration", "motive_seq_id", "mode_seq_id", "dest_seq_id", "utility", "n_persons"])
+            .clone()
+        )
+        
+        return stay_home_state, current_states
     
 
     def get_sinks(self, chains, motives, transport_zones):
@@ -451,9 +441,16 @@ class PopulationTrips(FileAsset):
             )
             .join(demand, on="motive")
             .with_columns(
-                sink_duration=pl.col("n_opp")/pl.col("n_opp").sum().over("motive")*pl.col("duration")*pl.col("sink_saturation_coeff")
+                sink_capacity=( 
+                    pl.col("n_opp")/pl.col("n_opp").sum().over("motive")
+                    * pl.col("duration")*pl.col("sink_saturation_coeff")
+                ),
+                k_saturation_utility=pl.lit(1.0, dtype=pl.Float64())
             )
-            .select(["to", "motive", "sink_duration"])
+            .with_columns(
+                sink_available=pl.col("sink_capacity")
+            )
+            .select(["to", "motive", "sink_capacity", "sink_available", "k_saturation_utility"])
         )
 
         return sinks
@@ -487,7 +484,7 @@ class PopulationTrips(FileAsset):
             # Apply the radiation model for each motive and origin
             costs_bin
             .with_columns(
-                s_ij=pl.col("sink_duration").cum_sum().over(["from", "motive"]),
+                s_ij=pl.col("sink_available").cum_sum().over(["from", "motive"]),
                 selection_lambda=pl.col("motive").replace_strict(motives_lambda)
             )
             .with_columns(
@@ -542,15 +539,54 @@ class PopulationTrips(FileAsset):
         return prob
     
     
+    def add_index(self, df, col, index_col_name, tmp_folders):
+        
+        index_path = tmp_folders["sequences-index"] / (index_col_name + ".parquet")
+        
+        if index_path.exists() is False:
+            
+            index = (
+                df.select(col)
+                .unique()
+                .with_row_index()
+                .rename({"index": index_col_name})
+            )
+            
+        else:
+            
+            index = pl.read_parquet(index_path)
+            max_index = index[index_col_name].max()
+            
+            missing_index = (
+                df
+                .join(index, on=col, how="anti")
+                .select(col)
+                .unique()
+                .with_row_index()
+                .with_columns(
+                    index=pl.col("index") + max_index + 1
+                )
+                .rename({"index": index_col_name})
+            )
+            
+            index = pl.concat([index, missing_index])
+            
+        index.write_parquet(index_path)
+            
+        df = df.join(index, on=col)
+            
+        return df
+    
+        
+        
+        
         
     def spatialize_trip_chains(self, iteration, chains, demand_groups, dest_prob, motives, costs, alpha, tmp_folders):
 
         
-        if iteration > 0:
-            chains = chains.filter(pl.col("motive_seq_id") != 0)
-        
         chains = (
             chains
+            .filter(pl.col("motive_seq_id") != 0)
             .join(demand_groups.select(["demand_group_id", "home_zone_id"]), on="demand_group_id")
             .select(["demand_group_id", "home_zone_id", "motive_seq_id", "motive", "is_anchor", "seq_step_index"])
         )
@@ -559,22 +595,28 @@ class PopulationTrips(FileAsset):
         chains = self.spatialize_anchor_motives(chains, dest_prob)
         chains = self.spatialize_other_motives(chains, dest_prob, costs, alpha)
         
-        dest_seq_index = ( 
+        dest_sequences = ( 
             chains
-            .sort("seq_step_index")
             .group_by(["demand_group_id", "motive_seq_id"])
             .agg(
-                to=pl.col("to")
+                to=pl.col("to").sort_by("seq_step_index").cast(pl.Utf8())
             )
             .with_columns(
-                dest_seq_id=pl.col("to").hash()
+                to=pl.col("to").list.join("-")
             )
+        )
+        
+        dest_sequences = self.add_index(
+            dest_sequences,
+            col="to",
+            index_col_name="dest_seq_id",
+            tmp_folders=tmp_folders
         )
         
         chains = (
             chains
             .join(
-                dest_seq_index.select(["demand_group_id", "motive_seq_id", "dest_seq_id"]),
+                dest_sequences.select(["demand_group_id", "motive_seq_id", "dest_seq_id"]),
                 on=["demand_group_id", "motive_seq_id"]
             )
         )
@@ -608,7 +650,7 @@ class PopulationTrips(FileAsset):
             
             .with_columns(
                 noise=( 
-                    pl.struct(["demand_group_id", "motive_seq_id", "to"])
+                    pl.struct(["demand_group_id", "motive_seq_id", "motive", "to"])
                     .hash(seed=seed)
                     .cast(pl.Float64) 
                     .truediv(pl.lit(18446744073709551616.0))
@@ -622,7 +664,7 @@ class PopulationTrips(FileAsset):
             )
             
             .with_columns(
-                min_score=pl.col("sample_score").min().over(["demand_group_id", "motive_seq_id"])
+                min_score=pl.col("sample_score").min().over(["demand_group_id", "motive_seq_id", "motive"])
             )
             .filter(pl.col("sample_score") == pl.col("min_score"))
             .select(["demand_group_id", "motive_seq_id", "motive", "to"])
@@ -670,6 +712,8 @@ class PopulationTrips(FileAsset):
         spatialized_chains = []
         
         while chains_step.height > 0:
+            
+            logging.info(f"Spatializing step {seq_step_index}...")
             
             spatialized_step = ( 
                 self.spatialize_trip_chains_step(seq_step_index, chains_step, dest_prob, costs, alpha)
@@ -727,7 +771,7 @@ class PopulationTrips(FileAsset):
             )
             
             .with_columns(
-                p_ij_corr=(pl.col("p_ij").log() - alpha*pl.col("cost")).exp(),
+                p_ij=(pl.col("p_ij").log() - alpha*pl.col("cost")).exp(),
                 noise=( 
                     pl.struct(["demand_group_id", "motive_seq_id", "to"])
                     .hash(seed=seed)
@@ -826,15 +870,14 @@ class PopulationTrips(FileAsset):
             pl.scan_parquet(chains_path)
             .group_by(["demand_group_id", "motive_seq_id", "dest_seq_id"])
             .agg(
-                locations=pl.col("from").sort_by("seq_step_index"),
-                locations_index=pl.col("from").str.join("-").hash()
+                locations=pl.col("from").sort_by("seq_step_index")
             )
             .collect()
         )
         
         unique_location_chains = ( 
             spat_chains
-            .group_by(["locations_index"])
+            .group_by(["dest_seq_id"])
             .agg(
                 pl.col("locations").first()
             )
@@ -865,33 +908,40 @@ class PopulationTrips(FileAsset):
         
         # Agregate all mode sequences chunks
         all_results = (
-            spat_chains.select(["demand_group_id", "motive_seq_id", "dest_seq_id", "locations_index"])
-            .join(pl.read_parquet(tmp_path), left_on="locations_index", right_on="index")
+            spat_chains.select(["demand_group_id", "motive_seq_id", "dest_seq_id"])
+            .join(pl.read_parquet(tmp_path), on="dest_seq_id")
             .with_columns(
                 mode=pl.col("mode_index").replace_strict(id_to_mode)
             )
         )
         
-        mode_seq_index = (
+        mode_sequences = (
             all_results
-            .sort(["seq_step_index"])
-            .group_by(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+            .group_by(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_index"])
             .agg(
-                pl.col("mode_index")
+                mode_index=pl.col("mode_index").sort_by("seq_step_index").cast(pl.Utf8())
             )
             .with_columns(
-                mode_seq_id_hash=pl.col("mode_index").hash()
+                mode_index=pl.col("mode_index").list.join("-")
             )
-            .drop("mode_index")
+        )
+        
+        mode_sequences = self.add_index(
+            mode_sequences,
+            col="mode_index",
+            index_col_name="mode_seq_id",
+            tmp_folders=tmp_folders
         )
         
         all_results = (
             all_results
-            .join(mode_seq_index, on=["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
-            .drop("mode_seq_id")
-            .rename({"mode_seq_id_hash": "mode_seq_id"})
+            .join(
+                mode_sequences.select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_index", "mode_seq_id"]),
+                on=["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_index"]
+            )
+            .drop("mode_seq_index")
             .select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id", "seq_step_index", "mode"])
-            .with_columns(iteration=pl.lit(iteration).cast(pl.UInt32))
+            .with_columns(iteration=pl.lit(iteration, dtype=pl.UInt32()))
         )
         
         all_results.write_parquet(output_path)
@@ -899,17 +949,18 @@ class PopulationTrips(FileAsset):
         
     def get_possible_states_steps(
             self,
+            current_states,
             demand_groups,
             chains,
             costs_aggregator,
+            sinks,
             motive_dur,
             iteration,
             activity_utility_coeff,
             tmp_folders
         ):
         
-        spat_chains = pl.read_parquet(tmp_folders['spatialized-chains'])
-        modes = pl.read_parquet(tmp_folders["modes"])
+        
         
         cost_by_od_and_modes = ( 
             costs_aggregator.get_costs_by_od_and_mode(
@@ -919,52 +970,91 @@ class PopulationTrips(FileAsset):
             )
         )
         
-        chains = ( 
+        chains_w_home = ( 
             chains
             .join(demand_groups.select(["demand_group_id", "csp"]), on="demand_group_id")
             .with_columns(duration_per_pers=pl.col("duration")/pl.col("n_persons"))
         )
         
-        # Keep only one mode / row per empty activity schedule.
-        # The mode search returns multiple rows because we use a dummy home motive
-        # for this empty schedule. We should find a better way to handle this.
-        modes = pl.concat([
-            modes.filter(pl.col("motive_seq_id") != 0),
-            modes.filter(pl.col("motive_seq_id") == 0).group_by(["demand_group_id", "motive_seq_id"]).head(1)
-        ])
+        # Keep only the last occurrence of any motive - destination sequence
+        # (the sampler might generate the same sequence twice)
+        spat_chains = (
+            pl.scan_parquet(tmp_folders['spatialized-chains'])
+            .sort("iteration", descending=True)
+            .unique(
+                subset=["demand_group_id", "motive_seq_id", "dest_seq_id", "seq_step_index"],
+                keep="first"
+            )
+
+        )
         
-        states = (
+        # Keep only the last occurrence of any motive - destination - mode sequence
+        # (the sampler might generate the same sequence twice)
+        modes = (
+            pl.scan_parquet(tmp_folders['modes'])
+            .sort("iteration", descending=True)
+            .unique(
+                subset=["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id", "seq_step_index"],
+                keep="first"
+            )
+
+        )
+        
+        possible_states_steps = (
+            
             modes
-            .join(spat_chains, on=["iteration", "demand_group_id", "motive_seq_id", "seq_step_index"])
-            .join(chains, on=["demand_group_id", "motive_seq_id", "seq_step_index"])
-            .join(cost_by_od_and_modes, on=["from", "to", "mode"])
-            .join(motive_dur, on=["csp", "motive"])
+            .join(spat_chains, on=["demand_group_id", "motive_seq_id", "dest_seq_id", "seq_step_index"])
+            .join(chains_w_home.lazy(), on=["demand_group_id", "motive_seq_id", "seq_step_index"])
+            .join(cost_by_od_and_modes.lazy(), on=["from", "to", "mode"])
+            .join(motive_dur.lazy(), on=["csp", "motive"])
+            
+            # Remove states that use at least one "empty" destination (with no opportunities left)
+            .join(sinks.select(["to", "motive", "k_saturation_utility"]).lazy(), on=["to", "motive"], how="left")
+            # .with_columns(
+            #     has_no_opportunities=(
+            #         (pl.col("sink_duration").fill_null(1.0) < 1e-6).any()
+            #         .over(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+            #     )
+            # )
+            
+        
+            
+            # Add a current step flag to be able to keep them in the dataframe
+            # and make the current state utility reevaluation possible in the next steps
+            # .join(
+            #     current_states.lazy()
+            #     .select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+            #     .with_columns(
+            #         is_current_state=pl.lit(True, dtype=pl.Boolean())
+            #     ),
+            #     on=["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"],
+            #     how="left"
+            # )
+            
+            # .filter(
+            #     (pl.col("has_no_opportunities").not_()) |
+            #     (pl.col("is_current_state") == True)
+            # )
+            
             .with_columns(
                 duration_per_pers=pl.max_horizontal([
                     pl.col("duration_per_pers"),
                     pl.col("mean_duration_per_pers")*0.1
-                 ])
+                  ])
             )
             .with_columns(
-                utility=activity_utility_coeff*pl.col("mean_duration_per_pers")*(pl.col("duration_per_pers")/0.1/pl.col("mean_duration_per_pers")).log() - pl.col("cost")
-            )
-            
-            # Set the utility of the home activity of the stay at home activity to zero
-            # (utility is computed directly at the day level in the compute_states_probability function)
-            .with_columns(
-                utility=(
-                    pl.when(pl.col("motive_seq_id") != 0)
-                    .then(pl.col("utility"))
-                    .otherwise(0.0)
+                utility=( 
+                    pl.col("k_saturation_utility")*activity_utility_coeff*pl.col("mean_duration_per_pers")*(pl.col("duration_per_pers")/0.1/pl.col("mean_duration_per_pers")).log()
+                    - pl.col("cost")
                 )
             )
             
         )
         
-        return states
+        return possible_states_steps
         
     
-    def get_possible_states_utility(self, possible_states_steps, home_night_dur, stay_home_utility_coeff):
+    def get_possible_states_utility(self, possible_states_steps, home_night_dur, stay_home_utility_coeff, stay_home_state):
                     
         possible_states_utility = (
             
@@ -975,7 +1065,7 @@ class PopulationTrips(FileAsset):
                 home_night_per_pers=24.0 - pl.col("duration_per_pers").sum()
             )
             
-            .join(home_night_dur, on="csp")
+            .join(home_night_dur.lazy(), on="csp")
             .with_columns(
                 home_night_per_pers=pl.max_horizontal([
                     pl.col("home_night_per_pers"),
@@ -983,14 +1073,35 @@ class PopulationTrips(FileAsset):
                 ])
             )
             .with_columns(
-                utility_stay_home=stay_home_utility_coeff*pl.col("mean_home_night_per_pers")*(pl.col("home_night_per_pers")/0.1/pl.col("mean_home_night_per_pers")).log()
+                utility_stay_home=( 
+                    stay_home_utility_coeff*pl.col("mean_home_night_per_pers")
+                    * (pl.col("home_night_per_pers")/0.1/pl.col("mean_home_night_per_pers")).log()
+                )
             )
             
             .with_columns(
                 utility=pl.col("utility") + pl.col("utility_stay_home")
             )
             
+            # Prune states that are below a certain distance from the best state
+            # (because they will have very low probabilities to be selected)
+            .filter(
+                (pl.col("utility") > pl.col("utility").max().over(["demand_group_id"]) - 5.0)
+            )
+            
             .select(["demand_group_id", "motive_seq_id", "mode_seq_id", "dest_seq_id", "utility"])
+        )
+        
+        possible_states_utility = ( 
+            
+            pl.concat([
+                possible_states_utility,
+                ( 
+                    stay_home_state.lazy()
+                    .select(["demand_group_id", "motive_seq_id", "mode_seq_id", "dest_seq_id", "utility"])
+                )
+            ])
+            
         )
         
         
@@ -1000,33 +1111,58 @@ class PopulationTrips(FileAsset):
     
     def get_transition_probabilities(self, current_states, possible_states_utility): 
         
+        state_cols = ["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
+        
         transition_probabilities = (
             
-            current_states
-            .select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id", "utility"])
+            current_states.lazy()
+            .select(state_cols)
             
+            # Join the updated utility of the current states
+            .join(possible_states_utility, on=state_cols)
+            
+            # Join the possible states when they can improve the utility compared to the current states
+            # (join also the current state so it is included in the probability calculation)
             .join_where(
                 possible_states_utility,
-                pl.col("demand_group_id") == pl.col("demand_group_id_trans"),
-                pl.col("utility") < pl.col("utility_trans"),
+                (
+                    (pl.col("demand_group_id") == pl.col("demand_group_id_trans")) &
+                    (pl.col("utility_trans") > pl.col("utility") - 5.0)
+                ),
                 suffix="_trans"
             )
+            
+            .drop("demand_group_id_trans")
             
             .with_columns(
                 delta_utility=pl.col("utility_trans") - pl.col("utility")
             )
             
             .with_columns(
-                delta_utility=pl.col("delta_utility") - pl.col("delta_utility").max().over(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+                delta_utility=pl.col("delta_utility") - pl.col("delta_utility").max().over(state_cols)
             )
             .filter(
-                (pl.col("delta_utility") > -5.0 ) | 
-                (pl.col("motive_seq_id") == 0)
+                (pl.col("delta_utility") > -5.0)
             )
             
             .with_columns(
-                p_transition=pl.col("delta_utility").exp()/pl.col("delta_utility").exp().sum().over(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+                p_transition=pl.col("delta_utility").exp()/pl.col("delta_utility").exp().sum().over(state_cols)
             )
+            
+            # Keep only the first 99% of the distribution
+            .sort("p_transition", descending=True)
+            .with_columns(
+                p_transition_cum=pl.col("p_transition").cum_sum().over(state_cols),
+                p_count=pl.col("p_transition").cum_count().over(state_cols)
+            )
+            .filter((pl.col("p_transition_cum") < 0.99) | (pl.col("p_count") == 1))
+            .with_columns(
+                p_transition=( 
+                    pl.col("p_transition")
+                    /
+                    pl.col("p_transition").sum()
+                    .over(state_cols))
+                )
             
             .select([
                 "demand_group_id",
@@ -1034,6 +1170,8 @@ class PopulationTrips(FileAsset):
                 "motive_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans",
                 "utility_trans", "p_transition"
             ])
+            
+            .collect(engine="streaming")
         
         )
         
@@ -1042,25 +1180,29 @@ class PopulationTrips(FileAsset):
     
     def apply_transitions(self, current_states, transition_probabilities):
         
+        state_cols = ["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
+        
         new_states = (
             
             current_states
-            .join(
-                transition_probabilities,
-                on=["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"],
-                how="left"
-            )
+            .join(transition_probabilities, on=state_cols, how="left")
             .with_columns(
                 p_transition=pl.col("p_transition").fill_null(1.0),
-                utility=pl.coalesce([pl.col("utility_trans", "utility")]),
-                motive_seq_id=pl.coalesce([pl.col("motive_seq_id_trans", "motive_seq_id")]),
-                dest_seq_id=pl.coalesce([pl.col("dest_seq_id_trans", "dest_seq_id")]),
-                mode_seq_id=pl.coalesce([pl.col("mode_seq_id_trans", "mode_seq_id")])
+                utility=pl.coalesce([pl.col("utility_trans"), pl.col("utility")]),
+                motive_seq_id=pl.coalesce([pl.col("motive_seq_id_trans"), pl.col("motive_seq_id")]),
+                dest_seq_id=pl.coalesce([pl.col("dest_seq_id_trans"), pl.col("dest_seq_id")]),
+                mode_seq_id=pl.coalesce([pl.col("mode_seq_id_trans"), pl.col("mode_seq_id")]),
             )
             .with_columns(
                 n_persons=pl.col("n_persons")*pl.col("p_transition")
             )
-            .select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id", "n_persons", "utility"])
+            .group_by(state_cols)
+            .agg(
+                n_persons=pl.col("n_persons").sum(),
+                utility=pl.col("utility").first()
+            )  
+           
+            
         )
         
         return new_states
@@ -1069,19 +1211,23 @@ class PopulationTrips(FileAsset):
     def get_current_states_steps(self, current_states, possible_states_steps):
         
         current_states_steps = (
-            current_states
+            current_states.lazy()
             .join(
                 possible_states_steps.select([
                     "demand_group_id", "motive_seq_id", "dest_seq_id",
                     "mode_seq_id", "seq_step_index", "motive",
                     "from", "to", "mode", "duration_per_pers"
                 ]),
-                on=["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
+                on=["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"],
+                how="left"
             )
             .with_columns(
-                duration=pl.col("duration_per_pers")*pl.col("n_persons")
+                duration=pl.col("duration_per_pers").fill_null(24.0)*pl.col("n_persons")
             )
             .drop("duration_per_pers")
+            
+            .collect(engine="streaming")
+            
         )
         
         return current_states_steps
@@ -1095,7 +1241,7 @@ class PopulationTrips(FileAsset):
             in after congestion.
         """
         
-        if n_iter_per_cost_update > 0 and iteration > 0 and iteration % n_iter_per_cost_update == 0:
+        if n_iter_per_cost_update > 0 and iteration > 1 and (iteration-1) % n_iter_per_cost_update == 0:
             
             od_flows_by_mode = (
                 current_states_steps
@@ -1115,7 +1261,9 @@ class PopulationTrips(FileAsset):
     
 
         
-    def fix_overflow(self, current_states_steps, sinks):
+    def fix_overflow(self, current_states, current_states_steps, sinks, stay_home_state):
+        
+        state_cols = ["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
         
         # Compute the share of persons in each OD flow that could not find an
         # opportunity because too many people chose the same destiation
@@ -1126,52 +1274,104 @@ class PopulationTrips(FileAsset):
         # p_overflow = max(p_overflow_motive)
         logging.info("Correcting flows for sink saturation...")
         
-        overflow = (
+        # Compute the overflow for each motive / dest / mode state
+        overflow_share = (
             
             current_states_steps
-            .filter(pl.col("motive_seq_id") != 0)
             
-            .join(sinks, on=["motive", "to"], how="left")
+            .join(sinks, on=["motive", "to"])
             .with_columns(
-                p_overflow=(
-                    pl.when(pl.col("motive") == "home")
-                    .then(0.0)
-                    .otherwise((1.0 - 1.0/(pl.col("duration").sum().over(["to", "motive"])/pl.col("sink_duration"))).clip(0.0, 1.0))
-                )
+                overflow_share=(1.0 - pl.col("sink_duration")/pl.col("duration").sum().over(["to", "motive"])).clip(0.0, 1.0)
             )
-            .with_columns(
-                p_overflow_max=pl.col("p_overflow").max().over(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
+            .group_by(state_cols)
+            .agg(
+                overflow_share=pl.col("overflow_share").max()
             )
-            .with_columns(
-                n_persons_overflow=pl.col("n_persons")*pl.col("p_overflow_max")
+            .filter(pl.col("overflow_share") > 0.0)
+        )
+        
+        # Agreggate the overflow per demand group
+        current_states_fixed = (
+            
+            current_states
+            .join(
+                overflow_share,
+                on=state_cols,
+                how="left"
             )
             
-            .group_by(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"])
-            .agg(pl.col("n_persons_overflow").first())
-            
-            .group_by(["demand_group_id"])
-            .agg(pl.col("n_persons_overflow").sum())
+            .with_columns(
+                n_persons=pl.col("n_persons")*(1.0 - pl.col("overflow_share").fill_null(0.0)),
+                n_persons_overflow=pl.col("n_persons")*pl.col("overflow_share").fill_null(0.0)
+            )
             
         )
         
-        states_stay_home = (
+        total_overflow_by_demand_group = (
             
-            current_states_steps
-            .filter(pl.col("motive_seq_id") == 0)
-            .join(overflow, on="demand_group_id", how="left")
-            .with_columns(
-                n_persons=pl.col("n_persons") + pl.col("n_persons_overflow").fill_null(0.0)
+            current_states_fixed
+            .group_by("demand_group_id")
+            .agg(
+                total_overflow=pl.col("n_persons_overflow").sum()
             )
-            .drop("n_persons_overflow")
             
         )
         
-        states_steps_fixed = pl.concat([
-            current_states_steps.filter(pl.col("motive_seq_id") != 0),
-            states_stay_home
+
+        stay_home_states_fixed = (
+            
+            stay_home_state
+            .select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id", "utility"])
+            
+            .join(
+                total_overflow_by_demand_group,
+                on="demand_group_id",
+                how="left"
+            )
+            
+            .join(
+                current_states.filter(pl.col("motive_seq_id") == 0).drop("utility"),
+                on=state_cols,
+                how="left"
+            )
+            
+            .with_columns(
+                n_persons=pl.col("n_persons").fill_null(0.0) + pl.col("total_overflow").fill_null(0.0)
+            )
+            
+            .filter(pl.col("n_persons") > 0.0)
+            
+            .select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id", "n_persons", "utility"])
+            
+        )
+        
+        
+        current_states_fixed = pl.concat([
+            
+            ( 
+                current_states_fixed
+                .filter(pl.col("motive_seq_id") != 0)
+                .select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id", "n_persons", "utility"])
+            ),
+            
+            stay_home_states_fixed
+            
         ])
         
-        return states_steps_fixed
+        # Concatenate the states with activities and the ones without (stay at home)
+        current_states_steps_fixed = ( 
+        
+            current_states_steps.drop(["utility", "n_persons"])
+            .join(
+                current_states_fixed.drop("utility"),
+                on=state_cols,
+                how="full",
+                coalesce=True
+            )
+            
+        )
+    
+        return current_states_fixed, current_states_steps_fixed
     
     
 
@@ -1185,18 +1385,30 @@ class PopulationTrips(FileAsset):
         remaining_sinks = (
         
             current_states_steps
+            .filter(pl.col("motive_seq_id") != 0)
             .group_by(["to", "motive"])
             .agg(pl.col("duration").sum())
             .join(sinks, on=["to", "motive"], how="full", coalesce=True)
             .with_columns(
-                sink_duration=( 
-                    pl.col("sink_duration").fill_null(0.0).fill_nan(0.0)
+                sink_occupation=( 
+                    pl.col("sink_capacity").fill_null(0.0).fill_nan(0.0)
                     -
                     pl.col("duration").fill_null(0.0).fill_nan(0.0)
                 )
             )
-            .select(["motive", "to", "sink_duration"])
-            .filter(pl.col("sink_duration") > 0.0)
+            .with_columns(
+                k=pl.col("sink_occupation")/pl.col("sink_capacity"),
+                sink_available=pl.col("sink_capacity") - pl.col("sink_occupation")
+            )
+            .with_columns(
+                k_saturation_utility=(
+                    pl.when(pl.col("k") < 1.0)
+                    .then(1.0)
+                    .otherwise((1.0 - pl.col("k")).exp())
+                )
+            )
+            .select(["motive", "to", "sink_capacity", "sink_available", "k_saturation_utility"])
+            .filter(pl.col("sink_available") > 0.0)
             
         )
         
@@ -1243,22 +1455,24 @@ class PopulationTrips(FileAsset):
             .join(utilities.lazy(), on=["motive", "to"], how="left")
             .with_columns(
                 utility=pl.col("utility").fill_null(0.0),
-                n_opp=pl.col("sink_duration")*pl.col("prob")
+                sink_available=pl.col("sink_available")*pl.col("prob")
             )
             .drop("prob")
-            .with_columns(cost_bin=(pl.col("cost") - pl.col("utility")).round().cast(pl.Int32()))
+            .with_columns(
+                cost_bin=(pl.col("cost") - pl.col("utility")).floor()
+            )
         )
 
         cost_bin_to_dest = (
             costs
-            .with_columns(p_to=pl.col("sink_duration")/pl.col("sink_duration").sum().over(["from", "motive", "cost_bin"]))
+            .with_columns(p_to=pl.col("sink_available")/pl.col("sink_available").sum().over(["from", "motive", "cost_bin"]))
             .select(["motive", "from", "cost_bin", "to", "p_to"])
         )
 
         costs_bin = (
             costs
             .group_by(["from", "motive", "cost_bin"])
-            .agg(pl.col("sink_duration").sum())
+            .agg(pl.col("sink_available").sum())
             .sort(["from", "motive", "cost_bin"])
         )
         
