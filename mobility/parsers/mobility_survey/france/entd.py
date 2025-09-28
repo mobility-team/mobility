@@ -11,11 +11,11 @@ from mobility.parsers.download_file import download_file
 class ENTDMobilitySurvey(MobilitySurvey):
     """
     A class for managing and processing mobility survey data for the EMP-2019 and ENTD-2008 surveys.
-    
+
     Attributes:
         source (str): The source of the mobility survey data (e.g., "EMP-2019" or "ENTD-2008").
         cache_path (dict): A dictionary mapping data identifiers to their file paths in the cache.
-    
+
     Methods:
         get_cached_asset: Returns the cached asset data as a dictionary of pandas DataFrames.
         create_and_get_asset: Prepares mobility survey data from scratch, caches it, and returns it.
@@ -24,74 +24,74 @@ class ENTDMobilitySurvey(MobilitySurvey):
         prepare_survey_data_ENTD_2008: Processes and formats ENTD-2008 survey data.
         prepare_survey_data_EMP_2019: Processes and formats EMP-2019 survey data.
     """
-    
-    def __init__(self):
+
+    def __init__(self, seq_prob_cutoff: float = 0.95):
         inputs = {
             "survey_name": "fr-ENTD-2008",
             "country": "fr"
         }
-        super().__init__(inputs)
-        
-    
+        super().__init__(inputs, seq_prob_cutoff)
+
+
     def create_and_get_asset(self) -> dict[str, pd.DataFrame]:
         """
         Prepares mobility survey data by downloading, processing, and caching it, then returns the cached data.
-        
+
         Returns:
             dict: A dictionary where keys are data identifiers and values are pandas DataFrames of the prepared and cached data.
         """
-        
+
         logging.info("Preparing ENTD survey data...")
-        
+
         dataset_path = (
             pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) /
             "mobility_surveys" / "ENTD-2008" / "entd-2008.zip"
         )
-        
+
         self.download_survey_data(dataset_path)
         self.parse_survey_data(dataset_path)
-        
+
         return self.get_cached_asset()
-        
-    
+
+
     def download_survey_data(self, dataset_path: pathlib.Path) -> None:
         """
         Downloads the survey data zip file from a specified URL and extracts it to a designated folder.
-        
+
         Args:
             source (str): The source identifier of the mobility survey data (e.g., "EMP-2019" or "ENTD-2008").
-        
+
         Returns:
             None
         """
-        
+
         if dataset_path.exists() is False:
-            
+
             download_file(
                 "https://www.data.gouv.fr/fr/datasets/r/896647f1-35b3-4dbe-8967-5a956cb99b95",
                 dataset_path
             )
-            
+
             with zipfile.ZipFile(dataset_path, "r") as zip_ref:
                 zip_ref.extractall(dataset_path.parent)
-                
+
         return None
-                
-            
-            
+
+
+
     def parse_survey_data(self, dataset_path: pathlib.Path) -> None:
         """
         Processes and formats the ENTD-2008 mobility survey data, then saves the data to parquet files in the cache directory.
-        
+
         Args:
             data_folder_path (pathlib.Path): The path to the folder containing the extracted ENTD-2008 survey data files.
-        
+
         Returns:
             None
         """
-        
+
         data_folder_path = dataset_path.parent
-        
+
         # Info about the individuals (CSP, city category...)
         indiv = pd.read_csv(
             data_folder_path / "Q_tcm_individu.csv",
@@ -252,7 +252,7 @@ class ENTDMobilitySurvey(MobilitySurvey):
             ],
         )
         df_long["poids_annuel"] = df_long["poids_annuel"].astype(float)
-        # df_long.rename(columns={"poids_annuel": "annual weight"}, inplace=True)  
+        # df_long.rename(columns={"poids_annuel": "annual weight"}, inplace=True)
         df_long["V2_DVO_ODV"] = df_long["V2_DVO_ODV"].astype(float)
         df_long["n_other_passengers"] = df_long[
             [
@@ -285,10 +285,10 @@ class ENTDMobilitySurvey(MobilitySurvey):
             columns=["labels", "UU_id"],
         )
         dict_urban_category.columns = ["V2_OLDARCOM_UUCat", "UU_id"]
-        
+
         df_long = pd.merge(df_long, dict_urban_category, on="V2_OLDARCOM_UUCat")
-        
-       
+
+
 
         # Merge with the data about individuals and household cars
         df_long = pd.merge(df_long, indiv, on="IDENT_IND")
@@ -366,7 +366,7 @@ class ENTDMobilitySurvey(MobilitySurvey):
         # Convert the urban category of the destination to the {'C', 'B', 'I', 'R'} terminology
         dict_urban_category.columns = ["V2_OLDVCOM_UUCat", "UU_id"]
         travels = pd.merge(travels, dict_urban_category, on="V2_OLDVCOM_UUCat")
-        
+
 
         # Merge with the data about individuals and household cars
         travels = pd.merge(travels, indiv, on="IDENT_IND")
@@ -643,7 +643,7 @@ class ENTDMobilitySurvey(MobilitySurvey):
             lambda x: x.left)
         p_det_mode["dist_bin_right"] = p_det_mode["dist_bin"].apply(
             lambda x: x.right)
-        
+
         p_det_mode["dist_bin_left"] = p_det_mode["dist_bin_left"].astype(float)
         p_det_mode["dist_bin_right"] = p_det_mode["dist_bin_right"].astype(float)
 
@@ -656,7 +656,7 @@ class ENTDMobilitySurvey(MobilitySurvey):
 
         p_det_mode = p_det_mode / p_det_mode_tot
         p_det_mode.dropna(inplace=True)
-        
+
         files = {
             "short_trips": df,
             "days_trip": days_trip,
@@ -667,9 +667,8 @@ class ENTDMobilitySurvey(MobilitySurvey):
             "p_car": p_car.to_frame(),
             "p_det_mode": p_det_mode.to_frame()
         }
-        
+
         for name, df in files.items():
             df.to_parquet(self.cache_path[name])
 
         return None
-    

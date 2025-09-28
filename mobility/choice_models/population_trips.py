@@ -36,7 +36,7 @@ class PopulationTrips(FileAsset):
             modes: List[TransportMode] = None,
             motives: List[Motive] = None,
             surveys: List[MobilitySurvey] = None,
-            n_iterations: int = 10,
+            n_iterations: int = 1,
             alpha: float = 0.01,
             k_mode_sequences: int = 6,
             dest_prob_cutoff: float = 0.99,
@@ -1520,10 +1520,10 @@ class PopulationTrips(FileAsset):
         elif zone == "destination":
             left_column = "to"
 
-        mode_share = population_df.groupby([left_column, "mode"]).sum("flow_volume")
+        mode_share = population_df.groupby([left_column, "mode"]).sum("n_persons")
         mode_share = mode_share.reset_index().set_index([left_column])
-        mode_share["total"] = mode_share.groupby([left_column])["flow_volume"].sum()
-        mode_share["modal_share"] = mode_share["flow_volume"] / mode_share["total"]
+        mode_share["total"] = mode_share.groupby([left_column])["n_persons"].sum()
+        mode_share["modal_share"] = mode_share["n_persons"] / mode_share["total"]
 
         if mode == "public_transport":
             mode_name = "Public transport"
@@ -1607,8 +1607,8 @@ class PopulationTrips(FileAsset):
                 population_df = population_df[population_df["mode"] == mode]
 
         # Find all biggest origin-destination between different transport zones
-        biggest_flows = population_df.groupby(["from", "to"]).sum("flow_volume").reset_index()
-        biggest_flows = biggest_flows.where(biggest_flows["from"] != biggest_flows["to"]).nlargest(n_largest, "flow_volume")
+        biggest_flows = population_df.groupby(["from", "to"]).sum("n_persons").reset_index()
+        biggest_flows = biggest_flows.where(biggest_flows["from"] != biggest_flows["to"]).nlargest(n_largest, "n_persons")
         transport_zones_df = self.population.transport_zones.get()
         biggest_flows = biggest_flows.merge(
             transport_zones_df, left_on="from", right_on="transport_zone_id", suffixes=('', '_from'))
@@ -1630,7 +1630,7 @@ class PopulationTrips(FileAsset):
         # Draw all origin-destinations
         for index, row in biggest_flows.iterrows():
             plt.plot([row["x"], row["x_to"]], [row["y"], row["y_to"]],
-                     linewidth=row["flow_volume"]/500, color=color, alpha=transparency)
+                     linewidth=row["n_persons"]/500, color=color, alpha=transparency)
 
         if isinstance(labels, gpd.GeoDataFrame):
             self.__show_labels__(labels, labels_size, labels_color)
@@ -1679,12 +1679,12 @@ class PopulationTrips(FileAsset):
 
         # Group flows per local admin unit
         flows_per_commune = population_df.merge(tzdf, left_on="from", right_on="transport_zone_id")
-        flows_per_commune = flows_per_commune.groupby("local_admin_unit_id")["flow_volume"].sum().reset_index()
+        flows_per_commune = flows_per_commune.groupby("local_admin_unit_id")["n_persons"].sum().reset_index()
         flows_per_commune = flows_per_commune.merge(study_area_df)
 
         # Keep the most important cities and five them an initial prominence depending on total flows
         # Use n_levels here in the future
-        flows_per_commune = flows_per_commune.sort_values(by="flow_volume", ascending=False).head(n_cities*2).reset_index()
+        flows_per_commune = flows_per_commune.sort_values(by="n_persons", ascending=False).head(n_cities*2).reset_index()
         flows_per_commune.loc[0, "prominence"] = 1
         flows_per_commune.loc[1:n_cities//2, "prominence"] = 2
         flows_per_commune.loc[n_cities//2+1:n_cities, "prominence"] = 3

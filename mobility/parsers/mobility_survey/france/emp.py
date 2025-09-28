@@ -11,11 +11,11 @@ from mobility.parsers.download_file import download_file
 class EMPMobilitySurvey(MobilitySurvey):
     """
     A class for managing and processing mobility survey data for the EMP-2019 and ENTD-2008 surveys.
-    
+
     Attributes:
         source (str): The source of the mobility survey data (e.g., "EMP-2019" or "ENTD-2008").
         cache_path (dict): A dictionary mapping data identifiers to their file paths in the cache.
-    
+
     Methods:
         get_cached_asset: Returns the cached asset data as a dictionary of pandas DataFrames.
         create_and_get_asset: Prepares mobility survey data from scratch, caches it, and returns it.
@@ -24,74 +24,74 @@ class EMPMobilitySurvey(MobilitySurvey):
         prepare_survey_data_ENTD_2008: Processes and formats ENTD-2008 survey data.
         prepare_survey_data_EMP_2019: Processes and formats EMP-2019 survey data.
     """
-    
-    def __init__(self, seq_prob_cutoff: float):
+
+    def __init__(self, seq_prob_cutoff: float = 0.95):
         inputs = {
             "survey_name": "fr-EMP-2019",
             "country": "fr"
         }
         super().__init__(inputs, seq_prob_cutoff)
-        
-    
+
+
     def create_and_get_asset(self) -> dict[str, pd.DataFrame]:
         """
         Prepares mobility survey data by downloading, processing, and caching it, then returns the cached data.
-        
+
         Returns:
             dict: A dictionary where keys are data identifiers and values are pandas DataFrames of the prepared and cached data.
         """
-        
+
         logging.info("Preparing EMP survey data...")
-        
-        dataset_path =  ( 
+
+        dataset_path =  (
             pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) /
             "mobility_surveys" / "EMP-2019" / "emp-2019.zip"
         )
-        
+
         self.download_survey_data(dataset_path)
         self.parse_survey_data(dataset_path)
-        
+
         return self.get_cached_asset()
-        
-    
+
+
     def download_survey_data(self, dataset_path: pathlib.Path) -> None:
         """
         Downloads the survey data zip file from a specified URL and extracts it to a designated folder.
-        
+
         Args:
             source (str): The source identifier of the mobility survey data (e.g., "EMP-2019" or "ENTD-2008").
-        
+
         Returns:
             None
         """
-        
+
         if dataset_path.exists() is False:
-            
+
             download_file(
                 "https://www.data.gouv.fr/fr/datasets/r/4a97ce1d-4e7f-43fd-bac3-60a9cc2bc1b5",
                 dataset_path
             )
-            
+
             with zipfile.ZipFile(dataset_path, "r") as zip_ref:
                 zip_ref.extractall(dataset_path.parent)
-                
+
         return None
-                
-            
-    
+
+
+
     def parse_survey_data(self, dataset_path: pathlib.Path) -> None:
         """
         Processes and formats the EMP-2019 mobility survey data, then saves the data to parquet files in the cache directory.
-        
+
         Args:
             data_folder_path (pathlib.Path): The path to the folder containing the extracted EMP-2019 survey data files.
-        
+
         Returns:
             None
         """
-        
+
         data_folder_path = dataset_path.parent
-        
+
         # Info about the individuals (CSP, city category...)
         indiv = pd.read_csv(
             data_folder_path / "tcm_ind_kish_public_V2.csv",
@@ -211,7 +211,7 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "MDESHARR"
             ]
         )
-        
+
         df["daily_trip_index"] = df.groupby("IDENT_IND").cumcount() + 1
 
         df["POND_JOUR"] = df["POND_JOUR"].astype(float)
@@ -220,7 +220,7 @@ class EMPMobilitySurvey(MobilitySurvey):
         df.loc[df["MACCOMPHM"].isnull(), "MACCOMPHM"] = 0
         df["n_other_passengers"] = df["MACCOMPM"].astype(int) + df["MACCOMPHM"].astype(int)
         df["weekday"] = np.where(df["TYPEJOUR"] == "1", True, False)
-        
+
         df["departure_time"] = pd.to_timedelta(df["MORIHDEP"]).astype('timedelta64[s]').astype(int)
         df["arrival_time"] = pd.to_timedelta(df["MDESHARR"]).astype('timedelta64[s]').astype(int)
 
@@ -232,7 +232,7 @@ class EMPMobilitySurvey(MobilitySurvey):
 
         # Remove trips with an unknown or zero distance
         df = df[(df["MDISTTOT_fin"] > 0.0) | (~df["MDISTTOT_fin"].isnull())]
-        
+
         # Map months and day of week to integers
         df["MDATE_mois"] = df["MDATE_mois"].replace({
             'janvier': "1",
@@ -390,7 +390,7 @@ class EMPMobilitySurvey(MobilitySurvey):
                 "MDATE_jour"
             ]
         ].copy()
-        
+
         days_trip.columns = [
             "day_id",
             "weekday",
@@ -620,7 +620,7 @@ class EMPMobilitySurvey(MobilitySurvey):
         travels.loc[
             travels["STATUTCOM_UU_VOY_DES"].isna(), "STATUTCOM_UU_VOY_DES"
         ] = travels.loc[travels["STATUTCOM_UU_VOY_DES"].isna(), "city_category"]
-        
+
         # Map months and day of week to integers
         travels["OLDDEBJ_mois"] = travels["OLDDEBJ_mois"].replace({
             'janvier': "1",
@@ -646,7 +646,7 @@ class EMPMobilitySurvey(MobilitySurvey):
             'samedi': "5",
             'dimanche': "6"
         }).astype(int)
-         
+
         travels = travels.loc[
             :,
             [
@@ -674,9 +674,9 @@ class EMPMobilitySurvey(MobilitySurvey):
             "month",
             "weekday"
         ]
-        
+
         travels.set_index(["csp", "n_cars", "city_category"], inplace=True)
-        
+
 
         # ------------------------------------------
         # Population by csp in 2019 from the weigths in the data base k_individu
@@ -695,7 +695,7 @@ class EMPMobilitySurvey(MobilitySurvey):
         travel_csp_pop["n_travel_by_csp"] = (
             travel_csp_pop["pondki"] / travel_csp_pop["n_pop"]
         )
-        
+
         # Compute the number of travels per year
         n_travel_by_csp = travel_csp_pop["n_travel_by_csp"]
 
@@ -939,7 +939,7 @@ class EMPMobilitySurvey(MobilitySurvey):
         p_det_mode["dist_bin"] = pd.qcut(p_det_mode["distance"].values, 4)
         p_det_mode["dist_bin_left"] = p_det_mode["dist_bin"].apply(lambda x: x.left)
         p_det_mode["dist_bin_right"] = p_det_mode["dist_bin"].apply(lambda x: x.right)
-        
+
         p_det_mode["dist_bin_left"] = p_det_mode["dist_bin_left"].astype(float)
         p_det_mode["dist_bin_right"] = p_det_mode["dist_bin_right"].astype(float)
 
@@ -952,14 +952,14 @@ class EMPMobilitySurvey(MobilitySurvey):
 
         p_det_mode = p_det_mode / p_det_mode_tot
         p_det_mode.dropna(inplace=True)
-        
-        
-        
+
+
+
         df = df.drop("pondki", axis=1)
 
         # ------------------------------------------
         # Write datasets to parquet files
-        
+
         files = {
             "short_trips": df,
             "days_trip": days_trip,
@@ -970,7 +970,7 @@ class EMPMobilitySurvey(MobilitySurvey):
             "p_car": p_car.to_frame(),
             "p_det_mode": p_det_mode.to_frame()
         }
-        
+
         for name, df in files.items():
             df.to_parquet(self.cache_path[name])
 
