@@ -116,8 +116,6 @@ class PopulationTrips(FileAsset):
         
         remaining_sinks = sinks.clone()
         
-        n_iterations = 10
-        
         for iteration in range(1, n_iterations+1):
             
             logging.info(f"Iteration n°{iteration}")
@@ -146,21 +144,11 @@ class PopulationTrips(FileAsset):
             current_states = self.apply_transitions(current_states, transition_prob)
             current_states_steps = self.get_current_states_steps(current_states, possible_states_steps)
             
-            print("-----")
-            print("Non moving persons")
-            print(current_states.filter(pl.col("motive_seq_id") == 0)["n_persons"].sum())
+            costs = self.update_costs(costs, iteration, n_iter_per_cost_update, current_states_steps, costs_aggregator)
             
-            # costs = self.update_costs(costs, iteration, n_iter_per_cost_update, current_states_steps, costs_aggregator)
-            
-            # current_states, current_states_steps = self.fix_overflow(current_states, current_states_steps, sinks, stay_home_state)
             remaining_sinks = self.get_remaining_sinks(current_states_steps, sinks)
             
-            # print("Non moving persons after overflow correction")
-            # print(current_states.filter(pl.col("motive_seq_id") == 0)["n_persons"].sum())
-            
-            
-        
-        
+    
         current_states_steps = (
             current_states_steps
             .join(
@@ -1242,6 +1230,8 @@ class PopulationTrips(FileAsset):
         """
         
         if n_iter_per_cost_update > 0 and iteration > 1 and (iteration-1) % n_iter_per_cost_update == 0:
+            
+            logging.info("Updating costs...")
             
             od_flows_by_mode = (
                 current_states_steps

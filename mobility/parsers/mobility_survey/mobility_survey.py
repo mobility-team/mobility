@@ -17,7 +17,7 @@ class MobilitySurvey(FileAsset):
         get_cached_asset: Returns the cached asset data as a dictionary of pandas DataFrames.
     """
     
-    def __init__(self, inputs, seq_prob_cutoff):
+    def __init__(self, inputs, seq_prob_cutoff: float = 0.95):
         
         folder_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "mobility_surveys" / inputs["survey_name"]
         
@@ -34,7 +34,7 @@ class MobilitySurvey(FileAsset):
         
         cache_path = {k: folder_path / file for k, file in files.items()}
         
-        self.seq_prob_cutoff = seq_prob_cutoff if seq_prob_cutoff is not None else 0.95
+        self.seq_prob_cutoff = seq_prob_cutoff
 
         super().__init__(inputs, cache_path)
         
@@ -294,7 +294,7 @@ class MobilitySurvey(FileAsset):
         )
         
         # Compute the probability of each subsequence, keeping only the first 
-        # 95 % of the contribution to the average distance for each population 
+        # x % of the contribution to the average distance for each population 
         # group
         cutoff = self.seq_prob_cutoff
 
