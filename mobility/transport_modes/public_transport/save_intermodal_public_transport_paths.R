@@ -43,11 +43,6 @@ buildings_sample_fp <- file.path(
   )
 )
 
-# source(file.path(package_path, "r_utils", "compute_gtfs_travel_costs.R"))
-# source(file.path(package_path, "r_utils", "duplicate_cpprouting_graph.R"))
-# source(file.path(package_path, "r_utils", "initialize_travel_costs.R"))
-# source(file.path(package_path, "r_utils", "concatenate_graphs.R"))
-# source(file.path(package_path, "r_utils", "create_graph_from_travel_costs.R"))
 source(file.path(package_path, "r_utils", "cpprouting_io.R"))
 
 logger <- logger(appenders = console_appender())
