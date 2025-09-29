@@ -1,17 +1,12 @@
-def test_calling_base_get_executes_pass_for_coverage(use_real_asset_init):
-    # Use real init so we construct a bona fide Asset subclass instance
-    Asset = use_real_asset_init
+# tests/unit/domain/asset/test_024_cover_abstract_get_line.py
+def test_calling_base_get_executes_pass_for_coverage(asset_base_class):
+    Asset = asset_base_class
 
     class ConcreteAsset(Asset):
         def get(self):
-            # Normal path returns something; not used here
             return "ok"
 
     instance = ConcreteAsset({"foo": 1})
-
-    # Deliberately call the base-class abstract method to execute its 'pass' line.
-    # This is safe and purely for coverage.
+    # Directly invoke the base abstract method body to cover the 'pass' line.
     result = Asset.get(instance)
-
-    # Base 'pass' returns None implicitly
     assert result is None
