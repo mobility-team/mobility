@@ -19,11 +19,11 @@ html_theme = "sphinx_rtd_theme"
 
 extensions = [
     'myst_parser',
+    'sphinx_copybutton',
     'sphinx.ext.duration',
     'sphinx.ext.doctest',
     'sphinx.ext.autodoc',
     'sphinx.ext.autosummary',
     'sphinx.ext.intersphinx',
-    'sphinxcontrib.napoleon',
     'sphinx_rtd_theme',
 ]

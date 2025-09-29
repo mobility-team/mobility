@@ -8,12 +8,11 @@ import pytest
 def test_003_car_costs_can_be_computed(test_data):
     
     transport_zones = mobility.TransportZones(
-        insee_city_id=test_data["transport_zones_insee_city_id"],
-        method="radius",
-        radius=test_data["transport_zones_radius"],
+        local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
+        radius=test_data["transport_zones_radius"]
     )
-    
-    car_travel_costs = mobility.TravelCosts(transport_zones, "car")
-    car_travel_costs = car_travel_costs.get()
-    
-    assert car_travel_costs.shape[0] > 0
+
+    car = mobility.CarMode(transport_zones)
+    costs = car.travel_costs.get()
+
+    assert costs.shape[0] > 0

@@ -3,12 +3,13 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mobility-tools"
+name = "mobility"
 version = "0.1"
 dependencies = [
   "geopandas",
   "numpy",
   "pandas",
+  "scipy",
   "requests",
   "shortuuid",
   "pyarrow",
@@ -18,12 +19,11 @@ dependencies = [
   "python-dotenv",
   "geojson",
   "matplotlib",
-  "throttler",
-  "sphinxcontrib-napoleon",
-  "myst_parser",
-  "streamlit",
-  "streamlit_lottie",
-  "streamlit_option_menu"
+  "seaborn",
+  "pyogrio",
+  "polars",
+  "psutil",
+  "networkx"
 ]
 
 requires-python = ">=3.11"
@@ -36,7 +36,6 @@ authors = [
 maintainers = []
 description = "A tool to simulate the mobility behaviours of the inhabitants of a given region."
 readme = "README.md"
-license = { file = "LICENSE" }
 keywords = ["mobility", "transport systems"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -48,7 +47,9 @@ dev = [
     "flake8",
     "pytest",
     "pytest-cov",
-    "pytest-dependency"
+    "pytest-dependency",
+    "sphinxcontrib-napoleon",
+     "myst_parser"
 ]
 
 spyder = [
@@ -63,5 +64,12 @@ Issues = "https://github.com/mobility-team/mobility/issues"
 Changelog = "https://github.com/mobility-team/mobility/releases"
 
 [tool.setuptools.package-data]
-mobility = ["data/gtfs/gtfs_route_types.xlsx", "resources/*", "R/*"]
+mobility = [
+    "data/gtfs/gtfs_route_types.csv",
+    "resources/*",
+    "r_utils/*",
+    "**/*.R"
+]
 
+[tool.setuptools.packages.find]
+exclude = ["certs", "certs.*"]

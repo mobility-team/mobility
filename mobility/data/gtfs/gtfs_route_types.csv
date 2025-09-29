@@ -1,0 +1,92 @@
+route_type;description;route_type_label;vehicle_capacity
+0;Tram, Streetcar, Light rail. Any light rail or street level system within a metropolitan area.;tramway;200
+1;Subway, Metro. Any underground rail system within a metropolitan area.;subway;1000
+2;Rail. Used for intercity or long-distance travel.;train;800
+3;Bus. Used for short- and long-distance bus routes.;bus;50
+4;Ferry. Used for short- and long-distance boat service.;ferry;500
+5;Cable tram. Used for street-level rail cars where the cable runs beneath the vehicle.;cable_car;80
+6;Aerial lift, suspended cable car (e.g., gondola lift, aerial tramway).;aerial_tramway;40
+7;Funicular. Any rail system designed for steep inclines.;aerial_tramway;100
+11;Trolleybus. Electric buses that draw power from overhead wires using poles.;trolley_bus;60
+12;Monorail. Railway in which the track consists of a single rail or a beam.;monorail;200
+100;Railway Service;train;800
+101;High Speed Rail Service;train;600
+102;Long Distance Trains;train;700
+103;Inter Regional Rail Service;train;400
+104;Car Transport Rail Service;train;400
+105;Sleeper Rail Service;train;500
+106;Regional Rail Service;train;300
+107;Tourist Railway Service;train;150
+108;Rail Shuttle (Within Complex);train;200
+109;Suburban Railway;train;400
+110;Replacement Rail Service;train;300
+111;Special Rail Service;train;150
+112;Lorry Transport Rail Service;train;400
+113;All Rail Services;train;800
+114;Cross-Country Rail Service;train;600
+115;Vehicle Transport Rail Service;train;400
+116;Rack and Pinion Railway;train;50
+117;Additional Rail Service;train;150
+200;Coach Service;bus;50
+201;International Coach Service;bus;50
+202;National Coach Service;bus;50
+203;Shuttle Coach Service;bus;40
+204;Regional Coach Service;bus;50
+205;Special Coach Service;bus;40
+206;Sightseeing Coach Service;bus;40
+207;Tourist Coach Service;bus;50
+208;Commuter Coach Service;bus;40
+209;All Coach Services;bus;50
+400;Urban Railway Service;subway;1000
+401;Metro Service;subway;1000
+402;Underground Service;subway;1000
+403;Urban Railway Service;subway;1000
+404;All Urban Railway Services;subway;1000
+405;Monorail;subway;200
+700;Bus Service;bus;50
+701;Regional Bus Service;bus;50
+702;Express Bus Service;bus;50
+703;Stopping Bus Service;bus;50
+704;Local Bus Service;bus;50
+705;Night Bus Service;bus;50
+706;Post Bus Service;bus;30
+707;Special Needs Bus;bus;20
+708;Mobility Bus Service;bus;15
+709;Mobility Bus for Registered Disabled;bus;10
+710;Sightseeing Bus;bus;40
+711;Shuttle Bus;bus;30
+712;School Bus;bus;50
+713;School and Public Service Bus;bus;50
+714;Rail Replacement Bus Service;bus;50
+715;Demand and Response Bus Service;bus;15
+716;All Bus Services;bus;50
+800;Trolleybus Service;trolley_bus;60
+900;Tram Service;tramway;200
+901;City Tram Service;tramway;150
+902;Local Tram Service;tramway;150
+903;Regional Tram Service;tramway;200
+904;Sightseeing Tram Service;tramway;100
+905;Shuttle Tram Service;tramway;100
+906;All Tram Services;tramway;200
+1000;Water Transport Service;ferry;500
+1100;Air Service;plane;200
+1200;Ferry Service;ferry;500
+1300;Aerial Lift Service;aerial_lift;40
+1301;Telecabin Service;aerial_lift;40
+1302;Cable Car Service;aerial_lift;30
+1303;Elevator Service;aerial_lift;10
+1304;Chair Lift Service;aerial_lift;20
+1305;Drag Lift Service;aerial_lift;10
+1306;Small Telecabin Service;aerial_lift;20
+1307;All Telecabin Services;aerial_lift;40
+1400;Funicular Service;funicular;100
+1500;Taxi Service;car;4
+1501;Communal Taxi Service;car;8
+1502;Water Taxi Service;car;10
+1503;Rail Taxi Service;car;10
+1504;Bike Taxi Service;car;2
+1505;Licensed Taxi Service;car;4
+1506;Private Hire Service Vehicle;car;4
+1507;All Taxi Services;car;4
+1700;Miscellaneous Service;other;50
+1702;Horse-drawn Carriage;horse_carriage;6

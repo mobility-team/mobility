@@ -123,5 +123,5 @@ La plus grosse différence vient de l'utilisation de la voiture (mode 3) : 2000 
 
 | Distance totale par groupe | Distance totale par groupe et par mode | Distance totale par groupe et par motif |
 |:----------------------:|:----------------------:|:----------------------:|
-| ![](quickstart/total_distance.png) | ![](quickstart/total_distance_by_mode.png) | ![](quickstart/total_distance_by_motive.png) |
+| ![](total_distance.png) | ![](total_distance_by_mode.png) | ![](total_distance_by_motive.png) |
 

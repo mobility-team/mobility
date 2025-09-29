@@ -3,15 +3,22 @@ import sys
 import pathlib
 import logging
 import platform
+import json
 
 from importlib import resources
-from mobility.r_script import RScript
+from mobility.r_utils.r_script import RScript
 
 
 def set_params(
-    package_data_folder_path=None, project_data_folder_path=None,
-    path_to_pem_file=None, http_proxy_url=None, https_proxy_url=None,
-    r_packages=True
+    package_data_folder_path=None,
+    project_data_folder_path=None,
+    path_to_pem_file=None,
+    http_proxy_url=None,
+    https_proxy_url=None,
+    r_packages=True,
+    r_packages_force_reinstall=False,
+    r_packages_download_method="auto",
+    debug=False
 ):
     """
     Sets up the necessary environment for the Mobility package.
@@ -25,20 +32,25 @@ def set_params(
     path_to_pem_file (str, optional): The file path to the PEM file for SSL certification.
     http_proxy_url (str, optional): The URL for the HTTP proxy.
     https_proxy_url (str, optional): The URL for the HTTPS proxy.
-    r_packages (boolean, optional): wether to install R packages or not by running RScript (does not work for github actions so is handled by a separate r-lib github action)
+    r_packages (boolean, optional): whether to install R packages or not by running RScript (does not work for github actions so is handled by a separate r-lib github action)
+    r_packages_force_reinstall (bool, optional)
+    r_packages_download_method (str, optional): set this parameter to "wininet" to be able to install packages on some proxies. See the installation.md page for details.
+    debug (bool, optional): set debug to True to see the R logs, including error messages
     """
 
     setup_logging()
-
+    
     set_env_variable("MOBILITY_ENV_PATH", str(pathlib.Path(sys.executable).parent))
     set_env_variable("MOBILITY_CERT_FILE", path_to_pem_file)
     set_env_variable("HTTP_PROXY", http_proxy_url)
     set_env_variable("HTTPS_PROXY", https_proxy_url)
+    
+    os.environ["MOBILITY_DEBUG"] = "1" if debug else "0"
 
     setup_package_data_folder_path(package_data_folder_path)
     setup_project_data_folder_path(project_data_folder_path)
 
-    install_r_packages(r_packages)
+    install_r_packages(r_packages, r_packages_force_reinstall, r_packages_download_method)
 
 
 def set_env_variable(key, value):
@@ -137,40 +149,56 @@ def setup_project_data_folder_path(project_data_folder_path):
                 raise ValueError("Please re run setup_mobility with the project_data_folder_path pointed to your desired location.")
 
 
-def install_r_packages(r_packages):
+def install_r_packages(r_packages, r_packages_force_reinstall, r_packages_download_method):
 
     if r_packages is True:
     
-        packages_from_cran = [
-            "dodgr",
-            "gtfsrouter",
-            "sf",
-            "geodist",
-            "dplyr",
-            "sfheaders",
-            "nngeo",
-            "data.table",
-            "reshape2",
-            "arrow",
-            "stringr",
-            "pbapply",
-            "hms",
-            "lubridate",
-            "readxl",
-            "pbapply"
+        packages = [
+            {'source': 'CRAN', 'name': 'remotes'},
+            {'source': 'CRAN', 'name': 'dodgr'},
+            {'source': 'CRAN', 'name': 'sf'},
+            # {'source': 'CRAN', 'name': 'geodist'},
+            {'source': 'CRAN', 'name': 'dplyr'},
+            {'source': 'CRAN', 'name': 'sfheaders'},
+            {'source': 'CRAN', 'name': 'nngeo'},
+            {'source': 'CRAN', 'name': 'data.table'},
+            # {'source': 'CRAN', 'name': 'reshape2'},
+            {'source': 'CRAN', 'name': 'arrow'},
+            # {'source': 'CRAN', 'name': 'stringr'},
+            {'source': 'CRAN', 'name': 'hms'},
+            {'source': 'CRAN', 'name': 'lubridate'},
+            # {'source': 'CRAN', 'name': 'readxl'},
+            # {'source': 'CRAN', 'name': 'codetools'},
+            {'source': 'CRAN', 'name': 'future'},
+            {'source': 'CRAN', 'name': 'future.apply'},
+            {'source': 'CRAN', 'name': 'ggplot2'},
+            # {'source': 'CRAN', 'name': 'svglite'},
+            {'source': 'CRAN', 'name': 'cppRouting'},
+            {'source': 'CRAN', 'name': 'duckdb'},
+            {'source': 'CRAN', 'name': 'jsonlite'},
+            {'source': 'CRAN', 'name': 'gtfsrouter'},
+            {'source': 'CRAN', 'name': 'geos'},
+            {'source': 'CRAN', 'name': 'FNN'},
+            {'source': 'CRAN', 'name': 'cluster'},
+            {'source': 'CRAN', 'name': 'dbscan'}
         ]
         
-        packages_from_binaries = []
-        
         if platform.system() == "Windows":
-            packages_from_binaries.append(str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip')))
+            packages.append(
+                {
+                    "source": "local",
+                    "path": str(resources.files('mobility.resources').joinpath('osmdata_0.2.5.005.zip'))
+                }
+            )
         else:
-            packages_from_cran.append("osmdata")
-
-        os.environ["R_LIBS"] = str(pathlib.Path(sys.executable).parent / "Lib/R/library")
+            packages.append({'source': 'CRAN', 'name': 'osmdata'})
             
-        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_cran.R'))
-        script.run(args=packages_from_cran)
-        
-        script = RScript(resources.files('mobility.R').joinpath('install_packages_from_binaries.R'))
-        script.run(args=packages_from_binaries)
+            
+        args = [
+            json.dumps(packages),
+            str(r_packages_force_reinstall),
+            r_packages_download_method
+        ]
+            
+        script = RScript(resources.files('mobility.r_utils').joinpath('install_packages.R'))
+        script.run(args)

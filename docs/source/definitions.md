@@ -1,5 +1,12 @@
 # Definitions
-## Catégories socioprofessionnelles
+Some definitions and tables useful to understand Mobility data!
+
+## France
+France's statistical institute INSEE uses socioprofessional categories (Catégories socioprofessionnelles, or *CSP*) to describe the population.
+It also uses categories for the urban setting of communes and journeys' motives and modes.
+This documentation is only available in French.
+
+### Catégories socioprofessionnelles
 | Code CSP | CSP |
 | - | - |
 | 1 | Agriculteurs exploitants |
@@ -14,7 +21,7 @@
 
 Définition INSEE : https://www.insee.fr/fr/metadonnees/definition/c1493
 
-## Catégorie de l'unité urbaine
+### Catégorie de l'unité urbaine
 | Code | Catégorie de l'unité urbaine |
 | - | - |
 | C | Ville-centre de l'unité urbaine |
@@ -24,7 +31,7 @@ Définition INSEE : https://www.insee.fr/fr/metadonnees/definition/c1493
 
 Définition INSEE : https://www.insee.fr/fr/metadonnees/definition/c1501
 
-## Motif du déplacement
+### Motif du déplacement
 | Code | Motif |
 |------|-------|
 | 1 à 8 | MOTIFS PRIVÉS |
@@ -69,7 +76,7 @@ Définition INSEE : https://www.insee.fr/fr/metadonnees/definition/c1501
 | 9.95 | Tournées professionnelles (VRP) ou visites de patients |
 | 9.96 | Autres motifs professionnels |
 
-## Mode du déplacement
+### Mode du déplacement
 | Code | Label |
 |------|-------|
 | 1 | Piéton |
@@ -115,3 +122,7 @@ Définition INSEE : https://www.insee.fr/fr/metadonnees/definition/c1501
 | 7.70 | Avion |
 | 8.80 | Bateau |
 | 9.90 | Autre |
+
+## Switzerland
+
+To do!

@@ -5,10 +5,10 @@ import zipfile
 import pandas as pd
 import numpy as np
 
-from mobility.asset import Asset
+from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file
 
-class CensusLocalizedIndividuals(Asset):
+class CensusLocalizedIndividuals(FileAsset):
     
     def __init__(self, region: str):
 
