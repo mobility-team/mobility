@@ -8,21 +8,19 @@ library(sfheaders)
 
 args <- commandArgs(trailingOnly = TRUE)
 
+# args <- c(
+#   'D:\\dev\\mobility_oss\\mobility',
+#   'D:\\test-09\\e90a8308da40d062e66d1021c5094d4d-transport_zones.gpkg',
+#   'D:\\mobility-data\\gtfs\\80d9147b5fa8f2a62c1f9492c239b0b7-a9867a67c4aca09a3214ee7de867fbd3_ucexportdownloadid1VXd01yQl2Mb67C9bkrx0P8sqNIL532_o.zip,D:\\mobility-data\\gtfs\\8dba4ccc087960568442cfb2a2b728c9-4a590cb87669fe2bc39328652ef1d2e9_gtfs_generic_eu.zip,D:\\mobility-data\\gtfs\\ad3958a96dacccb44825549e21e84979-7c570637abe59c4c966bdd7323db2746_naq-aggregated-gtfs.zip,D:\\mobility-data\\gtfs\\dccabe1db6bbe10b7457fa5a43069869-ebfa654bbde377deaf34c670d23e9cf6_lioapiKey2b160d626f783808095373766f18714901325e45typegtfs_lio.zip,D:\\mobility-data\\gtfs\\a1e0570cf593e64a24a17e0264183d21-7960742560564aec19bdfc92988923d9_gtfs_global.zip,D:\\mobility-data\\gtfs\\9e748ff3e0f6f3d11c7e7cf702348174-7eb92f86cd2571d4b6659470f41c66ce_KORRIGOBRET.gtfs.zip,D:\\mobility-data\\gtfs\\7dc7fdbf6d0b27516ab576a904ddc290-a2065509a9ecd722ae9bcd89c6a33bf8_pt-th-offer-atoumod-gtfs-20250912-914-opendata.zip,D:\\mobility-data\\gtfs\\45f4b3956a0b9c91f3b042a2d1a4ace4-d059c488bd33c0e0d9ed9d0363d06aa5_gtfs-20240903-154223.zip',
+#   'D:\\dev\\mobility_oss\\mobility\\data\\gtfs\\gtfs_route_types.csv',
+#   'D:\\test-09\\0a8bd50eb6f9cc645144a17944c656b6-gtfs_router.rds'
+# )
+
 package_path <- args[1]
 tz_file_path <- args[2]
 gtfs_file_paths <- args[3]
 route_types_fp <- args[4]
 output_file_path <- args[5]
-
-# package_path <- 'D:/dev/mobility_oss/mobility'
-# tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a9203ae729d0-transport_zones.gpkg'
-# gtfs_file_paths <- 'D:\\data\\mobility\\data\\gtfs\\8f079203e31e5691d6d5f477289a49c0-a161391d60620240d7ae4ee37235fbc3_gtfs_complete.zip,D:\\data\\mobility\\data\\gtfs\\05640a5657d2c01dfa31724c21766f01-b70c0b29d3c2d0d262640e04a62869cb_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\20c21f94f8253a28d75284d5fbfe1066-6434c57678fdd877da53c749c0eea4cf_gtfs_generic_eu.zip,D:\\data\\mobility\\data\\gtfs\\320285583e204d9870286c46c261efa1-c9e2c2b923e6ab5a6a02776f6ee82207_export-ter-gtfs-last.zip,D:\\data\\mobility\\data\\gtfs\\4f2639f26eb94e07a18aa7ace94b286c-d47d66a3537807ae0e6b9eae45d2a802_export_gtfs_voyages.zip,D:\\data\\mobility\\data\\gtfs\\bc5dbe98b9daa96fe316d03fc5df3c6b-184253675901bfb025145a45593a95d0_DAT_AURA_GTFS_ExportAOM.zip,D:\\data\\mobility\\data\\gtfs\\1b3e497042c10298355caebe9c2dd0d2-f47807b294f863252c2da5e52a82a0da_GTFS_haute_savoie.zip,D:\\data\\mobility\\data\\gtfs\\ded173997cbb2ae769981abfa256b88d-9adb2aafa0827752a0db8a036b32f0e7_DESTINEO.gtfs.zip,D:\\data\\mobility\\data\\gtfs\\96db7cde4b24f24cf5c61b89923b89e6-7eb92f86cd2571d4b6659470f41c66ce_KORRIGOBRET.gtfs.zip,D:\\data\\mobility\\data\\gtfs\\53364a5913538d1294ca2493c35ec5ba-05db816cd25aa105999a4cfe22c25ff3_pt-th-offer-atoumod-gtfs-20240515-708-opendata.zip,D:\\data\\mobility\\data\\gtfs\\91ac42fa84d13e722a293ec9e2973723-9a6ec87a6e13b2162aae4c8f1e48a13c_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\af81d29e11025429121f73f53a40fa17-3099d69b1640aa362433a2b01a5adc4d_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\094e45c18e15942893a32a5533d05837-2a8453724d9c657011b2640ab935f1ad_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\9624bfdce445e8068df3e1b43ce473bc-3cb37cbf51263dcec94874cc10aa8913_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\e030ba9af42cb993315b4994aa113656-ba0fc9ebd797ef95c9ae8c794b02d65a_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\eff2be32796c9810706eda64e0cf481b-e844419b3e84ae96125e7b87ce222526_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\1f874a9da730832b72907ad1d0e1c65d-70b9a19cf4e00c1988a5b8cb1a9a9e5e_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\5e3a1dd644c6443309b5ddc50dffa804-0387e1ecfb203ff88a4fa83e76e91953_gtfs-ginko.zip,D:\\data\\mobility\\data\\gtfs\\a20e7e28599b5757ff8c55447d165ec6-42f0655e9e41033f28eb9d26b17cb80f_gtfs.zip,D:\\data\\mobility\\data\\gtfs\\9d5159c9392f474fe214d3ba433f24ec-36b41f205c5ab27575d18b06caa34ee0_capg-2024.zip,D:\\data\\mobility\\data\\gtfs\\60635a2b3ee6beec568271a865902f7e-8f6e40321ca12be15dfea9f8d150e8dd_2024.03.27-gtfs-start-2024-03-28-au-2024-06-30-orchestra-sans-scolaires.zip,D:\\data\\mobility\\data\\gtfs\\6e03163fbad50c58ecf80b853ef61f56-ba2cb3a0cacf24a315c0c8e5db3c8e27_gtfs-dole.zip,D:\\data\\mobility\\data\\gtfs\\a415c76765906b4cc1e53d4ea6e39098-1745561814d0d3b6bb148b516e09d468_gtfs-evian-10122023-26052024-v3.zip,D:/data/mobility/projects/haut-doubs/gtfs-vallorbe-pontarlier.zip,D:/data/mobility/projects/haut-doubs/export-ter-gtfs-2024-06-12-edited-haut-doubs.zip'
-# # gtfs_file_paths <- 'D:/data/mobility/data/gtfs/a415c76765906b4cc1e53d4ea6e39098-1745561814d0d3b6bb148b516e09d468_gtfs-evian-10122023-26052024-v3.zip'
-# route_types_fp <- 'D:/dev/mobility_oss/mobility/data/gtfs/gtfs_route_types.csv'
-# output_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\0c828f5d2dc7774ee06699b2812eb93a-gtfs_router.rds'
-
-# stop()
-
 
 logger <- logger(appenders = console_appender())
 
@@ -366,6 +364,9 @@ if ("calendar_dates" %in% names(gtfs)) {
 
 
 # Create the list of tuesdays covering all dates in the GTFS
+has_tuesday <- function(s, e) s <= e & (s + ((3 - wday(s) + 7) %% 7)) <= e
+cal <- cal[has_tuesday(start_date, end_date)]
+
 end_date <- max(c(cal$end_date, cal_dates$date), na.rm = TRUE)
 start_date <- min(c(cal$start_date, cal_dates$date), na.rm = TRUE)
 
