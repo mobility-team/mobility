@@ -112,7 +112,7 @@ class Population(FileAsset):
         
         individuals = ( 
             pop_groups
-            .groupby("transport_zone_id", group_keys=False)
+            .groupby("transport_zone_id", as_index=False)
             .apply(lambda g: g.sample(n=sample_sizes[g.name], weights="weight"))
         )
         
