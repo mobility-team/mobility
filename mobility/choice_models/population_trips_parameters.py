@@ -11,6 +11,7 @@ class PopulationTripsParameters:
     n_iter_per_cost_update: int = 3
     cost_uncertainty_sd: float = 1.0
     seed: int = 0
+    mode_sequence_search_parallel: bool = True
 
     def validate(self) -> None:
         assert self.n_iterations >= 1
