@@ -74,9 +74,9 @@ class PopulationTrips(FileAsset):
         else:
             self.rng = random.Random(parameters.seed)
         
+        self.state_initializer = StateInitializer()
         self.destination_sequence_sampler = DestinationSequenceSampler()
         self.top_k_mode_sequence_search = TopKModeSequenceSearch()
-        self.state_initializer = StateInitializer()
         self.state_updater = StateUpdater()
 
         costs_aggregator = TravelCostsAggregator(modes)
