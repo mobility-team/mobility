@@ -333,7 +333,7 @@ class MobilitySurvey(FileAsset):
             
             # Filter subsequences
             .with_columns(
-                group_count=pl.count().over(["is_weekday", "city_category", "csp", "n_cars"]),
+                group_count=pl.len().over(["is_weekday", "city_category", "csp", "n_cars"]),
                 cross_threshold=(
                     (pl.col("distance_p_cum_share") >= cutoff) & 
                     (pl.col("distance_p_cum_share").shift(1).over(["is_weekday", "city_category", "csp", "n_cars"]) < cutoff)
