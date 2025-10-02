@@ -57,7 +57,8 @@ def test_008_population_trips_can_be_computed(test_data):
             activity_utility_coeff=1.0,
             stay_home_utility_coeff=1.0,
             k_mode_sequences=6,
-            cost_uncertainty_sd=1.0
+            cost_uncertainty_sd=1.0,
+            mode_sequence_search_parallel=False
         )
     )
     
