@@ -23,7 +23,8 @@ dependencies = [
   "pyogrio",
   "polars",
   "psutil",
-  "networkx"
+  "networkx",
+  "plotly"
 ]
 
 requires-python = ">=3.11"
