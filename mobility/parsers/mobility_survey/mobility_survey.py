@@ -48,7 +48,7 @@ class MobilitySurvey(FileAsset):
         return {k: pd.read_parquet(path) for k, path in self.cache_path.items()}
     
 
-    def get_chains_probability(self, motives):
+    def get_chains_probability(self, motives, modes):
         
         motive_mapping = [{"group": m.name, "motive": m.survey_ids} for m in motives]
         motive_mapping = pd.DataFrame(motive_mapping)
@@ -56,6 +56,13 @@ class MobilitySurvey(FileAsset):
         motive_mapping = motive_mapping.set_index("motive").to_dict()["group"]
         
         motive_names = [m.name for m in motives]
+        
+        mode_mapping = [{"group": m.name, "mode": m.survey_ids} for m in modes]
+        mode_mapping = pd.DataFrame(mode_mapping)
+        mode_mapping = mode_mapping.explode("mode")
+        mode_mapping = mode_mapping.set_index("mode").to_dict()["group"]
+        
+        mode_names = [m.name for m in modes] + ["other"]
 
         days_trips = pl.from_pandas(self.get()["days_trip"].reset_index())
         short_trips = pl.from_pandas(self.get()["short_trips"].reset_index())
@@ -80,7 +87,7 @@ class MobilitySurvey(FileAsset):
             .select(["individual_id","day_id"])
         )
 
-        sequences = (
+        sequences_by_motives_and_modes = (
             
             days_trips.select(["day_id", "day_of_week", "pondki"])
             .join(short_trips, on="day_id")
@@ -92,10 +99,22 @@ class MobilitySurvey(FileAsset):
             )
 
             # Map detailed motives to grouped motives
-            .with_columns(pl.col("motive").replace(motive_mapping))
+            .with_columns(
+                pl.col("motive").replace(motive_mapping)
+            )
             .with_columns(
                 motive=pl.when(pl.col("motive").is_in(motive_names))
                 .then(pl.col("motive"))
+                .otherwise(pl.lit("other"))
+            )
+            
+            # Map detailed modes to grouped modes
+            .with_columns(
+                mode=pl.col("mode_id").replace(mode_mapping)
+            )
+            .with_columns(
+                mode=pl.when(pl.col("mode").is_in(mode_names))
+                .then(pl.col("mode"))
                 .otherwise(pl.lit("other"))
             )
             
@@ -105,6 +124,7 @@ class MobilitySurvey(FileAsset):
                 csp=pl.col("csp").cast(pl.Enum(["1", "2", "3", "4", "5", "6", "7", "8", "no_csp"])),
                 n_cars=pl.col("n_cars").cast(pl.Enum(["0", "1", "2+"])),
                 motive=pl.col("motive").cast(pl.Enum(motive_names)),
+                mode=pl.col("mode").cast(pl.Enum(mode_names)),
                 max_seq_step_index=( 
                     pl.col("seq_step_index")
                     .max().over(["individual_id", "day_id"])
@@ -143,10 +163,15 @@ class MobilitySurvey(FileAsset):
                 .otherwise(pl.col("departure_time"))
             )
             .with_columns(
-                arrival_time=pl.when((pl.col("departure_time") >= 24.0*3600.0) & (pl.col("departure_time") > pl.col("arrival_time")))
+                arrival_time=pl.when(pl.col("arrival_time") < pl.col("departure_time"))
                 .then(pl.col("arrival_time") + 24.0*3600.0)
                 .otherwise(pl.col("arrival_time"))
             )
+            # .with_columns(
+            #     arrival_time=pl.when((pl.col("departure_time") >= 24.0*3600.0) & (pl.col("departure_time") > pl.col("arrival_time")))
+            #     .then(pl.col("arrival_time") + 24.0*3600.0)
+            #     .otherwise(pl.col("arrival_time"))
+            # )
 
                 
             # Combine motives within each sequence to identify unique sequences
@@ -155,18 +180,25 @@ class MobilitySurvey(FileAsset):
                     pl.col("motive")
                     .str.join("-")
                     .over(["individual_id", "day_id"])
-                )
+                ),
+                mode_seq=( 
+                    pl.col("mode")
+                    .str.join("-")
+                    .over(["individual_id", "day_id"])
+                ),
+                travel_time=(pl.col("arrival_time") - pl.col("departure_time"))
             )
 
             # Compute the average departure and arrival time of each trip in each sequence
             .group_by([
                 "is_weekday", "city_category", "csp", "n_cars", "motive_seq",
-                "motive", "max_seq_step_index", "seq_step_index"
+                "mode_seq", "motive", "mode", "max_seq_step_index", "seq_step_index"
             ])
             .agg(
                 pondki=pl.col("pondki").sum(),
                 departure_time=(pl.col("departure_time")*pl.col("pondki")).sum()/pl.col("pondki").sum()/3600.0,
                 arrival_time=(pl.col("arrival_time")*pl.col("pondki")).sum()/pl.col("pondki").sum()/3600.0,
+                travel_time=(pl.col("travel_time")*pl.col("pondki")).sum()/pl.col("pondki").sum()/3600.0,
                 distance=(pl.col("distance")*pl.col("pondki")).sum()/pl.col("pondki").sum()
             )
             .sort(["seq_step_index"])
@@ -285,9 +317,11 @@ class MobilitySurvey(FileAsset):
             .select([
                 "is_weekday", "city_category", "csp", "n_cars",
                 "motive_seq", "motive",
+                "mode_seq", "mode",
                 "seq_step_index", 
                 "duration_morning", "duration_midday", "duration_evening",
                 "distance",
+                "travel_time",
                 "pondki"
             ])
             
@@ -297,13 +331,13 @@ class MobilitySurvey(FileAsset):
         # x % of the contribution to the average distance for each population 
         # group
         cutoff = self.seq_prob_cutoff
-
+        
         p_seq = (
             
             # Compute the probability of each sequence, given day status, city category, 
             # csp and number of cars in the household
-            sequences
-            .group_by(["is_weekday", "city_category", "csp", "n_cars", "motive_seq"])
+            sequences_by_motives_and_modes
+            .group_by(["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq"])
             .agg(
                 pondki=pl.col("pondki").first(),
                 distance=pl.col("distance").sum()
@@ -346,24 +380,24 @@ class MobilitySurvey(FileAsset):
                 | (pl.col("group_count") == 1)
             )
             
-            # Rescale propbabilities
+            # Rescale probabilities
             .with_columns(
                 p_seq=pl.col("p_seq")/pl.col("p_seq").sum().over(["is_weekday", "city_category", "csp", "n_cars"])
             )
             
             .select([
-                "is_weekday", "city_category", "csp", "n_cars", "motive_seq", "p_seq"
+                "is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq", "p_seq"
             ])
             
         )
 
         
-        sequences = (
-            sequences.drop("pondki")
-            .join(p_seq, on=["is_weekday", "city_category", "csp", "n_cars", "motive_seq"])    
+        sequences_by_motives_and_modes = (
+            sequences_by_motives_and_modes.drop("pondki")
+            .join(p_seq, on=["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq"])    
         )
         
-        return sequences
+        return sequences_by_motives_and_modes
             
             
         

@@ -9,7 +9,7 @@ class StateInitializer:
     (sinks), and (5) fetch current OD costs.
     """
     
-    def get_chains(self, population, surveys, motives, is_weekday):
+    def get_chains(self, population, surveys, motives, modes, is_weekday):
         """Aggregate demand groups and attach survey chain probabilities.
     
         Produces per-group trip chains with durations and anchor flags by
@@ -21,6 +21,7 @@ class StateInitializer:
             population: Population container providing transport zones and groups.
             surveys: Iterable of survey objects exposing `get_chains_probability`.
             motives: Iterable of motives; used to mark anchors.
+            modes: 
             is_weekday (bool): Select weekday (True) or weekend (False) chains.
     
         Returns:
@@ -83,7 +84,7 @@ class StateInitializer:
                 [
                     (
                         survey
-                        .get_chains_probability(motives)
+                        .get_chains_probability(motives, modes)
                         .with_columns(
                             country=pl.lit(survey.inputs["country"])
                         )
@@ -146,6 +147,13 @@ class StateInitializer:
                 )
             )
             
+            
+        )
+        
+        chains_by_motive = (
+            
+            chains
+            
             .group_by(["demand_group_id", "motive_seq_id", "seq_step_index", "motive"])
             .agg(
                 n_persons=pl.col("n_persons").sum(),
@@ -165,7 +173,7 @@ class StateInitializer:
             .drop(["country", "city_category"])
         )
 
-        return chains, demand_groups
+        return chains_by_motive, chains, demand_groups
     
     
     def get_mean_activity_durations(self, chains, demand_groups):

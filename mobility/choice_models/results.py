@@ -14,7 +14,9 @@ class Results:
             weekday_sinks,
             weekend_sinks,
             weekday_costs,
-            weekend_costs
+            weekend_costs,
+            weekday_chains,
+            weekend_chains
         ):
         
         self.transport_zones = transport_zones
@@ -25,6 +27,8 @@ class Results:
         self.weekend_sinks = weekend_sinks
         self.weekday_costs = weekday_costs
         self.weekend_costs = weekend_costs
+        self.weekday_chains = weekday_chains
+        self.weekend_chains = weekend_chains
         
         self.metrics_methods = {
             "sink_occupation": self.sink_occupation,

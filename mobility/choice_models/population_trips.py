@@ -107,6 +107,7 @@ class PopulationTrips(FileAsset):
             "population": population,
             "costs_aggregator": costs_aggregator,
             "motives": motives,
+            "modes": modes,
             "surveys": surveys,
             "parameters": parameters
         }
@@ -118,10 +119,12 @@ class PopulationTrips(FileAsset):
             "weekday_flows": project_folder / "population_trips" / "weekday" / "weekday_flows.parquet",
             "weekday_sinks": project_folder / "population_trips" / "weekday" / "weekday_sinks.parquet",
             "weekday_costs": project_folder / "population_trips" / "weekday" / "weekday_costs.parquet",
+            "weekday_chains": project_folder / "population_trips" / "weekday" / "weekday_chains.parquet",
             
             "weekend_flows": project_folder / "population_trips" / "weekend" / "weekend_flows.parquet",
             "weekend_sinks": project_folder / "population_trips" / "weekend" / "weekend_sinks.parquet",
             "weekend_costs": project_folder / "population_trips" / "weekend" / "weekend_costs.parquet",
+            "weekend_chains": project_folder / "population_trips" / "weekend" / "weekend_chains.parquet",
             
             "demand_groups": project_folder / "population_trips" / "demand_groups.parquet"
             
@@ -292,16 +295,18 @@ class PopulationTrips(FileAsset):
         
     def create_and_get_asset(self):
         
-        weekday_flows, weekday_sinks, demand_groups, weekday_costs = self.run_model(is_weekday=True)
-        weekend_flows, weekend_sinks, demand_groups, weekend_costs = self.run_model(is_weekday=False)
-        
+        weekday_flows, weekday_sinks, demand_groups, weekday_costs, weekday_chains = self.run_model(is_weekday=True)
+        weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains = self.run_model(is_weekday=False)
+    
         weekday_flows.write_parquet(self.cache_path["weekday_flows"])
         weekday_sinks.write_parquet(self.cache_path["weekday_sinks"])
         weekday_costs.write_parquet(self.cache_path["weekday_costs"])
+        weekday_chains.write_parquet(self.cache_path["weekday_chains"])
         
         weekend_flows.write_parquet(self.cache_path["weekend_flows"])
         weekend_sinks.write_parquet(self.cache_path["weekend_sinks"])
         weekend_costs.write_parquet(self.cache_path["weekend_costs"])
+        weekend_chains.write_parquet(self.cache_path["weekend_chains"])
         
         demand_groups.write_parquet(self.cache_path["demand_groups"])
             
@@ -320,21 +325,23 @@ class PopulationTrips(FileAsset):
         population = self.inputs["population"]
         costs_aggregator = self.inputs["costs_aggregator"]
         motives = self.inputs["motives"]
+        modes = self.inputs["modes"]
         surveys = self.inputs["surveys"]
         parameters = self.inputs["parameters"]
         
         cache_path = self.cache_path["weekday_flows"] if is_weekday is True else self.cache_path["weekend_flows"]
         tmp_folders = self.prepare_tmp_folders(cache_path)
 
-        chains, demand_groups = self.state_initializer.get_chains(
+        chains_by_motive, chains, demand_groups = self.state_initializer.get_chains(
             population,
             surveys,
             motives,
+            modes,
             is_weekday
         )
         
         motive_dur, home_night_dur = self.state_initializer.get_mean_activity_durations(
-            chains,
+            chains_by_motive,
             demand_groups
         )
         
@@ -345,7 +352,7 @@ class PopulationTrips(FileAsset):
         )
         
         sinks = self.state_initializer.get_sinks(
-            chains,
+            chains_by_motive,
             motives,
             population.transport_zones
         )
@@ -369,7 +376,7 @@ class PopulationTrips(FileAsset):
                     population.transport_zones,
                     remaining_sinks,
                     iteration,
-                    chains,
+                    chains_by_motive,
                     demand_groups,
                     costs,
                     tmp_folders,
@@ -393,7 +400,7 @@ class PopulationTrips(FileAsset):
             current_states, current_states_steps = self.state_updater.get_new_states(
                 current_states,
                 demand_groups,
-                chains,
+                chains_by_motive,
                 costs_aggregator,
                 remaining_sinks,
                 motive_dur,
@@ -438,7 +445,7 @@ class PopulationTrips(FileAsset):
         
         costs = costs_aggregator.get_costs_by_od_and_mode(["distance", "time"], congestion=True)
 
-        return current_states_steps, sinks, demand_groups, costs
+        return current_states_steps, sinks, demand_groups, costs, chains
     
 
     def prepare_tmp_folders(self, cache_path):
@@ -499,7 +506,9 @@ class PopulationTrips(FileAsset):
             weekend_sinks=pl.scan_parquet(self.cache_path["weekend_sinks"]),
             weekday_costs=pl.scan_parquet(self.cache_path["weekday_costs"]),
             weekend_costs=pl.scan_parquet(self.cache_path["weekend_costs"]),
-            demand_groups=pl.scan_parquet(self.cache_path["demand_groups"])
+            weekday_chains=pl.scan_parquet(self.cache_path["weekday_chains"]),
+            weekend_chains=pl.scan_parquet(self.cache_path["weekend_chains"]),
+            demand_groups=pl.scan_parquet(self.cache_path["demand_groups"]),
         )
               
         if metric not in results.metrics_methods.keys():
