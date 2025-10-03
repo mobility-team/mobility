@@ -208,6 +208,84 @@ class PopulationTrips(FileAsset):
         return parameters
         
         
+    def resolve_parameters(
+            self,
+            parameters: PopulationTripsParameters = None,
+            n_iterations: int = None,
+            alpha: float = None,
+            k_mode_sequences: int = None,
+            dest_prob_cutoff: float = None,
+            activity_utility_coeff: float = None,
+            stay_home_utility_coeff: float = None,
+            n_iter_per_cost_update: int = None,
+            cost_uncertainty_sd: float = None,
+            mode_sequence_search_parallel: bool = None
+        ):
+        """
+        Resolve a PopulationTripsParameters instance from user input.
+        
+        Preferred usage is to pass a `PopulationTripsParameters` object directly
+        via the `parameters` argument.
+        
+        Legacy keyword arguments (e.g. `n_iterations`, `alpha`, …) are still
+        accepted for backward compatibility, but will be removed in a future
+        version. If both `parameters` and legacy arguments are provided, an
+        error is raised.
+        
+        Parameters
+        ----------
+        parameters : PopulationTripsParameters, optional
+            A pre-built parameters object (preferred).
+        n_iterations, alpha, k_mode_sequences, ... : various, optional
+            Legacy keyword arguments. Each corresponds to a field of
+            PopulationTripsParameters.
+        
+        Returns
+        -------
+        PopulationTripsParameters
+            A validated parameters object, either the one provided directly
+            or built from the legacy arguments.
+        """
+        
+        # Handle old arguments
+        old_args = {
+            "n_iterations": n_iterations,
+            "alpha": alpha,
+            "k_mode_sequences": k_mode_sequences,
+            "dest_prob_cutoff": dest_prob_cutoff,
+            "activity_utility_coeff": activity_utility_coeff,
+            "stay_home_utility_coeff": stay_home_utility_coeff,
+            "n_iter_per_cost_update": n_iter_per_cost_update,
+            "cost_uncertainty_sd": cost_uncertainty_sd,
+            "mode_sequence_search_parallel": mode_sequence_search_parallel
+        }
+        
+        old_args = {k: v for k, v in old_args.items() if v is not None}
+            
+        if parameters is not None and old_args:
+            raise TypeError(
+                "❌ Use the new `parameters` argument (preferred). "
+                "Old arguments are deprecated and cannot be combined with `parameters`."
+            )
+            
+        if parameters is None:
+            
+            if old_args:
+                warnings.warn(
+                    "⚠️ Passing old arguments (like n_iterations, alpha, …) is "
+                    "deprecated and will be removed in a future version. "
+                    "Please pass a PopulationTripsParameters instance instead.",
+                    FutureWarning,
+                    stacklevel=2
+                )
+                        
+            parameters = PopulationTripsParameters(**old_args)
+            
+        parameters.validate()
+            
+        return parameters
+        
+        
     def get_cached_asset(self):
         return {k: pl.scan_parquet(v) for k, v in self.cache_path.items()}
         
