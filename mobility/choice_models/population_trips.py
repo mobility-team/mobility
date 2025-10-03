@@ -388,6 +388,28 @@ class PopulationTrips(FileAsset):
 
 
     def evaluate(self, metric, **kwargs):
+        """
+        Evaluate model outputs using a specified metric.
+        
+        This method loads cached simulation results, wraps them in a `Results`
+        object, and dispatches to the appropriate evaluation function.
+        
+        Parameters
+        ----------
+        metric : str
+            Name of the evaluation metric to compute. Must be one of:
+            {"sink_occupation", "trip_count_by_demand_group",
+             "distance_per_person", "time_per_person"}.
+        **kwargs : dict, optional
+            Additional arguments forwarded to the underlying metric function.
+            For example, `weekday=True` or `plot=True`.
+        
+        Returns
+        -------
+        pl.DataFrame or object
+            Result of the chosen evaluation function, typically a Polars DataFrame.
+            Some metrics may also trigger plots if plotting is enabled.
+        """
         
         self.get()
         

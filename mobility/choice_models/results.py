@@ -39,6 +39,22 @@ class Results:
             weekday: bool = True,
             plot_motive: str = None
         ):
+        """
+        Compute sink occupation per (zone, motive), optionally map a single motive.
+        
+        Parameters
+        ----------
+        weekday : bool, default True
+            Use weekday (True) or weekend (False) flows/sinks.
+        plot_motive : str, optional
+            If provided, renders a choropleth of occupation for that motive.
+        
+        Returns
+        -------
+        pl.DataFrame
+            Columns: ['transport_zone_id', 'motive', 'duration', 'sink_capacity', 'sink_occupation'].
+            'sink_occupation' = total occupied duration / capacity.
+        """
         
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
         sinks = self.weekday_sinks if weekday else self.weekend_sinks
@@ -85,6 +101,24 @@ class Results:
             weekday: bool = True,
             plot: bool = False
         ):
+        """
+        Count trips and trips per person by demand group; optional map at home-zone level.
+        
+        Parameters
+        ----------
+        weekday : bool, default True
+            Use weekday (True) or weekend (False) states.
+        plot : bool, default False
+            When True, shows a choropleth of average trips per person by home zone.
+        
+        Returns
+        -------
+        pl.DataFrame
+            Grouped by ['home_zone_id', 'csp', 'n_cars'] with:
+            - n_trips: total trips
+            - n_persons: group size
+            - n_trips_per_person: n_trips / n_persons
+        """
         
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
         
@@ -134,6 +168,24 @@ class Results:
             weekday: bool = True,
             plot: bool = False
         ):
+        """
+        Aggregate total travel distance and distance per person by demand group.
+    
+        Parameters
+        ----------
+        weekday : bool, default True
+            Use weekday (True) or weekend (False) data.
+        plot : bool, default False
+            When True, shows a choropleth of average distance per person by home zone.
+    
+        Returns
+        -------
+        pl.DataFrame
+            Grouped by ['home_zone_id', 'csp', 'n_cars'] with:
+            - distance: sum(distance * n_persons)
+            - n_persons: group size
+            - distance_per_person: distance / n_persons
+        """
         
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
         costs = self.weekday_costs if weekday else self.weekend_costs
@@ -185,6 +237,24 @@ class Results:
             weekday: bool = True,
             plot: bool = False
         ):
+        """
+        Aggregate total travel time and time per person by demand group.
+        
+        Parameters
+        ----------
+        weekday : bool, default True
+            Use weekday (True) or weekend (False) data.
+        plot : bool, default False
+            When True, shows a choropleth of average time per person by home zone.
+        
+        Returns
+        -------
+        pl.DataFrame
+            Grouped by ['home_zone_id', 'csp', 'n_cars'] with:
+            - time: sum(time * n_persons) * 60.0 (minutes)
+            - n_persons: group size
+            - time_per_person: time / n_persons
+        """
         
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
         costs = self.weekday_costs if weekday else self.weekend_costs
@@ -233,23 +303,52 @@ class Results:
     
     
     def plot_map(self, tz, value: str = None):
+        """
+        Render a Plotly choropleth for a transport-zone metric.
         
-            fig = px.choropleth(
-                tz.drop(columns="geometry"),
-                geojson=json.loads(tz.to_json()),
-                locations="transport_zone_id",
-                featureidkey="properties.transport_zone_id",
-                color=value,
-                hover_data=["transport_zone_id", value],
-                color_continuous_scale="Viridis",
-                projection="mercator"
-            )
-            fig.update_geos(fitbounds="geojson", visible=False)
-            fig.update_layout(margin=dict(l=0,r=0,t=0,b=0))
-            fig.show("browser")
+        Parameters
+        ----------
+        tz : geopandas.GeoDataFrame
+            Zones GeoDataFrame in EPSG:4326 with columns:
+            ['transport_zone_id', value, 'geometry'].
+        value : str
+            Column name to color by (e.g., 'sink_occupation').
+        
+        Returns
+        -------
+        None
+            Displays an interactive map in the browser.
+        """
+        
+        fig = px.choropleth(
+            tz.drop(columns="geometry"),
+            geojson=json.loads(tz.to_json()),
+            locations="transport_zone_id",
+            featureidkey="properties.transport_zone_id",
+            color=value,
+            hover_data=["transport_zone_id", value],
+            color_continuous_scale="Viridis",
+            projection="mercator"
+        )
+        fig.update_geos(fitbounds="geojson", visible=False)
+        fig.update_layout(margin=dict(l=0,r=0,t=0,b=0))
+        fig.show("browser")
     
     
-    def replace_outliers(self, series, method="iqr", z_thresh=3.0):
+    def replace_outliers(self, series):
+        """
+        Mask outliers in a numeric pandas/Series-like array.
+        
+        Parameters
+        ----------
+        series : array-like
+            Numeric series to clean.
+        
+        Returns
+        -------
+        array-like
+            Series with outliers replaced by NaN (bounds: Q1 - 1.5*IQR, Q3 + 1.5*IQR).
+        """
         
         s = series.copy()
         q25 = s.quantile(0.25)
