@@ -1,5 +1,4 @@
 import mobility
-import pandas as pd
 import pytest
 
 @pytest.mark.dependency(
@@ -9,8 +8,9 @@ import pytest
 def test_002_population_sample_can_be_created(test_data):
     
     transport_zones = mobility.TransportZones(
-        local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
-        radius=test_data["transport_zones_radius"]
+        insee_city_id=test_data["transport_zones_insee_city_id"],
+        method="radius",
+        radius=test_data["transport_zones_radius"],
     )
     
     population = mobility.Population(
@@ -18,6 +18,6 @@ def test_002_population_sample_can_be_created(test_data):
         sample_size=test_data["population_sample_size"]
     )
     
-    population = pd.read_parquet(population.get()["individuals"])
+    population = population.get()
     
     assert population.shape[0] > 0
