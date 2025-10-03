@@ -110,10 +110,17 @@ class Population(FileAsset):
         sample_sizes = self.get_sample_sizes(lau_to_tz_coeff, self.inputs["sample_size"])
         sample_sizes = sample_sizes.set_index("transport_zone_id")["n_persons"].to_dict()
         
-        individuals = ( 
+        individuals = (
             pop_groups
-            .groupby("transport_zone_id", as_index=False)
-            .apply(lambda g: g.sample(n=sample_sizes[g.name], weights="weight"))
+            .groupby("transport_zone_id", group_keys=False)
+            .apply(
+                lambda g: ( 
+                    g.assign(transport_zone_id=g.name)
+                    .sample(n=sample_sizes[g.name], weights="weight") 
+                ),
+                include_groups=False
+            )
+            .reset_index(drop=True)
         )
         
         individuals["individual_id"] = [shortuuid.uuid() for _ in range(individuals.shape[0])]
