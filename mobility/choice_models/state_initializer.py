@@ -316,6 +316,8 @@ class StateInitializer:
                     for motive in motives if motive.has_opportunities is True
                 ]
             )
+            
+            .filter(pl.col("n_opp") > 0.0)
 
             .with_columns(
                 motive=pl.col("motive").cast(pl.Enum(motive_names)),

@@ -166,7 +166,8 @@ class StateUpdater:
                 duration_per_pers=pl.max_horizontal([
                     pl.col("duration_per_pers"),
                     pl.col("mean_duration_per_pers")*0.1
-                  ])
+                ]),
+                k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0)
             )
             .with_columns(
                 utility=( 
@@ -244,7 +245,6 @@ class StateUpdater:
             ])
             
         )
-        
         
         return possible_states_utility
     
@@ -460,7 +460,7 @@ class StateUpdater:
         """Recompute remaining opportunities per (motive, destination).
     
         Subtracts assigned durations from capacities, computes availability and a
-        saturation utility factor, and drops fully saturated destinations.
+        saturation utility factor.
     
         Args:
             current_states_steps (pl.DataFrame): Step-level assigned durations.
@@ -478,30 +478,27 @@ class StateUpdater:
         remaining_sinks = (
         
             current_states_steps
-            .filter(pl.col("motive_seq_id") != 0)
+            .filter(
+                (pl.col("motive_seq_id") != 0) & 
+                (pl.col("motive") != "home")
+            )
             .group_by(["to", "motive"])
-            .agg(pl.col("duration").sum())
+            .agg(
+                sink_occupation=pl.col("duration").sum()
+            )
             .join(sinks, on=["to", "motive"], how="full", coalesce=True)
             .with_columns(
-                sink_occupation=( 
-                    pl.col("sink_capacity").fill_null(0.0).fill_nan(0.0)
-                    -
-                    pl.col("duration").fill_null(0.0).fill_nan(0.0)
-                )
-            )
-            .with_columns(
                 k=pl.col("sink_occupation")/pl.col("sink_capacity"),
-                sink_available=pl.col("sink_capacity") - pl.col("sink_occupation")
+                sink_available=(pl.col("sink_capacity") - pl.col("sink_occupation")).clip(0.0)
             )
             .with_columns(
                 k_saturation_utility=(
-                    pl.when(pl.col("k") < 1.0)
+                    pl.when((pl.col("k") < 1.0) | pl.col("k").is_null())
                     .then(1.0)
                     .otherwise((1.0 - pl.col("k")).exp())
                 )
             )
             .select(["motive", "to", "sink_capacity", "sink_available", "k_saturation_utility"])
-            .filter(pl.col("sink_available") > 0.0)
             
         )
         

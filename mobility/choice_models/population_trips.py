@@ -19,7 +19,7 @@ from mobility.choice_models.destination_sequence_sampler import DestinationSeque
 from mobility.choice_models.top_k_mode_sequence_search import TopKModeSequenceSearch
 from mobility.choice_models.state_initializer import StateInitializer
 from mobility.choice_models.state_updater import StateUpdater
-from mobility.choice_models.results_evaluator import ResultsEvaluator
+from mobility.choice_models.results import Results
 from mobility.motives import Motive
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.parsers.mobility_survey import MobilitySurvey
@@ -100,7 +100,6 @@ class PopulationTrips(FileAsset):
         self.destination_sequence_sampler = DestinationSequenceSampler()
         self.top_k_mode_sequence_search = TopKModeSequenceSearch()
         self.state_updater = StateUpdater()
-        self.results_evaluator = ResultsEvaluator()
 
         costs_aggregator = TravelCostsAggregator(modes)
         
@@ -115,13 +114,17 @@ class PopulationTrips(FileAsset):
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
         
         cache_path = {
+            
             "weekday_flows": project_folder / "population_trips" / "weekday" / "weekday_flows.parquet",
             "weekday_sinks": project_folder / "population_trips" / "weekday" / "weekday_sinks.parquet",
             "weekday_costs": project_folder / "population_trips" / "weekday" / "weekday_costs.parquet",
+            
             "weekend_flows": project_folder / "population_trips" / "weekend" / "weekend_flows.parquet",
             "weekend_sinks": project_folder / "population_trips" / "weekend" / "weekend_sinks.parquet",
-            "weekend_costs": project_folder / "population_trips" / "weekday" / "weekend_costs.parquet",
+            "weekend_costs": project_folder / "population_trips" / "weekend" / "weekend_costs.parquet",
+            
             "demand_groups": project_folder / "population_trips" / "demand_groups.parquet"
+            
         }
         
         super().__init__(inputs, cache_path)
@@ -388,111 +391,22 @@ class PopulationTrips(FileAsset):
         
         self.get()
         
-        args = {
-            "transport_zones": self.inputs["population"].inputs["transport_zones"],
-            "weekday_states_steps": pl.scan_parquet(self.cache_path["weekday_flows"]),
-            "weekend_states_steps": pl.scan_parquet(self.cache_path["weekend_flows"]),
-            "weekday_sinks": pl.scan_parquet(self.cache_path["weekday_sinks"]),
-            "weekend_sinks": pl.scan_parquet(self.cache_path["weekend_sinks"]),
-            "weekday_costs": pl.scan_parquet(self.cache_path["weekday_costs"]),
-            "weekend_costs": pl.scan_parquet(self.cache_path["weekend_costs"]),
-            "demand_groups": pl.scan_parquet(self.cache_path["demand_groups"])
-        }
-        
-        metrics = {
-            
-            "weekday_sink_occupation": {
-                "method":  "sink_occupation",
-                "args": {
-                    "transport_zones": args["transport_zones"],
-                    "states_steps": args["weekday_states_steps"],
-                    "sinks": args["weekday_sinks"],
-                    "plot_motive": kwargs["plot_motive"] if "plot_motive" in kwargs else None
-                }
-            },
-            "weekend_sink_occupation": {
-                "method":  "sink_occupation",
-                "args": {
-                    "transport_zones": args["transport_zones"],
-                    "states_steps": args["weekend_states_steps"],
-                    "sinks": args["weekend_sinks"],
-                    "plot_motive": kwargs["plot_motive"] if "plot_motive" in kwargs else None
-                }
-            },
-            
-            "weekday_trip_count_by_demand_group": {
-                "method":  "trip_count_by_demand_group",
-                "args": {
-                    "transport_zones": args["transport_zones"],
-                    "states_steps": args["weekday_states_steps"],
-                    "demand_groups": args["demand_groups"],
-                    "plot": kwargs["plot"] if "plot" in kwargs else None
-                }
-            },
-            "weekend_trip_count_by_demand_group": {
-                "method":  "trip_count_by_demand_group",
-                "args": {
-                    "transport_zones": args["transport_zones"],
-                    "states_steps": args["weekend_states_steps"],
-                    "demand_groups": args["demand_groups"],
-                    "plot": kwargs["plot"] if "plot" in kwargs else None
-                }
-            },
-            
-            "weekday_distance_per_person": {
-                "method":  "distance_per_person",
-                "args": {
-                    "transport_zones": args["transport_zones"],
-                    "states_steps": args["weekday_states_steps"],
-                    "costs": args["weekday_costs"],
-                    "demand_groups": args["demand_groups"],
-                    "plot": kwargs["plot"] if "plot" in kwargs else None
-                }
-            },
-            "weekend_distance_per_person": {
-                "method":  "distance_per_person",
-                "args": {
-                    "transport_zones": args["transport_zones"],
-                    "states_steps": args["weekend_states_steps"],
-                    "costs": args["weekend_costs"],
-                    "demand_groups": args["demand_groups"],
-                    "plot": kwargs["plot"] if "plot" in kwargs else None
-                }
-            },
-            
-            "weekday_time_per_person": {
-                "method":  "time_per_person",
-                "args": {
-                    "transport_zones": args["transport_zones"],
-                    "states_steps": args["weekday_states_steps"],
-                    "costs": args["weekday_costs"],
-                    "demand_groups": args["demand_groups"],
-                    "plot": kwargs["plot"] if "plot" in kwargs else None
-                }
-            },
-            "weekend_time_per_person": {
-                "method":  "time_per_person",
-                "args": {
-                    "transport_zones": args["transport_zones"],
-                    "states_steps": args["weekend_states_steps"],
-                    "costs": args["weekend_costs"],
-                    "demand_groups": args["demand_groups"],
-                    "plot": kwargs["plot"] if "plot" in kwargs else None
-                }
-            }
-            
-            
-        }
-        
-        if metric not in metrics.keys():
-            raise ValueError(f"Unknown evaluation metric: {metric}")
-        
-        evaluation = getattr(
-            self.results_evaluator,
-            metrics[metric]["method"]
-        )(
-            **metrics[metric]["args"]
+        results = Results(
+            transport_zones=self.inputs["population"].inputs["transport_zones"],
+            weekday_states_steps=pl.scan_parquet(self.cache_path["weekday_flows"]),
+            weekend_states_steps=pl.scan_parquet(self.cache_path["weekend_flows"]),
+            weekday_sinks=pl.scan_parquet(self.cache_path["weekday_sinks"]),
+            weekend_sinks=pl.scan_parquet(self.cache_path["weekend_sinks"]),
+            weekday_costs=pl.scan_parquet(self.cache_path["weekday_costs"]),
+            weekend_costs=pl.scan_parquet(self.cache_path["weekend_costs"]),
+            demand_groups=pl.scan_parquet(self.cache_path["demand_groups"])
         )
+              
+        if metric not in results.metrics_methods.keys():
+            available = ", ".join(results.metrics_methods.keys())
+            raise ValueError(f"Unknown evaluation metric: {metric}. Available metrics are: {available}")
+        
+        evaluation = results.metrics_methods[metric](**kwargs)
         
         return evaluation
         
