@@ -34,7 +34,7 @@ mobility.set_params(debug=True)
 > Relancer la commande d'installation en changeant de méthode de téléchargement `mobility.set_params(debug=True, r_packages_download_method="wininet")`. Pak devrait pouvoir s'installer correctement, puis installer les autres packages.
 > Si cela ne fonctionne toujours pas, essayer d'installer les packages manuellement :
 > * Dans une invite de commande, après avoir exécuté `mamba activate mobility`, utiliser la commande `R` pour entrer dans le terminal R.
-> * Utiliser la commande `install.packages(c('remotes', 'dodgr', 'sf', 'geodist', 'dplyr', 'sfheaders', 'nngeo', 'data.table', 'reshape2', 'arrow', 'stringr', 'hms', 'lubridate', 'readxl', 'codetools', 'future', 'future.apply', 'ggplot2', 'svglite', 'cppRouting', 'duckdb', 'jsonlite', 'gtfsrouter', 'geos', 'FNN', 'cluster', 'dbscan'), method='wininet')` pour installer les packages R.
+> * Utiliser la commande `install.packages(c('remotes', 'dodgr', 'sf', 'geodist', 'dplyr', 'sfheaders', 'nngeo', 'data.table', 'reshape2', 'arrow', 'stringr', 'hms', 'lubridate', 'codetools', 'future', 'future.apply', 'ggplot2', 'svglite', 'cppRouting', 'duckdb', 'jsonlite', 'gtfsrouter', 'geos', 'FNN', 'cluster', 'dbscan'), method='wininet')` pour installer les packages R.
 > * Sur Windows, utiliser la commande `install.packages(file.choose(), repos=NULL)` et aller sélectionner le fichier ZIP `osmdata_0.2.5.005.zip` dans `mobility/mobility/resources/`, cela permet d'installer une version d'osmdata plus rapide (modifiée par nos soins).
 > * Utiliser la commande `q()` pour quitter le terminal R.
 

@@ -45,7 +45,11 @@ def test_004_public_transport_costs_can_be_computed(test_data):
         first_intermodal_transfer=transfer,
         last_leg_mode=walk,
         last_intermodal_transfer=transfer,
-        generalized_cost_parameters=gen_cost_parms
+        generalized_cost_parameters=gen_cost_parms,
+        routing_parameters=mobility.PublicTransportRoutingParameters(
+            max_traveltime=10.0,
+            max_perceived_time=10.0
+        )
     )
 
     costs = public_transport.travel_costs.get()
