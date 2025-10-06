@@ -34,6 +34,7 @@ class Results:
         
         self.metrics_methods = {
             "global_metrics": self.global_metrics,
+            "metrics_by_variable": self.metrics_by_variable,
             "sink_occupation": self.sink_occupation,
             "trip_count_by_demand_group": self.trip_count_by_demand_group,
             "distance_per_person": self.distance_per_person,
