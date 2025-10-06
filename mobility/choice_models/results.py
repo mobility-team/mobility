@@ -3,6 +3,8 @@ import polars as pl
 import numpy as np
 import plotly.express as px
 
+from typing import Literal
+
 class Results:
     
     def __init__(
@@ -31,12 +33,188 @@ class Results:
         self.weekend_chains = weekend_chains
         
         self.metrics_methods = {
+            "global_metrics": self.global_metrics,
             "sink_occupation": self.sink_occupation,
             "trip_count_by_demand_group": self.trip_count_by_demand_group,
             "distance_per_person": self.distance_per_person,
             "time_per_person": self.time_per_person
         }
+        
+        
+        
+    def global_metrics(
+            self,
+            weekday: bool = True,
+            normalize: bool = True
+        ):
+    
+        states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
+        ref_states_steps = self.weekday_chains if weekday else self.weekend_chains
+        
+        n_persons = self.demand_groups.collect()["n_persons"].sum()
+        
+        trip_count = (
+            states_steps 
+            .filter(pl.col("motive_seq_id") != 0)
+            .select(
+                n_trips=pl.col("n_persons").sum(),
+                time=pl.col("time").sum(),
+                distance=pl.col("distance").sum()
+            )
+            .melt()
+            .collect(engine="streaming")
+        )
+        
+        trip_count_ref = (
+            ref_states_steps 
+            .filter(pl.col("motive_seq_id") != 0)
+            .select(
+                n_trips=pl.col("n_persons").sum(),
+                time=pl.col("travel_time").sum(),
+                distance=pl.col("distance").sum()
+            )
+            .melt()
+            .collect(engine="streaming")
+        )
+        
+        comparison = (
+            trip_count
+            .join(
+                trip_count_ref,
+                on="variable",
+                suffix="_ref"
+            )
+        )
+        
+        if normalize:
+            comparison = (
+                comparison 
+                .with_columns(
+                    value=pl.col("value")/n_persons,
+                    value_ref=pl.col("value_ref")/n_persons
+                )
+            )
+           
+        comparison = (
+            comparison
+            .with_columns(
+                delta=pl.col("value") - pl.col("value_ref")
+            )
+            .with_columns(
+                delta_relative=pl.col("delta")/pl.col("value_ref")
+            )
+            .select(["variable", "value", "value_ref", "delta", "delta_relative"])
+        )
+        
+        return comparison
+    
+    
             
+    def metrics_by_variable(
+            self,
+            variable: Literal["mode", "time_bin", "distance_bin"] = None,
+            weekday: bool = True,
+            normalize: bool = True,
+            plot: bool = False
+        ):
+    
+        states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
+        ref_states_steps = self.weekday_chains if weekday else self.weekend_chains
+        
+        n_persons = self.demand_groups.collect()["n_persons"].sum()
+        
+        with pl.StringCache():
+            
+            trip_count = (
+                states_steps 
+                .filter(pl.col("motive_seq_id") != 0)
+                .with_columns(
+                    time_bin=(pl.col("time")*60.0).cut([0.0, 5.0, 10, 20, 30.0, 45.0, 60.0, 1e6], left_closed=True),
+                    distance_bin=pl.col("distance").cut([0.0, 1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 1e6], left_closed=True)
+                )
+                .group_by(variable)
+                .agg(
+                    n_trips=pl.col("n_persons").sum(),
+                    time=pl.col("time").sum(),
+                    distance=pl.col("distance").sum()
+                )
+                .melt(variable)
+                .collect(engine="streaming")
+            )
+            
+            trip_count_ref = (
+                ref_states_steps 
+                .filter(pl.col("motive_seq_id") != 0)
+                .with_columns(
+                    mode=pl.col("mode").cast(pl.String()),
+                    time_bin=(pl.col("travel_time")*60.0).cut([0.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 1e6], left_closed=True),
+                    distance_bin=pl.col("distance").cut([0.0, 1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 1e6], left_closed=True)
+                )
+                .group_by(variable)
+                .agg(
+                    n_trips=pl.col("n_persons").sum(),
+                    time=pl.col("travel_time").sum(),
+                    distance=pl.col("distance").sum()
+                )
+                .melt(variable)
+                .collect(engine="streaming")
+            )
+            
+        comparison = (
+            trip_count
+            .join(
+                trip_count_ref,
+                on=["variable", variable],
+                suffix="_ref",
+                how="full",
+                coalesce=True
+            )
+        )
+        
+        if normalize:
+            comparison = (
+                comparison 
+                .with_columns(
+                    value=pl.col("value")/n_persons,
+                    value_ref=pl.col("value_ref")/n_persons
+                )
+            )
+           
+        comparison = (
+            comparison
+            .with_columns(
+                delta=pl.col("value") - pl.col("value_ref")
+            )
+            .with_columns(
+                delta_relative=pl.col("delta")/pl.col("value_ref")
+            )
+            .select(["variable", variable, "value", "value_ref", "delta", "delta_relative"])
+        )
+        
+        if plot:
+            
+            comparison_plot_df = (
+                comparison
+                .select(["variable", variable, "value", "value_ref"])
+                .melt(["variable", variable], variable_name="value_type")
+                .sort(variable)
+            )
+            
+            
+            fig = px.bar(
+                comparison_plot_df,
+                x=variable,
+                y="value",
+                color="value_type",
+                facet_col="variable",
+                barmode="group",
+                facet_col_spacing=0.05
+            )
+            fig.update_yaxes(matches=None, showticklabels=True)
+            fig.show("browser")
+        
+        return comparison
+        
         
     def sink_occupation(
             self,
