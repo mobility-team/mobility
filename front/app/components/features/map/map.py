@@ -19,7 +19,7 @@ def _deck_json():
         pickable=True,
     )
 
-    # Static camera over France (moderate perspective)
+    # Static initial camera over France (moderate perspective)
     view_state = pdk.ViewState(
         longitude=2.2,
         latitude=46.5,

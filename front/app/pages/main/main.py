@@ -12,8 +12,6 @@ HEADER_HEIGHT = 60
 
 
 
-print("Assets path ->", ASSETS_PATH)  # debug : vérifie la sortie dans la console
-
 app = Dash(
     __name__,
     suppress_callback_exceptions=True,
@@ -26,11 +24,9 @@ app.layout = dmc.MantineProvider(
         children=[
             Header("MOBILITY"),
             dmc.AppShellMain(
-                Map(),  # <— ne gère pas la hauteur ici
+                Map(),  
                 style={
-                    # remplis tout le viewport sous le header
                     "height": f"calc(100vh - {HEADER_HEIGHT}px)",
-                    # ou "minHeight": f"calc(100vh - {HEADER_HEIGHT}px)",
                     "padding": 0,
                     "margin": 0,
                     "overflow": "hidden",
@@ -38,8 +34,8 @@ app.layout = dmc.MantineProvider(
             ),
             Footer(),
         ],
-        padding=0,                     # <— enlève le padding global
-        styles={"main": {"padding": 0}},  # sécurité Mantine
+        padding=0,                    
+        styles={"main": {"padding": 0}},  
     )
 )
 
