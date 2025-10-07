@@ -1,0 +1,47 @@
+# app/pages/main/main.py
+from pathlib import Path
+from dash import Dash
+import dash_mantine_components as dmc
+from app.components.layout.header.header import Header
+from app.components.features.map.map import Map
+from app.components.layout.footer.footer import Footer
+
+
+ASSETS_PATH = Path(__file__).resolve().parents[3] / "assets"
+HEADER_HEIGHT = 60
+
+
+
+print("Assets path ->", ASSETS_PATH)  # debug : vérifie la sortie dans la console
+
+app = Dash(
+    __name__,
+    suppress_callback_exceptions=True,
+    assets_folder=str(ASSETS_PATH),
+    assets_url_path="/assets",
+)
+
+app.layout = dmc.MantineProvider(
+    dmc.AppShell(
+        children=[
+            Header("MOBILITY"),
+            dmc.AppShellMain(
+                Map(),  # <— ne gère pas la hauteur ici
+                style={
+                    # remplis tout le viewport sous le header
+                    "height": f"calc(100vh - {HEADER_HEIGHT}px)",
+                    # ou "minHeight": f"calc(100vh - {HEADER_HEIGHT}px)",
+                    "padding": 0,
+                    "margin": 0,
+                    "overflow": "hidden",
+                },
+            ),
+            Footer(),
+        ],
+        padding=0,                     # <— enlève le padding global
+        styles={"main": {"padding": 0}},  # sécurité Mantine
+    )
+)
+
+if __name__ == "__main__":
+    app.run(debug=True, dev_tools_ui=False)
