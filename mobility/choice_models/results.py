@@ -18,19 +18,26 @@ class Results:
             weekday_costs,
             weekend_costs,
             weekday_chains,
-            weekend_chains
+            weekend_chains,
+            surveys
         ):
         
         self.transport_zones = transport_zones
         self.demand_groups = demand_groups
+        
         self.weekday_states_steps = weekday_states_steps
         self.weekend_states_steps = weekend_states_steps
+        
         self.weekday_sinks = weekday_sinks
         self.weekend_sinks = weekend_sinks
+        
         self.weekday_costs = weekday_costs
         self.weekend_costs = weekend_costs
+        
         self.weekday_chains = weekday_chains
         self.weekend_chains = weekend_chains
+        
+        self.surveys = surveys
         
         self.metrics_methods = {
             "global_metrics": self.global_metrics,
@@ -38,7 +45,8 @@ class Results:
             "sink_occupation": self.sink_occupation,
             "trip_count_by_demand_group": self.trip_count_by_demand_group,
             "distance_per_person": self.distance_per_person,
-            "time_per_person": self.time_per_person
+            "time_per_person": self.time_per_person,
+            "immobility": self.immobility
         }
         
         
@@ -50,39 +58,73 @@ class Results:
         ):
     
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
+        
         ref_states_steps = self.weekday_chains if weekday else self.weekend_chains
         
-        n_persons = self.demand_groups.collect()["n_persons"].sum()
-        
-        trip_count = (
-            states_steps 
-            .filter(pl.col("motive_seq_id") != 0)
-            .select(
-                n_trips=pl.col("n_persons").sum(),
-                time=pl.col("time").sum(),
-                distance=pl.col("distance").sum()
+        # Align column names and formats (should be done upstream when the data is created)
+        ref_states_steps = (
+            ref_states_steps
+            .rename({"travel_time": "time"})
+            .with_columns(
+                country=pl.col("country").cast(pl.String())
             )
-            .melt()
+        )
+        
+        transport_zones_df = pl.DataFrame(self.transport_zones.get().drop("geometry", axis=1)).lazy()
+        study_area_df = pl.DataFrame(self.transport_zones.study_area.get().drop("geometry", axis=1)).lazy()
+        
+        n_persons = ( 
+            self.demand_groups
+            .rename({"home_zone_id": "transport_zone_id"})
+            .join(
+                transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
+                on=["transport_zone_id"]
+            )
+            .join(
+                study_area_df.select(["local_admin_unit_id", "country"]),
+                on=["local_admin_unit_id"]
+            )
+            .group_by("country")
+            .agg(
+                pl.col("n_persons").sum()
+            )
             .collect(engine="streaming")
         )
         
-        trip_count_ref = (
-            ref_states_steps 
-            .filter(pl.col("motive_seq_id") != 0)
-            .select(
-                n_trips=pl.col("n_persons").sum(),
-                time=pl.col("travel_time").sum(),
-                distance=pl.col("distance").sum()
+        def aggregate(df, transport_zones_df, study_area_df):
+        
+            result = (
+                df 
+                .filter(pl.col("motive_seq_id") != 0)
+                .rename({"home_zone_id": "transport_zone_id"})
+                .join(
+                    transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
+                    on=["transport_zone_id"]
+                )
+                .join(
+                    study_area_df.select(["local_admin_unit_id", "country"]),
+                    on=["local_admin_unit_id"]
+                )
+                .group_by("country")
+                .agg(
+                    n_trips=pl.col("n_persons").sum(),
+                    time=(pl.col("time")*pl.col("n_persons")).sum(),
+                    distance=(pl.col("distance")*pl.col("n_persons")).sum()
+                )
+                .melt("country")
+                .collect(engine="streaming")
             )
-            .melt()
-            .collect(engine="streaming")
-        )
+            
+            return result
+        
+        trip_count = aggregate(states_steps, transport_zones_df, study_area_df)
+        trip_count_ref = aggregate(ref_states_steps, transport_zones_df, study_area_df)
         
         comparison = (
             trip_count
             .join(
                 trip_count_ref,
-                on="variable",
+                on=["country", "variable"],
                 suffix="_ref"
             )
         )
@@ -90,9 +132,10 @@ class Results:
         if normalize:
             comparison = (
                 comparison 
+                .join(n_persons, on=["country"])
                 .with_columns(
-                    value=pl.col("value")/n_persons,
-                    value_ref=pl.col("value_ref")/n_persons
+                    value=pl.col("value")/pl.col("n_persons"),
+                    value_ref=pl.col("value_ref")/pl.col("n_persons")
                 )
             )
            
@@ -104,7 +147,7 @@ class Results:
             .with_columns(
                 delta_relative=pl.col("delta")/pl.col("value_ref")
             )
-            .select(["variable", "value", "value_ref", "delta", "delta_relative"])
+            .select(["country", "variable", "value", "value_ref", "delta", "delta_relative"])
         )
         
         return comparison
@@ -113,7 +156,7 @@ class Results:
             
     def metrics_by_variable(
             self,
-            variable: Literal["mode", "time_bin", "distance_bin"] = None,
+            variable: Literal["mode", "motive", "time_bin", "distance_bin"] = None,
             weekday: bool = True,
             normalize: bool = True,
             plot: bool = False
@@ -122,12 +165,20 @@ class Results:
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
         ref_states_steps = self.weekday_chains if weekday else self.weekend_chains
         
+        ref_states_steps = (
+            ref_states_steps
+            .rename({"travel_time": "time"})
+            .with_columns(
+                mode=pl.col("mode").cast(pl.String())
+            )
+        )
+        
         n_persons = self.demand_groups.collect()["n_persons"].sum()
         
-        with pl.StringCache():
+        def aggregate(df):
             
-            trip_count = (
-                states_steps 
+            results = (
+                df 
                 .filter(pl.col("motive_seq_id") != 0)
                 .with_columns(
                     time_bin=(pl.col("time")*60.0).cut([0.0, 5.0, 10, 20, 30.0, 45.0, 60.0, 1e6], left_closed=True),
@@ -136,31 +187,21 @@ class Results:
                 .group_by(variable)
                 .agg(
                     n_trips=pl.col("n_persons").sum(),
-                    time=pl.col("time").sum(),
-                    distance=pl.col("distance").sum()
+                    time=(pl.col("time")*pl.col("n_persons")).sum(),
+                    distance=(pl.col("distance")*pl.col("n_persons")).sum()
                 )
                 .melt(variable)
                 .collect(engine="streaming")
             )
             
-            trip_count_ref = (
-                ref_states_steps 
-                .filter(pl.col("motive_seq_id") != 0)
-                .with_columns(
-                    mode=pl.col("mode").cast(pl.String()),
-                    time_bin=(pl.col("travel_time")*60.0).cut([0.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 1e6], left_closed=True),
-                    distance_bin=pl.col("distance").cut([0.0, 1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 1e6], left_closed=True)
-                )
-                .group_by(variable)
-                .agg(
-                    n_trips=pl.col("n_persons").sum(),
-                    time=pl.col("travel_time").sum(),
-                    distance=pl.col("distance").sum()
-                )
-                .melt(variable)
-                .collect(engine="streaming")
-            )
+            return results
+        
+        with pl.StringCache():
             
+            trip_count = aggregate(states_steps)
+            trip_count_ref = aggregate(ref_states_steps)
+            
+
         comparison = (
             trip_count
             .join(
@@ -215,6 +256,99 @@ class Results:
             fig.show("browser")
         
         return comparison
+    
+    
+    
+    def immobility(
+            self,
+            weekday: bool = True,
+            plot: bool = True
+        ):
+        
+        states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
+        
+        surveys_immobility = [
+            ( 
+                pl.DataFrame(s.get()["p_immobility"].reset_index())
+                .with_columns(
+                    country=pl.lit(s.inputs["country"], pl.String())
+                )
+            )
+            for s in self.surveys
+        ]
+        surveys_immobility = ( 
+            pl.concat(surveys_immobility)
+            .with_columns(
+                p_immobility=( 
+                    pl.when(weekday)
+                    .then(pl.col("immobility_weekday"))
+                    .otherwise(pl.col("immobility_weekend"))
+                )
+            )
+            .select(["country", "csp", "p_immobility"])
+        )
+        
+        transport_zones_df = pl.DataFrame(self.transport_zones.get().drop("geometry", axis=1)[["transport_zone_id", "local_admin_unit_id"]]).lazy()
+        study_area_df = pl.DataFrame(self.transport_zones.study_area.get().drop("geometry", axis=1)[["local_admin_unit_id", "country"]]).lazy()
+        
+        
+        immobility = (
+            
+            states_steps 
+            .filter(pl.col("motive_seq_id") == 0)
+            .with_columns(pl.col("csp").cast(pl.String()))
+            .join(
+                ( 
+                    self.demand_groups.rename({"n_persons": "n_persons_dem_grp"})
+                    .with_columns(pl.col("csp").cast(pl.String()))
+                ),
+                on=["home_zone_id", "csp", "n_cars"],
+                how="right"
+            )
+            .join(
+                transport_zones_df, left_on="home_zone_id", right_on="transport_zone_id"
+            )
+            .join(
+                study_area_df, on="local_admin_unit_id"
+            )
+            .group_by(["country", "csp"])
+            .agg(
+                n_persons_imm=pl.col("n_persons").fill_null(0.0).sum(),
+                n_persons_dem_grp=pl.col("n_persons_dem_grp").sum()
+            )
+            .with_columns(
+                p_immobility=pl.col("n_persons_imm")/pl.col("n_persons_dem_grp")
+            )
+            .join(
+                surveys_immobility.lazy(),
+                on=["country", "csp"],
+                suffix="_ref"
+            )
+            # .select(["country", "csp", "p_immobility", "p_immobility_ref"])
+            .collect(engine="streaming")
+            
+        )
+        
+        if plot:
+            
+            immobility_m = (
+                immobility
+                .melt(["country", "csp"], value_name="p_immobility")
+                .sort("csp")
+            )
+            
+            fig = px.bar(
+                immobility_m,
+                x="csp",
+                y="p_immobility",
+                color="variable",
+                barmode="group",
+                facet_col="country",
+                
+            )
+            fig.show("browser")
+        
+        return immobility
         
         
     def sink_occupation(
