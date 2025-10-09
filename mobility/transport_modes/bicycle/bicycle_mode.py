@@ -17,7 +17,8 @@ class BicycleMode(TransportMode):
         routing_parameters: PathRoutingParameters = None,
         osm_capacity_parameters: OSMCapacityParameters = None,
         generalized_cost_parameters: GeneralizedCostParameters = None,
-        speed_modifiers: List[SpeedModifier] = []
+        speed_modifiers: List[SpeedModifier] = [],
+        survey_ids: List[str] = ["2.20"]
     ):
         
         mode_name = "bicycle"
@@ -45,6 +46,7 @@ class BicycleMode(TransportMode):
             mode_name,
             travel_costs,
             generalized_cost,
-            vehicle="car"
+            vehicle="car",
+            survey_ids=survey_ids
         )
         

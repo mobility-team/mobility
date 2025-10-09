@@ -1,3 +1,5 @@
+from typing import List
+
 from mobility.transport_zones import TransportZones
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
@@ -31,7 +33,12 @@ class PublicTransportMode(TransportMode):
         first_intermodal_transfer: IntermodalTransfer = None,
         last_intermodal_transfer: IntermodalTransfer = None,
         routing_parameters: PublicTransportRoutingParameters = PublicTransportRoutingParameters(),
-        generalized_cost_parameters: GeneralizedCostParameters = None
+        generalized_cost_parameters: GeneralizedCostParameters = None,
+        survey_ids: List[str] = [
+            "4.42", "4.43", "5.50", "5.51", "5.52", "5.53", "5.54", "5.55",
+            "5.56", "5.57", "5.58", "5.59", "6.60", "6.61", "6.62", "6.63",
+            "6.69"
+        ]
     ):
         
         travel_costs = PublicTransportTravelCosts(
@@ -73,5 +80,6 @@ class PublicTransportMode(TransportMode):
             congestion,
             vehicle=vehicle,
             multimodal=True,
-            return_mode=return_mode_name
+            return_mode=return_mode_name,
+            survey_ids=survey_ids
         )    

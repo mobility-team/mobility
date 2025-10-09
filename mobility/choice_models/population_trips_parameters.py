@@ -12,6 +12,7 @@ class PopulationTripsParameters:
     cost_uncertainty_sd: float = 1.0
     seed: int = 0
     mode_sequence_search_parallel: bool = True
+    min_activity_time_constant: float = 1.0
 
     def validate(self) -> None:
         assert self.n_iterations >= 1
@@ -21,3 +22,4 @@ class PopulationTripsParameters:
         assert self.n_iter_per_cost_update >= 0
         assert self.cost_uncertainty_sd > 0.0
         assert self.seed >= 0
+        assert self.min_activity_time_constant >= 0
