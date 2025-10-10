@@ -101,10 +101,6 @@ class MobilitySurvey(FileAsset):
             
             # Cast columns to efficient types   
             .with_columns(
-                city_category=pl.col("city_category").cast(pl.Enum(["C", "B", "R", "I"])),
-                csp=pl.col("csp").cast(pl.Enum(["1", "2", "3", "4", "5", "6", "7", "8", "no_csp"])),
-                n_cars=pl.col("n_cars").cast(pl.Enum(["0", "1", "2+"])),
-                motive=pl.col("motive").cast(pl.Enum(motive_names)),
                 max_seq_step_index=( 
                     pl.col("seq_step_index")
                     .max().over(["individual_id", "day_id"])
