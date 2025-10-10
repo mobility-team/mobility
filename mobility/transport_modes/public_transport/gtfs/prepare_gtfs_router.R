@@ -10,11 +10,13 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\test-09\\e90a8308da40d062e66d1021c5094d4d-transport_zones.gpkg',
+#   'D:\\data\\mobility\\projects\\grand-geneve\\9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
 #   'D:\\mobility-data\\gtfs\\80d9147b5fa8f2a62c1f9492c239b0b7-a9867a67c4aca09a3214ee7de867fbd3_ucexportdownloadid1VXd01yQl2Mb67C9bkrx0P8sqNIL532_o.zip,D:\\mobility-data\\gtfs\\8dba4ccc087960568442cfb2a2b728c9-4a590cb87669fe2bc39328652ef1d2e9_gtfs_generic_eu.zip,D:\\mobility-data\\gtfs\\ad3958a96dacccb44825549e21e84979-7c570637abe59c4c966bdd7323db2746_naq-aggregated-gtfs.zip,D:\\mobility-data\\gtfs\\dccabe1db6bbe10b7457fa5a43069869-ebfa654bbde377deaf34c670d23e9cf6_lioapiKey2b160d626f783808095373766f18714901325e45typegtfs_lio.zip,D:\\mobility-data\\gtfs\\a1e0570cf593e64a24a17e0264183d21-7960742560564aec19bdfc92988923d9_gtfs_global.zip,D:\\mobility-data\\gtfs\\9e748ff3e0f6f3d11c7e7cf702348174-7eb92f86cd2571d4b6659470f41c66ce_KORRIGOBRET.gtfs.zip,D:\\mobility-data\\gtfs\\7dc7fdbf6d0b27516ab576a904ddc290-a2065509a9ecd722ae9bcd89c6a33bf8_pt-th-offer-atoumod-gtfs-20250912-914-opendata.zip,D:\\mobility-data\\gtfs\\45f4b3956a0b9c91f3b042a2d1a4ace4-d059c488bd33c0e0d9ed9d0363d06aa5_gtfs-20240903-154223.zip',
 #   'D:\\dev\\mobility_oss\\mobility\\data\\gtfs\\gtfs_route_types.csv',
 #   'D:\\test-09\\0a8bd50eb6f9cc645144a17944c656b6-gtfs_router.rds'
 # )
+
+# args[3] <- "D:/downloads/gtfs-evad010925-131225.zip"
 
 package_path <- args[1]
 tz_file_path <- args[2]
@@ -122,6 +124,13 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
       }
       
       if ("calendar_dates" %in% names(gtfs)) {
+        
+        # Force calendar_dates column names tp avoid bugs whan the GTFS file is malformed
+        # (with blank lines below the header)
+        # A general and better solution would be to change the parsing of gtfsrouter,
+        # see https://github.com/UrbanAnalyst/gtfsrouter/issues/138
+        setnames(gtfs$calendar_dates, c("service_id", "date", "exception_type"))
+        
         gtfs$calendar_dates <- gtfs$calendar_dates[service_id %in% service_ids]
       }
       
