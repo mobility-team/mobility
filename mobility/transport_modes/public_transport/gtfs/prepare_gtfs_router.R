@@ -129,7 +129,10 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
         # (with blank lines below the header)
         # A general and better solution would be to change the parsing of gtfsrouter,
         # see https://github.com/UrbanAnalyst/gtfsrouter/issues/138
-        setnames(gtfs$calendar_dates, c("service_id", "date", "exception_type"))
+        if (("service_id" %in% colnames(gtfs$calendar_dates)) == FALSE) {
+          setnames(gtfs$calendar_dates, c("service_id", "date", "exception_type"))
+        }
+        
         
         gtfs$calendar_dates <- gtfs$calendar_dates[service_id %in% service_ids]
       }
@@ -163,6 +166,7 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
       }
       
       if ("calendar_dates" %in% names(gtfs)) {
+        
         calendar_dates_cols <- c(
           "service_id", "date", "exception_type"
         )
