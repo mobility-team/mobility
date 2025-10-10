@@ -92,8 +92,8 @@ class StateInitializer:
         city_category_values = get_col_values(demand_groups, p_chain, "city_category")
         csp_values = get_col_values(demand_groups, p_chain, "csp")
         n_cars_values = get_col_values(demand_groups, p_chain, "n_cars")
-        motive_values = get_col_values(demand_groups, p_chain, "motive")
-        mode_values = get_col_values(demand_groups, p_chain, "mode")
+        motive_values = p_chain["motive"].unique().sort().to_list()
+        # mode_values = p_chain["mode"].unique().sort().to_list()
         
         p_chain = (
             p_chain
@@ -103,7 +103,7 @@ class StateInitializer:
                 csp=pl.col("csp").cast(pl.Enum(csp_values)),
                 n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values)),
                 motive=pl.col("motive").cast(pl.Enum(motive_values)),
-                mode=pl.col("mode").cast(pl.Enum(mode_values)),
+                # mode=pl.col("mode").cast(pl.Enum(mode_values)),
             )
         )
 
@@ -320,8 +320,8 @@ class StateInitializer:
             .agg(pl.col("duration").sum())
         )
         
-        motive_names = [m.name for m in motives]
-
+        motive_names = chains.schema["motive"].categories
+        
         # Load and adjust sinks
         sinks = (
             
