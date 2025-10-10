@@ -61,20 +61,11 @@ class StateInitializer:
             .join(lau_to_city_cat.lazy(), on=["local_admin_unit_id"])
             .group_by(["country", "home_zone_id", "city_category", "csp", "n_cars"])
             .agg(pl.col("n_persons").sum())
-
-            # Cast strings to enums to speed things up
-            .with_columns(
-                country=pl.col("country").cast(pl.Enum(countries)),
-                city_category=pl.col("city_category").cast(pl.Enum(["C", "B", "R", "I"])),
-                csp=pl.col("csp").cast(pl.Enum(["1", "2", "3", "4", "5", "6", "7", "8", "no_csp"])),
-                n_cars=pl.col("n_cars").cast(pl.Enum(["0", "1", "2+"]))
-            )
-            .with_row_index("demand_group_id")
-
+            
             .collect(engine="streaming")
             
         )
-
+        
         # Get the chain probabilities from the mobility surveys
         surveys = [s for s in surveys if s.country in countries]
         
@@ -91,9 +82,40 @@ class StateInitializer:
                     for survey in surveys
                 ]
             )
+        )
+        
+        # Cast string columns to enums for better perf
+        def get_col_values(df1, df2, col):
+            s = pl.concat([df1.select(col), df2.select(col)]).to_series()
+            return s.unique().sort().to_list()
+            
+        city_category_values = get_col_values(demand_groups, p_chain, "city_category")
+        csp_values = get_col_values(demand_groups, p_chain, "csp")
+        n_cars_values = get_col_values(demand_groups, p_chain, "n_cars")
+        motive_values = p_chain["motive"].unique().sort().to_list()
+        # mode_values = p_chain["mode"].unique().sort().to_list()
+        
+        p_chain = (
+            p_chain
             .with_columns(
-                country=pl.col("country").cast(pl.Enum(countries))
+                country=pl.col("country").cast(pl.Enum(countries)),
+                city_category=pl.col("city_category").cast(pl.Enum(city_category_values)),
+                csp=pl.col("csp").cast(pl.Enum(csp_values)),
+                n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values)),
+                motive=pl.col("motive").cast(pl.Enum(motive_values)),
+                # mode=pl.col("mode").cast(pl.Enum(mode_values)),
             )
+        )
+
+        demand_groups = (
+            demand_groups
+            .with_columns(
+                country=pl.col("country").cast(pl.Enum(countries)),
+                city_category=pl.col("city_category").cast(pl.Enum(city_category_values)),
+                csp=pl.col("csp").cast(pl.Enum(csp_values)),
+                n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values))
+            )
+            .with_row_index("demand_group_id")
         )
         
         # Create an index for motive sequences to avoid moving giant strings around
@@ -298,8 +320,8 @@ class StateInitializer:
             .agg(pl.col("duration").sum())
         )
         
-        motive_names = [m.name for m in motives]
-
+        motive_names = chains.schema["motive"].categories
+        
         # Load and adjust sinks
         sinks = (
             

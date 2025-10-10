@@ -128,17 +128,17 @@ class DestinationSequenceSampler:
                 - cost_bin_to_dest: ["motive","from","cost_bin","to","p_to"].
         """
         
-        motive_names = [m.name for m in motives]
-        
         utilities = [(m.name, m.get_utilities(transport_zones)) for m in motives]
         utilities = [u for u in utilities if u[1] is not None]
         utilities = [u[1].with_columns(motive=pl.lit(u[0])) for u in utilities]
+        
+        motive_values = sinks.schema["motive"].categories
         
         utilities = (
             
             pl.concat(utilities)
             .with_columns(
-                motive=pl.col("motive").cast(pl.Enum(motive_names)),
+                motive=pl.col("motive").cast(pl.Enum(motive_values)),
                 to=pl.col("to").cast(pl.Int32)
             )
 

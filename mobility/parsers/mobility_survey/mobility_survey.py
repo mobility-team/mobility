@@ -94,27 +94,24 @@ class MobilitySurvey(FileAsset):
             # Map detailed motives to grouped motives
             .with_columns(pl.col("motive").replace(motive_mapping))
             .with_columns(
-                motive=pl.when(pl.col("motive").is_in(motive_names))
-                .then(pl.col("motive"))
-                .otherwise(pl.lit("other"))
+                motive=( 
+                    pl.when(pl.col("motive").is_in(motive_names))
+                    .then(pl.col("motive"))
+                    .otherwise(pl.lit("other"))
+                )
             )
-            
-            # Cast columns to efficient types   
+                     
+            # Remove motive sequences that are longer than 10 motives to speed 
+            # up further processing steps. We lose approx. 1 % of the travelled 
+            # distance.
+            # TO DO : break up these motive sequences into smaller ones.
             .with_columns(
-                city_category=pl.col("city_category").cast(pl.Enum(["C", "B", "R", "I"])),
-                csp=pl.col("csp").cast(pl.Enum(["1", "2", "3", "4", "5", "6", "7", "8", "no_csp"])),
-                n_cars=pl.col("n_cars").cast(pl.Enum(["0", "1", "2+"])),
-                motive=pl.col("motive").cast(pl.Enum(motive_names)),
                 max_seq_step_index=( 
                     pl.col("seq_step_index")
                     .max().over(["individual_id", "day_id"])
                 )
             )
             
-            # Remove motive sequences that are longer than 10 motives to speed 
-            # up further processing steps. We lose approx. 1 % of the travelled 
-            # distance.
-            # TO DO : break up these motive sequences into smaller ones.
             .filter(pl.col("max_seq_step_index") < 11)
             
             # Force motive sequences to end up at home because further processing
