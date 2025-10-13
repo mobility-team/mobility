@@ -32,6 +32,7 @@ class ShopsTurnoverDistribution(FileAsset):
         Retrieves cached data if it exists.
         """
         logging.info(f"Using cached shops' turnover data from: {self.cache_path['shops_turnover']}")
+        
         return pd.read_parquet(self.cache_path["shops_turnover"])
 
     def create_and_get_asset(self) -> pd.DataFrame:
@@ -46,6 +47,7 @@ class ShopsTurnoverDistribution(FileAsset):
         shops_turnover = pd.concat([shops_turnover_fr, shops_turnover_ch])
         shops_turnover = shops_turnover.dropna(subset=["local_admin_unit_id"])
         shops_turnover.to_parquet(self.cache_path["shops_turnover"])
+        
         return shops_turnover
 
     def prepare_shops_turnover_ratio(self) -> pd.DataFrame:

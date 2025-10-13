@@ -222,6 +222,7 @@ class StudentsDistribution(FileAsset):
 
         # ---------------------------------------------------------------------
         # Get BFS enrollment rate data by age.
+        # From : https://www.bfs.admin.ch/bfs/en/home/statistics/education-science/pupils-students.html?utm_source=chatgpt.com
         # ---------------------------------------------------------------------
         enrollment_rate_data = {
             "age": list(range(3, 32)),

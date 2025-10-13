@@ -16,6 +16,8 @@ osm_buildings_fp <- args[3]
 level_of_detail <- as.integer(args[4])
 output_fp <- args[5]
 
+
+
 # package_path <- 'D:/dev/mobility_oss/mobility'
 # study_area_fp <- 'D:/data/mobility/projects/post-carbon/770d300c5e292c864d61ca4cd7bcbb62-study_area.gpkg'
 # osm_buildings_fp <- 'D:/data/mobility/projects/post-carbon/building-osm_data'
@@ -79,7 +81,7 @@ compute_k_medoids <- function(buildings_dt) {
   
   k_medoids <- lapply(1:5, function(i) {
     
-    pam_result <- clara(bdt[, list(X, Y)], i)
+    pam_result <- cluster::clara(bdt[, list(X, Y)], i)
     
     bdt[, subcluster := pam_result$clustering]
     subcluster_area <- bdt[, list(area = sum(area)), by = subcluster]
@@ -223,7 +225,9 @@ study_area_dt[, geometry_wkb := geos_write_wkb(geometry)]
 
 set.seed(0)
 
-plan(multisession, workers = max(parallel::detectCores()-3, 1))
+# plan(multisession, workers = max(parallel::detectCores()-3, 1))
+plan(multisession, workers =4)
+
 # plan(sequential)
 
 transport_zones_buildings <- future_lapply(

@@ -56,95 +56,100 @@ class StudiesDestinationChoiceModelParameters:
     
     
 
-# class StudiesDestinationChoiceModel(DestinationChoiceModel):
+class StudiesDestinationChoiceModel(DestinationChoiceModel):
     
-#     def __init__(
-#             self,
-#             transport_zones: TransportZones,
-#             modes: List[TransportMode],
-#             parameters: StudiesDestinationChoiceModelParameters = StudiesDestinationChoiceModelParameters(),
-#             students_distribution: pd.DataFrame = None, 
-#             school_capacities: pd.DataFrame = None, 
-#             reference_flows: pd.DataFrame = None,
-#             ssi_min_flow_volume: float = 200.0
-#         ):
-#         """
+    def __init__(
+            self,
+            transport_zones: TransportZones,
+            modes: List[TransportMode],
+            parameters: StudiesDestinationChoiceModelParameters = StudiesDestinationChoiceModelParameters(),
+            students_distribution: pd.DataFrame = None, 
+            school_capacities: pd.DataFrame = None, 
+            reference_flows: pd.DataFrame = None,
+            ssi_min_flow_volume: float = 200.0
+        ):
+        """
 
-#         """
+        """
         
         
-#         if students_distribution is None:
-#             self.students_distribution = StudentsDistribution()
-#             self.school_capacities = SchoolsCapacityDistribution()
-#             self.reference_flows = None # SchoolStudentsFlows() : class does not exist ?
-#         else:
-#             self.students_distribution = students_distribution
-#             self.school_capacities = school_capacities
-#             self.reference_flows = reference_flows
+        if students_distribution is None:
+            self.students_distribution = StudentsDistribution()
+            self.school_capacities = SchoolsCapacityDistribution()
+            self.reference_flows = None # SchoolStudentsFlows() : class does not exist ?
+        else:
+            self.students_distribution = students_distribution
+            self.school_capacities = school_capacities
+            self.reference_flows = reference_flows
 
         
         
-#         if "type" not in parameters.model.keys():
-#             raise ValueError("The model_parameters should be a dict that specifies the type of radiation model : radiation_universal or radiation_selection")
+        if "type" not in parameters.model.keys():
+            raise ValueError("The model_parameters should be a dict that specifies the type of radiation model : radiation_universal or radiation_selection")
         
-#         if parameters.model["type"] == "radiation_selection":
-#             if "lambda" not in parameters.model.keys():
-#                 raise ValueError("Lambda parameter missing in model_parameters. It should be a dict with keys fr and ch.")
+        if parameters.model["type"] == "radiation_selection":
+            if "lambda" not in parameters.model.keys():
+                raise ValueError("Lambda parameter missing in model_parameters. It should be a dict with keys fr and ch.")
             
-#         if parameters.model["type"] == "radiation_universal":
-#             if "alpha" not in parameters.model.keys():
-#                 raise ValueError("Alpha parameter missing in model_parameters.")
-#             if "beta" not in parameters.model.keys():
-#                 raise ValueError("Beta parameter missing in model_parameters.")
+        if parameters.model["type"] == "radiation_universal":
+            if "alpha" not in parameters.model.keys():
+                raise ValueError("Alpha parameter missing in model_parameters.")
+            if "beta" not in parameters.model.keys():
+                raise ValueError("Beta parameter missing in model_parameters.")
         
-#         super().__init__(
-#             "studies",
-#             transport_zones,
-#             modes,
-#             self.studies_sources_and_sinks,
-#             parameters,
-#             ssi_min_flow_volume
-#         )
-        
-        
-#     def prepare_sources_and_sinks(self, transport_zones: TransportZones):
+        super().__init__(
+            "studies",
+            transport_zones,
+            modes,
+            self.studies_sources_and_sinks,
+            parameters,
+            ssi_min_flow_volume
+        )
         
         
-#         transport_zones = transport_zones.get()
-#         sources = self.prepare_sources(transport_zones)
-#         sinks = self.prepare_sinks(transport_zones)
+    def prepare_sources_and_sinks(self, transport_zones: TransportZones):
         
-#         return sources, sinks
+        
+        transport_zones = transport_zones.get()
+        sources = self.prepare_sources(transport_zones)
+        sinks = self.prepare_sinks(transport_zones)
+        
+        return sources, sinks
     
-#     def prepare_utilities(self, transport_zones, sinks):
-#         utilities = Utilities(transport_zones, sinks, self.inputs["parameters"].utility)
-#         return utilities
+    def prepare_utilities(self, transport_zones, sinks):
+        utilities = Utilities(transport_zones, sinks, self.inputs["parameters"].utility)
+        return utilities
 
     
-#     def prepare_sources(
-#             self,
-#             transport_zones: pd.DataFrame
-#         ) -> pd.DataFrame:
+    def prepare_sources(
+            self,
+            transport_zones: pd.DataFrame
+        ) -> pd.DataFrame:
+        
+        transport_zones_df = transport_zones.drop(columns="geometry")
+        
+        # récupérer où sont les étudiants par ages, et pas zones de transport
+        
 
-#         tz_lau_ids = set(transport_zones["local_admin_unit_id"].unique())        
+        tz_lau_ids = set(transport_zones["local_admin_unit_id"].unique())        
         
-#         students_distribution = self.students_distribution.get()
-#         students_distribution = students_distribution[students_distribution["local_admin_unit_id"].isin(tz_lau_ids)]
+        students_distribution = students_distribution.get()
+        students_distribution = students_distribution[students_distribution["local_admin_unit_id"].isin(tz_lau_ids)]
         
-#         return students_distribution
+        return students_distribution
         
     
-#     def prepare_sinks(
-#             self,
-#             transport_zones: pd.DataFrame
-#         ) -> pd.DataFrame:
-#         """
-#         """
+    def prepare_sinks(
+            self,
+            transport_zones: pd.DataFrame
+        ) -> pd.DataFrame:
+        """
+        """
         
-#         # missing swiss school capacities
-#         school_capacities = self.school_capacities.get()
-#         school_capacities = school_capacities[school_capacities["local_admin_unit_id"].isin(tz_lau_ids)]
+        # missing swiss school capacities
+        school_capacities = self.school_capacities.get()
+        school_capacities = school_capacities[school_capacities["local_admin_unit_id"].isin(tz_lau_ids)]
 
                 
-#         return all_shops
+        return all_shops
     
