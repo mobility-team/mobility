@@ -52,19 +52,21 @@ def test_009_population_trips_results_can_be_computed(test_data):
             n_iter_per_cost_update=0,
             alpha=0.01,
             dest_prob_cutoff=0.9,
-            activity_utility_coeff=1.0,
+            activity_utility_coeff=6.0,
             stay_home_utility_coeff=1.0,
-            k_mode_sequences=6,
+            k_mode_sequences=3,
             cost_uncertainty_sd=1.0,
             mode_sequence_search_parallel=False
         )
     )
     
+    global_metrics = pop_trips.evaluate("global_metrics")
     weekday_sink_occupation = pop_trips.evaluate("sink_occupation", weekday=True)
     weekday_trip_count_by_demand_group = pop_trips.evaluate("trip_count_by_demand_group", weekday=True)
     weekday_distance_per_person = pop_trips.evaluate("distance_per_person", weekday=True)
     weekday_time_per_person = pop_trips.evaluate("time_per_person", weekday=True)
     
+    assert global_metrics.shape[0] > 0
     assert weekday_sink_occupation.shape[0] > 0
     assert weekday_trip_count_by_demand_group.shape[0] > 0
     assert weekday_distance_per_person.shape[0] > 0

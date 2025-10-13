@@ -92,11 +92,12 @@ class MobilitySurvey(FileAsset):
             
             short_trips
             .select(["day_id", "individual_id", "daily_trip_index", "departure_time", "arrival_time"])
+            .unpivot(index=["day_id", "individual_id", "daily_trip_index"], value_name="event_time")
             
-            .unpivot(["day_id", "individual_id", "daily_trip_index"], value_name="event_time")
             .with_columns(
                 is_arrival=pl.col("variable") == "arrival_time"
             )
+            
             .sort(["day_id", "individual_id", "daily_trip_index", "is_arrival"])
             
             # Force time to be in the 0 to 24 hour interval
