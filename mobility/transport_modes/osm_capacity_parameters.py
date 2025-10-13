@@ -97,6 +97,8 @@ class BicycleOSMCapacityParameters(BaseOSMCapacityParameters):
     # but we disable them here because they lead to large graphs, with ways that 
     # are not very likely to be selected because they match hinking trails and 
     # dirt roads in OSM
+
+    # we also remove ferry ways which should be included in the public transport graph instead
          
     trunk: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     primary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
@@ -106,7 +108,6 @@ class BicycleOSMCapacityParameters(BaseOSMCapacityParameters):
     residential: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     service: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     cycleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    ferry: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     living_street: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     bridleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     footway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
