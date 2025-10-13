@@ -63,6 +63,7 @@ class TopKModeSequenceSearch:
             pl.scan_parquet(chains_path)
             .group_by(["demand_group_id", "motive_seq_id", "dest_seq_id"])
             .agg(
+                n=pl.col('from').len(),
                 locations=pl.col("from").sort_by("seq_step_index")
             )
             .collect()

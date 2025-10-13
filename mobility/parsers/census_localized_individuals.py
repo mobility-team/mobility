@@ -94,6 +94,19 @@ class CensusLocalizedIndividuals(FileAsset):
         
         individuals["household_id"] = individuals["CANTVILLE"] + "-" + individuals["household_number"]
         
+        # Split the CSP 8 into 2 groups : inf and sup 15 years old
+        conditions = [
+            (individuals["socio_pro_category"] == "8") & (individuals["age"] < 15),
+            (individuals["socio_pro_category"] == "8") & (individuals["age"] >= 15),
+        ]
+        choices = ["8a", "8b"]
+        
+        individuals["socio_pro_category"] = np.select(
+            conditions, choices, default=individuals["socio_pro_category"]
+        )
+        
+        individuals["socio_pro_category"] = "fr-" + individuals["socio_pro_category"]
+        
         
         # Handle individuals living outside of households
         individuals_in_hh = individuals[individuals["link_ref_pers_household"] != "Z"].copy()

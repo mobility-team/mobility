@@ -77,6 +77,9 @@ class StateUpdater:
         current_states = self.apply_transitions(current_states, transition_prob)
         current_states_steps = self.get_current_states_steps(current_states, possible_states_steps)
         
+        if current_states["n_persons"].is_null().any() or current_states["n_persons"].is_nan().any():
+            raise ValueError("Null or NaN values in the n_persons column, something went wrong.")
+        
         return current_states, current_states_steps
     
     def get_possible_states_steps(
@@ -221,10 +224,6 @@ class StateUpdater:
             
             .join(home_night_dur.lazy(), on="csp")
             .with_columns(
-                # home_night_per_pers=pl.max_horizontal([
-                #     pl.col("home_night_per_pers"),
-                #     pl.col("mean_home_night_per_pers")*0.1
-                # ]),
                 min_activity_time=pl.col("mean_home_night_per_pers")*math.exp(-min_activity_time_constant)
             )
             .with_columns(
@@ -500,6 +499,9 @@ class StateUpdater:
                 sink_occupation=pl.col("duration").sum()
             )
             .join(sinks, on=["to", "motive"], how="full", coalesce=True)
+            .with_columns(
+                sink_occupation=pl.col("sink_occupation").fill_null(0.0)
+            )
             .with_columns(
                 k=pl.col("sink_occupation")/pl.col("sink_capacity"),
                 sink_available=(pl.col("sink_capacity") - pl.col("sink_occupation")).clip(0.0)

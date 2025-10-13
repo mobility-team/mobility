@@ -333,6 +333,7 @@ class Results:
             
             immobility_m = (
                 immobility
+                .select(["country", "csp", "p_immobility", "p_immobility_ref"])
                 .melt(["country", "csp"], value_name="p_immobility")
                 .sort("csp")
             )
