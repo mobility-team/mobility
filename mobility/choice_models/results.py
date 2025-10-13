@@ -324,6 +324,9 @@ class Results:
                 on=["country", "csp"],
                 suffix="_ref"
             )
+            .with_columns(
+                n_persons_imm_ref=pl.col("n_persons_dem_grp")*pl.col("p_immobility_ref")
+            )
             # .select(["country", "csp", "p_immobility", "p_immobility_ref"])
             .collect(engine="streaming")
             
@@ -333,20 +336,20 @@ class Results:
             
             immobility_m = (
                 immobility
-                .select(["country", "csp", "p_immobility", "p_immobility_ref"])
-                .melt(["country", "csp"], value_name="p_immobility")
+                .select(["country", "csp", "n_persons_imm", "n_persons_imm_ref"])
+                .melt(["country", "csp"], value_name="n_pers_immobility")
                 .sort("csp")
             )
             
             fig = px.bar(
                 immobility_m,
                 x="csp",
-                y="p_immobility",
+                y="n_pers_immobility",
                 color="variable",
                 barmode="group",
-                facet_col="country",
-                
+                facet_col="country"
             )
+            fig = fig.update_xaxes(matches=None)
             fig.show("browser")
         
         return immobility
