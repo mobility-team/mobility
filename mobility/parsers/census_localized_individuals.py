@@ -12,7 +12,10 @@ class CensusLocalizedIndividuals(FileAsset):
     
     def __init__(self, region: str):
 
-        inputs = {"region": region}
+        inputs = {
+            "verson": "1",
+            "region": region
+        }
 
         file_name = "census_localized_individuals_" + region + ".parquet"
         cache_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "insee" / "census_localized_individuals" / file_name

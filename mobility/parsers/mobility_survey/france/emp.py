@@ -27,6 +27,7 @@ class EMPMobilitySurvey(MobilitySurvey):
 
     def __init__(self, seq_prob_cutoff: float = 0.95):
         inputs = {
+            "version": "1",
             "survey_name": "fr-EMP-2019",
             "country": "fr"
         }
