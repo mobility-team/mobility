@@ -15,8 +15,8 @@ args <- commandArgs(trailingOnly = TRUE)
 #   'D:\\dev\\mobility_oss\\mobility\\data\\gtfs\\gtfs_route_types.csv',
 #   'D:\\test-09\\0a8bd50eb6f9cc645144a17944c656b6-gtfs_router.rds'
 # )
-
-# args[3] <- "D:/downloads/gtfs-evad010925-131225.zip"
+# 
+# args[3] <- "D:/downloads/gtfs-manett-20250818-20251219.zip"
 
 package_path <- args[1]
 tz_file_path <- args[2]
@@ -59,6 +59,11 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
 
   gtfs <- extract_gtfs(dataset$file, quiet = FALSE)
   
+  # Add the agency_id column if missing
+  if (!("agency_id" %in% colnames(gtfs$agency))) {
+    gtfs$agency[, agency_id := 1:.N]
+  }
+  
   # Keep only stops within the region
   stops <- sfheaders::sf_point(gtfs$stops, x = "stop_lon", y = "stop_lat", keep = TRUE)
   st_crs(stops) <- 4326
@@ -97,7 +102,7 @@ gtfs_all <- lapply(gtfs_file_paths, function(dataset) {
       # Keep only routes passing in the region
       route_ids <- unique(gtfs$trips$route_id)
       
-      if (!"agency_id" %in% colnames(gtfs$routes)) {
+      if (!("agency_id" %in% colnames(gtfs$routes))) {
         if ("agency_id" %in% colnames(gtfs$agency)) {
           gtfs$routes$agency_id <- gtfs$agency$agency_id[1]
         } else {
