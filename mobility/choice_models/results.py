@@ -111,7 +111,7 @@ class Results:
                     time=(pl.col("time")*pl.col("n_persons")).sum(),
                     distance=(pl.col("distance")*pl.col("n_persons")).sum()
                 )
-                .unpivot("country")
+                .unpivot(index="country")
                 .collect(engine="streaming")
             )
             
