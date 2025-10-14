@@ -64,6 +64,8 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
         
         costs["cost"] = gen_cost
         
+        costs["time"] = costs["start_real_time"] + costs["mid_real_time"] + costs["last_real_time"]
+        
         if detail_distances is True:
             
             first_mode_col = first_leg_mode_name + "_distance"
