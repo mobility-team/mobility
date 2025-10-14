@@ -1,7 +1,3 @@
-[![codecov](https://codecov.io/github/mobility-team/mobility/branch/main/graph/badge.svg?token=D31X32AZ43)](https://codecov.io/github/mobility-team/mobility)
-[![Code style: black][black-badge]][black-link]
-[![Documentation Status][rtd-badge]][rtd-link]
-
 # Mobility, an open-source library for mobility modelisation
 Mobility is an open source Python library for modelling the travel behavior of local populations, from short range to long range trips, for different travel motives (personnal and professional) and on multimodal transport networks (walk, bicycle, public transport and car). It can be used on regions composed of hundreds of cities (up to a thousand), located in France and Switzerland.
 
@@ -10,6 +6,9 @@ It provides estimated travel diaries of a local sample population, based on indi
 It uses discrete choice models to evaluate destination and mode decisions based on generalized cost estimates, estimated from detailed unimodal and intermodal travel costs between the transport zones of the studied region.
 
 It handles the preparation of most inputs from open data (administrative boundaries, housing and places of interest spatial distribution, transport infrastructure, public transport schedules, activity programmes) and provides reasonable default values for model parameters. 
+
+<img width="305" height="256" alt="Flow map of Bayonne region" src="https://github.com/user-attachments/assets/629e5ed0-aa5a-4949-acc6-60615e8f31b5" />
+<img width="305" height="256" alt="Car modal share of Bayonne region" src="https://github.com/user-attachments/assets/9fb95b35-4443-40d0-8640-ce1c9846d83b" />
 
 To see how Mobility works, take a look at the [installation instructions](docs/sources/installation.md) and the [quickstart page](docs/source/quickstart.md). If you want to contribute, see our [guidelines](docs/contributing.md) and the [issue tracker](https://github.com/mobility-team/mobility).
 
