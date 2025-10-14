@@ -59,7 +59,8 @@ Sur Windows, assurez-vous de bien utiliser le package `osmdata_0.2.5.005.zip` fo
 - Pour obtenir une liste des packages existants, utilisez la commande :
 ```ip = as.data.frame(installed.packages()[,c(1,3:4)])
 ip = ip[is.na(ip$Priority),1:2,drop=FALSE]
-ip```
+ip
+```
 - Si la version d'osmdata est déjà 0.2.5.005, votre configuration est correcte et le problème est ailleurs !
 - Sinon, utiliser la commande `install.packages(file.choose(), repos=NULL)` et aller sélectionner le fichier ZIP `osmdata_0.2.5.005.zip` dans `mobility/mobility/resources/`.
 - Utiliser la commande `q()` pour quitter le terminal R.
