@@ -25,7 +25,7 @@ class EMPMobilitySurvey(MobilitySurvey):
         prepare_survey_data_EMP_2019: Processes and formats EMP-2019 survey data.
     """
 
-    def __init__(self, seq_prob_cutoff: float = 0.95):
+    def __init__(self, seq_prob_cutoff: float = 0.5):
         inputs = {
             "version": "1",
             "survey_name": "fr-EMP-2019",

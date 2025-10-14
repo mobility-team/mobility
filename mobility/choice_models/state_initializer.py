@@ -9,7 +9,7 @@ class StateInitializer:
     (sinks), and (5) fetch current OD costs.
     """
     
-    def get_chains(self, population, surveys, motives, is_weekday):
+    def get_chains(self, population, surveys, motives, modes, is_weekday):
         """Aggregate demand groups and attach survey chain probabilities.
     
         Produces per-group trip chains with durations and anchor flags by
@@ -21,6 +21,7 @@ class StateInitializer:
             population: Population container providing transport zones and groups.
             surveys: Iterable of survey objects exposing `get_chains_probability`.
             motives: Iterable of motives; used to mark anchors.
+            modes: 
             is_weekday (bool): Select weekday (True) or weekend (False) chains.
     
         Returns:
@@ -74,7 +75,7 @@ class StateInitializer:
                 [
                     (
                         survey
-                        .get_chains_probability(motives)
+                        .get_chains_probability(motives, modes)
                         .with_columns(
                             country=pl.lit(survey.inputs["country"])
                         )
@@ -93,7 +94,7 @@ class StateInitializer:
         csp_values = get_col_values(demand_groups, p_chain, "csp")
         n_cars_values = get_col_values(demand_groups, p_chain, "n_cars")
         motive_values = p_chain["motive"].unique().sort().to_list()
-        # mode_values = p_chain["mode"].unique().sort().to_list()
+        mode_values = p_chain["mode"].unique().sort().to_list()
         
         p_chain = (
             p_chain
@@ -103,7 +104,7 @@ class StateInitializer:
                 csp=pl.col("csp").cast(pl.Enum(csp_values)),
                 n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values)),
                 motive=pl.col("motive").cast(pl.Enum(motive_values)),
-                # mode=pl.col("mode").cast(pl.Enum(mode_values)),
+                mode=pl.col("mode").cast(pl.Enum(mode_values)),
             )
         )
 
@@ -159,7 +160,7 @@ class StateInitializer:
                 n_persons=pl.col("n_persons")*pl.col("p_seq")
             )
             .with_columns(
-                duration=(
+                duration_per_pers=(
                     (
                         pl.col("duration_morning")
                         + pl.col("duration_midday")
@@ -168,10 +169,17 @@ class StateInitializer:
                 )
             )
             
+            
+        )
+        
+        chains_by_motive = (
+            
+            chains
+            
             .group_by(["demand_group_id", "motive_seq_id", "seq_step_index", "motive"])
             .agg(
                 n_persons=pl.col("n_persons").sum(),
-                duration=(pl.col("n_persons")*pl.col("duration")).sum()
+                duration=(pl.col("n_persons")*pl.col("duration_per_pers")).sum()
             )
             
             .sort(["demand_group_id", "motive_seq_id",  "seq_step_index"])
@@ -187,7 +195,7 @@ class StateInitializer:
             .drop(["country", "city_category"])
         )
 
-        return chains, demand_groups
+        return chains_by_motive, chains, demand_groups
     
     
     def get_mean_activity_durations(self, chains, demand_groups):
@@ -338,6 +346,8 @@ class StateInitializer:
                     for motive in motives if motive.has_opportunities is True
                 ]
             )
+            
+            .filter(pl.col("n_opp") > 0.0)
 
             .with_columns(
                 motive=pl.col("motive").cast(pl.Enum(motive_names)),

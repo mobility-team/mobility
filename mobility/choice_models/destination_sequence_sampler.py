@@ -19,7 +19,8 @@ class DestinationSequenceSampler:
             motives,
             transport_zones,
             remaining_sinks,
-            iteration, chains,
+            iteration,
+            chains,
             demand_groups,
             costs,
             tmp_folders,
@@ -79,6 +80,7 @@ class DestinationSequenceSampler:
             chains
             .group_by(["demand_group_id", "motive_seq_id"])
             .agg(
+                n=pl.col("to").len(),
                 to=pl.col("to").sort_by("seq_step_index").cast(pl.Utf8())
             )
             .with_columns(
@@ -161,7 +163,14 @@ class DestinationSequenceSampler:
 
         costs = (
             costs.lazy()
-            .join(sinks.lazy(), on="to")
+            .join(
+                ( 
+                    sinks
+                    .filter(pl.col("sink_available") > 0.0)
+                    .lazy()
+                ),
+                on="to"
+            )
             .join(utilities.lazy(), on=["motive", "to"], how="left")
             .with_columns(
                 utility=pl.col("utility").fill_null(0.0),
@@ -352,7 +361,7 @@ class DestinationSequenceSampler:
             )
             .sort(["demand_group_id", "motive_seq_id", "seq_step_index"])
             .with_columns(
-                anchor_to=pl.col("anchor_to").backward_fill()
+                anchor_to=pl.col("anchor_to").backward_fill().over(["demand_group_id","motive_seq_id"])
             )
             
         ) 
@@ -501,7 +510,7 @@ class DestinationSequenceSampler:
         )
         
         
-        # Add the steps that end end up at anchor destinations
+        # Add the steps that end up at anchor destinations
         steps_anchor = (
             chains_step
             .filter(pl.col("is_anchor"))
