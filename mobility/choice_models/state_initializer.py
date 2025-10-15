@@ -71,7 +71,7 @@ class StateInitializer:
             )
             .with_row_index("demand_group_id")
 
-            .collect(engine="streaming")
+            .collect(streaming=True)
             
         )
 

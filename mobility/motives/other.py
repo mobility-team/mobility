@@ -45,7 +45,7 @@ class OtherMotive(Motive):
                 .agg(
                     n_opp=pl.col("weight").sum()
                 )
-                .collect(engine="streaming")
+                .collect(streaming=True)
                 .rename({"transport_zone_id": "to"})
                 .to_pandas()
             )

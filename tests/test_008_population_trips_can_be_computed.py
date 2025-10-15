@@ -2,7 +2,7 @@ import mobility
 import pytest
 
 from mobility.choice_models.population_trips import PopulationTrips
-from mobility.motives import OtherMotive, HomeMotive, WorkMotive
+from mobility.motives import OtherMotive, HomeMotive, WorkMotive, StudiesMotive
 from mobility.choice_models.population_trips_parameters import PopulationTripsParameters
 from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
 
@@ -10,9 +10,9 @@ from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
 # but still need the setup phase and input data defined in conftest.py
 # Don't forget to recomment or the tests will not pass !
 
-# from conftest import get_test_data, do_mobility_setup
-# do_mobility_setup(True, False, False)
-# test_data = get_test_data()
+from conftest import get_test_data, do_mobility_setup
+do_mobility_setup(True, False, False)
+test_data = get_test_data()
 
 @pytest.mark.dependency(
     depends=[

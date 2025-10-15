@@ -269,7 +269,7 @@ class DestinationSequenceSampler:
             
             .select(["motive", "from", "to", "p_ij"])
             
-            .collect(engine="streaming")
+            .collect(streaming=True)
         )
         
         return prob  
@@ -510,7 +510,9 @@ class DestinationSequenceSampler:
             )
             .select(["demand_group_id", "home_zone_id", "motive_seq_id", "motive", "anchor_to", "from", "to"])
         )
-        
+        steps = steps.with_columns(pl.col("to").cast(pl.Int64))
+
+                
         steps = pl.concat([steps, steps_anchor])
             
         

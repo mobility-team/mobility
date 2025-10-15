@@ -2,12 +2,10 @@ import os
 import json
 import pathlib
 import logging
-import tempfile
 import subprocess
 import pandas as pd
 import geopandas as gpd
 import requests
-from pyaxis import pyaxis
 
 from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file
@@ -66,10 +64,8 @@ class SchoolsCapacityDistribution(FileAsset):
         # ---------------------------------------------------------------------
 
         url = (
-            "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/"
-            "fr-en-annuaire-education/exports/csv?lang=fr&timezone=Europe%2FBerlin&"
-            "use_labels=true&delimiter=%3B"
-        )
+            "https://www.data.gouv.fr/api/1/datasets/r/6ebc938c-af7a-4faa-b10b-7b2757b50404"
+            )
         csv_path = data_folder / "fr-en-annuaire-education.csv"
         download_file(url, csv_path)
 
@@ -159,47 +155,40 @@ class SchoolsCapacityDistribution(FileAsset):
     
     
         
+        
+    def get_swiss_student_totals(self, year_oblig="2023/24", year_sup="2024/25"):
     
-    def get_swiss_student_totals(self, year_oblig="2023/24", year_sup="2024/25") -> dict:
+        data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "bfs" / "schools"
+        data_folder.mkdir(parents=True, exist_ok=True)
+    
+        urls = {
+            "oblig": "https://www.data.gouv.fr/api/1/datasets/r/fd96016f-eb0b-4a51-9158-9d063c2a566f",
+            "heu":   "https://www.data.gouv.fr/api/1/datasets/r/6dd5621e-581c-4c4e-838d-f4796ac69afc",
+            "hes":   "https://www.data.gouv.fr/api/1/datasets/r/a0321bb2-cb2a-498d-8d13-976fff4b8e14",
+            "hep":   "https://www.data.gouv.fr/api/1/datasets/r/714e5796-5722-4d56-b4fe-2778deb8b324",
+        }
+    
+        for key, url in urls.items():
+            p = data_folder / f"ch-{key}.csv"
+            r = requests.get(url, timeout=120)
+            r.raise_for_status()
+            p.write_bytes(r.content)
+    
+        df_obl = pd.read_csv(data_folder / "ch-oblig.csv", encoding="utf-8")
+        df_heu = pd.read_csv(data_folder / "ch-heu.csv",   encoding="utf-8")
+        df_hes = pd.read_csv(data_folder / "ch-hes.csv",   encoding="utf-8")
+        df_hep = pd.read_csv(data_folder / "ch-hep.csv",   encoding="utf-8")
+    
+        s_oblig = df_obl.loc[df_obl["Année"].astype(str) == year_oblig, "VALUE"].sum()
+    
+        s_sup = (
+            df_heu.loc[df_heu["Année"].astype(str) == year_sup, "VALUE"].sum() +
+            df_hes.loc[df_hes["Année"].astype(str) == year_sup, "VALUE"].sum() +
+            df_hep.loc[df_hep["Année"].astype(str) == year_sup, "VALUE"].sum()
+        )
+    
+        return {"oblig": float(s_oblig), "superieur": float(s_sup)}
 
-        # PX OFS
-        url_oblig = "https://dam-api.bfs.admin.ch/hub/api/dam/assets/34107791/master"
-        url_heu   = "https://dam-api.bfs.admin.ch/hub/api/dam/assets/31305789/master"
-        url_hes   = "https://dam-api.bfs.admin.ch/hub/api/dam/assets/34248697/master"
-        url_hep   = "https://dam-api.bfs.admin.ch/hub/api/dam/assets/34248753/master"
-    
-        # Téléchargements
-        p_obl = tempfile.NamedTemporaryFile(delete=False, suffix=".px").name
-        p_heu = tempfile.NamedTemporaryFile(delete=False, suffix=".px").name
-        p_hes = tempfile.NamedTemporaryFile(delete=False, suffix=".px").name
-        p_hep = tempfile.NamedTemporaryFile(delete=False, suffix=".px").name
-        open(p_obl, "wb").write(requests.get(url_oblig, timeout=120).content)
-        open(p_heu, "wb").write(requests.get(url_heu,   timeout=120).content)
-        open(p_hes, "wb").write(requests.get(url_hes,   timeout=120).content)
-        open(p_hep, "wb").write(requests.get(url_hep,   timeout=120).content)
-    
-        # Obligatoire (latin-1)
-        px1 = pyaxis.parse(p_obl, encoding="latin-1", lang="fr")
-        df_obl = px1["DATA"].rename(columns={"DATA": "VALUE"})
-        df_obl = df_obl[
-            (df_obl.filter(like="Année").iloc[:,0].astype(str) == year_oblig) &
-            (df_obl["Forme d'enseignement"].astype(str) == "Forme d'enseignement - total") &
-            (df_obl["Canton de l'école"].astype(str) == "Suisse")
-        ]
-        s_oblig = pd.to_numeric(df_obl["VALUE"], errors="coerce").sum()
-    
-        # Supérieur (UTF-8) – somme HEU + HES + HEP
-        def sum_px(px_path: str, year: str) -> float:
-            px = pyaxis.parse(px_path, encoding="utf-8", lang="fr")
-            df = px["DATA"].rename(columns={"DATA": "VALUE"})
-            ycol = next(c for c in df.columns if "année" in c.lower())
-            df = df[df[ycol].astype(str).eq(year)]
-            return pd.to_numeric(df["VALUE"], errors="coerce").sum()
-    
-        s_sup = sum_px(p_heu, year_sup) + sum_px(p_hes, year_sup) + sum_px(p_hep, year_sup)
-    
-        return {"oblig": s_oblig, "superieur": s_sup}
-    
     
     
     def get_swiss_osm_schools(self, pbf_path: pathlib.Path, study_area_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
