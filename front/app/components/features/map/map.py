@@ -1,5 +1,6 @@
 # app/components/features/map/map.py
 from __future__ import annotations
+
 import json
 import pydeck as pdk
 import dash_deck
@@ -8,8 +9,11 @@ import geopandas as gpd
 import pandas as pd
 import numpy as np
 from shapely.geometry import Polygon, MultiPolygon
+import dash_mantine_components as dmc
+
 from app.scenario.scenario_001_from_docs import load_scenario
 from app.components.features.study_area_summary import StudyAreaSummary
+from app.components.features.scenario import ScenarioControls  # 👈 les contrôles Mantine
 
 
 # ---------- CONSTANTES ----------
@@ -19,7 +23,6 @@ FALLBACK_CENTER = (1.4442, 43.6045)  # Toulouse
 
 # ---------- HELPERS ----------
 def _centroids_lonlat(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Calcule les centroides en coordonnées géographiques (lon/lat)."""
     g = gdf.copy()
     if g.crs is None:
         g = g.set_crs(4326, allow_override=True)
@@ -46,11 +49,6 @@ def _fmt_pct(v, nd=1):
 
 
 def _polygons_for_layer(zones_gdf: gpd.GeoDataFrame):
-    """
-    Prépare les polygones pour Deck.gl :
-    - geometry / fill_rgba : nécessaires au rendu
-    - champs “métier” (INSEE/Zone/Temps/Niveau + stats & parts modales) : pour le tooltip
-    """
     g = zones_gdf
     if g.crs is None or getattr(g.crs, "to_epsg", lambda: None)() != 4326:
         g = g.to_crs(4326)
@@ -63,11 +61,9 @@ def _polygons_for_layer(zones_gdf: gpd.GeoDataFrame):
         travel_time = _fmt_num(row.get("average_travel_time", np.nan), 1)
         legend = row.get("__legend", "")
 
-        # Stats “par personne et par jour”
         total_dist_km = _fmt_num(row.get("total_dist_km", np.nan), 1)
         total_time_min = _fmt_num(row.get("total_time_min", np.nan), 1)
 
-        # Parts modales
         share_car = _fmt_pct(row.get("share_car", np.nan), 1)
         share_bicycle = _fmt_pct(row.get("share_bicycle", np.nan), 1)
         share_walk = _fmt_pct(row.get("share_walk", np.nan), 1)
@@ -83,10 +79,8 @@ def _polygons_for_layer(zones_gdf: gpd.GeoDataFrame):
 
         for ring in rings:
             polygons.append({
-                # ⚙️ Champs techniques pour le rendu
                 "geometry": [[float(x), float(y)] for x, y in ring],
                 "fill_rgba": color,
-                # ✅ Champs métier visibles dans le tooltip (clés FR)
                 "Unité INSEE": str(insee),
                 "Identifiant de zone": str(zone_id),
                 "Temps moyen de trajet (minutes)": travel_time,
@@ -102,11 +96,6 @@ def _polygons_for_layer(zones_gdf: gpd.GeoDataFrame):
 
 # ---------- DECK FACTORY ----------
 def _deck_json(scn: dict | None = None) -> str:
-    """
-    Construit le Deck JSON.
-    - Si scn est None, charge le scénario via load_scenario().
-    - Sinon, utilise le scénario fourni (pour éviter un double chargement).
-    """
     layers = []
     lon_center, lat_center = FALLBACK_CENTER
 
@@ -118,14 +107,12 @@ def _deck_json(scn: dict | None = None) -> str:
         flows_df = scn["flows_df"].copy()
         zones_lookup = scn["zones_lookup"].copy()
 
-        # Centrage robuste
         if not zones_gdf.empty:
             zvalid = zones_gdf[zones_gdf.geometry.notnull() & zones_gdf.geometry.is_valid]
             if not zvalid.empty:
                 c = zvalid.to_crs(4326).geometry.unary_union.centroid
                 lon_center, lat_center = float(c.x), float(c.y)
 
-        # Palette couleur basée sur average_travel_time
         at = pd.to_numeric(zones_gdf.get("average_travel_time", pd.Series(dtype="float64")), errors="coerce")
         zones_gdf["average_travel_time"] = at
         finite_at = at.replace([np.inf, -np.inf], np.nan).dropna()
@@ -155,13 +142,11 @@ def _deck_json(scn: dict | None = None) -> str:
         zones_gdf["__legend"] = zones_gdf["average_travel_time"].map(_legend)
         zones_gdf["__color"] = zones_gdf["average_travel_time"].map(_colorize)
 
-        # Appliquer la palette au jeu transmis au layer
         polys = []
         for p, v in zip(_polygons_for_layer(zones_gdf), zones_gdf["average_travel_time"].tolist() or []):
             p["fill_rgba"] = _colorize(v)
             polys.append(p)
 
-        # Polygones (zones)
         if polys:
             zones_layer = pdk.Layer(
                 "PolygonLayer",
@@ -179,7 +164,6 @@ def _deck_json(scn: dict | None = None) -> str:
             )
             layers.append(zones_layer)
 
-        # --- Arcs de flux ---
         lookup_ll = _centroids_lonlat(zones_lookup)
         flows_df["flow_volume"] = pd.to_numeric(flows_df["flow_volume"], errors="coerce").fillna(0.0)
         flows_df = flows_df[flows_df["flow_volume"] > 0]
@@ -209,7 +193,6 @@ def _deck_json(scn: dict | None = None) -> str:
     except Exception as e:
         print("Overlay scénario désactivé (erreur):", e)
 
-    # Vue centrée
     view_state = pdk.ViewState(
         longitude=lon_center,
         latitude=lat_center,
@@ -230,14 +213,19 @@ def _deck_json(scn: dict | None = None) -> str:
 
 
 # ---------- DASH COMPONENT ----------
-def Map(id_prefix="map"):
-    # Charge une seule fois pour alimenter la carte ET le panneau global
+def Map(id_prefix: str = "map"):
+    """
+    Carte avec:
+    - Deck.gl
+    - Panel résumé global (overlay)
+    - Panel contrôles 'Rayon' (overlay), 100px sous le header
+    """
     scn = load_scenario()
     zones_gdf = scn["zones_gdf"]
 
     deckgl = dash_deck.DeckGL(
         id=f"{id_prefix}-deck-map",
-        data=_deck_json(scn),  # passe le scénario pour éviter un double chargement
+        data=_deck_json(scn),
         tooltip={
             "html": (
                 "<div style='font-family:Arial, sans-serif;'>"
@@ -266,11 +254,37 @@ def Map(id_prefix="map"):
         style={"position": "absolute", "inset": 0},
     )
 
-    # Panneau global — visible par défaut, avec croix pour fermer
-    summary_panel = StudyAreaSummary(zones_gdf, visible=True, id_prefix=id_prefix)
+    # Panel résumé (overlay)
+    summary_wrapper = html.Div(
+        id=f"{id_prefix}-summary-wrapper",
+        children=StudyAreaSummary(zones_gdf, visible=True, id_prefix=id_prefix),
+        style={},  # style géré dans le composant lui-même (absolute, top/right)
+    )
+
+    # Panel contrôles Rayon (overlay dans la carte, ~100px sous le header)
+    controls_overlay = html.Div(
+        dmc.Paper(
+            children=[
+                ScenarioControls(id_prefix=id_prefix, min_radius=15, max_radius=50, step=1, default=40),
+            ],
+            withBorder=True,
+            shadow="sm",
+            radius="md",
+            p="sm",
+            style={"width": "fit-content"},
+        ),
+        id=f"{id_prefix}-controls-overlay",
+        style={
+            "position": "absolute",
+            "top": "100px",     # 👈 100 px sous le header
+            "left": "12px",
+            "zIndex": 1100,
+            "pointerEvents": "auto",
+        },
+    )
 
     return html.Div(
-        [deckgl, summary_panel],
+        [deckgl, summary_wrapper, controls_overlay],
         style={
             "position": "relative",
             "width": "100%",
@@ -281,7 +295,7 @@ def Map(id_prefix="map"):
 
 
 # ---------- CALLBACKS ----------
-# Ferme le panneau au clic sur la croix (masquage via style.display)
+# Ferme le panneau de synthèse au clic sur la croix
 @callback(
     Output("map-study-summary", "style"),
     Input("map-summary-close", "n_clicks"),
