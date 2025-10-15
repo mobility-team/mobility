@@ -1,12 +1,15 @@
+# app/components/features/map/map.py
+from __future__ import annotations
 import json
 import pydeck as pdk
 import dash_deck
-from dash import html
+from dash import html, Input, Output, State, callback
 import geopandas as gpd
 import pandas as pd
 import numpy as np
 from shapely.geometry import Polygon, MultiPolygon
 from app.scenario.scenario_001_from_docs import load_scenario
+from app.components.features.study_area_summary import StudyAreaSummary
 
 
 # ---------- CONSTANTES ----------
@@ -15,7 +18,6 @@ FALLBACK_CENTER = (1.4442, 43.6045)  # Toulouse
 
 
 # ---------- HELPERS ----------
-
 def _centroids_lonlat(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Calcule les centroides en coordonnées géographiques (lon/lat)."""
     g = gdf.copy()
@@ -99,13 +101,19 @@ def _polygons_for_layer(zones_gdf: gpd.GeoDataFrame):
 
 
 # ---------- DECK FACTORY ----------
-
-def _deck_json():
+def _deck_json(scn: dict | None = None) -> str:
+    """
+    Construit le Deck JSON.
+    - Si scn est None, charge le scénario via load_scenario().
+    - Sinon, utilise le scénario fourni (pour éviter un double chargement).
+    """
     layers = []
     lon_center, lat_center = FALLBACK_CENTER
 
     try:
-        scn = load_scenario()
+        if scn is None:
+            scn = load_scenario()
+
         zones_gdf = scn["zones_gdf"].copy()
         flows_df = scn["flows_df"].copy()
         zones_lookup = scn["zones_lookup"].copy()
@@ -117,7 +125,7 @@ def _deck_json():
                 c = zvalid.to_crs(4326).geometry.unary_union.centroid
                 lon_center, lat_center = float(c.x), float(c.y)
 
-        # Palette couleur
+        # Palette couleur basée sur average_travel_time
         at = pd.to_numeric(zones_gdf.get("average_travel_time", pd.Series(dtype="float64")), errors="coerce")
         zones_gdf["average_travel_time"] = at
         finite_at = at.replace([np.inf, -np.inf], np.nan).dropna()
@@ -222,12 +230,14 @@ def _deck_json():
 
 
 # ---------- DASH COMPONENT ----------
+def Map(id_prefix="map"):
+    # Charge une seule fois pour alimenter la carte ET le panneau global
+    scn = load_scenario()
+    zones_gdf = scn["zones_gdf"]
 
-def Map():
     deckgl = dash_deck.DeckGL(
-        id="deck-map",
-        data=_deck_json(),
-        # Tooltip personnalisé (aucun champ technique)
+        id=f"{id_prefix}-deck-map",
+        data=_deck_json(scn),  # passe le scénario pour éviter un double chargement
         tooltip={
             "html": (
                 "<div style='font-family:Arial, sans-serif;'>"
@@ -256,8 +266,11 @@ def Map():
         style={"position": "absolute", "inset": 0},
     )
 
+    # Panneau global — visible par défaut, avec croix pour fermer
+    summary_panel = StudyAreaSummary(zones_gdf, visible=True, id_prefix=id_prefix)
+
     return html.Div(
-        deckgl,
+        [deckgl, summary_panel],
         style={
             "position": "relative",
             "width": "100%",
@@ -265,3 +278,17 @@ def Map():
             "background": "#fff",
         },
     )
+
+
+# ---------- CALLBACKS ----------
+# Ferme le panneau au clic sur la croix (masquage via style.display)
+@callback(
+    Output("map-study-summary", "style"),
+    Input("map-summary-close", "n_clicks"),
+    State("map-study-summary", "style"),
+    prevent_initial_call=True,
+)
+def _close_summary(n_clicks, style):
+    style = dict(style or {})
+    style["display"] = "none"
+    return style
