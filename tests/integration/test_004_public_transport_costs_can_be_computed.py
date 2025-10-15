@@ -57,3 +57,4 @@ def test_004_public_transport_costs_can_be_computed(test_data):
     
     assert costs.shape[0] > 0
     assert gen_costs.shape[0] > 0
+    
