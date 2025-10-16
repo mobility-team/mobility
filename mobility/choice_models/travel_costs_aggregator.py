@@ -69,7 +69,6 @@ class TravelCostsAggregator(InMemoryAsset):
                 
             costs.append(
                 pl.DataFrame(gc)
-                # .with_columns(pl.lit(mode.name).alias("mode"))
             )
         
         costs = pl.concat(costs, how="diagonal")
@@ -80,10 +79,9 @@ class TravelCostsAggregator(InMemoryAsset):
             dist_cols = {col: pl.col(col).fill_null(0.0) for col in dist_cols}
             costs = costs.with_columns(**dist_cols)
 
-        # Not sure if we need this anymore ?
         costs = costs.with_columns([
-            pl.col("from").cast(pl.Int64),
-            pl.col("to").cast(pl.Int64)
+            pl.col("from").cast(pl.Int32),
+            pl.col("to").cast(pl.Int32)
         ])
         
         return costs
