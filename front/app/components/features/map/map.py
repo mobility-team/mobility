@@ -1,4 +1,3 @@
-# app/components/features/map/map.py
 from __future__ import annotations
 
 import json
@@ -11,15 +10,16 @@ import numpy as np
 from shapely.geometry import Polygon, MultiPolygon
 import dash_mantine_components as dmc
 
-from app.scenario.scenario_001_from_docs import load_scenario
+from front.app.services.scenario_service import load_scenario
 from app.components.features.study_area_summary import StudyAreaSummary
-from app.components.features.scenario import ScenarioControls  # 👈 les contrôles Mantine
-
+from app.components.features.scenario import ScenarioControls
 
 # ---------- CONSTANTES ----------
 CARTO_POSITRON_GL = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 FALLBACK_CENTER = (1.4442, 43.6045)  # Toulouse
 
+HEADER_OFFSET_PX = 80
+SIDEBAR_WIDTH = 340  
 
 # ---------- HELPERS ----------
 def _centroids_lonlat(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -60,14 +60,11 @@ def _polygons_for_layer(zones_gdf: gpd.GeoDataFrame):
         insee = row.get("local_admin_unit_id", "N/A")
         travel_time = _fmt_num(row.get("average_travel_time", np.nan), 1)
         legend = row.get("__legend", "")
-
         total_dist_km = _fmt_num(row.get("total_dist_km", np.nan), 1)
         total_time_min = _fmt_num(row.get("total_time_min", np.nan), 1)
-
         share_car = _fmt_pct(row.get("share_car", np.nan), 1)
         share_bicycle = _fmt_pct(row.get("share_bicycle", np.nan), 1)
         share_walk = _fmt_pct(row.get("share_walk", np.nan), 1)
-
         color = row.get("__color", [180, 180, 180, 160])
 
         if isinstance(geom, Polygon):
@@ -107,12 +104,14 @@ def _deck_json(scn: dict | None = None) -> str:
         flows_df = scn["flows_df"].copy()
         zones_lookup = scn["zones_lookup"].copy()
 
+        # Centrage auto
         if not zones_gdf.empty:
             zvalid = zones_gdf[zones_gdf.geometry.notnull() & zones_gdf.geometry.is_valid]
             if not zvalid.empty:
-                c = zvalid.to_crs(4326).geometry.unary_union.centroid
-                lon_center, lat_center = float(c.x), float(c.y)
+                centroid = zvalid.to_crs(4326).geometry.unary_union.centroid
+                lon_center, lat_center = float(centroid.x), float(centroid.y)
 
+        # Couleurs
         at = pd.to_numeric(zones_gdf.get("average_travel_time", pd.Series(dtype="float64")), errors="coerce")
         zones_gdf["average_travel_time"] = at
         finite_at = at.replace([np.inf, -np.inf], np.nan).dropna()
@@ -164,6 +163,7 @@ def _deck_json(scn: dict | None = None) -> str:
             )
             layers.append(zones_layer)
 
+        # Arcs de flux
         lookup_ll = _centroids_lonlat(zones_lookup)
         flows_df["flow_volume"] = pd.to_numeric(flows_df["flow_volume"], errors="coerce").fillna(0.0)
         flows_df = flows_df[flows_df["flow_volume"] > 0]
@@ -214,12 +214,6 @@ def _deck_json(scn: dict | None = None) -> str:
 
 # ---------- DASH COMPONENT ----------
 def Map(id_prefix: str = "map"):
-    """
-    Carte avec:
-    - Deck.gl
-    - Panel résumé global (overlay)
-    - Panel contrôles 'Rayon' (overlay), 100px sous le header
-    """
     scn = load_scenario()
     zones_gdf = scn["zones_gdf"]
 
@@ -251,58 +245,71 @@ def Map(id_prefix: str = "map"):
             },
         },
         mapboxKey="",
-        style={"position": "absolute", "inset": 0},
+        style={
+            "position": "absolute",
+            "inset": 0,
+            "height": "100vh",  # ⬅️ force la map à occuper tout l’espace vertical visible
+            "width": "100%",
+        },
     )
 
-    # Panel résumé (overlay)
     summary_wrapper = html.Div(
         id=f"{id_prefix}-summary-wrapper",
         children=StudyAreaSummary(zones_gdf, visible=True, id_prefix=id_prefix),
-        style={},  # style géré dans le composant lui-même (absolute, top/right)
     )
 
-    # Panel contrôles Rayon (overlay dans la carte, ~100px sous le header)
-    controls_overlay = html.Div(
+    # Sidebar collée à gauche et confinée verticalement
+    controls_sidebar = html.Div(
         dmc.Paper(
             children=[
-                ScenarioControls(id_prefix=id_prefix, min_radius=15, max_radius=50, step=1, default=40),
+                dmc.Stack(
+                    [
+                        ScenarioControls(
+                            id_prefix=id_prefix,
+                            min_radius=15,
+                            max_radius=50,
+                            step=1,
+                            default=40,
+                            default_insee="31555",
+                        )
+                    ],
+                    gap="md",
+                )
             ],
             withBorder=True,
-            shadow="sm",
+            shadow="md",
             radius="md",
-            p="sm",
-            style={"width": "fit-content"},
+            p="md",
+            style={
+                "width": "100%",
+                "height": "100%",
+                "overflowY": "auto",
+                "overflowX": "hidden",
+                "background": "#ffffffee",
+                "boxSizing": "border-box",
+            },
         ),
-        id=f"{id_prefix}-controls-overlay",
+        id=f"{id_prefix}-controls-sidebar",
         style={
             "position": "absolute",
-            "top": "100px",     # 👈 100 px sous le header
-            "left": "12px",
-            "zIndex": 1100,
+            "top": f"{HEADER_OFFSET_PX}px",
+            "left": "0px",
+            "bottom": "0px",
+            "width": f"{SIDEBAR_WIDTH}px",
+            "zIndex": 1200,
             "pointerEvents": "auto",
+            "overflow": "hidden",
         },
     )
 
     return html.Div(
-        [deckgl, summary_wrapper, controls_overlay],
+        [deckgl, summary_wrapper, controls_sidebar],
         style={
             "position": "relative",
             "width": "100%",
-            "height": "100%",
+            "height": "100vh",  
             "background": "#fff",
+            "overflow": "hidden",
         },
     )
 
-
-# ---------- CALLBACKS ----------
-# Ferme le panneau de synthèse au clic sur la croix
-@callback(
-    Output("map-study-summary", "style"),
-    Input("map-summary-close", "n_clicks"),
-    State("map-study-summary", "style"),
-    prevent_initial_call=True,
-)
-def _close_summary(n_clicks, style):
-    style = dict(style or {})
-    style["display"] = "none"
-    return style

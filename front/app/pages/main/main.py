@@ -1,3 +1,4 @@
+# app/pages/main/main.py
 from pathlib import Path
 from dash import Dash, html, no_update
 import dash_mantine_components as dmc
@@ -7,11 +8,9 @@ from app.components.layout.header.header import Header
 from app.components.features.map.map import Map, _deck_json
 from app.components.layout.footer.footer import Footer
 from app.components.features.study_area_summary import StudyAreaSummary
-from app.scenario.scenario_001_from_docs import load_scenario
-
+from front.app.services.scenario_service import load_scenario
 
 ASSETS_PATH = Path(__file__).resolve().parents[3] / "assets"
-HEADER_HEIGHT = 60
 
 MAPP = "map"  # doit matcher Map(id_prefix="map")
 
@@ -26,35 +25,53 @@ app.layout = dmc.MantineProvider(
     dmc.AppShell(
         children=[
             Header("MOBILITY"),
+
+            # La zone centrale occupe TOUT l'espace restant entre Header et Footer
             dmc.AppShellMain(
                 html.Div(
                     Map(id_prefix=MAPP),
+                    # ⬇️ le wrapper direct de la map prend 100% de la hauteur dispo
                     style={
-                        "position": "relative",
-                        "width": "100%",
                         "height": "100%",
-                        "background": "#fff",
-                        "margin": "0",
-                        "padding": "0",
+                        "width": "100%",
+                        "position": "relative",
+                        "overflow": "hidden",
+                        "margin": 0,
+                        "padding": 0,
                     },
                 ),
+                # ⬇️ AppShellMain remplit l'espace, sans imposer de min-height
                 style={
-                    "height": f"calc(100vh - {HEADER_HEIGHT}px)",
+                    "flex": "1 1 auto",
+                    "minHeight": 0,
                     "padding": 0,
                     "margin": 0,
                     "overflow": "hidden",
                 },
             ),
-            Footer(),
+
+            # Footer toujours visible (pas de scroll)
+            html.Div(
+                Footer(),
+                style={
+                    "flexShrink": "0",
+                    "display": "flex",
+                    "alignItems": "center",
+                },
+            ),
         ],
         padding=0,
-        styles={"main": {"padding": 0}},
+        styles={
+            # ⬇️ verrouille la hauteur à la fenêtre et supprime tout scroll global
+            "root": {"height": "100vh", "overflow": "hidden"},
+            "main": {"padding": 0, "margin": 0, "overflow": "hidden"},
+        },
+        # (double sécurité pour certains thèmes Mantine)
+        style={"height": "100vh", "overflow": "hidden"},
     )
 )
 
-# ---- Callbacks (les contrôles sont dans la Map) ----
-
-# Sync slider -> number (UX)
+# --------- CALLBACKS ---------
 @app.callback(
     Output(f"{MAPP}-radius-input", "value"),
     Input(f"{MAPP}-radius-slider", "value"),
@@ -65,7 +82,6 @@ def _sync_input_from_slider(slider_val, current_input):
         return no_update
     return slider_val
 
-# Sync number -> slider (UX)
 @app.callback(
     Output(f"{MAPP}-radius-slider", "value"),
     Input(f"{MAPP}-radius-input", "value"),
@@ -76,19 +92,18 @@ def _sync_slider_from_input(input_val, current_slider):
         return no_update
     return input_val
 
-# Lancer la simulation uniquement au clic
 @app.callback(
     Output(f"{MAPP}-deck-map", "data"),
     Output(f"{MAPP}-summary-wrapper", "children"),
     Input(f"{MAPP}-run-btn", "n_clicks"),
     State(f"{MAPP}-radius-input", "value"),
+    State(f"{MAPP}-lau-input", "value"),
     prevent_initial_call=True,
 )
-def _run_simulation(n_clicks, radius_val):
+def _run_simulation(n_clicks, radius_val, lau_val):
     r = radius_val if radius_val is not None else 40
-    scn = load_scenario(radius=r)
+    scn = load_scenario(radius=r, local_admin_unit_id=lau_val)
     return _deck_json(scn), StudyAreaSummary(scn["zones_gdf"], visible=True, id_prefix=MAPP)
-
 
 if __name__ == "__main__":
     app.run(debug=True, dev_tools_ui=False)

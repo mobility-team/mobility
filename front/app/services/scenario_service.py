@@ -1,10 +1,10 @@
-# app/scenario/scenario_001_from_docs.py
 from __future__ import annotations
 import os
 import pandas as pd
 import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point
+
 
 def _to_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     if gdf.crs is None:
@@ -14,6 +14,23 @@ def _to_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     except Exception:
         epsg = None
     return gdf if epsg == 4326 else gdf.to_crs(4326)
+
+
+def _normalize_lau_id(raw: str | None) -> str:
+    """
+    Accepte '31555' (INSEE) ou 'fr-31555' et renvoie toujours 'fr-31555'.
+    Si invalide/None -> Toulouse 'fr-31555'.
+    """
+    if not raw:
+        return "fr-31555"
+    s = str(raw).strip().lower()
+    if s.startswith("fr-"):
+        code = s[3:]
+    else:
+        code = s
+    code = "".join(ch for ch in code if ch.isdigit())[:5]
+    return f"fr-{code}" if len(code) == 5 else "fr-31555"
+
 
 def _fallback_scenario() -> dict:
     """Scénario minimal de secours (Paris–Lyon)."""
@@ -27,6 +44,7 @@ def _fallback_scenario() -> dict:
     zones = pts.to_crs(3857)
     zones["geometry"] = zones.geometry.buffer(5000)  # 5 km
     zones = zones.to_crs(4326)
+    # Indicateurs d'exemple
     zones["average_travel_time"] = [18.0, 25.0]
     zones["total_dist_km"] = [15.0, 22.0]
     zones["share_car"] = [0.6, 0.55]
@@ -42,14 +60,15 @@ def _fallback_scenario() -> dict:
         "zones_lookup": _to_wgs84(pts),
     }
 
-def load_scenario(radius: int | float = 40) -> dict:
+
+def load_scenario(radius: int | float = 40, local_admin_unit_id: str | None = "fr-31555") -> dict:
     """
-    Charge un scénario de mobilité (Toulouse = fr-31555) avec rayon paramétrable.
-    Calcule:
-      - average_travel_time (minutes)
-      - total_dist_km (km/personne/jour)
-      - parts modales share_car / share_bicycle / share_walk
-    Bascule sur un fallback si la lib échoue.
+    Charge un scénario de mobilité avec rayon et commune paramétrables.
+    - local_admin_unit_id : code INSEE (ex '31555') ou 'fr-31555'
+    Retourne:
+      zones_gdf (WGS84) avec average_travel_time, total_dist_km, shares...
+      flows_df (from, to, flow_volume)
+      zones_lookup (centroïdes / géom pour arcs)
     """
     try:
         import mobility
@@ -68,11 +87,13 @@ def load_scenario(radius: int | float = 40) -> dict:
                 else:
                     raise
 
-        # --- Création des assets (Toulouse) ---
+        lau = _normalize_lau_id(local_admin_unit_id)
+
+        # --- Création des assets ---
         transport_zones = _safe_instantiate(
             mobility.TransportZones,
-            local_admin_unit_id="fr-31555",  # Toulouse
-            radius=float(radius),            # <- RAYON PARAMÉTRABLE
+            local_admin_unit_id=lau,
+            radius=float(radius),
             level_of_detail=0,
         )
 
@@ -88,7 +109,7 @@ def load_scenario(radius: int | float = 40) -> dict:
             generalized_cost_parameters=mobility.GeneralizedCostParameters(cost_of_distance=0.0),
         )
 
-        # 🚶 Marche si dispo
+        # Marche si dispo
         walk = None
         for cls_name in ("WalkMode", "PedestrianMode", "WalkingMode", "Pedestrian"):
             if walk is None and hasattr(mobility, cls_name):
@@ -131,6 +152,7 @@ def load_scenario(radius: int | float = 40) -> dict:
         travel_costs = pd.concat(costs_list, ignore_index=True)
         travel_costs["mode"] = travel_costs["mode"].map(_canon_mode)
 
+        # Normalisation unités
         if "time" in travel_costs.columns:
             t_hours = pd.to_numeric(travel_costs["time"], errors="coerce")
             travel_costs["time_min"] = t_hours * 60.0
@@ -144,6 +166,7 @@ def load_scenario(radius: int | float = 40) -> dict:
         else:
             travel_costs["dist_km"] = np.nan
 
+        # Jointures d'identifiants
         ids = transport_zones.get()[["local_admin_unit_id", "transport_zone_id"]].copy()
 
         ori_dest_counts = (
@@ -155,6 +178,7 @@ def load_scenario(radius: int | float = 40) -> dict:
         ori_dest_counts["flow_volume"] = pd.to_numeric(ori_dest_counts["flow_volume"], errors="coerce").fillna(0.0)
         ori_dest_counts = ori_dest_counts[ori_dest_counts["flow_volume"] > 0]
 
+        # Parts modales OD
         modal_shares = mode_df.merge(ori_dest_counts, on=["from", "to"], how="inner")
         modal_shares["prob"] = pd.to_numeric(modal_shares["prob"], errors="coerce").fillna(0.0)
         modal_shares["flow_volume"] *= modal_shares["prob"]
@@ -167,6 +191,7 @@ def load_scenario(radius: int | float = 40) -> dict:
         od_mode["time_min"] = pd.to_numeric(od_mode.get("time_min", np.nan), errors="coerce")
         od_mode["dist_km"] = pd.to_numeric(od_mode.get("dist_km", np.nan), errors="coerce")
 
+        # Agrégats par origine
         den = od_mode.groupby("from", as_index=True)["flow_volume"].sum().replace(0, np.nan)
         num_time = (od_mode["time_min"] * od_mode["flow_volume"]).groupby(od_mode["from"]).sum(min_count=1)
         avg_time_min = (num_time / den).rename("average_travel_time")
@@ -182,18 +207,23 @@ def load_scenario(radius: int | float = 40) -> dict:
         share_bicycle = (mode_flow_by_from["bicycle"] / den).rename("share_bicycle")
         share_walk = (mode_flow_by_from["walk"] / den).rename("share_walk")
 
+        # Construction zones
         zones = transport_zones.get()[["transport_zone_id", "geometry", "local_admin_unit_id"]].copy()
         zones_gdf = gpd.GeoDataFrame(zones, geometry="geometry")
 
-        agg = pd.concat([avg_time_min, per_person_dist_km, share_car, share_bicycle, share_walk], axis=1).reset_index().rename(columns={"from": "transport_zone_id"})
+        agg = pd.concat([avg_time_min, per_person_dist_km, share_car, share_bicycle, share_walk], axis=1)\
+                .reset_index().rename(columns={"from": "transport_zone_id"})
         zones_gdf = zones_gdf.merge(agg, on="transport_zone_id", how="left")
         zones_gdf = _to_wgs84(zones_gdf)
 
-        zones_lookup = gpd.GeoDataFrame(zones[["transport_zone_id", "geometry"]], geometry="geometry", crs=zones_gdf.crs)
+        zones_lookup = gpd.GeoDataFrame(
+            zones[["transport_zone_id", "geometry"]], geometry="geometry", crs=zones_gdf.crs
+        )
         flows_df = ori_dest_counts.groupby(["from", "to"], as_index=False)["flow_volume"].sum()
 
         print(
-            f"SCENARIO_META: source=mobility zones={len(zones_gdf)} flows={len(flows_df)} time_unit=minutes distance_unit=kilometers"
+            f"SCENARIO_META: source=mobility zones={len(zones_gdf)} flows={len(flows_df)} "
+            f"time_unit=minutes distance_unit=kilometers"
         )
 
         return {"zones_gdf": zones_gdf, "flows_df": flows_df, "zones_lookup": _to_wgs84(zones_lookup)}
