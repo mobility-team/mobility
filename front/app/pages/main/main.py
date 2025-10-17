@@ -1,3 +1,4 @@
+# app/pages/main/main.py
 from pathlib import Path
 import os
 
@@ -12,9 +13,9 @@ from app.components.features.study_area_summary import StudyAreaSummary
 from app.components.features.map.config import DeckOptions
 from front.app.services.scenario_service import get_scenario
 
-# Utilise map_service si dispo (cache/centralisation); sinon fallback direct deck_factory
+# Utilise map_service si dispo : on lui passe le scénario construit
 try:
-    from front.app.services.map_service import get_map_deck_json
+    from front.app.services.map_service import get_map_deck_json_from_scn
     USE_MAP_SERVICE = True
 except Exception:
     from app.components.features.map.deck_factory import make_deck_json
@@ -25,7 +26,7 @@ MAPP = "map"  # doit matcher Map(id_prefix="map")
 
 def _make_deck_json_from_scn(scn: dict) -> str:
     if USE_MAP_SERVICE:
-        return get_map_deck_json(id_prefix=MAPP, opts=DeckOptions())
+        return get_map_deck_json_from_scn(scn, DeckOptions())
     return make_deck_json(scn, DeckOptions())
 
 def create_app() -> Dash:

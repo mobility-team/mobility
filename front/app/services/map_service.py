@@ -13,6 +13,10 @@ def _scenario_snapshot_key() -> int:
     """
     return 0
 
+def get_map_deck_json_from_scn(scn: dict, opts: DeckOptions | None = None) -> str:
+    opts = opts or DeckOptions()
+    return make_deck_json(scn, opts)
+
 def get_map_deck_json(id_prefix: str, opts: DeckOptions) -> str:
     # éventuellement invalider le cache selon _scenario_snapshot_key()
     scn = get_scenario()
