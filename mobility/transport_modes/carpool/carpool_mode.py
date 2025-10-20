@@ -13,7 +13,7 @@ class CarpoolMode(TransportMode):
         routing_parameters: DetailedCarpoolRoutingParameters = None,
         generalized_cost_parameters: DetailedCarpoolGeneralizedCostParameters = None,
         intermodal_transfer: IntermodalTransfer = None,
-        survey_ids: List[str] = ["3.31", "3.32", "3.33", "3.39"]
+        survey_ids: List[str] = ["0.0_carpool"]
     ):
             
         routing_parameters = routing_parameters or DetailedCarpoolRoutingParameters()

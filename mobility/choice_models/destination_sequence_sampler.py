@@ -173,7 +173,7 @@ class DestinationSequenceSampler:
             )
             .join(utilities.lazy(), on=["motive", "to"], how="left")
             .with_columns(
-                utility=pl.col("utility").fill_null(0.0),
+                utility=pl.col("utility").fill_null(0.0)*pl.col("k_saturation_utility"),
                 sink_available=pl.col("sink_available")*pl.col("prob")
             )
             .drop("prob")

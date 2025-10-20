@@ -58,24 +58,33 @@ class Results:
         ):
     
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
-        
         ref_states_steps = self.weekday_chains if weekday else self.weekend_chains
         
         # Align column names and formats (should be done upstream when the data is created)
         ref_states_steps = (
             ref_states_steps
             .rename({"travel_time": "time"})
-            .with_columns(
-                country=pl.col("country").cast(pl.String())
-            )
         )
         
         transport_zones_df = pl.DataFrame(self.transport_zones.get().drop("geometry", axis=1)).lazy()
-        study_area_df = pl.DataFrame(self.transport_zones.study_area.get().drop("geometry", axis=1)).lazy()
+        
+        study_area_df = ( 
+            pl.DataFrame(
+                self.transport_zones.study_area.get().drop("geometry", axis=1)
+            )
+            .with_columns(
+                country=pl.col("country").cast(ref_states_steps.collect_schema()["country"])
+            )
+            .lazy()
+        )
+        
         
         n_persons = ( 
             self.demand_groups
             .rename({"home_zone_id": "transport_zone_id"})
+            .with_columns(
+                country=pl.col("country").cast(ref_states_steps.collect_schema()["country"])
+            )
             .join(
                 transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
                 on=["transport_zone_id"]
@@ -297,10 +306,13 @@ class Results:
             states_steps 
             .filter(pl.col("motive_seq_id") == 0)
             .with_columns(pl.col("csp").cast(pl.String()))
+            
             .join(
                 ( 
-                    self.demand_groups.rename({"n_persons": "n_persons_dem_grp"})
+                    self.demand_groups
+                    .rename({"n_persons": "n_persons_dem_grp"})
                     .with_columns(pl.col("csp").cast(pl.String()))
+                    .with_columns(pl.col("country").cast(pl.String()))
                 ),
                 on=["home_zone_id", "csp", "n_cars"],
                 how="right"
@@ -410,7 +422,7 @@ class Results:
             )
             
             tz["sink_occupation"] = tz["sink_occupation"].fillna(0.0)
-            tz["sink_occupation"] = self.replace_outliers(tz["sink_occupation"])
+            # tz["sink_occupation"] = self.replace_outliers(tz["sink_occupation"])
 
             self.plot_map(tz, "sink_occupation")
         
@@ -477,7 +489,7 @@ class Results:
             )
             
             tz["n_trips_per_person"] = tz["n_trips_per_person"].fillna(0.0)
-            tz["n_trips_per_person"] = self.replace_outliers(tz["n_trips_per_person"])
+            # tz["n_trips_per_person"] = self.replace_outliers(tz["n_trips_per_person"])
 
             self.plot_map(tz, "n_trips_per_person")
         
@@ -546,7 +558,7 @@ class Results:
             )
             
             tz["distance_per_person"] = tz["distance_per_person"].fillna(0.0)
-            tz["distance_per_person"] = self.replace_outliers(tz["distance_per_person"])
+            # tz["distance_per_person"] = self.replace_outliers(tz["distance_per_person"])
 
             self.plot_map(tz, "distance_per_person")
         
@@ -615,7 +627,7 @@ class Results:
             )
             
             tz["time_per_person"] = tz["time_per_person"].fillna(0.0)
-            tz["time_per_person"] = self.replace_outliers(tz["time_per_person"])
+            # tz["time_per_person"] = self.replace_outliers(tz["time_per_person"])
             
             self.plot_map(tz, "time_per_person")
 

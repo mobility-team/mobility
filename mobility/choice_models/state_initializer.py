@@ -190,10 +190,10 @@ class StateInitializer:
         )
         
         # Drop unecessary columns from demand groups
-        demand_groups = (
-            demand_groups
-            .drop(["country", "city_category"])
-        )
+        # demand_groups = (
+        #     demand_groups
+        #     .drop(["country", "city_category"])
+        # )
 
         return chains_by_motive, chains, demand_groups
     

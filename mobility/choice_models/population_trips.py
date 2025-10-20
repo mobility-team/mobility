@@ -20,9 +20,11 @@ from mobility.choice_models.top_k_mode_sequence_search import TopKModeSequenceSe
 from mobility.choice_models.state_initializer import StateInitializer
 from mobility.choice_models.state_updater import StateUpdater
 from mobility.choice_models.results import Results
+from mobility.choice_models.survey_pre_calibrator import SurveyPreCalibrator
 from mobility.motives import Motive
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.parsers.mobility_survey import MobilitySurvey
+from mobility.cost_of_time_parameters import CostOfTimeParameters
 
 class PopulationTrips(FileAsset):
     """
@@ -97,6 +99,7 @@ class PopulationTrips(FileAsset):
             self.rng = random.Random(parameters.seed)
         
         self.state_initializer = StateInitializer()
+        self.survey_pre_calibrator = SurveyPreCalibrator()
         self.destination_sequence_sampler = DestinationSequenceSampler()
         self.top_k_mode_sequence_search = TopKModeSequenceSearch()
         self.state_updater = StateUpdater()
@@ -272,6 +275,31 @@ class PopulationTrips(FileAsset):
             home_night_dur,
             parameters
         )
+        
+        if parameters.pre_calibrate_on_survey:
+            
+            optim_parameters = self.survey_pre_calibrator.run(
+                chains,
+                demand_groups,
+                surveys,
+                motive_dur,
+                home_night_dur,
+                is_weekday,
+                parameters.utility_of_stay_home_time,
+                parameters.precalibration_n_iterations,
+                parameters.precalibration_loss_fun,
+                parameters.plot_precalibration_fit
+            )
+            
+            cost_of_time = optim_parameters["cost_of_time"].to_dicts()
+            cost_of_time = {v["mode"]: v["cost_of_time"] for v in cost_of_time}
+            
+            for mode in modes:
+                mode.generalized_cost["inputs"].parameters.cost_of_time = CostOfTimeParameters(
+                    intercept=cost_of_time[mode.name]
+                )
+                
+                
         
         sinks = self.state_initializer.get_sinks(
             chains_by_motive,

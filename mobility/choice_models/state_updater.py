@@ -165,16 +165,10 @@ class StateUpdater:
             .join(chains_w_home.lazy(), on=["demand_group_id", "motive_seq_id", "seq_step_index"])
             .join(cost_by_od_and_modes.lazy(), on=["from", "to", "mode"])
             .join(motive_dur.lazy(), on=["csp", "motive"])
-            
-            # Remove states that use at least one "empty" destination (with no opportunities left)
             .join(sinks.select(["to", "motive", "k_saturation_utility"]).lazy(), on=["to", "motive"], how="left")
             
             .with_columns(
-                # duration_per_pers=pl.max_horizontal([
-                #     pl.col("duration_per_pers"),
-                #     pl.col("mean_duration_per_pers")*0.1
-                # ]),
-                k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0),
+                k_saturation_utility=pl.col("k_saturation_utility").fill_null(0.0),
                 min_activity_time=pl.col("mean_duration_per_pers")*math.exp(-min_activity_time_constant)
             )
             .with_columns(
@@ -504,14 +498,10 @@ class StateUpdater:
             )
             .with_columns(
                 k=pl.col("sink_occupation")/pl.col("sink_capacity"),
-                sink_available=(pl.col("sink_capacity") - pl.col("sink_occupation")).clip(0.0)
+                sink_available=pl.col("sink_capacity")#(pl.col("sink_capacity") - pl.col("sink_occupation")).clip(0.0)
             )
             .with_columns(
-                k_saturation_utility=(
-                    pl.when((pl.col("k") < 1.0) | pl.col("k").is_null())
-                    .then(1.0)
-                    .otherwise((1.0 - pl.col("k")).exp())
-                )
+                k_saturation_utility=1.0 # (1.0 - 1.0/(1.0**4)*pl.col("k").pow(4)).clip(0.0)
             )
             .select(["motive", "to", "sink_capacity", "sink_available", "k_saturation_utility"])
             
