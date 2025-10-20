@@ -7,6 +7,7 @@ import pathlib
 
 from importlib import resources
 from typing import Literal, List, Union
+from shapely.geometry import Point
 
 from mobility.file_asset import FileAsset
 from mobility.study_area import StudyArea
@@ -38,7 +39,7 @@ class TransportZones(FileAsset):
         within the commune, one sub-zone is created for every 20 000 m². These buildings are then grouped using k-medoids to ensure consistent clusters.
         We use Voronoi constellations around the clusters centers to finally create these sub-communal transport zones.
             
-    radius : int, default=40
+    radius : float, default=40.0
         Local admin units within this radius (in km) of the center admin unit will be included.
 
     Methods
@@ -54,8 +55,19 @@ class TransportZones(FileAsset):
             self,
             local_admin_unit_id: Union[str, List[str]],
             level_of_detail: Literal[0, 1] = 0,
-            radius: int = 40
+            radius: float = 40.0,
+            inner_radius: float = None,
+            inner_local_admin_unit_id: List[str] = None
         ):
+        
+        # If the user does not choose an inner radius or a list of inner 
+        # transport zones, we suppose that there is no inner / outer zones
+        # (= all zones are inner zones)
+        if inner_radius is None:
+            inner_radius = radius
+        
+        if isinstance(local_admin_unit_id, list) and inner_local_admin_unit_id is None:
+            inner_local_admin_unit_id = local_admin_unit_id
         
         study_area = StudyArea(local_admin_unit_id, radius)
         
@@ -68,9 +80,12 @@ class TransportZones(FileAsset):
         )
 
         inputs = {
+            "version": "1",
             "study_area": study_area,
             "level_of_detail": level_of_detail,
-            "osm_buildings": osm_buildings
+            "osm_buildings": osm_buildings,
+            "inner_radius": inner_radius,
+            "inner_local_admin_unit_id": inner_local_admin_unit_id
         }
 
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "transport_zones.gpkg"
@@ -128,6 +143,73 @@ class TransportZones(FileAsset):
         
         transport_zones = gpd.read_file(self.cache_path)
         
+        # Remove transport zones that are not adjacent to at least another one
+        # (= filter "islands" that were selected but are not connected to the 
+        # study area)
+        transport_zones = self.remove_isolated_zones(transport_zones)
+        
+        # Set inner / outer flag
+        local_admin_unit_id = self.study_area.inputs["local_admin_unit_id"]
+        inner_radius = self.inputs["inner_radius"]
+        inner_local_admin_unit_id = self.inputs["inner_local_admin_unit_id"]
+        
+        transport_zones = self.flag_inner_zones(
+            transport_zones,
+            local_admin_unit_id,
+            inner_radius,
+            inner_local_admin_unit_id
+        )
+        
+        transport_zones.to_file(self.cache_path)
+        
+        return transport_zones
+    
+    
+    def remove_isolated_zones(self, transport_zones):
+        
+        pairs = gpd.sjoin(
+            transport_zones.reset_index(names="_i"),
+            transport_zones.reset_index(names="_j"),
+            how="inner",
+            predicate="touches"
+        )
+        keep_ids = pairs.groupby("_i")["_j"].nunique().index
+        transport_zones = transport_zones.loc[transport_zones.index.isin(keep_ids)].copy()
+        
         return transport_zones
 
 
+    def flag_inner_zones(
+            self,
+            transport_zones,
+            local_admin_unit_id,
+            inner_radius,
+            inner_local_admin_unit_id
+        ):
+        
+        if isinstance(local_admin_unit_id, str) and inner_radius is not None:
+            
+            lau_xy = transport_zones.loc[
+                transport_zones["local_admin_unit_id"] == local_admin_unit_id,
+                ["x", "y"]
+            ]
+            
+            lau_xy = Point(lau_xy.iloc[0]["x"], lau_xy.iloc[0]["y"])
+            inner_buffer = lau_xy.buffer(inner_radius*1000.0)
+            
+            transport_zones["is_inner_zone"] = transport_zones.intersects(inner_buffer)
+
+        elif isinstance(local_admin_unit_id, list) and inner_local_admin_unit_id is not None:
+            
+            if isinstance(inner_local_admin_unit_id, str):
+                inner_local_admin_unit_id = [inner_local_admin_unit_id]
+            
+            transport_zones["is_inner_zone"] = transport_zones["local_admin_unit_id"].isin(inner_local_admin_unit_id)
+            
+        else:    
+        
+            raise ValueError("Could not set the transport zones inner/outer flag from the provided inputs.")
+            
+        
+            
+        return transport_zones
