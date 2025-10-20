@@ -1,4 +1,3 @@
-# tests/front/integration/test_001_main_app.py
 import json
 import pandas as pd
 import geopandas as gpd

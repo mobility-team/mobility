@@ -132,6 +132,6 @@ def create_app() -> Dash:
 # Exécution locale
 app = create_app()
 
-if __name__ == "__main__":
+if __name__ == "__main__": #pragma: no cover
     port = int(os.environ.get("PORT", "8050"))
     app.run(debug=True, dev_tools_ui=False, port=port, host="0.0.0.0")
