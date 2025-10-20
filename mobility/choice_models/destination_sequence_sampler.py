@@ -434,8 +434,7 @@ class DestinationSequenceSampler:
                     on=["demand_group_id", "home_zone_id", "motive_seq_id"]
                 )
             )
-            
-            
+               
         return pl.concat(spatialized_chains)
         
         
