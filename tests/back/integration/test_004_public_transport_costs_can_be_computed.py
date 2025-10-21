@@ -10,7 +10,7 @@ import pytest
 # test_data = get_test_data()
 
 @pytest.mark.dependency(
-    depends=["tests/test_002_population_sample_can_be_created.py::test_002_population_sample_can_be_created"],
+    depends=["tests/back/integrationtest_002_population_sample_can_be_created.py::test_002_population_sample_can_be_created"],
     scope="session"
  )
 def test_004_public_transport_costs_can_be_computed(test_data):

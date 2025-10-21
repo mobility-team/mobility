@@ -16,9 +16,9 @@ from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
 
 @pytest.mark.dependency(
     depends=[
-        "tests/test_001_transport_zones_can_be_created.py::test_001_transport_zones_can_be_created",
-        "tests/test_003_car_costs_can_be_computed.py::test_003_car_costs_can_be_computed",
-        "tests/test_005_mobility_surveys_can_be_prepared.py::test_005_mobility_surveys_can_be_prepared"
+        "tests/back/integration/test_001_transport_zones_can_be_created.py::test_001_transport_zones_can_be_created",
+        "tests/back/integration/test_003_car_costs_can_be_computed.py::test_003_car_costs_can_be_computed",
+        "tests/back/integration/test_005_mobility_surveys_can_be_prepared.py::test_005_mobility_surveys_can_be_prepared"
     ],
     scope="session"
  )

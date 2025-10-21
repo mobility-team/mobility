@@ -16,7 +16,7 @@ from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
 
 @pytest.mark.dependency(
     depends=[
-        "tests/test_008_population_trips_can_be_computed.py::test_008_population_trips_can_be_computed"
+        "tests/back/integrationtest_008_population_trips_can_be_computed.py::test_008_population_trips_can_be_computed"
     ],
     scope="session"
  )

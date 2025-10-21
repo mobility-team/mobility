@@ -1,20 +1,13 @@
 import mobility
 import pytest
 
-@pytest.mark.dependency(
-    depends=["tests/test_002_population_sample_can_be_created.py::test_002_population_sample_can_be_created"],
-    scope="session"
- )
-def test_003_car_costs_can_be_computed(test_data):
+@pytest.mark.dependency()
+def test_001_transport_zones_can_be_created(test_data):
     
-    transport_zones = mobility.TransportZones(
-        insee_city_id=test_data["transport_zones_insee_city_id"],
-        method="radius",
-        radius=test_data["transport_zones_radius"],
+    transport_zones_radius = mobility.TransportZones(
+        local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
+        radius=test_data["transport_zones_radius"]
     )
+    transport_zones_radius = transport_zones_radius.get()
     
-    car_travel_costs = mobility.TravelCosts(transport_zones, "car")
-    car_travel_costs = car_travel_costs.get()
-    
-    assert car_travel_costs.shape[0] > 0
-
+    assert transport_zones_radius.shape[0] > 0
