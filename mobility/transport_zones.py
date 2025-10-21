@@ -57,7 +57,8 @@ class TransportZones(FileAsset):
             level_of_detail: Literal[0, 1] = 0,
             radius: float = 40.0,
             inner_radius: float = None,
-            inner_local_admin_unit_id: List[str] = None
+            inner_local_admin_unit_id: List[str] = None,
+            cutout_geometries: gpd.GeoDataFrame = None
         ):
         
         # If the user does not choose an inner radius or a list of inner 
@@ -69,7 +70,7 @@ class TransportZones(FileAsset):
         if isinstance(local_admin_unit_id, list) and inner_local_admin_unit_id is None:
             inner_local_admin_unit_id = local_admin_unit_id
         
-        study_area = StudyArea(local_admin_unit_id, radius)
+        study_area = StudyArea(local_admin_unit_id, radius, cutout_geometries)
         
         osm_buildings = OSMData(
             study_area,
@@ -85,7 +86,8 @@ class TransportZones(FileAsset):
             "level_of_detail": level_of_detail,
             "osm_buildings": osm_buildings,
             "inner_radius": inner_radius,
-            "inner_local_admin_unit_id": inner_local_admin_unit_id
+            "inner_local_admin_unit_id": inner_local_admin_unit_id,
+            "cutout_geometries": cutout_geometries
         }
 
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "transport_zones.gpkg"
@@ -160,6 +162,12 @@ class TransportZones(FileAsset):
             inner_local_admin_unit_id
         )
         
+        # Cut the transport zones 
+        transport_zones = self.apply_cutout(
+            transport_zones,
+            self.inputs["cutout_geometries"]
+        )
+        
         transport_zones.to_file(self.cache_path)
         
         return transport_zones
@@ -211,5 +219,13 @@ class TransportZones(FileAsset):
             raise ValueError("Could not set the transport zones inner/outer flag from the provided inputs.")
             
         
+            
+        return transport_zones
+    
+    
+    def apply_cutout(self, transport_zones, cutout_geometries):
+        
+        if cutout_geometries is not None:
+            transport_zones = gpd.overlay(transport_zones, cutout_geometries, how="difference")
             
         return transport_zones

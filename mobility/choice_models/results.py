@@ -70,7 +70,14 @@ class Results:
             )
         )
         
-        transport_zones_df = pl.DataFrame(self.transport_zones.get().drop("geometry", axis=1)).lazy()
+        transport_zones_df = ( 
+            pl.DataFrame(
+                self.transport_zones.get().drop("geometry", axis=1)
+            )
+            .filter(pl.col("is_inner_zone"))
+            .lazy()
+        )
+            
         study_area_df = pl.DataFrame(self.transport_zones.study_area.get().drop("geometry", axis=1)).lazy()
         
         n_persons = ( 
@@ -173,13 +180,34 @@ class Results:
             )
         )
         
-        n_persons = self.demand_groups.collect()["n_persons"].sum()
+        transport_zones_df = ( 
+            pl.DataFrame(
+                self.transport_zones.get().drop("geometry", axis=1)
+            )
+            .filter(pl.col("is_inner_zone"))
+            .lazy()
+        )
+        
+        n_persons = ( 
+            self.demand_groups
+            .rename({"home_zone_id": "transport_zone_id"})
+            .join(
+                transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
+                on=["transport_zone_id"]
+            )
+            .collect()["n_persons"].sum()
+        )
         
         def aggregate(df):
             
             results = (
                 df 
                 .filter(pl.col("motive_seq_id") != 0)
+                .rename({"home_zone_id": "transport_zone_id"})
+                .join(
+                    transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
+                    on=["transport_zone_id"]
+                )
                 .with_columns(
                     time_bin=(pl.col("time")*60.0).cut([0.0, 5.0, 10, 20, 30.0, 45.0, 60.0, 1e6], left_closed=True),
                     distance_bin=pl.col("distance").cut([0.0, 1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 1e6], left_closed=True)
@@ -288,25 +316,44 @@ class Results:
             .select(["country", "csp", "p_immobility"])
         )
         
-        transport_zones_df = pl.DataFrame(self.transport_zones.get().drop("geometry", axis=1)[["transport_zone_id", "local_admin_unit_id"]]).lazy()
-        study_area_df = pl.DataFrame(self.transport_zones.study_area.get().drop("geometry", axis=1)[["local_admin_unit_id", "country"]]).lazy()
+                
+        transport_zones_df = ( 
+            pl.DataFrame(
+                self.transport_zones.get().drop("geometry", axis=1)
+            )
+            .filter(pl.col("is_inner_zone"))
+            .lazy()
+        )
         
+        study_area_df = (
+            pl.DataFrame(
+                self.transport_zones.study_area.get()
+                .drop("geometry", axis=1)
+                [["local_admin_unit_id", "country"]]
+            ).lazy()
+        )
         
+    
         immobility = (
             
             states_steps 
             .filter(pl.col("motive_seq_id") == 0)
+            .rename({"home_zone_id": "transport_zone_id"})
+            .join(
+                transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
+                on=["transport_zone_id"]
+            )
             .with_columns(pl.col("csp").cast(pl.String()))
             .join(
                 ( 
-                    self.demand_groups.rename({"n_persons": "n_persons_dem_grp"})
+                    self.demand_groups.rename({"n_persons": "n_persons_dem_grp", "home_zone_id": "transport_zone_id"})
                     .with_columns(pl.col("csp").cast(pl.String()))
                 ),
-                on=["home_zone_id", "csp", "n_cars"],
+                on=["transport_zone_id", "csp", "n_cars"],
                 how="right"
             )
             .join(
-                transport_zones_df, left_on="home_zone_id", right_on="transport_zone_id"
+                transport_zones_df, on="transport_zone_id"
             )
             .join(
                 study_area_df, on="local_admin_unit_id"
@@ -327,7 +374,6 @@ class Results:
             .with_columns(
                 n_persons_imm_ref=pl.col("n_persons_dem_grp")*pl.col("p_immobility_ref")
             )
-            # .select(["country", "csp", "p_immobility", "p_immobility_ref"])
             .collect(engine="streaming")
             
         )
@@ -358,7 +404,8 @@ class Results:
     def sink_occupation(
             self,
             weekday: bool = True,
-            plot_motive: str = None
+            plot_motive: str = None,
+            mask_outliers: bool = False
         ):
         """
         Compute sink occupation per (zone, motive), optionally map a single motive.
@@ -379,10 +426,23 @@ class Results:
         
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
         sinks = self.weekday_sinks if weekday else self.weekend_sinks
+        
+        transport_zones_df = ( 
+            pl.DataFrame(
+                self.transport_zones.get().drop("geometry", axis=1)
+            )
+            .filter(pl.col("is_inner_zone"))
+            .lazy()
+        )
 
         sink_occupation = (
             states_steps 
             .filter(pl.col("motive_seq_id") != 0)
+            .rename({"home_zone_id": "transport_zone_id"})
+            .join(
+                transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
+                on=["transport_zone_id"]
+            )
             .group_by(["to", "motive"])
             .agg(
                 pl.col("duration").sum()
@@ -410,7 +470,9 @@ class Results:
             )
             
             tz["sink_occupation"] = tz["sink_occupation"].fillna(0.0)
-            tz["sink_occupation"] = self.replace_outliers(tz["sink_occupation"])
+            
+            if mask_outliers:
+                tz["sink_occupation"] = self.mask_outliers(tz["sink_occupation"])
 
             self.plot_map(tz, "sink_occupation")
         
@@ -420,7 +482,8 @@ class Results:
     def trip_count_by_demand_group(
             self,
             weekday: bool = True,
-            plot: bool = False
+            plot: bool = False,
+            mask_outliers: bool = False
         ):
         """
         Count trips and trips per person by demand group; optional map at home-zone level.
@@ -443,14 +506,27 @@ class Results:
         
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
         
+        transport_zones_df = ( 
+            pl.DataFrame(
+                self.transport_zones.get().drop("geometry", axis=1)
+            )
+            .filter(pl.col("is_inner_zone"))
+            .lazy()
+        )
+        
         trip_count = (
             states_steps
             .filter(pl.col("motive_seq_id") != 0)
-            .group_by(["home_zone_id", "csp", "n_cars"])
+            .rename({"home_zone_id": "transport_zone_id"})
+            .join(
+                transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
+                on=["transport_zone_id"]
+            )
+            .group_by(["transport_zone_id", "csp", "n_cars"])
             .agg(
                 n_trips=pl.col("n_persons").sum()
             )
-            .join(self.demand_groups, on=["home_zone_id", "csp", "n_cars"])
+            .join(self.demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
             .with_columns(
                 n_trips_per_person=pl.col("n_trips")/pl.col("n_persons")
             )
@@ -465,19 +541,19 @@ class Results:
             tz = tz.merge(
                 (
                     trip_count
-                    .group_by(["home_zone_id"])
+                    .group_by(["transport_zone_id"])
                     .agg(
                         n_trips_per_person=pl.col("n_trips").sum()/pl.col("n_persons").sum()
                     )
-                    .rename({"home_zone_id": "transport_zone_id"})
                     .to_pandas()
                 ),
-                on="transport_zone_id",
-                how="left"
+                on="transport_zone_id"
             )
             
             tz["n_trips_per_person"] = tz["n_trips_per_person"].fillna(0.0)
-            tz["n_trips_per_person"] = self.replace_outliers(tz["n_trips_per_person"])
+            
+            if mask_outliers:
+                tz["n_trips_per_person"] = self.mask_outliers(tz["n_trips_per_person"])
 
             self.plot_map(tz, "n_trips_per_person")
         
@@ -487,7 +563,8 @@ class Results:
     def distance_per_person(
             self,
             weekday: bool = True,
-            plot: bool = False
+            plot: bool = False,
+            mask_outliers: bool = False
         ):
         """
         Aggregate total travel distance and distance per person by demand group.
@@ -511,15 +588,28 @@ class Results:
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
         costs = self.weekday_costs if weekday else self.weekend_costs
         
+        transport_zones_df = ( 
+            pl.DataFrame(
+                self.transport_zones.get().drop("geometry", axis=1)
+            )
+            .filter(pl.col("is_inner_zone"))
+            .lazy()
+        )
+        
         distance = (
             states_steps
             .filter(pl.col("motive_seq_id") != 0)
+            .rename({"home_zone_id": "transport_zone_id"})
+            .join(
+                transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
+                on=["transport_zone_id"]
+            )
             .join(costs, on=["from", "to", "mode"])
-            .group_by(["home_zone_id", "csp", "n_cars"])
+            .group_by(["transport_zone_id", "csp", "n_cars"])
             .agg(
                 distance=(pl.col("distance")*pl.col("n_persons")).sum()
             )
-            .join(self.demand_groups, on=["home_zone_id", "csp", "n_cars"])
+            .join(self.demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
             .with_columns(
                 distance_per_person=pl.col("distance")/pl.col("n_persons")
             )
@@ -534,19 +624,19 @@ class Results:
             tz = tz.merge(
                 (
                     distance
-                    .group_by(["home_zone_id"])
+                    .group_by(["transport_zone_id"])
                     .agg(
                         distance_per_person=pl.col("distance").sum()/pl.col("n_persons").sum()
                     )
-                    .rename({"home_zone_id": "transport_zone_id"})
                     .to_pandas()
                 ),
-                on="transport_zone_id",
-                how="left"
+                on="transport_zone_id"
             )
             
             tz["distance_per_person"] = tz["distance_per_person"].fillna(0.0)
-            tz["distance_per_person"] = self.replace_outliers(tz["distance_per_person"])
+            
+            if mask_outliers:
+                tz["distance_per_person"] = self.mask_outliers(tz["distance_per_person"])
 
             self.plot_map(tz, "distance_per_person")
         
@@ -556,7 +646,8 @@ class Results:
     def time_per_person(
             self,
             weekday: bool = True,
-            plot: bool = False
+            plot: bool = False,
+            mask_outliers: bool = False
         ):
         """
         Aggregate total travel time and time per person by demand group.
@@ -580,15 +671,28 @@ class Results:
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
         costs = self.weekday_costs if weekday else self.weekend_costs
         
+        transport_zones_df = ( 
+            pl.DataFrame(
+                self.transport_zones.get().drop("geometry", axis=1)
+            )
+            .filter(pl.col("is_inner_zone"))
+            .lazy()
+        )
+        
         time = (
             states_steps
             .filter(pl.col("motive_seq_id") != 0)
+            .rename({"home_zone_id": "transport_zone_id"})
+            .join(
+                transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
+                on=["transport_zone_id"]
+            )
             .join(costs, on=["from", "to", "mode"])
-            .group_by(["home_zone_id", "csp", "n_cars"])
+            .group_by(["transport_zone_id", "csp", "n_cars"])
             .agg(
                 time=(pl.col("time")*pl.col("n_persons")).sum()*60.0
             )
-            .join(self.demand_groups, on=["home_zone_id", "csp", "n_cars"])
+            .join(self.demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
             .with_columns(
                 time_per_person=pl.col("time")/pl.col("n_persons")
             )
@@ -603,19 +707,19 @@ class Results:
             tz = tz.merge(
                 (
                     time
-                    .group_by(["home_zone_id"])
+                    .group_by(["transport_zone_id"])
                     .agg(
                         time_per_person=pl.col("time").sum()/pl.col("n_persons").sum()
                     )
-                    .rename({"home_zone_id": "transport_zone_id"})
                     .to_pandas()
                 ),
-                on="transport_zone_id",
-                how="left"
+                on="transport_zone_id"
             )
             
             tz["time_per_person"] = tz["time_per_person"].fillna(0.0)
-            tz["time_per_person"] = self.replace_outliers(tz["time_per_person"])
+            
+            if mask_outliers:
+                tz["time_per_person"] = self.mask_outliers(tz["time_per_person"])
             
             self.plot_map(tz, "time_per_person")
 
@@ -656,7 +760,7 @@ class Results:
         fig.show("browser")
     
     
-    def replace_outliers(self, series):
+    def mask_outliers(self, series):
         """
         Mask outliers in a numeric pandas/Series-like array.
         
