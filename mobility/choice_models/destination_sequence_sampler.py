@@ -164,11 +164,7 @@ class DestinationSequenceSampler:
         costs = (
             costs.lazy()
             .join(
-                ( 
-                    sinks
-                    .filter(pl.col("sink_available") > 0.0)
-                    .lazy()
-                ),
+                sinks.lazy(),
                 on="to"
             )
             .join(utilities.lazy(), on=["motive", "to"], how="left")

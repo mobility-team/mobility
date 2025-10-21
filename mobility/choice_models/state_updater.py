@@ -166,15 +166,10 @@ class StateUpdater:
             .join(cost_by_od_and_modes.lazy(), on=["from", "to", "mode"])
             .join(motive_dur.lazy(), on=["csp", "motive"])
             
-            # Remove states that use at least one "empty" destination (with no opportunities left)
             .join(sinks.select(["to", "motive", "k_saturation_utility"]).lazy(), on=["to", "motive"], how="left")
             
             .with_columns(
-                # duration_per_pers=pl.max_horizontal([
-                #     pl.col("duration_per_pers"),
-                #     pl.col("mean_duration_per_pers")*0.1
-                # ]),
-                k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0),
+                k_saturation_utility=pl.col("k_saturation_utility").fill_null(0.0),
                 min_activity_time=pl.col("mean_duration_per_pers")*math.exp(-min_activity_time_constant)
             )
             .with_columns(
@@ -239,9 +234,9 @@ class StateUpdater:
             
             # Prune states that are below a certain distance from the best state
             # (because they will have very low probabilities to be selected)
-            .filter(
-                (pl.col("utility") > pl.col("utility").max().over(["demand_group_id"]) - 5.0)
-            )
+            # .filter(
+            #     (pl.col("utility") > pl.col("utility").max().over(["demand_group_id"]) - 5.0)
+            # )
             
             .select(["demand_group_id", "motive_seq_id", "mode_seq_id", "dest_seq_id", "utility"])
         )
@@ -295,20 +290,41 @@ class StateUpdater:
                 possible_states_utility,
                 (
                     (pl.col("demand_group_id") == pl.col("demand_group_id_trans")) &
-                    (pl.col("utility_trans") > pl.col("utility") - 5.0)
+                    (
+                        (pl.col("utility_trans") > pl.col("utility") - 5.0) | 
+                        (
+                            (pl.col("motive_seq_id") == pl.col("motive_seq_id_trans")) & 
+                            (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans")) & 
+                            (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
+                        )
+                    )
                 ),
                 suffix="_trans"
             )
             
             .drop("demand_group_id_trans")
             
+            # Add a transition cost
             .with_columns(
-                delta_utility=pl.col("utility_trans") - pl.col("utility")
+                utility_trans=( 
+                    pl.when(
+                        (
+                            (pl.col("motive_seq_id") == pl.col("motive_seq_id_trans")) & 
+                            (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans")) & 
+                            (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
+                        )
+                    ).then(
+                        pl.col("utility_trans") + 5.0
+                    ).otherwise(
+                        pl.col("utility_trans")
+                    )
+                )
             )
             
             .with_columns(
-                delta_utility=pl.col("delta_utility") - pl.col("delta_utility").max().over(state_cols)
+                delta_utility=pl.col("utility_trans") - pl.col("utility_trans").max().over(state_cols)
             )
+            
             .filter(
                 (pl.col("delta_utility") > -5.0)
             )
@@ -506,12 +522,11 @@ class StateUpdater:
                 k=pl.col("sink_occupation")/pl.col("sink_capacity"),
                 sink_available=(pl.col("sink_capacity") - pl.col("sink_occupation")).clip(0.0)
             )
+            .filter(
+                pl.col("sink_available") > 0.0
+            )
             .with_columns(
-                k_saturation_utility=(
-                    pl.when((pl.col("k") < 1.0) | pl.col("k").is_null())
-                    .then(1.0)
-                    .otherwise((1.0 - pl.col("k")).exp())
-                )
+                k_saturation_utility=(1.0 - pl.col("k").pow(4)/(1.0**4)).clip(0.0)
             )
             .select(["motive", "to", "sink_capacity", "sink_available", "k_saturation_utility"])
             
