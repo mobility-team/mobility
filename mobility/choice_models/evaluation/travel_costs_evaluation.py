@@ -129,7 +129,7 @@ class TravelCostsEvaluation:
         """
         
         ref_costs = [
-            self.format_google_travel_costs(**c)
+            self.flatten_travel_costs(**c)
             for c in ref_costs
         ]
         ref_costs = list(itertools.chain.from_iterable(ref_costs))
@@ -143,19 +143,19 @@ class TravelCostsEvaluation:
         return ref_costs
     
 
-    def format_google_travel_costs(self, origin: str, destination: str, url: str, hour: float, travel_costs: Dict):
+    def flatten_travel_costs(self, origin: Dict, destination: Dict, departure_hour: float, travel_costs: Dict):
         """
         Convert a single reference route definition into row entries.
         
         Parameters
         ----------
-        origin : str
-            Name of the origin location.
-        destination : str
-            Name of the destination location.
+        origin : dict
+            name, lon, and lat of the origin.
+        destination : dict
+            name, lon, and lat of the destination.
         url : str
             Google Maps directions URL.
-        hour : float
+        departure_hour : float
             Departure hour in decimal format.
         travel_costs : dict
             Dictionary of mode/time/distance entries.
@@ -166,17 +166,15 @@ class TravelCostsEvaluation:
             Each dict contains travel attributes and coordinates for a specific mode.
         """
         
-        coords = self.extract_coords_from_google_maps_url(url)
-        
         travel_costs = [
             {
-                "origin": origin,
-                "destination": destination,
-                "from_lon": coords["origin"][1],
-                "from_lat": coords["origin"][0],
-                "to_lon": coords["destination"][1],
-                "to_lat": coords["destination"][0],
-                "hour": hour,
+                "origin": origin["name"],
+                "destination": destination["name"],
+                "from_lon": origin["lon"],
+                "from_lat": origin["lat"],
+                "to_lon":  destination["lon"],
+                "to_lat": destination["lat"],
+                "departure_hour": departure_hour,
                 "time": tc["time"],
                 "distance": tc["distance"],  
                 "mode": tc["mode"]
@@ -186,42 +184,6 @@ class TravelCostsEvaluation:
         
         return travel_costs
     
-    
-    
-    def extract_coords_from_google_maps_url(self, url: str):
-        """
-        Extract origin and destination coordinates from a Google Maps URL.
-        
-        Parameters
-        ----------
-        url : str
-            URL from Google Maps directions.
-        
-        Returns
-        -------
-        dict
-            {'origin': (lat, lon), 'destination': (lat, lon)}
-        
-        Raises
-        ------
-        ValueError
-            If coordinates cannot be parsed.
-        """
-        url = unquote(url)
-        match = re.search(r"/dir/([^/]+)/([^/@]+)", url)
-        if not match:
-            return None
-        def parse_coord(s):
-            parts = s.split(',')
-            try:
-                return tuple(map(float, parts))
-            except ValueError:
-                raise ValueError(f"Could not parse url: {url}")
-        return {
-            "origin": parse_coord(match.group(1)),
-            "destination": parse_coord(match.group(2))
-        }
-
 
     def join_transport_zone_ids(self, ref_costs, transport_zones):
         """
