@@ -2,8 +2,10 @@ import json
 import polars as pl
 import numpy as np
 import plotly.express as px
+import geopandas as gpd
 
 from typing import Literal
+from mobility.choice_models.evaluation.travel_costs_evaluation import TravelCostsEvaluation
 
 class Results:
     
@@ -46,7 +48,8 @@ class Results:
             "trip_count_by_demand_group": self.trip_count_by_demand_group,
             "distance_per_person": self.distance_per_person,
             "time_per_person": self.time_per_person,
-            "immobility": self.immobility
+            "immobility": self.immobility,
+            "travel_costs": self.travel_costs
         }
         
         
@@ -462,6 +465,7 @@ class Results:
             
             tz = self.transport_zones.get()
             tz = tz.to_crs(4326)
+            tz = tz.merge(transport_zones_df.collect().to_pandas(), on="transport_zone_id")
             
             tz = tz.merge(
                 sink_occupation.filter(pl.col("motive") == plot_motive).to_pandas(),
@@ -537,6 +541,7 @@ class Results:
             
             tz = self.transport_zones.get()
             tz = tz.to_crs(4326)
+            tz = tz.merge(transport_zones_df.collect().to_pandas(), on="transport_zone_id")
             
             tz = tz.merge(
                 (
@@ -547,7 +552,8 @@ class Results:
                     )
                     .to_pandas()
                 ),
-                on="transport_zone_id"
+                on="transport_zone_id",
+                how="left"
             )
             
             tz["n_trips_per_person"] = tz["n_trips_per_person"].fillna(0.0)
@@ -620,6 +626,7 @@ class Results:
             
             tz = self.transport_zones.get()
             tz = tz.to_crs(4326)
+            tz = tz.merge(transport_zones_df.collect().to_pandas(), on="transport_zone_id")
             
             tz = tz.merge(
                 (
@@ -630,7 +637,8 @@ class Results:
                     )
                     .to_pandas()
                 ),
-                on="transport_zone_id"
+                on="transport_zone_id",
+                how="left"
             )
             
             tz["distance_per_person"] = tz["distance_per_person"].fillna(0.0)
@@ -703,6 +711,7 @@ class Results:
             
             tz = self.transport_zones.get()
             tz = tz.to_crs(4326)
+            tz = tz.merge(transport_zones_df.collect().to_pandas(), on="transport_zone_id")
             
             tz = tz.merge(
                 (
@@ -713,7 +722,8 @@ class Results:
                     )
                     .to_pandas()
                 ),
-                on="transport_zone_id"
+                on="transport_zone_id",
+                how="left"
             )
             
             tz["time_per_person"] = tz["time_per_person"].fillna(0.0)
@@ -783,3 +793,11 @@ class Results:
         
         return s.mask((s < lower) | (s > upper), np.nan)
     
+    
+    def travel_costs(self, *args, **kwargs):
+        return TravelCostsEvaluation(self).get(*args, **kwargs)
+        
+        
+        
+        
+        
