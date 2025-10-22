@@ -1,15 +1,20 @@
-# tests/back/integration/test_006_trips_can_be_sampled.py
 import enum
 import json
 import os
 import pandas as pd
 import pytest
+
 import mobility
+from mobility.choice_models.population_trips import PopulationTrips
+from mobility.motives import OtherMotive, HomeMotive, WorkMotive
+from mobility.choice_models.population_trips_parameters import PopulationTripsParameters
+from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
 
 
 @pytest.fixture
 def safe_json(monkeypatch):
-    """Harden json/orjson against non-serializable objects for this test."""
+    """Make json.dump/json.dumps (and orjson.dumps if present) resilient
+    to non-serializable objects during this test."""
     def _fallback(o):
         if isinstance(o, enum.Enum):
             return getattr(o, "value", o.name)
@@ -54,7 +59,7 @@ def safe_json(monkeypatch):
 
 
 def _to_pandas(val):
-    """Normalize result to a pandas DataFrame (handles DF, lazy, dict, path)."""
+    """Convert various table-like results to a pandas DataFrame."""
     # pandas
     if hasattr(val, "shape") and hasattr(val, "columns"):
         return val
@@ -77,9 +82,9 @@ def _to_pandas(val):
     except Exception:
         pass
 
-    # dict with meaningful keys
+    # mapping with a meaningful key
     if isinstance(val, dict):
-        for k in ("trips", "path", "data", "output"):
+        for k in ("data", "df", "path", "output", "result"):
             if k in val:
                 return _to_pandas(val[k])
 
@@ -102,21 +107,58 @@ def _to_pandas(val):
 
 
 @pytest.mark.dependency(
-    depends=["tests/back/integration/test_002_population_sample_can_be_created.py::test_002_population_sample_can_be_created"],
+    depends=[
+        "tests/back/integration/test_008_population_trips_can_be_computed.py::test_008_population_trips_can_be_computed"
+    ],
     scope="session",
 )
-def test_006_trips_can_be_sampled(test_data, safe_json):
+def test_009_population_trips_results_can_be_computed(test_data, safe_json):
     transport_zones = mobility.TransportZones(
         local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
         radius=test_data["transport_zones_radius"],
     )
+    emp = EMPMobilitySurvey()
 
-    population = mobility.Population(
-        transport_zones=transport_zones,
+    pop = mobility.Population(
+        transport_zones,
         sample_size=test_data["population_sample_size"],
     )
 
-    trips = mobility.Trips(population).get()
-    trips_df = _to_pandas(trips)
+    pop_trips = PopulationTrips(
+        population=pop,
+        modes=[mobility.CarMode(transport_zones)],
+        motives=[HomeMotive(), WorkMotive(), OtherMotive(population=pop)],
+        surveys=[emp],
+        parameters=PopulationTripsParameters(
+            n_iterations=1,
+            n_iter_per_cost_update=0,
+            alpha=0.01,
+            dest_prob_cutoff=0.9,
+            activity_utility_coeff=6.0,
+            stay_home_utility_coeff=1.0,
+            k_mode_sequences=3,
+            cost_uncertainty_sd=1.0,
+            mode_sequence_search_parallel=False,
+        ),
+    )
 
+    # Evaluate various metrics
+    global_metrics = pop_trips.evaluate("global_metrics")
+    weekday_sink_occupation = pop_trips.evaluate("sink_occupation", weekday=True)
+    weekday_trip_count_by_demand_group = pop_trips.evaluate("trip_count_by_demand_group", weekday=True)
+    weekday_distance_per_person = pop_trips.evaluate("distance_per_person", weekday=True)
+    weekday_time_per_person = pop_trips.evaluate("time_per_person", weekday=True)
+
+    # Normalize results to pandas DataFrames
+    gm_df = _to_pandas(global_metrics)
+    sink_df = _to_pandas(weekday_sink_occupation)
+    trips_df = _to_pandas(weekday_trip_count_by_demand_group)
+    dist_df = _to_pandas(weekday_distance_per_person)
+    time_df = _to_pandas(weekday_time_per_person)
+
+    # Assertions
+    assert gm_df.shape[0] > 0
+    assert sink_df.shape[0] > 0
     assert trips_df.shape[0] > 0
+    assert dist_df.shape[0] > 0
+    assert time_df.shape[0] > 0

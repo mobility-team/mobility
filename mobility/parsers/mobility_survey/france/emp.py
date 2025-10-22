@@ -25,8 +25,9 @@ class EMPMobilitySurvey(MobilitySurvey):
         prepare_survey_data_EMP_2019: Processes and formats EMP-2019 survey data.
     """
 
-    def __init__(self, seq_prob_cutoff: float = 0.95):
+    def __init__(self, seq_prob_cutoff: float = 0.5):
         inputs = {
+            "version": "1",
             "survey_name": "fr-EMP-2019",
             "country": "fr"
         }
@@ -93,39 +94,93 @@ class EMPMobilitySurvey(MobilitySurvey):
         data_folder_path = dataset_path.parent
 
         # Info about the individuals (CSP, city category...)
+        cols = {
+            "ident_men": int,
+            "ident_ind": int,
+            "CS24": str,
+            "AGE": int
+        }
+        
         indiv = pd.read_csv(
             data_folder_path / "tcm_ind_kish_public_V2.csv",
             encoding="latin-1",
             sep=";",
-            dtype={
-                "ident_men": int,
-                "ident_ind": int,
-                "CS24": str
-            },
-            usecols=["ident_men", "ident_ind", "CS24"],
+            dtype=cols,
+            usecols=list(cols.keys()),
         )
+        
+        indiv.rename({
+            "ident_men": "IDENT_MEN",
+            "ident_ind": "IDENT_IND"
+        }, inplace=True, axis=1)
 
-        # the terminology of the entd is used to be consistent with the function prepare_entd_2008
-        indiv.columns = ["IDENT_IND", "IDENT_MEN", "CS24"]
-
-        indiv["csp"] = indiv["CS24"].str.slice(0, 1)
-        indiv.loc[indiv["csp"].isnull(), "csp"] = "no_csp"
-        indiv.loc[indiv["csp"] == "0", "csp"] = "no_csp"
+        indiv["csp"] = indiv["CS24"].str.slice(0, 1).fillna("8")
+        
+        # Some individuals have CSP 00, which corresponds to nothing in the 
+        # survey metadata. We replace this CSP by the most likely given the
+        # age of the individual.
+        # TO DO : use the weights to get unbiased most likely value.
+        age_to_csp = ( 
+            indiv[~indiv["csp"].isnull()]
+            .groupby(["AGE", "csp"])["IDENT_IND"]
+            .count()
+            .sort_values(ascending=False)
+            .groupby(["AGE"])
+            .head(1)
+            .reset_index()
+            [["AGE", "csp"]]
+        )
+        age_to_csp.columns = ["AGE", "csp_age"]
+        
+        indiv = pd.merge(
+            indiv,
+            age_to_csp,
+            on="AGE"
+        )
+        
+        indiv["csp"] = np.where(
+            indiv["csp"] == "0",
+            indiv["csp_age"],
+            indiv["csp"]
+        )
+        
+        
+        # Split the CSP 8 into 2 groups : inf and sup 15 years old
+        conditions = [
+            (indiv["csp"] == "8") & (indiv["AGE"] < 15),
+            (indiv["csp"] == "8") & (indiv["AGE"] >= 15),
+        ]
+        choices = ["8a", "8b"]
+        
+        indiv["csp"] = np.select(
+            conditions, choices, default=indiv["csp"]
+        )
+        
+        indiv["csp"] = "fr-" + indiv["csp"]
 
         # Info about households
+        cols = {
+            "ident_men": int,
+            "STATUTCOM_UU_RES": str,
+            "CS24PR": str,
+            "NPERS": str,
+            "AGEPR": int
+        }
+        
         hh = pd.read_csv(
             data_folder_path / "tcm_men_public_V2.csv",
             encoding="latin-1",
             sep=";",
-            dtype={
-                "ident_men": int,
-                "STATUTCOM_UU_RES": str,
-                "CS24PR": str,
-                "NPERS": str
-            },
-            usecols=["ident_men", "STATUTCOM_UU_RES", "NPERS", "CS24PR"],
+            dtype=cols,
+            usecols=list(cols.keys()),
         )
-        hh.columns = ["IDENT_MEN", "n_pers", "csp", "city_category"]
+        hh.rename({
+            "ident_men": "IDENT_MEN",
+            "STATUTCOM_UU_RES": "city_category",
+            "CS24PR": "csp",
+            "NPERS": "n_pers",
+            "AGEPR": "AGE"
+        }, inplace=True, axis=1)
 
         # the R category of the ENTD correspond to the H category of the EMP 2019
         hh.loc[hh["city_category"] == "H", "city_category"] = "R"
@@ -133,6 +188,30 @@ class EMPMobilitySurvey(MobilitySurvey):
         hh["csp"] = hh["csp"].str.slice(0, 1)
         hh["csp_household"] = hh["csp"]
         hh["n_pers"] = hh["n_pers"].astype(int)
+        
+        hh = pd.merge(
+            hh,
+            age_to_csp,
+            on="AGE"
+        )
+        
+        hh["csp"] = np.where(
+            hh["csp"] == "0",
+            hh["csp_age"],
+            hh["csp"]
+        )
+        
+        # Split the CSP 8 into 2 groups : inf and sup 15 years old
+        conditions = [
+            (hh["csp"] == "8") & (hh["AGE"] < 15),
+            (hh["csp"] == "8") & (hh["AGE"] >= 15),
+        ]
+        choices = ["8_under_15y", "8_15y_and_over"]
+        
+        hh["csp"] = np.select(
+            conditions, choices, default=hh["csp"]
+        )
+        
 
         # Number of cars in each household
         cars = pd.read_csv(
@@ -368,7 +447,6 @@ class EMPMobilitySurvey(MobilitySurvey):
 
         # Merge the trips dataframe with the data about individuals and household cars
         df = pd.merge(df, indiv, on="IDENT_IND")
-        # df = pd.merge(df, k_indiv[["IDENT_IND", "pond_indC"]], on="IDENT_IND")
         df = pd.merge(
             df, hh[["city_category", "IDENT_MEN", "csp_household"]], on="IDENT_MEN"
         )

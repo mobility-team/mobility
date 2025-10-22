@@ -1,3 +1,5 @@
+from typing import List
+
 from mobility.transport_zones import TransportZones
 from mobility.transport_costs.path_travel_costs import PathTravelCosts
 from mobility.transport_modes.transport_mode import TransportMode
@@ -7,8 +9,6 @@ from mobility.cost_of_time_parameters import CostOfTimeParameters
 from mobility.transport_costs.path_generalized_cost import PathGeneralizedCost
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport_graphs.speed_modifier import SpeedModifier
-
-from typing import List
 
 class CarMode(TransportMode):
     """
@@ -27,7 +27,8 @@ class CarMode(TransportMode):
         generalized_cost_parameters: GeneralizedCostParameters = None,
         congestion: bool = False,
         congestion_flows_scaling_factor: float = 0.1,
-        speed_modifiers: List[SpeedModifier] = []
+        speed_modifiers: List[SpeedModifier] = [],
+        survey_ids: List[str] = ["3.30"]
     ):
         
         mode_name = "car"
@@ -70,6 +71,7 @@ class CarMode(TransportMode):
             travel_costs,
             generalized_cost,
             congestion,
-            vehicle="car"
+            vehicle="car",
+            survey_ids=survey_ids
         )
         

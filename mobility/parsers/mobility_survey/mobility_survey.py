@@ -17,7 +17,7 @@ class MobilitySurvey(FileAsset):
         get_cached_asset: Returns the cached asset data as a dictionary of pandas DataFrames.
     """
     
-    def __init__(self, inputs, seq_prob_cutoff: float = 0.95):
+    def __init__(self, inputs, seq_prob_cutoff: float = 0.5):
         
         folder_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "mobility_surveys" / inputs["survey_name"]
         
@@ -48,7 +48,7 @@ class MobilitySurvey(FileAsset):
         return {k: pd.read_parquet(path) for k, path in self.cache_path.items()}
     
 
-    def get_chains_probability(self, motives):
+    def get_chains_probability(self, motives, modes):
         
         motive_mapping = [{"group": m.name, "motive": m.survey_ids} for m in motives]
         motive_mapping = pd.DataFrame(motive_mapping)
@@ -56,6 +56,13 @@ class MobilitySurvey(FileAsset):
         motive_mapping = motive_mapping.set_index("motive").to_dict()["group"]
         
         motive_names = [m.name for m in motives]
+        
+        mode_mapping = [{"group": m.name, "mode": m.survey_ids} for m in modes]
+        mode_mapping = pd.DataFrame(mode_mapping)
+        mode_mapping = mode_mapping.explode("mode")
+        mode_mapping = mode_mapping.set_index("mode").to_dict()["group"]
+        
+        mode_names = [m.name for m in modes] + ["other"]
 
         days_trips = pl.from_pandas(self.get()["days_trip"].reset_index())
         short_trips = pl.from_pandas(self.get()["short_trips"].reset_index())
@@ -79,8 +86,76 @@ class MobilitySurvey(FileAsset):
             .filter(~pl.col("dense_ok"))
             .select(["individual_id","day_id"])
         )
+        
+        
+        short_trips_fixed_times = (
+            
+            short_trips
+            .select(["day_id", "individual_id", "daily_trip_index", "departure_time", "arrival_time"])
+            .unpivot(index=["day_id", "individual_id", "daily_trip_index"], value_name="event_time")
+            
+            .with_columns(
+                is_arrival=pl.col("variable") == "arrival_time"
+            )
+            
+            .sort(["day_id", "individual_id", "daily_trip_index", "is_arrival"])
+            
+            # Force time to be in the 0 to 24 hour interval
+            .with_columns(
+                event_time=pl.col("event_time").mod(24.0*3600.0)
+            )
+        
+            # Detect day changes when the times suddenly drop a lot
+            .with_columns(
+                prev_event_time=pl.col("event_time").shift(n=1).over(["day_id", "individual_id"]),
+                next_event_time=pl.col("event_time").shift(n=-1).over(["day_id", "individual_id"])
+            )
+            .with_columns(
+                day_change=( 
+                    (
+                        ((pl.col("event_time") - pl.col("prev_event_time")) < -12.0*3600.0)
+                        & ((pl.col("next_event_time") - pl.col("prev_event_time")) < -12.0*3600.0).fill_null(True)
+                    )
+                    .fill_null(False)
+                    .cast(pl.Int8())
+                )
+            )
+            .with_columns(
+                n_day_changes=pl.col("day_change").cum_sum().over(["day_id", "individual_id"])
+            )
+            
+            # Compute the time in seconds after 00:00:00 of the first day
+            .with_columns(
+                event_time_corr=pl.col("event_time") + 24.0*3600.0*pl.col("n_day_changes")
+            )
+            
+            # Force time to increase
+            .with_columns(
+                event_time_corr=pl.col("event_time_corr").cum_max().over(["day_id", "individual_id"])
+            )
+            
+            .pivot(
+                on="variable",
+                index=["day_id", "individual_id", "daily_trip_index"],
+                values=["event_time_corr"]
+            )
+            
+        )
+        
+        short_trips = (
+        
+            short_trips
+            .drop(["departure_time", "arrival_time"])
+            .join(
+                short_trips_fixed_times,
+                on=["day_id", "individual_id", "daily_trip_index"]
+            )
+            
+        )
+        
+        
 
-        sequences = (
+        sequences_by_motives_and_modes = (
             
             days_trips.select(["day_id", "day_of_week", "pondki"])
             .join(short_trips, on="day_id")
@@ -88,34 +163,50 @@ class MobilitySurvey(FileAsset):
             .rename({"daily_trip_index": "seq_step_index"})
             .sort("seq_step_index")
             .with_columns(
-                is_weekday=pl.col("day_of_week") < 5
+                is_weekday=pl.col("day_of_week") < 5,
+                departure_time=pl.col("departure_time")/3600.0,
+                arrival_time=pl.col("arrival_time")/3600.0
             )
 
             # Map detailed motives to grouped motives
-            .with_columns(pl.col("motive").replace(motive_mapping))
             .with_columns(
-                motive=pl.when(pl.col("motive").is_in(motive_names))
-                .then(pl.col("motive"))
-                .otherwise(pl.lit("other"))
+                pl.col("motive").replace(motive_mapping)
+            )
+            .with_columns(
+                motive=( 
+                    pl.when(pl.col("motive").is_in(motive_names))
+                    .then(pl.col("motive"))
+                    .otherwise(pl.lit("other"))
+                )
             )
             
-            # Cast columns to efficient types   
+            # Map detailed modes to grouped modes
             .with_columns(
-                city_category=pl.col("city_category").cast(pl.Enum(["C", "B", "R", "I"])),
-                csp=pl.col("csp").cast(pl.Enum(["1", "2", "3", "4", "5", "6", "7", "8", "no_csp"])),
-                n_cars=pl.col("n_cars").cast(pl.Enum(["0", "1", "2+"])),
-                motive=pl.col("motive").cast(pl.Enum(motive_names)),
+                mode=pl.col("mode_id").replace(mode_mapping)
+            )
+            .with_columns(
+                mode=pl.when(pl.col("mode").is_in(mode_names))
+                .then(pl.col("mode"))
+                .otherwise(pl.lit("other"))
+            )
+                     
+            # Remove motive sequences that are longer than 10 motives to speed 
+            # up further processing steps. We lose approx. 1 % of the travelled 
+            # distance.
+            # TO DO : break up these motive sequences into smaller ones.
+            .with_columns(
                 max_seq_step_index=( 
                     pl.col("seq_step_index")
                     .max().over(["individual_id", "day_id"])
                 )
             )
             
-            # Remove motive sequences that are longer than 10 motives to speed 
-            # up further processing steps. We lose approx. 1 % of the travelled 
-            # distance.
-            # TO DO : break up these motive sequences into smaller ones.
             .filter(pl.col("max_seq_step_index") < 11)
+            
+            # Remove trips that go over midnight of the survey day because 
+            # we model a single day of travel
+            # TO DO : see how to handle those trips ?
+            .filter((pl.col("departure_time") < 24.0) &( pl.col("arrival_time") < 24.0))
             
             # Force motive sequences to end up at home because further processing
             # steps can only work on such sequences. Approx. 5 % of the trips 
@@ -132,22 +223,7 @@ class MobilitySurvey(FileAsset):
                     pl.col("motive")
                 )
             )
-                    
-            # Add 24 hours to the times that are after midnight
-            .with_columns(
-                prev_arrival_time=pl.col("departure_time").shift(n=1).over(["day_id", "individual_id"])
-            )
-            .with_columns(
-                departure_time=pl.when(pl.col("departure_time") < pl.col("prev_arrival_time"))
-                .then(pl.col("departure_time") + 24.0*3600.0)
-                .otherwise(pl.col("departure_time"))
-            )
-            .with_columns(
-                arrival_time=pl.when((pl.col("departure_time") >= 24.0*3600.0) & (pl.col("departure_time") > pl.col("arrival_time")))
-                .then(pl.col("arrival_time") + 24.0*3600.0)
-                .otherwise(pl.col("arrival_time"))
-            )
-
+        
                 
             # Combine motives within each sequence to identify unique sequences
             .with_columns(
@@ -155,34 +231,20 @@ class MobilitySurvey(FileAsset):
                     pl.col("motive")
                     .str.join("-")
                     .over(["individual_id", "day_id"])
-                )
-            )
-
-            # Compute the average departure and arrival time of each trip in each sequence
-            .group_by([
-                "is_weekday", "city_category", "csp", "n_cars", "motive_seq",
-                "motive", "max_seq_step_index", "seq_step_index"
-            ])
-            .agg(
-                pondki=pl.col("pondki").sum(),
-                departure_time=(pl.col("departure_time")*pl.col("pondki")).sum()/pl.col("pondki").sum()/3600.0,
-                arrival_time=(pl.col("arrival_time")*pl.col("pondki")).sum()/pl.col("pondki").sum()/3600.0,
-                distance=(pl.col("distance")*pl.col("pondki")).sum()/pl.col("pondki").sum()
-            )
-            .sort(["seq_step_index"])
+                ),
+                mode_seq=( 
+                    pl.col("mode")
+                    .str.join("-")
+                    .over(["individual_id", "day_id"])
+                ),
+                travel_time=(pl.col("arrival_time") - pl.col("departure_time"))
+            ) 
             
-
-            # Compute the overlap of each activity with the periods morning / 
-            # midday / evening. Some sequences span more than one day, so the 
-            # values can sum to more than 24 hours.
-            # TO DO : do some research about how to handle this better, because
-            # for now we should model only one day of activities (but multi day 
-            # sequences should still be accounted for somehow).
             .with_columns(
                 next_departure_time=( 
                     pl.col("departure_time")
                     .shift(n=-1)
-                    .over(["is_weekday", "city_category", "csp", "n_cars", "motive_seq"])
+                    .over(["day_id", "individual_id"])
                     .fill_null(pl.col("arrival_time"))
                 )
             )
@@ -210,100 +272,69 @@ class MobilitySurvey(FileAsset):
                 ).clip(0.0, 8.0)
             )
             
-            # Some activities are reported to have zero duration in the surveys,
-            # which is weird (maybe the effect of some threshold ?) and breaks 
-            # our logic that uses time to model opportunities saturation at
-            # destination.
-            # For now we replace the zeros by the average duration for the 
-            # activity, for each day type, motive and step index.
-            # Approx. 3 % of the activities still have near zero durations after
-            # correction (less than 10 second durations).
-            # TO DO : check the surveys to see why these cases appear and find 
-            # a better way to handle them.
-            .with_columns(
-               zero_duration=(
-                   pl.col("duration_morning") + pl.col("duration_midday") + pl.col("duration_evening") < 1e-3
-               ) 
+            # Compute the average departure and arrival time of each trip in each sequence
+            .group_by([
+                "is_weekday", "city_category", "csp", "n_cars",
+                "motive_seq", "motive", "mode_seq", "mode",
+                "seq_step_index"
+            ])
+            .agg(
+                pondki=pl.col("pondki").sum(),
+                duration_morning=(pl.col("duration_morning")*pl.col("pondki")).sum()/pl.col("pondki").sum(),
+                duration_midday=(pl.col("duration_midday")*pl.col("pondki")).sum()/pl.col("pondki").sum(),
+                duration_evening=(pl.col("duration_evening")*pl.col("pondki")).sum()/pl.col("pondki").sum(),
+                travel_time=(pl.col("travel_time")*pl.col("pondki")).sum()/pl.col("pondki").sum(),
+                distance=(pl.col("distance")*pl.col("pondki")).sum()/pl.col("pondki").sum()
             )
-            
-            .with_columns(
-                
-                duration_morning=pl.when(
-                    pl.col("zero_duration") == True
-                ).then(
-                    (pl.when(pl.col("duration_morning") < 1e-3).then(None).otherwise(pl.col("duration_morning"))*pl.col("pondki")).sum().over(["is_weekday", "motive", "max_seq_step_index"])/pl.col("pondki").sum().over(["is_weekday", "motive", "max_seq_step_index"])
-                ).otherwise(
-                    pl.col("duration_morning")
-                ),
-                    
-                duration_midday=pl.when(
-                    pl.col("zero_duration") == True
-                ).then(
-                    (pl.when(pl.col("duration_midday") < 1e-3).then(None).otherwise(pl.col("duration_morning"))*pl.col("pondki")).sum().over(["is_weekday", "motive", "max_seq_step_index"])/pl.col("pondki").sum().over(["is_weekday", "motive", "max_seq_step_index"])
-                ).otherwise(
-                    pl.col("duration_midday")
-                ),
-                    
-                duration_evening=pl.when(
-                    pl.col("zero_duration") == True
-                ).then(
-                    (pl.when(pl.col("duration_evening") < 1e-3).then(None).otherwise(pl.col("duration_morning"))*pl.col("pondki")).sum().over(["is_weekday", "motive", "max_seq_step_index"])/pl.col("pondki").sum().over(["is_weekday", "motive", "max_seq_step_index"])
-                ).otherwise(
-                    pl.col("duration_evening")
-                )
-            )
-                    
-            .with_columns(
-                
-                duration_morning=pl.when(
-                    pl.col("seq_step_index") == pl.col("max_seq_step_index")
-                ).then(
-                    0.0
-                ).otherwise(
-                    pl.col("duration_morning")
-                ),
-                    
-                duration_midday=pl.when(
-                    pl.col("seq_step_index") == pl.col("max_seq_step_index")
-                ).then(
-                    0.0
-                ).otherwise(
-                    pl.col("duration_midday")
-                ),
-                    
-                duration_evening=pl.when(
-                    pl.col("seq_step_index") == pl.col("max_seq_step_index")
-                ).then(
-                    0.0
-                ).otherwise(
-                    pl.col("duration_evening")
-                )
-                    
-            )
-            
+            .sort(["seq_step_index"])
+        
             
             .select([
                 "is_weekday", "city_category", "csp", "n_cars",
                 "motive_seq", "motive",
-                "seq_step_index", 
+                "mode_seq", "mode",
+                "seq_step_index",
                 "duration_morning", "duration_midday", "duration_evening",
                 "distance",
+                "travel_time",
                 "pondki"
             ])
             
+        )
+                    
+        # Some rare schedules are still more than 24 hour long at this point
+        # We remove them for now !
+        # TO DO : find out what's wrong with the correction and filtering logic above
+        sequences_sup_24 = ( 
+            sequences_by_motives_and_modes
+            .group_by(["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq"])
+            .agg(
+                sequence_duration=(pl.col("duration_morning") + pl.col("duration_midday") + pl.col("duration_evening")).sum()
+            )
+            .filter(pl.col("sequence_duration") > 24.0)
+            .drop("sequence_duration")
+        )
+        
+        sequences_by_motives_and_modes = (
+            sequences_by_motives_and_modes
+            .join(
+                sequences_sup_24,
+                on=["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq"],
+                how="anti"
+            )
         )
         
         # Compute the probability of each subsequence, keeping only the first 
         # x % of the contribution to the average distance for each population 
         # group
         cutoff = self.seq_prob_cutoff
-
+        
         p_seq = (
             
             # Compute the probability of each sequence, given day status, city category, 
             # csp and number of cars in the household
-            sequences
-            .group_by(["is_weekday", "city_category", "csp", "n_cars", "motive_seq"])
+            sequences_by_motives_and_modes
+            .group_by(["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq"])
             .agg(
                 pondki=pl.col("pondki").first(),
                 distance=pl.col("distance").sum()
@@ -333,7 +364,7 @@ class MobilitySurvey(FileAsset):
             
             # Filter subsequences
             .with_columns(
-                group_count=pl.count().over(["is_weekday", "city_category", "csp", "n_cars"]),
+                group_count=pl.len().over(["is_weekday", "city_category", "csp", "n_cars"]),
                 cross_threshold=(
                     (pl.col("distance_p_cum_share") >= cutoff) & 
                     (pl.col("distance_p_cum_share").shift(1).over(["is_weekday", "city_category", "csp", "n_cars"]) < cutoff)
@@ -346,24 +377,24 @@ class MobilitySurvey(FileAsset):
                 | (pl.col("group_count") == 1)
             )
             
-            # Rescale propbabilities
+            # Rescale probabilities
             .with_columns(
                 p_seq=pl.col("p_seq")/pl.col("p_seq").sum().over(["is_weekday", "city_category", "csp", "n_cars"])
             )
             
             .select([
-                "is_weekday", "city_category", "csp", "n_cars", "motive_seq", "p_seq"
+                "is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq", "p_seq"
             ])
             
         )
 
         
-        sequences = (
-            sequences.drop("pondki")
-            .join(p_seq, on=["is_weekday", "city_category", "csp", "n_cars", "motive_seq"])    
+        sequences_by_motives_and_modes = (
+            sequences_by_motives_and_modes.drop("pondki")
+            .join(p_seq, on=["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq"])    
         )
         
-        return sequences
+        return sequences_by_motives_and_modes
             
             
         

@@ -14,10 +14,12 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\test-09\\e90a8308da40d062e66d1021c5094d4d-transport_zones.gpkg',
-#   'D:\\test-09\\car_public_transport_walk_intermodal_transport_graph\\simplified\\36b87c0f7e9865d7c45a0aaa649402a8-done',
-#   '{"max_travel_time": 0.3333333333333333, "average_speed": 50.0, "transfer_time": 15.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}', '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}', '{"start_time_min": 6.5, "start_time_max": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "transfer_time_coeff": 2.0, "no_show_perceived_prob": 0.2, "target_time": 8.0, "max_wait_time_at_destination": 0.25, "max_perceived_time": 2.0, "additional_gtfs_files": [], "expected_agencies": null}',
-#   'D:\\test-09\\ff0fef8d59e63242fa4e658d3423e04f-car_public_transport_walk_travel_costs.parquet'
+#   'D:\\data\\mobility\\tests\\results\\a767539ad61bd79cbf2698b20e6228d2-transport_zones.gpkg',
+#   'D:\\data\\mobility\\tests\\results\\walk_public_transport_walk_intermodal_transport_graph\\simplified\\104636085c6a4c535eb572a2badbd93c-done',
+#   '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
+#   '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
+#   '{"start_time_min": 6.5, "start_time_max": 8.0, "max_traveltime": 10.0, "wait_time_coeff": 2.0, "transfer_time_coeff": 2.0, "no_show_perceived_prob": 0.2, "target_time": 8.0, "max_wait_time_at_destination": 0.25, "max_perceived_time": 10.0, "additional_gtfs_files": [], "expected_agencies": null}',
+#   NA
 # )
 
 package_path <- args[1]
@@ -143,7 +145,7 @@ perceived_time_mat <- get_distance_matrix(
 )
 
 values <- as.vector(perceived_time_mat)
-idx <- which(!is.na(values) & values < 3600.0)
+idx <- which(!is.na(values) & values < 3600.0*parameters[["max_traveltime"]])
 
 perceived_time <- data.table(
   vertex_id_from = from[((idx - 1) %% nrow(perceived_time_mat)) + 1],

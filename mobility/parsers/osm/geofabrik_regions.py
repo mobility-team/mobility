@@ -13,11 +13,11 @@ class GeofabrikRegions(FileAsset):
     
     Parameters
     ----------
-    extract_date : str, default="240101"
+    extract_date : str, default="250101"
         Date of export of the OSM data, in format YYMMDD.
     """
         
-    def __init__(self, extract_date: str = "240101"): 
+    def __init__(self, extract_date: str = "250101"): 
         inputs = {"extract_date": extract_date}
         cache_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "geofabrik_regions.gpkg"
         super().__init__(inputs, cache_path)

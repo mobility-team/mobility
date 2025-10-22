@@ -86,7 +86,7 @@ def merge_mode_sequences_list(lists_of_lists, k):
         cur = merge_two_mode_sequences(cur, sorted(L, key=lambda x: x[0]), k)
     return cur[:k]
 
-def process_batch(batch_of_locations, debug=False):
+def process_batch_parallel(batch_of_locations, debug=False):
     
     try:
         
@@ -120,6 +120,53 @@ def process_batch(batch_of_locations, debug=False):
         logging.exception("Error when running run_top_k_search.")
         raise
 
+
+def process_batch_serial(
+        batch_of_locations,
+        n_vehicles,
+        leg_modes,
+        costs,
+        needs_vehicle,
+        vehicle_for_mode,
+        multimodal,
+        is_return_mode,
+        return_mode,
+        k_sequences,
+        tmp_path,
+        debug=False
+    ):
+    
+    try:
+        
+        mode_sequences = [
+            run_top_k_search(
+                loc[0],
+                loc[1],
+                n_vehicles,
+                leg_modes,
+                costs,
+                needs_vehicle,
+                vehicle_for_mode,
+                multimodal,
+                is_return_mode,
+                return_mode,
+                k=k_sequences,
+                debug=debug
+            ) for loc in batch_of_locations
+        ]
+        
+        mode_sequences = [ms for ms in mode_sequences if ms is not None]
+        
+        ( 
+            pl.concat(mode_sequences)
+            .write_parquet(
+                tmp_path / (shortuuid.uuid() + ".parquet")
+            )
+        )
+        
+    except Exception:
+        logging.exception("Error when running run_top_k_search.")
+        raise
 
 
 def run_top_k_search(
