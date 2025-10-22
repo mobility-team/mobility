@@ -39,7 +39,7 @@ class PublicTransportRoutingParameters():
     
     start_time_min: float = 6.5
     start_time_max: float = 8.0
-    max_traveltime: float = 1.0
+    max_traveltime: float = 2.0
     wait_time_coeff: float = 2.0
     transfer_time_coeff: float = 2.0
     no_show_perceived_prob: float = 0.2

@@ -1,6 +1,8 @@
+from typing import List
 
+from mobility.in_memory_asset import InMemoryAsset
 
-class TransportMode:
+class TransportMode(InMemoryAsset):
     """
     A base class for all transport modes (car, bicycle, walk...).
     
@@ -23,7 +25,8 @@ class TransportMode:
         congestion: bool = False,
         vehicle: str = None,
         multimodal: bool = False,
-        return_mode: str = None
+        return_mode: str = None,
+        survey_ids: List[str] = None
     ):
         
         self.name = name
@@ -33,6 +36,11 @@ class TransportMode:
         self.vehicle = vehicle
         self.multimodal = multimodal
         self.return_mode = return_mode
+        self.survey_ids = survey_ids
+        
+        inputs = {}
+
+        super().__init__(inputs)
         
         
     def clone(self):

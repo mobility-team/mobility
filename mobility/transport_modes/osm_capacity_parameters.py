@@ -34,6 +34,9 @@ class CarOSMCapacityParameters(BaseOSMCapacityParameters):
     # Capacities according to https://svn.vsp.tu-berlin.de/repos/public-svn/publications/vspwp/2011/11-10/2011-06-20_openstreetmap_for_traffic_simulation_sotm-eu.pdf
     # Typical values for the BPR volume decay function parameters, according to https://www.istiee.unict.it/sites/default/files/files/ET_2021_83_7.pdf
     
+    # ferry ways are included in the default dodgr weighting profile, but we 
+    # disable them here. We should handle car transport with a ferry in public transport.
+
     motorway: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=2000.0))
     trunk: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
     primary: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
@@ -42,7 +45,6 @@ class CarOSMCapacityParameters(BaseOSMCapacityParameters):
     unclassified: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))
     residential: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))
     service: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))
-    ferry: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
     living_street: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=300.0))
     motorway_link: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
     trunk_link: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
@@ -58,6 +60,9 @@ class WalkOSMCapacityParameters(BaseOSMCapacityParameters):
     # Parameters not actually used used for now because we don't compute congestion for this mode :
     # Default capacity of 1000 pers/h .
     # Typical values for the BPR volume decay function parameters (same as car).
+
+    # ferry ways are included in the default dodgr weighting profile, but we 
+    # disable them here because they should be represented in the public transport graph
     
     trunk: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     primary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
@@ -70,7 +75,6 @@ class WalkOSMCapacityParameters(BaseOSMCapacityParameters):
     cycleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     path: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     steps: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    ferry: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     living_street: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     bridleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     footway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
@@ -93,6 +97,8 @@ class BicycleOSMCapacityParameters(BaseOSMCapacityParameters):
     # but we disable them here because they lead to large graphs, with ways that 
     # are not very likely to be selected because they match hinking trails and 
     # dirt roads in OSM
+
+    # we also remove ferry ways which should be included in the public transport graph instead
          
     trunk: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     primary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
@@ -101,11 +107,7 @@ class BicycleOSMCapacityParameters(BaseOSMCapacityParameters):
     unclassified: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     residential: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     service: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    # track: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)   
     cycleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    # path: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    # steps: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    ferry: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     living_street: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     bridleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     footway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
