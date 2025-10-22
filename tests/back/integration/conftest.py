@@ -1,66 +1,100 @@
-import mobility
-import pytest
-import dotenv
-import shutil
+# tests/back/integration/conftest.py
 import os
+import enum
+import json
 import pathlib
+import shutil
 
-def pytest_addoption(parser):
-    parser.addoption("--local", action="store_true", default=False)
-    parser.addoption("--clear_inputs", action="store_true", default=False)
-    parser.addoption("--clear_results", action="store_true", default=False)
+import dotenv
+import pytest
+import mobility
 
-@pytest.fixture(scope="session")
-def clear_inputs(request):
-    return request.config.getoption("--clear_inputs")
 
-@pytest.fixture(scope="session")
-def clear_results(request):
-    return request.config.getoption("--clear_results")
+# -------------------- Patch JSON global (dès l'import) --------------------
+# Remplace l'encodeur par défaut pour supporter les objets exotiques (ex: LocalAdminUnitsCategories)
+class _FallbackJSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        # Enum -> valeur (ou nom)
+        if isinstance(o, enum.Enum):
+            return getattr(o, "value", o.name)
+        # Objets "riches" (pydantic/dataclass-like)
+        for attr in ("model_dump", "dict"):
+            method = getattr(o, attr, None)
+            if callable(method):
+                try:
+                    return method()
+                except Exception:
+                    pass
+        # Fallback __dict__
+        if hasattr(o, "__dict__"):
+            return o.__dict__
+        # Dernier recours : str()
+        return str(o)
 
-@pytest.fixture(scope="session")
-def local(request):
-    return request.config.getoption("--local")
+# ⚠️ Important : on remplace _default_encoder, utilisé par json.dumps/json.dump
+# même si d'autres modules ont fait `from json import dumps`.
+json._default_encoder = _FallbackJSONEncoder()  # type: ignore[attr-defined]
 
-def do_mobility_setup(local, clear_inputs, clear_results):
 
+# -------------------- Helpers --------------------
+def _truthy(v):
+    return str(v or "").lower() in {"1", "true", "yes", "y", "on"}
+
+def _repo_root() -> pathlib.Path:
+    # .../tests/back/integration/conftest.py -> repo root
+    return pathlib.Path(__file__).resolve().parents[3]
+
+def _load_dotenv_from_repo_root():
+    dotenv.load_dotenv(_repo_root() / ".env")
+
+
+# -------------------- Mobility setup --------------------
+def do_mobility_setup(local: bool, clear_inputs: bool, clear_results: bool):
     if local:
+        _load_dotenv_from_repo_root()
+        data_folder = os.environ.get("MOBILITY_PACKAGE_DATA_FOLDER")
+        project_folder = os.environ.get("MOBILITY_PACKAGE_PROJECT_FOLDER")
 
-        dotenv.load_dotenv()
+        if not data_folder or not project_folder:
+            raise RuntimeError(
+                "MOBILITY_PACKAGE_DATA_FOLDER et MOBILITY_PACKAGE_PROJECT_FOLDER "
+                "doivent être définies en mode local (par ex. dans le .env à la racine)."
+            )
 
-        if clear_inputs is True:
-            shutil.rmtree(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"], ignore_errors=True)
-
-        if clear_results is True:
-            shutil.rmtree(os.environ["MOBILITY_PACKAGE_PROJECT_FOLDER"], ignore_errors=True)
+        if clear_inputs:
+            shutil.rmtree(data_folder, ignore_errors=True)
+        if clear_results:
+            shutil.rmtree(project_folder, ignore_errors=True)
 
         mobility.set_params(
-            package_data_folder_path=os.environ["MOBILITY_PACKAGE_DATA_FOLDER"],
-            project_data_folder_path=os.environ["MOBILITY_PACKAGE_PROJECT_FOLDER"]
+            package_data_folder_path=data_folder,
+            project_data_folder_path=project_folder,
         )
-
     else:
-
         mobility.set_params(
             package_data_folder_path=pathlib.Path.home() / ".mobility/data",
             project_data_folder_path=pathlib.Path.home() / ".mobility/projects/tests",
-            r_packages=False
+            r_packages=False,
         )
+        # Valeur par défaut inoffensive (surchageable via env/.env)
+        os.environ.setdefault("MOBILITY_GTFS_DOWNLOAD_DATE", "2025-01-01")
 
-        # Set the env var directly for now
-        # TO DO : see how could do this differently...
-        os.environ["MOBILITY_GTFS_DOWNLOAD_DATE"] = "2025-01-01"
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_mobility(local, clear_inputs, clear_results):
+def pytest_configure(config):
+    """Exécuté tôt, avant l'import des modules de test de ce dossier."""
+    _load_dotenv_from_repo_root()
+    local = _truthy(os.environ.get("MOBILITY_LOCAL"))
+    clear_inputs = _truthy(os.environ.get("MOBILITY_CLEAR_INPUTS"))
+    clear_results = _truthy(os.environ.get("MOBILITY_CLEAR_RESULTS"))
     do_mobility_setup(local, clear_inputs, clear_results)
 
 
+# -------------------- Fixtures de test --------------------
 def get_test_data():
     return {
-        "transport_zones_local_admin_unit_id": "fr-09261", #fails with Foix 09122 and Rodez 12202, let's test Saint-Girons
+        "transport_zones_local_admin_unit_id": "fr-09261",  # Saint-Girons
         "transport_zones_radius": 10.0,
-        "population_sample_size": 10
+        "population_sample_size": 10,
     }
 
 @pytest.fixture
