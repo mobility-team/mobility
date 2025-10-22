@@ -269,7 +269,7 @@ class DestinationSequenceSampler:
             
             .select(["motive", "from", "to", "p_ij"])
             
-            .collect(streaming=True)
+            .collect(engine="streaming")
         )
         
         return prob  

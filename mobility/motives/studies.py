@@ -65,6 +65,7 @@ class StudiesMotive(Motive):
                 opportunities[["transport_zone_id", "n_opp"]]
                 .rename({"transport_zone_id": "to"}, axis=1)
             )
+            opportunities["to"] = opportunities["to"].astype("Int64")
             
             if os.environ.get("MOBILITY_DEBUG") == "1":
                 self.plot_opportunities_map(

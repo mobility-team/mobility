@@ -10,7 +10,7 @@ from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
 # but still need the setup phase and input data defined in conftest.py
 # Don't forget to recomment or the tests will not pass !
 
-from conftest import get_test_data, do_mobility_setup
+from tests.conftest import get_test_data, do_mobility_setup
 do_mobility_setup(True, False, False)
 test_data = get_test_data()
 
@@ -44,6 +44,7 @@ def test_008_population_trips_can_be_computed(test_data):
         motives=[
             HomeMotive(),
             WorkMotive(),
+            StudiesMotive(),
             OtherMotive(
                 population=pop
             )
