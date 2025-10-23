@@ -5,7 +5,7 @@ import plotly.express as px
 
 from typing import Literal
 
-from mobility.choice_models.evaluation.car_congestion_evaluation import CarCongestionEvaluation
+from mobility.choice_models.evaluation.car_traffic_evaluation import CarTrafficEvaluation
 
 class Results:
     
@@ -51,7 +51,7 @@ class Results:
             "distance_per_person": self.distance_per_person,
             "time_per_person": self.time_per_person,
             "immobility": self.immobility,
-            "car_congestion": self.car_congestion
+            "car_traffic": self.car_traffic
         }
         
         
@@ -788,5 +788,5 @@ class Results:
         
         return s.mask((s < lower) | (s > upper), np.nan)
     
-    def car_congestion(self, *args, **kwargs):
-        return CarCongestionEvaluation(self).get(*args, **kwargs)
+    def car_traffic(self, *args, **kwargs):
+        return CarTrafficEvaluation(self).get(*args, **kwargs)

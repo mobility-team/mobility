@@ -5,7 +5,7 @@ import geopandas as gpd
 
 from shapely import linestrings
 
-class CarCongestionEvaluation:
+class CarTrafficEvaluation:
     
     def __init__(self, results):
         self.results = results
