@@ -63,6 +63,20 @@ class Motive(InMemoryAsset):
 
         return utilities
 
+
+    def enforce_opportunities_schema(self, opportunities):
+        
+        opportunities = (
+            
+            opportunities
+            .with_columns(
+                to=pl.col("to").cast(pl.Int32()),
+                n_opp=pl.col("n_opp").cast(pl.Float64())
+            )
+            
+        )
+        
+        return opportunities
     
 
 
