@@ -53,7 +53,7 @@ class Results:
             "distance_per_person": self.distance_per_person,
             "time_per_person": self.time_per_person,
             "immobility": self.immobility,
-            "car_traffic": self.car_traffic
+            "car_traffic": self.car_traffic,
             "travel_costs": self.travel_costs
         }
         
