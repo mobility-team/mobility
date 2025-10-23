@@ -76,15 +76,29 @@ hash <- strsplit(basename(output_file_path), "-")[[1]][1]
 wt_fp <- paste0(dirname(output_file_path), "/", paste0(hash, "-dodgr-wt_profile.json"))
 write(toJSON(wt_profiles), wt_fp)
 
+
+if (mode == "car") {
+  keep_cols <- c("hgv", "hov")
+} else {
+  keep_cols <- NULL
+}
+
+
 graph <- weight_streetnet(
   osm_data,
   wt_profile = dodgr_mode,
   wt_profile_file = wt_fp,
-  turn_penalty = FALSE
+  turn_penalty = FALSE,
+  keep_cols = keep_cols
 )
 
 graph <- graph[graph$component == 1, ]
 
+# Remove Heavy Goods Vehicles only and ridesharing only ways
+if (mode == "car") {
+  graph <- graph[graph$hgv != "designated" | is.na(graph$hgv), ]
+  graph <- graph[graph$hov != "designated" | is.na(graph$hov), ]
+}
 
 info(logger, "Extracting edges and nodes..")
 
