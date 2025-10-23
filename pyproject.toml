@@ -73,4 +73,6 @@ mobility = [
 ]
 
 [tool.setuptools.packages.find]
+where = ["."]
+include = ["mobility*"]
 exclude = ["certs", "certs.*"]

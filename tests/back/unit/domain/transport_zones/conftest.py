@@ -244,17 +244,26 @@ def dependency_fakes(monkeypatch, tmp_path):
 
     # --- Fake StudyArea ---
     class _FakeStudyArea:
-        def __init__(self, local_admin_unit_id, radius):
+        def __init__(self, local_admin_unit_id, radius, cutout_geometries=None):
             self.local_admin_unit_id = local_admin_unit_id
             self.radius = radius
-            # TransportZones.create_and_get_asset expects a dict-like cache_path with "polygons"
-            self.cache_path = {"polygons": str(tmp_path / "study_area_polygons.gpkg")}
+            self.cutout_geometries = cutout_geometries
+            # TransportZones.create_and_get_asset expects a dict-like cache_path with keys like "polygons"
+            self.cache_path = {
+                "polygons": str(tmp_path / "study_area_polygons.gpkg"),
+                "boundary": str(tmp_path / "study_area_boundary.geojson"),
+            }
 
     state.study_area_inits = []
-    def _StudyArea_spy(local_admin_unit_id, radius):
-        instance = _FakeStudyArea(local_admin_unit_id, radius)
+
+    def _StudyArea_spy(local_admin_unit_id, radius, cutout_geometries=None, *args, **kwargs):
+        instance = _FakeStudyArea(local_admin_unit_id, radius, cutout_geometries)
+        # Record only the keys asserted by tests
         state.study_area_inits.append(
-            {"local_admin_unit_id": local_admin_unit_id, "radius": radius}
+            {
+                "local_admin_unit_id": local_admin_unit_id,
+                "radius": radius,
+            }
         )
         return instance
 
@@ -273,6 +282,7 @@ def dependency_fakes(monkeypatch, tmp_path):
             return self.get_return_path
 
     state.osm_inits = []
+
     def _OSMData_spy(study_area, object_type, key, geofabrik_extract_date, split_local_admin_units):
         instance = _FakeOSMData(study_area, object_type, key, geofabrik_extract_date, split_local_admin_units)
         state.osm_inits.append(
