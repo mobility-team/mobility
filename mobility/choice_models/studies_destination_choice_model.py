@@ -146,11 +146,13 @@ class StudiesDestinationChoiceModel(DestinationChoiceModel):
         ) -> pd.DataFrame:
         """
         """
+
+        tz_lau_ids = set(transport_zones["local_admin_unit_id"].unique())   
         
         # missing swiss school capacities
         school_capacities = self.school_capacities.get()
         school_capacities = school_capacities[school_capacities["local_admin_unit_id"].isin(tz_lau_ids)]
 
                 
-        return all_shops
+        return school_capacities
     
