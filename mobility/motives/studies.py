@@ -12,7 +12,7 @@ class StudiesMotive(Motive):
 
     def __init__(
         self,
-        survey_ids: List[str] = ["9.92"], 
+        survey_ids: List[str] = ["1.11"], 
         radiation_lambda: float = 0.99986,
         opportunities: pd.DataFrame = None
     ):
@@ -50,8 +50,6 @@ class StudiesMotive(Motive):
             
             opportunities["country"] = opportunities["local_admin_unit_id"].str[0:2]
             
-
-            
             opportunities = (
                 opportunities.groupby(["transport_zone_id", "local_admin_unit_id", "country", "weight"], dropna=False)["n_students"]
                   .sum()
@@ -72,8 +70,11 @@ class StudiesMotive(Motive):
                     opportunities, 
                     use_log = True
                     )
+            
+        opportunities = pl.from_pandas(opportunities)
+        opportunities = self.enforce_opportunities_schema(opportunities)
 
-        return pl.from_pandas(opportunities)
+        return opportunities
     
         
     def plot_opportunities_map(
