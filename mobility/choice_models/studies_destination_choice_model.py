@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 from importlib import resources
 import mobility
+from mobility.choice_models.destination_choice_model import DestinationChoiceModel
 from mobility.choice_models.utilities import Utilities
 from mobility.parsers.students_distribution import StudentsDistribution
 from mobility.parsers.schools_capacity_distribution import SchoolsCapacityDistribution
@@ -125,10 +126,15 @@ class StudiesDestinationChoiceModelParameters:
 #             self,
 #             transport_zones: pd.DataFrame
 #         ) -> pd.DataFrame:
+        
+#         transport_zones_df = transport_zones.drop(columns="geometry")
+        
+#         # récupérer où sont les étudiants par ages, et pas zones de transport
+        
 
 #         tz_lau_ids = set(transport_zones["local_admin_unit_id"].unique())        
         
-#         students_distribution = self.students_distribution.get()
+#         students_distribution = students_distribution.get()
 #         students_distribution = students_distribution[students_distribution["local_admin_unit_id"].isin(tz_lau_ids)]
         
 #         return students_distribution
@@ -140,11 +146,13 @@ class StudiesDestinationChoiceModelParameters:
 #         ) -> pd.DataFrame:
 #         """
 #         """
+
+#         tz_lau_ids = set(transport_zones["local_admin_unit_id"].unique())   
         
 #         # missing swiss school capacities
 #         school_capacities = self.school_capacities.get()
 #         school_capacities = school_capacities[school_capacities["local_admin_unit_id"].isin(tz_lau_ids)]
 
                 
-#         return all_shops
+#         return school_capacities
     

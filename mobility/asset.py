@@ -2,8 +2,11 @@ import json
 import hashlib
 import pathlib
 
+import geopandas as gpd
+
 from abc import ABC, abstractmethod
 from dataclasses import is_dataclass, fields
+from pandas.util import hash_pandas_object
 
 class Asset(ABC):
     """
@@ -69,6 +72,11 @@ class Asset(ABC):
             
             elif isinstance(value, pathlib.Path):
                 return str(value)
+            
+            elif isinstance(value, gpd.GeoDataFrame):
+                geom_hash = hashlib.sha256(b"".join(value.geometry.to_wkb())).hexdigest()
+                attr_hash = hash_pandas_object(value.drop(columns="geometry")).sum()
+                return hashlib.sha256((geom_hash + str(attr_hash)).encode()).hexdigest()
             
             else:
                 return value
