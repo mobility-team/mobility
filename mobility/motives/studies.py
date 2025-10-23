@@ -4,7 +4,6 @@ import geopandas as gpd
 from typing import List
 import numpy as np
 import os
-import polars as pl
 
 from mobility.motives.motive import Motive
 from mobility.parsers.schools_capacity_distribution import SchoolsCapacityDistribution
@@ -19,7 +18,7 @@ class StudiesMotive(Motive):
     ):
 
         super().__init__(
-            name="shopping",
+            name="studies",
             survey_ids=survey_ids,
             radiation_lambda=radiation_lambda,
             opportunities=opportunities

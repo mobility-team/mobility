@@ -9,7 +9,7 @@ class StateInitializer:
     (sinks), and (5) fetch current OD costs.
     """
     
-    def get_chains(self, population, surveys, motives, is_weekday):
+    def get_chains(self, population, surveys, motives, modes, is_weekday):
         """Aggregate demand groups and attach survey chain probabilities.
     
         Produces per-group trip chains with durations and anchor flags by
@@ -21,6 +21,7 @@ class StateInitializer:
             population: Population container providing transport zones and groups.
             surveys: Iterable of survey objects exposing `get_chains_probability`.
             motives: Iterable of motives; used to mark anchors.
+            modes: 
             is_weekday (bool): Select weekday (True) or weekend (False) chains.
     
         Returns:
@@ -61,20 +62,11 @@ class StateInitializer:
             .join(lau_to_city_cat.lazy(), on=["local_admin_unit_id"])
             .group_by(["country", "home_zone_id", "city_category", "csp", "n_cars"])
             .agg(pl.col("n_persons").sum())
-
-            # Cast strings to enums to speed things up
-            .with_columns(
-                country=pl.col("country").cast(pl.Enum(countries)),
-                city_category=pl.col("city_category").cast(pl.Enum(["C", "B", "R", "I"])),
-                csp=pl.col("csp").cast(pl.Enum(["1", "2", "3", "4", "5", "6", "7", "8", "no_csp"])),
-                n_cars=pl.col("n_cars").cast(pl.Enum(["0", "1", "2+"]))
-            )
-            .with_row_index("demand_group_id")
-
-             .collect(engine="streaming")
+            
+            .collect(engine="streaming")
             
         )
-
+        
         # Get the chain probabilities from the mobility surveys
         surveys = [s for s in surveys if s.country in countries]
         
@@ -83,7 +75,7 @@ class StateInitializer:
                 [
                     (
                         survey
-                        .get_chains_probability(motives)
+                        .get_chains_probability(motives, modes)
                         .with_columns(
                             country=pl.lit(survey.inputs["country"])
                         )
@@ -91,9 +83,40 @@ class StateInitializer:
                     for survey in surveys
                 ]
             )
+        )
+        
+        # Cast string columns to enums for better perf
+        def get_col_values(df1, df2, col):
+            s = pl.concat([df1.select(col), df2.select(col)]).to_series()
+            return s.unique().sort().to_list()
+            
+        city_category_values = get_col_values(demand_groups, p_chain, "city_category")
+        csp_values = get_col_values(demand_groups, p_chain, "csp")
+        n_cars_values = get_col_values(demand_groups, p_chain, "n_cars")
+        motive_values = p_chain["motive"].unique().sort().to_list()
+        mode_values = p_chain["mode"].unique().sort().to_list()
+        
+        p_chain = (
+            p_chain
             .with_columns(
-                country=pl.col("country").cast(pl.Enum(countries))
+                country=pl.col("country").cast(pl.Enum(countries)),
+                city_category=pl.col("city_category").cast(pl.Enum(city_category_values)),
+                csp=pl.col("csp").cast(pl.Enum(csp_values)),
+                n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values)),
+                motive=pl.col("motive").cast(pl.Enum(motive_values)),
+                mode=pl.col("mode").cast(pl.Enum(mode_values)),
             )
+        )
+
+        demand_groups = (
+            demand_groups
+            .with_columns(
+                country=pl.col("country").cast(pl.Enum(countries)),
+                city_category=pl.col("city_category").cast(pl.Enum(city_category_values)),
+                csp=pl.col("csp").cast(pl.Enum(csp_values)),
+                n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values))
+            )
+            .with_row_index("demand_group_id")
         )
         
         # Create an index for motive sequences to avoid moving giant strings around
@@ -137,7 +160,7 @@ class StateInitializer:
                 n_persons=pl.col("n_persons")*pl.col("p_seq")
             )
             .with_columns(
-                duration=(
+                duration_per_pers=(
                     (
                         pl.col("duration_morning")
                         + pl.col("duration_midday")
@@ -146,10 +169,17 @@ class StateInitializer:
                 )
             )
             
+            
+        )
+        
+        chains_by_motive = (
+            
+            chains
+            
             .group_by(["demand_group_id", "motive_seq_id", "seq_step_index", "motive"])
             .agg(
                 n_persons=pl.col("n_persons").sum(),
-                duration=(pl.col("n_persons")*pl.col("duration")).sum()
+                duration=(pl.col("n_persons")*pl.col("duration_per_pers")).sum()
             )
             
             .sort(["demand_group_id", "motive_seq_id",  "seq_step_index"])
@@ -165,7 +195,7 @@ class StateInitializer:
             .drop(["country", "city_category"])
         )
 
-        return chains, demand_groups
+        return chains_by_motive, chains, demand_groups
     
     
     def get_mean_activity_durations(self, chains, demand_groups):
@@ -298,8 +328,8 @@ class StateInitializer:
             .agg(pl.col("duration").sum())
         )
         
-        motive_names = [m.name for m in motives]
-
+        motive_names = chains.schema["motive"].categories
+        
         # Load and adjust sinks
         sinks = (
             
@@ -316,6 +346,8 @@ class StateInitializer:
                     for motive in motives if motive.has_opportunities is True
                 ]
             )
+            
+            .filter(pl.col("n_opp") > 0.0)
 
             .with_columns(
                 motive=pl.col("motive").cast(pl.Enum(motive_names)),

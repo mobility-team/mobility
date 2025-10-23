@@ -327,7 +327,7 @@ class StateUpdater:
                 "utility_trans", "p_transition"
             ])
             
-            .collect(streaming=True)
+            .collect(engine="streaming")
         
         )
         

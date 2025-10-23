@@ -19,6 +19,7 @@ from mobility.choice_models.destination_sequence_sampler import DestinationSeque
 from mobility.choice_models.top_k_mode_sequence_search import TopKModeSequenceSearch
 from mobility.choice_models.state_initializer import StateInitializer
 from mobility.choice_models.state_updater import StateUpdater
+from mobility.choice_models.results import Results
 from mobility.motives import Motive
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.parsers.mobility_survey import MobilitySurvey
@@ -106,14 +107,27 @@ class PopulationTrips(FileAsset):
             "population": population,
             "costs_aggregator": costs_aggregator,
             "motives": motives,
+            "modes": modes,
             "surveys": surveys,
             "parameters": parameters
         }
         
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
+        
         cache_path = {
+            
             "weekday_flows": project_folder / "population_trips" / "weekday" / "weekday_flows.parquet",
-            "weekend_flows": project_folder / "population_trips" / "weekend" / "weekend_flows.parquet"
+            "weekday_sinks": project_folder / "population_trips" / "weekday" / "weekday_sinks.parquet",
+            "weekday_costs": project_folder / "population_trips" / "weekday" / "weekday_costs.parquet",
+            "weekday_chains": project_folder / "population_trips" / "weekday" / "weekday_chains.parquet",
+            
+            "weekend_flows": project_folder / "population_trips" / "weekend" / "weekend_flows.parquet",
+            "weekend_sinks": project_folder / "population_trips" / "weekend" / "weekend_sinks.parquet",
+            "weekend_costs": project_folder / "population_trips" / "weekend" / "weekend_costs.parquet",
+            "weekend_chains": project_folder / "population_trips" / "weekend" / "weekend_chains.parquet",
+            
+            "demand_groups": project_folder / "population_trips" / "demand_groups.parquet"
+            
         }
         
         super().__init__(inputs, cache_path)
@@ -203,15 +217,24 @@ class PopulationTrips(FileAsset):
         
     def create_and_get_asset(self):
         
-        weekday_flows = self.compute_flows(is_weekday=True)
-        weekend_flows = self.compute_flows(is_weekday=False)
-        
+        weekday_flows, weekday_sinks, demand_groups, weekday_costs, weekday_chains = self.run_model(is_weekday=True)
+        weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains = self.run_model(is_weekday=False)
+    
         weekday_flows.write_parquet(self.cache_path["weekday_flows"])
+        weekday_sinks.write_parquet(self.cache_path["weekday_sinks"])
+        weekday_costs.write_parquet(self.cache_path["weekday_costs"])
+        weekday_chains.write_parquet(self.cache_path["weekday_chains"])
+        
         weekend_flows.write_parquet(self.cache_path["weekend_flows"])
+        weekend_sinks.write_parquet(self.cache_path["weekend_sinks"])
+        weekend_costs.write_parquet(self.cache_path["weekend_costs"])
+        weekend_chains.write_parquet(self.cache_path["weekend_chains"])
+        
+        demand_groups.write_parquet(self.cache_path["demand_groups"])
             
         return {k: pl.scan_parquet(v) for k, v in self.cache_path.items()}
 
-    def compute_flows(self, is_weekday):
+    def run_model(self, is_weekday):
         """Run the iterative assignment for weekday/weekend and return flows.
         
         Args:
@@ -224,21 +247,23 @@ class PopulationTrips(FileAsset):
         population = self.inputs["population"]
         costs_aggregator = self.inputs["costs_aggregator"]
         motives = self.inputs["motives"]
+        modes = self.inputs["modes"]
         surveys = self.inputs["surveys"]
         parameters = self.inputs["parameters"]
         
         cache_path = self.cache_path["weekday_flows"] if is_weekday is True else self.cache_path["weekend_flows"]
         tmp_folders = self.prepare_tmp_folders(cache_path)
 
-        chains, demand_groups = self.state_initializer.get_chains(
+        chains_by_motive, chains, demand_groups = self.state_initializer.get_chains(
             population,
             surveys,
             motives,
+            modes,
             is_weekday
         )
         
         motive_dur, home_night_dur = self.state_initializer.get_mean_activity_durations(
-            chains,
+            chains_by_motive,
             demand_groups
         )
         
@@ -249,7 +274,7 @@ class PopulationTrips(FileAsset):
         )
         
         sinks = self.state_initializer.get_sinks(
-            chains,
+            chains_by_motive,
             motives,
             population.transport_zones
         )
@@ -273,7 +298,7 @@ class PopulationTrips(FileAsset):
                     population.transport_zones,
                     remaining_sinks,
                     iteration,
-                    chains,
+                    chains_by_motive,
                     demand_groups,
                     costs,
                     tmp_folders,
@@ -297,7 +322,7 @@ class PopulationTrips(FileAsset):
             current_states, current_states_steps = self.state_updater.get_new_states(
                 current_states,
                 demand_groups,
-                chains,
+                chains_by_motive,
                 costs_aggregator,
                 remaining_sinks,
                 motive_dur,
@@ -321,21 +346,35 @@ class PopulationTrips(FileAsset):
                 sinks
             )
             
+            
+        costs = costs_aggregator.get_costs_by_od_and_mode(["distance", "time"], congestion=True)
     
         current_states_steps = (
+            
             current_states_steps
+            
+            # Add demand groups informations
             .join(
                 demand_groups.select(["demand_group_id", "home_zone_id", "csp", "n_cars"]),
                 on=["demand_group_id"]
             )
             .drop("demand_group_id")
+            
+             # Add costs info
+             .join(
+                 costs,
+                 on=["from", "to", "mode"],
+                 how="left"
+             )
+            
+            # Add the is_weekday info
+            .with_columns(
+                is_weekday=pl.lit(is_weekday)
+            )
+            
         )
 
-        current_states_steps = current_states_steps.with_columns(
-            is_weekday=pl.lit(is_weekday)
-        )
-
-        return current_states_steps
+        return current_states_steps, sinks, demand_groups, costs, chains
     
 
     def prepare_tmp_folders(self, cache_path):
@@ -361,6 +400,54 @@ class PopulationTrips(FileAsset):
         
         return folders
 
+
+    def evaluate(self, metric, **kwargs):
+        """
+        Evaluate model outputs using a specified metric.
+        
+        This method loads cached simulation results, wraps them in a `Results`
+        object, and dispatches to the appropriate evaluation function.
+        
+        Parameters
+        ----------
+        metric : str
+            Name of the evaluation metric to compute. Must be one of:
+            {"sink_occupation", "trip_count_by_demand_group",
+             "distance_per_person", "time_per_person"}.
+        **kwargs : dict, optional
+            Additional arguments forwarded to the underlying metric function.
+            For example, `weekday=True` or `plot=True`.
+        
+        Returns
+        -------
+        pl.DataFrame or object
+            Result of the chosen evaluation function, typically a Polars DataFrame.
+            Some metrics may also trigger plots if plotting is enabled.
+        """
+        
+        self.get()
+        
+        results = Results(
+            transport_zones=self.inputs["population"].inputs["transport_zones"],
+            weekday_states_steps=pl.scan_parquet(self.cache_path["weekday_flows"]),
+            weekend_states_steps=pl.scan_parquet(self.cache_path["weekend_flows"]),
+            weekday_sinks=pl.scan_parquet(self.cache_path["weekday_sinks"]),
+            weekend_sinks=pl.scan_parquet(self.cache_path["weekend_sinks"]),
+            weekday_costs=pl.scan_parquet(self.cache_path["weekday_costs"]),
+            weekend_costs=pl.scan_parquet(self.cache_path["weekend_costs"]),
+            weekday_chains=pl.scan_parquet(self.cache_path["weekday_chains"]),
+            weekend_chains=pl.scan_parquet(self.cache_path["weekend_chains"]),
+            demand_groups=pl.scan_parquet(self.cache_path["demand_groups"]),
+            surveys=self.inputs["surveys"]
+        )
+              
+        if metric not in results.metrics_methods.keys():
+            available = ", ".join(results.metrics_methods.keys())
+            raise ValueError(f"Unknown evaluation metric: {metric}. Available metrics are: {available}")
+        
+        evaluation = results.metrics_methods[metric](**kwargs)
+        
+        return evaluation
         
 
     def plot_modal_share(self, zone="origin", mode="car", period="weekdays",
