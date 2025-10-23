@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 from importlib import resources
 import mobility
+from mobility.choice_models.destination_choice_model import DestinationChoiceModel
 from mobility.choice_models.utilities import Utilities
 from mobility.parsers.students_distribution import StudentsDistribution
 from mobility.parsers.schools_capacity_distribution import SchoolsCapacityDistribution
