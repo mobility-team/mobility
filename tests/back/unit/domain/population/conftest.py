@@ -10,7 +10,7 @@ import numpy as np
 
 
 # --------------------------------------------------------------------------------------
-# Create minimal dummy modules so mobility.population can import safely.
+# Create minimal dummy modules ONLY if the real mobility package/submodules are missing.
 # --------------------------------------------------------------------------------------
 
 def _ensure_dummy_module(module_name: str):
@@ -20,45 +20,70 @@ def _ensure_dummy_module(module_name: str):
     sys.modules[module_name] = module
     return module
 
-mobility_package = _ensure_dummy_module("mobility")
-mobility_package.__path__ = []
+# Try to import the real package; fall back to dummies only if import fails.
+try:
+    import mobility  # type: ignore
+    _HAVE_REAL_MOBILITY = True
+except Exception:
+    mobility = _ensure_dummy_module("mobility")
+    # provide a minimal __path__ to behave like a pkg (not strictly necessary,
+    # but avoids some loaders choking on packages without __path__)
+    if not hasattr(mobility, "__path__"):
+        mobility.__path__ = []  # type: ignore[attr-defined]
+    _HAVE_REAL_MOBILITY = False
 
-file_asset_module = _ensure_dummy_module("mobility.file_asset")
-parsers_module = _ensure_dummy_module("mobility.parsers")
-parsers_admin_module = _ensure_dummy_module("mobility.parsers.admin_boundaries")
-asset_module = _ensure_dummy_module("mobility.asset")
+# Provide dummies ONLY for missing submodules/classes.
+def _maybe_stub_module(qualified_name: str):
+    if qualified_name in sys.modules:
+        return sys.modules[qualified_name]
+    try:
+        __import__(qualified_name)
+        return sys.modules[qualified_name]
+    except Exception:
+        return _ensure_dummy_module(qualified_name)
 
-class _DummyFileAsset:
-    def __init__(self, *args, **kwargs):
-        self.inputs = args[0] if args else {}
-        self.cache_path = args[1] if len(args) > 1 else {}
+file_asset_module = _maybe_stub_module("mobility.file_asset")
+parsers_module = _maybe_stub_module("mobility.parsers")
+parsers_admin_module = _maybe_stub_module("mobility.parsers.admin_boundaries")
+asset_module = _maybe_stub_module("mobility.asset")
 
-setattr(file_asset_module, "FileAsset", _DummyFileAsset)
+# Only add stubs if attributes don’t exist yet (don’t overwrite real ones)
+if not hasattr(file_asset_module, "FileAsset"):
+    class _DummyFileAsset:
+        def __init__(self, *args, **kwargs):
+            self.inputs = args[0] if args else {}
+            self.cache_path = args[1] if len(args) > 1 else {}
+    setattr(file_asset_module, "FileAsset", _DummyFileAsset)
 
-class _DummyAsset:
-    def __init__(self, *args, **kwargs):
-        pass
-setattr(asset_module, "Asset", _DummyAsset)
+if not hasattr(asset_module, "Asset"):
+    class _DummyAsset:
+        def __init__(self, *args, **kwargs):
+            pass
+    setattr(asset_module, "Asset", _DummyAsset)
 
-# Defaults (overridden by fixtures below)
-class _DummyCityLegalPopulation:
-    def get(self):
-        return pd.DataFrame({"local_admin_unit_id": [], "legal_population": []})
-setattr(parsers_module, "CityLegalPopulation", _DummyCityLegalPopulation)
+if not hasattr(parsers_module, "CityLegalPopulation"):
+    class _DummyCityLegalPopulation:
+        def get(self):
+            return pd.DataFrame({"local_admin_unit_id": [], "legal_population": []})
+    setattr(parsers_module, "CityLegalPopulation", _DummyCityLegalPopulation)
 
-class _DummyCensusLocalizedIndividuals:
-    def __init__(self, region=None):
-        self.region = region
-    def get(self):
-        return pd.DataFrame()
-setattr(parsers_module, "CensusLocalizedIndividuals", _DummyCensusLocalizedIndividuals)
+if not hasattr(parsers_module, "CensusLocalizedIndividuals"):
+    class _DummyCensusLocalizedIndividuals:
+        def __init__(self, region=None):
+            self.region = region
+        def get(self):
+            return pd.DataFrame()
+    setattr(parsers_module, "CensusLocalizedIndividuals", _DummyCensusLocalizedIndividuals)
 
-def _dummy_regions_boundaries():
-    return pd.DataFrame({"INSEE_REG": [], "geometry": []})
-def _dummy_cities_boundaries():
-    return pd.DataFrame({"INSEE_COM": [], "INSEE_CAN": []})
-setattr(parsers_admin_module, "get_french_regions_boundaries", _dummy_regions_boundaries)
-setattr(parsers_admin_module, "get_french_cities_boundaries", _dummy_cities_boundaries)
+if not hasattr(parsers_admin_module, "get_french_regions_boundaries"):
+    def _dummy_regions_boundaries():
+        return pd.DataFrame({"INSEE_REG": [], "geometry": []})
+    setattr(parsers_admin_module, "get_french_regions_boundaries", _dummy_regions_boundaries)
+
+if not hasattr(parsers_admin_module, "get_french_cities_boundaries"):
+    def _dummy_cities_boundaries():
+        return pd.DataFrame({"INSEE_COM": [], "INSEE_CAN": []})
+    setattr(parsers_admin_module, "get_french_cities_boundaries", _dummy_cities_boundaries)
 
 
 # --------------------------------------------------------------------------------------
@@ -339,14 +364,13 @@ def patch_mobility_parsers(monkeypatch):
 
 
 # --------------------------------------------------------------------------------------
-# Import the module under test after bootstrapping exists.
+# Import the module under test after bootstrapping exists — NO reload.
 # --------------------------------------------------------------------------------------
 
 @pytest.fixture(scope="session", autouse=True)
 def _import_population_module_once():
-    import importlib  # noqa: F401
-    import mobility.population as _  # noqa: F401
-    importlib.reload(sys.modules["mobility.population"])
+    # Just import; do NOT reload (avoids 'spec not found' under installed wheels).
+    import mobility.population  # noqa: F401
 
 
 # --------------------------------------------------------------------------------------
