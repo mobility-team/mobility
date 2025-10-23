@@ -195,14 +195,16 @@ def fake_transport_zones():
     Minimal GeoDataFrame with columns typical code would expect.
     Geometry can be None for simplicity; CRS added for consistency.
 
-    Important: include 'local_admin_unit_id' so flag_inner_zones() can run.
-    We use 'ch-6621' because test_043 constructs TransportZones with that id.
+    Important: include 'local_admin_unit_id' and numeric 'x','y'
+    so flag_inner_zones() and any x/y-based logic can run.
     """
     df = pd.DataFrame(
         {
             "transport_zone_id": [1, 2],
             "urban_unit_category": ["core", "peripheral"],
             "local_admin_unit_id": ["ch-6621", "ch-6621"],  # required by flag_inner_zones
+            "x": [0.0, 1.0],  # required by downstream selection logic
+            "y": [0.0, 1.0],  # required by downstream selection logic
             "geometry": [None, None],
         }
     )
