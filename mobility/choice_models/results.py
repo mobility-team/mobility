@@ -7,6 +7,8 @@ import geopandas as gpd
 from typing import Literal
 from mobility.choice_models.evaluation.travel_costs_evaluation import TravelCostsEvaluation
 
+from mobility.choice_models.evaluation.car_traffic_evaluation import CarTrafficEvaluation
+
 class Results:
     
     def __init__(
@@ -21,7 +23,8 @@ class Results:
             weekend_costs,
             weekday_chains,
             weekend_chains,
-            surveys
+            surveys,
+            modes
         ):
         
         self.transport_zones = transport_zones
@@ -40,6 +43,7 @@ class Results:
         self.weekend_chains = weekend_chains
         
         self.surveys = surveys
+        self.modes = modes
         
         self.metrics_methods = {
             "global_metrics": self.global_metrics,
@@ -49,6 +53,7 @@ class Results:
             "distance_per_person": self.distance_per_person,
             "time_per_person": self.time_per_person,
             "immobility": self.immobility,
+            "car_traffic": self.car_traffic,
             "travel_costs": self.travel_costs
         }
         
@@ -793,6 +798,8 @@ class Results:
         
         return s.mask((s < lower) | (s > upper), np.nan)
     
+    def car_traffic(self, *args, **kwargs):
+        return CarTrafficEvaluation(self).get(*args, **kwargs)
     
     def travel_costs(self, *args, **kwargs):
         return TravelCostsEvaluation(self).get(*args, **kwargs)
