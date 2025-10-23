@@ -96,8 +96,12 @@ graph <- graph[graph$component == 1, ]
 
 # Remove Heavy Goods Vehicles only and ridesharing only ways
 if (mode == "car") {
-  graph <- graph[graph$hgv != "designated" | is.na(graph$hgv), ]
-  graph <- graph[graph$hov != "designated" | is.na(graph$hov), ]
+  if ("hgv" %in% colnames(graph)) {
+    graph <- graph[graph$hgv != "designated" | is.na(graph$hgv), ]
+  }
+  if ("hov" %in% colnames(graph)) {
+    graph <- graph[graph$hov != "designated" | is.na(graph$hov), ]
+  }
 }
 
 info(logger, "Extracting edges and nodes..")
