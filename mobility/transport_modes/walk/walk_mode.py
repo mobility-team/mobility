@@ -1,3 +1,5 @@
+from typing import List
+
 from mobility.transport_zones import TransportZones
 from mobility.transport_costs.path_travel_costs import PathTravelCosts
 from mobility.transport_modes.transport_mode import TransportMode
@@ -14,7 +16,8 @@ class WalkMode(TransportMode):
         transport_zones: TransportZones,
         routing_parameters: PathRoutingParameters = None,
         osm_capacity_parameters: OSMCapacityParameters = None,
-        generalized_cost_parameters: GeneralizedCostParameters = None
+        generalized_cost_parameters: GeneralizedCostParameters = None,
+        survey_ids: List[str] = ["1.10", "1.11", "1.13"]
     ):
         
         mode_name = "walk"
@@ -35,8 +38,24 @@ class WalkMode(TransportMode):
                 cost_of_time=CostOfTimeParameters()
             )
         
-        travel_costs = PathTravelCosts(mode_name, transport_zones, routing_parameters, osm_capacity_parameters)
-        generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters, mode_name)
-        super().__init__(mode_name, travel_costs, generalized_cost)
+        travel_costs = PathTravelCosts(
+            mode_name,
+            transport_zones,
+            routing_parameters,
+            osm_capacity_parameters
+        )
+        
+        generalized_cost = PathGeneralizedCost(
+            travel_costs,
+            generalized_cost_parameters,
+            mode_name
+        )
+        
+        super().__init__(
+            mode_name,
+            travel_costs,
+            generalized_cost, 
+            survey_ids=survey_ids
+        )
         
 

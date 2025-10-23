@@ -1,4 +1,5 @@
-import logging 
+import logging
+import math
 
 import polars as pl
 
@@ -60,6 +61,7 @@ class StateUpdater:
             motive_dur,
             iteration,
             parameters.activity_utility_coeff,
+            parameters.min_activity_time_constant,
             tmp_folders
         )
         
@@ -67,12 +69,16 @@ class StateUpdater:
             possible_states_steps,
             home_night_dur,
             parameters.stay_home_utility_coeff,
-            stay_home_state
+            stay_home_state,
+            parameters.min_activity_time_constant
         )
         
         transition_prob = self.get_transition_probabilities(current_states, possible_states_utility)
         current_states = self.apply_transitions(current_states, transition_prob)
         current_states_steps = self.get_current_states_steps(current_states, possible_states_steps)
+        
+        if current_states["n_persons"].is_null().any() or current_states["n_persons"].is_nan().any():
+            raise ValueError("Null or NaN values in the n_persons column, something went wrong.")
         
         return current_states, current_states_steps
     
@@ -86,6 +92,7 @@ class StateUpdater:
             motive_dur,
             iteration,
             activity_utility_coeff,
+            min_activity_time_constant,
             tmp_folders
         ):
         """Enumerate candidate state steps and compute per-step utilities.
@@ -163,14 +170,16 @@ class StateUpdater:
             .join(sinks.select(["to", "motive", "k_saturation_utility"]).lazy(), on=["to", "motive"], how="left")
             
             .with_columns(
-                duration_per_pers=pl.max_horizontal([
-                    pl.col("duration_per_pers"),
-                    pl.col("mean_duration_per_pers")*0.1
-                  ])
+                # duration_per_pers=pl.max_horizontal([
+                #     pl.col("duration_per_pers"),
+                #     pl.col("mean_duration_per_pers")*0.1
+                # ]),
+                k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0),
+                min_activity_time=pl.col("mean_duration_per_pers")*math.exp(-min_activity_time_constant)
             )
             .with_columns(
                 utility=( 
-                    pl.col("k_saturation_utility")*activity_utility_coeff*pl.col("mean_duration_per_pers")*(pl.col("duration_per_pers")/0.1/pl.col("mean_duration_per_pers")).log()
+                    pl.col("k_saturation_utility")*activity_utility_coeff*pl.col("mean_duration_per_pers")*(pl.col("duration_per_pers")/pl.col("min_activity_time")).log().clip(0.0)
                     - pl.col("cost")
                 )
             )
@@ -180,7 +189,14 @@ class StateUpdater:
         return possible_states_steps
         
     
-    def get_possible_states_utility(self, possible_states_steps, home_night_dur, stay_home_utility_coeff, stay_home_state):
+    def get_possible_states_utility(
+            self,
+            possible_states_steps,
+            home_night_dur,
+            stay_home_utility_coeff,
+            stay_home_state,
+            min_activity_time_constant
+        ):
         """Aggregate per-step utilities to state-level utilities (incl. home-night).
 
         Sums step utilities per state, adds home-night utility, prunes dominated
@@ -208,15 +224,12 @@ class StateUpdater:
             
             .join(home_night_dur.lazy(), on="csp")
             .with_columns(
-                home_night_per_pers=pl.max_horizontal([
-                    pl.col("home_night_per_pers"),
-                    pl.col("mean_home_night_per_pers")*0.1
-                ])
+                min_activity_time=pl.col("mean_home_night_per_pers")*math.exp(-min_activity_time_constant)
             )
             .with_columns(
                 utility_stay_home=( 
                     stay_home_utility_coeff*pl.col("mean_home_night_per_pers")
-                    * (pl.col("home_night_per_pers")/0.1/pl.col("mean_home_night_per_pers")).log()
+                    * (pl.col("home_night_per_pers")/pl.col("min_activity_time")).log().clip(0.0)
                 )
             )
             
@@ -244,7 +257,6 @@ class StateUpdater:
             ])
             
         )
-        
         
         return possible_states_utility
     
@@ -451,7 +463,7 @@ class StateUpdater:
             )
             
             costs_aggregator.update(od_flows_by_mode)
-            costs = self.get_current_costs(costs_aggregator, congestion=True)
+            costs = costs_aggregator.get(congestion=True)
 
         return costs
     
@@ -460,7 +472,7 @@ class StateUpdater:
         """Recompute remaining opportunities per (motive, destination).
     
         Subtracts assigned durations from capacities, computes availability and a
-        saturation utility factor, and drops fully saturated destinations.
+        saturation utility factor.
     
         Args:
             current_states_steps (pl.DataFrame): Step-level assigned durations.
@@ -478,30 +490,30 @@ class StateUpdater:
         remaining_sinks = (
         
             current_states_steps
-            .filter(pl.col("motive_seq_id") != 0)
+            .filter(
+                (pl.col("motive_seq_id") != 0) & 
+                (pl.col("motive") != "home")
+            )
             .group_by(["to", "motive"])
-            .agg(pl.col("duration").sum())
+            .agg(
+                sink_occupation=pl.col("duration").sum()
+            )
             .join(sinks, on=["to", "motive"], how="full", coalesce=True)
             .with_columns(
-                sink_occupation=( 
-                    pl.col("sink_capacity").fill_null(0.0).fill_nan(0.0)
-                    -
-                    pl.col("duration").fill_null(0.0).fill_nan(0.0)
-                )
+                sink_occupation=pl.col("sink_occupation").fill_null(0.0)
             )
             .with_columns(
                 k=pl.col("sink_occupation")/pl.col("sink_capacity"),
-                sink_available=pl.col("sink_capacity") - pl.col("sink_occupation")
+                sink_available=(pl.col("sink_capacity") - pl.col("sink_occupation")).clip(0.0)
             )
             .with_columns(
                 k_saturation_utility=(
-                    pl.when(pl.col("k") < 1.0)
+                    pl.when((pl.col("k") < 1.0) | pl.col("k").is_null())
                     .then(1.0)
                     .otherwise((1.0 - pl.col("k")).exp())
                 )
             )
             .select(["motive", "to", "sink_capacity", "sink_available", "k_saturation_utility"])
-            .filter(pl.col("sink_available") > 0.0)
             
         )
         

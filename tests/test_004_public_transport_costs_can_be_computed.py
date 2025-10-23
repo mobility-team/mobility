@@ -53,5 +53,7 @@ def test_004_public_transport_costs_can_be_computed(test_data):
     )
 
     costs = public_transport.travel_costs.get()
+    gen_costs = public_transport.generalized_cost.get(["distance", "time"])
     
     assert costs.shape[0] > 0
+    assert gen_costs.shape[0] > 0

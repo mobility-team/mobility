@@ -34,13 +34,16 @@ class StudyArea(FileAsset):
     def __init__(
             self,
             local_admin_unit_id: Union[str, List[str]],
-            radius: int = 40
+            radius: int = 40,
+            cutout_geometries: gpd.GeoDataFrame = None
         ):
 
         inputs = {
+            "version": "1",
             "local_admin_units": LocalAdminUnits(),
             "local_admin_unit_id": local_admin_unit_id,
-            "radius": radius
+            "radius": radius,
+            "cutout_geometries": cutout_geometries
         }
 
         cache_path = {
@@ -101,10 +104,16 @@ class StudyArea(FileAsset):
              "urban_unit_category", "geometry"]
         ].copy()
         
-        local_admin_units.to_file(self.cache_path["polygons"], driver="GPKG", index=False)
-
+        
         self.create_study_area_boundary(local_admin_units)
-
+        
+        local_admin_units = self.apply_cutout(
+            local_admin_units,
+            self.inputs["cutout_geometries"]
+        )
+        
+        local_admin_units.to_file(self.cache_path["polygons"], driver="GPKG", index=False)
+        
         return local_admin_units
 
 
@@ -168,6 +177,15 @@ class StudyArea(FileAsset):
             geojson.dump(boundary_geojson, f)
         
         return None
+    
+    
+        
+    def apply_cutout(self, study_area, cutout_geometries):
+        
+        if cutout_geometries is not None:
+            study_area = gpd.overlay(study_area, cutout_geometries, how="difference")
+            
+        return study_area
     
         
         

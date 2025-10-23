@@ -43,14 +43,6 @@ class FileAsset(Asset):
             self.cache_path = {k: cp.parent / (self.inputs_hash + "-" + cp.name) for k, cp in cache_path.items()}
             self.hash_path = self.cache_path[list(self.cache_path.keys())[0]].with_suffix(".inputs-hash")
             
-            for k in self.cache_path.keys():
-                
-                self.update_ui_db(
-                    cache_path[k].name,
-                    self.inputs_hash,
-                    self.cache_path[k]
-                )
-            
         else:
             
             cache_path = pathlib.Path(cache_path)
@@ -61,12 +53,6 @@ class FileAsset(Asset):
             self.hash_path = cache_path.with_suffix(".inputs-hash")
             if not cache_path.parent.exists():
                 os.makedirs(cache_path.parent)
-                
-            self.update_ui_db(
-                basename,
-                self.inputs_hash,
-                cache_path
-            )
             
         self.update_hash(self.inputs_hash)
     
@@ -80,12 +66,18 @@ class FileAsset(Asset):
     
     def get(self, *args, **kwargs) -> Any:
         """
-        Retrieves the Asset, either from the cache or by creating a new one if the
-        cache is outdated or non-existent.
-
+        Retrieve the asset, ensuring that all upstream dependencies are up to date.
+    
+        This method first checks and rebuilds any ancestor FileAssets that are stale,
+        then retrieves the current asset. If the asset itself is outdated or missing,
+        it is rebuilt and its input hash is updated.
+    
         Returns:
-            The retrieved or newly created Asset.
+            Any: The cached or newly created asset.
         """
+        
+        self.update_ancestors_if_needed()
+                
         if self.is_update_needed():
             asset = self.create_and_get_asset(*args, **kwargs)
             self.update_hash(self.inputs_hash)
@@ -95,20 +87,51 @@ class FileAsset(Asset):
 
     def is_update_needed(self) -> bool:
         """
-        Checks if an update to the Asset is needed based on the current inputs hash,
-        or the non existence of the output file.
-
+        Determine whether the asset requires an update.
+    
+        An update is needed if the recorded input hash differs from the current one
+        or if the cached output file(s) are missing.
+    
         Returns:
-            True if an update is needed, False otherwise.
+            bool: True if the asset is outdated or missing, False otherwise.
         """
+        return self.inputs_changed() or self.assets_missing()
+    
+    def inputs_changed(self):
+        """
+        Check whether the asset's input hash differs from the cached version.
         
-        same_hashes = self.get_cached_hash() == self.inputs_hash
+        Returns:
+            bool: True if the cached hash does not match the current input hash.
+        """
+        return self.get_cached_hash() != self.inputs_hash
         
+    def assets_missing(self):
+        """
+        Check whether the cached output file(s) exist.
+        
+        Returns:
+            bool: True if any expected cache file is missing, False otherwise.
+        """
         if isinstance(self.cache_path, dict):
-            file_exists = all([cp.exists() for cp in self.cache_path.values()])
+            file_exists = all(cp.exists() for cp in self.cache_path.values())
         else:
             file_exists = self.cache_path.exists()
+        return not file_exists
             
+    def update_ancestors_if_needed(self):
+        """
+        Identify and rebuild stale ancestor FileAssets in dependency order.
+        
+        Builds a directed acyclic graph (DAG) of upstream FileAssets and determines
+        which ones require updates. Those assets, along with all their descendants,
+        are rebuilt in topological order. Each rebuilt asset also has its input hash
+        refreshed after creation.
+        
+        Raises:
+            RuntimeError: If a dependency cycle is detected among FileAssets.
+        """
+        
         # Build a graph of input assets
         graph = nx.DiGraph()
         
@@ -134,16 +157,18 @@ class FileAsset(Asset):
                 for descendant in nx.descendants(graph, asset):
                     update_needed_assets.add(descendant)
     
-        topo_order = list(nx.topological_sort(graph))
+        try:
+            topo_order = list(nx.topological_sort(graph))
+        except nx.NetworkXUnfeasible:
+            raise RuntimeError("Dependency cycle detected among FileAssets")
         
         assets = [asset for asset in topo_order if asset in update_needed_assets]
         
         for asset in assets:
-            asset.get()
-            
-        upstream_updates = len(assets) > 0
+            asset.create_and_get_asset()
+            asset.update_hash(asset.inputs_hash)
         
-        return same_hashes is False or file_exists is False or upstream_updates is True
+        return None
         
     def get_cached_hash(self) -> str:
         """
@@ -181,32 +206,4 @@ class FileAsset(Asset):
             path = pathlib.Path(self.cache_path)
             if path.exists():
                 path.unlink()
-            
-            
-    def update_ui_db(self, file_name: str, inputs_hash: str, cache_path: pathlib.Path) -> None:
-        
-        db_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "ui.sqlite"
-        
-        # with sqlite3.connect(db_path) as conn:
-            
-        #     cursor = conn.cursor()
-    
-        #     cursor.execute("""
-        #         CREATE TABLE IF NOT EXISTS ui_cache (
-        #             id INTEGER PRIMARY KEY AUTOINCREMENT,
-        #             file_name TEXT NOT NULL,
-        #             inputs_hash TEXT NOT NULL,
-        #             cache_path TEXT NOT NULL,
-        #             UNIQUE(file_name, inputs_hash)
-        #         )
-        #     """)
-            
-        #     cursor.execute("""
-        #         INSERT INTO ui_cache (file_name, inputs_hash, cache_path)
-        #         VALUES (?, ?, ?)
-        #         ON CONFLICT(file_name, inputs_hash) 
-        #         DO UPDATE SET cache_path = excluded.cache_path
-        #     """, (file_name, inputs_hash, str(cache_path)))
-        
-        #     conn.commit()
             

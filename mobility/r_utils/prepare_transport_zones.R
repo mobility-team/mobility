@@ -110,6 +110,7 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
   buildings <- st_read(
     file.path(osm_buildings_fp, lau_id, "building.pbf"),
     query = "select osm_id from multipolygons",
+    layer = "multipolygons",
     quiet = TRUE
   )
   
