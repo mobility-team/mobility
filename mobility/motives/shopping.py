@@ -33,8 +33,6 @@ class ShoppingMotive(Motive):
 
             transport_zones = transport_zones.get().drop("geometry", axis=1)
             transport_zones["country"] = transport_zones["local_admin_unit_id"].str[0:2]
-            
-            tz_lau_ids = transport_zones["local_admin_unit_id"].unique().tolist()
 
             opportunities = ShopsTurnoverDistribution().get()
             opportunities = opportunities.groupby("local_admin_unit_id", as_index=False)[["turnover"]].sum()
@@ -51,7 +49,10 @@ class ShoppingMotive(Motive):
                 opportunities[["transport_zone_id", "n_opp"]]
                 .rename({"transport_zone_id": "to"}, axis=1)
             )
+            
+        opportunities = pl.from_pandas(opportunities)
+        opportunities = self.enforce_opportunities_schema(opportunities)
 
-        return pl.from_pandas(opportunities)
+        return opportunities
     
 
