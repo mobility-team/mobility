@@ -48,5 +48,8 @@ class LeisureMotive(Motive):
             .rename({"transport_zone_id": "to"}, axis=1)
         )
 
-        return pl.from_pandas(opportunities)
+        opportunities = pl.from_pandas(opportunities)
+        opportunities = self.enforce_opportunities_schema(opportunities)
     
+        return opportunities
+            
