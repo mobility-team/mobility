@@ -5,6 +5,8 @@ import plotly.express as px
 
 from typing import Literal
 
+from mobility.choice_models.evaluation.car_congestion_evaluation import CarCongestionEvaluation
+
 class Results:
     
     def __init__(
@@ -19,7 +21,8 @@ class Results:
             weekend_costs,
             weekday_chains,
             weekend_chains,
-            surveys
+            surveys,
+            modes
         ):
         
         self.transport_zones = transport_zones
@@ -38,6 +41,7 @@ class Results:
         self.weekend_chains = weekend_chains
         
         self.surveys = surveys
+        self.modes = modes
         
         self.metrics_methods = {
             "global_metrics": self.global_metrics,
@@ -46,7 +50,8 @@ class Results:
             "trip_count_by_demand_group": self.trip_count_by_demand_group,
             "distance_per_person": self.distance_per_person,
             "time_per_person": self.time_per_person,
-            "immobility": self.immobility
+            "immobility": self.immobility,
+            "car_congestion": self.car_congestion
         }
         
         
@@ -783,3 +788,5 @@ class Results:
         
         return s.mask((s < lower) | (s > upper), np.nan)
     
+    def car_congestion(self, *args, **kwargs):
+        return CarCongestionEvaluation(self).get(*args, **kwargs)
