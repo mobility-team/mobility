@@ -1,8 +1,6 @@
 import pandas as pd
 import polars as pl
 
-from typing import List
-
 from mobility.motives.motive import Motive
 from mobility.population import Population
 
@@ -35,10 +33,6 @@ class OtherMotive(Motive):
 
         elif self.population is not None:
 
-            transport_zones = transport_zones.get().drop("geometry", axis=1)
-
-            tz_ids = transport_zones["transport_zone_id"].unique().tolist()
-
             opportunities = (
                 pl.scan_parquet(self.population.get()["population_groups"])
                 .group_by(["transport_zone_id"])
@@ -50,5 +44,9 @@ class OtherMotive(Motive):
                 .to_pandas()
             )
 
-        return pl.from_pandas(opportunities)
+        opportunities = pl.from_pandas(opportunities)
+        opportunities = self.enforce_opportunities_schema(opportunities)
+
+        return opportunities
+            
     
