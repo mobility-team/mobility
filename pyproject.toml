@@ -23,7 +23,8 @@ dependencies = [
   "pyogrio",
   "polars",
   "psutil",
-  "networkx"
+  "networkx",
+  "plotly"
 ]
 
 requires-python = ">=3.11"
@@ -72,4 +73,6 @@ mobility = [
 ]
 
 [tool.setuptools.packages.find]
+where = ["."]
+include = ["mobility*"]
 exclude = ["certs", "certs.*"]
