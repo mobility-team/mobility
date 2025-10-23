@@ -248,6 +248,12 @@ def dependency_fakes(monkeypatch, tmp_path):
             self.local_admin_unit_id = local_admin_unit_id
             self.radius = radius
             self.cutout_geometries = cutout_geometries
+            # expose inputs so TZ code can read self.study_area.inputs["local_admin_unit_id"]
+            self.inputs = {
+                "local_admin_unit_id": local_admin_unit_id,
+                "radius": radius,
+                "cutout_geometries": cutout_geometries,
+            }
             # TransportZones.create_and_get_asset expects a dict-like cache_path with keys like "polygons"
             self.cache_path = {
                 "polygons": str(tmp_path / "study_area_polygons.gpkg"),
