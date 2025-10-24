@@ -11,8 +11,22 @@ from sklearn.neighbors import NearestNeighbors
 from mobility.r_utils.r_script import RScript
 
 class RoutingEvaluation:
+    """
+    Evaluate routing results by generating and analyzing route geometries based on graph data.
+    
+    This class handles route conversion, snapping to transport graphs, computing shortest paths
+    using cpprouting, and exporting routes as GeoPackage layers for visualization or analysis.
+    """
     
     def __init__(self, results):
+        """
+        Initialize the routing evaluation with precomputed model results.
+        
+        Parameters
+        ----------
+        results : object
+            Model results containing transport zones, modes, and routing graphs.
+        """
         self.results = results
     
     
@@ -21,6 +35,21 @@ class RoutingEvaluation:
             routes: pl.DataFrame,
             weekday: bool = True
         ):
+        """
+        Generate and evaluate route paths on a given day type (weekday or weekend).
+        
+        Parameters
+        ----------
+        routes : pl.DataFrame
+            Route list with origin and destination coordinates.
+        weekday : bool, optional
+            If True, evaluate weekday conditions (default is True).
+        
+        Returns
+        -------
+        gpd.GeoDataFrame
+            Route geometries with travel attributes.
+        """
         
         graph = self.get_mode_graph(self.results.modes, "car")
         transport_zones = self.results.transport_zones
@@ -51,6 +80,26 @@ class RoutingEvaluation:
     
     
     def get_mode_graph(self, modes, mode_name):
+        """
+        Retrieve a mode-specific graph from available transport modes.
+        
+        Parameters
+        ----------
+        modes : list
+            List of transport modes in the model.
+        mode_name : str
+            Name of the mode to retrieve (e.g., 'car').
+        
+        Returns
+        -------
+        object
+            The routing graph corresponding to the selected mode.
+        
+        Raises
+        ------
+        ValueError
+            If no mode with the given name is found.
+        """
         
         mode = [m for m in modes if m.name == mode_name]
         
@@ -63,6 +112,21 @@ class RoutingEvaluation:
     
     
     def get_vertices(self, graph_folder, graph_hash):
+        """
+        Load vertex data from a cached graph.
+        
+        Parameters
+        ----------
+        graph_folder : Path
+            Folder containing cached graph files.
+        graph_hash : str
+            Unique hash identifier of the graph.
+        
+        Returns
+        -------
+        pl.DataFrame
+            Vertex table with coordinates and vertex indices.
+        """
         
         vertices_path = graph_folder.parent / (graph_hash + "-vertices.parquet")
         vertices = ( 
@@ -75,6 +139,20 @@ class RoutingEvaluation:
     
     
     def convert_to_dataframe(self, routes: List):
+        """
+        Convert a list of route dictionaries to a Polars DataFrame.
+        
+        Parameters
+        ----------
+        routes : list of dict
+            List of route objects containing origin/destination names and coordinates.
+        
+        Returns
+        -------
+        pl.DataFrame
+            Structured route DataFrame with indexed rows.
+        """
+
 
         routes = [
             {
@@ -100,20 +178,21 @@ class RoutingEvaluation:
     
     def join_transport_zone_info(self, routes, transport_zones):
         """
-        Assign origin and destination transport zone IDs to each route.
-        
+        Assign transport zone IDs to origin and destination coordinates.
+
         Parameters
         ----------
-        ref_costs : pl.DataFrame
-            Reference travel cost DataFrame with coordinates.
+        routes : pl.DataFrame
+            Route DataFrame containing coordinates.
         transport_zones : gpd.GeoDataFrame
-            Transport zone polygons with an ID column.
-        
+            Transport zones with geometry and identifiers.
+
         Returns
         -------
         pl.DataFrame
-            Input DataFrame with added 'from' and 'to' zone identifiers.
+            Routes DataFrame with associated zone IDs and cluster counts.
         """
+    
         
         transport_zones = transport_zones.get()
         
@@ -169,8 +248,28 @@ class RoutingEvaluation:
     
     
     def snap_routes_to_graph(self, routes, graph, vertices, transport_zones):
+        """
+        Attach route endpoints to the nearest graph vertices.
         
-        buildings = self.snap_buildings_to_graph(transport_zones, graph, vertices)
+        Parameters
+        ----------
+        routes : pl.DataFrame
+            Route list with origin and destination transport zones.
+        graph : object
+            Routing graph used for snapping.
+        vertices : pl.DataFrame
+            Graph vertices with coordinates.
+        transport_zones : object
+            Cached transport zones with building information.
+        
+        Returns
+        -------
+        pl.DataFrame
+            Route table with matched vertex IDs for origin and destination.
+        """
+        
+        buildings = self.get_buildings(transport_zones)
+        buildings = self.find_nearest_vertex(buildings, vertices)
         
         routes = (
             
@@ -184,17 +283,22 @@ class RoutingEvaluation:
         )
         
         return routes
-        
-        
-    def snap_buildings_to_graph(self, transport_zones, graph, vertices):
-
-        buildings = self.get_buildings(transport_zones)
-        buildings = self.find_nearest_vertex(buildings, vertices)
-        
-        return buildings
     
     
     def get_graph_folder_and_hash(self, graph):
+        """
+        Extract graph folder path and hash identifier from a cached graph file.
+        
+        Parameters
+        ----------
+        graph : object
+            Routing graph with a cache_path attribute.
+        
+        Returns
+        -------
+        tuple
+            (Path to graph folder, graph hash string).
+        """
         
         graph_file_token = graph.cache_path
         graph_file_folder = graph_file_token.parent
@@ -204,6 +308,19 @@ class RoutingEvaluation:
     
     
     def get_buildings(self, transport_zones):
+        """
+        Load building data linked to transport zones.
+        
+        Parameters
+        ----------
+        transport_zones : object
+            Cached transport zones object with a known cache path.
+        
+        Returns
+        -------
+        pl.DataFrame
+            Building coordinates with building IDs and no weights.
+        """
         
         transport_zones_path = transport_zones.cache_path
         transport_zones_hash = transport_zones_path.stem.split("-")[0]
@@ -223,6 +340,21 @@ class RoutingEvaluation:
     
     
     def find_nearest_vertex(self, buildings, vertices):
+        """
+        Find the nearest graph vertex for each building.
+        
+        Parameters
+        ----------
+        buildings : pl.DataFrame
+            Building coordinates.
+        vertices : pl.DataFrame
+            Graph vertices with coordinates.
+        
+        Returns
+        -------
+        pl.DataFrame
+            Buildings DataFrame with vertex_id of the nearest vertex.
+        """
         
         nn_model = ( 
             NearestNeighbors(
@@ -248,6 +380,21 @@ class RoutingEvaluation:
         
 
     def run_cpprouting_get_path_pair(self, routes, graph):
+        """
+        Compute shortest paths between all origin-destination pairs using cpprouting (via R).
+        
+        Parameters
+        ----------
+        routes : pl.DataFrame
+            Routes with vertex_id pairs.
+        graph : object
+            Routing graph object.
+        
+        Returns
+        -------
+        pl.DataFrame
+            Paths with vertex sequences and path metadata.
+        """
         
         unique_ods = routes.select(["vertex_id", "vertex_id_to"]).unique()
         
@@ -269,6 +416,21 @@ class RoutingEvaluation:
     
     
     def get_graph_data(self, graph_folder, graph_hash):
+        """
+        Load graph edges and attributes (time, distance, speed) from cached parquet files.
+        
+        Parameters
+        ----------
+        graph_folder : Path
+            Graph data folder.
+        graph_hash : str
+            Hash identifier of the graph.
+        
+        Returns
+        -------
+        tuple
+            (graph_data : pl.DataFrame, graph_dict : pl.DataFrame)
+        """
         
         graph_data_path = graph_folder / (graph_hash + "data.parquet")
         graph_dict_path = graph_folder / (graph_hash + "dict.parquet")
@@ -294,6 +456,27 @@ class RoutingEvaluation:
     
     
     def create_geopandas_paths(self, cpprouting_paths, graph_data, graph_dict, vertices, routes):
+        """
+        Convert cpprouting path results into GeoDataFrame with travel attributes.
+        
+        Parameters
+        ----------
+        cpprouting_paths : pl.DataFrame
+            Computed paths with vertex sequences.
+        graph_data : pl.DataFrame
+            Graph edge attributes.
+        graph_dict : pl.DataFrame
+            Mapping between vertex references and graph IDs.
+        vertices : pl.DataFrame
+            Graph vertices with coordinates.
+        routes : pl.DataFrame
+            Original route definitions.
+        
+        Returns
+        -------
+        gpd.GeoDataFrame
+            Path geometries with travel times, distances, and speeds.
+        """
         
         paths = ( 
             
@@ -362,6 +545,20 @@ class RoutingEvaluation:
     
     
     def save_gpkg(self, gdf, path):
+        """
+        Save route geometries to a GeoPackage file.
+        
+        Parameters
+        ----------
+        gdf : gpd.GeoDataFrame
+            Geodataframe of route geometries.
+        path : Path
+            Output file path (.gpkg).
+        
+        Returns
+        -------
+        None
+        """
         
         gdf.to_file(
             path,
