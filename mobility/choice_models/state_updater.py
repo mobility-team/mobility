@@ -73,9 +73,22 @@ class StateUpdater:
             parameters.min_activity_time_constant
         )
         
-        transition_prob = self.get_transition_probabilities(current_states, possible_states_utility)
-        current_states = self.apply_transitions(current_states, transition_prob)
-        current_states_steps = self.get_current_states_steps(current_states, possible_states_steps)
+        transition_prob = self.get_transition_probabilities(
+            current_states,
+            possible_states_utility,
+            parameters.transition_cost
+        )
+        
+        current_states = self.apply_transitions(
+            current_states,
+            transition_prob
+        )
+        
+        current_states_steps = self.get_current_states_steps(
+            current_states,
+            possible_states_steps
+        )
+        
         
         if current_states["n_persons"].is_null().any() or current_states["n_persons"].is_nan().any():
             raise ValueError("Null or NaN values in the n_persons column, something went wrong.")
@@ -257,7 +270,7 @@ class StateUpdater:
     
     
     
-    def get_transition_probabilities(self, current_states, possible_states_utility): 
+    def get_transition_probabilities(self, current_states, possible_states_utility, transition_cost): 
         """Compute transition probabilities from current to candidate states.
 
         Uses softmax over Δutility (with stabilization and pruning) within each
@@ -314,7 +327,7 @@ class StateUpdater:
                             (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
                         )
                     ).then(
-                        pl.col("utility_trans") + 5.0
+                        pl.col("utility_trans") + transition_cost
                     ).otherwise(
                         pl.col("utility_trans")
                     )
@@ -484,15 +497,22 @@ class StateUpdater:
         return costs
     
     
-    def get_new_sinks(self, current_states_steps, sinks):
+    def get_new_sinks(
+            self,
+            current_states_steps,
+            sinks,
+            saturation_fun_beta: float = 4.0,
+            saturation_fun_ref_level: float = 1.0
+        ):
         """Recompute remaining opportunities per (motive, destination).
     
         Subtracts assigned durations from capacities, computes availability and a
-        saturation utility factor.
+        saturation utility factor (= 1 - k^beta / ref_level^beta).
     
         Args:
             current_states_steps (pl.DataFrame): Step-level assigned durations.
             sinks (pl.DataFrame): Initial capacities per (motive,to).
+            saturation_fun_beta (float): 
     
         Returns:
             pl.DataFrame: Updated sinks with
@@ -526,7 +546,7 @@ class StateUpdater:
                 pl.col("sink_available") > 0.0
             )
             .with_columns(
-                k_saturation_utility=(1.0 - pl.col("k").pow(4)/(1.0**4)).clip(0.0)
+                k_saturation_utility=(1.0 - pl.col("k").pow(saturation_fun_beta)/(saturation_fun_ref_level**saturation_fun_beta)).clip(0.0)
             )
             .select(["motive", "to", "sink_capacity", "sink_available", "k_saturation_utility"])
             

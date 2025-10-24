@@ -343,7 +343,9 @@ class PopulationTrips(FileAsset):
             
             remaining_sinks = self.state_updater.get_new_sinks(
                 current_states_steps,
-                sinks
+                sinks,
+                parameters.saturation_fun_beta,
+                parameters.saturation_fun_ref_level
             )
             
             
