@@ -24,7 +24,8 @@ dependencies = [
   "polars",
   "psutil",
   "networkx",
-  "plotly"
+  "plotly",
+  "scikit-learn"
 ]
 
 requires-python = ">=3.11"
