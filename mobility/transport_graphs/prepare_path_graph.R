@@ -78,7 +78,7 @@ write(toJSON(wt_profiles), wt_fp)
 
 
 if (mode == "car") {
-  keep_cols <- c("hgv", "hov")
+  keep_cols <- c("hgv", "hov", "access")
 } else {
   keep_cols <- NULL
 }
@@ -101,6 +101,9 @@ if (mode == "car") {
   }
   if ("hov" %in% colnames(graph)) {
     graph <- graph[graph$hov != "designated" | is.na(graph$hov), ]
+  }
+  if ("access" %in% colnames(graph)) {
+    graph <- graph[!(graph$access %in% c("private", "no")) | is.na(graph$access), ]
   }
 }
 
