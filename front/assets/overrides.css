@@ -1,0 +1,8 @@
+/* Masquer le bouton (flèche) du panneau d'attribution MapLibre/Mapbox */
+.maplibregl-control-container {
+  display: none !important;
+  padding: 2px 6px !important;
+  margin: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+}

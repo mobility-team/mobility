@@ -514,8 +514,7 @@ class DestinationSequenceSampler:
             )
             .select(["demand_group_id", "home_zone_id", "motive_seq_id", "motive", "anchor_to", "from", "to"])
         )
-        
+               
         steps = pl.concat([steps, steps_anchor])
-            
         
         return steps
