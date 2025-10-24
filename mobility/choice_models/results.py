@@ -2,12 +2,11 @@ import json
 import polars as pl
 import numpy as np
 import plotly.express as px
-import geopandas as gpd
 
 from typing import Literal
 from mobility.choice_models.evaluation.travel_costs_evaluation import TravelCostsEvaluation
-
 from mobility.choice_models.evaluation.car_traffic_evaluation import CarTrafficEvaluation
+from mobility.choice_models.evaluation.routing_evaluation import RoutingEvaluation
 
 class Results:
     
@@ -54,7 +53,8 @@ class Results:
             "time_per_person": self.time_per_person,
             "immobility": self.immobility,
             "car_traffic": self.car_traffic,
-            "travel_costs": self.travel_costs
+            "travel_costs": self.travel_costs,
+            "routing": self.routing
         }
         
         
@@ -804,7 +804,9 @@ class Results:
     def travel_costs(self, *args, **kwargs):
         return TravelCostsEvaluation(self).get(*args, **kwargs)
         
-        
+    def routing(self, *args, **kwargs):
+        return RoutingEvaluation(self).get(*args, **kwargs)
+         
         
         
         

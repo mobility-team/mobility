@@ -32,7 +32,7 @@ class TravelCostsEvaluation:
             ref_costs: List,
             variable: str = "time",
             weekday: bool = True,
-            plot=True
+            plot: bool = True
         ):
         """
         Compares the travel costs (time, distance) of the model with reference 
