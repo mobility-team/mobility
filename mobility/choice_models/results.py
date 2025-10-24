@@ -2,8 +2,12 @@ import json
 import polars as pl
 import numpy as np
 import plotly.express as px
+import geopandas as gpd
 
 from typing import Literal
+from mobility.choice_models.evaluation.travel_costs_evaluation import TravelCostsEvaluation
+from mobility.choice_models.evaluation.car_traffic_evaluation import CarTrafficEvaluation
+
 
 class Results:
     
@@ -19,7 +23,8 @@ class Results:
             weekend_costs,
             weekday_chains,
             weekend_chains,
-            surveys
+            surveys,
+            modes
         ):
         
         self.transport_zones = transport_zones
@@ -38,6 +43,7 @@ class Results:
         self.weekend_chains = weekend_chains
         
         self.surveys = surveys
+        self.modes = modes
         
         self.metrics_methods = {
             "global_metrics": self.global_metrics,
@@ -46,7 +52,9 @@ class Results:
             "trip_count_by_demand_group": self.trip_count_by_demand_group,
             "distance_per_person": self.distance_per_person,
             "time_per_person": self.time_per_person,
-            "immobility": self.immobility
+            "immobility": self.immobility,
+            "car_traffic": self.car_traffic,
+            "travel_costs": self.travel_costs
         }
         
         
@@ -462,6 +470,7 @@ class Results:
             
             tz = self.transport_zones.get()
             tz = tz.to_crs(4326)
+            tz = tz.merge(transport_zones_df.collect().to_pandas(), on="transport_zone_id")
             
             tz = tz.merge(
                 sink_occupation.filter(pl.col("motive") == plot_motive).to_pandas(),
@@ -537,6 +546,7 @@ class Results:
             
             tz = self.transport_zones.get()
             tz = tz.to_crs(4326)
+            tz = tz.merge(transport_zones_df.collect().to_pandas(), on="transport_zone_id")
             
             tz = tz.merge(
                 (
@@ -545,241 +555,3 @@ class Results:
                     .agg(
                         n_trips_per_person=pl.col("n_trips").sum()/pl.col("n_persons").sum()
                     )
-                    .to_pandas()
-                ),
-                on="transport_zone_id"
-            )
-            
-            tz["n_trips_per_person"] = tz["n_trips_per_person"].fillna(0.0)
-            
-            if mask_outliers:
-                tz["n_trips_per_person"] = self.mask_outliers(tz["n_trips_per_person"])
-
-            self.plot_map(tz, "n_trips_per_person")
-        
-        return trip_count
-        
-    
-    def distance_per_person(
-            self,
-            weekday: bool = True,
-            plot: bool = False,
-            mask_outliers: bool = False
-        ):
-        """
-        Aggregate total travel distance and distance per person by demand group.
-    
-        Parameters
-        ----------
-        weekday : bool, default True
-            Use weekday (True) or weekend (False) data.
-        plot : bool, default False
-            When True, shows a choropleth of average distance per person by home zone.
-    
-        Returns
-        -------
-        pl.DataFrame
-            Grouped by ['home_zone_id', 'csp', 'n_cars'] with:
-            - distance: sum(distance * n_persons)
-            - n_persons: group size
-            - distance_per_person: distance / n_persons
-        """
-        
-        states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
-        costs = self.weekday_costs if weekday else self.weekend_costs
-        
-        transport_zones_df = ( 
-            pl.DataFrame(
-                self.transport_zones.get().drop("geometry", axis=1)
-            )
-            .filter(pl.col("is_inner_zone"))
-            .lazy()
-        )
-        
-        distance = (
-            states_steps
-            .filter(pl.col("motive_seq_id") != 0)
-            .rename({"home_zone_id": "transport_zone_id"})
-            .join(
-                transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
-                on=["transport_zone_id"]
-            )
-            .join(costs, on=["from", "to", "mode"])
-            .group_by(["transport_zone_id", "csp", "n_cars"])
-            .agg(
-                distance=(pl.col("distance")*pl.col("n_persons")).sum()
-            )
-            .join(self.demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
-            .with_columns(
-                distance_per_person=pl.col("distance")/pl.col("n_persons")
-            )
-            .collect(engine="streaming")
-        )
-        
-        if plot:
-            
-            tz = self.transport_zones.get()
-            tz = tz.to_crs(4326)
-            
-            tz = tz.merge(
-                (
-                    distance
-                    .group_by(["transport_zone_id"])
-                    .agg(
-                        distance_per_person=pl.col("distance").sum()/pl.col("n_persons").sum()
-                    )
-                    .to_pandas()
-                ),
-                on="transport_zone_id"
-            )
-            
-            tz["distance_per_person"] = tz["distance_per_person"].fillna(0.0)
-            
-            if mask_outliers:
-                tz["distance_per_person"] = self.mask_outliers(tz["distance_per_person"])
-
-            self.plot_map(tz, "distance_per_person")
-        
-        return distance
-             
-    
-    def time_per_person(
-            self,
-            weekday: bool = True,
-            plot: bool = False,
-            mask_outliers: bool = False
-        ):
-        """
-        Aggregate total travel time and time per person by demand group.
-        
-        Parameters
-        ----------
-        weekday : bool, default True
-            Use weekday (True) or weekend (False) data.
-        plot : bool, default False
-            When True, shows a choropleth of average time per person by home zone.
-        
-        Returns
-        -------
-        pl.DataFrame
-            Grouped by ['home_zone_id', 'csp', 'n_cars'] with:
-            - time: sum(time * n_persons) * 60.0 (minutes)
-            - n_persons: group size
-            - time_per_person: time / n_persons
-        """
-        
-        states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
-        costs = self.weekday_costs if weekday else self.weekend_costs
-        
-        transport_zones_df = ( 
-            pl.DataFrame(
-                self.transport_zones.get().drop("geometry", axis=1)
-            )
-            .filter(pl.col("is_inner_zone"))
-            .lazy()
-        )
-        
-        time = (
-            states_steps
-            .filter(pl.col("motive_seq_id") != 0)
-            .rename({"home_zone_id": "transport_zone_id"})
-            .join(
-                transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
-                on=["transport_zone_id"]
-            )
-            .join(costs, on=["from", "to", "mode"])
-            .group_by(["transport_zone_id", "csp", "n_cars"])
-            .agg(
-                time=(pl.col("time")*pl.col("n_persons")).sum()*60.0
-            )
-            .join(self.demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
-            .with_columns(
-                time_per_person=pl.col("time")/pl.col("n_persons")
-            )
-            .collect(engine="streaming")
-        )
-        
-        if plot:
-            
-            tz = self.transport_zones.get()
-            tz = tz.to_crs(4326)
-            
-            tz = tz.merge(
-                (
-                    time
-                    .group_by(["transport_zone_id"])
-                    .agg(
-                        time_per_person=pl.col("time").sum()/pl.col("n_persons").sum()
-                    )
-                    .to_pandas()
-                ),
-                on="transport_zone_id"
-            )
-            
-            tz["time_per_person"] = tz["time_per_person"].fillna(0.0)
-            
-            if mask_outliers:
-                tz["time_per_person"] = self.mask_outliers(tz["time_per_person"])
-            
-            self.plot_map(tz, "time_per_person")
-
-        
-        return time
-    
-    
-    def plot_map(self, tz, value: str = None):
-        """
-        Render a Plotly choropleth for a transport-zone metric.
-        
-        Parameters
-        ----------
-        tz : geopandas.GeoDataFrame
-            Zones GeoDataFrame in EPSG:4326 with columns:
-            ['transport_zone_id', value, 'geometry'].
-        value : str
-            Column name to color by (e.g., 'sink_occupation').
-        
-        Returns
-        -------
-        None
-            Displays an interactive map in the browser.
-        """
-        
-        fig = px.choropleth(
-            tz.drop(columns="geometry"),
-            geojson=json.loads(tz.to_json()),
-            locations="transport_zone_id",
-            featureidkey="properties.transport_zone_id",
-            color=value,
-            hover_data=["transport_zone_id", value],
-            color_continuous_scale="Viridis",
-            projection="mercator"
-        )
-        fig.update_geos(fitbounds="geojson", visible=False)
-        fig.update_layout(margin=dict(l=0,r=0,t=0,b=0))
-        fig.show("browser")
-    
-    
-    def mask_outliers(self, series):
-        """
-        Mask outliers in a numeric pandas/Series-like array.
-        
-        Parameters
-        ----------
-        series : array-like
-            Numeric series to clean.
-        
-        Returns
-        -------
-        array-like
-            Series with outliers replaced by NaN (bounds: Q1 - 1.5*IQR, Q3 + 1.5*IQR).
-        """
-        
-        s = series.copy()
-        q25 = s.quantile(0.25)
-        q75 = s.quantile(0.75)
-        iqr = q75 - q25
-        lower, upper = q25 - 1.5 * iqr, q75 + 1.5 * iqr
-        
-        return s.mask((s < lower) | (s > upper), np.nan)
-    

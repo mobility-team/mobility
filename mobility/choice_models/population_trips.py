@@ -438,7 +438,8 @@ class PopulationTrips(FileAsset):
             weekday_chains=pl.scan_parquet(self.cache_path["weekday_chains"]),
             weekend_chains=pl.scan_parquet(self.cache_path["weekend_chains"]),
             demand_groups=pl.scan_parquet(self.cache_path["demand_groups"]),
-            surveys=self.inputs["surveys"]
+            surveys=self.inputs["surveys"],
+            modes=self.inputs["modes"]
         )
               
         if metric not in results.metrics_methods.keys():
