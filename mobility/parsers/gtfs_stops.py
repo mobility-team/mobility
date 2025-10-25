@@ -5,7 +5,6 @@ import pandas as pd
 import geopandas as gpd
 import zipfile
 
-from mobility import TransportZones
 from mobility.file_asset import FileAsset
 from mobility.parsers.download_file import download_file
 
@@ -15,9 +14,13 @@ class GTFSStops(FileAsset):
     Currently covers France and Switzerland using two national datasets.
     """
     
-    def __init__(self, admin_prefixes: list):
+    def __init__(self, admin_prefixes: list, date: str):
         
-        inputs = {"admin_prefixes": admin_prefixes}
+        inputs = {
+            "version": "1",
+            "admin_prefixes": admin_prefixes,
+            "date": date
+        }
         
         cache_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "gtfs/gtfs_stops.gpkg"
         
@@ -45,6 +48,7 @@ class GTFSStops(FileAsset):
                 gtfs_stops.append(self.get_swiss_gtfs_stops())
         
         gtfs_stops = pd.concat(gtfs_stops)
+        gtfs_stops = gtfs_stops[~gtfs_stops.geometry.is_empty]
         gtfs_stops.to_file(self.cache_path)
         
         if bbox is not None:
@@ -57,10 +61,10 @@ class GTFSStops(FileAsset):
         
         logging.info("Preparing french GTFS stops...")
         
-        url = "https://www.data.gouv.fr/fr/datasets/r/6200ccb0-4cdb-4b34-8d79-4ca70d0d729f"
+        url = "https://www.data.gouv.fr/api/1/datasets/r/ceae7cae-4039-4f6e-9624-485310171c85"
         data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "gtfs"
-        zip_path = data_folder / "gtfs-stops-france-export-2024-02-01.zip"
-        path = data_folder / "gtfs-stops-france-export-2024-02-01.csv"
+        zip_path = data_folder / "gtfs-stops-france-export-2025-09-09.zip"
+        path = data_folder / "gtfs-stops-france-export-2025-09-09.csv"
         
         download_file(url, zip_path)
         

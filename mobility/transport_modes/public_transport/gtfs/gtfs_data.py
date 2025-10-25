@@ -53,8 +53,6 @@ class GTFSData(FileAsset):
     
     def is_gtfs_file_ok(self, path):
         
-        file_ok = False
-        
         if os.path.exists(path) is False:
             return False
         
