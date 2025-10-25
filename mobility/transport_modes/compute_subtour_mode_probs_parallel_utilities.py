@@ -281,12 +281,6 @@ def run_top_k_search(
     
     else:
         
-<<<<<<< Updated upstream
-        c = np.array([r[0] for r in results])
-        p = np.exp(-c)
-        p /= p.sum()
-        i_max = np.argmax(p.cumsum() > 0.98)
-=======
         # Transform costs into utilities
         # (remove the max so that exponentials don't overflow in the next step)
         utilities = -np.array([r[0] for r in results])
@@ -298,7 +292,6 @@ def run_top_k_search(
         
         # Keep only the first 98 % of the cumulative distribution
         i_max = np.argmax(prob.cumsum() > 0.98)
->>>>>>> Stashed changes
           
         rows = []
         for i, (total_cost, mode_seq) in enumerate(results):
