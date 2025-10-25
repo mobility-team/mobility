@@ -13,6 +13,7 @@ class PopulationTripsParameters:
     seed: int = 0
     mode_sequence_search_parallel: bool = True
     min_activity_time_constant: float = 1.0
+    simulate_weekend: bool = False
 
     def validate(self) -> None:
         assert self.n_iterations >= 1

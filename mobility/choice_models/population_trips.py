@@ -218,20 +218,30 @@ class PopulationTrips(FileAsset):
     def create_and_get_asset(self):
         
         weekday_flows, weekday_sinks, demand_groups, weekday_costs, weekday_chains = self.run_model(is_weekday=True)
-        weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains = self.run_model(is_weekday=False)
-    
+        
         weekday_flows.write_parquet(self.cache_path["weekday_flows"])
         weekday_sinks.write_parquet(self.cache_path["weekday_sinks"])
         weekday_costs.write_parquet(self.cache_path["weekday_costs"])
         weekday_chains.write_parquet(self.cache_path["weekday_chains"])
         
-        weekend_flows.write_parquet(self.cache_path["weekend_flows"])
-        weekend_sinks.write_parquet(self.cache_path["weekend_sinks"])
-        weekend_costs.write_parquet(self.cache_path["weekend_costs"])
-        weekend_chains.write_parquet(self.cache_path["weekend_chains"])
-        
         demand_groups.write_parquet(self.cache_path["demand_groups"])
+        
+        if self.parameters.simulate_weekend:
             
+            weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains = self.run_model(is_weekday=False)
+        
+            weekend_flows.write_parquet(self.cache_path["weekend_flows"])
+            weekend_sinks.write_parquet(self.cache_path["weekend_sinks"])
+            weekend_costs.write_parquet(self.cache_path["weekend_costs"])
+            weekend_chains.write_parquet(self.cache_path["weekend_chains"])
+            
+        else:
+            
+            pl.DataFrame().write_parquet(self.cache_path["weekend_flows"])
+            pl.DataFrame().write_parquet(self.cache_path["weekend_sinks"])
+            pl.DataFrame().write_parquet(self.cache_path["weekend_costs"])
+            pl.DataFrame().write_parquet(self.cache_path["weekend_chains"])
+               
         return {k: pl.scan_parquet(v) for k, v in self.cache_path.items()}
 
     def run_model(self, is_weekday):
