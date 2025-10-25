@@ -282,6 +282,7 @@ def run_top_k_search(
     else:
         
         c = np.array([r[0] for r in results])
+        c = c - np.max(c)
         p = np.exp(-c)
         p /= p.sum()
         i_max = np.argmax(p.cumsum() > 0.98)
