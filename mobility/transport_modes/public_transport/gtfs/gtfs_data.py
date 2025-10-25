@@ -66,6 +66,10 @@ class GTFSData(FileAsset):
             logging.info("Manual exception, GTFS not used from path", path)
             return False
         
+        if "blablacar" in path.name:
+            logging.info("Manual exception, GTFS not used from path", path)
+            return False
+        
         try:
             with zipfile.ZipFile(path, 'r') as zip_ref:
                 zip_contents = zip_ref.namelist()              
