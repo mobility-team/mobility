@@ -53,8 +53,6 @@ class GTFSData(FileAsset):
     
     def is_gtfs_file_ok(self, path):
         
-        file_ok = False
-        
         if os.path.exists(path) is False:
             return False
         
@@ -63,10 +61,6 @@ class GTFSData(FileAsset):
             return False
         
         if "e8f2aceaaaa2493f6041dc7f0251f325-5d7ae44c16ad373ca1afbc4590f53256_gtfs-2015-chamonix-mobilit" in path.name:
-            logging.info("Manual exception, GTFS not used from path", path)
-            return False
-        
-        if "blablacar" in path.name:
             logging.info("Manual exception, GTFS not used from path", path)
             return False
         
