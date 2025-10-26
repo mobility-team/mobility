@@ -25,7 +25,8 @@ dependencies = [
   "psutil",
   "networkx",
   "plotly",
-  "scikit-learn"
+  "scikit-learn",
+  "gtfs_kit"
 ]
 
 requires-python = ">=3.11"
