@@ -6,8 +6,6 @@ class PopulationTripsParameters:
     alpha: float = 0.01
     k_mode_sequences: int = 6
     dest_prob_cutoff: float = 0.99
-    activity_utility_coeff: float = 2.0
-    stay_home_utility_coeff: float = 1.0
     n_iter_per_cost_update: int = 3
     cost_uncertainty_sd: float = 1.0
     seed: int = 0

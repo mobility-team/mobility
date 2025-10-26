@@ -256,7 +256,7 @@ class StateInitializer:
         return mean_motive_durations, mean_home_night_durations
     
     
-    def get_stay_home_state(self, demand_groups, home_night_dur, parameters):
+    def get_stay_home_state(self, demand_groups, home_night_dur, motives):
         
         """Create the baseline 'stay home all day' state.
 
@@ -276,6 +276,8 @@ class StateInitializer:
                 - current_states: A clone of `stay_home_state` for iteration start.
         """
         
+        home_motive = [m for m in motives if m.name == "home"][0]
+        
         stay_home_state = (
             
             demand_groups.select(["demand_group_id", "csp", "n_persons"])
@@ -287,7 +289,11 @@ class StateInitializer:
             )
             .join(home_night_dur, on="csp")
             .with_columns(
-                utility=parameters.stay_home_utility_coeff*pl.col("mean_home_night_per_pers")*(pl.col("mean_home_night_per_pers")/0.1/pl.col("mean_home_night_per_pers")).log()
+                utility=( 
+                    home_motive.value_of_time_stay_home 
+                    * pl.col("mean_home_night_per_pers")
+                    * (pl.col("mean_home_night_per_pers")/0.1/pl.col("mean_home_night_per_pers")).log()
+                )
             )
             
             .select(["demand_group_id", "iteration", "motive_seq_id", "mode_seq_id", "dest_seq_id", "utility", "n_persons"])

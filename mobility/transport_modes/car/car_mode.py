@@ -28,7 +28,7 @@ class CarMode(TransportMode):
         congestion: bool = False,
         congestion_flows_scaling_factor: float = 0.1,
         speed_modifiers: List[SpeedModifier] = [],
-        survey_ids: List[str] = ["3.30"]
+        survey_ids: List[str] = ["3.30", "3.31", "3.32", "3.33", "3.39"]
     ):
         
         mode_name = "car"

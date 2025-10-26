@@ -63,8 +63,6 @@ class PopulationTrips(FileAsset):
             alpha: float = None,
             k_mode_sequences: int = None,
             dest_prob_cutoff: float = None,
-            activity_utility_coeff: float = None,
-            stay_home_utility_coeff: float = None,
             n_iter_per_cost_update: int = None,
             cost_uncertainty_sd: float = None,
             mode_sequence_search_parallel: bool = None
@@ -84,8 +82,6 @@ class PopulationTrips(FileAsset):
             alpha,
             k_mode_sequences,
             dest_prob_cutoff,
-            activity_utility_coeff,
-            stay_home_utility_coeff,
             n_iter_per_cost_update,
             cost_uncertainty_sd,
             mode_sequence_search_parallel
@@ -140,8 +136,6 @@ class PopulationTrips(FileAsset):
             alpha: float = None,
             k_mode_sequences: int = None,
             dest_prob_cutoff: float = None,
-            activity_utility_coeff: float = None,
-            stay_home_utility_coeff: float = None,
             n_iter_per_cost_update: int = None,
             cost_uncertainty_sd: float = None,
             mode_sequence_search_parallel: bool = None
@@ -178,8 +172,6 @@ class PopulationTrips(FileAsset):
             "alpha": alpha,
             "k_mode_sequences": k_mode_sequences,
             "dest_prob_cutoff": dest_prob_cutoff,
-            "activity_utility_coeff": activity_utility_coeff,
-            "stay_home_utility_coeff": stay_home_utility_coeff,
             "n_iter_per_cost_update": n_iter_per_cost_update,
             "cost_uncertainty_sd": cost_uncertainty_sd,
             "mode_sequence_search_parallel": mode_sequence_search_parallel
@@ -280,7 +272,7 @@ class PopulationTrips(FileAsset):
         stay_home_state, current_states = self.state_initializer.get_stay_home_state(
             demand_groups,
             home_night_dur,
-            parameters
+            motives
         )
         
         sinks = self.state_initializer.get_sinks(
@@ -340,7 +332,8 @@ class PopulationTrips(FileAsset):
                 tmp_folders,
                 home_night_dur,
                 stay_home_state,
-                parameters
+                parameters,
+                motives
             )
             
             costs = self.state_updater.get_new_costs(
@@ -353,7 +346,8 @@ class PopulationTrips(FileAsset):
             
             remaining_sinks = self.state_updater.get_new_sinks(
                 current_states_steps,
-                sinks
+                sinks,
+                motives
             )
             
             
