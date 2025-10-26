@@ -156,6 +156,7 @@ def test_008_population_trips_can_be_computed(test_data, safe_json):
             k_mode_sequences=6,
             cost_uncertainty_sd=1.0,
             mode_sequence_search_parallel=False,
+            simulate_weekend=False
         ),
     )
 
