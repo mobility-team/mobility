@@ -70,8 +70,11 @@ class PublicTransportMode(TransportMode):
         
         name = first_leg_mode.name + "/public_transport/" + last_leg_mode.name
         vehicle = first_leg_mode.vehicle
-        return_mode_name = last_leg_mode.name + "/public_transport/" + first_leg_mode.name
         
+        if last_leg_mode.name != first_leg_mode.name:
+            return_mode_name = last_leg_mode.name + "/public_transport/" + first_leg_mode.name
+        else:
+            return_mode_name = None
         
         super().__init__(
             name,
