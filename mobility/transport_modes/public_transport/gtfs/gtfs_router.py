@@ -97,7 +97,7 @@ class GTFSRouter(FileAsset):
         admin_prefixes = ["fr", "ch"]
         admin_prefixes = [prefix for prefix in admin_prefixes if transport_zones["local_admin_unit_id"].str.contains(prefix).any()]
         
-        stops = GTFSStops(admin_prefixes)
+        stops = GTFSStops(admin_prefixes, self.inputs["download_date"])
         stops = stops.get(bbox=tuple(transport_zones.total_bounds))
         
         return stops
@@ -143,7 +143,10 @@ class GTFSRouter(FileAsset):
         datagouv_dataset_ids = [pathlib.Path(url).name for url in datagouv_dataset_urls]
         
         url = "https://transport.data.gouv.fr/api/datasets"
-        path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "gtfs/gtfs_metadata.json"
+        path = ( 
+            pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "gtfs"/
+            (self.inputs["download_date"] + "_gtfs_metadata.json")
+        )
         download_file(url, path)
             
         with open(path, "r", encoding="UTF-8") as f:
