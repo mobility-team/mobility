@@ -7,6 +7,7 @@ from typing import Literal
 from mobility.choice_models.evaluation.travel_costs_evaluation import TravelCostsEvaluation
 from mobility.choice_models.evaluation.car_traffic_evaluation import CarTrafficEvaluation
 from mobility.choice_models.evaluation.routing_evaluation import RoutingEvaluation
+from mobility.choice_models.evaluation.public_transport_network_evaluation import PublicTransportNetworkEvaluation
 
 class Results:
     
@@ -54,7 +55,8 @@ class Results:
             "immobility": self.immobility,
             "car_traffic": self.car_traffic,
             "travel_costs": self.travel_costs,
-            "routing": self.routing
+            "routing": self.routing,
+            "public_transport_network": self.public_transport_network
         }
         
         
@@ -806,6 +808,9 @@ class Results:
         
     def routing(self, *args, **kwargs):
         return RoutingEvaluation(self).get(*args, **kwargs)
+    
+    def public_transport_network(self, *args, **kwargs):
+        return PublicTransportNetworkEvaluation(self).get(*args, **kwargs)
          
         
         
