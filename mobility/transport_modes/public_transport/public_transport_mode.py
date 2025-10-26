@@ -83,3 +83,8 @@ class PublicTransportMode(TransportMode):
             return_mode=return_mode_name,
             survey_ids=survey_ids
         )    
+        
+    def audit_gtfs(self):
+        logging.info("Auditing GTFS for this mode")
+        travel_costs = self.travel_costs.audit_gtfs()
+        return travel_costs

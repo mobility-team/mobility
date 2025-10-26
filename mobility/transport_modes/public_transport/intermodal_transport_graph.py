@@ -149,3 +149,6 @@ class IntermodalTransportGraph(FileAsset):
     def update(self):
         
         self.create_and_get_asset()
+
+    def audit_gtfs(self):
+        return self.public_transport_graph.audit_gtfs()

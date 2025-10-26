@@ -104,4 +104,5 @@ class PublicTransportGraph(FileAsset):
     
 
     
-    
+    def audit_gtfs(self):
+        return self.gtfs_router.audit_gtfs()    
