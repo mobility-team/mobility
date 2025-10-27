@@ -415,9 +415,8 @@ class PopulationTrips(FileAsset):
         Parameters
         ----------
         metric : str
-            Name of the evaluation metric to compute. Must be one of:
-            {"sink_occupation", "trip_count_by_demand_group",
-             "distance_per_person", "time_per_person"}.
+            Name of the evaluation metric to compute. Must be one of the metrics
+            methods accepted by Results
         **kwargs : dict, optional
             Additional arguments forwarded to the underlying metric function.
             For example, `weekday=True` or `plot=True`.
