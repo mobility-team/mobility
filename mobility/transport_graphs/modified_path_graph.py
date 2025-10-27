@@ -1,11 +1,7 @@
 import os
 import pathlib
 import logging
-import dataclasses
 import json
-import pandas as pd
-import geopandas as gpd
-from shapely.geometry import LineString
 
 from importlib import resources
 from mobility.file_asset import FileAsset

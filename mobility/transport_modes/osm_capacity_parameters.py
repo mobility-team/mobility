@@ -35,7 +35,7 @@ class CarOSMCapacityParameters(BaseOSMCapacityParameters):
     # Typical values for the BPR volume decay function parameters, according to https://www.istiee.unict.it/sites/default/files/files/ET_2021_83_7.pdf
     
     # ferry ways are included in the default dodgr weighting profile, but we 
-    # disable them here. We should handle car transport with a ferry in public transport.
+    # exclude them in mobility. We should handle car transport with a ferry in public transport.
 
     motorway: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=2000.0))
     trunk: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
@@ -44,7 +44,6 @@ class CarOSMCapacityParameters(BaseOSMCapacityParameters):
     tertiary: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))
     unclassified: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))
     residential: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))
-    service: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))
     living_street: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=300.0))
     motorway_link: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
     trunk_link: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
@@ -70,7 +69,6 @@ class WalkOSMCapacityParameters(BaseOSMCapacityParameters):
     tertiary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     unclassified: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     residential: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    service: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     track: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     cycleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     path: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
@@ -106,7 +104,6 @@ class BicycleOSMCapacityParameters(BaseOSMCapacityParameters):
     tertiary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     unclassified: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     residential: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    service: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     cycleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     living_street: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
     bridleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
