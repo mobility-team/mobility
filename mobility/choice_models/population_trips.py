@@ -516,7 +516,7 @@ class PopulationTrips(FileAsset):
 
         return mode_share
 
-    def plot_od_flows(self, mode="all", motive="all", period="weekdays", level_of_detail=0,
+    def plot_od_flows(self, mode="all", motive="all", period="weekdays", level_of_detail=1,
                       n_largest=2000, color="blue", transparency=0.2, zones_color="xkcd:light grey",
                       labels=None, labels_size=[10, 6, 4], labels_color="black"):
         """
@@ -570,9 +570,14 @@ class PopulationTrips(FileAsset):
         mode_name = mode.capitalize()
 
         if mode != "all":
+            if mode == "count":
+                population_df["mode"] = population_df["mode"].fillna("unknown_mode")
+                count_modes = population_df.groupby("mode")[["mode"]].count()
+                print(count_modes)
+                return count_modes
             if mode == "public_transport":
                 mode_name = "Public transport"
-                population_df = population_df[population_df["mode"].str.contains("public_transport")]
+                population_df = population_df[population_df["mode"].fillna("unknown_mode").str.contains("public_transport")]
             else:
                 population_df = population_df[population_df["mode"] == mode]
 
