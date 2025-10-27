@@ -25,15 +25,10 @@ dependencies = [
   "psutil",
   "networkx",
   "plotly",
-<<<<<<< HEAD
   "dash",
-  "dash[testing]",
   "dash-deck",
   "pydeck",
   "dash-mantine-components"
-=======
-  "scikit-learn"
->>>>>>> c3d3fb77524059941f9ef1ae44a1cb540613d46f
 ]
 
 requires-python = ">=3.11"
@@ -58,6 +53,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "pytest-dependency",
+    "dash[testing]",
     "sphinxcontrib-napoleon",
      "myst_parser"
 ]
