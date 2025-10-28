@@ -449,7 +449,7 @@ class StateUpdater:
             pl.DataFrame: Updated OD costs (or original if no update ran).
         """
         
-        if n_iter_per_cost_update > 0 and iteration > 1 and (iteration-1) % n_iter_per_cost_update == 0:
+        if n_iter_per_cost_update > 0 and (iteration-1) % n_iter_per_cost_update == 0:
             
             logging.info("Updating costs...")
             
