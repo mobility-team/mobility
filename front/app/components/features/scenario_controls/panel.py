@@ -1,7 +1,9 @@
+# app/components/features/…/panel.py
 import dash_mantine_components as dmc
 from .radius import RadiusControl
 from .lau_input import LauInput
 from .run_button import RunButton
+from .transport_modes_inputs import TransportModesInputs 
 
 def ScenarioControlsPanel(
     id_prefix: str = "scenario",
@@ -17,6 +19,7 @@ def ScenarioControlsPanel(
       - Rayon (slider + input)
       - Zone d’étude (INSEE)
       - Bouton 'Lancer la simulation'
+      - Transport modes
     """
     return dmc.Stack(
         [
@@ -28,11 +31,11 @@ def ScenarioControlsPanel(
                 default=default,
             ),
             LauInput(id_prefix, default_insee=default_insee),
+
+            TransportModesInputs(id_prefix="tm"),
+
             RunButton(id_prefix),
         ],
         gap="sm",
-        style={
-            "width": "fit-content",
-            "padding": "8px",
-        },
+        style={"width": "fit-content", "padding": "8px"},
     )

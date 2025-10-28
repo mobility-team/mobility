@@ -4,14 +4,14 @@ from .components import DeckMap, ControlsSidebarWrapper, SummaryPanelWrapper
 
 # — Option A : via map_service s’il existe
 try:
-    from front.app.services.map_service import get_map_deck_json, get_map_zones_gdf
+    from app.services.map_service import get_map_deck_json, get_map_zones_gdf
     _USE_SERVICE = True
 except Exception:
     _USE_SERVICE = False
 
 # — Option B : fallback direct si map_service absent
 if not _USE_SERVICE:
-    from front.app.services.scenario_service import get_scenario
+    from app.services.scenario_service import get_scenario
     from .deck_factory import make_deck_json
     def get_map_deck_json(id_prefix: str, opts: DeckOptions) -> str:
         scn = get_scenario()
