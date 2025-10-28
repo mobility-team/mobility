@@ -25,7 +25,10 @@ dependencies = [
   "psutil",
   "networkx",
   "plotly",
-  "scikit-learn"
+  "dash",
+  "dash-deck",
+  "pydeck",
+  "dash-mantine-components"
 ]
 
 requires-python = ">=3.11"
@@ -50,8 +53,9 @@ dev = [
     "pytest",
     "pytest-cov",
     "pytest-dependency",
+    "dash[testing]",
     "sphinxcontrib-napoleon",
-     "myst_parser"
+    "myst_parser"
 ]
 
 spyder = [
@@ -77,3 +81,10 @@ mobility = [
 where = ["."]
 include = ["mobility*"]
 exclude = ["certs", "certs.*"]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  ".",      
+  "front",
+  "mobility"   
+]
