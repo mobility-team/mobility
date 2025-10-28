@@ -100,6 +100,7 @@ class PopulationTrips(FileAsset):
         costs_aggregator = TravelCostsAggregator(modes)
         
         inputs = {
+            "version": 1,
             "population": population,
             "costs_aggregator": costs_aggregator,
             "motives": motives,
@@ -351,8 +352,11 @@ class PopulationTrips(FileAsset):
             )
             
             
-        costs = costs_aggregator.get_costs_by_od_and_mode(["distance", "time"], congestion=True)
-    
+        costs = costs_aggregator.get_costs_by_od_and_mode(
+            ["distance", "time", "ghg_emissions"],
+            congestion=True
+        )
+        
         current_states_steps = (
             
             current_states_steps
@@ -364,13 +368,13 @@ class PopulationTrips(FileAsset):
             )
             .drop("demand_group_id")
             
-             # Add costs info
-             .join(
-                 costs,
-                 on=["from", "to", "mode"],
-                 how="left"
-             )
-            
+            # Add costs info
+            .join(
+                costs,
+                on=["from", "to", "mode"],
+                how="left"
+            )
+           
             # Add the is_weekday info
             .with_columns(
                 is_weekday=pl.lit(is_weekday)

@@ -53,7 +53,23 @@ class TravelCostsAggregator(InMemoryAsset):
         return costs
         
         
-    def get_costs_by_od_and_mode(self, metrics: List, congestion: bool, detail_distances: bool = False):
+    def get_costs_by_od_and_mode(
+            self,
+            metrics: List,
+            congestion: bool,
+            detail_distances: bool = False
+        ):
+        
+        # Hack to match the current API and compute the GHG emissions from
+        # detailed distances and GHG intensities in this method, but this 
+        # should be done by the generalized_cost method of each mode.
+        if "ghg_emissions" in metrics:
+            original_detail_distances = detail_distances
+            detail_distances = True
+            compute_ghg_emissions = True
+            metrics = [m for m in metrics if m != "ghg_emissions"]
+        else:
+            compute_ghg_emissions=False
         
         costs = []
         
@@ -83,6 +99,48 @@ class TravelCostsAggregator(InMemoryAsset):
             pl.col("from").cast(pl.Int32),
             pl.col("to").cast(pl.Int32)
         ])
+        
+        # Final step of the GHG emissions computation hack above
+        if compute_ghg_emissions:
+            
+            # Build a mode -> GHG emissions polars formula dict
+            # (uses the multimodal flag to handle the public transport mode,
+            # this should be improved)
+            pl_columns = {}
+            dist_col_names = []
+            
+            for mode in modes:
+                
+                mode_name = "public_transport" if mode.multimodal else mode.name
+                ghg_col_name = mode_name + "_ghg_emissions"
+                dist_col_name = mode_name + "_distance"
+                
+                pl_columns[ghg_col_name] = ( 
+                    pl.col(dist_col_name)*mode.ghg_intensity
+                )
+                
+                dist_col_names.append(dist_col_name)
+                
+            
+            # Compute the GHG emissions with the formulas and then sum them
+            costs = (
+                costs
+                .with_columns(**pl_columns)
+                .with_columns(
+                    ghg_emissions_per_trip=pl.sum_horizontal(
+                        list(pl_columns.keys())
+                    )
+                )
+                .drop(list(pl_columns.keys()))
+            )
+            
+            # Keep the detailed distances only if asked in the first place
+            if original_detail_distances is False:
+                costs = ( 
+                    costs
+                    .drop(dist_col_names) 
+                )
+                
         
         return costs
     

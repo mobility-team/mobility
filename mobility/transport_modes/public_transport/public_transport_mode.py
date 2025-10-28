@@ -40,7 +40,8 @@ class PublicTransportMode(TransportMode):
             "4.42", "4.43", "5.50", "5.51", "5.52", "5.53", "5.54", "5.55",
             "5.56", "5.57", "5.58", "5.59", "6.60", "6.61", "6.62", "6.63",
             "6.69"
-        ]
+        ],
+        ghg_intensity: float = 0.05
     ):
         
         travel_costs = PublicTransportTravelCosts(
@@ -82,7 +83,8 @@ class PublicTransportMode(TransportMode):
             name,
             travel_costs,
             generalized_cost,
-            congestion,
+            congestion=congestion,
+            ghg_intensity=ghg_intensity,
             vehicle=vehicle,
             multimodal=True,
             return_mode=return_mode_name,
