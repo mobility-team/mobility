@@ -494,6 +494,7 @@ class PopulationTrips(FileAsset):
         mode_share = mode_share.reset_index().set_index([left_column])
         mode_share["total"] = mode_share.groupby([left_column])["n_persons"].sum()
         mode_share["modal_share"] = mode_share["n_persons"] / mode_share["total"]
+   
 
         if mode == "public_transport":
             mode_name = "Public transport"
@@ -503,8 +504,9 @@ class PopulationTrips(FileAsset):
         mode_share = mode_share[mode_share["mode"] == mode]
 
         transport_zones_df = self.population.transport_zones.get()
+        
         gc = gpd.GeoDataFrame(
-            mode_share.merge(transport_zones_df, left_on=left_column, right_on="transport_zone_id", suffixes=('', '_z')))
+            transport_zones_df.merge(mode_share, how="left", right_on=left_column, left_on="transport_zone_id", suffixes=('', '_z'))).fillna(0)
         gcp = gc.plot("modal_share", legend=True)
         gcp.set_axis_off()
         plt.title(f"{mode_name} share per {zone} transport zone ({period})")
