@@ -72,7 +72,7 @@ class GTFSData(FileAsset):
                 logging.info("Downloaded file is a proper GTFS zip which contains an agency file.")
             else:
                 logging.info("Downloaded file is a proper GTFS zip but does not contain an agency file, it will not be used by Mobility.")
-            return 
+            return True
         except:
             logging.info("Downloaded file is not a regular GTFS zip file, it will not be used by Mobility.")
             return False
