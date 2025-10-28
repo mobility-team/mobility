@@ -8,6 +8,7 @@ from mobility.choice_models.evaluation.travel_costs_evaluation import TravelCost
 from mobility.choice_models.evaluation.car_traffic_evaluation import CarTrafficEvaluation
 from mobility.choice_models.evaluation.routing_evaluation import RoutingEvaluation
 
+
 class Results:
     
     def __init__(
@@ -806,7 +807,3 @@ class Results:
         
     def routing(self, *args, **kwargs):
         return RoutingEvaluation(self).get(*args, **kwargs)
-         
-        
-        
-        
