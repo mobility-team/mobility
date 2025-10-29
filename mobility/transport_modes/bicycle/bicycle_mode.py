@@ -18,7 +18,8 @@ class BicycleMode(TransportMode):
         osm_capacity_parameters: OSMCapacityParameters = None,
         generalized_cost_parameters: GeneralizedCostParameters = None,
         speed_modifiers: List[SpeedModifier] = [],
-        survey_ids: List[str] = ["2.20"]
+        survey_ids: List[str] = ["2.20"],
+        ghg_intensity: float = 0.00017
     ):
         
         mode_name = "bicycle"
@@ -46,7 +47,8 @@ class BicycleMode(TransportMode):
             mode_name,
             travel_costs,
             generalized_cost,
-            vehicle="car",
+            ghg_intensity=ghg_intensity,
+            vehicle="bicycle",
             survey_ids=survey_ids
         )
         

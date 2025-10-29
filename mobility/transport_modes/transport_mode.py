@@ -22,6 +22,7 @@ class TransportMode(InMemoryAsset):
         name: str,
         travel_costs,
         generalized_cost,
+        ghg_intensity: float,
         congestion: bool = False,
         vehicle: str = None,
         multimodal: bool = False,
@@ -29,9 +30,13 @@ class TransportMode(InMemoryAsset):
         survey_ids: List[str] = None
     ):
         
+        if ghg_intensity is None:
+            raise ValueError("Please provide a value for the ghg_intensity argument (GHG intensity in kgCO2e/pass.km).")
+        
         self.name = name
         self.travel_costs = travel_costs
         self.generalized_cost = generalized_cost
+        self.ghg_intensity = ghg_intensity
         self.congestion = congestion
         self.vehicle = vehicle
         self.multimodal = multimodal

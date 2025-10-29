@@ -100,6 +100,7 @@ class PopulationTrips(FileAsset):
         costs_aggregator = TravelCostsAggregator(modes)
         
         inputs = {
+            "version": 1,
             "population": population,
             "costs_aggregator": costs_aggregator,
             "motives": motives,
@@ -352,8 +353,11 @@ class PopulationTrips(FileAsset):
             )
             
             
-        costs = costs_aggregator.get_costs_by_od_and_mode(["distance", "time"], congestion=True)
-    
+        costs = costs_aggregator.get_costs_by_od_and_mode(
+            ["distance", "time", "ghg_emissions"],
+            congestion=True
+        )
+        
         current_states_steps = (
             
             current_states_steps
@@ -365,13 +369,13 @@ class PopulationTrips(FileAsset):
             )
             .drop("demand_group_id")
             
-             # Add costs info
-             .join(
-                 costs,
-                 on=["from", "to", "mode"],
-                 how="left"
-             )
-            
+            # Add costs info
+            .join(
+                costs,
+                on=["from", "to", "mode"],
+                how="left"
+            )
+           
             # Add the is_weekday info
             .with_columns(
                 is_weekday=pl.lit(is_weekday)
@@ -495,6 +499,7 @@ class PopulationTrips(FileAsset):
         mode_share = mode_share.reset_index().set_index([left_column])
         mode_share["total"] = mode_share.groupby([left_column])["n_persons"].sum()
         mode_share["modal_share"] = mode_share["n_persons"] / mode_share["total"]
+   
 
         if mode == "public_transport":
             mode_name = "Public transport"
@@ -504,8 +509,9 @@ class PopulationTrips(FileAsset):
         mode_share = mode_share[mode_share["mode"] == mode]
 
         transport_zones_df = self.population.transport_zones.get()
+        
         gc = gpd.GeoDataFrame(
-            mode_share.merge(transport_zones_df, left_on=left_column, right_on="transport_zone_id", suffixes=('', '_z')))
+            transport_zones_df.merge(mode_share, how="left", right_on=left_column, left_on="transport_zone_id", suffixes=('', '_z'))).fillna(0)
         gcp = gc.plot("modal_share", legend=True)
         gcp.set_axis_off()
         plt.title(f"{mode_name} share per {zone} transport zone ({period})")
