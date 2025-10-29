@@ -144,3 +144,6 @@ class PublicTransportTravelCosts(FileAsset):
         
         self.intermodal_graph.update()
         self.create_and_get_asset()
+        
+    def audit_gtfs(self):
+        return self.intermodal_graph.audit_gtfs()

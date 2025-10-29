@@ -17,7 +17,8 @@ class WalkMode(TransportMode):
         routing_parameters: PathRoutingParameters = None,
         osm_capacity_parameters: OSMCapacityParameters = None,
         generalized_cost_parameters: GeneralizedCostParameters = None,
-        survey_ids: List[str] = ["1.10", "1.11", "1.13"]
+        survey_ids: List[str] = ["1.10", "1.11", "1.13"],
+        ghg_intensity: float = 0.0
     ):
         
         mode_name = "walk"
@@ -55,6 +56,7 @@ class WalkMode(TransportMode):
             mode_name,
             travel_costs,
             generalized_cost, 
+            ghg_intensity=ghg_intensity,
             survey_ids=survey_ids
         )
         

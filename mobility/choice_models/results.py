@@ -7,6 +7,7 @@ from typing import Literal
 from mobility.choice_models.evaluation.travel_costs_evaluation import TravelCostsEvaluation
 from mobility.choice_models.evaluation.car_traffic_evaluation import CarTrafficEvaluation
 from mobility.choice_models.evaluation.routing_evaluation import RoutingEvaluation
+from mobility.choice_models.evaluation.public_transport_network_evaluation import PublicTransportNetworkEvaluation
 
 class Results:
     
@@ -54,7 +55,8 @@ class Results:
             "immobility": self.immobility,
             "car_traffic": self.car_traffic,
             "travel_costs": self.travel_costs,
-            "routing": self.routing
+            "routing": self.routing,
+            "public_transport_network": self.public_transport_network
         }
         
         
@@ -483,7 +485,8 @@ class Results:
             if mask_outliers:
                 tz["sink_occupation"] = self.mask_outliers(tz["sink_occupation"])
 
-            self.plot_map(tz, "sink_occupation")
+            print("Plot map for", plot_motive)
+            self.plot_map(tz, "sink_occupation", plot_motive)
         
         return sink_occupation
     
@@ -742,7 +745,7 @@ class Results:
         return time
     
     
-    def plot_map(self, tz, value: str = None):
+    def plot_map(self, tz, value: str = None, motive: str = None):
         """
         Render a Plotly choropleth for a transport-zone metric.
         
@@ -768,7 +771,9 @@ class Results:
             color=value,
             hover_data=["transport_zone_id", value],
             color_continuous_scale="Viridis",
-            projection="mercator"
+            projection="mercator",
+            title=motive,
+            subtitle=motive
         )
         fig.update_geos(fitbounds="geojson", visible=False)
         fig.update_layout(margin=dict(l=0,r=0,t=0,b=0))
@@ -806,6 +811,9 @@ class Results:
         
     def routing(self, *args, **kwargs):
         return RoutingEvaluation(self).get(*args, **kwargs)
+    
+    def public_transport_network(self, *args, **kwargs):
+        return PublicTransportNetworkEvaluation(self).get(*args, **kwargs)
          
         
         

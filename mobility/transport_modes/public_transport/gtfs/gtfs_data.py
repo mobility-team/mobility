@@ -66,10 +66,15 @@ class GTFSData(FileAsset):
         
         try:
             with zipfile.ZipFile(path, 'r') as zip_ref:
-                zip_contents = zip_ref.namelist()              
-            return "agency.txt" in zip_contents
+                zip_contents = zip_ref.namelist()
+            has_an_agency = "agency.txt" in zip_contents
+            if has_an_agency:
+                logging.info("Downloaded file is a proper GTFS zip which contains an agency file.")
+            else:
+                logging.info("Downloaded file is a proper GTFS zip but does not contain an agency file, it will not be used by Mobility.")
+            return True
         except:
-            logging.info("Downloaded file is not a regular GTFS zip file, it will not be used by mobility.")
+            logging.info("Downloaded file is not a regular GTFS zip file, it will not be used by Mobility.")
             return False
     
     
