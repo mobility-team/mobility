@@ -33,6 +33,15 @@ MOCK_MODES = [
             "Constante de mode (€)": 1,
         },
     },
+    {
+        "name": "Covoiturage",
+        "active": True,
+        "vars": {
+            "Valeur du temps (€/h)": 12,
+            "Valeur de la distance (€/km)": 0.01,
+            "Constante de mode (€)": 1,
+        },
+    },
 ]
 
 VAR_SPECS = {

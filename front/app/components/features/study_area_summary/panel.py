@@ -1,9 +1,53 @@
 from dash import html
 import dash_mantine_components as dmc
+import numpy as np
+
 from .utils import safe_mean
 from .kpi import KPIStatGroup
 from .modal_split import ModalSplitList
 from .legend import LegendCompact
+
+
+def _collect_modal_shares(zones_gdf):
+    """
+    Récupère les parts modales disponibles dans zones_gdf,
+    supprime les modes absents/inactifs (colonne manquante ou NA),
+    puis renormalise pour que la somme = 1.
+    Retourne une liste de tuples (label, share_float entre 0 et 1).
+    """
+    # (label affiché, nom de colonne)
+    CANDIDATES = [
+        ("Voiture", "share_car"),
+        ("Covoiturage", "share_carpool"),
+        ("Vélo", "share_bicycle"),
+        ("À pied", "share_walk"),
+    ]
+
+    items = []
+    for label, col in CANDIDATES:
+        if col in zones_gdf.columns:
+            v = safe_mean(zones_gdf[col])
+            # on considère absent si None/NaN
+            if v is not None and not (isinstance(v, float) and np.isnan(v)):
+                # borne pour éviter valeurs négatives ou >1 venant de bruit
+                v = float(np.clip(v, 0.0, 1.0))
+                items.append((label, v))
+
+    if not items:
+        return []
+
+    # Renormalisation (ne pas diviser par 0)
+    total = sum(v for _, v in items)
+    if total > 0:
+        items = [(label, v / total) for label, v in items]
+    else:
+        # tout est 0 -> on retourne tel quel
+        pass
+
+    # Optionnel: trier par part décroissante
+    items.sort(key=lambda t: t[1], reverse=True)
+    return items
+
 
 def StudyAreaSummary(
     zones_gdf,
@@ -15,7 +59,6 @@ def StudyAreaSummary(
     """
     Panneau latéral droit affichant les agrégats globaux de la zone d'étude,
     avec légende enrichie (dégradé continu) et contexte (code INSEE/LAU).
-    API inchangée par rapport à l'ancien composant.
     """
     comp_id = f"{id_prefix}-study-summary"
 
@@ -28,9 +71,9 @@ def StudyAreaSummary(
     else:
         avg_time = safe_mean(zones_gdf.get("average_travel_time"))
         avg_dist = safe_mean(zones_gdf.get("total_dist_km"))
-        share_car = safe_mean(zones_gdf.get("share_car"))
-        share_bike = safe_mean(zones_gdf.get("share_bicycle"))
-        share_walk = safe_mean(zones_gdf.get("share_walk"))
+
+        # ⚠️ parts modales dynamiques: on ne garde que les modes vraiment présents
+        modal_items = _collect_modal_shares(zones_gdf)
 
         content = dmc.Stack(
             [
@@ -39,7 +82,8 @@ def StudyAreaSummary(
                 KPIStatGroup(avg_time_min=avg_time, avg_dist_km=avg_dist),
                 dmc.Divider(),
                 dmc.Text("Répartition modale", fw=600, size="sm"),
-                ModalSplitList(share_car=share_car, share_bike=share_bike, share_walk=share_walk),
+                # Passe la liste (label, value) au composant d'affichage
+                ModalSplitList(items=modal_items),
                 dmc.Divider(),
                 LegendCompact(zones_gdf.get("average_travel_time")),
             ],

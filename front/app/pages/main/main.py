@@ -2,7 +2,7 @@
 from pathlib import Path
 import os
 
-from dash import Dash, html, no_update, Input, Output, State, ALL
+from dash import Dash, html, no_update, Input, Output, State, ALL, ctx
 import dash_mantine_components as dmc
 
 from app.components.layout.header.header import Header
@@ -30,12 +30,15 @@ UI_TO_INTERNAL = {
     "A pied": "walk",
     "Vélo": "bicycle",
     "Voiture": "car",
+    "Covoiturage": "carpool", 
 }
+
 
 def _make_deck_json_from_scn(scn: dict) -> str:
     if USE_MAP_SERVICE:
         return get_map_deck_json_from_scn(scn, DeckOptions())
     return make_deck_json(scn, DeckOptions())
+
 
 # ---------------------------------------------------------------------
 # Application Dash
@@ -115,21 +118,55 @@ def create_app() -> Dash:
             return no_update
         return input_val
 
-    # --- Simulation principale (tolérante et typée pour React) ---
+    # -----------------------------------------------------------------
+    # CALLBACK : Empêche de décocher tous les modes (sans notification)
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output({'type': 'mode-active', 'index': ALL}, 'checked'),
+        Input({'type': 'mode-active', 'index': ALL}, 'checked'),
+        State({'type': 'mode-active', 'index': ALL}, 'id'),
+        prevent_initial_call=True,
+    )
+    def ensure_one_mode_checked(values, ids):
+        """
+        Garantit qu'au moins un mode reste coché.
+        Si tous passent à False, on réactive automatiquement celui qui vient d'être décoché (ou le premier).
+        """
+        if not values or not ids:
+            return no_update
+
+        if any(values):
+            return values
+
+        new_values = list(values)
+        triggered = ctx.triggered_id
+
+        if isinstance(triggered, dict) and "index" in triggered:
+            triggered_name = triggered["index"]
+            for i, id_ in enumerate(ids):
+                if id_["index"] == triggered_name:
+                    new_values[i] = True
+                    break
+            else:
+                new_values[0] = True
+        else:
+            new_values[0] = True
+
+        return new_values
+
+    # -----------------------------------------------------------------
+    # Simulation principale
+    # -----------------------------------------------------------------
     @app.callback(
         Output(f"{MAPP}-deck-map", "data"),
         Output(f"{MAPP}-summary-wrapper", "children"),
         Input(f"{MAPP}-run-btn", "n_clicks"),
         State(f"{MAPP}-radius-input", "value"),
         State(f"{MAPP}-lau-input", "value"),
-        # pattern-matching states (peuvent être vides si accordéons repliés)
         State({"type": "mode-active", "index": ALL}, "checked"),
         State({"type": "mode-active", "index": ALL}, "id"),
         State({"type": "mode-var", "mode": ALL, "var": ALL}, "value"),
         State({"type": "mode-var", "mode": ALL, "var": ALL}, "id"),
-        # état courant (pour fallback sans rien casser)
-        State(f"{MAPP}-deck-map", "data"),
-        State(f"{MAPP}-summary-wrapper", "children"),
         prevent_initial_call=True,
     )
     def _run_simulation(
@@ -140,109 +177,54 @@ def create_app() -> Dash:
         active_ids,
         vars_values,
         vars_ids,
-        prev_deck,
-        prev_summary,
     ):
-        """
-        Exécute la simulation avec les paramètres du formulaire.
-        - Convertit tout 'children' en liste de composants Dash.
-        - En cas d'erreur, réaffiche l'ancien panneau + une alerte.
-        """
-
-        # Helpers internes
-        def _as_children(obj):
-            """Force un retour children en liste de composants Dash/HTML."""
-            if obj is None:
-                return []
-            if isinstance(obj, list):
-                return obj
-            if isinstance(obj, tuple):
-                return list(obj)
-            # Un seul composant -> encapsule
-            return [obj]
-
-        def _build_params(active_values, active_ids, vars_values, vars_ids):
-            """Reconstruit transport_modes_params en tolérant les listes vides/mal typées."""
-            # Defaults si rien n’est monté
-            params = {
-                "walk":    {"active": True, "cost_of_time_eur_per_h": 12.0, "cost_of_distance_eur_per_km": 0.01, "cost_constant": 1.0},
-                "bicycle": {"active": True, "cost_of_time_eur_per_h": 12.0, "cost_of_distance_eur_per_km": 0.01, "cost_constant": 1.0},
-                "car":     {"active": True, "cost_of_time_eur_per_h": 12.0, "cost_of_distance_eur_per_km": 0.01, "cost_constant": 1.0},
-            }
-
-            active_values = active_values or []
-            active_ids    = active_ids or []
-            vars_values   = vars_values or []
-            vars_ids      = vars_ids or []
-
-            # Checkboxes
-            n = min(len(active_ids), len(active_values))
-            for i in range(n):
-                aid = active_ids[i]
-                checked = bool(active_values[i])
-                if not isinstance(aid, dict):
-                    continue
-                ui_label = aid.get("index")
-                internal = UI_TO_INTERNAL.get(ui_label or "")
-                if internal:
-                    params[internal]["active"] = checked
-
-            # Inputs numériques
-            m = min(len(vars_ids), len(vars_values))
-            for i in range(m):
-                vid = vars_ids[i]
-                val = vars_values[i]
-                if not isinstance(vid, dict):
-                    continue
-                ui_mode = vid.get("mode")
-                var_lbl = (vid.get("var") or "").lower()
-                internal = UI_TO_INTERNAL.get(ui_mode or "")
-                if not internal:
-                    continue
-                try:
-                    fval = float(val) if val is not None else 0.0
-                except Exception:
-                    fval = 0.0
-                if "temps" in var_lbl:
-                    params[internal]["cost_of_time_eur_per_h"] = fval
-                elif "distance" in var_lbl:
-                    params[internal]["cost_of_distance_eur_per_km"] = fval
-                elif "constante" in var_lbl:
-                    params[internal]["cost_constant"] = fval
-
-            return params
-
+        """Callback : exécute la simulation avec les paramètres du formulaire."""
         try:
-            r = 40.0 if radius_val is None else float(radius_val)
+            r = 40 if radius_val is None else float(radius_val)
             lau = (lau_val or "").strip() or "31555"
 
-            params = _build_params(active_values, active_ids, vars_values, vars_ids)
+            # Reconstitue un dictionnaire transport_modes_params
+            params = {}
+            # 1. checkboxes (active/inactive)
+            for aid, val in zip(active_ids, active_values):
+                mode_label = aid["index"]
+                internal_key = UI_TO_INTERNAL.get(mode_label)
+                if internal_key:
+                    params.setdefault(internal_key, {})["active"] = bool(val)
 
+            # 2. variables numériques
+            for vid, val in zip(vars_ids, vars_values):
+                mode_label = vid["mode"]
+                var_label = vid["var"]
+                internal_key = UI_TO_INTERNAL.get(mode_label)
+                if not internal_key:
+                    continue
+                p = params.setdefault(internal_key, {"active": True})
+                if "temps" in var_label.lower():
+                    p["cost_of_time_eur_per_h"] = float(val or 0)
+                elif "distance" in var_label.lower():
+                    p["cost_of_distance_eur_per_km"] = float(val or 0)
+                elif "constante" in var_label.lower():
+                    p["cost_constant"] = float(val or 0)
+
+            # Appel au service
             scn = get_scenario(
                 local_admin_unit_id=lau,
                 radius=r,
                 transport_modes_params=params,
             )
             deck_json = _make_deck_json_from_scn(scn)
-
-            # Toujours renvoyer une LISTE de composants pour children
-            summary_comp = StudyAreaSummary(scn["zones_gdf"], visible=True, id_prefix=MAPP)
-            summary_children = _as_children(summary_comp)
-
-            return deck_json, summary_children
+            summary = StudyAreaSummary(scn["zones_gdf"], visible=True, id_prefix=MAPP)
+            return deck_json, summary
 
         except Exception as e:
-            # On garde l'état précédent et on affiche une alerte AU-DESSUS,
-            # le tout converti en liste de composants Dash.
-            alert = dmc.Alert(
+            err = dmc.Alert(
                 f"Une erreur est survenue pendant la simulation : {e}",
                 color="red",
                 variant="filled",
                 radius="md",
-                my="sm",
             )
-            prev_children = _as_children(prev_summary)
-            return prev_deck, [alert, *prev_children] if prev_children else [alert]
+            return no_update, err
 
     return app
 

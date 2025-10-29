@@ -12,7 +12,9 @@ def default_tooltip() -> dict:
             "<b style='font-size:13px;'>Répartition modale</b><br>"
             "Part des trajets en voiture : <b>{Part des trajets en voiture (%)}</b><br>"
             "Part des trajets à vélo : <b>{Part des trajets à vélo (%)}</b><br>"
-            "Part des trajets à pied : <b>{Part des trajets à pied (%)}</b>"
+            "Part des trajets à pied : <b>{Part des trajets à pied (%)}</b><br>"
+            # NEW: covoiturage
+            "Part des trajets en covoiturage : <b>{Part des trajets en covoiturage (%)}</b>"
             "</div>"
         ),
         "style": {

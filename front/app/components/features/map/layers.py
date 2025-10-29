@@ -20,23 +20,32 @@ def _polygons_records(zones_gdf: gpd.GeoDataFrame, scale: ColorScale) -> List[Di
         avg_tt = pd.to_numeric(row.get("average_travel_time", np.nan), errors="coerce")
         total_dist_km = pd.to_numeric(row.get("total_dist_km", np.nan), errors="coerce")
         total_time_min = pd.to_numeric(row.get("total_time_min", np.nan), errors="coerce")
+
         share_car = pd.to_numeric(row.get("share_car", np.nan), errors="coerce")
         share_bicycle = pd.to_numeric(row.get("share_bicycle", np.nan), errors="coerce")
         share_walk = pd.to_numeric(row.get("share_walk", np.nan), errors="coerce")
+        # NEW: covoiturage
+        share_carpool = pd.to_numeric(row.get("share_carpool", np.nan), errors="coerce")
 
         for ring in rings:
             out.append({
                 "geometry": [[float(x), float(y)] for x, y in ring],
                 "fill_rgba": scale.rgba(avg_tt),
+
+                # Infos générales
                 "Unité INSEE": str(insee),
                 "Identifiant de zone": str(zone_id),
                 "Temps moyen de trajet (minutes)": fmt_num(avg_tt, 1),
                 "Niveau d’accessibilité": scale.legend(avg_tt),
                 "Distance totale parcourue (km/jour)": fmt_num(total_dist_km, 1),
                 "Temps total de déplacement (min/jour)": fmt_num(total_time_min, 1),
+
+                # Répartition modale (en %)
                 "Part des trajets en voiture (%)": fmt_pct(share_car, 1),
                 "Part des trajets à vélo (%)": fmt_pct(share_bicycle, 1),
                 "Part des trajets à pied (%)": fmt_pct(share_walk, 1),
+                # NEW: covoiturage
+                "Part des trajets en covoiturage (%)": fmt_pct(share_carpool, 1),
             })
     return out
 
