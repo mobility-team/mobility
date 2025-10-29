@@ -229,8 +229,8 @@ class PopulationTrips(FileAsset):
             weekend_chains.write_parquet(self.cache_path["weekend_chains"])
             
         else:
-            
-            os.mkdir(self.cache_path["weekend_flows"].parent)
+            if not os.path.exists(self.cache_path["weekend_flows"].parent):
+                os.mkdir(self.cache_path["weekend_flows"].parent)
             pl.DataFrame().write_parquet(self.cache_path["weekend_flows"])
             pl.DataFrame().write_parquet(self.cache_path["weekend_sinks"])
             pl.DataFrame().write_parquet(self.cache_path["weekend_costs"])
