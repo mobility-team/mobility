@@ -99,6 +99,19 @@ class PublicTransportNetworkEvaluation:
             
             graph_lines
             .join(graph_data.select(["edge_id", "dist"]).rename({"dist": "time"}), on="edge_id")
+            
+            # Filter edges with less than 2 points to avoid a shapely error later on
+            # (this should never be the case ?)
+            .with_columns(
+                n_points=pl.col("point_id").count().over("edge_id")
+            )
+            .filter(
+                pl.col("n_points") == 2
+            )
+            .with_columns(
+                edge_id=pl.col("edge_id").rank("dense").cast(pl.Int64()) - 1
+            )
+            
             .sort("edge_id")
             
         )
