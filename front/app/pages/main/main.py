@@ -2,7 +2,8 @@
 from pathlib import Path
 import os
 
-from dash import Dash, html, no_update, Input, Output, State, ALL, ctx
+from dash import Dash, html, no_update, dcc
+from dash import Input, Output, State, ALL, ctx
 import dash_mantine_components as dmc
 
 from app.components.layout.header.header import Header
@@ -21,18 +22,16 @@ except Exception:
     USE_MAP_SERVICE = False
 
 ASSETS_PATH = Path(__file__).resolve().parents[3] / "assets"
-MAPP = "map"   # id_prefix pour la carte
-TM = "tm"      # id_prefix pour les modes de transport
+MAPP = "map"
 
-# Conversion UI -> noms internes du service
+# libellés UI -> clés internes du scénario
 UI_TO_INTERNAL = {
     "À pied": "walk",
     "A pied": "walk",
     "Vélo": "bicycle",
     "Voiture": "car",
-    "Covoiturage": "carpool", 
+    "Covoiturage": "carpool",
 }
-
 
 def _make_deck_json_from_scn(scn: dict) -> str:
     if USE_MAP_SERVICE:
@@ -55,6 +54,10 @@ def create_app() -> Dash:
         dmc.AppShell(
             children=[
                 Header("MOBILITY"),
+
+                # (optionnel) petit store si tu veux piloter autre chose plus tard
+                dcc.Store(id="dummy-store"),
+
                 dmc.AppShellMain(
                     html.Div(
                         Map(id_prefix=MAPP),
@@ -75,21 +78,14 @@ def create_app() -> Dash:
                         "overflow": "hidden",
                     },
                 ),
-                html.Div(
-                    Footer(),
-                    style={
-                        "flexShrink": "0",
-                        "display": "flex",
-                        "alignItems": "center",
-                    },
-                ),
+
+                html.Div(Footer(), style={"flexShrink": "0"}),
             ],
             padding=0,
             styles={
                 "root": {"height": "100vh", "overflow": "hidden"},
                 "main": {"padding": 0, "margin": 0, "overflow": "hidden"},
             },
-            style={"height": "100vh", "overflow": "hidden"},
         )
     )
 
@@ -97,7 +93,7 @@ def create_app() -> Dash:
     # CALLBACKS
     # -----------------------------------------------------------------
 
-    # Synchronisation slider / input
+    # 1) Synchronisation slider <-> input
     @app.callback(
         Output(f"{MAPP}-radius-input", "value"),
         Input(f"{MAPP}-radius-slider", "value"),
@@ -118,45 +114,7 @@ def create_app() -> Dash:
             return no_update
         return input_val
 
-    # -----------------------------------------------------------------
-    # CALLBACK : Empêche de décocher tous les modes (sans notification)
-    # -----------------------------------------------------------------
-    @app.callback(
-        Output({'type': 'mode-active', 'index': ALL}, 'checked'),
-        Input({'type': 'mode-active', 'index': ALL}, 'checked'),
-        State({'type': 'mode-active', 'index': ALL}, 'id'),
-        prevent_initial_call=True,
-    )
-    def ensure_one_mode_checked(values, ids):
-        """
-        Garantit qu'au moins un mode reste coché.
-        Si tous passent à False, on réactive automatiquement celui qui vient d'être décoché (ou le premier).
-        """
-        if not values or not ids:
-            return no_update
-
-        if any(values):
-            return values
-
-        new_values = list(values)
-        triggered = ctx.triggered_id
-
-        if isinstance(triggered, dict) and "index" in triggered:
-            triggered_name = triggered["index"]
-            for i, id_ in enumerate(ids):
-                if id_["index"] == triggered_name:
-                    new_values[i] = True
-                    break
-            else:
-                new_values[0] = True
-        else:
-            new_values[0] = True
-
-        return new_values
-
-    # -----------------------------------------------------------------
-    # Simulation principale
-    # -----------------------------------------------------------------
+    # 2) Lancement de simulation (bouton "Lancer la simulation")
     @app.callback(
         Output(f"{MAPP}-deck-map", "data"),
         Output(f"{MAPP}-summary-wrapper", "children"),
@@ -178,41 +136,34 @@ def create_app() -> Dash:
         vars_values,
         vars_ids,
     ):
-        """Callback : exécute la simulation avec les paramètres du formulaire."""
         try:
-            r = 40 if radius_val is None else float(radius_val)
+            r = 40.0 if radius_val is None else float(radius_val)
             lau = (lau_val or "").strip() or "31555"
 
-            # Reconstitue un dictionnaire transport_modes_params
+            # Reconstitue le dictionnaire transport_modes_params à partir du formulaire
             params = {}
-            # 1. checkboxes (active/inactive)
+            # 2.1 actifs / inactifs
             for aid, val in zip(active_ids, active_values):
                 mode_label = aid["index"]
                 internal_key = UI_TO_INTERNAL.get(mode_label)
                 if internal_key:
                     params.setdefault(internal_key, {})["active"] = bool(val)
-
-            # 2. variables numériques
+            # 2.2 variables numériques
             for vid, val in zip(vars_ids, vars_values):
                 mode_label = vid["mode"]
-                var_label = vid["var"]
+                var_label = (vid["var"] or "").lower()
                 internal_key = UI_TO_INTERNAL.get(mode_label)
                 if not internal_key:
                     continue
                 p = params.setdefault(internal_key, {"active": True})
-                if "temps" in var_label.lower():
+                if "temps" in var_label:
                     p["cost_of_time_eur_per_h"] = float(val or 0)
-                elif "distance" in var_label.lower():
+                elif "distance" in var_label:
                     p["cost_of_distance_eur_per_km"] = float(val or 0)
-                elif "constante" in var_label.lower():
+                elif "constante" in var_label:
                     p["cost_constant"] = float(val or 0)
 
-            # Appel au service
-            scn = get_scenario(
-                local_admin_unit_id=lau,
-                radius=r,
-                transport_modes_params=params,
-            )
+            scn = get_scenario(local_admin_unit_id=lau, radius=r, transport_modes_params=params)
             deck_json = _make_deck_json_from_scn(scn)
             summary = StudyAreaSummary(scn["zones_gdf"], visible=True, id_prefix=MAPP)
             return deck_json, summary
@@ -225,6 +176,44 @@ def create_app() -> Dash:
                 radius="md",
             )
             return no_update, err
+
+    # 3) Empêcher de décocher tous les modes + ouvrir le Tooltip sur la case fautive
+    @app.callback(
+        Output({"type": "mode-active", "index": ALL}, "checked"),
+        Output({"type": "mode-tip", "index": ALL}, "opened"),
+        Input({"type": "mode-active", "index": ALL}, "checked"),
+        State({"type": "mode-active", "index": ALL}, "id"),
+        prevent_initial_call=True,
+    )
+    def _enforce_at_least_one_mode(checked_list, ids):
+        """
+        Si l'utilisateur tente de décocher le dernier mode actif :
+        - on réactive la case cliquée
+        - on ouvre le Tooltip de cette case (les autres restent fermés)
+        """
+        if not checked_list or not ids:
+            return no_update, no_update
+
+        # Combien de True ?
+        n_checked = sum(1 for v in checked_list if bool(v))
+        triggered = ctx.triggered_id  # dict: {"type":"mode-active","index":"..."}
+
+        # Tous décochés -> impossible
+        if n_checked == 0 and triggered is not None:
+            # Réactive uniquement la case qui vient d'être cliquée
+            new_checked = []
+            new_opened = []
+            for id_, val in zip(ids, checked_list):
+                if id_ == triggered:
+                    new_checked.append(True)
+                    new_opened.append(True)   # ouvre le tooltip ici
+                else:
+                    new_checked.append(bool(val))
+                    new_opened.append(False)
+            return new_checked, new_opened
+
+        # Sinon : ferme tous les tooltips (aucun blocage)
+        return list(bool(v) for v in checked_list), [False] * len(ids)
 
     return app
 

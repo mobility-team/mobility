@@ -1,9 +1,8 @@
-# app/components/features/.../transport_modes_inputs.py
 import dash_mantine_components as dmc
 from dash import html
 
 # -------------------------
-# Données mock : 3 modes de transport
+# Données mock : 4 modes de transport
 # -------------------------
 MOCK_MODES = [
     {
@@ -50,16 +49,33 @@ VAR_SPECS = {
     "Constante de mode (€)": {"min": 0, "max": 20, "step": 1},
 }
 
+
 def _mode_header(mode):
+    """Case à cocher + nom, avec tooltip rouge contrôlé par main.py."""
     return dmc.Group(
         [
-            dmc.Checkbox(checked=mode["active"], id={"type": "mode-active", "index": mode["name"]}),
+            dmc.Tooltip(
+                label="Au moins un mode doit rester actif",
+                position="right",
+                withArrow=True,
+                color="#e5007d",  # rouge/magenta du logo
+                opened=False,     # contrôlé par callback
+                withinPortal=True,
+                zIndex=9999,
+                transitionProps={"transition": "fade", "duration": 400, "timingFunction": "ease-in-out"},
+                id={"type": "mode-tip", "index": mode["name"]},
+                children=dmc.Checkbox(
+                    id={"type": "mode-active", "index": mode["name"]},
+                    checked=mode["active"],     # <- version qui marchait
+                ),
+            ),
             dmc.Text(mode["name"], fw=600),
         ],
         gap="sm",
         align="center",
         w="100%",
     )
+
 
 def _mode_body(mode):
     rows = []
@@ -84,6 +100,7 @@ def _mode_body(mode):
         )
     return dmc.Stack(rows, gap="md")
 
+
 def _modes_list():
     items = [
         dmc.AccordionItem(
@@ -102,6 +119,7 @@ def _modes_list():
         radius="md",
         styles={"control": {"paddingTop": 8, "paddingBottom": 8}},
     )
+
 
 def TransportModesInputs(id_prefix="tm"):
     """Panneau principal 'MODES DE TRANSPORT' collapsable."""
