@@ -8,6 +8,10 @@ from .transport_graphs.path_graph import PathGraph
 
 from .population import Population
 
+
+from .trips import Trips
+
+
 from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
 
 from mobility.transport_modes.walk import WalkMode
