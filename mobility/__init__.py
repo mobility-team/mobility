@@ -7,23 +7,8 @@ from .transport_costs.path_travel_costs import PathTravelCosts
 from .transport_graphs.path_graph import PathGraph
 
 from .population import Population
-from .trips import Trips
-# from .localized_trips import LocalizedTrips
 
-from .choice_models.work_destination_choice_model import (
-    WorkDestinationChoiceModel,
-    WorkDestinationChoiceModelParameters
-)
-
-from .choice_models.shopping_destination_choice_model import (
-    ShoppingDestinationChoiceModel,
-    ShoppingDestinationChoiceModelParameters
-)
-
-from .choice_models.leisure_destination_choice_model import (
-    LeisureDestinationChoiceModel,
-    LeisureDestinationChoiceModelParameters
-)
+from mobility.parsers.mobility_survey.france import EMPMobilitySurvey
 
 from mobility.transport_modes.walk import WalkMode
 from mobility.transport_modes.bicycle import BicycleMode
@@ -46,7 +31,16 @@ from .choice_models.transport_mode_choice_model import TransportModeChoiceModel
 from .parsers import LocalAdminUnits
 
 
-from .localized_trips import LocalizedTrips
+from .motives.home import HomeMotive
+from .motives.leisure import LeisureMotive
+from .motives.shopping import ShoppingMotive
+from .motives.studies import StudiesMotive
+from .motives.work import WorkMotive
+from .motives.other import OtherMotive
+
+
+from mobility.choice_models.population_trips import PopulationTrips
+from mobility.choice_models.population_trips_parameters import PopulationTripsParameters
 
 
 from mobility.transport_graphs.speed_modifier import (
