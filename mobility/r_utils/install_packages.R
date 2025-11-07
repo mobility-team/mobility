@@ -56,8 +56,6 @@ library(pak)
 
 pkg_install_if_needed <- function(packages, force_reinstall, log) {
   
-  print(packages)
-  
   installed_packages <- packages[packages %in% installed.packages()]
 
   if (force_reinstall) {
