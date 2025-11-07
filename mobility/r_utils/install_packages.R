@@ -12,18 +12,44 @@ download_method <- args[4]
 # -----------------------------------------------------------------------------
 # Install pak if needed
 if (!("pak" %in% installed.packages())) {
-  install.packages(
-    "pak",
-    method = download_method,
-    repos = sprintf(
-      "https://r-lib.github.io/p/pak/%s/%s/%s/%s",
-      "stable",
-      .Platform$pkgType,
-      R.Version()$os,
-      R.Version()$arch
+
+  message("Installing pak...")
+
+  tryCatch({
+
+      install.packages(
+        "pak",
+        method = download_method,
+        repos = sprintf(
+          "https://r-lib.github.io/p/pak/%s/%s/%s/%s",
+          "stable",
+          .Platform$pkgType,
+          R.Version()$os,
+          R.Version()$arch
+        )
+      )
+
+  }, error = function(e) {
+
+    message("Pak installation failed with the default method, retrying with R_LIBCURL_SSL_REVOKE_BEST_EFFORT=TRUE.")
+    Sys.setenv(R_LIBCURL_SSL_REVOKE_BEST_EFFORT=TRUE)
+
+    install.packages(
+      "pak",
+      method = download_method,
+      repos = sprintf(
+        "https://r-lib.github.io/p/pak/%s/%s/%s/%s",
+        "stable",
+        .Platform$pkgType,
+        R.Version()$os,
+        R.Version()$arch
+      )
     )
-  )
+
+  })
+
 }
+
 library(pak)
 
 # Install log4r if not available
