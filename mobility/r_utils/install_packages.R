@@ -11,7 +11,7 @@ download_method <- args[4]
 
 # -----------------------------------------------------------------------------
 # Install pak if needed
-if (!("pak" %in% installed.packages())) {
+if (!("pak" %in% installed.packages()) | force_reinstall) {
 
   message("Installing pak...")
 
@@ -28,6 +28,8 @@ if (!("pak" %in% installed.packages())) {
           R.Version()$arch
         )
       )
+
+      return("pak" %in% installed.packages())
 
   }, error = function(e) {
 
@@ -52,21 +54,69 @@ if (!("pak" %in% installed.packages())) {
 
 library(pak)
 
-# Install log4r if not available
-if (!("log4r" %in% installed.packages())) {
-  pkg_install("log4r")
+pkg_install_if_needed <- function(packages, force_reinstall, log) {
+  
+  print(packages)
+  
+  installed_packages <- packages[packages %in% installed.packages()]
+
+  if (force_reinstall) {
+    remove.packages(installed_packages)
+  }
+  
+  packages <- packages[!(packages %in% installed.packages())]
+
+  if (log) {
+    info(logger, paste0("Installing R packages: ", paste0(packages, collapse = ", ")))
+  }
+  
+  pkg_install(packages)
+
 }
-library(log4r)
-logger <- logger(appenders = console_appender())
+
+pkg_install_with_fallback <- function(packages, force_reinstall, log = TRUE) {
+
+  tryCatch({
+
+    pkg_install_if_needed(packages, force_reinstall, log)
+
+  }, error = function(e) {
+
+    message("Package installation failed with the default method, retrying with R_LIBCURL_SSL_REVOKE_BEST_EFFORT=TRUE.")
+    Sys.setenv(R_LIBCURL_SSL_REVOKE_BEST_EFFORT=TRUE)
+    pkg_install_if_needed(packages, force_reinstall, log)
+
+  })
+
+}
 
 # Install log4r if not available
-if (!("jsonlite" %in% installed.packages())) {
-  pkg_install("jsonlite")
-}
+pkg_install_with_fallback(
+  c("log4r", "jsonlite"),
+  force_reinstall,
+  log = FALSE
+)
+
+library(log4r)
 library(jsonlite)
 
-# Parse the packages list
+logger <- logger(appenders = console_appender())
 packages <- fromJSON(packages, simplifyDataFrame = FALSE)
+
+# -----------------------------------------------------------------------------
+# CRAN packages
+cran_packages <- Filter(function(p) {p[["source"]]} == "CRAN", packages)
+if (length(cran_packages) > 0) {
+  cran_packages <- unlist(lapply(cran_packages, "[[", "name"))
+} else {
+  cran_packages <- c()
+}
+
+pkg_install_with_fallback(
+  cran_packages,
+  force_reinstall,
+  log = TRUE
+)
 
 # -----------------------------------------------------------------------------
 # Local packages
@@ -92,24 +142,6 @@ if (length(local_packages) > 0) {
     type = "binary",
     quiet = FALSE
   )
-}
-
-# -----------------------------------------------------------------------------
-# CRAN packages
-cran_packages <- Filter(function(p) {p[["source"]]} == "CRAN", packages)
-if (length(cran_packages) > 0) {
-  cran_packages <- unlist(lapply(cran_packages, "[[", "name"))
-} else {
-  cran_packages <- c()
-}
-
-if (force_reinstall == FALSE) {
-  cran_packages <- cran_packages[!(cran_packages %in% rownames(installed.packages()))]
-}
-
-if (length(cran_packages) > 0) {
-  info(logger, paste0("Installing R packages from CRAN : ", paste0(cran_packages, collapse = ", ")))
-  pkg_install(cran_packages)
 }
 
 # -----------------------------------------------------------------------------
