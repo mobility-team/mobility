@@ -2,16 +2,20 @@
 # Parse arguments
 args <- commandArgs(trailingOnly = TRUE)
 
+# args <- c(
+#   'D:\\dev\\mobility\\mobility',
+#   '[{"source": "CRAN", "name": "remotes"}, {"source": "CRAN", "name": "dodgr"}, {"source": "CRAN", "name": "sf"}, {"source": "CRAN", "name": "dplyr"}, {"source": "CRAN", "name": "sfheaders"}, {"source": "CRAN", "name": "nngeo"}, {"source": "CRAN", "name": "data.table"}, {"source": "CRAN", "name": "arrow"}, {"source": "CRAN", "name": "hms"}, {"source": "CRAN", "name": "lubridate"}, {"source": "CRAN", "name": "future"}, {"source": "CRAN", "name": "future.apply"}, {"source": "CRAN", "name": "ggplot2"}, {"source": "CRAN", "name": "cppRouting"}, {"source": "CRAN", "name": "duckdb"}, {"source": "CRAN", "name": "gtfsrouter"}, {"source": "CRAN", "name": "geos"}, {"source": "CRAN", "name": "FNN"}, {"source": "CRAN", "name": "cluster"}, {"source": "CRAN", "name": "dbscan"}, {"source": "local", "path": "D:\\\\dev\\\\mobility\\\\mobility\\\\resources\\\\osmdata_0.2.5.005.zip"}]',
+#   'False',
+#   'auto'
+# )
+
 packages <- args[2]
-
-force_reinstall <- args[3]
-force_reinstall <- as.logical(force_reinstall)
-
+force_reinstall <- as.logical(args[3])
 download_method <- args[4]
 
 # -----------------------------------------------------------------------------
 # Install pak if needed
-if (!("pak" %in% installed.packages()) | force_reinstall) {
+if (!("pak" %in% installed.packages()) | force_reinstall == TRUE) {
 
   message("Installing pak...")
 
@@ -63,12 +67,16 @@ pkg_install_if_needed <- function(packages, force_reinstall, log) {
   }
   
   packages <- packages[!(packages %in% installed.packages())]
-
-  if (log) {
-    info(logger, paste0("Installing R packages: ", paste0(packages, collapse = ", ")))
-  }
   
-  pkg_install(packages)
+  if (length(packages) > 0) {
+    
+    if (log) {
+      info(logger, paste0("Installing R packages: ", paste0(packages, collapse = ", ")))
+    }
+    
+    pkg_install(packages)
+    
+  } 
 
 }
 
