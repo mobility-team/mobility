@@ -1,4 +1,3 @@
-# app/services/scenario_service.py
 from __future__ import annotations
 from functools import lru_cache
 from typing import Dict, Any, Tuple
@@ -7,9 +6,9 @@ import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point
 
-# --------------------------------------------------------------------
+# ------------------------------------------------------------
 # Helpers & fallback
-# --------------------------------------------------------------------
+# ------------------------------------------------------------
 def _to_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     if gdf.crs is None:
         return gdf.set_crs(4326, allow_override=True)
@@ -21,7 +20,7 @@ def _to_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 
 def _fallback_scenario() -> Dict[str, Any]:
-    """Scénario minimal de secours (Toulouse – Blagnac) AVEC covoiturage."""
+    """Scénario de secours (Toulouse–Blagnac) avec toutes les colonnes de parts (y compris TC)."""
     toulouse = (1.4442, 43.6047)
     blagnac = (1.3903, 43.6350)
 
@@ -30,23 +29,46 @@ def _fallback_scenario() -> Dict[str, Any]:
         geometry="geometry",
         crs=4326,
     )
+
     zones = pts.to_crs(3857)
     zones["geometry"] = zones.geometry.buffer(5000)  # 5 km
     zones = zones.to_crs(4326)
 
     zones["average_travel_time"] = [18.0, 25.0]
     zones["total_dist_km"] = [15.0, 22.0]
-    zones["share_car"] = [0.55, 0.50]
-    zones["share_bicycle"] = [0.19, 0.20]
-    zones["share_walk"] = [0.16, 0.15]
-    zones["share_carpool"] = [0.10, 0.15]
+
+    # parts modales "plausibles"
+    car_tlse, bike_tlse, walk_tlse = 0.55, 0.19, 0.16
+    ptw_tlse, ptc_tlse, ptb_tlse = 0.06, 0.03, 0.02  # sous-modes TC
+    carpool_tlse = 0.05
+
+    car_blg,  bike_blg,  walk_blg  = 0.50, 0.20, 0.15
+    ptw_blg,  ptc_blg,  ptb_blg   = 0.08, 0.04, 0.03
+    carpool_blg = 0.00
+
+    zones["share_car"] = [car_tlse, car_blg]
+    zones["share_bicycle"] = [bike_tlse, bike_blg]
+    zones["share_walk"] = [walk_tlse, walk_blg]
+    zones["share_carpool"] = [carpool_tlse, carpool_blg]
+
+    zones["share_pt_walk"] = [ptw_tlse, ptw_blg]
+    zones["share_pt_car"] = [ptc_tlse, ptc_blg]
+    zones["share_pt_bicycle"] = [ptb_tlse, ptb_blg]
+    zones["share_public_transport"] = zones[["share_pt_walk", "share_pt_car", "share_pt_bicycle"]].sum(axis=1)
+
+    # normalisation pour s’assurer que la somme = 1
+    cols_all = [
+        "share_car", "share_bicycle", "share_walk", "share_carpool",
+        "share_pt_walk", "share_pt_car", "share_pt_bicycle"
+    ]
+    total = zones[cols_all].sum(axis=1)
+    zones[cols_all] = zones[cols_all].div(total.replace(0, np.nan), axis=0).fillna(0)
+    zones["share_public_transport"] = zones[["share_pt_walk", "share_pt_car", "share_pt_bicycle"]].sum(axis=1)
+
     zones["local_admin_unit_id"] = ["fr-31555", "fr-31069"]
 
-    return {
-        "zones_gdf": _to_wgs84(zones),
-        "flows_df": pd.DataFrame(columns=["from", "to", "flow_volume"]),
-        "zones_lookup": _to_wgs84(pts),
-    }
+    empty_flows = pd.DataFrame(columns=["from", "to", "flow_volume"])
+    return {"zones_gdf": _to_wgs84(zones), "flows_df": empty_flows, "zones_lookup": _to_wgs84(pts)}
 
 
 def _normalize_lau_code(code: str) -> str:
@@ -58,174 +80,178 @@ def _normalize_lau_code(code: str) -> str:
     return s
 
 
-# --------------------------------------------------------------------
-# Helpers pour paramètres personnalisés
-# --------------------------------------------------------------------
+# ------------------------------------------------------------
+# Param helpers
+# ------------------------------------------------------------
 def _safe_cost_of_time(v_per_hour: float):
-    from mobility.cost_of_time_parameters import CostOfTimeParameters
-    cot = CostOfTimeParameters()
-    for attr in ("value_per_hour", "hourly_cost", "value"):
-        if hasattr(cot, attr):
-            setattr(cot, attr, float(v_per_hour))
-            return cot
-    return cot
+    # On garde la présence de cette fonction pour compatibilité,
+    # mais on n’instancie pas de modèles lourds ici.
+    class _COT:
+        def __init__(self, v): self.value_per_hour = float(v)
+    return _COT(v_per_hour)
 
 
-def _make_gcp(mobility, params: dict):
-    return mobility.GeneralizedCostParameters(
-        cost_constant=float(params.get("cost_constant", 0.0)),
-        cost_of_time=_safe_cost_of_time(params.get("cost_of_time_eur_per_h", 0.0)),
-        cost_of_distance=float(params.get("cost_of_distance_eur_per_km", 0.0)),
-    )
-
-
-def _make_carpool_gcp(params: dict):
-    from mobility.transport_modes.carpool.detailed import DetailedCarpoolGeneralizedCostParameters
-    return DetailedCarpoolGeneralizedCostParameters(
-        cost_constant=float(params.get("cost_constant", 0.0)),
-        cost_of_time=_safe_cost_of_time(params.get("cost_of_time_eur_per_h", 0.0)),
-        cost_of_distance=float(params.get("cost_of_distance_eur_per_km", 0.0)),
-    )
-
-
-# --------------------------------------------------------------------
-# Core computation
-# --------------------------------------------------------------------
-def _compute_scenario(local_admin_unit_id="31555", radius=40.0, transport_modes_params=None) -> Dict[str, Any]:
-    """
-    Calcule un scénario avec la librairie 'mobility'.
-    - Gère 'car', 'bicycle', 'walk' + 'carpool' (via mobility.CarpoolMode)
-    - Les modes décochés gardent part = 0 ; renormalisation sur les modes actifs
-    - Pas de flux (flows_df vide)
-    """
-    # Import critiques : si 'mobility' absent → fallback
-    try:
-        import mobility
-        from mobility.path_routing_parameters import PathRoutingParameters
-        from mobility.transport_modes.carpool.carpool_mode import CarpoolMode
-        from mobility.transport_modes.carpool.detailed import DetailedCarpoolRoutingParameters
-    except Exception as e:
-        print(f"[SCENARIO] mobility indisponible → fallback. Raison: {e}")
-        return _fallback_scenario()
-
-    transport_modes_params = transport_modes_params or {}
-
-    BASE = {
-        "active": False,
-        "cost_constant": 1,
-        "cost_of_time_eur_per_h": 12,
-        "cost_of_distance_eur_per_km": 0.01,
+def _extract_vars(d: Dict[str, Any], defaults: Dict[str, float]) -> Dict[str, float]:
+    """Récupère cost_constant / cost_of_time_eur_per_h / cost_of_distance_eur_per_km avec défauts."""
+    return {
+        "cost_constant": float((d or {}).get("cost_constant", defaults["cost_constant"])),
+        "cost_of_time_eur_per_h": float((d or {}).get("cost_of_time_eur_per_h", defaults["cost_of_time_eur_per_h"])),
+        "cost_of_distance_eur_per_km": float((d or {}).get("cost_of_distance_eur_per_km", defaults["cost_of_distance_eur_per_km"])),
     }
 
-    if not transport_modes_params:
-        # Comportement historique : 3 modes actifs, carpool inactif
-        modes_cfg = {
-            "car":       {**BASE, "active": True},
-            "bicycle":   {**BASE, "active": True},
-            "walk":      {**BASE, "active": True},
-            "carpool":   {**BASE, "active": True},
-        }
-    else:
-        modes_cfg = {}
-        for k in ("car", "bicycle", "walk", "carpool"):
-            if k in transport_modes_params:
-                user = transport_modes_params[k] or {}
-                cfg = {**BASE, **{kk: vv for kk, vv in user.items() if vv is not None}}
-                if "active" not in user:
-                    cfg["active"] = True
-                modes_cfg[k] = cfg
 
-    lau_norm = _normalize_lau_code(local_admin_unit_id)
-    mobility.set_params(debug=True, r_packages_download_method="wininet")
-    transport_zones = mobility.TransportZones(local_admin_unit_id=lau_norm, radius=float(radius), level_of_detail=0)
+def _mode_cost_to_weight(vars_: Dict[str, float], base_minutes: float) -> float:
+    """
+    Convertit les variables de coût d’un mode en un poids temps synthétique (minutes).
+    Plus les coûts sont élevés, plus le "poids" est haut (=> augmente average_travel_time si la part du mode est forte).
+    On garde une transformation simple, stable et déterministe.
+    """
+    cc = vars_["cost_constant"]                # €
+    cot = vars_["cost_of_time_eur_per_h"]      # €/h
+    cod = vars_["cost_of_distance_eur_per_km"] # €/km
 
-    # Instanciation des modes (pas de try global pour éviter fallback intempestif)
-    modes = []
-
-    # Car (base) — requis par CarpoolMode
-    car_base = mobility.CarMode(
-        transport_zones=transport_zones,
-        generalized_cost_parameters=_make_gcp(mobility, modes_cfg.get("car", BASE)),
+    # pondérations simples mais sensibles :
+    # - le coût du temps influe beaucoup (rapport heures→minutes)
+    # - la distance influe modérément
+    # - la constante donne un petit offset
+    return (
+        base_minutes
+        + 0.6 * (cot)          # €/h → ~impact direct
+        + 4.0 * (cod)          # €/km → faible
+        + 0.8 * (cc)           # €
     )
-    if modes_cfg.get("car", {}).get("active"):
-        modes.append(car_base)
 
-    # Bicycle
-    if modes_cfg.get("bicycle", {}).get("active"):
-        modes.append(
-            mobility.BicycleMode(
-                transport_zones=transport_zones,
-                generalized_cost_parameters=_make_gcp(mobility, modes_cfg["bicycle"]),
-            )
-        )
 
-    # Walk
-    if modes_cfg.get("walk", {}).get("active"):
-        walk_params = PathRoutingParameters(filter_max_time=2.0, filter_max_speed=5.0)
-        modes.append(
-            mobility.WalkMode(
-                transport_zones=transport_zones,
-                routing_parameters=walk_params,
-                generalized_cost_parameters=_make_gcp(mobility, modes_cfg["walk"]),
-            )
-        )
+# ------------------------------------------------------------
+# Core computation (robuste aux modes manquants)
+# ------------------------------------------------------------
+def _compute_scenario(
+    local_admin_unit_id: str = "31555",
+    radius: float = 40.0,
+    transport_modes_params: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """
+    Calcule un scénario. Crée toujours toutes les colonnes de parts :
+    - share_car, share_bicycle, share_walk, share_carpool
+    - share_pt_walk, share_pt_car, share_pt_bicycle, share_public_transport
+    Renormalise sur les seuls modes actifs (zéro si décoché).
+    Recalcule average_travel_time (Option B) avec influence des variables par mode.
+    """
+    try:
+        import mobility
+    except Exception as e:
+        print(f"[SCENARIO] fallback (mobility indisponible): {e}")
+        return _fallback_scenario()
 
-    # Carpool (covoiturage) — on essaie, et si ça échoue on continue sans casser la simu
-    if modes_cfg.get("carpool", {}).get("active"):
-        try:
-            routing_params = DetailedCarpoolRoutingParameters()
-            gcp_carpool = _make_carpool_gcp(modes_cfg["carpool"])
-            modes.append(
-                CarpoolMode(
-                    car_mode=car_base,
-                    routing_parameters=routing_params,
-                    generalized_cost_parameters=gcp_carpool,
-                    intermodal_transfer=None,
-                )
-            )
-            print("[SCENARIO] CarpoolMode activé.")
-        except Exception as e:
-            print(f"[SCENARIO] CarpoolMode indisponible, on continue sans : {e}")
+    p = transport_modes_params or {}
+    # états d’activation des modes principaux
+    active = {
+        "car": bool(p.get("car", {}).get("active", True)),
+        "bicycle": bool(p.get("bicycle", {}).get("active", True)),
+        "walk": bool(p.get("walk", {}).get("active", True)),
+        "carpool": bool(p.get("carpool", {}).get("active", True)),
+        "public_transport": bool(p.get("public_transport", {}).get("active", True)),
+    }
+    # états des sous-modes TC
+    pt_sub = {
+        "walk_pt": bool((p.get("public_transport", {}) or {}).get("pt_walk", True)),
+        "car_pt": bool((p.get("public_transport", {}) or {}).get("pt_car", True)),
+        "bicycle_pt": bool((p.get("public_transport", {}) or {}).get("pt_bicycle", True)),
+    }
 
-    if not modes:
-        raise ValueError("Aucun mode de transport actif. Activez au moins un mode.")
+    # Variables des modes (avec défauts souhaités : 12€/h ; 0.01€/km ; 1€)
+    defaults = {"cost_constant": 1.0, "cost_of_time_eur_per_h": 12.0, "cost_of_distance_eur_per_km": 0.01}
+    vars_car      = _extract_vars(p.get("car"), defaults)
+    vars_bicycle  = _extract_vars(p.get("bicycle"), defaults)
+    vars_walk     = _extract_vars(p.get("walk"), defaults)
+    vars_carpool  = _extract_vars(p.get("carpool"), defaults)
+    vars_pt       = _extract_vars(p.get("public_transport"), defaults)  # appliqué au bloc TC
 
-    # Calcul principal
-    work_choice_model = mobility.WorkDestinationChoiceModel(transport_zones, modes=modes)
-    work_choice_model.get()
+    # Zones issues de mobility (géométrie réaliste) — sans lancer de modèles
+    lau_norm = _normalize_lau_code(local_admin_unit_id or "31555")
+    mobility.set_params(debug=True, r_packages_download_method="wininet")
+    tz = mobility.TransportZones(local_admin_unit_id=lau_norm, radius=float(radius), level_of_detail=0)
 
-    zones = transport_zones.get()[["transport_zone_id", "geometry", "local_admin_unit_id"]].copy()
+    zones = tz.get()[["transport_zone_id", "geometry", "local_admin_unit_id"]].copy()
     zones_gdf = gpd.GeoDataFrame(zones, geometry="geometry")
+    n = len(zones_gdf)
 
-    # Indicateurs génériques (mock cohérents)
-    zones_gdf["average_travel_time"] = np.random.uniform(10, 30, len(zones_gdf))
-    zones_gdf["total_dist_km"] = np.random.uniform(5, 25, len(zones_gdf))
+    # --- Initialisation TOUTES parts à 0
+    for col in [
+        "share_car", "share_bicycle", "share_walk", "share_carpool",
+        "share_pt_walk", "share_pt_car", "share_pt_bicycle", "share_public_transport"
+    ]:
+        zones_gdf[col] = 0.0
 
-    # Parts modales initialisées à 0
-    zones_gdf["share_car"] = 0.0
-    zones_gdf["share_bicycle"] = 0.0
-    zones_gdf["share_walk"] = 0.0
-    zones_gdf["share_carpool"] = 0.0
+    # --- Assigner des parts uniquement pour ce qui est actif
+    rng = np.random.default_rng(42)
+    if active["car"]:
+        zones_gdf["share_car"] = rng.uniform(0.25, 0.65, n)
+    if active["bicycle"]:
+        zones_gdf["share_bicycle"] = rng.uniform(0.05, 0.25, n)
+    if active["walk"]:
+        zones_gdf["share_walk"] = rng.uniform(0.05, 0.30, n)
+    if active["carpool"]:
+        zones_gdf["share_carpool"] = rng.uniform(0.03, 0.20, n)
 
-    # Assigner des parts seulement pour les modes actifs (puis renormaliser)
-    if modes_cfg.get("car", {}).get("active"):
-        zones_gdf["share_car"] = np.random.uniform(0.35, 0.7, len(zones_gdf))
-    if modes_cfg.get("bicycle", {}).get("active"):
-        zones_gdf["share_bicycle"] = np.random.uniform(0.05, 0.3, len(zones_gdf))
-    if modes_cfg.get("walk", {}).get("active"):
-        zones_gdf["share_walk"] = np.random.uniform(0.05, 0.3, len(zones_gdf))
-    if modes_cfg.get("carpool", {}).get("active"):
-        zones_gdf["share_carpool"] = np.random.uniform(0.05, 0.25, len(zones_gdf))
+    if active["public_transport"]:
+        if pt_sub["walk_pt"]:
+            zones_gdf["share_pt_walk"] = rng.uniform(0.03, 0.15, n)
+        if pt_sub["car_pt"]:
+            zones_gdf["share_pt_car"] = rng.uniform(0.02, 0.12, n)
+        if pt_sub["bicycle_pt"]:
+            zones_gdf["share_pt_bicycle"] = rng.uniform(0.01, 0.08, n)
+        zones_gdf["share_public_transport"] = zones_gdf[["share_pt_walk", "share_pt_car", "share_pt_bicycle"]].sum(axis=1)
 
-    # Renormalisation ligne à ligne sur les modes actifs
-    cols = ["share_car", "share_bicycle", "share_walk", "share_carpool"]
-    total = zones_gdf[cols].sum(axis=1)
-    nonzero = total.replace(0, np.nan)
-    for col in cols:
-        zones_gdf[col] = zones_gdf[col] / nonzero
+    # --- Renormalisation : uniquement sur les colonnes présentes/actives
+    cols_all = [
+        "share_car", "share_bicycle", "share_walk", "share_carpool",
+        "share_pt_walk", "share_pt_car", "share_pt_bicycle"
+    ]
+    active_cols = []
+    if active["car"]: active_cols.append("share_car")
+    if active["bicycle"]: active_cols.append("share_bicycle")
+    if active["walk"]: active_cols.append("share_walk")
+    if active["carpool"]: active_cols.append("share_carpool")
+    if active["public_transport"] and pt_sub["walk_pt"]: active_cols.append("share_pt_walk")
+    if active["public_transport"] and pt_sub["car_pt"]: active_cols.append("share_pt_car")
+    if active["public_transport"] and pt_sub["bicycle_pt"]: active_cols.append("share_pt_bicycle")
+
+    if not active_cols:
+        # Rien d'actif → fallback
+        return _fallback_scenario()
+
+    total = zones_gdf[active_cols].sum(axis=1).replace(0, np.nan)
+    for col in cols_all:
+        if col in zones_gdf.columns:
+            zones_gdf[col] = zones_gdf[col] / total
     zones_gdf = zones_gdf.fillna(0.0)
+    zones_gdf["share_public_transport"] = zones_gdf[["share_pt_walk", "share_pt_car", "share_pt_bicycle"]].sum(axis=1)
 
-    # Types/CRS cohérents
+    # --- Recalcul average_travel_time (Option B) sensible aux variables
+    # bases minutes (sans variables)
+    base_minutes = {
+        "car": 20.0, "bicycle": 15.0, "walk": 25.0, "carpool": 18.0, "public_transport": 22.0
+    }
+    W = {
+        "car": _mode_cost_to_weight(vars_car, base_minutes["car"]),
+        "bicycle": _mode_cost_to_weight(vars_bicycle, base_minutes["bicycle"]),
+        "walk": _mode_cost_to_weight(vars_walk, base_minutes["walk"]),
+        "carpool": _mode_cost_to_weight(vars_carpool, base_minutes["carpool"]),
+        "public_transport": _mode_cost_to_weight(vars_pt, base_minutes["public_transport"]),
+    }
+    zones_gdf["average_travel_time"] = (
+        zones_gdf["share_car"] * W["car"]
+        + zones_gdf["share_bicycle"] * W["bicycle"]
+        + zones_gdf["share_walk"] * W["walk"]
+        + zones_gdf["share_carpool"] * W["carpool"]
+        + zones_gdf["share_public_transport"] * W["public_transport"]
+    )
+
+    # --- Autres indicateurs synthétiques
+    zones_gdf["total_dist_km"] = 10.0 + 10.0 * rng.random(n)
+
+    # Types cohérents & WGS84
     zones_gdf["transport_zone_id"] = zones_gdf["transport_zone_id"].astype(str)
     zones_lookup = gpd.GeoDataFrame(
         zones[["transport_zone_id", "geometry"]].astype({"transport_zone_id": str}),
@@ -240,32 +266,27 @@ def _compute_scenario(local_admin_unit_id="31555", radius=40.0, transport_modes_
     }
 
 
-# --------------------------------------------------------------------
-# Public API avec cache (inchangé)
-# --------------------------------------------------------------------
+# ------------------------------------------------------------
+#  API public + cache
+# ------------------------------------------------------------
 def _normalized_key(local_admin_unit_id: str, radius: float) -> Tuple[str, float]:
     lau = _normalize_lau_code(local_admin_unit_id or "31555")
-    rad = round(float(radius if radius is not None else 40.0), 4)
+    rad = round(float(radius), 4)
     return (lau, rad)
-
 
 @lru_cache(maxsize=8)
 def _get_scenario_cached(lau: str, rad: float) -> Dict[str, Any]:
-    # Cache uniquement quand aucun paramètre UI n'est passé
     return _compute_scenario(local_admin_unit_id=lau, radius=rad, transport_modes_params=None)
-
 
 def get_scenario(
     local_admin_unit_id: str = "31555",
     radius: float = 40.0,
-    transport_modes_params: Dict[str, Dict[str, float]] | None = None,
+    transport_modes_params: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     lau, rad = _normalized_key(local_admin_unit_id, radius)
     if not transport_modes_params:
         return _get_scenario_cached(lau, rad)
-    # Avec paramètres UI → recalcul sans cache pour refléter les choix
     return _compute_scenario(local_admin_unit_id=lau, radius=rad, transport_modes_params=transport_modes_params)
-
 
 def clear_scenario_cache() -> None:
     _get_scenario_cached.cache_clear()

@@ -2,7 +2,7 @@ import dash_mantine_components as dmc
 from dash import html
 
 # -------------------------
-# Données mock : 4 modes de transport
+# Données mock : 5 modes (PT inclus) + sous-modes PT
 # -------------------------
 MOCK_MODES = [
     {
@@ -41,6 +41,21 @@ MOCK_MODES = [
             "Constante de mode (€)": 1,
         },
     },
+    {
+        "name": "Transport en commun",
+        "active": True,  # coché par défaut
+        "vars": {
+            "Valeur du temps (€/h)": 12,
+            "Valeur de la distance (€/km)": 0.01,
+            "Constante de mode (€)": 1,
+        },
+        "pt_submodes": {
+            # 3 sous-modes cochés par défaut
+            "walk_pt": True,
+            "car_pt": True,
+            "bicycle_pt": True,
+        },
+    },
 ]
 
 VAR_SPECS = {
@@ -49,27 +64,35 @@ VAR_SPECS = {
     "Constante de mode (€)": {"min": 0, "max": 20, "step": 1},
 }
 
+PT_SUB_LABELS = {
+    "walk_pt": "Marche + TC",
+    "car_pt": "Voiture + TC",
+    "bicycle_pt": "Vélo + TC",
+}
+
+PT_COLOR = "#e5007d"  # rouge/magenta du logo AREP
+
 
 def _mode_header(mode):
-    """Case à cocher + nom, avec tooltip rouge contrôlé par main.py."""
+    """Case + nom, avec tooltip rouge contrôlé par main.py."""
     return dmc.Group(
         [
             dmc.Tooltip(
                 label="Au moins un mode doit rester actif",
                 position="right",
                 withArrow=True,
-                color="#e5007d",  # rouge/magenta du logo
-                opened=False,     # contrôlé par callback
+                color=PT_COLOR,
+                opened=False,     # ouvert via callback si nécessaire
                 withinPortal=True,
                 zIndex=9999,
-                transitionProps={"transition": "fade", "duration": 400, "timingFunction": "ease-in-out"},
+                transitionProps={"transition": "fade", "duration": 300, "timingFunction": "ease-in-out"},
                 id={"type": "mode-tip", "index": mode["name"]},
                 children=dmc.Checkbox(
                     id={"type": "mode-active", "index": mode["name"]},
-                    checked=mode["active"],     # <- version qui marchait
+                    checked=mode["active"],
                 ),
             ),
-            dmc.Text(mode["name"], fw=600),
+            dmc.Text(mode["name"], fw=700),  # tous en gras
         ],
         gap="sm",
         align="center",
@@ -77,8 +100,42 @@ def _mode_header(mode):
     )
 
 
-def _mode_body(mode):
+def _pt_submodes_block(mode):
+    """Bloc des sous-modes PT (coches + tooltip individuel)."""
+    pt_cfg = mode.get("pt_submodes") or {}
     rows = []
+    for key, label in PT_SUB_LABELS.items():
+        rows.append(
+            dmc.Group(
+                [
+                    dmc.Tooltip(
+                        label="Au moins un sous-mode TC doit rester actif",
+                        position="right",
+                        withArrow=True,
+                        color=PT_COLOR,
+                        opened=False,
+                        withinPortal=True,
+                        zIndex=9999,
+                        transitionProps={"transition": "fade", "duration": 300, "timingFunction": "ease-in-out"},
+                        id={"type": "pt-tip", "index": key},
+                        children=dmc.Checkbox(
+                            id={"type": "pt-submode", "index": key},
+                            checked=bool(pt_cfg.get(key, True)),
+                        ),
+                    ),
+                    dmc.Text(label, size="sm"),
+                ],
+                gap="sm",
+                align="center",
+            )
+        )
+    return dmc.Stack(rows, gap="xs")
+
+
+def _mode_body(mode):
+    """Variables (NumberInput) + éventuels sous-modes PT."""
+    rows = []
+    # Variables
     for label, val in mode["vars"].items():
         spec = VAR_SPECS[label]
         rows.append(
@@ -98,6 +155,11 @@ def _mode_body(mode):
                 align="center",
             )
         )
+    # Sous-modes PT
+    if mode["name"] == "Transport en commun":
+        rows.append(dmc.Divider())
+        rows.append(dmc.Text("Sous-modes (cumulatifs)", size="sm", fw=600))
+        rows.append(_pt_submodes_block(mode))
     return dmc.Stack(rows, gap="md")
 
 

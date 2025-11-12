@@ -2,39 +2,60 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-@dataclass(frozen=True)
+def _interp_color(c1, c2, t):
+    return (
+        int(c1[0] + (c2[0] - c1[0]) * t),
+        int(c1[1] + (c2[1] - c1[1]) * t),
+        int(c1[2] + (c2[2] - c1[2]) * t),
+    )
+
+def _build_legend_palette(n=256):
+    """
+    Dégradé bleu -> gris -> orange pour coller à la légende :
+      - bleu "accès rapide"
+      - gris "accès moyen"
+      - orange "accès lent"
+    """
+    blue   = ( 74, 160, 205)  
+    grey   = (147, 147, 147)  
+    orange = (228,  86,  43)  
+
+    mid = n // 2
+    first  = [_interp_color(blue, grey, i / max(1, mid - 1)) for i in range(mid)]
+    second = [_interp_color(grey, orange, i / max(1, n - mid - 1)) for i in range(n - mid)]
+    return first + second
+
+@dataclass
 class ColorScale:
     vmin: float
     vmax: float
-
-    def _rng(self) -> float:
-        r = self.vmax - self.vmin
-        return r if r > 1e-9 else 1.0
-
-    def legend(self, v) -> str:
-        if pd.isna(v):
-            return "Donnée non disponible"
-        rng = self._rng()
-        t1 = self.vmin + rng / 3.0
-        t2 = self.vmin + 2 * rng / 3.0
-        v = float(v)
-        if v <= t1:
-            return "Accès rapide"
-        if v <= t2:
-            return "Accès moyen"
-        return "Accès lent"
+    colors: list[tuple[int, int, int]]
+    alpha: int = 102  # ~0.4 d’opacité
 
     def rgba(self, v) -> list[int]:
-        if pd.isna(v):
-            return [200, 200, 200, 140]
-        z = (float(v) - self.vmin) / self._rng()
-        z = max(0.0, min(1.0, z))
-        r = int(255 * z)
-        g = int(64 + 128 * (1 - z))
-        b = int(255 * (1 - z))
-        return [r, g, b, 180]
+        if v is None or pd.isna(v):
+            return [200, 200, 200, 40]
+        if self.vmax <= self.vmin:
+            idx = 0
+        else:
+            t = (float(v) - self.vmin) / (self.vmax - self.vmin)
+            t = max(0.0, min(1.0, t))
+            idx = int(t * (len(self.colors) - 1))
+        r, g, b = self.colors[idx]
+        return [int(r), int(g), int(b), self.alpha]
+
+    def legend(self, v) -> str:
+        if v is None or pd.isna(v):
+            return "N/A"
+        return f"{float(v):.1f} min"
 
 def fit_color_scale(series: pd.Series) -> ColorScale:
-    s = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-    vmin, vmax = (float(s.min()), float(s.max())) if not s.empty else (0.0, 1.0)
-    return ColorScale(vmin=vmin, vmax=vmax)
+    s = pd.to_numeric(series, errors="coerce").dropna()
+    if len(s):
+        vmin = float(np.nanpercentile(s, 5))
+        vmax = float(np.nanpercentile(s, 95))
+        if vmin == vmax:
+            vmin, vmax = float(s.min()), float(s.max() or 1.0)
+    else:
+        vmin, vmax = 0.0, 1.0
+    return ColorScale(vmin=vmin, vmax=vmax, colors=_build_legend_palette(256), alpha=102)

@@ -1,54 +1,37 @@
 import dash_mantine_components as dmc
 from .utils import fmt_pct
 
+def _row(label: str, val) -> dmc.Group | None:
+    if val is None: return None
+    try:
+        v = float(val)
+    except Exception:
+        return None
+    if v <= 0:  # n'affiche pas les zéros
+        return None
+    return dmc.Group([dmc.Text(f"{label} :", size="sm"),
+                      dmc.Text(fmt_pct(v, 1), fw=600, size="sm")], gap="xs")
 
 def ModalSplitList(
-    items=None,
-    share_car=None,
-    share_bike=None,
-    share_walk=None,
-    share_carpool=None,  # <-- nouveau param pour compat ascendante
+    share_car=None, share_bike=None, share_walk=None, share_carpool=None,
+    share_pt=None, share_pt_walk=None, share_pt_car=None, share_pt_bicycle=None
 ):
-    """
-    Affiche la répartition modale uniquement pour les modes non nuls (> 0 %).
+    rows = [
+        _row("Voiture", share_car),
+        _row("Vélo", share_bike),
+        _row("À pied", share_walk),
+        _row("Covoiturage", share_carpool),
+    ]
+    if (share_pt or 0) > 0:
+        rows.append(dmc.Group([dmc.Text("Transports en commun", fw=700, size="sm"),
+                               dmc.Text(fmt_pct(share_pt, 1), fw=700, size="sm")], gap="xs"))
+        # sous-modes (indentés)
+        sub = [
+            _row("  À pied + TC",  share_pt_walk),
+            _row("  Voiture + TC", share_pt_car),
+            _row("  Vélo + TC",    share_pt_bicycle),
+        ]
+        rows.extend([r for r in sub if r is not None])
 
-    Utilisation recommandée :
-      - items : liste [(label:str, value:float 0..1), ...] déjà filtrée/renormalisée
-
-    Compatibilité ascendante :
-      - si items est None, on construit la liste à partir de share_* fournis.
-    """
-    rows = []
-
-    # --- Compat ascendante : on construit items depuis les valeurs individuelles
-    if items is None:
-        items = []
-        if share_car is not None:
-            items.append(("Voiture", share_car))
-        if share_bike is not None:
-            items.append(("Vélo", share_bike))
-        if share_walk is not None:
-            items.append(("À pied", share_walk))
-        if share_carpool is not None:
-            items.append(("Covoiturage", share_carpool))
-
-    # --- Filtrage : retirer les modes avec part <= 0
-    filtered_items = [(label, val) for label, val in items if (val is not None and val > 1e-4)]
-
-    if not filtered_items:
-        # Rien à afficher (ex: tous les modes décochés)
-        return dmc.Text("Aucun mode actif.", size="sm", c="dimmed")
-
-    # --- Affichage
-    for label, value in filtered_items:
-        rows.append(
-            dmc.Group(
-                [
-                    dmc.Text(f"{label} :", size="sm"),
-                    dmc.Text(fmt_pct(value, 1), fw=600, size="sm"),
-                ],
-                gap="xs",
-            )
-        )
-
+    rows = [r for r in rows if r is not None]
     return dmc.Stack(rows, gap="xs")

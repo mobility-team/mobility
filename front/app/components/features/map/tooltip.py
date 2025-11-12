@@ -13,8 +13,7 @@ def default_tooltip() -> dict:
             "Part des trajets en voiture : <b>{Part des trajets en voiture (%)}</b><br>"
             "Part des trajets à vélo : <b>{Part des trajets à vélo (%)}</b><br>"
             "Part des trajets à pied : <b>{Part des trajets à pied (%)}</b><br>"
-            # NEW: covoiturage
-            "Part des trajets en covoiturage : <b>{Part des trajets en covoiturage (%)}</b>"
+            "Part des trajets en transport en commun : <b>{Part des trajets en transport en commun (%)}</b>"
             "</div>"
         ),
         "style": {
