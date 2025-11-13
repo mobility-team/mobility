@@ -28,7 +28,7 @@ dependencies = [
   "dash",
   "dash-deck",
   "pydeck",
-  "dash-mantine-components"
+  "dash-mantine-components",
   "scikit-learn",
   "gtfs_kit"
 ]
