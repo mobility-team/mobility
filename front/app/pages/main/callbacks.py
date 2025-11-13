@@ -1,5 +1,6 @@
 # app/callbacks.py
 from dash import Input, Output, State, ALL, no_update, ctx
+import uuid
 import dash_mantine_components as dmc
 
 from app.components.features.study_area_summary import StudyAreaSummary
