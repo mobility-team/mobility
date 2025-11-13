@@ -100,7 +100,7 @@ class PopulationTrips(FileAsset):
         costs_aggregator = TravelCostsAggregator(modes)
         
         inputs = {
-            "version": 1,
+            "version": 2,
             "population": population,
             "costs_aggregator": costs_aggregator,
             "motives": motives,
@@ -354,7 +354,7 @@ class PopulationTrips(FileAsset):
             
             
         costs = costs_aggregator.get_costs_by_od_and_mode(
-            ["distance", "time", "ghg_emissions"],
+            ["distance", "time", "ghg_emissions", "cost"], #To be tested
             congestion=True
         )
         

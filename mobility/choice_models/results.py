@@ -1,4 +1,5 @@
 import json
+import logging
 import polars as pl
 import numpy as np
 import plotly.express as px
@@ -25,7 +26,7 @@ class Results:
             weekend_chains,
             surveys,
             modes
-        ):
+            ):
         
         self.transport_zones = transport_zones
         self.demand_groups = demand_groups
@@ -52,6 +53,7 @@ class Results:
             "trip_count_by_demand_group": self.trip_count_by_demand_group,
             "distance_per_person": self.distance_per_person,
             "time_per_person": self.time_per_person,
+            "cost_per_person": self.cost_per_person,
             "immobility": self.immobility,
             "car_traffic": self.car_traffic,
             "travel_costs": self.travel_costs,
@@ -744,8 +746,167 @@ class Results:
         
         return time
     
+ 
+    def cost_per_person(
+            self,
+            weekday: bool = True,
+            plot: bool = False,
+            mask_outliers: bool = False,
+            compare_with = None,
+            plot_delta = False
+        ):
+        """
+        TODO
+        
+        Aggregate total travel time and time per person by demand group.
+        
+        Parameters
+        ----------
+        weekday : bool, default True
+            Use weekday (True) or weekend (False) data.
+        plot : bool, default False
+            When True, shows a choropleth of average time per person by home zone.
+        
+        Returns
+        -------
+        pl.DataFrame
+            Grouped by ['home_zone_id', 'csp', 'n_cars'] with:
+            - cost: sum(cost * n_persons) * 60.0 (minutes)
+            - n_persons: group size
+            - time_per_person: time / n_persons
+        """
+        
+        states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
+        print("states_steps:")
+        print(type(states_steps))
+        print(states_steps.columns)
+        print(states_steps)
+        costs = self.weekday_costs if weekday else self.weekend_costs
+        print("costs:")
+        print(costs.columns)
+        
+        transport_zones_df = ( 
+            pl.DataFrame(
+                self.transport_zones.get().drop("geometry", axis=1)
+            )
+            .filter(pl.col("is_inner_zone"))
+            .lazy()
+        )
+        print("tzdf:")
+        print(transport_zones_df.columns)
+        
+        cost = (
+            states_steps
+            .filter(pl.col("motive_seq_id") != 0)
+            .rename({"home_zone_id": "transport_zone_id"})
+            .join(
+                transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
+                on=["transport_zone_id"]
+            )
+            .join(costs, on=["from", "to", "mode"])
+            .group_by(["transport_zone_id", "csp", "n_cars"])
+            .agg(
+                cost=(pl.col("cost")*pl.col("n_persons")).sum()
+            )
+            .join(self.demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
+            .with_columns(
+                cost_per_person=pl.col("cost")/pl.col("n_persons")
+            )
+            .collect(engine="streaming")
+        )
+        
+        if compare_with is not None:
+            weekday_states_steps_comp = pl.scan_parquet(compare_with.cache_path["weekday_flows"])
+            weekend_states_steps_comp = pl.scan_parquet(compare_with.cache_path["weekend_flows"])
+            weekday_costs_comp = pl.scan_parquet(compare_with.cache_path["weekday_costs"])
+            weekend_costs_comp = pl.scan_parquet(compare_with.cache_path["weekend_costs"])
+            states_steps_comp = weekday_states_steps_comp if weekday else weekend_states_steps_comp
+            costs_comp = weekday_costs_comp if weekday else weekend_costs_comp
+            cost_comp = (
+                states_steps_comp
+                .filter(pl.col("motive_seq_id") != 0)
+                .rename({"home_zone_id": "transport_zone_id"})
+                .join(
+                    transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]),
+                    on=["transport_zone_id"]
+                )
+                .join(costs_comp, on=["from", "to", "mode"])
+                .group_by(["transport_zone_id", "csp", "n_cars"])
+                .agg(
+                    cost_comp=(pl.col("cost")*pl.col("n_persons")).sum()
+                )
+                .join(self.demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
+                .with_columns(
+                    cost_per_person_comp=pl.col("cost_comp")/pl.col("n_persons")
+                )
+                .collect(engine="streaming")
+            )
+            cost = (
+                cost
+                .join(cost_comp.select(["transport_zone_id", "csp", "n_cars", "cost_comp", "cost_per_person_comp"]),
+                      on=["transport_zone_id", "csp", "n_cars"])
+                .with_columns(delta=pl.col("cost_per_person")-pl.col("cost_per_person_comp"))
+            )
+                        
+        
+        if plot or plot_delta:
+            
+            tz = self.transport_zones.get()
+            tz = tz.to_crs(4326)
+            tz = tz.merge(transport_zones_df.collect().to_pandas(), on="transport_zone_id")
+            
+            tz = tz.merge(
+                (
+                    cost
+                    .group_by(["transport_zone_id"])
+                    .agg(
+                        cost_per_person=pl.col("cost").sum()/pl.col("n_persons").sum()
+                    )
+                    .to_pandas()
+                ),
+                on="transport_zone_id",
+                how="left"
+            )
+            
+            if plot_delta:
+                tz = tz.merge(
+                    (
+                        cost
+                        .group_by(["transport_zone_id"])
+                        .agg(
+                            cost_per_person_comp=pl.col("cost_comp").sum()/pl.col("n_persons").sum()
+                            # Assumption : always same number of persons in TZ
+                        )
+                        .to_pandas()
+                    ),
+                    on="transport_zone_id",
+                    how="left"
+                )
+                tz["delta"] = tz["cost_per_person"] - tz["cost_per_person_comp"]
+
+                
+            if plot:
+                tz["cost_per_person"] = tz["cost_per_person"].fillna(0.0)
+                
+                if mask_outliers:
+                    tz["cost_per_person"] = self.mask_outliers(tz["cost_per_person"])
+                
+                self.plot_map(tz, "cost_per_person")
+                
+
+            if plot_delta:
+                tz["delta"] = tz["delta"].fillna(0.0)
+                
+                if mask_outliers:
+                    tz["delta"] = self.mask_outliers(tz["delta"])
+                
+                self.plot_map(tz, "delta")                
+
+        
+        return cost
     
-    def plot_map(self, tz, value: str = None, motive: str = None):
+ 
+    def plot_map(self, tz, value: str = None, motive: str = None, plot_method: str = "browser"):
         """
         Render a Plotly choropleth for a transport-zone metric.
         
@@ -762,6 +923,8 @@ class Results:
         None
             Displays an interactive map in the browser.
         """
+        logging.getLogger("kaleido").setLevel(logging.WARNING)
+        #plot_method="png"
         
         fig = px.choropleth(
             tz.drop(columns="geometry"),
@@ -777,7 +940,7 @@ class Results:
         )
         fig.update_geos(fitbounds="geojson", visible=False)
         fig.update_layout(margin=dict(l=0,r=0,t=0,b=0))
-        fig.show("browser")
+        fig.show(plot_method)
     
     
     def mask_outliers(self, series):
