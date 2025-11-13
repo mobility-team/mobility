@@ -77,10 +77,8 @@ class TopKModeSequenceSearch:
             )
         )
         
-        # Format the modes info as a dict and save the result in a temp file
         modes = modes_list_to_dict(costs_aggregator.modes)
         
-        # Format the costs as dict and save it as pickle to be ready for the parallel workers
         mode_id = {n: i for i, n in enumerate(modes)}
         id_to_mode = {i: n for i, n in enumerate(modes)}
     
@@ -97,7 +95,6 @@ class TopKModeSequenceSearch:
 
         costs = {(row["from"], row["to"], row["mode_id"]): row["cost"] for row in costs.to_dicts()}
             
-        # Format the available modes list for each OD as dict and save it as pickle to be ready for the parallel workers
         is_return_mode = {mode_id[k]: v["is_return_mode"] for  k, v in modes.items()}
         
         leg_modes = defaultdict(list)

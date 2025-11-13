@@ -63,8 +63,6 @@ class PopulationTrips(FileAsset):
             alpha: float = None,
             k_mode_sequences: int = None,
             dest_prob_cutoff: float = None,
-            activity_utility_coeff: float = None,
-            stay_home_utility_coeff: float = None,
             n_iter_per_cost_update: int = None,
             cost_uncertainty_sd: float = None,
             mode_sequence_search_parallel: bool = None
@@ -84,8 +82,6 @@ class PopulationTrips(FileAsset):
             alpha,
             k_mode_sequences,
             dest_prob_cutoff,
-            activity_utility_coeff,
-            stay_home_utility_coeff,
             n_iter_per_cost_update,
             cost_uncertainty_sd,
             mode_sequence_search_parallel
@@ -104,6 +100,7 @@ class PopulationTrips(FileAsset):
         costs_aggregator = TravelCostsAggregator(modes)
         
         inputs = {
+            "version": 1,
             "population": population,
             "costs_aggregator": costs_aggregator,
             "motives": motives,
@@ -140,8 +137,6 @@ class PopulationTrips(FileAsset):
             alpha: float = None,
             k_mode_sequences: int = None,
             dest_prob_cutoff: float = None,
-            activity_utility_coeff: float = None,
-            stay_home_utility_coeff: float = None,
             n_iter_per_cost_update: int = None,
             cost_uncertainty_sd: float = None,
             mode_sequence_search_parallel: bool = None
@@ -178,8 +173,6 @@ class PopulationTrips(FileAsset):
             "alpha": alpha,
             "k_mode_sequences": k_mode_sequences,
             "dest_prob_cutoff": dest_prob_cutoff,
-            "activity_utility_coeff": activity_utility_coeff,
-            "stay_home_utility_coeff": stay_home_utility_coeff,
             "n_iter_per_cost_update": n_iter_per_cost_update,
             "cost_uncertainty_sd": cost_uncertainty_sd,
             "mode_sequence_search_parallel": mode_sequence_search_parallel
@@ -218,20 +211,31 @@ class PopulationTrips(FileAsset):
     def create_and_get_asset(self):
         
         weekday_flows, weekday_sinks, demand_groups, weekday_costs, weekday_chains = self.run_model(is_weekday=True)
-        weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains = self.run_model(is_weekday=False)
-    
+        
         weekday_flows.write_parquet(self.cache_path["weekday_flows"])
         weekday_sinks.write_parquet(self.cache_path["weekday_sinks"])
         weekday_costs.write_parquet(self.cache_path["weekday_costs"])
         weekday_chains.write_parquet(self.cache_path["weekday_chains"])
         
-        weekend_flows.write_parquet(self.cache_path["weekend_flows"])
-        weekend_sinks.write_parquet(self.cache_path["weekend_sinks"])
-        weekend_costs.write_parquet(self.cache_path["weekend_costs"])
-        weekend_chains.write_parquet(self.cache_path["weekend_chains"])
-        
         demand_groups.write_parquet(self.cache_path["demand_groups"])
+        
+        if self.parameters.simulate_weekend:
             
+            weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains = self.run_model(is_weekday=False)
+        
+            weekend_flows.write_parquet(self.cache_path["weekend_flows"])
+            weekend_sinks.write_parquet(self.cache_path["weekend_sinks"])
+            weekend_costs.write_parquet(self.cache_path["weekend_costs"])
+            weekend_chains.write_parquet(self.cache_path["weekend_chains"])
+            
+        else:
+            if not os.path.exists(self.cache_path["weekend_flows"].parent):
+                os.mkdir(self.cache_path["weekend_flows"].parent)
+            pl.DataFrame().write_parquet(self.cache_path["weekend_flows"])
+            pl.DataFrame().write_parquet(self.cache_path["weekend_sinks"])
+            pl.DataFrame().write_parquet(self.cache_path["weekend_costs"])
+            pl.DataFrame().write_parquet(self.cache_path["weekend_chains"])
+               
         return {k: pl.scan_parquet(v) for k, v in self.cache_path.items()}
 
     def run_model(self, is_weekday):
@@ -270,7 +274,7 @@ class PopulationTrips(FileAsset):
         stay_home_state, current_states = self.state_initializer.get_stay_home_state(
             demand_groups,
             home_night_dur,
-            parameters
+            motives
         )
         
         sinks = self.state_initializer.get_sinks(
@@ -330,7 +334,8 @@ class PopulationTrips(FileAsset):
                 tmp_folders,
                 home_night_dur,
                 stay_home_state,
-                parameters
+                parameters,
+                motives
             )
             
             costs = self.state_updater.get_new_costs(
@@ -343,12 +348,16 @@ class PopulationTrips(FileAsset):
             
             remaining_sinks = self.state_updater.get_new_sinks(
                 current_states_steps,
-                sinks
+                sinks,
+                motives
             )
             
             
-        costs = costs_aggregator.get_costs_by_od_and_mode(["distance", "time"], congestion=True)
-    
+        costs = costs_aggregator.get_costs_by_od_and_mode(
+            ["distance", "time", "ghg_emissions"],
+            congestion=True
+        )
+        
         current_states_steps = (
             
             current_states_steps
@@ -360,13 +369,13 @@ class PopulationTrips(FileAsset):
             )
             .drop("demand_group_id")
             
-             # Add costs info
-             .join(
-                 costs,
-                 on=["from", "to", "mode"],
-                 how="left"
-             )
-            
+            # Add costs info
+            .join(
+                costs,
+                on=["from", "to", "mode"],
+                how="left"
+            )
+           
             # Add the is_weekday info
             .with_columns(
                 is_weekday=pl.lit(is_weekday)
@@ -411,9 +420,8 @@ class PopulationTrips(FileAsset):
         Parameters
         ----------
         metric : str
-            Name of the evaluation metric to compute. Must be one of:
-            {"sink_occupation", "trip_count_by_demand_group",
-             "distance_per_person", "time_per_person"}.
+            Name of the evaluation metric to compute. Must be one of the metrics
+            methods accepted by Results
         **kwargs : dict, optional
             Additional arguments forwarded to the underlying metric function.
             For example, `weekday=True` or `plot=True`.
@@ -491,6 +499,7 @@ class PopulationTrips(FileAsset):
         mode_share = mode_share.reset_index().set_index([left_column])
         mode_share["total"] = mode_share.groupby([left_column])["n_persons"].sum()
         mode_share["modal_share"] = mode_share["n_persons"] / mode_share["total"]
+   
 
         if mode == "public_transport":
             mode_name = "Public transport"
@@ -500,8 +509,9 @@ class PopulationTrips(FileAsset):
         mode_share = mode_share[mode_share["mode"] == mode]
 
         transport_zones_df = self.population.transport_zones.get()
+        
         gc = gpd.GeoDataFrame(
-            mode_share.merge(transport_zones_df, left_on=left_column, right_on="transport_zone_id", suffixes=('', '_z')))
+            transport_zones_df.merge(mode_share, how="left", right_on=left_column, left_on="transport_zone_id", suffixes=('', '_z'))).fillna(0)
         gcp = gc.plot("modal_share", legend=True)
         gcp.set_axis_off()
         plt.title(f"{mode_name} share per {zone} transport zone ({period})")
@@ -513,7 +523,7 @@ class PopulationTrips(FileAsset):
 
         return mode_share
 
-    def plot_od_flows(self, mode="all", motive="all", period="weekdays", level_of_detail=0,
+    def plot_od_flows(self, mode="all", motive="all", period="weekdays", level_of_detail=1,
                       n_largest=2000, color="blue", transparency=0.2, zones_color="xkcd:light grey",
                       labels=None, labels_size=[10, 6, 4], labels_color="black"):
         """
@@ -567,9 +577,14 @@ class PopulationTrips(FileAsset):
         mode_name = mode.capitalize()
 
         if mode != "all":
+            if mode == "count":
+                population_df["mode"] = population_df["mode"].fillna("unknown_mode")
+                count_modes = population_df.groupby("mode")[["mode"]].count()
+                print(count_modes)
+                return count_modes
             if mode == "public_transport":
                 mode_name = "Public transport"
-                population_df = population_df[population_df["mode"].str.contains("public_transport")]
+                population_df = population_df[population_df["mode"].fillna("unknown_mode").str.contains("public_transport")]
             else:
                 population_df = population_df[population_df["mode"] == mode]
 

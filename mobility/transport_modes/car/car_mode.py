@@ -28,7 +28,8 @@ class CarMode(TransportMode):
         congestion: bool = False,
         congestion_flows_scaling_factor: float = 0.1,
         speed_modifiers: List[SpeedModifier] = [],
-        survey_ids: List[str] = ["3.30"]
+        survey_ids: List[str] = ["3.30", "3.31", "3.32", "3.33", "3.39"],
+        ghg_intensity: float = 0.218
     ):
         
         mode_name = "car"
@@ -70,7 +71,8 @@ class CarMode(TransportMode):
             mode_name,
             travel_costs,
             generalized_cost,
-            congestion,
+            congestion=congestion,
+            ghg_intensity=ghg_intensity,
             vehicle="car",
             survey_ids=survey_ids
         )

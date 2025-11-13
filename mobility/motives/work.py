@@ -10,6 +10,9 @@ class WorkMotive(Motive):
 
     def __init__(
         self,
+        value_of_time: float = 10.0,
+        saturation_fun_ref_level: float = 1.5,
+        saturation_fun_beta: float = 4.0,
         survey_ids: List[str] = ["9.91"],
         radiation_lambda: float = 0.99986,
         opportunities: pd.DataFrame = None,
@@ -25,12 +28,15 @@ class WorkMotive(Motive):
 
         super().__init__(
             name="work",
+            value_of_time=value_of_time,
             survey_ids=survey_ids,
             radiation_lambda=radiation_lambda,
             is_anchor=True,
             opportunities=opportunities,
             utilities=utilities,
-            country_utilities=country_utilities
+            country_utilities=country_utilities,
+            saturation_fun_ref_level=saturation_fun_ref_level,
+            saturation_fun_beta=saturation_fun_beta
         )
 
     def get_opportunities(self, transport_zones):

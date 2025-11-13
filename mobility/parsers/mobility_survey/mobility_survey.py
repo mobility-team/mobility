@@ -57,7 +57,10 @@ class MobilitySurvey(FileAsset):
         
         motive_names = [m.name for m in motives]
         
-        mode_mapping = [{"group": m.name, "mode": m.survey_ids} for m in modes]
+        mode_mapping = [
+            {"group": m.name, "mode": m.survey_ids} 
+            for m in modes if len(m.survey_ids) > 0
+        ]
         mode_mapping = pd.DataFrame(mode_mapping)
         mode_mapping = mode_mapping.explode("mode")
         mode_mapping = mode_mapping.set_index("mode").to_dict()["group"]

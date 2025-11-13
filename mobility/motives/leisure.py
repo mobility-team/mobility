@@ -10,6 +10,9 @@ class LeisureMotive(Motive):
 
     def __init__(
         self,
+        value_of_time: float = 10.0,
+        saturation_fun_ref_level: float = 1.5,
+        saturation_fun_beta: float = 4.0,
         survey_ids: List[str] = ["7.71", "7.72", "7.73", "7.74", "7.75", "7.76", "7.77", "7.78"],
         radiation_lambda: float = 0.99986,
         opportunities: pd.DataFrame = None
@@ -20,9 +23,12 @@ class LeisureMotive(Motive):
 
         super().__init__(
             name="leisure",
+            value_of_time=value_of_time,
             survey_ids=survey_ids,
             radiation_lambda=radiation_lambda,
-            opportunities=opportunities
+            opportunities=opportunities,
+            saturation_fun_ref_level=saturation_fun_ref_level,
+            saturation_fun_beta=saturation_fun_beta
         )
 
     

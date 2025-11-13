@@ -10,6 +10,10 @@ class Motive(InMemoryAsset):
     def __init__(
             self,
             name: str,
+            value_of_time: float,
+            saturation_fun_ref_level: float,
+            saturation_fun_beta: float,
+            value_of_time_v2: float = None,
             survey_ids: List[str] = None,
             radiation_lambda: float = None,
             has_opportunities: bool = True,
@@ -21,6 +25,8 @@ class Motive(InMemoryAsset):
         ):
 
         self.name = name
+        self.value_of_time = value_of_time
+        self.value_of_time_v2 = value_of_time_v2
         self.survey_ids = survey_ids
         self.radiation_lambda = radiation_lambda
         self.has_opportunities = has_opportunities
@@ -34,7 +40,11 @@ class Motive(InMemoryAsset):
             "survey_ids": survey_ids,
             "radiation_lambda": radiation_lambda,
             "country_utilities": country_utilities,
-            "sink_saturation_coeff": sink_saturation_coeff
+            "sink_saturation_coeff": sink_saturation_coeff,
+            "value_of_time": value_of_time,
+            "value_of_time_v2": value_of_time_v2,
+            "saturation_fun_ref_level": saturation_fun_ref_level,
+            "saturation_fun_beta": saturation_fun_beta
         }
 
         super().__init__(inputs)

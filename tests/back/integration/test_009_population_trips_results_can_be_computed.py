@@ -134,8 +134,6 @@ def test_009_population_trips_results_can_be_computed(test_data, safe_json):
             n_iter_per_cost_update=0,
             alpha=0.01,
             dest_prob_cutoff=0.9,
-            activity_utility_coeff=6.0,
-            stay_home_utility_coeff=1.0,
             k_mode_sequences=3,
             cost_uncertainty_sd=1.0,
             mode_sequence_search_parallel=False,

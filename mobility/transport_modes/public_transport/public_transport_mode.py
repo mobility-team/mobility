@@ -1,3 +1,5 @@
+import logging
+
 from typing import List
 
 from mobility.transport_zones import TransportZones
@@ -38,7 +40,8 @@ class PublicTransportMode(TransportMode):
             "4.42", "4.43", "5.50", "5.51", "5.52", "5.53", "5.54", "5.55",
             "5.56", "5.57", "5.58", "5.59", "6.60", "6.61", "6.62", "6.63",
             "6.69"
-        ]
+        ],
+        ghg_intensity: float = 0.05
     ):
         
         travel_costs = PublicTransportTravelCosts(
@@ -70,16 +73,25 @@ class PublicTransportMode(TransportMode):
         
         name = first_leg_mode.name + "/public_transport/" + last_leg_mode.name
         vehicle = first_leg_mode.vehicle
-        return_mode_name = last_leg_mode.name + "/public_transport/" + first_leg_mode.name
         
+        if last_leg_mode.name != first_leg_mode.name:
+            return_mode_name = last_leg_mode.name + "/public_transport/" + first_leg_mode.name
+        else:
+            return_mode_name = None
         
         super().__init__(
             name,
             travel_costs,
             generalized_cost,
-            congestion,
+            congestion=congestion,
+            ghg_intensity=ghg_intensity,
             vehicle=vehicle,
             multimodal=True,
             return_mode=return_mode_name,
             survey_ids=survey_ids
         )    
+        
+    def audit_gtfs(self):
+        logging.info("Auditing GTFS for this mode")
+        travel_costs = self.travel_costs.audit_gtfs()
+        return travel_costs
