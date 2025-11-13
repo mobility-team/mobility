@@ -24,7 +24,8 @@ class StateUpdater:
             tmp_folders,
             home_night_dur,
             stay_home_state,
-            parameters
+            parameters,
+            motives
         ):
         """Advance one iteration of state updates.
 
@@ -60,15 +61,17 @@ class StateUpdater:
             remaining_sinks,
             motive_dur,
             iteration,
-            parameters.activity_utility_coeff,
+            motives,
             parameters.min_activity_time_constant,
             tmp_folders
         )
         
+        home_motive = [m for m in motives if m.name == "home"][0]
+        
         possible_states_utility = self.get_possible_states_utility(
             possible_states_steps,
             home_night_dur,
-            parameters.stay_home_utility_coeff,
+            home_motive.value_of_time_stay_home,
             stay_home_state,
             parameters.min_activity_time_constant
         )
@@ -91,7 +94,7 @@ class StateUpdater:
             sinks,
             motive_dur,
             iteration,
-            activity_utility_coeff,
+            motives,
             min_activity_time_constant,
             tmp_folders
         ):
@@ -136,6 +139,16 @@ class StateUpdater:
 
         )
         
+        # Get the activities values of time
+        value_of_time = ( 
+            pl.from_dicts(
+                [{"motive": m.name, "value_of_time": m.value_of_time} for m in motives]
+            )
+            .with_columns(
+                motive=pl.col("motive").cast(pl.Enum(motive_dur["motive"].dtype.categories))
+            )
+        )
+        
         possible_states_steps = (
             
             modes
@@ -143,21 +156,17 @@ class StateUpdater:
             .join(chains_w_home.lazy(), on=["demand_group_id", "motive_seq_id", "seq_step_index"])
             .join(cost_by_od_and_modes.lazy(), on=["from", "to", "mode"])
             .join(motive_dur.lazy(), on=["csp", "motive"])
-            
-            # Remove states that use at least one "empty" destination (with no opportunities left)
+            .join(value_of_time.lazy(), on="motive")
             .join(sinks.select(["to", "motive", "k_saturation_utility"]).lazy(), on=["to", "motive"], how="left")
             
             .with_columns(
-                # duration_per_pers=pl.max_horizontal([
-                #     pl.col("duration_per_pers"),
-                #     pl.col("mean_duration_per_pers")*0.1
-                # ]),
                 k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0),
                 min_activity_time=pl.col("mean_duration_per_pers")*math.exp(-min_activity_time_constant)
             )
+            
             .with_columns(
                 utility=( 
-                    pl.col("k_saturation_utility")*activity_utility_coeff*pl.col("mean_duration_per_pers")*(pl.col("duration_per_pers")/pl.col("min_activity_time")).log().clip(0.0)
+                    pl.col("k_saturation_utility")*pl.col("value_of_time")*pl.col("mean_duration_per_pers")*(pl.col("duration_per_pers")/pl.col("min_activity_time")).log().clip(0.0)
                     - pl.col("cost")
                 )
             )
@@ -171,7 +180,7 @@ class StateUpdater:
             self,
             possible_states_steps,
             home_night_dur,
-            stay_home_utility_coeff,
+            value_of_time_stay_home,
             stay_home_state,
             min_activity_time_constant
         ):
@@ -192,7 +201,7 @@ class StateUpdater:
             )
             .with_columns(
                 utility_stay_home=( 
-                    stay_home_utility_coeff*pl.col("mean_home_night_per_pers")
+                    value_of_time_stay_home*pl.col("mean_home_night_per_pers")
                     * (pl.col("home_night_per_pers")/pl.col("min_activity_time")).log().clip(0.0)
                 )
             )
@@ -224,10 +233,27 @@ class StateUpdater:
         
         return possible_states_utility
     
-    
-    
-    def get_transition_probabilities(self, current_states, possible_states_utility): 
-        """Compute transition probabilities from current to candidate states."""
+    def get_transition_probabilities(
+            self,
+            current_states,
+            possible_states_utility,
+            transition_cost: float = 0.0
+        ): 
+        """Compute transition probabilities from current to candidate states.
+
+        Uses softmax over Δutility (with stabilization and pruning) within each
+        demand group and current state key.
+        
+        Args:
+            current_states (pl.DataFrame): Current states with utilities.
+            possible_states_utility (pl.DataFrame): Candidate states with utilities.
+        
+        Returns:
+            pl.DataFrame: Transitions with
+                ["demand_group_id","motive_seq_id","dest_seq_id","mode_seq_id",
+                 "motive_seq_id_trans","dest_seq_id_trans","mode_seq_id_trans",
+                 "utility_trans","p_transition"].
+        """
         
         state_cols = ["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
         
@@ -245,20 +271,41 @@ class StateUpdater:
                 possible_states_utility,
                 (
                     (pl.col("demand_group_id") == pl.col("demand_group_id_trans")) &
-                    (pl.col("utility_trans") > pl.col("utility") - 5.0)
+                    (
+                        (pl.col("utility_trans") > pl.col("utility") - 5.0) | 
+                        (
+                            (pl.col("motive_seq_id") == pl.col("motive_seq_id_trans")) & 
+                            (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans")) & 
+                            (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
+                        )
+                    )
                 ),
                 suffix="_trans"
             )
             
             .drop("demand_group_id_trans")
             
+            # Add a transition cost
             .with_columns(
-                delta_utility=pl.col("utility_trans") - pl.col("utility")
+                utility_trans=( 
+                    pl.when(
+                        (
+                            (pl.col("motive_seq_id") == pl.col("motive_seq_id_trans")) & 
+                            (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans")) & 
+                            (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
+                        )
+                    ).then(
+                        pl.col("utility_trans") + transition_cost
+                    ).otherwise(
+                        pl.col("utility_trans")
+                    )
+                )
             )
             
             .with_columns(
-                delta_utility=pl.col("delta_utility") - pl.col("delta_utility").max().over(state_cols)
+                delta_utility=pl.col("utility_trans") - pl.col("utility_trans").max().over(state_cols)
             )
+            
             .filter(
                 (pl.col("delta_utility") > -5.0)
             )
@@ -374,10 +421,43 @@ class StateUpdater:
         return costs
     
     
-    def get_new_sinks(self, current_states_steps, sinks):
-        """Recompute remaining opportunities per (motive, destination)."""
+    def get_new_sinks(
+            self,
+            current_states_steps,
+            sinks,
+            motives
+        ):
+        """Recompute remaining opportunities per (motive, destination).
+    
+        Subtracts assigned durations from capacities, computes availability and a
+        saturation utility factor.
+    
+        Args:
+            current_states_steps (pl.DataFrame): Step-level assigned durations.
+            sinks (pl.DataFrame): Initial capacities per (motive,to).
+    
+        Returns:
+            pl.DataFrame: Updated sinks with
+                ["motive","to","sink_capacity","sink_available","k_saturation_utility"].
+        """
         
         logging.info("Computing remaining opportunities at destinations...")
+        
+        saturation_fun_parameters = ( 
+            pl.from_dicts(
+                [
+                    {
+                        "motive": m.name,
+                        "beta": m.saturation_fun_beta,
+                        "ref_level": m.saturation_fun_ref_level
+                    }
+                    for m in motives
+                ]
+            )
+            .with_columns(
+                motive=pl.col("motive").cast(pl.Enum(sinks["motive"].dtype.categories))
+            )
+        )
 
         remaining_sinks = (
         
@@ -390,7 +470,10 @@ class StateUpdater:
             .agg(
                 sink_occupation=pl.col("duration").sum()
             )
+            
             .join(sinks, on=["to", "motive"], how="full", coalesce=True)
+            .join(saturation_fun_parameters, on="motive")
+            
             .with_columns(
                 sink_occupation=pl.col("sink_occupation").fill_null(0.0)
             )
@@ -399,11 +482,7 @@ class StateUpdater:
                 sink_available=(pl.col("sink_capacity") - pl.col("sink_occupation")).clip(0.0)
             )
             .with_columns(
-                k_saturation_utility=(
-                    pl.when((pl.col("k") < 1.0) | pl.col("k").is_null())
-                    .then(1.0)
-                    .otherwise((1.0 - pl.col("k")).exp())
-                )
+                k_saturation_utility=(1.0 - pl.col("k").pow(pl.col("beta"))/(pl.col("ref_level").pow(pl.col("beta")))).clip(0.0)
             )
             .select(["motive", "to", "sink_capacity", "sink_available", "k_saturation_utility"])
             

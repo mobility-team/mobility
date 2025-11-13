@@ -1,3 +1,4 @@
+import gtfs_kit
 import os
 import pathlib
 import json
@@ -160,3 +161,38 @@ class GTFSRouter(FileAsset):
                     gtfs_urls.append(r["original_url"])
                 
         return gtfs_urls
+    
+    def audit_gtfs(self):
+        transport_zones = self.transport_zones
+        stops = self.get_stops(transport_zones)
+        gtfs_files = self.get_gtfs_files(stops)
+        for gtfs_url in gtfs_files:
+            print("\nGTFS\n")
+            print(gtfs_url)
+            gtfs=GTFSData(gtfs_url)
+            agencies = gtfs.get_agencies_names(gtfs_url)
+            #print(agencies)
+            #print(type(agencies))
+            if "TPG" in agencies:
+                print("TPG found in ", gtfs_url)
+                #k = gtfs_kit.read_feed(gtfs_url, "m")
+                #k = gtfs_kit.miscellany.restrict_to_agencies(k, ["000881"])
+                #trips = k.get_trips()
+                #print(trips)
+                #dates = k.get_dates()
+                #print(dates)
+                #routes = k.get_routes()
+                #print(routes)
+                #shapes = k.get_shapes(as_gdf=True)
+                #print(shapes)
+                #shapes.plot()
+                #script = RScript(resources.files('mobility.transport_modes.public_transport').joinpath('routing_tests.R'))
+                #script.run(
+                #    args=[
+                #        "None"
+                #        ]
+                #)
+            if "SNCF" in agencies:
+                print("SNCF found in ", gtfs_url)
+            
+        #print(gtfs_files)

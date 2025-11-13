@@ -10,12 +10,12 @@ Vous pouvez soit utiliser git directement soit GitHub Desktop.
 ### Avec git
 - Ouvrir une invite de commande, puis allez dans le dossier dans lequel vous souhaitez stocker le code de Mobility : `cd path/to/mobility-repo`. Sous Windows, choisissez un dossier standard (par exemple "C:\Users\username\Documents\GitHub\mobility"), l'utilisation de dossiers système peut bloquer l'installation.
 - Récupérer le code avec la commande : `git clone https://github.com/mobility-team/mobility.git`
-- Passer sur la branche carpool : `git checkout carpool`
+- Si nécessaire, se placer sur la branche main : `git checkout main`
 
 ### Avec GitHub Desktop
 - Installer et ouvrir GitHub Desktop
 - File > Clone repository > URL > `mobility-team/mobility`. Sous Windows, choisissez un dossier standard (par exemple `C:\Users\username\Documents\GitHub\mobility`), l'utilisation de dossiers système peut bloquer l'installation.
-- Passer sur la branche carpool grâce au sélecteur en haut de l'interface
+- Rester sur la branche main
 
 ## Créer un environnement dédié et installer les dépendances de mobility
 - Ouvrir Miniforge Prompt et se placer dans le dossier où a été installé mobility ( `cd path/to/mobility-repo`)

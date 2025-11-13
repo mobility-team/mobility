@@ -8,6 +8,9 @@ class OtherMotive(Motive):
 
     def __init__(
         self,
+        value_of_time: float = 10.0,
+        saturation_fun_ref_level: float = 1.5,
+        saturation_fun_beta: float = 4.0,
         radiation_lambda: float = 0.99986,
         opportunities: pd.DataFrame = None,
         population: Population = None
@@ -20,8 +23,11 @@ class OtherMotive(Motive):
 
         super().__init__(
             name="other",
+            value_of_time=value_of_time,
             radiation_lambda=radiation_lambda,
-            opportunities=opportunities
+            opportunities=opportunities,
+            saturation_fun_ref_level=saturation_fun_ref_level,
+            saturation_fun_beta=saturation_fun_beta
         )
 
     
