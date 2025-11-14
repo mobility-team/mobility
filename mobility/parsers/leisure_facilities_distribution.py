@@ -149,8 +149,12 @@ class LeisureFacilitiesDistribution(FileAsset):
         
         # Drop items mapped to None or explicitly unwanted categories
         gdf = gdf[~gdf["leisure_clean"].isna()].copy()
-        gdf = gdf[gdf["leisure_clean"] != "nature_reserve"]
         gdf = gdf[gdf["leisure_clean"] != "garden"]
+        gdf = gdf[gdf["leisure_clean"] != "picnic_table"]
+        gdf = gdf[gdf["leisure_clean"] != "common"]
+        gdf = gdf[gdf["leisure_clean"] != "schoolyard"]
+        # to complete if necessary
+
         
         # Remove private places in general
         gdf = gdf[gdf["access"] != "private"]
