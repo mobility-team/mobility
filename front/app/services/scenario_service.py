@@ -1,3 +1,24 @@
+"""
+scenario_service.py
+===================
+
+Service de construction de scénarios de mobilité (zones, parts modales, indicateurs).
+
+Principes :
+- Tente d’utiliser le module externe **`mobility`** pour générer des zones réalistes.
+- Fournit un **fallback** déterministe Toulouse–Blagnac si `mobility` est indisponible.
+- Crée systématiquement toutes les colonnes de parts (voiture, vélo, marche, covoiturage,
+  transports en commun + sous-modes TC).
+- Renormalise les parts sur les **modes actifs uniquement**.
+- Recalcule un **temps moyen de trajet** sensible aux variables de coût par mode.
+- Met à disposition un **cache LRU** pour les scénarios sans paramètres de modes.
+
+Sortie principale (dict):
+    - `zones_gdf` (GeoDataFrame, WGS84): zones avec géométries et indicateurs.
+    - `flows_df` (DataFrame): tableau des flux (vide par défaut).
+    - `zones_lookup` (GeoDataFrame, WGS84): points de référence des zones.
+"""
+
 from __future__ import annotations
 from functools import lru_cache
 from typing import Dict, Any, Tuple
@@ -10,6 +31,11 @@ from shapely.geometry import Point
 # Helpers & fallback
 # ------------------------------------------------------------
 def _to_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Assure que le GeoDataFrame est en WGS84 (EPSG:4326).
+
+    - Si le CRS est absent, le définit à 4326 (allow_override=True).
+    - Si le CRS n’est pas 4326, reprojette en 4326.
+    """
     if gdf.crs is None:
         return gdf.set_crs(4326, allow_override=True)
     try:
@@ -20,7 +46,11 @@ def _to_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 
 def _fallback_scenario() -> Dict[str, Any]:
-    """Scénario de secours (Toulouse–Blagnac) avec toutes les colonnes de parts (y compris TC)."""
+    """Scénario de secours (Toulouse–Blagnac) avec toutes les colonnes de parts (y compris TC).
+
+    Construit deux buffers de 5 km autour de Toulouse et Blagnac, assigne des parts
+    modales plausibles, normalise, et retourne un dict {zones_gdf, flows_df, zones_lookup}.
+    """
     toulouse = (1.4442, 43.6047)
     blagnac = (1.3903, 43.6350)
 
@@ -72,6 +102,7 @@ def _fallback_scenario() -> Dict[str, Any]:
 
 
 def _normalize_lau_code(code: str) -> str:
+    """Normalise un code INSEE/LAU au format `fr-xxxxx` si nécessaire."""
     s = str(code).strip().lower()
     if s.startswith("fr-"):
         return s
@@ -84,6 +115,7 @@ def _normalize_lau_code(code: str) -> str:
 # Param helpers
 # ------------------------------------------------------------
 def _safe_cost_of_time(v_per_hour: float):
+    """Objet léger pour compatibilité (valeur du temps en €/h)."""
     # On garde la présence de cette fonction pour compatibilité,
     # mais on n’instancie pas de modèles lourds ici.
     class _COT:
@@ -101,19 +133,14 @@ def _extract_vars(d: Dict[str, Any], defaults: Dict[str, float]) -> Dict[str, fl
 
 
 def _mode_cost_to_weight(vars_: Dict[str, float], base_minutes: float) -> float:
-    """
-    Convertit les variables de coût d’un mode en un poids temps synthétique (minutes).
-    Plus les coûts sont élevés, plus le "poids" est haut (=> augmente average_travel_time si la part du mode est forte).
-    On garde une transformation simple, stable et déterministe.
+    """Convertit des variables de coût d’un mode en un poids-temps synthétique (minutes).
+
+    Plus les coûts sont élevés, plus le "poids" est haut (→ augmente average_travel_time si
+    la part du mode est forte). Transformation simple, stable et déterministe.
     """
     cc = vars_["cost_constant"]                # €
     cot = vars_["cost_of_time_eur_per_h"]      # €/h
     cod = vars_["cost_of_distance_eur_per_km"] # €/km
-
-    # pondérations simples mais sensibles :
-    # - le coût du temps influe beaucoup (rapport heures→minutes)
-    # - la distance influe modérément
-    # - la constante donne un petit offset
     return (
         base_minutes
         + 0.6 * (cot)          # €/h → ~impact direct
@@ -130,13 +157,7 @@ def _compute_scenario(
     radius: float = 40.0,
     transport_modes_params: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    """
-    Calcule un scénario. Crée toujours toutes les colonnes de parts :
-    - share_car, share_bicycle, share_walk, share_carpool
-    - share_pt_walk, share_pt_car, share_pt_bicycle, share_public_transport
-    Renormalise sur les seuls modes actifs (zéro si décoché).
-    Recalcule average_travel_time (Option B) avec influence des variables par mode.
-    """
+    """Calcule un scénario, remplit les parts des modes actifs, renormalise et dérive les indicateurs."""
     try:
         import mobility
     except Exception as e:
@@ -183,7 +204,7 @@ def _compute_scenario(
     ]:
         zones_gdf[col] = 0.0
 
-    # --- Assigner des parts uniquement pour ce qui est actif
+    # --- Assigner des parts uniquement pour ce qui est actif (RNG déterministe)
     rng = np.random.default_rng(42)
     if active["car"]:
         zones_gdf["share_car"] = rng.uniform(0.25, 0.65, n)
@@ -228,8 +249,7 @@ def _compute_scenario(
     zones_gdf = zones_gdf.fillna(0.0)
     zones_gdf["share_public_transport"] = zones_gdf[["share_pt_walk", "share_pt_car", "share_pt_bicycle"]].sum(axis=1)
 
-    # --- Recalcul average_travel_time (Option B) sensible aux variables
-    # bases minutes (sans variables)
+    # --- Recalcul average_travel_time sensible aux variables (Option B)
     base_minutes = {
         "car": 20.0, "bicycle": 15.0, "walk": 25.0, "carpool": 18.0, "public_transport": 22.0
     }
@@ -248,8 +268,9 @@ def _compute_scenario(
         + zones_gdf["share_public_transport"] * W["public_transport"]
     )
 
-    # --- Autres indicateurs synthétiques
-    zones_gdf["total_dist_km"] = 10.0 + 10.0 * rng.random(n)
+    # --- Autres indicateurs synthétiques (déterministes et sans RNG)
+    # Distance "typique" proportionnelle à la racine de la surface (km).
+    zones_gdf["total_dist_km"] = zones_gdf.geometry.area ** 0.5 / 1000
 
     # Types cohérents & WGS84
     zones_gdf["transport_zone_id"] = zones_gdf["transport_zone_id"].astype(str)
@@ -270,23 +291,30 @@ def _compute_scenario(
 #  API public + cache
 # ------------------------------------------------------------
 def _normalized_key(local_admin_unit_id: str, radius: float) -> Tuple[str, float]:
+    """Retourne la clé normalisée (LAU, rayon) pour le cache LRU."""
     lau = _normalize_lau_code(local_admin_unit_id or "31555")
     rad = round(float(radius), 4)
     return (lau, rad)
 
+
 @lru_cache(maxsize=8)
 def _get_scenario_cached(lau: str, rad: float) -> Dict[str, Any]:
+    """Version mise en cache (pas de `transport_modes_params`)."""
     return _compute_scenario(local_admin_unit_id=lau, radius=rad, transport_modes_params=None)
+
 
 def get_scenario(
     local_admin_unit_id: str = "31555",
     radius: float = 40.0,
     transport_modes_params: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
+    """API principale : construit un scénario (avec cache si pas de params modes)."""
     lau, rad = _normalized_key(local_admin_unit_id, radius)
     if not transport_modes_params:
         return _get_scenario_cached(lau, rad)
     return _compute_scenario(local_admin_unit_id=lau, radius=rad, transport_modes_params=transport_modes_params)
 
+
 def clear_scenario_cache() -> None:
+    """Vide le cache LRU des scénarios sans paramètres de modes."""
     _get_scenario_cached.cache_clear()

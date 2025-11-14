@@ -74,7 +74,19 @@ PT_COLOR = "#e5007d"  # rouge/magenta du logo AREP
 
 
 def _mode_header(mode):
-    """Case + nom, avec tooltip rouge contrôlé par main.py."""
+    """Crée l'en-tête d'un mode de transport avec case à cocher et tooltip d'avertissement.
+
+    Cette fonction construit un composant `dmc.Group` contenant :
+      - une case à cocher permettant d'activer ou désactiver le mode ;
+      - un texte affichant le nom du mode ;
+      - un tooltip rouge s'affichant si l'utilisateur tente de désactiver tous les modes.
+
+    Args:
+        mode (dict): Dictionnaire représentant un mode de transport, issu de MOCK_MODES.
+
+    Returns:
+        dmc.Group: Composant Mantine contenant la case à cocher, le texte et le tooltip.
+    """
     return dmc.Group(
         [
             dmc.Tooltip(
@@ -82,7 +94,7 @@ def _mode_header(mode):
                 position="right",
                 withArrow=True,
                 color=PT_COLOR,
-                opened=False,     # ouvert via callback si nécessaire
+                opened=False,
                 withinPortal=True,
                 zIndex=9999,
                 transitionProps={"transition": "fade", "duration": 300, "timingFunction": "ease-in-out"},
@@ -92,7 +104,7 @@ def _mode_header(mode):
                     checked=mode["active"],
                 ),
             ),
-            dmc.Text(mode["name"], fw=700),  # tous en gras
+            dmc.Text(mode["name"], fw=700),
         ],
         gap="sm",
         align="center",
@@ -101,7 +113,22 @@ def _mode_header(mode):
 
 
 def _pt_submodes_block(mode):
-    """Bloc des sous-modes PT (coches + tooltip individuel)."""
+    """Construit le bloc des sous-modes pour le transport en commun (TC).
+
+    Crée une pile verticale de cases à cocher correspondant aux sous-modes :
+    - Marche + TC
+    - Voiture + TC
+    - Vélo + TC
+
+    Chaque case est associée à un tooltip rouge indiquant qu'au moins un sous-mode
+    doit rester activé.
+
+    Args:
+        mode (dict): Dictionnaire décrivant le mode "Transport en commun" et ses sous-modes.
+
+    Returns:
+        dmc.Stack: Bloc vertical contenant les sous-modes configurables.
+    """
     pt_cfg = mode.get("pt_submodes") or {}
     rows = []
     for key, label in PT_SUB_LABELS.items():
@@ -133,9 +160,20 @@ def _pt_submodes_block(mode):
 
 
 def _mode_body(mode):
-    """Variables (NumberInput) + éventuels sous-modes PT."""
+    """Construit le corps (contenu détaillé) d'un mode de transport.
+
+    Ce bloc inclut les paramètres numériques (valeur du temps, distance, constante)
+    sous forme de champs `NumberInput`. Si le mode est "Transport en commun",
+    le corps inclut également la section des sous-modes.
+
+    Args:
+        mode (dict): Dictionnaire décrivant un mode de transport avec ses variables.
+
+    Returns:
+        dmc.Stack: Bloc vertical avec les variables d'entrée et, si applicable, les sous-modes TC.
+    """
     rows = []
-    # Variables
+    # Variables principales
     for label, val in mode["vars"].items():
         spec = VAR_SPECS[label]
         rows.append(
@@ -155,7 +193,7 @@ def _mode_body(mode):
                 align="center",
             )
         )
-    # Sous-modes PT
+    # Sous-modes TC
     if mode["name"] == "Transport en commun":
         rows.append(dmc.Divider())
         rows.append(dmc.Text("Sous-modes (cumulatifs)", size="sm", fw=600))
@@ -164,6 +202,16 @@ def _mode_body(mode):
 
 
 def _modes_list():
+    """Construit la liste complète des modes de transport sous forme d'accordéon.
+
+    Chaque item correspond à un mode de transport (piéton, vélo, voiture, etc.)
+    et contient :
+      - un en-tête (nom + case à cocher) ;
+      - un panneau dépliable avec les paramètres et sous-modes.
+
+    Returns:
+        dmc.Accordion: Accordéon Mantine contenant tous les modes configurables.
+    """
     items = [
         dmc.AccordionItem(
             [dmc.AccordionControl(_mode_header(m)), dmc.AccordionPanel(_mode_body(m))],
@@ -174,7 +222,7 @@ def _modes_list():
     return dmc.Accordion(
         children=items,
         multiple=True,
-        value=[],                 # fermé par défaut
+        value=[],
         chevronPosition="right",
         chevronSize=18,
         variant="separated",
@@ -184,7 +232,19 @@ def _modes_list():
 
 
 def TransportModesInputs(id_prefix="tm"):
-    """Panneau principal 'MODES DE TRANSPORT' collapsable."""
+    """Construit le panneau principal "MODES DE TRANSPORT".
+
+    Ce composant est un accordéon englobant la liste complète des modes
+    et permet à l'utilisateur d'activer, désactiver ou ajuster les paramètres
+    de chaque mode.
+
+    Args:
+        id_prefix (str, optional): Préfixe d'identifiants pour les callbacks Dash. 
+            Par défaut "tm".
+
+    Returns:
+        dmc.Accordion: Accordéon principal contenant tous les contrôles des modes.
+    """
     return dmc.Accordion(
         children=[
             dmc.AccordionItem(
@@ -201,7 +261,7 @@ def TransportModesInputs(id_prefix="tm"):
             )
         ],
         multiple=True,
-        value=[],                 # parent fermé par défaut
+        value=[],
         chevronPosition="right",
         chevronSize=18,
         variant="separated",

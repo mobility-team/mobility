@@ -6,11 +6,22 @@ from shapely.geometry import Polygon
 import sys
 from pathlib import Path
 
+def pytest_configure(config):
+    import builtins
+    # Répond "Yes" à toute demande d'input (évite la lecture du stdin pendant la collecte)
+    builtins.input = lambda *args, **kwargs: "Yes"
+
+    # S'assurer que le dossier par défaut existe (utilisé par set_params)
+    default_projects = Path.home() / ".mobility" / "data" / "projects"
+    default_projects.mkdir(parents=True, exist_ok=True)
+
+
 REPO_ROOT = Path(__file__).resolve().parents[2]   # -> repository root
 FRONT_DIR = REPO_ROOT / "front"
 if str(FRONT_DIR) not in sys.path:
     sys.path.insert(0, str(FRONT_DIR))
-    
+
+
 @pytest.fixture
 def sample_scn():
     poly = Polygon([
@@ -39,12 +50,15 @@ def sample_scn():
 
     return {"zones_gdf": zones_gdf, "flows_df": flows_df, "zones_lookup": zones_lookup}
 
+
 @pytest.fixture(autouse=True)
 def patch_services(monkeypatch, sample_scn):
     # Patch le service scénario pour les tests d’intégration
     import front.app.services.scenario_service as scn_mod
+
     def fake_get_scenario(radius=40, local_admin_unit_id="31555"):
         return sample_scn
+
     monkeypatch.setattr(scn_mod, "get_scenario", fake_get_scenario, raising=True)
 
     # Patch map_service option B (si présent)
@@ -52,11 +66,17 @@ def patch_services(monkeypatch, sample_scn):
         import front.app.services.map_service as map_service
         from app.components.features.map.config import DeckOptions
         from app.components.features.map.deck_factory import make_deck_json
+
         def fake_get_map_deck_json_from_scn(scn, opts=None):
             opts = opts or DeckOptions()
             return make_deck_json(scn, opts)
-        monkeypatch.setattr(map_service, "get_map_deck_json_from_scn",
-                            fake_get_map_deck_json_from_scn, raising=False)
+
+        monkeypatch.setattr(
+            map_service,
+            "get_map_deck_json_from_scn",
+            fake_get_map_deck_json_from_scn,
+            raising=False,
+        )
     except Exception:
         pass
 

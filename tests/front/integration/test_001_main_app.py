@@ -1,3 +1,18 @@
+"""
+test_callbacks_simulation.py
+============================
+
+Tests de la logique de simulation associée au callback `_run_simulation`
+sans recourir à Selenium / dash_duo.
+
+L’objectif est de :
+- monkeypatcher `get_scenario` pour obtenir un scénario stable et déterministe ;
+- exécuter un helper (`compute_simulation_outputs_test`) qui reproduit la logique
+  du callback (construction de `deck_json` + `StudyAreaSummary`) ;
+- vérifier que la spécification Deck.gl produite est valide et que le composant
+  résumé est bien un composant Dash sérialisable.
+"""
+
 import json
 import pandas as pd
 import geopandas as gpd
@@ -12,10 +27,27 @@ from app.components.features.study_area_summary import StudyAreaSummary
 
 MAPP = "map"  # doit matcher l'id_prefix de la Map
 
+
 def compute_simulation_outputs_test(radius_val, lau_val, id_prefix=MAPP):
-    """
-    Helper local au test : reproduit la logique du callback _run_simulation
-    sans nécessiter Selenium / dash_duo.
+    """Reproduit la logique du callback `_run_simulation` dans un contexte de test.
+
+    Ce helper permet de tester la génération de la carte et du panneau de résumé
+    sans démarrer le serveur Dash ni utiliser Selenium. Il :
+      - normalise le rayon et le code INSEE/LAU ;
+      - appelle `get_scenario` (qui peut être monkeypatché dans le test) ;
+      - construit la spec Deck.gl JSON via `make_deck_json` ;
+      - construit le composant `StudyAreaSummary`.
+
+    Args:
+        radius_val: Valeur du rayon (slider / input) telle que fournie par l’UI.
+        lau_val: Code INSEE/LAU saisi (ex. "31555").
+        id_prefix (str, optional): Préfixe d’identifiants pour le composant
+            `StudyAreaSummary`. Doit être cohérent avec `MAPP`. Par défaut `"map"`.
+
+    Returns:
+        Tuple[str, Component]:  
+            - `deck_json`: spécification Deck.gl sérialisée en JSON,  
+            - `summary`: composant Dash `StudyAreaSummary`.
     """
     r = 40 if radius_val is None else int(radius_val)
     lau = (lau_val or "").strip() or "31555"
