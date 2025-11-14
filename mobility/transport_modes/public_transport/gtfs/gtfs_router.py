@@ -177,13 +177,13 @@ class GTFSRouter(FileAsset):
             with open(date_file_path, 'r') as f:
                 max_services_date_str = f.readline().strip()
                 max_services_date = int(max_services_date_str)
-                print(f"Max services date is : {max_services_date}")
+                logging.info(f"Max services date is : {max_services_date}")
         except FileNotFoundError:
-            print(f"Error : File not found in {date_file_path}")
+            logging.info(f"Error : File not found in {date_file_path}")
         except ValueError:
-            print("Error : The variable is not a valid integer.")
+            logging.info("Error : The variable is not a valid integer.")
         except Exception as e:
-            print(f"Error in retrieving max services date : {e}")
+            logging.info(f"Error in retrieving max services date : {e}")
 
         for gtfs_url in gtfs_files:
             print("\nGTFS\n")
@@ -217,7 +217,7 @@ class GTFSRouter(FileAsset):
             try:
                 feed = gtfs_kit.read_feed(gtfs_url, dist_units='m')
             except Exception as e:
-                print(f"Error in loading GTFS : {e}")
+                logging.info(f"Error in loading GTFS : {e}")
 
             # 1. Load the reference dataframes (make copies to avoid modifing the feed)
             # If shapes.txt et shape_id exist, load them :
@@ -237,20 +237,18 @@ class GTFSRouter(FileAsset):
             #active_trips contains all the trips for the target date
             active_trips = feed.get_trips(date=max_services_date)
             if active_trips.empty:
-                print(f"No active trip for date {max_services_date}.")
+                logging.info(f"No active trip for date {max_services_date}.")
             else:
                 nb_trips = active_trips['trip_id'].count()
-                print(f"{nb_trips}' trips found for date {max_services_date}")
+                logging.info(f"{nb_trips}' trips found for date {max_services_date}")
 
 
             # 3A. If shape_id exists : group active trips by shape_id and count the number of trips for each shape_id
             if 'shape_id' in active_trips.columns:
-                print("Shapes file present, counting trips")
+                logging.info("Shapes file present, counting trips")
                 # Group active trips by shape_id and count the number of trips for each shape_id
                 trips_counts = active_trips.groupby(['shape_id','route_id']).size().reset_index(name='trip_count')
                 
-                trips_total = trips_counts['trip_count'].sum()
-                print(trips_total)
                 # Remove trips with empty shape_id if they are still present
                 trips_counts = trips_counts[trips_counts['shape_id'].notna()]
                 
@@ -272,12 +270,12 @@ class GTFSRouter(FileAsset):
                     how='left'
                     )
                 nb_shapes = shapes_enriched_final['shape_id'].nunique()
-                print("Shapes enriched with route names and trip counts")
-                print(f"The network has {nb_shapes} different shapes with trips on {max_services_date}")
+                logging.info("Shapes enriched with route names and trip counts")
+                logging.info(f"The network has {nb_shapes} different shapes with trips on {max_services_date}")
 
             # 3B. If shape_id doesn't exist : reconstruct the shapes
             else:
-                print("Column 'shape_id' is missing in trips.txt, reconstructing shapes")
+                logging.info("Column 'shape_id' is missing in trips.txt, reconstructing shapes")
                 # Join active_trips and stop_times_df to have the stop sequence for each trip 
                 trips_stop_sequences = pd.merge(
                     active_trips[['trip_id','route_id']],
@@ -343,8 +341,8 @@ class GTFSRouter(FileAsset):
                 # Sort by shape_id and shape_pt_sequence
                 shapes_enriched_final = shapes_enriched_final.sort_values(['shape_id', 'shape_pt_sequence'])
                 nb_shapes = shapes_enriched_final['shape_id'].nunique()
-                print("Shapes enriched with route names and trip counts")
-                print(f"The network has {nb_shapes} different shapes with trips on {max_services_date}")
+                logging.info("Shapes enriched with route names and trip counts")
+                logging.info(f"The network has {nb_shapes} different shapes with trips on {max_services_date}")
 
             # 4. Mapping the stops
             # Create map 
@@ -358,7 +356,7 @@ class GTFSRouter(FileAsset):
             )
             # Update map with OSM style
             fig_stops.update_layout(mapbox_style="open-street-map")
-            print("Map of the stops")
+            logging.info("Map of the stops")
             fig_stops.show() 
 
             # 5. Mapping the shapes with one color for each route
@@ -383,7 +381,7 @@ class GTFSRouter(FileAsset):
                 map_style="open-street-map",
                 showlegend=False
             )
-            print("Map of the shapes with one color for each route")
+            logging.info("Map of the shapes with one color for each route")
             fig_shapes.show()
 
             # 6. Mapping the shapes with the linewidth depending on the number of trips
@@ -428,7 +426,7 @@ class GTFSRouter(FileAsset):
                     hovertemplate=f"Ligne {route_name}<br>Passages: {int(trip_count)}<extra></extra>"
                 ))
             # Display map
-            print("Map of the shapes with line width varying based on the number of trips")
+            logging.info("Map of the shapes with line width varying based on the number of trips")
             fig_shapes_count.show()
 
 
