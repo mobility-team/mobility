@@ -115,7 +115,6 @@ class LeisureMotive(Motive):
                 m = m[m["geometry"].notna()]
                 m = m[~m.geometry.is_empty]
         
-            # 5. Si demandé, transformer les valeurs en log
             if use_log:
                 log_col = f"log_{value_col}"
                 m[log_col] = np.log1p(m[value_col])
@@ -123,7 +122,6 @@ class LeisureMotive(Motive):
             else:
                 col_to_plot = value_col
         
-            # 6. Tracé
             ax = m.plot(
                 column=col_to_plot,
                 legend=True,

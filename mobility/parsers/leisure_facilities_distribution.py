@@ -51,6 +51,7 @@ class LeisureFacilitiesDistribution(FileAsset):
         return gdf
 
     def _prepare_leisure_facilities(self) -> gpd.GeoDataFrame:
+        
         admin_units = LocalAdminUnits().get()
         admin_units_ids = admin_units["local_admin_unit_id"].tolist()
 
@@ -80,33 +81,34 @@ class LeisureFacilitiesDistribution(FileAsset):
             ],
             check=True,
         )
-
+        
         rows = []
-
+        
+        # Read GeoJSONSeq and convert all geometries to points
         with open(out_seq_leisure, "r", encoding="utf-8") as f:
             for line in f:
                 s = line.lstrip("\x1e").strip()
                 if not s.startswith("{"):
                     continue
-
+        
                 try:
                     obj = json.loads(s)
                 except json.JSONDecodeError:
                     continue
-
+        
                 props = obj.get("properties", obj)
                 leisure = props.get("leisure")
                 if leisure is None:
                     continue
-
+        
                 geom = obj.get("geometry")
                 if geom is None:
                     continue
-
+        
                 g = shape(geom)
                 if isinstance(g, (Polygon, MultiPolygon)):
                     g = g.representative_point()
-
+        
                 rows.append(
                     {
                         "leisure": leisure,
@@ -114,51 +116,53 @@ class LeisureFacilitiesDistribution(FileAsset):
                         "geometry": g,
                     }
                 )
-
+        
         gdf = gpd.GeoDataFrame(rows, geometry="geometry", crs="EPSG:4326")
-
-        # remove private facilities
-        gdf = gdf[gdf["access"] != "private"]
-
-        # remove gardens (often private or ornamental)
-        gdf = gdf[gdf["leisure"] != "garden"]
-
-        # normalize leisure values (lowercase, split composite values, apply mapping)
+        
+        # Normalize leisure values (lowercase, split composite values, apply mapping)
         vals = gdf["leisure"].astype(str).str.strip().str.lower()
         split_vals = vals.str.replace("+", ";", regex=False).str.split(";")
-
+        
         cleaned = []
         for lst in split_vals:
             cleaned_value = None
             fallback = None
-
+        
             for p in lst:
                 p = p.strip()
                 if not p:
                     continue
-
+        
                 if p in LEISURE_MAPPING:
                     cleaned_value = LEISURE_MAPPING[p]
                     break
-
+        
                 if fallback is None:
                     fallback = p
-
+        
             if cleaned_value is None:
                 cleaned_value = fallback
-
+        
             cleaned.append(cleaned_value)
-
+        
         gdf["leisure_clean"] = cleaned
-
-        # drop items mapped to None or explicitly unwanted categories
+        
+        # Drop items mapped to None or explicitly unwanted categories
         gdf = gdf[~gdf["leisure_clean"].isna()].copy()
         gdf = gdf[gdf["leisure_clean"] != "nature_reserve"]
-
-        # assign frequency score
+        gdf = gdf[gdf["leisure_clean"] != "garden"]
+        
+        # Remove private places in general
+        gdf = gdf[gdf["access"] != "private"]
+        
+        # Special rule: keep only public swimming pools (access == "yes")
+        mask_pool = gdf["leisure_clean"] == "swimming_pool"
+        gdf = gdf[~mask_pool | (gdf["access"] == "yes")]
+        
+        # Assign frequency score
         gdf["freq_score"] = gdf["leisure_clean"].map(LEISURE_FREQUENCY).fillna(2)
-
-        # reproject to 3035 and return
+        
+        # Reproject
         gdf = gdf.to_crs(3035)
-
+        
         return gdf
