@@ -4,6 +4,8 @@ import logging
 
 import mobility
 
+import polars as pl
+
 dotenv.load_dotenv()
 
 
@@ -28,22 +30,30 @@ pop_trips = mobility.PopulationTrips(
     pop,
     [mobility.CarMode(transport_zones), mobility.WalkMode(transport_zones), mobility.BicycleMode(transport_zones)],
     [mobility.HomeMotive(), mobility.WorkMotive(), mobility.OtherMotive(population=pop)],
-    [emp]
+    [emp],
+    parameters=mobility.PopulationTripsParameters(n_iterations=10)
     )
 
 pop_trips_base = mobility.PopulationTrips(
     pop,
     [mobility.CarMode(transport_zones), mobility.WalkMode(transport_zones), mobility.BicycleMode(transport_zones)],
     [mobility.HomeMotive(), mobility.WorkMotive(), mobility.OtherMotive(population=pop)],
-    [emp]
+    [emp],
+    parameters=mobility.PopulationTripsParameters(n_iterations=10, seed=49283092)
     )
+
+tz = transport_zones.get()
 
 # You can get the weekday trips to inspect them
 weekday_flows = pop_trips.get()["weekday_flows"].collect()
 
 # You can can also get global metrics that will be compared to the theoetical values for this population 
-tz = pop_trips.evaluate("cost_per_person", plot_delta=True, compare_with=pop_trips_base)
+cost_per_person = pop_trips.evaluate("cost_per_person", plot_delta=True, compare_with=pop_trips_base)
+dist_per_person = pop_trips.evaluate("distance_per_person", plot_delta=True, compare_with=pop_trips_base)
+time_per_person = pop_trips.evaluate("time_per_person", plot_delta=True, compare_with=pop_trips_base)
+ghg_per_person = pop_trips.evaluate("ghg_per_person", plot_delta=True, compare_with=pop_trips_base)
 global_metrics = pop_trips.evaluate("global_metrics")
+
 
 # You can also plot the flows, with labels for the cities that are bigger than their neighbours
 labels = pop_trips.get_prominent_cities()
