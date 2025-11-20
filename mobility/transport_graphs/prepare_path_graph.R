@@ -64,7 +64,7 @@ osm_data$object <- osm_data$object %>%
     oneway = case_when(
       oneway %in% c("yes","true","1","t","Y","y","forward") ~ "yes",
       oneway == "-1" ~ "yes", 
-      oneway %in% c("no","false","0","both","2","n","backward") ~ "no",
+      oneway %in% c("no","false","0","both","2","n","backward", "alternating", "reversible") ~ "no",
       TRUE ~ "no"
     )
   ) %>%
