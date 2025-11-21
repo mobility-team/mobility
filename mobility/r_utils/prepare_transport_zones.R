@@ -7,6 +7,9 @@ library(arrow)
 library(cluster)
 library(future)
 library(future.apply)
+library(log4r)
+
+logger <- logger(appenders = console_appender())
 
 args <- commandArgs(trailingOnly = TRUE)
 
@@ -227,14 +230,16 @@ study_area_dt[, geometry_wkb := geos_write_wkb(geometry)]
 set.seed(0)
 
 # plan(multisession, workers = max(parallel::detectCores(logical = FALSE)-3, 1))
-plan(sequential)
+# plan(sequential)
 
-transport_zones_buildings <- future_lapply(
+transport_zones_buildings <- lapply(
   
   study_area_dt$local_admin_unit_id,
-  future.seed = 0,
+  # future.seed = 0,
   
   FUN = function(lau_id) {
+  
+    info(logger, sprintf("Clustering buildings of LAU %s...", lau_id))
     
     lau_geom <- study_area_dt[local_admin_unit_id == lau_id, geometry_wkb]
     lau_geom <- geos_read_wkb(lau_geom)
@@ -254,7 +259,7 @@ transport_zones_buildings <- future_lapply(
   }
 )
 
-plan(sequential)
+# plan(sequential)
 
 transport_zones <- rbindlist(lapply(transport_zones_buildings, "[[", 1), use.names = TRUE)
 clusters <- rbindlist(lapply(transport_zones_buildings, "[[", 2), use.names = TRUE)
