@@ -56,17 +56,17 @@ info(logger, "Parsing OSM data...")
 osm_data <- osmdata_sc(q = opq(bbox), doc = osm_file_path)
 
 # Avoid dodgr 0.4.3 regression (does not handle all oneway tags)
+# Map all existing tags to "yes or "no", with a oneway="no" fallback
 osm_data$object <- osm_data$object %>%
   mutate(
     oneway = if_else(key == "oneway", value, NA_character_)
   ) %>%
   mutate(
     oneway = case_when(
-      oneway %in% c("yes","true","1","t","Y","y","forward") ~ "yes",
-      oneway == "-1" ~ "yes", 
-      oneway %in% c("no","false","0","both","2","n","backward", "alternating", "reversible") ~ "no",
-      TRUE ~ "no"
-    )
+        oneway %in% c("yes") ~ "yes",
+        oneway %in% c("no","-1", "alternating", "reversible") ~ "no",
+        TRUE ~ "no"
+     )
   ) %>%
   mutate(
     value = if_else(key == "oneway", oneway, value)
@@ -74,6 +74,22 @@ osm_data$object <- osm_data$object %>%
   select(
     -oneway
   )
+
+# Some ways have no oneway tag and must also be set to oneway="no" so they are not NA when dodgr parses them
+all_ids <- unique(osm_data$object$object_)
+oneway_ids <- osm_data$object %>%
+  filter(key == "oneway") %>% 
+  pull(object_)
+
+no_oneway_ids <- setdiff(all_ids, oneway_ids)
+
+new_rows <- tibble(
+  object_ = no_oneway_ids,
+  key = "oneway",
+  value = "no"
+)
+
+osm_data$object <- bind_rows(osm_data$object, new_rows)
 
 
 info(logger, "Weighting network with dodgr...")
