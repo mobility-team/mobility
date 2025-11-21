@@ -9,16 +9,17 @@ library(jsonlite)
 library(data.table)
 library(arrow)
 library(FNN)
+library(dplyr)
 
 args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
-#   'D:\\dev\\mobility_oss\\mobility',
-#   'D:/data/mobility/projects/grand-geneve/9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
-#   'D:/data/mobility/projects/grand-geneve/3fd01ce982bfb700a979327cb34822e6-highway-osm_data.osm',
+#   'D:\\dev\\mobility\\mobility',
+#   'd:\\data\\mobility\\projects\\dolancourt\\b8f2f9296a57c29bb6aa2d11e02994c7-transport_zones.gpkg',
+#   'd:\\data\\mobility\\projects\\dolancourt\\dbdb0e14874405c398e1c237890c12ab-highway-osm_data.osm',
 #   'car',
-#   '{"motorway": {"capacity": 2000.0, "alpha": 0.15, "beta": 4.0}, "trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "service": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "ferry": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 300.0, "alpha": 0.15, "beta": 4.0}, "motorway_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}}',
-#   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\36630180a6ecb8a3d76de517c9c6a130-car-simplified-path-graph'
+#   '{"motorway": {"capacity": 2000.0, "alpha": 0.15, "beta": 4.0}, "trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 300.0, "alpha": 0.15, "beta": 4.0}, "motorway_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}}',
+#   'd:\\data\\mobility\\projects\\dolancourt\\path_graph_car\\simplified\\957d77e3fac8b10fa874c88552c68145-car-simplified-path-graph'
 # )
 
 package_path <- args[1]
@@ -53,6 +54,43 @@ bbox <- st_bbox(transport_zones)
 info(logger, "Parsing OSM data...")
 
 osm_data <- osmdata_sc(q = opq(bbox), doc = osm_file_path)
+
+# Avoid dodgr 0.4.3 regression (does not handle all oneway tags)
+# Map all existing tags to "yes or "no", with a oneway="no" fallback
+osm_data$object <- osm_data$object %>%
+  mutate(
+    oneway = if_else(key == "oneway", value, NA_character_)
+  ) %>%
+  mutate(
+    oneway = case_when(
+        oneway %in% c("yes") ~ "yes",
+        oneway %in% c("no","-1", "alternating", "reversible") ~ "no",
+        TRUE ~ "no"
+     )
+  ) %>%
+  mutate(
+    value = if_else(key == "oneway", oneway, value)
+  ) %>%
+  select(
+    -oneway
+  )
+
+# Some ways have no oneway tag and must also be set to oneway="no" so they are not NA when dodgr parses them
+all_ids <- unique(osm_data$object$object_)
+oneway_ids <- osm_data$object %>%
+  filter(key == "oneway") %>% 
+  pull(object_)
+
+no_oneway_ids <- setdiff(all_ids, oneway_ids)
+
+new_rows <- tibble(
+  object_ = no_oneway_ids,
+  key = "oneway",
+  value = "no"
+)
+
+osm_data$object <- bind_rows(osm_data$object, new_rows)
+
 
 info(logger, "Weighting network with dodgr...")
 
