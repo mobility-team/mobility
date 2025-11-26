@@ -420,11 +420,6 @@ n_services <- n_services[n_month_average == max(n_month_average)]
 max_services_date <- n_services[n == max(n), date][1]
 max_services_date <- as.integer(format(max_services_date, "%Y%m%d"))
 
-# Write and save max_services_date in file
-date_output_file <- file.path(dirname(output_file_path), "max_services_date.txt")
-write(max_services_date, file = date_output_file)
-info(logger, paste0("Max services date saved to: ", date_output_file))
-
 # Filter trips
 service_ids <- gtfs$calendar[start_date < max_services_date & end_date > max_services_date & tuesday == 1, service_id]
 service_ids <- unique(c(service_ids, gtfs$calendar_dates[date == max_services_date & exception_type == 1, service_id]))

@@ -3,8 +3,6 @@ import os
 import pathlib
 import json
 import logging
-import plotly.express as px
-import plotly.graph_objects as go
 import pandas as pd
 
 from importlib import resources
@@ -169,23 +167,8 @@ class GTFSRouter(FileAsset):
         transport_zones = self.transport_zones
         stops = self.get_stops(transport_zones)
         gtfs_files = self.get_gtfs_files(stops)
-        
-        # Retrieve max services date from file saved with R script
-        output_dir = "D:\\test-09" # TBC
-        date_file_path = os.path.join(output_dir, "max_services_date.txt")
-        try:
-            with open(date_file_path, 'r') as f:
-                max_services_date_str = f.readline().strip()
-                max_services_date = int(max_services_date_str)
-                logging.info(f"Max services date is : {max_services_date}")
-        except FileNotFoundError:
-            logging.info(f"Error : File not found in {date_file_path}")
-        except ValueError:
-            logging.info("Error : The variable is not a valid integer.")
-        except Exception as e:
-            logging.info(f"Error in retrieving max services date : {e}")
 
-        for gtfs_url in gtfs_files:
+        for i, gtfs_url in enumerate(gtfs_files, start=1):
             print("\nGTFS\n")
             print(gtfs_url)
             gtfs=GTFSData(gtfs_url)
@@ -213,11 +196,11 @@ class GTFSRouter(FileAsset):
                 #)
             if "SNCF" in agencies:
                 print("SNCF found in ", gtfs_url)
-            
+
             try:
                 feed = gtfs_kit.read_feed(gtfs_url, dist_units='m')
             except Exception as e:
-                logging.info(f"Error in loading GTFS : {e}")
+                print(f"Error in loading GTFS : {e}")
 
             # 1. Load the reference dataframes (make copies to avoid modifing the feed)
             # If shapes.txt et shape_id exist, load them :
@@ -226,210 +209,172 @@ class GTFSRouter(FileAsset):
                 trips_df = feed.trips[['trip_id', 'route_id', 'shape_id']].copy()
             # Otherwise :
             except:
+                shapes_df = None
                 trips_df = feed.trips[['trip_id', 'route_id']].copy()
 
             routes_df = feed.routes[['route_id', 'route_short_name', 'route_long_name']].copy()
             stops_df = feed.stops[['stop_id','stop_name','stop_lat', 'stop_lon']].copy()
             stop_times_df = feed.stop_times.copy()
 
+            dates = feed.get_dates()
+            max_services_date = feed.compute_busiest_date(dates)
+            logging.info(f"Max services date is {max_services_date}")
 
-            # 2. Filter active trips for the target date
-            #active_trips contains all the trips for the target date
+            # 2. Filter active trips for the busiest date
+            #active_trips contains all the trips for the busiest date
             active_trips = feed.get_trips(date=max_services_date)
             if active_trips.empty:
-                logging.info(f"No active trip for date {max_services_date}.")
-            else:
-                nb_trips = active_trips['trip_id'].count()
-                logging.info(f"{nb_trips}' trips found for date {max_services_date}")
+                logging.info(f"No active trips found for {max_services_date}.")
+            else :
+                logging.info(f"{len(active_trips)} trips found for {max_services_date}")
 
+                # 3. Get the active shapes corresponding to the target date, count the trips for each shape and add route name
+                # 3A. If shapes_df is not null : group active trips by shape_id and count the number of trips for each shape_id
+                if shapes_df is not None and not shapes_df.empty:
+                    logging.info("File shapes.txt is present in GTFS feed, counting trips...")
+                    
+                    # Group active trips by shape_id and count the number of trips for each shape_id
+                    trips_counts = active_trips.groupby(['shape_id']).size().reset_index(name='trip_count')
+                    
+                    # # This part is added to manage the case where the same shapes may have different route_ids 
+                    # # even though they are on the same route
+                    # Retrieve a unique route_id corresponding to each shape_id
+                    shapes_routes = active_trips.groupby(['shape_id'])['route_id'].first().reset_index()
+                    
+                    # Add route_id to trips_counts
+                    trips_counts = trips_counts.merge(
+                        shapes_routes,
+                        on='shape_id',
+                        how='left'
+                    )
 
-            # 3A. If shape_id exists : group active trips by shape_id and count the number of trips for each shape_id
-            if 'shape_id' in active_trips.columns:
-                logging.info("Shapes file present, counting trips")
-                # Group active trips by shape_id and count the number of trips for each shape_id
-                trips_counts = active_trips.groupby(['shape_id','route_id']).size().reset_index(name='trip_count')
-                
-                # Remove trips with empty shape_id if they are still present
-                trips_counts = trips_counts[trips_counts['shape_id'].notna()]
-                
-                # Enrich shapes_df with the number of trips per shape_id
-                shapes_counts = shapes_df.merge(
+                    # Remove trips with empty shape_id if they are still present
+                    trips_counts = trips_counts[trips_counts['shape_id'].notna()]
+
+                    # Create active_shapes_df
+                    active_shapes_df = shapes_df[shapes_df['shape_id'].isin(active_trips['shape_id'])]
+
+                # 3B. If shape_id doesn't exist : reconstruct the shapes
+                else:
+                    logging.info("File shapes.txt is missing in GTFS feed, reconstructing shapes...")
+                    
+                    # Join active_trips and stop_times_df to have the stop sequence for each trip 
+                    trips_stop_sequences = pd.merge(
+                        active_trips[['trip_id','route_id']],
+                        stop_times_df[['trip_id','stop_id','stop_sequence']],
+                        on='trip_id',
+                        how='left'
+                    )
+                    
+                    # Sort by trip_id and stop_sequence 
+                    trips_stop_sequences = trips_stop_sequences.sort_values(by=['trip_id','stop_sequence'])
+
+                    # Group by trip_id and concat stops_id in one unique string to rebuild a pseudo_shape_id
+                    trips_with_pseudo_shape_id = trips_stop_sequences.groupby(['trip_id','route_id']).agg(
+                        pseudo_shape_id=('stop_id', lambda x: '-'.join(x.astype(str)))
+                    ).reset_index()
+
+                    # Add the pseudo_shape_id to trips_with_stop_sequence
+                    trips_stop_sequences = pd.merge(
+                        trips_stop_sequences, 
+                        trips_with_pseudo_shape_id[['trip_id','pseudo_shape_id']], 
+                        on='trip_id'
+                        )
+                    
+                    # Suppress all the non unique values to recreate a shapes df
+                    pseudo_shapes = trips_stop_sequences[[
+                        'pseudo_shape_id', 
+                        'stop_id', 
+                        'stop_sequence',
+                        'route_id'
+                    ]].drop_duplicates(subset=['pseudo_shape_id', 'stop_sequence'])
+
+                    # Get the lat and long from stops_df and add stop_coords to pseudo_shapes
+                    stops_coords = stops_df[['stop_id', 'stop_lat', 'stop_lon']].copy()
+                    stops_coords = stops_coords.rename(columns={'stop_lat': 'shape_pt_lat','stop_lon': 'shape_pt_lon'})
+                    pseudo_shapes = pd.merge(
+                        pseudo_shapes, 
+                        stops_coords, 
+                        on='stop_id'
+                    )
+                    
+                    # Finalize the structure (similar to shapes.txt)
+                    # Rename stop_sequence into shape_pt_sequence
+                    active_shapes_df = pseudo_shapes.rename(
+                        columns={'stop_sequence': 'shape_pt_sequence',
+                                'pseudo_shape_id': 'shape_id'}
+                    )
+                    # Sort by shape_id and shape_pt_sequence
+                    active_shapes_df = active_shapes_df.sort_values(['shape_id', 'shape_pt_sequence'])
+                    
+                    # Group active trips by shape_id and count the number of trips for each pseudo_shape_id
+                    logging.info("Counting trips...")
+                    trips_counts = trips_with_pseudo_shape_id.groupby(['pseudo_shape_id']).size().reset_index(name='trip_count')
+                    
+                    # # This part is added to manage the case where the same pseudo_shapes may have different route_ids 
+                    # # even though they are on the same route
+                    # Retrieve a unique route_id corresponding to each shape_id
+                    shapes_routes = trips_with_pseudo_shape_id.groupby(['pseudo_shape_id'])['route_id'].first().reset_index()
+
+                    # Add route_id to trips_counts
+                    trips_counts = trips_counts.merge(
+                        shapes_routes,
+                        on='pseudo_shape_id',
+                        how='left'
+                    )
+
+                    trips_counts = trips_counts.rename(columns={'pseudo_shape_id': 'shape_id'})
+
+                # Add route names to trips_counts
+                trips_counts = trips_counts.merge(
+                    routes_df,
+                    on='route_id',
+                    how='left'
+                )
+
+                # 4. Get the active stops corresponding to the target date
+                # Keep only stop times for active trips
+                active_stop_times = stop_times_df[stop_times_df['trip_id'].isin(active_trips['trip_id'])]
+
+                # Extract the corresponding active stop_ids
+                active_stop_ids = active_stop_times['stop_id'].unique()
+
+                # Filter stops_df to only keep active stops
+                active_stops_df = stops_df[stops_df['stop_id'].isin(active_stop_ids)]
+
+                # 5. Enrich active_shapes_df and export gpkg
+                # Creating GeoDataFrames for shapes and stops
+                active_shapes_gdf = gtfs_kit.shapes.geometrize_shapes(active_shapes_df)
+                active_stops_gdf = gtfs_kit.stops.geometrize_stops(active_stops_df)
+
+                # Enrich shapes with trip_counts, route_id and route_names
+                logging.info('Enriching shapes with trip counts and route names...')
+                active_shapes_gdf = active_shapes_gdf.merge(
                     trips_counts, 
                     on='shape_id', 
                     how='left' 
                     )
-                
+
+                # Print some data about number of trips
+                nb_shapes = active_shapes_gdf['shape_id'].nunique()
+                trips_total = active_shapes_gdf['trip_count'].sum()
+                logging.info(f"The network has {nb_shapes} different shapes with a total of {trips_total} trips on {max_services_date}")
+
                 # Replace NaN values of trip_count by 0
-                shapes_counts['trip_count'] = shapes_counts['trip_count'].fillna(0)
-                shapes_counts = shapes_counts[shapes_counts['trip_count'] > 0.0]
-                
-                # Enrich shapes with route_name
-                shapes_enriched_final = shapes_counts.merge(
-                    routes_df, 
-                    on='route_id', 
-                    how='left'
-                    )
-                nb_shapes = shapes_enriched_final['shape_id'].nunique()
-                logging.info("Shapes enriched with route names and trip counts")
-                logging.info(f"The network has {nb_shapes} different shapes with trips on {max_services_date}")
-
-            # 3B. If shape_id doesn't exist : reconstruct the shapes
-            else:
-                logging.info("Column 'shape_id' is missing in trips.txt, reconstructing shapes")
-                # Join active_trips and stop_times_df to have the stop sequence for each trip 
-                trips_stop_sequences = pd.merge(
-                    active_trips[['trip_id','route_id']],
-                    stop_times_df[['trip_id','stop_id','stop_sequence']],
-                    on='trip_id',
-                    how='left'
-                )
-                # Sort by trip_id and stop_sequence 
-                trips_stop_sequences = trips_stop_sequences.sort_values(by=['trip_id','stop_sequence'])
-
-                # Group by trip_id and concat stops_id in one unique string to rebuild a pseudo_shape_id
-                trips_with_pseudo_shape_id = trips_stop_sequences.groupby(['trip_id']).agg(
-                    pseudo_shape_id=('stop_id', lambda x: '-'.join(x.astype(str)))
-                ).reset_index()
-
-                # Add the pseudo_shape_id to trips_with_stop_sequence
-                trips_stop_sequences = pd.merge(
-                    trips_stop_sequences, 
-                    trips_with_pseudo_shape_id, 
-                    on='trip_id'
-                    )
+                active_shapes_gdf['trip_count'] = active_shapes_gdf['trip_count'].fillna(0)
+                #active_shapes_gdf = active_shapes_gdf[active_shapes_gdf['trip_count'] > 0.0]
                     
-                # Suppress all the non unique values to recreate a shapes df
-                pseudo_shapes = trips_stop_sequences[[
-                    'pseudo_shape_id', 
-                    'stop_id', 
-                    'stop_sequence',
-                    'route_id'
-                ]].drop_duplicates(subset=['pseudo_shape_id', 'stop_sequence'])
+                # Export shapes and stops to gpkg
 
-                # Get the lat and long from stops_df and add stop_coords to pseudo_shapes
-                stops_coords = stops_df[['stop_id', 'stop_lat', 'stop_lon']].copy()
-                stops_coords = stops_coords.rename(columns={'stop_lat': 'shape_pt_lat','stop_lon': 'shape_pt_lon'})
-                pseudo_shapes = pd.merge(
-                    pseudo_shapes, 
-                    stops_coords, 
-                    on='stop_id'
-                )
+                output_path = f"D:/test-09/gtfs_{i}.gpkg" #to improve
                 
-                # Group active trips by shape_id and count the number of trips for each pseudo_shape_id
-                trips_counts = trips_with_pseudo_shape_id.groupby(['pseudo_shape_id']).size().reset_index(name='trip_count')
+                #output_path= f"gtfs_{i}.gpkg"
+                active_shapes_gdf.to_file(output_path,driver="GPKG",layer="shapes")
+                active_stops_gdf.to_file(output_path,driver="GPKG",layer="stops")
 
-                # Join the counting information 
-                shapes_counts = pd.merge(
-                    pseudo_shapes, 
-                    trips_counts, 
-                    on='pseudo_shape_id'
-                )
-
-                # Enrich shapes with route_name
-                shapes_enriched_final = shapes_counts.merge(
-                    routes_df, 
-                    on='route_id', 
-                    how='left'
-                    )
-                
-                # Finalize the structure (similar to à shapes.txt)
-                # Rename stop_sequence into shape_pt_sequence
-                shapes_enriched_final = shapes_enriched_final.rename(
-                    columns={'stop_sequence': 'shape_pt_sequence',
-                            'pseudo_shape_id': 'shape_id'}
-                )
-                # Sort by shape_id and shape_pt_sequence
-                shapes_enriched_final = shapes_enriched_final.sort_values(['shape_id', 'shape_pt_sequence'])
-                nb_shapes = shapes_enriched_final['shape_id'].nunique()
-                logging.info("Shapes enriched with route names and trip counts")
-                logging.info(f"The network has {nb_shapes} different shapes with trips on {max_services_date}")
-
-            # 4. Mapping the stops
-            # Create map 
-            fig_stops = px.scatter_map(
-                stops_df, # Limité pour l'exemple
-                lat="stop_lat",
-                lon="stop_lon",
-                hover_name="stop_name", # Nom affiché au survol
-                color_discrete_sequence=["blue"],
-                height=600
-            )
-            # Update map with OSM style
-            fig_stops.update_layout(mapbox_style="open-street-map")
-            logging.info("Map of the stops")
-            fig_stops.show() 
-
-            # 5. Mapping the shapes with one color for each route
-            # Create map
-            fig_shapes = px.line_map(
-                shapes_enriched_final,
-                lat="shape_pt_lat",
-                lon="shape_pt_lon",
-                color="route_id",  
-                line_group="shape_id",
-                hover_name="route_short_name",
-                height=600,
-            )
-            # Update map to only show hover_name in hover bubble
-            fig_shapes.update_traces(
-                # The name of the road is between <b> tags
-                # <extra></extra> deletes the default lines in hover_data
-                hovertemplate='<b>Ligne %{hovertext}</b><extra></extra>' 
-            )
-            # Update map with OSM style & no legend
-            fig_shapes.update_layout(
-                map_style="open-street-map",
-                showlegend=False
-            )
-            logging.info("Map of the shapes with one color for each route")
-            fig_shapes.show()
-
-            # 6. Mapping the shapes with the linewidth depending on the number of trips
-            # Initial parameters
-            min_weight = 1
-            max_weight = 10
-            max_trips = shapes_enriched_final['trip_count'].max()
-            center_lat = shapes_enriched_final['shape_pt_lat'].mean()
-            center_lon = shapes_enriched_final['shape_pt_lon'].mean()
-            # Create map with initial parameters
-            fig_shapes_count = go.Figure()
-            fig_shapes_count.update_layout(
-                map_style='open-street-map', 
-                map_center_lat = center_lat,
-                map_center_lon = center_lon,
-                map_zoom = 9,
-                margin={"r":0,"t":0,"l":0,"b":0},
-                showlegend=False
-            )
-            # Trace each line with variable width
-            for shape_id, group_df in shapes_enriched_final.groupby('shape_id'):
-                # Each group_df represents a full line (with several shapes)
-                # Get the statistics for each trip
-                trip_count = group_df['trip_count'].iloc[0]
-                route_name = group_df['route_short_name'].iloc[0]                
-                # Calculate line width
-                # Width = Min + (Max - Min) * (n_trips / max_trips)
-                line_weight = min_weight + (max_weight- min_weight) * (trip_count / max_trips)                
-                # Add the new line to the figure
-                fig_shapes_count.add_trace(go.Scattermap(
-                    mode="lines",
-                    # Shapes of the line
-                    lon=group_df['shape_pt_lon'],
-                    lat=group_df['shape_pt_lat'],
-                    # Style of the line
-                    line=dict(
-                        width=line_weight, 
-                        color='#00529C'   
-                    ),
-                    # Hover bubble
-                    name=f"Ligne {route_name}",
-                    hovertemplate=f"Ligne {route_name}<br>Passages: {int(trip_count)}<extra></extra>"
-                ))
-            # Display map
-            logging.info("Map of the shapes with line width varying based on the number of trips")
-            fig_shapes_count.show()
+                # Print some info
+                logging.info(f"GTFS stops and shapes exported as GeoPackage in file {output_path}")
 
 
-        #print(gtfs_files)
-
+            
         
