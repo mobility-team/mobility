@@ -70,25 +70,25 @@ class GTFSRouter(FileAsset):
         return self.cache_path
     
     def check_expected_agencies(self, gtfs_files, expected_agencies):
-        print(gtfs_files)
+        logging.info(gtfs_files)
         for gtfs_url in gtfs_files:
-            print("\nGTFS\n")
+            logging.info("GTFS")
             gtfs=GTFSData(gtfs_url)
             agencies = gtfs.get_agencies_names(gtfs_url)
-            print(agencies)
-            print(type(agencies))
+            logging.info(agencies)
+            logging.info(type(agencies))
             for expected_agency in expected_agencies:
-                print(f'Looking for {expected_agency} in {gtfs.name}')
+                logging.info(f'Looking for {expected_agency} in {gtfs.name}')
                 if expected_agency.lower() in agencies.lower():
                     logging.info(f"{expected_agency} found in {gtfs.name}")
                     expected_agencies.remove(expected_agency)
-        print(expected_agencies)
+        logging.info(expected_agencies)
         if expected_agencies == []:
             logging.info("All expected agencies were found")
             return True
         else:
             logging.info("Some agencies were not found in GTFS files.")
-            print(expected_agencies)
+            logging.info(expected_agencies)
             raise IndexError('Missing agencies')
             
         
@@ -169,14 +169,12 @@ class GTFSRouter(FileAsset):
         gtfs_files = self.get_gtfs_files(stops)
 
         for i, gtfs_url in enumerate(gtfs_files, start=1):
-            print("\nGTFS\n")
-            print(gtfs_url)
+            logging.info("GTFS")
+            logging.info(gtfs_url)
             gtfs=GTFSData(gtfs_url)
             agencies = gtfs.get_agencies_names(gtfs_url)
-            #print(agencies)
-            #print(type(agencies))
             if "TPG" in agencies:
-                print("TPG found in ", gtfs_url)
+                logging.info(f"TPG found in {gtfs_url}")
                 #k = gtfs_kit.read_feed(gtfs_url, "m")
                 #k = gtfs_kit.miscellany.restrict_to_agencies(k, ["000881"])
                 #trips = k.get_trips()
@@ -195,12 +193,12 @@ class GTFSRouter(FileAsset):
                 #        ]
                 #)
             if "SNCF" in agencies:
-                print("SNCF found in ", gtfs_url)
+                logging.info(f"SNCF found in {gtfs_url}")
 
             try:
                 feed = gtfs_kit.read_feed(gtfs_url, dist_units='m')
             except Exception as e:
-                print(f"Error in loading GTFS : {e}")
+                logging.info(f"Error in loading GTFS : {e}")
 
             # 1. Load the reference dataframes (make copies to avoid modifing the feed)
             # If shapes.txt et shape_id exist, load them :

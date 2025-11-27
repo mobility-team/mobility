@@ -83,7 +83,7 @@ class GTFSData(FileAsset):
         with zipfile.ZipFile(path, 'r') as gtfs_folder:
             with gtfs_folder.open("agency.txt") as agency:
                 agencies = agency.read().decode('utf-8')
-                print(agencies)
+                logging.info(agencies)
                 return agencies
 
 
