@@ -164,6 +164,16 @@ class GTFSRouter(FileAsset):
         return gtfs_urls
     
     def audit_gtfs(self):
+        """
+        Used to audit and verify GTFS files.
+        For each GTFS in the defined Transport Zones, the function :
+        - finds the date with the max number of services
+        - if file shapes.txt is absent, recreates shapes based on stop sequences
+        - computes number of trips on each shape for the max services date
+        - identifies active stops on the max services date
+        - exports stops and shapes enriched with trip count and route name as a GeoPackage file
+        """
+                
         transport_zones = self.transport_zones
         stops = self.get_stops(transport_zones)
         gtfs_files = self.get_gtfs_files(stops)
@@ -173,27 +183,6 @@ class GTFSRouter(FileAsset):
             logging.info(gtfs_url)
             gtfs=GTFSData(gtfs_url)
             agencies = gtfs.get_agencies_names(gtfs_url)
-            if "TPG" in agencies:
-                logging.info(f"TPG found in {gtfs_url}")
-                #k = gtfs_kit.read_feed(gtfs_url, "m")
-                #k = gtfs_kit.miscellany.restrict_to_agencies(k, ["000881"])
-                #trips = k.get_trips()
-                #print(trips)
-                #dates = k.get_dates()
-                #print(dates)
-                #routes = k.get_routes()
-                #print(routes)
-                #shapes = k.get_shapes(as_gdf=True)
-                #print(shapes)
-                #shapes.plot()
-                #script = RScript(resources.files('mobility.transport_modes.public_transport').joinpath('routing_tests.R'))
-                #script.run(
-                #    args=[
-                #        "None"
-                #        ]
-                #)
-            if "SNCF" in agencies:
-                logging.info(f"SNCF found in {gtfs_url}")
 
             try:
                 feed = gtfs_kit.read_feed(gtfs_url, dist_units='m')
@@ -234,8 +223,8 @@ class GTFSRouter(FileAsset):
                     # Group active trips by shape_id and count the number of trips for each shape_id
                     trips_counts = active_trips.groupby(['shape_id']).size().reset_index(name='trip_count')
                     
-                    # # This part is added to manage the case where the same shapes may have different route_ids 
-                    # # even though they are on the same route
+                    # This part is added to manage the case where the same shapes may have different route_ids 
+                    # even though they are on the same route
                     # Retrieve a unique route_id corresponding to each shape_id
                     shapes_routes = active_trips.groupby(['shape_id'])['route_id'].first().reset_index()
                     
@@ -309,8 +298,8 @@ class GTFSRouter(FileAsset):
                     logging.info("Counting trips...")
                     trips_counts = trips_with_pseudo_shape_id.groupby(['pseudo_shape_id']).size().reset_index(name='trip_count')
                     
-                    # # This part is added to manage the case where the same pseudo_shapes may have different route_ids 
-                    # # even though they are on the same route
+                    # This part is added to manage the case where the same pseudo_shapes may have different route_ids 
+                    # even though they are on the same route
                     # Retrieve a unique route_id corresponding to each shape_id
                     shapes_routes = trips_with_pseudo_shape_id.groupby(['pseudo_shape_id'])['route_id'].first().reset_index()
 
@@ -363,10 +352,9 @@ class GTFSRouter(FileAsset):
                 #active_shapes_gdf = active_shapes_gdf[active_shapes_gdf['trip_count'] > 0.0]
                     
                 # Export shapes and stops to gpkg
-
-                output_path = f"D:/test-09/gtfs_{i}.gpkg" #to improve
+                output_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "gtfs" / "gpkg" / f"gtfs_{i}.gpkg"
+                output_path.parent.mkdir(parents=True, exist_ok=True)
                 
-                #output_path= f"gtfs_{i}.gpkg"
                 active_shapes_gdf.to_file(output_path,driver="GPKG",layer="shapes")
                 active_stops_gdf.to_file(output_path,driver="GPKG",layer="stops")
 
