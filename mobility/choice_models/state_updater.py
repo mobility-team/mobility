@@ -221,6 +221,8 @@ class StateUpdater:
             pl.DataFrame: State-level utilities with
                 ["demand_group_id","motive_seq_id","mode_seq_id","dest_seq_id","utility"].
         """
+        
+        # possible_states_steps.collect().write_parquet("d:/data/pss2.parquet")
                     
         possible_states_utility = (
             
@@ -294,6 +296,8 @@ class StateUpdater:
         """
         
         state_cols = ["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
+        
+        # possible_states_utility.collect().write_parquet("d:/data/psu2.parquet")
         
         transition_probabilities = (
             
