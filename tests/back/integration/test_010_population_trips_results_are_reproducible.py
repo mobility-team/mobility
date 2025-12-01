@@ -72,9 +72,9 @@ def test_010_population_trips_results_are_reproducible(test_data):
         metrics_run_1 
         .join(metrics_run_2, on=["country", "variable"])
         .with_columns(
-            delta=pl.col("value_right") - pl.col("value")
+            delta=(pl.col("value_right") - pl.col("value")).abs()
         )
-        .select("delta").abs().sum().item()
+        .select("delta").sum().item()
     )
     
     assert comparison < 1e-9
