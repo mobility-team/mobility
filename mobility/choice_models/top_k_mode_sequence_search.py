@@ -63,10 +63,10 @@ class TopKModeSequenceSearch:
             pl.scan_parquet(chains_path)
             .group_by(["demand_group_id", "motive_seq_id", "dest_seq_id"])
             .agg(
-                n=pl.col('from').len(),
                 locations=pl.col("from").sort_by("seq_step_index")
             )
             .collect()
+            .sort(["demand_group_id", "motive_seq_id", "dest_seq_id"])
         )
         
         unique_location_chains = ( 
@@ -75,6 +75,7 @@ class TopKModeSequenceSearch:
             .agg(
                 pl.col("locations").first()
             )
+            .sort("dest_seq_id")
         )
         
         modes = modes_list_to_dict(costs_aggregator.modes)
@@ -88,9 +89,12 @@ class TopKModeSequenceSearch:
                 congestion=True,
                 detail_distances=False
             )
+            # Cast costs to ints to avoid float comparison instabilities later
             .with_columns(
-                mode_id=pl.col("mode").replace_strict(mode_id, return_dtype=pl.UInt8())
+                mode_id=pl.col("mode").replace_strict(mode_id, return_dtype=pl.UInt8()),
+                cost=pl.col("cost").mul(1e6).cast(pl.Int64)
             )
+            .sort(["from", "to", "mode_id"])
         )
 
         costs = {(row["from"], row["to"], row["mode_id"]): row["cost"] for row in costs.to_dicts()}
@@ -172,6 +176,7 @@ class TopKModeSequenceSearch:
             .with_columns(
                 mode_index=pl.col("mode_index").list.join("-")
             )
+            .sort(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_index", "mode_index"])
         )
         
         mode_sequences = add_index(
