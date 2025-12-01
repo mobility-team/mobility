@@ -74,7 +74,7 @@ def test_010_population_trips_results_are_reproducible(test_data):
         .with_columns(
             delta=pl.col("value_right") - pl.col("value")
         )
-        .select("delta").sum().item()
+        .select("delta").abs().sum().item()
     )
     
     assert comparison < 1e-9
