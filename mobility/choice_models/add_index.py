@@ -41,6 +41,7 @@ def add_index(df, col, index_col_name, tmp_folders):
         index = (
             df.select(col)
             .unique()
+            .sort(col)
             .with_row_index()
             .rename({"index": index_col_name})
         )
@@ -55,6 +56,7 @@ def add_index(df, col, index_col_name, tmp_folders):
             .join(index, on=col, how="anti")
             .select(col)
             .unique()
+            .sort(col)
             .with_row_index()
             .with_columns(
                 index=pl.col("index") + max_index + 1
