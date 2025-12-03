@@ -226,7 +226,7 @@ study_area_dt[, geometry_wkb := geos_write_wkb(geometry)]
 
 set.seed(0)
 
-plan(multisession, workers = max(parallel::detectCores()-3, 1))
+plan(multisession, workers = 4)
 # plan(sequential)
 
 transport_zones_buildings <- future_lapply(
