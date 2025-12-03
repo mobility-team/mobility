@@ -20,7 +20,7 @@ from mobility.choice_models.top_k_mode_sequence_search import TopKModeSequenceSe
 from mobility.choice_models.state_initializer import StateInitializer
 from mobility.choice_models.state_updater import StateUpdater
 from mobility.choice_models.results import Results
-from mobility.motives import Motive
+from mobility.motives import Motive, HomeMotive, OtherMotive
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.parsers.mobility_survey import MobilitySurvey
 
@@ -68,14 +68,59 @@ class PopulationTrips(FileAsset):
             mode_sequence_search_parallel: bool = None
             
         ):
-        
-        if not modes:
-            raise ValueError("PopulationTrips needs at least one mode in `modes`.")
-        if not motives:
-            raise ValueError("PopulationTrips needs at least one motive in `motives`.")
-        if not surveys:
-            raise ValueError("PopulationTrips needs at least one survey in `surveys`.")
-        
+        """
+        Initialize a PopulationTrips model and its caching backend.
+
+        This constructor validates core inputs (modes, motives, surveys),
+        resolves model parameters (preferably from a PopulationTripsParameters
+        instance, otherwise from legacy keyword arguments), and sets up internal
+        components used during simulation (state initialization, destination
+        sampling, mode sequence search, and state updates). A TravelCostsAggregator
+        is built from the provided modes. Cache file paths are derived from the
+        MOBILITY_PROJECT_DATA_FOLDER environment variable and passed to FileAsset.
+
+        Parameters
+        ----------
+        population : Population
+            Population object containing demand groups and transport zones.
+        modes : list[TransportMode]
+            Available transport modes. Must contain at least one TransportMode.
+        motives : list[Motive]
+            Activity motives used to build and spatialize schedules. Must contain
+            at least one Motive and include HomeMotive and OtherMotive.
+        surveys : list[MobilitySurvey]
+            Mobility surveys providing empirical activity chains. Must contain at
+            least one MobilitySurvey.
+        parameters : PopulationTripsParameters, optional
+            Preferred way to configure the model. If provided, legacy keyword
+            arguments must be None.
+
+        Legacy Parameters (deprecated)
+        ------------------------------
+        n_iterations, alpha, k_mode_sequences, dest_prob_cutoff,
+        n_iter_per_cost_update, cost_uncertainty_sd, mode_sequence_search_parallel :
+            Deprecated shortcuts for PopulationTripsParameters fields. If any are
+            provided, a PopulationTripsParameters is built from them and a
+            FutureWarning is emitted.
+
+        Raises
+        ------
+        ValueError
+            If modes, motives, or surveys are empty, or if required motives are missing.
+        TypeError
+            If any element of modes, motives, or surveys has an incorrect type, or if
+            both `parameters` and legacy arguments are provided.
+
+        Notes
+        -----
+        Randomness is controlled by parameters.seed. If seed is None, a non-deterministic
+        RNG is used. The model itself is executed lazily via FileAsset.get()/create().
+        """
+
+        self.validate_modes(modes)
+        self.validate_motives(motives)
+        self.validate_surveys(surveys)
+
         parameters = self.resolve_parameters(
             parameters,
             n_iterations,
@@ -100,7 +145,7 @@ class PopulationTrips(FileAsset):
         costs_aggregator = TravelCostsAggregator(modes)
         
         inputs = {
-            "version": 1,
+            "version": 2,
             "population": population,
             "costs_aggregator": costs_aggregator,
             "motives": motives,
@@ -202,7 +247,42 @@ class PopulationTrips(FileAsset):
         parameters.validate()
             
         return parameters
-        
+
+
+    def validate_motives(self, motives: List[Motive]) -> None:
+
+        if not motives:
+            raise ValueError("PopulationTrips needs at least one motive in `motives`.")
+
+        for motive in motives:
+            if not isinstance(motive, Motive):
+                raise TypeError(f"PopulationTrips motives argument should be a list of `Motive` instances, but received one object of class {type(motive)}.")
+
+        if not any(isinstance(m, OtherMotive) for m in motives):
+            raise ValueError("PopulationTrips `motives` argument should contain a `OtherMotive`.")
+
+        if not any(isinstance(m, HomeMotive) for m in motives):
+            raise ValueError("PopulationTrips `motives` argument should contain a `HomeMotive`.")
+
+
+    def validate_modes(self, modes: List[TransportMode]) -> None:
+
+        if not modes:
+            raise ValueError("PopulationTrips needs at least one mode in `modes`.")
+
+        for mode in modes:
+            if not isinstance(mode, TransportMode):
+                raise TypeError(f"PopulationTrips modes argument should be a list of `TransportMode` instances, but received one object of class  {type(mode)}.")
+
+    def validate_surveys(self, surveys: List[MobilitySurvey]) -> None:
+
+        if not surveys:
+            raise ValueError("PopulationTrips needs at least one survey in `surveys`.")
+
+        for survey in surveys:
+            if not isinstance(survey, MobilitySurvey):
+                raise TypeError(f"PopulationTrips surveys argument should be a list of `MobilitySurvey` instances, but received one object of class  {type(survey)}.")
+
         
     def get_cached_asset(self):
         return {k: pl.scan_parquet(v) for k, v in self.cache_path.items()}
@@ -354,7 +434,7 @@ class PopulationTrips(FileAsset):
             
             
         costs = costs_aggregator.get_costs_by_od_and_mode(
-            ["distance", "time", "ghg_emissions"],
+            ["cost", "distance", "time", "ghg_emissions"],
             congestion=True
         )
         
