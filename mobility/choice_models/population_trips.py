@@ -4,6 +4,7 @@ import logging
 import shutil
 import random
 import warnings
+import pandas as pd
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -685,8 +686,10 @@ class PopulationTrips(FileAsset):
         # Put a legend for width on bottom right, title on the top
         x_min = float(biggest_flows[["x"]].min().iloc[0])
         y_min = float(biggest_flows[["y"]].min().iloc[0])
-        plt.plot([x_min, x_min+4000], [y_min, y_min], linewidth=2, color=color)
-        plt.text(x_min+6000, y_min-1000, "1 000", color=color)
+        plt.plot([x_min-6000, x_min-4000], [y_min, y_min], linewidth=2, color=color)
+        plt.text(x_min-2000, y_min-200, "1 000", color=color)
+        plt.text(x_min-6000, y_min-2000, f"hash: {self.inputs_hash}", fontsize=7, color=color)
+        plt.text(x_min-6000, y_min-4000,self.parameters_dict(),fontsize=7, color=color)
         plt.title(f"{mode_name} flows between transport zones on {period}")
 
         # Draw all origin-destinations
@@ -771,3 +774,20 @@ class PopulationTrips(FileAsset):
         geoflows = geoflows.merge(xy_coords, left_index=True, right_index=True)
 
         return geoflows
+    
+    def parameters_dict(self) :
+        params = {
+            #study area radius
+            "radius": self.population.transport_zones.inner_radius,
+            #id number of administrative unit
+            "local_admin_unit_id": self.population.transport_zones.study_area.local_admin_unit_id,
+            #sample size of population surveyed
+            "population_sample_size": self.population.sample_size,
+            #referenced of survey used for parsing
+            "survey_used": [s.survey_name for s in self.surveys],
+            #liste des local admin units
+            "nombre_local_admin_units": len(self.population.transport_zones.study_area.get()),
+            #hash path#
+            "inputs_hash" : self.inputs_hash
+            }
+        return pd.DataFrame([params])
