@@ -40,4 +40,4 @@ labels = pop_trips.get_prominent_cities()
 pop_trips.plot_od_flows(labels=labels)
 
 rapport = pop_trips.parameters_dict()
-print(rapport)
+print(rapport.T)
