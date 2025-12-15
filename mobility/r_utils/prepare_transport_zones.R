@@ -54,7 +54,7 @@ convert_sf_to_geos_dt <- function(sf_df) {
   st_geometry(sf_df) <- "geometry"
   
   dt <- as.data.table(sf_df)
-
+  
   if (nrow(dt) == 1){
     dt <- dt[rep(1:.N, each = 2)]
     dt[, geometry := as_geos_geometry(geometry)]
@@ -75,15 +75,15 @@ compute_cluster_internal_distance <- function(buildings_dt) {
   set.seed(0)
   
   from_buildings <- buildings_dt[,
-    .SD[sample(.N, 1000, replace = TRUE, prob = area)],
-    by = cluster,
-    .SDcols = c("X", "Y")
+                                 .SD[sample(.N, 1000, replace = TRUE, prob = area)],
+                                 by = cluster,
+                                 .SDcols = c("X", "Y")
   ]
   
   to_buildings <- buildings_dt[,
-     .SD[sample(.N, 1000, replace = TRUE, prob = area)],
-     by = cluster,
-     .SDcols = c("X", "Y")
+                               .SD[sample(.N, 1000, replace = TRUE, prob = area)],
+                               by = cluster,
+                               .SDcols = c("X", "Y")
   ]
   
   distances <- cbind(
@@ -169,7 +169,7 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
     
     cluster_area <- buildings_dt[, list(area = sum(area)), by = cluster]
     clusters <- merge(clusters, cluster_area, by = "cluster")
-
+    
     transport_zones <- clusters[, list(
       transport_zone_id = cluster,
       weight = area/sum(area),
@@ -202,7 +202,7 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
       st_as_sf(geos_geometry_n(clusters_geos, seq_len(geos_num_geometries(clusters_geos)))),
       st_as_sf(voronoi)
     )
-
+    
     transport_zones[, geometry := voronoi[unlist(v_order)]]
     
     #
@@ -216,7 +216,7 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
     # p <- p + coord_equal()
     # p
     # 
-
+    
     
   } else {
     
@@ -254,11 +254,7 @@ study_area_dt[, geometry_wkb := geos_write_wkb(geometry)]
 
 set.seed(0)
 
-<<<<<<< HEAD
-plan(multisession, workers = 4)
-=======
 # plan(multisession, workers = max(parallel::detectCores(logical = FALSE)-3, 1))
->>>>>>> e95fe105e2ad04d0740f7f2eb09a8c25aa1318ec
 # plan(sequential)
 
 transport_zones_buildings <- lapply(
@@ -267,7 +263,7 @@ transport_zones_buildings <- lapply(
   # future.seed = 0,
   
   FUN = function(lau_id) {
-  
+    
     info(logger, sprintf("Clustering buildings of LAU %s...", lau_id))
     
     lau_geom <- study_area_dt[local_admin_unit_id == lau_id, geometry_wkb]
@@ -284,7 +280,7 @@ transport_zones_buildings <- lapply(
     )
     
     return(result)
-  
+    
   }
 )
 
