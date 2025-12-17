@@ -10,6 +10,7 @@ from mobility.choice_models.evaluation.car_traffic_evaluation import CarTrafficE
 from mobility.choice_models.evaluation.routing_evaluation import RoutingEvaluation
 from mobility.choice_models.evaluation.public_transport_network_evaluation import PublicTransportNetworkEvaluation
 
+
 class Results:
     
     def __init__(
