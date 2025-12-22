@@ -62,7 +62,7 @@ class StateUpdater:
             motive_dur,
             iteration,
             motives,
-            parameters.min_activity_time_constant,
+            parameters["min_activity_time_constant"],
             tmp_folders
         )
         
@@ -73,7 +73,7 @@ class StateUpdater:
             home_night_dur,
             home_motive.value_of_time_stay_home,
             stay_home_state,
-            parameters.min_activity_time_constant
+            parameters["min_activity_time_constant"]
         )
         
         transition_prob = self.get_transition_probabilities(current_states, possible_states_utility)

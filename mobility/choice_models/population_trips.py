@@ -221,7 +221,7 @@ class PopulationTrips(FileAsset):
         
         demand_groups.write_parquet(self.cache_path["demand_groups"])
         
-        if self.parameters.simulate_weekend:
+        if self.parameters["simulate_weekend"]:
             
             weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains = self.run_model(is_weekday=False)
         
@@ -292,7 +292,7 @@ class PopulationTrips(FileAsset):
         
         remaining_sinks = sinks.clone()
         
-        for iteration in range(1, parameters.n_iterations+1):
+        for iteration in range(1, parameters["n_iterations"]+1):
             
             logging.info(f"Iteration n°{iteration}")
             
@@ -343,7 +343,7 @@ class PopulationTrips(FileAsset):
             costs = self.state_updater.get_new_costs(
                 costs,
                 iteration,
-                parameters.n_iter_per_cost_update,
+                parameters["n_iter_per_cost_update"],
                 current_states_steps,
                 costs_aggregator
             )

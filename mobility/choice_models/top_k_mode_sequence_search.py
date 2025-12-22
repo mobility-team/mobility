@@ -103,7 +103,7 @@ class TopKModeSequenceSearch:
                 leg_modes[(from_, to_)].append(mode)
         
         
-        if parameters.mode_sequence_search_parallel is False:
+        if parameters["mode_sequence_search_parallel"] is False:
             
             logging.info("Finding probable mode sequences for the spatialized trip chains...")
             
@@ -142,7 +142,7 @@ class TopKModeSequenceSearch:
                         "python",
                         "-u",
                         str(resources.files('mobility') / "transport_modes" / "compute_subtour_mode_probabilities.py"),
-                        "--k_sequences", str(parameters.k_mode_sequences),
+                        "--k_sequences", str(parameters["k_mode_sequences"]),
                         "--location_chains_path", str(location_chains_path),
                         "--costs_path", str(costs_path),
                         "--leg_modes_path", str(leg_modes_path),
