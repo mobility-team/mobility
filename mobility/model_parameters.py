@@ -49,7 +49,6 @@ class Parameter:
             )
 
     def __repr__(self):
-        print("pop")
         unit_str = f" [{self.unit}]" if self.unit else ""
         return f"<Parameter {self.name}={self.value}{unit_str}>"
 
@@ -94,7 +93,7 @@ class Parameter:
     
 @dataclass    
 class ParameterSet:
-    parameters : dict = field(init=False)    
+    parameters : dict = field(init=False, compare=False)    
     
     def validate(self):
         for param in fields(self)[1:]:
