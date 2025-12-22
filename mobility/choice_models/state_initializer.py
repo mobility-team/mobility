@@ -107,7 +107,9 @@ class StateInitializer:
                 mode=pl.col("mode").cast(pl.Enum(mode_values)),
             )
         )
-
+        
+        # Create demand groups
+        # !!! Sorting before creating ids is VERY important for reproducibility
         demand_groups = (
             demand_groups
             .with_columns(
@@ -116,10 +118,12 @@ class StateInitializer:
                 csp=pl.col("csp").cast(pl.Enum(csp_values)),
                 n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values))
             )
+            .sort(["home_zone_id", "country", "city_category", "csp", "n_cars"])
             .with_row_index("demand_group_id")
         )
         
         # Create an index for motive sequences to avoid moving giant strings around
+        # !!! Sorting before creating ids is VERY important for reproducibility
         motive_seqs = ( 
             p_chain
             .select(["motive_seq", "seq_step_index", "motive"])
@@ -129,6 +133,7 @@ class StateInitializer:
         motive_seq_index = (
             motive_seqs.select("motive_seq")
             .unique()
+            .sort("motive_seq")
             .with_row_index("motive_seq_id")
         )
         

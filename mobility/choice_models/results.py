@@ -595,6 +595,8 @@ class Results:
         
         Parameters
         ----------
+        metric : str
+            One of cost, time, distance, ghg
         weekday : bool, default True
             Use weekday (True) or weekend (False) data.
         plot : bool, default False

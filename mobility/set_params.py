@@ -169,7 +169,6 @@ def install_r_packages(r_packages, r_packages_force_reinstall, r_packages_downlo
             {'source': 'CRAN', 'name': 'ggplot2'},
             {'source': 'CRAN', 'name': 'cppRouting'},
             {'source': 'CRAN', 'name': 'duckdb'},
-            {'source': 'CRAN', 'name': 'jsonlite'},
             {'source': 'CRAN', 'name': 'gtfsrouter'},
             {'source': 'CRAN', 'name': 'geos'},
             {'source': 'CRAN', 'name': 'FNN'},

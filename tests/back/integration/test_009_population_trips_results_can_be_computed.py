@@ -137,6 +137,7 @@ def test_009_population_trips_results_can_be_computed(test_data, safe_json):
             k_mode_sequences=3,
             cost_uncertainty_sd=1.0,
             mode_sequence_search_parallel=False,
+            seed=0
         ),
     )
 
