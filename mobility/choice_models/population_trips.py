@@ -128,7 +128,9 @@ class PopulationTrips(FileAsset):
         }
         
         super().__init__(inputs, cache_path)
-        
+    
+    def has_multiple_seeds(self):
+        return (len(self.parameters.seeds) > 1)
         
     def resolve_parameters(
             self,
@@ -459,7 +461,7 @@ class PopulationTrips(FileAsset):
         return evaluation
         
 
-    def plot_modal_share(self, zone="origin", mode="car", period="weekdays",
+    def plot_modal_share(self, zone="origin", mode="car", period="weekdays", plot=True,
                          labels=None, labels_size=[10, 6, 4], labels_color="black"):
         """
         Plot modal share for the given mode in the origin or destination zones during weekdays or weekends.
@@ -480,7 +482,6 @@ class PopulationTrips(FileAsset):
             Mode share for the given mode in each transport zone.
 
         """
-        logging.info(f"🗺️ Plotting {mode} modal share for {zone} zones during {period}")
 
         if period == "weekdays":
             population_df = self.get()["weekday_flows"].collect().to_pandas()
@@ -508,18 +509,21 @@ class PopulationTrips(FileAsset):
             mode_name = mode.capitalize()
         mode_share = mode_share[mode_share["mode"] == mode]
 
-        transport_zones_df = self.population.transport_zones.get()
-        
-        gc = gpd.GeoDataFrame(
-            transport_zones_df.merge(mode_share, how="left", right_on=left_column, left_on="transport_zone_id", suffixes=('', '_z'))).fillna(0)
-        gcp = gc.plot("modal_share", legend=True)
-        gcp.set_axis_off()
-        plt.title(f"{mode_name} share per {zone} transport zone ({period})")
+        if plot:
+            logging.info(f"🗺️ Plotting {mode} modal share for {zone} zones during {period}")
 
-        if isinstance(labels, gpd.GeoDataFrame):
-            self.__show_labels__(labels, labels_size, labels_color)        
-        
-        plt.show()
+            transport_zones_df = self.population.transport_zones.get()
+            
+            gc = gpd.GeoDataFrame(
+                transport_zones_df.merge(mode_share, how="left", right_on=left_column, left_on="transport_zone_id", suffixes=('', '_z'))).fillna(0)
+            gcp = gc.plot("modal_share", legend=True)
+            gcp.set_axis_off()
+            plt.title(f"{mode_name} share per {zone} transport zone ({period})")
+    
+            if isinstance(labels, gpd.GeoDataFrame):
+                self.__show_labels__(labels, labels_size, labels_color)        
+            
+            plt.show()
 
         return mode_share
 

@@ -3,6 +3,7 @@ import logging
 import polars as pl
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 
 from typing import Literal
 from mobility.choice_models.evaluation.travel_costs_evaluation import TravelCostsEvaluation
@@ -53,6 +54,7 @@ class Results:
             "trip_count_by_demand_group": self.trip_count_by_demand_group,
             "distance_per_person": self.distance_per_person,
             "ghg_per_person": self.ghg_per_person,
+            "ghg_emissions_per_trip_per_person": self.ghg_emissions_per_trip, #Test
             "time_per_person": self.time_per_person,
             "cost_per_person": self.cost_per_person,
             "immobility": self.immobility,
@@ -583,7 +585,8 @@ class Results:
             plot: bool = False,
             mask_outliers: bool = False,
             compare_with = None,
-            plot_delta = False
+            plot_delta = False,
+            labels = None
         ):
         """
         TODO
@@ -728,7 +731,7 @@ class Results:
                 if mask_outliers:
                     tz[metric_per_person] = self.mask_outliers(tz[metric_per_person])
                 
-                self.plot_map(tz, metric_per_person)
+                self.plot_map(tz, metric_per_person, labels=labels)
                 
 
             if plot_delta:
@@ -737,7 +740,7 @@ class Results:
                 if mask_outliers:
                     tz["delta"] = self.mask_outliers(tz["delta"])
                 
-                self.plot_map(tz, "delta", color_continuous_scale="RdBu_r", color_continuous_midpoint=0)                
+                self.plot_map(tz, "delta", color_continuous_scale="RdBu_r", color_continuous_midpoint=0, labels=labels)                
 
         
         return metric_per_groups_and_transport_zones
@@ -765,6 +768,10 @@ class Results:
         return self.metric_per_person("distance", *args, **kwargs)
 
     def ghg_per_person(self, *args, **kwargs):
+        return self.metric_per_person("ghg_emissions_per_trip", *args, **kwargs)
+    
+    def ghg_emissions_per_trip(self, *args, **kwargs):
+        """Test for compat"""
         return self.metric_per_person("ghg_emissions_per_trip", *args, **kwargs)
     
     def time_per_person(self, *args, **kwargs):
@@ -823,7 +830,8 @@ class Results:
     
  
     def plot_map(self, tz, value: str = None, motive: str = None, plot_method: str = "browser",
-                 color_continuous_scale="Viridis", color_continuous_midpoint=None):
+                 color_continuous_scale="Viridis", color_continuous_midpoint=None,
+                 labels=None):
         """
         Render a Plotly choropleth for a transport-zone metric.
         
@@ -843,6 +851,8 @@ class Results:
         logging.getLogger("kaleido").setLevel(logging.WARNING)
         #plot_method="png"
         
+        
+        
         fig = px.choropleth(
             tz.drop(columns="geometry"),
             geojson=json.loads(tz.to_json()),
@@ -856,6 +866,19 @@ class Results:
             title=motive,
             subtitle=motive
         )
+        if labels is not None:
+            print(labels[["geometry"]])
+            labels = labels.to_crs(4326)
+            print(labels[["geometry"]])
+            for index, row in labels.iterrows():
+                if row["prominence"] == 1:
+                    fig.add_trace(go.Scattergeo(lon=[row["geometry"].centroid.x], lat=[row["geometry"].centroid.y], text=[row["local_admin_unit_name"]], mode="text", textposition="top center", textfont=dict(size=24, color="black"),))
+                elif row["prominence"] <3:
+                    fig.add_trace(go.Scattergeo(lon=[row["geometry"].centroid.x], lat=[row["geometry"].centroid.y], text=[row["local_admin_unit_name"]], mode="text", textposition="top center", textfont=dict(size=18, color="black"),))
+                else:
+                    fig.add_trace(go.Scattergeo(lon=[row["geometry"].centroid.x], lat=[row["geometry"].centroid.y], text=[row["local_admin_unit_name"]], mode="text", textposition="top center", textfont=dict(size=12, color="black"),))
+                    #plt.annotate(row["local_admin_unit_name"], (row["x"], row["y"]), size=size[0], ha="center", va="center", color=color)
+
         fig.update_geos(fitbounds="geojson", visible=False)
         fig.update_layout(margin=dict(l=0,r=0,t=0,b=0))
         fig.show(plot_method)
@@ -897,5 +920,5 @@ class Results:
         return PublicTransportNetworkEvaluation(self).get(*args, **kwargs)
          
         
-        
+
         
