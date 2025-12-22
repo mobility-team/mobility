@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, asdict
 from typing import List, Union
 
 Number = Union[int, float]    
@@ -105,3 +105,7 @@ class ParameterSet:
             
     def _validate_param_interdependency(self):
         pass
+
+    def to_hashable_dict(self) -> dict:
+        """Return JSON-serializable values only."""
+        return asdict(self)

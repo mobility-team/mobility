@@ -54,7 +54,7 @@ class Results:
             "trip_count_by_demand_group": self.trip_count_by_demand_group,
             "distance_per_person": self.distance_per_person,
             "ghg_per_person": self.ghg_per_person,
-            "ghg_emissions_per_trip_per_person": self.ghg_emissions_per_trip, #Test
+            #"ghg_emissions_per_trip_per_person": self.ghg_emissions_per_trip, #Test
             "time_per_person": self.time_per_person,
             "cost_per_person": self.cost_per_person,
             "immobility": self.immobility,
