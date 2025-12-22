@@ -30,7 +30,7 @@ class Parameter:
     def set(self, new_value):
         self.value = new_value
 
-    def _validate(self):
+    def validate(self):
         if self.value is None: #todo: improve this!
             return None
         if self.parameter_type is not None:
@@ -96,15 +96,12 @@ class Parameter:
 class ParameterSet:
     parameters : dict = field(init=False)    
     
-    def _validate(self):
-        # for param in fields(self):
-        #     print(param)
-        #     getattr(self, param.name)._validate()
+    def validate(self):
         for param in fields(self)[1:]:
             print(self.parameters)
             param_name = "param_" + param.name
             print(param_name)
-            self.parameters[param_name]._validate()
+            self.parameters[param_name].validate()
         self._validate_param_interdependency()
             
     def _validate_param_interdependency(self):
