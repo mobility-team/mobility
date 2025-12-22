@@ -96,6 +96,26 @@ class PopulationTripsParameters(ParameterSet):
     "param_name": Parameter(name="Name", name_fr="Nom", description="Name of the run with those parameters",
                             value=self.name, parameter_type=str)}
  
+    def to_dict(self):
+        # Return a structured description of all parameters
+        return {
+            "n_iterations": self.n_iterations,
+            "alpha": self.alpha,
+            "k_mode_sequences": self.k_mode_sequences,
+            "dest_prob_cutoff": self.dest_prob_cutoff,
+            "n_iter_per_cost_update": self.n_iter_per_cost_update,
+            "cost_uncertainty_sd": self.cost_uncertainty_sd,
+            "seed": self.seed,
+            "seeds": self.seeds,
+            "mode_sequence_search_parallel": self.mode_sequence_search_parallel,
+            "min_activity_time_constant": self.min_activity_time_constant,
+            "simulate_weekend": self.simulate_weekend,
+            "name": self.name,
+            # Add parameters in structured form
+            "parameters": {key: param.to_dict() for key, param in self.parameters.items()}
+        }                                        
+                                            
+                                            
     def _validate_param_interdependency(self):
         if self.seeds is not None:
             for seed in self.seeds:

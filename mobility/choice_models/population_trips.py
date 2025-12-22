@@ -106,7 +106,7 @@ class PopulationTrips(FileAsset):
             "motives": motives,
             "modes": modes,
             "surveys": surveys,
-            "parameters": parameters.to_hashable_dict()
+            "parameters": parameters.to_dict()
         }
         
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])

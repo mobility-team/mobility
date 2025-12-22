@@ -19,7 +19,22 @@ class Parameter:
     source_default: str = ""
     parameter_role: str = ""
     
-
+    def to_dict(self):
+        # Convert the parameter to a dictionary with serializable values
+        return {
+            "name": self.name,
+            "name_fr": self.name_fr,
+            "value": self.value,
+            "description": self.description,
+            "parameter_type": str(self.parameter_type),  # Convert type to string
+            "possible_values": self.possible_values,
+            "min_value": self.min_value,
+            "max_value": self.max_value,
+            "unit": self.unit,
+            "interval": self.interval,
+            "source_default": self.source_default,
+            "parameter_role": self.parameter_role,
+        }
 
     # def get(self):
     #     """Return parameter value."""
@@ -105,7 +120,3 @@ class ParameterSet:
             
     def _validate_param_interdependency(self):
         pass
-
-    def to_hashable_dict(self) -> dict:
-        """Return JSON-serializable values only."""
-        return asdict(self)
