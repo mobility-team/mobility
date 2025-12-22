@@ -1,5 +1,7 @@
 from .set_params import set_params
 
+from .model_parameters import Parameter, ParameterSet
+
 from .study_area import StudyArea
 from .transport_zones import TransportZones
 
