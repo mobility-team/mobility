@@ -57,13 +57,13 @@ class DestinationSequenceSampler:
             transport_zones,
             remaining_sinks,
             costs,
-            parameters.cost_uncertainty_sd
+            parameters["cost_uncertainty_sd"]
         )
         
         dest_prob = self.get_destination_probability(
             utilities,
             motives,
-            parameters.dest_prob_cutoff
+            parameters["dest_prob_cutoff"]
         )
 
         chains = (
@@ -74,7 +74,7 @@ class DestinationSequenceSampler:
         )
         
         chains = self.spatialize_anchor_motives(chains, dest_prob, seed)
-        chains = self.spatialize_other_motives(chains, dest_prob, costs, parameters.alpha, seed)
+        chains = self.spatialize_other_motives(chains, dest_prob, costs, parameters["alpha"], seed)
         
         dest_sequences = ( 
             chains

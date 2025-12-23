@@ -151,7 +151,7 @@ class PopulationTrips(FileAsset):
             "motives": motives,
             "modes": modes,
             "surveys": surveys,
-            "parameters": parameters
+            "parameters": parameters.to_dict()
         }
         
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
@@ -173,7 +173,9 @@ class PopulationTrips(FileAsset):
         }
         
         super().__init__(inputs, cache_path)
-        
+    
+    def has_multiple_seeds(self):
+        return (len(self.parameters.seeds) > 1)
         
     def resolve_parameters(
             self,
@@ -299,7 +301,7 @@ class PopulationTrips(FileAsset):
         
         demand_groups.write_parquet(self.cache_path["demand_groups"])
         
-        if self.parameters.simulate_weekend:
+        if self.parameters["simulate_weekend"]:
             
             weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains = self.run_model(is_weekday=False)
         
@@ -370,7 +372,7 @@ class PopulationTrips(FileAsset):
         
         remaining_sinks = sinks.clone()
         
-        for iteration in range(1, parameters.n_iterations+1):
+        for iteration in range(1, parameters["n_iterations"]+1):
             
             logging.info(f"Iteration n°{iteration}")
             
@@ -421,7 +423,7 @@ class PopulationTrips(FileAsset):
             costs = self.state_updater.get_new_costs(
                 costs,
                 iteration,
-                parameters.n_iter_per_cost_update,
+                parameters["n_iter_per_cost_update"],
                 current_states_steps,
                 costs_aggregator
             )
@@ -434,7 +436,7 @@ class PopulationTrips(FileAsset):
             
             
         costs = costs_aggregator.get_costs_by_od_and_mode(
-            ["cost", "distance", "time", "ghg_emissions"],
+            ["distance", "time", "ghg_emissions", "cost"],
             congestion=True
         )
         
@@ -539,7 +541,7 @@ class PopulationTrips(FileAsset):
         return evaluation
         
 
-    def plot_modal_share(self, zone="origin", mode="car", period="weekdays",
+    def plot_modal_share(self, zone="origin", mode="car", period="weekdays", plot=True,
                          labels=None, labels_size=[10, 6, 4], labels_color="black"):
         """
         Plot modal share for the given mode in the origin or destination zones during weekdays or weekends.
@@ -560,7 +562,6 @@ class PopulationTrips(FileAsset):
             Mode share for the given mode in each transport zone.
 
         """
-        logging.info(f"🗺️ Plotting {mode} modal share for {zone} zones during {period}")
 
         if period == "weekdays":
             population_df = self.get()["weekday_flows"].collect().to_pandas()
@@ -588,18 +589,21 @@ class PopulationTrips(FileAsset):
             mode_name = mode.capitalize()
         mode_share = mode_share[mode_share["mode"] == mode]
 
-        transport_zones_df = self.population.transport_zones.get()
-        
-        gc = gpd.GeoDataFrame(
-            transport_zones_df.merge(mode_share, how="left", right_on=left_column, left_on="transport_zone_id", suffixes=('', '_z'))).fillna(0)
-        gcp = gc.plot("modal_share", legend=True)
-        gcp.set_axis_off()
-        plt.title(f"{mode_name} share per {zone} transport zone ({period})")
+        if plot:
+            logging.info(f"🗺️ Plotting {mode} modal share for {zone} zones during {period}")
 
-        if isinstance(labels, gpd.GeoDataFrame):
-            self.__show_labels__(labels, labels_size, labels_color)        
-        
-        plt.show()
+            transport_zones_df = self.population.transport_zones.get()
+            
+            gc = gpd.GeoDataFrame(
+                transport_zones_df.merge(mode_share, how="left", right_on=left_column, left_on="transport_zone_id", suffixes=('', '_z'))).fillna(0)
+            gcp = gc.plot("modal_share", legend=True)
+            gcp.set_axis_off()
+            plt.title(f"{mode_name} share per {zone} transport zone ({period})")
+    
+            if isinstance(labels, gpd.GeoDataFrame):
+                self.__show_labels__(labels, labels_size, labels_color)        
+            
+            plt.show()
 
         return mode_share
 
