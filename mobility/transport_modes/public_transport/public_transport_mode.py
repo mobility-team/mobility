@@ -3,8 +3,14 @@ import logging
 from typing import List
 
 from mobility.transport_zones import TransportZones
+<<<<<<< HEAD
 from mobility.transport_modes.transport_mode import TransportMode, TransportModeParameters
 from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportRoutingParameters
+=======
+from mobility.transport_modes.transport_mode import TransportMode
+from mobility.transport_modes.walk import WalkMode
+from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
+>>>>>>> 3fea585 (Add walk as default value for first and last legs in PublicTransportMode)
 from mobility.transport_modes.public_transport.public_transport_travel_costs import PublicTransportTravelCosts
 from mobility.transport_modes.public_transport.public_transport_generalized_cost import PublicTransportGeneralizedCost
 from mobility.transport_modes.modal_transfer import (
@@ -34,17 +40,26 @@ class PublicTransportMode(TransportMode):
     def __init__(
         self,
         transport_zones: TransportZones,
+<<<<<<< HEAD
         first_leg_mode: TransportMode,
         last_leg_mode: TransportMode,
         first_intermodal_transfer: IntermodalTransfer = None,
         last_intermodal_transfer: IntermodalTransfer = None,
         routing_parameters: PublicTransportRoutingParameters | None = None,
+=======
+        first_leg_mode: TransportMode = None,
+        last_leg_mode: TransportMode = None,
+        first_intermodal_transfer: IntermodalTransfer =  IntermodalTransfer(),
+        last_intermodal_transfer: IntermodalTransfer =  IntermodalTransfer(),
+        routing_parameters: PublicTransportRoutingParameters = PublicTransportRoutingParameters(),
+>>>>>>> 3fea585 (Add walk as default value for first and last legs in PublicTransportMode)
         generalized_cost_parameters: GeneralizedCostParameters = None,
         survey_ids: List[str] | None = None,
         ghg_intensity: float | None = None,
         parameters: "PublicTransportModeParameters | None" = None,
     ):
 
+<<<<<<< HEAD
         if first_leg_mode is None or last_leg_mode is None:
             raise ValueError(
                 "PublicTransportMode requires both `first_leg_mode` and `last_leg_mode`."
@@ -64,6 +79,12 @@ class PublicTransportMode(TransportMode):
 
         if routing_parameters is None:
             routing_parameters = PublicTransportRoutingParameters()
+=======
+        if first_leg_mode is None:
+            first_leg_mode = WalkMode(transport_zones)
+        if last_leg_mode is None:
+            last_leg_mode = WalkMode(transport_zones)
+>>>>>>> 3fea585 (Add walk as default value for first and last legs in PublicTransportMode)
         
         travel_costs = PublicTransportTravelCosts(
             transport_zones,
@@ -127,6 +148,7 @@ class PublicTransportMode(TransportMode):
         
     def audit_gtfs(self):
         logging.info("Auditing GTFS for this mode")
+<<<<<<< HEAD
         travel_costs = self.inputs["travel_costs"].audit_gtfs()
         return travel_costs
 
@@ -157,3 +179,7 @@ class PublicTransportModeParameters(TransportModeParameters):
             "6.69",
         ]
     )
+=======
+        travel_costs = self.travel_costs.audit_gtfs()
+        return travel_costs
+>>>>>>> 3fea585 (Add walk as default value for first and last legs in PublicTransportMode)
