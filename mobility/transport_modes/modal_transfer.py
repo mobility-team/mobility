@@ -111,6 +111,3 @@ def default_intermodal_transfer_for_mode(
         f"No default IntermodalTransfer is defined for mode '{mode_name}'"
         + (f" (vehicle='{vehicle}')." if vehicle is not None else ".")
     )
-    
-    
-    
