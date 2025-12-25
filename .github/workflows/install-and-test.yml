@@ -55,7 +55,7 @@ jobs:
       shell: bash -el {0}
 
     - name: Test with pytest
-      run: pytest --cov=mobility --log-cli-level INFO --clear_inputs --cov-report xml
+      run: pytest --cov=. --log-cli-level INFO --clear_inputs --cov-report xml
       shell: bash -el {0}
 
     - name: Upload coverage reports to Codecov
