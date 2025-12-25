@@ -19,7 +19,7 @@ emp = mobility.EMPMobilitySurvey()
 # Creating a synthetic population of 1000 for the area
 pop = mobility.Population(transport_zones, sample_size = 1000)
 
-# Simulating the trips for this population for three modes : car, walk and bicyle, and only home and work motives (OtherMotive is mandatory)
+# Simulating the trips for this population for three modes : car, walk, bicyle and public transport, and only home and work motives (OtherMotive is mandatory)
 pop_trips = mobility.PopulationTrips(
     pop,
     [mobility.CarMode(transport_zones), mobility.WalkMode(transport_zones), mobility.BicycleMode(transport_zones), mobility.PublicTransportMode(transport_zones)],
