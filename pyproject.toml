@@ -48,6 +48,7 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = [
+    "coverage",
     "flake8",
     "pytest",
     "pytest-cov",
