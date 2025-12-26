@@ -53,6 +53,10 @@ jobs:
         python -m flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         python -m flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
       shell: bash -el {0}
+      
+    - name: Just see where we are
+      run: ls
+      shell: bash -el {0}
 
     - name: Test with pytest
       run: pytest --cov --log-cli-level INFO --clear_inputs --cov-report xml
