@@ -67,6 +67,9 @@ Repository = "https://github.com/mobility-team/mobility"
 Issues = "https://github.com/mobility-team/mobility/issues"
 Changelog = "https://github.com/mobility-team/mobility/releases"
 
+[pytest]
+pythonpath = ["mobility"]
+
 [tool.setuptools.package-data]
 mobility = [
     "data/gtfs/gtfs_route_types.csv",
