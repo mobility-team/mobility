@@ -19,7 +19,8 @@ pop_trips = mobility.PopulationTrips(
     pop,
     [mobility.CarMode(transport_zones), mobility.WalkMode(transport_zones), mobility.BicycleMode(transport_zones)],
     [mobility.HomeMotive(), mobility.WorkMotive(), mobility.OtherMotive(population=pop)],
-    [emp]
+    [emp],
+    n_iterations=1
     )
 
 # You can get the weekday trips to inspect them
