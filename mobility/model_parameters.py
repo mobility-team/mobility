@@ -70,14 +70,11 @@ class Parameter:
 
     def get_values_for_sensitivity_analyses(self, i_max=10):
         value = self.value
-        print(self)
-        print(value)
         values = [value]
         if self.interval is None:
             raise ValueError("To run a sensitivity analysis, interval must be specified in the parameter configuration")
         i = 0
         if self.max_value is not None:
-            print("hop")
             while i < i_max and value < self.max_value:
                 value += self.interval
                 values.append(round(value,3))
@@ -93,7 +90,6 @@ class Parameter:
         if self.min_value is not None:
             while i < i_max and value > self.min_value:
                 value -= self.interval
-                print(i, value)
                 values.append(round(value,3))
                 i += 1
         else:
@@ -103,7 +99,6 @@ class Parameter:
                 i += 1
                 
         values.sort()
-        print(values)
         return values
     
 @dataclass    
@@ -112,9 +107,7 @@ class ParameterSet:
     
     def validate(self):
         for param in fields(self)[1:]:
-            print(self.parameters)
             param_name = "param_" + param.name
-            print(param_name)
             self.parameters[param_name].validate()
         self._validate_param_interdependency()
             

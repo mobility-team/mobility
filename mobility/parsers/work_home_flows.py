@@ -91,3 +91,16 @@ class WorkHomeFlows_fr(FileAsset):
         flows.to_parquet(self.cache_path)
         
         return flows
+
+if __name__ == "__main__":
+    
+    
+    mobility.set_params(
+        # package_data_folder_path=os.environ["MOBILITY_PACKAGE_DATA_FOLDER"],
+        # project_data_folder_path=os.environ["MOBILITY_PROJECT_DATA_FOLDER"]
+            package_data_folder_path="D:/mobility-data",
+            project_data_folder_path="D:/test-09",
+            debug=True
+    )
+    f = WorkHomeFlows_fr(year="2018")
+    f1 = f.get()

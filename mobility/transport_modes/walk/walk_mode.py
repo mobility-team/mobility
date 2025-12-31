@@ -34,8 +34,8 @@ class WalkMode(TransportMode):
         
         if generalized_cost_parameters is None:
             generalized_cost_parameters = GeneralizedCostParameters(
-                cost_constant=0.0,
-                cost_of_distance=0.0,
+                cost_constant=0.5,
+                cost_of_distance=0.1,
                 cost_of_time=CostOfTimeParameters()
             )
         
