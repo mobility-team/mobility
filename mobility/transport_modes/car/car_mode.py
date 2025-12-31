@@ -45,8 +45,8 @@ class CarMode(TransportMode):
         
         if generalized_cost_parameters is None:
             generalized_cost_parameters = GeneralizedCostParameters(
-                cost_constant=0.0,
-                cost_of_distance=0.1,
+                cost_constant=2.0,
+                cost_of_distance=0.05,
                 cost_of_time=CostOfTimeParameters()
             )
             

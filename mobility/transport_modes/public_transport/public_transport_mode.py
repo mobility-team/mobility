@@ -4,6 +4,7 @@ from typing import List
 
 from mobility.transport_zones import TransportZones
 from mobility.transport_modes.transport_mode import TransportMode
+from mobility.transport_modes.walk import WalkMode
 from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
 from mobility.transport_modes.public_transport.public_transport_travel_costs import PublicTransportTravelCosts
 from mobility.transport_modes.public_transport.public_transport_generalized_cost import PublicTransportGeneralizedCost
@@ -32,8 +33,8 @@ class PublicTransportMode(TransportMode):
         transport_zones: TransportZones,
         first_leg_mode: TransportMode = None,
         last_leg_mode: TransportMode = None,
-        first_intermodal_transfer: IntermodalTransfer = None,
-        last_intermodal_transfer: IntermodalTransfer = None,
+        first_intermodal_transfer: IntermodalTransfer = IntermodalTransfer(),
+        last_intermodal_transfer: IntermodalTransfer = IntermodalTransfer(),
         routing_parameters: PublicTransportRoutingParameters = PublicTransportRoutingParameters(),
         generalized_cost_parameters: GeneralizedCostParameters = None,
         survey_ids: List[str] = [
@@ -44,6 +45,11 @@ class PublicTransportMode(TransportMode):
         ghg_intensity: float = 0.05
     ):
         
+        if first_leg_mode is None:
+            first_leg_mode = WalkMode(transport_zones)
+        if last_leg_mode is None:
+            last_leg_mode = WalkMode(transport_zones)
+            
         travel_costs = PublicTransportTravelCosts(
             transport_zones,
             routing_parameters,
@@ -57,8 +63,8 @@ class PublicTransportMode(TransportMode):
         
         if generalized_cost_parameters is None:
             generalized_cost_parameters = GeneralizedCostParameters(
-                cost_constant=0.0,
-                cost_of_distance=0.1,
+                cost_constant=1.0,
+                cost_of_distance=0.0,
                 cost_of_time=CostOfTimeParameters()
             )
         

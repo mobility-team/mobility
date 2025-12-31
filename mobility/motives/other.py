@@ -11,7 +11,7 @@ class OtherMotive(Motive):
         value_of_time: float = 10.0,
         saturation_fun_ref_level: float = 1.5,
         saturation_fun_beta: float = 4.0,
-        radiation_lambda: float = 0.99986,
+        radiation_lambda: float = 0.9999999,
         opportunities: pd.DataFrame = None,
         population: Population = None
     ):

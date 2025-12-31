@@ -63,13 +63,20 @@ class GTFSData(FileAsset):
         if "e8f2aceaaaa2493f6041dc7f0251f325-5d7ae44c16ad373ca1afbc4590f53256_gtfs-2015-chamonix-mobilit" in path.name:
             logging.info("Manual exception, GTFS not used from path", path)
             return False
+        if "datasud" in path.name:
+            logging.info("Manual exception, GTFS not used from path", path)
+            return False
+        if "4a590cb87669fe2bc39328652ef1d2e9_gtfs_generic_eu" in path.name:
+            logging.info(f"Manual exception, Flixbus GTFS not used from path {path.name}")
+            return False
+
         
         try:
             with zipfile.ZipFile(path, 'r') as zip_ref:
                 zip_contents = zip_ref.namelist()
             has_an_agency = "agency.txt" in zip_contents
             if has_an_agency:
-                logging.info("Downloaded file is a proper GTFS zip which contains an agency file.")
+                logging.debug("Downloaded file is a proper GTFS zip which contains an agency file.")
             else:
                 logging.info("Downloaded file is a proper GTFS zip but does not contain an agency file, it will not be used by Mobility.")
             return True

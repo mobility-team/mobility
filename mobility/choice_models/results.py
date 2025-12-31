@@ -3,12 +3,15 @@ import logging
 import polars as pl
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 
 from typing import Literal
 from mobility.choice_models.evaluation.travel_costs_evaluation import TravelCostsEvaluation
 from mobility.choice_models.evaluation.car_traffic_evaluation import CarTrafficEvaluation
 from mobility.choice_models.evaluation.routing_evaluation import RoutingEvaluation
 from mobility.choice_models.evaluation.public_transport_network_evaluation import PublicTransportNetworkEvaluation
+
+from mobility.parsers.work_home_flows import WorkHomeFlows_fr
 
 class Results:
     
@@ -53,13 +56,15 @@ class Results:
             "trip_count_by_demand_group": self.trip_count_by_demand_group,
             "distance_per_person": self.distance_per_person,
             "ghg_per_person": self.ghg_per_person,
+            #"ghg_emissions_per_trip_per_person": self.ghg_emissions_per_trip, #Test
             "time_per_person": self.time_per_person,
             "cost_per_person": self.cost_per_person,
             "immobility": self.immobility,
             "car_traffic": self.car_traffic,
             "travel_costs": self.travel_costs,
             "routing": self.routing,
-            "public_transport_network": self.public_transport_network
+            "public_transport_network": self.public_transport_network,
+            "ssi": self.ssi
         }
         
         
@@ -583,11 +588,13 @@ class Results:
             plot: bool = False,
             mask_outliers: bool = False,
             compare_with = None,
-            plot_delta = False
+            plot_delta = False,
+            labels = None
         ):
-        """        
-        Aggregate total value and value per person by demand group for this metric.
-        Metric can be : cost, time, distance, ghg
+        """
+        TODO
+        
+        Aggregate total travel time and time per person by demand group.
         
         Parameters
         ----------
@@ -738,7 +745,7 @@ class Results:
                 if mask_outliers:
                     tz["delta"] = self.mask_outliers(tz["delta"])
                 
-                self.plot_map(tz, "delta", color_continuous_scale="RdBu_r", color_continuous_midpoint=0)                
+                self.plot_map(tz, "delta", color_continuous_scale="RdBu_r", color_continuous_midpoint=0, labels=labels)                
 
         
         return metric_per_groups_and_transport_zones
@@ -768,6 +775,10 @@ class Results:
     def ghg_per_person(self, *args, **kwargs):
         return self.metric_per_person("ghg_emissions_per_trip", *args, **kwargs)
     
+    def ghg_emissions_per_trip(self, *args, **kwargs):
+        """Test for compat"""
+        return self.metric_per_person("ghg_emissions_per_trip", *args, **kwargs)
+    
     def time_per_person(self, *args, **kwargs):
         """
         Aggregate total travel time and time per person by demand group.
@@ -792,8 +803,17 @@ class Results:
     
  
     def cost_per_person(self, *args, **kwargs):
-        """
-        Aggregate total travel cost and cost per person by demand group.
+        """    self,
+            weekday: bool = True,
+            plot: bool = False,
+            mask_outliers: bool = False,
+            compare_with = None,
+            plot_delta = False
+        ):
+        
+        TODO
+        
+        Aggregate total travel time and time per person by demand group.
         
         Parameters
         ----------
@@ -806,16 +826,17 @@ class Results:
         -------
         pl.DataFrame
             Grouped by ['home_zone_id', 'csp', 'n_cars'] with:
-            - cost: sum(cost * n_persons)
+            - cost: sum(cost * n_persons) * 60.0 (minutes)
             - n_persons: group size
-            - time_per_person: cost / n_persons
+            - time_per_person: time / n_persons
         """
         return self.metric_per_person("cost", *args, **kwargs)
 
     
  
     def plot_map(self, tz, value: str = None, motive: str = None, plot_method: str = "browser",
-                 color_continuous_scale="Viridis", color_continuous_midpoint=None):
+                 color_continuous_scale="Viridis", color_continuous_midpoint=None,
+                 labels=None):
         """
         Render a Plotly choropleth for a transport-zone metric.
         
@@ -835,6 +856,8 @@ class Results:
         logging.getLogger("kaleido").setLevel(logging.WARNING)
         #plot_method="png"
         
+        
+        
         fig = px.choropleth(
             tz.drop(columns="geometry"),
             geojson=json.loads(tz.to_json()),
@@ -848,6 +871,19 @@ class Results:
             title=motive,
             subtitle=motive
         )
+        if labels is not None:
+            print(labels[["geometry"]])
+            labels = labels.to_crs(4326)
+            print(labels[["geometry"]])
+            for index, row in labels.iterrows():
+                if row["prominence"] == 1:
+                    fig.add_trace(go.Scattergeo(lon=[row["geometry"].centroid.x], lat=[row["geometry"].centroid.y], text=[row["local_admin_unit_name"]], mode="text", textposition="top center", textfont=dict(size=24, color="black"),))
+                elif row["prominence"] <3:
+                    fig.add_trace(go.Scattergeo(lon=[row["geometry"].centroid.x], lat=[row["geometry"].centroid.y], text=[row["local_admin_unit_name"]], mode="text", textposition="top center", textfont=dict(size=18, color="black"),))
+                else:
+                    fig.add_trace(go.Scattergeo(lon=[row["geometry"].centroid.x], lat=[row["geometry"].centroid.y], text=[row["local_admin_unit_name"]], mode="text", textposition="top center", textfont=dict(size=12, color="black"),))
+                    #plt.annotate(row["local_admin_unit_name"], (row["x"], row["y"]), size=size[0], ha="center", va="center", color=color)
+
         fig.update_geos(fitbounds="geojson", visible=False)
         fig.update_layout(margin=dict(l=0,r=0,t=0,b=0))
         fig.show(plot_method)
@@ -888,6 +924,82 @@ class Results:
     def public_transport_network(self, *args, **kwargs):
         return PublicTransportNetworkEvaluation(self).get(*args, **kwargs)
          
+    def ssi(self, threshold=20, *args, **kwargs):
+        transport_zones_df = pl.from_pandas(self.transport_zones.get()[["local_admin_unit_id", "transport_zone_id"]])
+        od_flows = self.weekday_states_steps.collect().join(
+            transport_zones_df, left_on="from", right_on="transport_zone_id")
+        od_flows = od_flows.join(
+            transport_zones_df, left_on="to", right_on="transport_zone_id", suffix=('_to'))
+
+        od_flows_work = (
+            od_flows
+            .filter(pl.col("motive") == "work")
+            .group_by("local_admin_unit_id", "local_admin_unit_id_to")
+            .agg(pl.col("n_persons").sum())
+            .rename({"local_admin_unit_id" : "local_admin_unit_id_from"})
+            )
+
+        whf = pl.from_pandas(WorkHomeFlows_fr().get())
+        od_flows_work = od_flows_work.join(whf, on=["local_admin_unit_id_from","local_admin_unit_id_to"])
+
+        od_flows_work_above_threshold = (
+            od_flows_work.filter((pl.col("insee_flows") > threshold) | (pl.col("n_persons") > threshold))
+            )
+
+        # Classic SSI formula
+        ssi = (
+            od_flows_work_above_threshold
+            .select(
+                (
+                    2 * pl.min_horizontal("n_persons", "insee_flows").sum()
+                    / (pl.col("n_persons").sum() + pl.col("insee_flows").sum())
+                ).alias(f"ssi-{threshold}")
+            )
+        )
+
+
+        # Modified SSI formula from Liu & Yan 2020
+        # https://doi.org/10.1038/s41598-020-61613-y
+        # modified with threshold
+        # removes i -> i
+        ssi_liu_yan_2020 = (
+            od_flows_work_above_threshold
+            # exclude i = j and flows under threshold
+            .filter(pl.col("local_admin_unit_id_from") != pl.col("local_admin_unit_id_to"))
+            # compute local Sørensen term
+            .with_columns(
+                (
+                    2 * pl.min_horizontal("n_persons", "insee_flows")
+                    / (pl.col("n_persons") + pl.col("insee_flows"))
+                ).alias("local_ssi")
+            )
+            # mean
+            .select(
+                (pl.col("local_ssi").mean()).alias("ssi_liu_yan_2020")
+            )
+        )
+
+        # Other SSI from Yan et al. 2014
+        # https://doi.org/10.1098/rsif.2014.0834
+        # modified with threshold
+        ssi_yan_2014 = (
+            od_flows_work_above_threshold
+            # compute local Sørensen term
+            .with_columns(
+                (
+                    2 * pl.min_horizontal("n_persons", "insee_flows")
+                    / (pl.col("n_persons") + pl.col("insee_flows"))
+                ).alias("local_ssi")
+            )
+            # mean
+            .select(
+                (pl.col("local_ssi").mean()).alias("ssi_yan_2014")
+            )
+            )
+
+        ssis = pl.concat([ssi, ssi_liu_yan_2020, ssi_yan_2014], how="horizontal")
         
-        
+        return ssis
+
+
         

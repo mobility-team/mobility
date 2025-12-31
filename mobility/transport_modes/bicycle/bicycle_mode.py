@@ -35,8 +35,8 @@ class BicycleMode(TransportMode):
         
         if generalized_cost_parameters is None:
             generalized_cost_parameters = GeneralizedCostParameters(
-                cost_constant=0.0,
-                cost_of_distance=0.0,
+                cost_constant=25.0,
+                cost_of_distance=0.20,
                 cost_of_time=CostOfTimeParameters()
             )
         

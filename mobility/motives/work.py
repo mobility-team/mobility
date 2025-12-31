@@ -14,7 +14,7 @@ class WorkMotive(Motive):
         saturation_fun_ref_level: float = 1.5,
         saturation_fun_beta: float = 4.0,
         survey_ids: List[str] = ["9.91"],
-        radiation_lambda: float = 0.99986,
+        radiation_lambda: float = 0.9999999,
         opportunities: pd.DataFrame = None,
         utilities: pd.DataFrame = None,
         country_utilities: Dict = None

@@ -151,7 +151,7 @@ class PopulationTrips(FileAsset):
             "motives": motives,
             "modes": modes,
             "surveys": surveys,
-            "parameters": parameters
+            "parameters": parameters.to_dict()
         }
         
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
@@ -173,7 +173,9 @@ class PopulationTrips(FileAsset):
         }
         
         super().__init__(inputs, cache_path)
-        
+    
+    def has_multiple_seeds(self):
+        return (len(self.parameters.seeds) > 1)
         
     def resolve_parameters(
             self,
@@ -299,7 +301,7 @@ class PopulationTrips(FileAsset):
         
         demand_groups.write_parquet(self.cache_path["demand_groups"])
         
-        if self.parameters.simulate_weekend:
+        if self.parameters["simulate_weekend"]:
             
             weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains = self.run_model(is_weekday=False)
         
@@ -370,7 +372,7 @@ class PopulationTrips(FileAsset):
         
         remaining_sinks = sinks.clone()
         
-        for iteration in range(1, parameters.n_iterations+1):
+        for iteration in range(1, parameters["n_iterations"]+1):
             
             logging.info(f"Iteration n°{iteration}")
             
@@ -421,7 +423,7 @@ class PopulationTrips(FileAsset):
             costs = self.state_updater.get_new_costs(
                 costs,
                 iteration,
-                parameters.n_iter_per_cost_update,
+                parameters["n_iter_per_cost_update"],
                 current_states_steps,
                 costs_aggregator
             )
@@ -434,7 +436,7 @@ class PopulationTrips(FileAsset):
             
             
         costs = costs_aggregator.get_costs_by_od_and_mode(
-            ["cost", "distance", "time", "ghg_emissions"],
+            ["distance", "time", "ghg_emissions", "cost"],
             congestion=True
         )
         
@@ -539,7 +541,7 @@ class PopulationTrips(FileAsset):
         return evaluation
         
 
-    def plot_modal_share(self, zone="origin", mode="car", period="weekdays",
+    def plot_modal_share(self, zone="origin", mode="car", period="weekdays", plot=True,
                          labels=None, labels_size=[10, 6, 4], labels_color="black"):
         """
         Plot modal share for the given mode in the origin or destination zones during weekdays or weekends.
@@ -560,7 +562,6 @@ class PopulationTrips(FileAsset):
             Mode share for the given mode in each transport zone.
 
         """
-        logging.info(f"🗺️ Plotting {mode} modal share for {zone} zones during {period}")
 
         if period == "weekdays":
             population_df = self.get()["weekday_flows"].collect().to_pandas()
@@ -588,24 +589,27 @@ class PopulationTrips(FileAsset):
             mode_name = mode.capitalize()
         mode_share = mode_share[mode_share["mode"] == mode]
 
-        transport_zones_df = self.population.transport_zones.get()
-        
-        gc = gpd.GeoDataFrame(
-            transport_zones_df.merge(mode_share, how="left", right_on=left_column, left_on="transport_zone_id", suffixes=('', '_z'))).fillna(0)
-        gcp = gc.plot("modal_share", legend=True)
-        gcp.set_axis_off()
-        plt.title(f"{mode_name} share per {zone} transport zone ({period})")
+        if plot:
+            logging.info(f"🗺️ Plotting {mode} modal share for {zone} zones during {period}")
 
-        if isinstance(labels, gpd.GeoDataFrame):
-            self.__show_labels__(labels, labels_size, labels_color)        
-        
-        plt.show()
+            transport_zones_df = self.population.transport_zones.get()
+            
+            gc = gpd.GeoDataFrame(
+                transport_zones_df.merge(mode_share, how="left", right_on=left_column, left_on="transport_zone_id", suffixes=('', '_z'))).fillna(0)
+            gcp = gc.plot("modal_share", legend=True)
+            gcp.set_axis_off()
+            plt.title(f"{mode_name} share per {zone} transport zone ({period})")
+    
+            if isinstance(labels, gpd.GeoDataFrame):
+                self.__show_labels__(labels, labels_size, labels_color)        
+            
+            plt.show()
 
         return mode_share
 
     def plot_od_flows(self, mode="all", motive="all", period="weekdays", level_of_detail=1,
                       n_largest=2000, color="blue", transparency=0.2, zones_color="xkcd:light grey",
-                      labels=None, labels_size=[10, 6, 4], labels_color="black"):
+                      labels=None, labels_size=[10, 6, 4], labels_color="black", save=False):
         """
         Plot flows between the different zones for the given mode, motive, period and level of detail.
 
@@ -685,8 +689,8 @@ class PopulationTrips(FileAsset):
         # Put a legend for width on bottom right, title on the top
         x_min = float(biggest_flows[["x"]].min().iloc[0])
         y_min = float(biggest_flows[["y"]].min().iloc[0])
-        plt.plot([x_min, x_min+4000], [y_min, y_min], linewidth=2, color=color)
-        plt.text(x_min+6000, y_min-1000, "1 000", color=color)
+        plt.plot([x_min-10000, x_min-8000], [y_min-2000, y_min-2000], linewidth=2, color=color)
+        plt.text(x_min-6000, y_min-3000, "1 000", color=color)
         plt.title(f"{mode_name} flows between transport zones on {period}")
 
         # Draw all origin-destinations
@@ -696,6 +700,10 @@ class PopulationTrips(FileAsset):
 
         if isinstance(labels, gpd.GeoDataFrame):
             self.__show_labels__(labels, labels_size, labels_color)
+            
+        if save:
+            text = "plot-" + str(self.parameters["seed"]) + ".png"
+            plt.savefig(text)
 
         plt.show()
 
@@ -757,13 +765,14 @@ class PopulationTrips(FileAsset):
 
         # If an admin unit is too close to a bigger admin unit, make it less prominent
         for i in range(n_cities//2):
-            coords = flows_per_commune.loc[i, "geometry"]
-            geoflows["dists"] = geoflows["geometry"].distance(coords)
-            # Use distance_km here
-            geoflows.loc[
-                ((geoflows["dists"] < distance_km*1000) & (geoflows.index > i)), "prominence"
-                ] = geoflows["prominence"] + 2
-            geoflows = geoflows.sort_values(by="prominence").reset_index(drop=True)
+            if i < len(flows_per_commune):
+                coords = flows_per_commune.loc[i, "geometry"]
+                geoflows["dists"] = geoflows["geometry"].distance(coords)
+                # Use distance_km here
+                geoflows.loc[
+                    ((geoflows["dists"] < distance_km*1000) & (geoflows.index > i)), "prominence"
+                    ] = geoflows["prominence"] + 2
+                geoflows = geoflows.sort_values(by="prominence").reset_index(drop=True)
 
         # Keep only the most prominent admin units and add their centroids
         geoflows = geoflows[geoflows["prominence"] <= n_levels]

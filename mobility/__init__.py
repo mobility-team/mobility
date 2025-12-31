@@ -1,5 +1,7 @@
 from .set_params import set_params
 
+from .model_parameters import Parameter, ParameterSet
+
 from .study_area import StudyArea
 from .transport_zones import TransportZones
 
@@ -31,7 +33,7 @@ from .transport_modes.carpool.detailed.detailed_carpool_generalized_cost_paramet
 
 from .cost_of_time_parameters import CostOfTimeParameters
 
-from .choice_models.transport_mode_choice_model import TransportModeChoiceModel
+#from .choice_models.transport_mode_choice_model import TransportModeChoiceModel
 from .parsers import LocalAdminUnits
 
 
