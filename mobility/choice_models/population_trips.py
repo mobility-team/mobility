@@ -529,7 +529,7 @@ class PopulationTrips(FileAsset):
 
     def plot_od_flows(self, mode="all", motive="all", period="weekdays", level_of_detail=1,
                       n_largest=2000, color="blue", transparency=0.2, zones_color="xkcd:light grey",
-                      labels=None, labels_size=[10, 6, 4], labels_color="black"):
+                      labels=None, labels_size=[10, 6, 4], labels_color="black", save=False):
         """
         Plot flows between the different zones for the given mode, motive, period and level of detail.
 
@@ -609,8 +609,8 @@ class PopulationTrips(FileAsset):
         # Put a legend for width on bottom right, title on the top
         x_min = float(biggest_flows[["x"]].min().iloc[0])
         y_min = float(biggest_flows[["y"]].min().iloc[0])
-        plt.plot([x_min, x_min+4000], [y_min, y_min], linewidth=2, color=color)
-        plt.text(x_min+6000, y_min-1000, "1 000", color=color)
+        plt.plot([x_min-10000, x_min-8000], [y_min-2000, y_min-2000], linewidth=2, color=color)
+        plt.text(x_min-6000, y_min-3000, "1 000", color=color)
         plt.title(f"{mode_name} flows between transport zones on {period}")
 
         # Draw all origin-destinations
@@ -620,6 +620,10 @@ class PopulationTrips(FileAsset):
 
         if isinstance(labels, gpd.GeoDataFrame):
             self.__show_labels__(labels, labels_size, labels_color)
+            
+        if save:
+            text = "plot-" + str(self.parameters["seed"]) + ".png"
+            plt.savefig(text)
 
         plt.show()
 
@@ -681,13 +685,14 @@ class PopulationTrips(FileAsset):
 
         # If an admin unit is too close to a bigger admin unit, make it less prominent
         for i in range(n_cities//2):
-            coords = flows_per_commune.loc[i, "geometry"]
-            geoflows["dists"] = geoflows["geometry"].distance(coords)
-            # Use distance_km here
-            geoflows.loc[
-                ((geoflows["dists"] < distance_km*1000) & (geoflows.index > i)), "prominence"
-                ] = geoflows["prominence"] + 2
-            geoflows = geoflows.sort_values(by="prominence").reset_index(drop=True)
+            if i < len(flows_per_commune):
+                coords = flows_per_commune.loc[i, "geometry"]
+                geoflows["dists"] = geoflows["geometry"].distance(coords)
+                # Use distance_km here
+                geoflows.loc[
+                    ((geoflows["dists"] < distance_km*1000) & (geoflows.index > i)), "prominence"
+                    ] = geoflows["prominence"] + 2
+                geoflows = geoflows.sort_values(by="prominence").reset_index(drop=True)
 
         # Keep only the most prominent admin units and add their centroids
         geoflows = geoflows[geoflows["prominence"] <= n_levels]
