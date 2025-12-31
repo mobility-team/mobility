@@ -598,6 +598,8 @@ class Results:
         
         Parameters
         ----------
+        metric : str
+            One of cost, time, distance, ghg
         weekday : bool, default True
             Use weekday (True) or weekend (False) data.
         plot : bool, default False
@@ -607,9 +609,9 @@ class Results:
         -------
         pl.DataFrame
             Grouped by ['home_zone_id', 'csp', 'n_cars'] with:
-            - cost: sum(cost * n_persons) * 60.0 (minutes)
+            - metric (column has actually the name of the metric): sum(metric * n_persons) (* 60.0 (minutes) for time)
             - n_persons: group size
-            - time_per_person: time / n_persons
+            - metric_per_person: metric / n_persons
         """
         
         states_steps = self.weekday_states_steps if weekday else self.weekend_states_steps
@@ -734,7 +736,7 @@ class Results:
                 if mask_outliers:
                     tz[metric_per_person] = self.mask_outliers(tz[metric_per_person])
                 
-                self.plot_map(tz, metric_per_person, labels=labels)
+                self.plot_map(tz, metric_per_person)
                 
 
             if plot_delta:

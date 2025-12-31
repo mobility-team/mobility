@@ -80,12 +80,12 @@ class DestinationSequenceSampler:
             chains
             .group_by(["demand_group_id", "motive_seq_id"])
             .agg(
-                n=pl.col("to").len(),
                 to=pl.col("to").sort_by("seq_step_index").cast(pl.Utf8())
             )
             .with_columns(
                 to=pl.col("to").list.join("-")
             )
+            .sort(["demand_group_id", "motive_seq_id"])
         )
         
         dest_sequences = add_index(
@@ -251,8 +251,11 @@ class DestinationSequenceSampler:
             )
             .filter(pl.col("p_ij") > 0.0)
             
+            # Rounding to avoid floating point instability when sorting
+            .with_columns(p_ij=pl.col("p_ij").round(9))
+  
             # Keep only the first 99 % of the distribution
-            .sort("p_ij", descending=True)
+            .sort(["from", "motive", "p_ij", "cost_bin"], descending=[False, False, True, False])
             .with_columns(
                 p_ij_cum=pl.col("p_ij").cum_sum().over(["from", "motive"]),
                 p_count=pl.col("p_ij").cum_count().over(["from", "motive"])
@@ -266,9 +269,12 @@ class DestinationSequenceSampler:
             .group_by(["motive", "from", "to"])
             .agg(pl.col("p_ij").sum())
             
+            # Rounding to avoid floating point instability when sorting
+            .with_columns(p_ij=pl.col("p_ij").round(9))
+            
             # Keep only the first 99 % of the distribution
             # (or the destination that has a 100% probability, which can happen)
-            .sort("p_ij", descending=True)
+            .sort(["from", "motive", "p_ij", "to"], descending=[False, False, True, False])
             .with_columns(
                 p_ij_cum=pl.col("p_ij").cum_sum().over(["from", "motive"]),
                 p_count=pl.col("p_ij").cum_count().over(["from", "motive"])
@@ -331,17 +337,24 @@ class DestinationSequenceSampler:
             )
             
             .with_columns(
-                sample_score=pl.col("noise")/pl.col("p_ij")
+                sample_score=( 
+                    pl.col("noise")/pl.col("p_ij").clip(1e-18)  # Make sure p_ij is > 0
+                    + pl.col("to").cast(pl.Float64)*1e-18           # Add a very small noise to beark ties
+                )
             )
             
             .with_columns(
-                min_score=pl.col("sample_score").min().over(["demand_group_id", "motive_seq_id", "motive"])
+                min_score=( 
+                    pl.col("sample_score").min()
+                    .over(["demand_group_id", "motive_seq_id", "motive"])
+                )
             )
             .filter(pl.col("sample_score") == pl.col("min_score"))
+            
             .select(["demand_group_id", "motive_seq_id", "motive", "to"])
             
         )
-        
+
         chains = (
             
             chains
@@ -484,7 +497,10 @@ class DestinationSequenceSampler:
             )
             
             .with_columns(
-                p_ij=(pl.col("p_ij").log() - alpha*pl.col("cost")).exp(),
+                p_ij=( 
+                    (pl.col("p_ij").clip(1e-18).log()   # Make sure p_ij > 0
+                     - alpha*pl.col("cost")).exp()
+                ),
                 noise=( 
                     pl.struct(["demand_group_id", "motive_seq_id", "to"])
                     .hash(seed=seed)
@@ -496,7 +512,10 @@ class DestinationSequenceSampler:
             )
             
             .with_columns(
-                sample_score=pl.col("noise")/pl.col("p_ij")
+                sample_score=( 
+                    pl.col("noise")/pl.col("p_ij").clip(1e-18)
+                    + pl.col("to").cast(pl.Float64)*1e-18
+                )
             )
             
             .with_columns(
@@ -507,7 +526,6 @@ class DestinationSequenceSampler:
             .select(["demand_group_id", "home_zone_id", "motive_seq_id", "motive", "anchor_to", "from", "to"])
             
         )
-        
         
         # Add the steps that end up at anchor destinations
         steps_anchor = (

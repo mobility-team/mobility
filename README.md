@@ -10,7 +10,7 @@ It handles the preparation of most inputs from open data (administrative boundar
 <img width="305" height="256" alt="Flow map of Bayonne region" src="https://github.com/user-attachments/assets/629e5ed0-aa5a-4949-acc6-60615e8f31b5" />
 <img width="305" height="256" alt="Car modal share of Bayonne region" src="https://github.com/user-attachments/assets/9fb95b35-4443-40d0-8640-ce1c9846d83b" />
 
-To see how Mobility works, take a look at the [installation instructions](docs/sources/installation.md) and the [quickstart page](docs/source/quickstart.md). If you want to contribute, see our [guidelines](docs/contributing.md) and the [issue tracker](https://github.com/mobility-team/mobility).
+To see how Mobility works, take a look at the [installation instructions](docs/source/installation.md) and the [quickstart page](docs/source/quickstart.md). If you want to contribute, see our [guidelines](docs/contributing.md) and the [issue tracker](https://github.com/mobility-team/mobility).
 
 Mobility has been developed mainly by [AREP](https://arep.fr) and [Elioth](https://elioth.com/) with [ADEME](https://wiki.resilience-territoire.ademe.fr/wiki/Mobility) support, but anyone can join us!
 For now, it is mainly focused on French and Swiss territories.
