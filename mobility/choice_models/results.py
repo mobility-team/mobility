@@ -11,6 +11,8 @@ from mobility.choice_models.evaluation.car_traffic_evaluation import CarTrafficE
 from mobility.choice_models.evaluation.routing_evaluation import RoutingEvaluation
 from mobility.choice_models.evaluation.public_transport_network_evaluation import PublicTransportNetworkEvaluation
 
+from mobility.parsers.work_home_flows import WorkHomeFlows_fr
+
 class Results:
     
     def __init__(
@@ -61,7 +63,8 @@ class Results:
             "car_traffic": self.car_traffic,
             "travel_costs": self.travel_costs,
             "routing": self.routing,
-            "public_transport_network": self.public_transport_network
+            "public_transport_network": self.public_transport_network,
+            "ssi": self.ssi
         }
         
         
@@ -919,6 +922,82 @@ class Results:
     def public_transport_network(self, *args, **kwargs):
         return PublicTransportNetworkEvaluation(self).get(*args, **kwargs)
          
+    def ssi(self, threshold=20, *args, **kwargs):
+        transport_zones_df = pl.from_pandas(self.transport_zones.get()[["local_admin_unit_id", "transport_zone_id"]])
+        od_flows = self.weekday_states_steps.collect().join(
+            transport_zones_df, left_on="from", right_on="transport_zone_id")
+        od_flows = od_flows.join(
+            transport_zones_df, left_on="to", right_on="transport_zone_id", suffix=('_to'))
+
+        od_flows_work = (
+            od_flows
+            .filter(pl.col("motive") == "work")
+            .group_by("local_admin_unit_id", "local_admin_unit_id_to")
+            .agg(pl.col("n_persons").sum())
+            .rename({"local_admin_unit_id" : "local_admin_unit_id_from"})
+            )
+
+        whf = pl.from_pandas(WorkHomeFlows_fr().get())
+        od_flows_work = od_flows_work.join(whf, on=["local_admin_unit_id_from","local_admin_unit_id_to"])
+
+        od_flows_work_above_threshold = (
+            od_flows_work.filter((pl.col("insee_flows") > threshold) | (pl.col("n_persons") > threshold))
+            )
+
+        # Classic SSI formula
+        ssi = (
+            od_flows_work_above_threshold
+            .select(
+                (
+                    2 * pl.min_horizontal("n_persons", "insee_flows").sum()
+                    / (pl.col("n_persons").sum() + pl.col("insee_flows").sum())
+                ).alias(f"ssi-{threshold}")
+            )
+        )
+
+
+        # Modified SSI formula from Liu & Yan 2020
+        # https://doi.org/10.1038/s41598-020-61613-y
+        # modified with threshold
+        # removes i -> i
+        ssi_liu_yan_2020 = (
+            od_flows_work_above_threshold
+            # exclude i = j and flows under threshold
+            .filter(pl.col("local_admin_unit_id_from") != pl.col("local_admin_unit_id_to"))
+            # compute local Sørensen term
+            .with_columns(
+                (
+                    2 * pl.min_horizontal("n_persons", "insee_flows")
+                    / (pl.col("n_persons") + pl.col("insee_flows"))
+                ).alias("local_ssi")
+            )
+            # mean
+            .select(
+                (pl.col("local_ssi").mean()).alias("ssi_liu_yan_2020")
+            )
+        )
+
+        # Other SSI from Yan et al. 2014
+        # https://doi.org/10.1098/rsif.2014.0834
+        # modified with threshold
+        ssi_yan_2014 = (
+            od_flows_work_above_threshold
+            # compute local Sørensen term
+            .with_columns(
+                (
+                    2 * pl.min_horizontal("n_persons", "insee_flows")
+                    / (pl.col("n_persons") + pl.col("insee_flows"))
+                ).alias("local_ssi")
+            )
+            # mean
+            .select(
+                (pl.col("local_ssi").mean()).alias("ssi_yan_2014")
+            )
+            )
+
+        ssis = pl.concat([ssi, ssi_liu_yan_2020, ssi_yan_2014], how="horizontal")
         
+        return ssis
+
 
         
