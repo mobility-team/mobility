@@ -108,7 +108,7 @@ class TopKModeSequenceSearch:
             logging.info("Finding probable mode sequences for the spatialized trip chains...")
             
             compute_subtour_mode_probabilities_serial(
-                parameters.k_mode_sequences,
+                parameters["k_mode_sequences"],
                 unique_location_chains,
                 costs,
                 leg_modes,

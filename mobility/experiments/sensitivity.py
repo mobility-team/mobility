@@ -20,8 +20,8 @@ global_metrics = pl.DataFrame()
 ssis = pl.DataFrame()
 ssis200 = pl.DataFrame()
 
-for radius in range(32, 51, 2):
-    if radius not in [52]: #blockage for this one
+for radius in range(36, 51, 2):
+    if radius not in [36]: #blockage for this one
         print(f"\nRADIUS: {radius}")
         transport_zones = mobility.TransportZones("fr-87085", radius = radius, level_of_detail=1)
         emp = mobility.EMPMobilitySurvey()
