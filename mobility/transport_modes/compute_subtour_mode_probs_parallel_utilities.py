@@ -182,6 +182,7 @@ def run_top_k_search(
         is_return_mode,
         return_mode,
         k=10,
+        divider=10,
         debug=False
     ):
     
@@ -302,7 +303,7 @@ def run_top_k_search(
         utilities -= np.max(utilities)
         
         # Compute probabilities
-        prob = np.exp(utilities)
+        prob = np.exp(utilities/divider)
         prob = prob/prob.sum()
         
         # Keep only the first 98 % of the cumulative distribution
