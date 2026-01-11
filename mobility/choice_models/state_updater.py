@@ -98,29 +98,7 @@ class StateUpdater:
             min_activity_time_constant,
             tmp_folders
         ):
-        """Enumerate candidate state steps and compute per-step utilities.
-
-        Joins latest spatialized chains and mode sequences, merges costs and
-        mean activity durations, filters out saturated destinations, and
-        computes per-step utility = activity utility − travel cost.
-        
-        Args:
-            current_states (pl.DataFrame): Current aggregate states (used for scoping).
-            demand_groups (pl.DataFrame): Demand groups with csp and sizes.
-            chains (pl.DataFrame): Chain steps with durations per person.
-            costs_aggregator (TravelCostsAggregator): Per-mode OD costs.
-            sinks (pl.DataFrame): Remaining sinks per (motive,to).
-            motive_dur (pl.DataFrame): Mean durations per (csp,motive).
-            iteration (int): Current iteration to pick latest artifacts.
-            activity_utility_coeff (float): Coefficient for activity utility.
-            tmp_folders (dict[str, pathlib.Path]): Must contain "spatialized-chains" and "modes".
-        
-        Returns:
-            pl.DataFrame: Candidate per-step rows with columns including
-                ["demand_group_id","csp","motive_seq_id","dest_seq_id","mode_seq_id",
-                 "seq_step_index","motive","from","to","mode",
-                 "duration_per_pers","utility"].
-        """
+        """Enumerate candidate state steps and compute per-step utilities."""
         
         
         cost_by_od_and_modes = ( 
@@ -206,21 +184,7 @@ class StateUpdater:
             stay_home_state,
             min_activity_time_constant
         ):
-        """Aggregate per-step utilities to state-level utilities (incl. home-night).
-
-        Sums step utilities per state, adds home-night utility, prunes dominated
-        states, and appends the explicit stay-home baseline.
-        
-        Args:
-            possible_states_steps (pl.DataFrame): Candidate step rows with per-step utility.
-            home_night_dur (pl.DataFrame): Mean home-night duration by csp.
-            stay_home_utility_coeff (float): Coefficient for home-night utility.
-            stay_home_state (pl.DataFrame): Baseline state rows to append.
-        
-        Returns:
-            pl.DataFrame: State-level utilities with
-                ["demand_group_id","motive_seq_id","mode_seq_id","dest_seq_id","utility"].
-        """
+        """Aggregate per-step utilities to state-level utilities (incl. home-night)."""
                     
         possible_states_utility = (
             
@@ -268,8 +232,6 @@ class StateUpdater:
         )
         
         return possible_states_utility
-    
-    
     
     def get_transition_probabilities(
             self,
@@ -382,21 +344,7 @@ class StateUpdater:
     
     
     def apply_transitions(self, current_states, transition_probabilities):
-        """Apply transition probabilities to reweight populations and update states.
-        
-        Left-joins transitions onto current states, defaults to self-transition
-        when absent, redistributes `n_persons` by `p_transition`, and aggregates
-        by the new state keys.
-        
-        Args:
-            current_states (pl.DataFrame): Current states with ["n_persons","utility"].
-            transition_probabilities (pl.DataFrame): Probabilities produced by
-                `get_transition_probabilities`.
-        
-        Returns:
-            pl.DataFrame: Updated `current_states` aggregated by
-                ["demand_group_id","motive_seq_id","dest_seq_id","mode_seq_id"].
-        """
+        """Apply transition probabilities to reweight populations and update states."""
         
         state_cols = ["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
         
@@ -427,20 +375,7 @@ class StateUpdater:
     
     
     def get_current_states_steps(self, current_states, possible_states_steps):
-        """Expand aggregate states to per-step rows (flows).
-        
-        Joins selected states back to their step sequences and converts
-        per-person durations to aggregate durations.
-        
-        Args:
-            current_states (pl.DataFrame): Updated aggregate states.
-            possible_states_steps (pl.DataFrame): Candidate steps universe.
-        
-        Returns:
-            pl.DataFrame: Per-step flows with columns including
-                ["demand_group_id","motive_seq_id","dest_seq_id","mode_seq_id",
-                 "seq_step_index","motive","from","to","mode","n_persons","duration"].
-        """
+        """Expand aggregate states to per-step rows (flows)."""
         
         current_states_steps = (
             current_states.lazy()
@@ -465,27 +400,10 @@ class StateUpdater:
         return current_states_steps
     
     
-        
-    
     def get_new_costs(self, costs, iteration, n_iter_per_cost_update, current_states_steps, costs_aggregator):
-        """Optionally recompute congested costs from current flows.
-
-        Aggregates OD flows by mode, updates network/user-equilibrium in the
-        `costs_aggregator`, and returns refreshed costs when the cadence matches.
-        
-        Args:
-            costs (pl.DataFrame): Current OD costs.
-            iteration (int): Current iteration (1-based).
-            n_iter_per_cost_update (int): Update cadence; 0 disables updates.
-            current_states_steps (pl.DataFrame): Step-level flows (by mode).
-            costs_aggregator (TravelCostsAggregator): Cost updater.
-        
-        Returns:
-            pl.DataFrame: Updated OD costs (or original if no update ran).
-        """
+        """Optionally recompute congested costs from current flows."""
         
         if n_iter_per_cost_update > 0 and (iteration-1) % n_iter_per_cost_update == 0:
-            
             logging.info("Updating costs...")
             
             od_flows_by_mode = (
@@ -541,8 +459,6 @@ class StateUpdater:
             )
         )
 
-        # Compute the remaining number of opportunities by motive and destination
-        # once assigned flows are accounted for
         remaining_sinks = (
         
             current_states_steps
