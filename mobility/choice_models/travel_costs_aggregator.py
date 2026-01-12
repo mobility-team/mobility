@@ -96,8 +96,8 @@ class TravelCostsAggregator(InMemoryAsset):
             costs = costs.with_columns(**dist_cols)
 
         costs = costs.with_columns([
-            pl.col("from").cast(pl.Int32),
-            pl.col("to").cast(pl.Int32)
+            pl.col("from").cast(pl.Int64),
+            pl.col("to").cast(pl.Int64)
         ])
         
         # Final step of the GHG emissions computation hack above

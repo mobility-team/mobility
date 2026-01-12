@@ -18,8 +18,8 @@ class LeisureMotive(Motive):
         opportunities: pd.DataFrame = None
     ):
         
-        if opportunities is None:
-            raise ValueError("No built in leisure opportunities data for now, please provide an opportunities dataframe when creating instantiating the LeisureMotive class (or don't use it at all and let the OtherMotive model handle this motive).")
+        # if opportunities is None:
+        #     raise ValueError("No built in leisure opportunities data for now, please provide an opportunities dataframe when creating instantiating the LeisureMotive class (or don't use it at all and let the OtherMotive model handle this motive).")
 
         super().__init__(
             name="leisure",
@@ -33,29 +33,35 @@ class LeisureMotive(Motive):
 
     
     def get_opportunities(self, transport_zones):
-
-        transport_zones = transport_zones.get().drop("geometry", axis=1)
-        transport_zones["country"] = transport_zones["local_admin_unit_id"].str[0:2]
         
-        tz_lau_ids = transport_zones["local_admin_unit_id"].unique().tolist()
+        if self.opportunities is not None:
 
-        opportunities = self.opportunities.loc[tz_lau_ids, "n_opp"].reset_index()
+            opportunities = self.opportunities
 
-        opportunities = pd.merge(
-            transport_zones[["transport_zone_id", "local_admin_unit_id", "country", "weight"]],
-            opportunities[["local_admin_unit_id", "n_opp"]],
-            on="local_admin_unit_id"
-        )
-        
-        opportunities["n_opp"] = opportunities["weight"]*opportunities["n_opp"]
+        else:
 
-        opportunities = ( 
-            opportunities[["transport_zone_id", "n_opp"]]
-            .rename({"transport_zone_id": "to"}, axis=1)
-        )
-
-        opportunities = pl.from_pandas(opportunities)
-        opportunities = self.enforce_opportunities_schema(opportunities)
+            transport_zones = transport_zones.get().drop("geometry", axis=1)
+            transport_zones["country"] = transport_zones["local_admin_unit_id"].str[0:2]
+            
+            tz_lau_ids = transport_zones["local_admin_unit_id"].unique().tolist()
+    
+            opportunities = self.opportunities.loc[tz_lau_ids, "n_opp"].reset_index()
+    
+            opportunities = pd.merge(
+                transport_zones[["transport_zone_id", "local_admin_unit_id", "country", "weight"]],
+                opportunities[["local_admin_unit_id", "n_opp"]],
+                on="local_admin_unit_id"
+            )
+            
+            opportunities["n_opp"] = opportunities["weight"]*opportunities["n_opp"]
+    
+            opportunities = ( 
+                opportunities[["transport_zone_id", "n_opp"]]
+                .rename({"transport_zone_id": "to"}, axis=1)
+            )
+    
+            opportunities = pl.from_pandas(opportunities)
+            opportunities = self.enforce_opportunities_schema(opportunities)
     
         return opportunities
             

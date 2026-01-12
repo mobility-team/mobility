@@ -395,8 +395,8 @@ class StateInitializer:
         current_costs = (
             costs.get(congestion=congestion)
             .with_columns([
-                pl.col("from").cast(pl.Int32()),
-                pl.col("to").cast(pl.Int32())
+                pl.col("from").cast(pl.Int64()),
+                pl.col("to").cast(pl.Int64())
             ])
         )
 
