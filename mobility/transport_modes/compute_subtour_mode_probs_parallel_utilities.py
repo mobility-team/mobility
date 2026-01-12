@@ -38,7 +38,7 @@ def worker_init(k_sequences_, costs_path, leg_modes_path, modes_path, tmp_path_)
     return_mode = {mode_id[k]: mode_id[v["return_mode"]] for k, v in modes.items() if not v["return_mode"] is None}
     is_return_mode = {mode_id[k]: v["is_return_mode"] for  k, v in modes.items()}
 
-    vehicles = set([v["vehicle"] for v in modes.values() if not v["vehicle"] is None])
+    vehicles = sorted({v["vehicle"] for v in modes.values() if v["vehicle"] is not None})
     vehicles = {v: i for i, v in enumerate(vehicles)}
     vehicle_for_mode = {mode_id[k]: vehicles[v["vehicle"]] for k, v in modes.items() if not v["vehicle"] is None}
     n_vehicles = len(vehicles)
@@ -81,9 +81,10 @@ def merge_two_mode_sequences(L1, L2, k):
     return out
 
 def merge_mode_sequences_list(lists_of_lists, k):
-    cur = sorted(lists_of_lists[0], key=lambda x: x[0])
+    cur = sorted(lists_of_lists[0], key=lambda r: (r[0], tuple(r[1])))
     for L in lists_of_lists[1:]:
-        cur = merge_two_mode_sequences(cur, sorted(L, key=lambda x: x[0]), k)
+        Ls = sorted(L, key=lambda r: (r[0], tuple(r[1])))
+        cur = merge_two_mode_sequences(cur, Ls, k)
     return cur[:k]
 
 def process_batch_parallel(batch_of_locations, debug=False):
@@ -197,7 +198,7 @@ def run_top_k_search(
     
         if len(locations) == 2:
             
-            available_mode_ids = leg_modes[(locations[0], locations[1])]
+            available_mode_ids = sorted(leg_modes[(locations[0], locations[1])])
             results = [(costs[(locations[0], locations[1], m_id)], [m_id]) for m_id in available_mode_ids]
             
         else:
@@ -208,8 +209,11 @@ def run_top_k_search(
             vehicle_locations = [locations[0]] * n_vehicles
             mode_sequence = []
             return_mode_constraints = {}
+
+            # Initialize the heap with the starting state
+            counter = 0
             state = (0, vehicle_locations, mode_sequence, return_mode_constraints)
-            heap = [(0.0, state)]
+            heap = [(0.0, counter, state)]
             results = []
                 
             # Create a map between start and end destinations of subtours, when they 
@@ -220,7 +224,7 @@ def run_top_k_search(
             
             while heap and len(results) < k:
                 
-                cost, (leg_idx, vehicle_locations, mode_sequence, return_mode_constraints) = heapq.heappop(heap)
+                cost, _, (leg_idx, vehicle_locations, mode_sequence, return_mode_constraints) = heapq.heappop(heap)
                 
                 # If we reached the end of the tour and all vehicle are at home,
                 # push the result and go to the next value on the heap
@@ -233,7 +237,7 @@ def run_top_k_search(
                 next_location = locations[leg_idx+1]
                 
                 enforced_mode = return_mode_constraints.get(leg_idx, None)
-                available_mode_ids = leg_modes[(current_location, next_location)] if enforced_mode is None else [enforced_mode]
+                available_mode_ids = sorted(leg_modes[(current_location, next_location)]) if enforced_mode is None else [enforced_mode]
                     
                 for m_id in available_mode_ids:
                         
@@ -268,22 +272,33 @@ def run_top_k_search(
                             next_return_mode_constraints[subtour_last_leg_index] = return_mode[m_id]
                                 
                     # Push the new state to the heap
-                    state = (leg_idx+1, next_vehicle_locations, mode_sequence + [m_id], next_return_mode_constraints)
-                    heapq.heappush(heap, (cost+mode_cost, state))
+                    counter += 1
+                    next_seq = mode_sequence + [m_id]
+                    state = (leg_idx+1, next_vehicle_locations, next_seq, next_return_mode_constraints)
+                    heapq.heappush(heap, (cost+mode_cost, counter, state))
                     
         all_results.append(results)       
             
     results = merge_mode_sequences_list(all_results, k=k)
-    
+
     if len(results) == 0:
         
         results = None
     
     else:
+
+        # Sort the results to break possible cost ties
+        # (if we don't sort the following cutoff can be non deterministic)
+        results = [
+            (round(c, 9), seq)
+            for c, seq in results
+        ]
+        results.sort(key=lambda r: (r[0], tuple(r[1])))
         
         # Transform costs into utilities
+        # (rescale the costs that we multiplied by 1e6 in compute_subtour_mode_probs_top_k_mode_sequeance_searchparalle)
         # (remove the max so that exponentials don't overflow in the next step)
-        utilities = -np.array([r[0] for r in results])
+        utilities = -np.array([r[0] for r in results]) / 1e6
         utilities -= np.max(utilities)
         
         # Compute probabilities
@@ -291,13 +306,15 @@ def run_top_k_search(
         prob = prob/prob.sum()
         
         # Keep only the first 98 % of the cumulative distribution
-        i_max = np.argmax(prob.cumsum() > 0.98)
+        cum = prob.cumsum()
+        cut = int(np.searchsorted(cum, 0.98, side="left"))
+        keep = min(len(results), max(1, cut + 1))
+        results = results[:keep]
           
         rows = []
         for i, (total_cost, mode_seq) in enumerate(results):
-            if i < i_max+1:
-                for leg_idx, m_id in enumerate(mode_seq):
-                    rows.append([i, locations_full[leg_idx+1], leg_idx+1, m_id])
+            for leg_idx, m_id in enumerate(mode_seq):
+                rows.append([i, locations_full[leg_idx+1], leg_idx+1, m_id])
         
         results = ( 
             pl.DataFrame(

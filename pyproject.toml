@@ -26,7 +26,8 @@ dependencies = [
   "networkx",
   "plotly",
   "scikit-learn",
-  "gtfs_kit"
+  "gtfs_kit",
+  "kaleido"
 ]
 
 requires-python = ">=3.11"
