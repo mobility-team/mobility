@@ -19,7 +19,7 @@ class PublicTransportRoutingParameters():
             The perceived probability(p)  that the vehicle will not show up at the 
             first stop of the journey, and the user has to wait for the next one.
             The perceived travel time is increased by p x time to next departure.
-        target_time (float):
+        target_time (float):²
             The time in hours at which the user would like to arrive at destination.
         max_wait_time_at_destination (float):
             The maximum time in hours that a user is willing to wait once at destination.
@@ -29,6 +29,7 @@ class PublicTransportRoutingParameters():
             The maximum time in perceived hours that a user is willing to take
             to get to her destination.
         additional_gtfs_files : list of additional GTFS files to include in the calculations
+        gtfs_edits: list of metadata to edit a given gtfs
         expected_agencies : list with the names of agencies that should appear of the GTFS of the territory.
             For instance, "SNCF" should be expected in any French territory and "SBB" in any Swiss one.
             It is not needed to exactly match the full name in the GTFS agency.txt file, but the name shoudl at least appear in agency.txt.
@@ -47,4 +48,5 @@ class PublicTransportRoutingParameters():
     max_wait_time_at_destination: float = 0.25
     max_perceived_time: float = 2.0
     additional_gtfs_files: list = None
+    gtfs_edits: list = None
     expected_agencies: list = None

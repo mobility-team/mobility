@@ -42,6 +42,7 @@ class PublicTransportGraph(FileAsset):
         gtfs_router = GTFSRouter(
             transport_zones,
             parameters.additional_gtfs_files,
+            parameters.gtfs_edits,
             parameters.expected_agencies
         )
 
