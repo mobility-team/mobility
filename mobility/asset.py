@@ -7,6 +7,7 @@ import geopandas as gpd
 from abc import ABC, abstractmethod
 from dataclasses import is_dataclass, fields
 from pandas.util import hash_pandas_object
+from pydantic import BaseModel
 
 class Asset(ABC):
     """
@@ -77,6 +78,9 @@ class Asset(ABC):
                 geom_hash = hashlib.sha256(b"".join(value.geometry.to_wkb())).hexdigest()
                 attr_hash = hash_pandas_object(value.drop(columns="geometry")).sum()
                 return hashlib.sha256((geom_hash + str(attr_hash)).encode()).hexdigest()
+            
+            elif isinstance(value, BaseModel):
+                return value.model_dump(mode="json")
             
             else:
                 return value

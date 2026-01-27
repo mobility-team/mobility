@@ -244,8 +244,6 @@ class PopulationTrips(FileAsset):
                         
             parameters = PopulationTripsParameters(**old_args)
             
-        parameters.validate()
-            
         return parameters
 
 
