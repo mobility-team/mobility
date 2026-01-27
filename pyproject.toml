@@ -27,7 +27,8 @@ dependencies = [
   "plotly",
   "scikit-learn",
   "gtfs_kit",
-  "kaleido"
+  "kaleido",
+  "pydantic",
 ]
 
 requires-python = ">=3.11"

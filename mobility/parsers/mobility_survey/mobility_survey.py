@@ -50,12 +50,10 @@ class MobilitySurvey(FileAsset):
 
     def get_chains_probability(self, motives, modes):
         
-        motive_mapping = [{"group": m.name, "motive": m.survey_ids} for m in motives]
+        motive_mapping = [{"group": m.name, "motive": m.survey_ids} for m in motives if m.name != "other"]
         motive_mapping = pd.DataFrame(motive_mapping)
         motive_mapping = motive_mapping.explode("motive")
         motive_mapping = motive_mapping.set_index("motive").to_dict()["group"]
-        
-        motive_names = [m.name for m in motives]
         
         mode_mapping = [
             {"group": m.name, "mode": m.survey_ids} 
@@ -173,24 +171,12 @@ class MobilitySurvey(FileAsset):
 
             # Map detailed motives to grouped motives
             .with_columns(
-                pl.col("motive").replace(motive_mapping)
-            )
-            .with_columns(
-                motive=( 
-                    pl.when(pl.col("motive").is_in(motive_names))
-                    .then(pl.col("motive"))
-                    .otherwise(pl.lit("other"))
-                )
+                pl.col("motive").replace_strict(motive_mapping, default="other")
             )
             
             # Map detailed modes to grouped modes
             .with_columns(
-                mode=pl.col("mode_id").replace(mode_mapping)
-            )
-            .with_columns(
-                mode=pl.when(pl.col("mode").is_in(mode_names))
-                .then(pl.col("mode"))
-                .otherwise(pl.lit("other"))
+                mode=pl.col("mode_id").replace_strict(mode_mapping, default="other")
             )
                      
             # Remove motive sequences that are longer than 10 motives to speed 

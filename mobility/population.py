@@ -258,7 +258,7 @@ class Population(FileAsset):
                     transport zones will be set to zero.
                 """
             )
-            population["legal_population"].fillna(0.0, inplace=True)
+            population["legal_population"] = population["legal_population"].fillna(0.0)
         
         population["n_persons"] = sample_size*population["legal_population"].pow(0.5)/population["legal_population"].pow(0.5).sum()
         population["n_persons"] = np.ceil(population["n_persons"])
