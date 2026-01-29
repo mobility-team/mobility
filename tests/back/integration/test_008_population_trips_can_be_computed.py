@@ -141,7 +141,7 @@ def test_008_population_trips_can_be_computed(test_data, safe_json):
 
     pop_trips = PopulationTrips(
         population=pop,
-        modes=[mobility.CarMode(transport_zones)],
+        modes=[mobility.CarMode(transport_zones), mobility.WalkMode(transport_zones), mobility.BicycleMode(transport_zones), mobility.PublicTransportMode(transport_zones)],
         motives=[
             HomeMotive(),
             WorkMotive(),
