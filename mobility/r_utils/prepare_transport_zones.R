@@ -183,8 +183,8 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
     # Create a voronoi tesselation around the cluster centers
     env <- geos_create_rectangle(
       xmin = min(buildings_dt$X),
-      ymin = max(buildings_dt$Y),
-      xmax = min(buildings_dt$X),
+      ymin = min(buildings_dt$Y),
+      xmax = max(buildings_dt$X),
       ymax = max(buildings_dt$Y),
       crs = wk_crs(lau_geom)
     )
