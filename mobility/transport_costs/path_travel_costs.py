@@ -202,7 +202,7 @@ class PathTravelCosts(FileAsset):
             if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
                 logging.info(
                     "PathTravelCosts.update legacy(shared) path: mode=%s",
-                    str(self.mode_name),
+                    str(self.inputs["mode_name"]),
                 )
             self.inputs["contracted_path_graph"].update(od_flows)
             self._current_congested_snapshot = None
@@ -240,7 +240,7 @@ class PathTravelCosts(FileAsset):
         if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
             logging.info(
                 "PathTravelCosts snapshot selected: mode=%s flow_hash=%s snapshot_hash=%s snapshot_path=%s",
-                str(self.mode_name),
+                str(self.inputs["mode_name"]),
                 flow_asset.get_cached_hash(),
                 snapshot.inputs_hash,
                 str(snapshot.cache_path),

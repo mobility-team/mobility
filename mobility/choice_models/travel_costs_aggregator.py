@@ -252,6 +252,6 @@ class TravelCostsAggregator(InMemoryAsset):
                             str(flow_asset.cache_path),
                         )
 
-                mode.inputs["travel_costs"].update(flows, flow_asset=flow_asset)
+                    mode.inputs["travel_costs"].update(flows, flow_asset=flow_asset)
             
         

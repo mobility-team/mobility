@@ -69,7 +69,6 @@ class CongestedPathGraphSnapshot(FileAsset):
             )
         else:
             logging.info("Building congested snapshot graph...")
-
         vehicle_flows.get()  # ensure parquet exists
 
         script = RScript(resources.files('mobility.transport_graphs').joinpath('load_path_graph.R'))
