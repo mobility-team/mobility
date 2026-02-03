@@ -467,7 +467,7 @@ class StateUpdater:
     
         
     
-    def get_new_costs(self, costs, iteration, n_iter_per_cost_update, current_states_steps, costs_aggregator):
+    def get_new_costs(self, costs, iteration, n_iter_per_cost_update, current_states_steps, costs_aggregator, run_key=None):
         """Optionally recompute congested costs from current flows.
 
         Aggregates OD flows by mode, updates network/user-equilibrium in the
@@ -496,8 +496,12 @@ class StateUpdater:
                     flow_volume=pl.col("n_persons").sum()
                 )
             )
-            
-            costs_aggregator.update(od_flows_by_mode)
+
+            has_congestion = any(getattr(m, "congestion", False) for m in costs_aggregator.modes)
+
+            # Only build/update congestion snapshots when at least one mode handles congestion.
+            if has_congestion:
+                costs_aggregator.update(od_flows_by_mode, run_key=run_key, iteration=iteration)
             costs = costs_aggregator.get(congestion=True)
 
         return costs
