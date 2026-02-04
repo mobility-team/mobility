@@ -97,9 +97,20 @@ class PathTravelCosts(FileAsset):
             path = self.cache_path["freeflow"]
         else:
             if self._current_congested_snapshot is not None:
+                if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+                    logging.info(
+                        "PathTravelCosts.get(congestion=True) using snapshot: snapshot_hash=%s snapshot_path=%s",
+                        self._current_congested_snapshot.inputs_hash,
+                        str(self._current_congested_snapshot.cache_path),
+                    )
                 return self._current_congested_snapshot.get()
             # If no congestion snapshot has been applied in this run, treat
             # "congested" as free-flow to avoid reusing stale shared caches.
+            if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+                logging.info(
+                    "PathTravelCosts.get(congestion=True) no snapshot -> fallback to freeflow: %s",
+                    str(self.cache_path["freeflow"]),
+                )
             path = self.cache_path["freeflow"]
 
         logging.info("Travel costs already prepared. Reusing the file : " + str(path))
@@ -184,6 +195,11 @@ class PathTravelCosts(FileAsset):
         """
 
         if flow_asset is None:
+            if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+                logging.info(
+                    "PathTravelCosts.update legacy(shared) path: mode=%s",
+                    str(self.mode_name),
+                )
             self.contracted_path_graph.update(od_flows)
             self._current_congested_snapshot = None
             self.create_and_get_asset(congestion=True)
@@ -210,6 +226,14 @@ class PathTravelCosts(FileAsset):
         )
 
         self._current_congested_snapshot = snapshot
+        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+            logging.info(
+                "PathTravelCosts.update snapshot selected: mode=%s flow_hash=%s snapshot_hash=%s snapshot_path=%s",
+                str(self.mode_name),
+                flow_asset.get_cached_hash(),
+                snapshot.inputs_hash,
+                str(snapshot.cache_path),
+            )
         snapshot.get()
         
     def clone(self):

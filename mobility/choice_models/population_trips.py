@@ -23,6 +23,7 @@ from mobility.choice_models.results import Results
 from mobility.motives import Motive, HomeMotive, OtherMotive
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.parsers.mobility_survey import MobilitySurvey
+from mobility.choice_models.population_trips_checkpoint import PopulationTripsCheckpointAsset
 
 class PopulationTrips(FileAsset):
     """
@@ -336,7 +337,20 @@ class PopulationTrips(FileAsset):
         parameters = self.inputs["parameters"]
         
         cache_path = self.cache_path["weekday_flows"] if is_weekday is True else self.cache_path["weekend_flows"]
-        tmp_folders = self.prepare_tmp_folders(cache_path)
+
+        run_key = self.inputs_hash
+        latest_ckpt_iter = PopulationTripsCheckpointAsset.find_latest_checkpoint_iter(
+            run_key=run_key,
+            is_weekday=is_weekday
+        )
+        resume_from_iter = None if latest_ckpt_iter is None else int(latest_ckpt_iter)
+
+        # If checkpoint is beyond the configured iterations (e.g. parameters changed),
+        # cap it to the current maximum.
+        if resume_from_iter is not None and resume_from_iter > self.parameters.n_iterations:
+            resume_from_iter = int(self.parameters.n_iterations)
+
+        tmp_folders = self.prepare_tmp_folders(cache_path, resume=(resume_from_iter is not None))
 
         chains_by_motive, chains, demand_groups = self.state_initializer.get_chains(
             population,
@@ -369,8 +383,78 @@ class PopulationTrips(FileAsset):
         )
         
         remaining_sinks = sinks.clone()
-        
-        for iteration in range(1, parameters.n_iterations+1):
+        start_iteration = 1
+
+        # Resume from last completed iteration checkpoint if present.
+        if resume_from_iter is not None:
+            try:
+                ckpt = PopulationTripsCheckpointAsset(
+                    run_key=run_key,
+                    is_weekday=is_weekday,
+                    iteration=resume_from_iter
+                ).get()
+            except Exception:
+                logging.exception("Failed to load checkpoint. Restarting from scratch.")
+                ckpt = None
+
+            if ckpt is None:
+                current_states = stay_home_state.select(["demand_group_id", "iteration", "motive_seq_id", "mode_seq_id", "dest_seq_id", "utility", "n_persons"]).clone()
+                remaining_sinks = sinks.clone()
+                start_iteration = 1
+            else:
+                current_states = ckpt["current_states"]
+                remaining_sinks = ckpt["remaining_sinks"]
+                try:
+                    self.rng.setstate(ckpt["rng_state"])
+                except Exception:
+                    logging.exception("Failed to restore RNG state from checkpoint. Restarting from scratch.")
+                    current_states = stay_home_state.select(["demand_group_id", "iteration", "motive_seq_id", "mode_seq_id", "dest_seq_id", "utility", "n_persons"]).clone()
+                    remaining_sinks = sinks.clone()
+                    start_iteration = 1
+                else:
+                    start_iteration = resume_from_iter + 1
+                    logging.info("Resuming PopulationTrips from checkpoint: run_key=%s is_weekday=%s iteration=%s", run_key, str(is_weekday), str(resume_from_iter))
+
+                # Prune any partial artifacts beyond the checkpoint iteration.
+                try:
+                    for p in tmp_folders["spatialized-chains"].glob("spatialized_chains_*.parquet"):
+                        it = int(p.stem.split("_")[-1])
+                        if it > resume_from_iter:
+                            p.unlink(missing_ok=True)
+                    for p in tmp_folders["modes"].glob("mode_sequences_*.parquet"):
+                        it = int(p.stem.split("_")[-1])
+                        if it > resume_from_iter:
+                            p.unlink(missing_ok=True)
+                except Exception:
+                    logging.exception("Failed to prune temp artifacts on resume. Continuing anyway.")
+
+                # Rehydrate congestion snapshot pointer for the last cost-update iteration,
+                # so the next iteration uses the correct congested costs.
+                if parameters.n_iter_per_cost_update > 0 and resume_from_iter >= 1:
+                    last_update_iter = 1 + ((resume_from_iter - 1) // parameters.n_iter_per_cost_update) * parameters.n_iter_per_cost_update
+                    if last_update_iter >= 1:
+                        try:
+                            from mobility.transport_costs.od_flows_asset import VehicleODFlowsAsset
+                            import pandas as pd
+                            flow_asset = VehicleODFlowsAsset(
+                                vehicle_od_flows=pd.DataFrame({"from": [], "to": [], "vehicle_volume": []}),
+                                run_key=run_key,
+                                iteration=last_update_iter,
+                                mode_name="car"
+                            )
+                            # If the flow file doesn't exist, this will raise when trying to read it.
+                            flow_asset.get()
+                            # Apply snapshot to the (shared) road costs so get(congestion=True) uses it.
+                            for mode in costs_aggregator.modes:
+                                if getattr(mode, "congestion", False) and getattr(mode, "name", None) == "car":
+                                    mode.travel_costs.update(pl.DataFrame(), flow_asset=flow_asset)
+                                    break
+                            costs = costs_aggregator.get(congestion=True)
+                        except Exception:
+                            logging.exception("Failed to rehydrate congestion snapshot on resume; falling back to free-flow costs until next update.")
+                            costs = costs_aggregator.get(congestion=False)
+
+        for iteration in range(start_iteration, parameters.n_iterations+1):
             
             logging.info(f"Iteration n°{iteration}")
             
@@ -432,6 +516,36 @@ class PopulationTrips(FileAsset):
                 sinks,
                 motives
             )
+
+            # Save per-iteration checkpoint after all state has been advanced.
+            try:
+                PopulationTripsCheckpointAsset(
+                    run_key=run_key,
+                    is_weekday=is_weekday,
+                    iteration=iteration,
+                    current_states=current_states,
+                    remaining_sinks=remaining_sinks,
+                    rng_state=self.rng.getstate(),
+                ).create_and_get_asset()
+            except Exception:
+                logging.exception("Failed to save checkpoint for iteration %s.", str(iteration))
+
+        # If we resumed after completing all iterations (or start_iteration > n_iterations),
+        # rebuild step-level flows from cached artifacts for final output.
+        if "current_states_steps" not in locals():
+            possible_states_steps = self.state_updater.get_possible_states_steps(
+                current_states,
+                demand_groups,
+                chains_by_motive,
+                costs_aggregator,
+                remaining_sinks,
+                motive_dur,
+                parameters.n_iterations,
+                motives,
+                parameters.min_activity_time_constant,
+                tmp_folders
+            )
+            current_states_steps = self.state_updater.get_current_states_steps(current_states, possible_states_steps)
             
             
         costs = costs_aggregator.get_costs_by_od_and_mode(
@@ -465,9 +579,25 @@ class PopulationTrips(FileAsset):
         )
 
         return current_states_steps, sinks, demand_groups, costs, chains
+
+    def remove(self, remove_checkpoints: bool = True):
+        """Remove cached outputs for this PopulationTrips run.
+
+        By default this also removes any saved checkpoints for this run_key, to avoid
+        resuming from stale intermediate state after a "clean" remove.
+        """
+        super().remove()
+
+        if remove_checkpoints:
+            run_key = self.inputs_hash
+            removed = 0
+            removed += PopulationTripsCheckpointAsset.remove_checkpoints_for_run(run_key=run_key, is_weekday=True)
+            removed += PopulationTripsCheckpointAsset.remove_checkpoints_for_run(run_key=run_key, is_weekday=False)
+            if removed > 0:
+                logging.info("Removed %s checkpoint files for run_key=%s", str(removed), str(run_key))
     
 
-    def prepare_tmp_folders(self, cache_path):
+    def prepare_tmp_folders(self, cache_path, resume: bool = False):
         """Create per-run temp folders next to the cache path.
         
         Args:
@@ -479,14 +609,15 @@ class PopulationTrips(FileAsset):
         
         inputs_hash = str(cache_path.stem).split("-")[0]
         
-        def rm_then_mkdirs(folder_name):
+        def ensure_dir(folder_name):
             path = cache_path.parent / (inputs_hash + "-" + folder_name)
-            shutil.rmtree(path, ignore_errors=True)
-            os.makedirs(path)
+            if resume is False:
+                shutil.rmtree(path, ignore_errors=True)
+            os.makedirs(path, exist_ok=True)
             return path
         
         folders = ["spatialized-chains", "modes", "flows", "sequences-index"]
-        folders = {f: rm_then_mkdirs(f) for f in folders}
+        folders = {f: ensure_dir(f) for f in folders}
         
         return folders
 
@@ -584,7 +715,7 @@ class PopulationTrips(FileAsset):
 
         if mode == "public_transport":
             mode_name = "Public transport"
-            mode_share["mode"] = mode_share["mode"].replace("\S+\/public_transport\/\S+", "public_transport", regex=True)
+            mode_share["mode"] = mode_share["mode"].replace(r"\S+/public_transport/\S+", "public_transport", regex=True)
         else:
             mode_name = mode.capitalize()
         mode_share = mode_share[mode_share["mode"] == mode]
