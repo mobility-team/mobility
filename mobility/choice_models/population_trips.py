@@ -501,7 +501,7 @@ class PopulationTrips(FileAsset):
         )
 
         return current_states_steps, sinks, demand_groups, costs, chains, transitions
-    
+
     def remove(self, remove_checkpoints: bool = True):
         """Remove cached outputs for this PopulationTrips run.
 
