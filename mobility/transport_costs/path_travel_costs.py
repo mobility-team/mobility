@@ -14,6 +14,9 @@ from mobility.transport_zones import TransportZones
 from mobility.path_routing_parameters import PathRoutingParameters
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport_graphs.speed_modifier import SpeedModifier
+from mobility.transport_graphs.congested_path_graph_snapshot import CongestedPathGraphSnapshot
+from mobility.transport_graphs.contracted_path_graph_snapshot import ContractedPathGraphSnapshot
+from mobility.transport_costs.path_travel_costs_snapshot import PathTravelCostsSnapshot
 
 from typing import List
 
@@ -45,7 +48,7 @@ class PathTravelCosts(FileAsset):
             osm_capacity_parameters: OSMCapacityParameters,
             congestion: bool = False,
             congestion_flows_scaling_factor: float = 1.0,
-            speed_modifiers: List[SpeedModifier] = []
+            speed_modifiers: List[SpeedModifier] = [],
         ):
         """
         Initializes a TravelCosts object with the given transport zones and travel mode.
@@ -81,6 +84,10 @@ class PathTravelCosts(FileAsset):
 
         super().__init__(inputs, cache_path)
 
+        # When congestion updates are used, we keep a pointer to the latest
+        # per-iteration snapshot so `get(congestion=True)` is isolated per run.
+        self._current_congested_snapshot = None
+
     def get_cached_asset(self, congestion: bool = False) -> pd.DataFrame:
         """
         Retrieves the travel costs DataFrame from the cache.
@@ -92,7 +99,22 @@ class PathTravelCosts(FileAsset):
         if congestion is False:
             path = self.cache_path["freeflow"]
         else:
-            path = self.cache_path["congested"]
+            if self._current_congested_snapshot is not None:
+                if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+                    logging.info(
+                        "PathTravelCosts.get(congestion=True) using snapshot: snapshot_hash=%s snapshot_path=%s",
+                        self._current_congested_snapshot.inputs_hash,
+                        str(self._current_congested_snapshot.cache_path),
+                    )
+                return self._current_congested_snapshot.get()
+            # If no congestion snapshot has been applied in this run, treat
+            # "congested" as free-flow to avoid reusing stale shared caches.
+            if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+                logging.info(
+                    "PathTravelCosts.get(congestion=True) no snapshot -> fallback to freeflow: %s",
+                    str(self.cache_path["freeflow"]),
+                )
+            path = self.cache_path["freeflow"]
 
         logging.info("Travel costs already prepared. Reusing the file : " + str(path))
         costs = pd.read_parquet(path)
@@ -117,7 +139,11 @@ class PathTravelCosts(FileAsset):
         if congestion is False:
             output_path = self.cache_path["freeflow"]
         else:
-            output_path = self.cache_path["congested"]
+            if self._current_congested_snapshot is not None:
+                return self._current_congested_snapshot.get()
+            # Same rationale as get_cached_asset(): without an applied snapshot,
+            # compute free-flow costs.
+            output_path = self.cache_path["freeflow"]
         
         costs = self.compute_costs_by_OD(self.transport_zones, self.contracted_path_graph, output_path)
         
@@ -163,10 +189,62 @@ class PathTravelCosts(FileAsset):
         return costs
     
     
-    def update(self, od_flows):
-        
-        self.contracted_path_graph.update(od_flows)
-        self.create_and_get_asset(congestion=True)
+    def update(self, od_flows, flow_asset=None):
+        """Update congestion state.
+
+        Legacy behavior (flow_asset is None) mutates the shared congested graph/costs.
+        New behavior (flow_asset provided) builds isolated per-iteration snapshot assets
+        and switches `get(congestion=True)` to use that snapshot.
+        """
+
+        if flow_asset is None:
+            if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+                logging.info(
+                    "PathTravelCosts.update legacy(shared) path: mode=%s",
+                    str(self.mode_name),
+                )
+            self.contracted_path_graph.update(od_flows)
+            self._current_congested_snapshot = None
+            self.create_and_get_asset(congestion=True)
+            return
+
+        self._apply_flow_snapshot(flow_asset)
+
+    def apply_flow_snapshot(self, flow_asset) -> None:
+        """Repoint this mode's congested costs to the snapshot defined by `flow_asset`.
+
+        This is primarily used when resuming a run from a checkpoint: the snapshot
+        files exist on disk, but the in-memory pointer to the "current snapshot"
+        is lost on restart.
+        """
+        self._apply_flow_snapshot(flow_asset)
+
+    def _apply_flow_snapshot(self, flow_asset) -> None:
+        congested_graph = CongestedPathGraphSnapshot(
+            modified_graph=self.modified_path_graph,
+            transport_zones=self.transport_zones,
+            vehicle_flows=flow_asset,
+            congestion_flows_scaling_factor=self.congested_path_graph.congestion_flows_scaling_factor,
+        )
+        contracted_graph = ContractedPathGraphSnapshot(congested_graph)
+
+        snapshot = PathTravelCostsSnapshot(
+            mode_name=self.mode_name,
+            transport_zones=self.transport_zones,
+            routing_parameters=self.routing_parameters,
+            contracted_graph=contracted_graph,
+        )
+
+        self._current_congested_snapshot = snapshot
+        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+            logging.info(
+                "PathTravelCosts snapshot selected: mode=%s flow_hash=%s snapshot_hash=%s snapshot_path=%s",
+                str(self.mode_name),
+                flow_asset.get_cached_hash(),
+                snapshot.inputs_hash,
+                str(snapshot.cache_path),
+            )
+        snapshot.get()
         
     def clone(self):
         
