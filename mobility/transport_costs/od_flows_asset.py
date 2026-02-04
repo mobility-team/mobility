@@ -1,6 +1,7 @@
 import os
 import pathlib
 import pandas as pd
+import logging
 
 from mobility.file_asset import FileAsset
 
@@ -29,7 +30,15 @@ class VehicleODFlowsAsset(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pd.DataFrame:
-        return pd.read_parquet(self.cache_path)
+        df = pd.read_parquet(self.cache_path)
+        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+            logging.info(
+                "VehicleODFlowsAsset cache hit: inputs_hash=%s path=%s rows=%s",
+                self.inputs_hash,
+                str(self.cache_path),
+                df.shape[0],
+            )
+        return df
 
     def create_and_get_asset(self) -> pd.DataFrame:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,4 +48,12 @@ class VehicleODFlowsAsset(FileAsset):
         expected_cols = ["from", "to", "vehicle_volume"]
         df = df[expected_cols] if all(c in df.columns for c in expected_cols) else df
         df.to_parquet(self.cache_path, index=False)
+
+        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+            logging.info(
+                "VehicleODFlowsAsset written: inputs_hash=%s path=%s rows=%s",
+                self.inputs_hash,
+                str(self.cache_path),
+                df.shape[0],
+            )
         return df
