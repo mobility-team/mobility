@@ -14,6 +14,9 @@ from mobility.transport_zones import TransportZones
 from mobility.path_routing_parameters import PathRoutingParameters
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport_graphs.speed_modifier import SpeedModifier
+from mobility.transport_graphs.congested_path_graph_snapshot import CongestedPathGraphSnapshot
+from mobility.transport_graphs.contracted_path_graph_snapshot import ContractedPathGraphSnapshot
+from mobility.transport_costs.path_travel_costs_snapshot import PathTravelCostsSnapshot
 
 from typing import List
 
@@ -205,11 +208,18 @@ class PathTravelCosts(FileAsset):
             self.create_and_get_asset(congestion=True)
             return
 
-        # Snapshot path: build a congested graph/costs variant keyed by flow_asset.
-        from mobility.transport_graphs.congested_path_graph_snapshot import CongestedPathGraphSnapshot
-        from mobility.transport_graphs.contracted_path_graph_snapshot import ContractedPathGraphSnapshot
-        from mobility.transport_costs.path_travel_costs_snapshot import PathTravelCostsSnapshot
+        self._apply_flow_snapshot(flow_asset)
 
+    def apply_flow_snapshot(self, flow_asset) -> None:
+        """Repoint this mode's congested costs to the snapshot defined by `flow_asset`.
+
+        This is primarily used when resuming a run from a checkpoint: the snapshot
+        files exist on disk, but the in-memory pointer to the "current snapshot"
+        is lost on restart.
+        """
+        self._apply_flow_snapshot(flow_asset)
+
+    def _apply_flow_snapshot(self, flow_asset) -> None:
         congested_graph = CongestedPathGraphSnapshot(
             modified_graph=self.modified_path_graph,
             transport_zones=self.transport_zones,
@@ -228,7 +238,7 @@ class PathTravelCosts(FileAsset):
         self._current_congested_snapshot = snapshot
         if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
             logging.info(
-                "PathTravelCosts.update snapshot selected: mode=%s flow_hash=%s snapshot_hash=%s snapshot_path=%s",
+                "PathTravelCosts snapshot selected: mode=%s flow_hash=%s snapshot_hash=%s snapshot_path=%s",
                 str(self.mode_name),
                 flow_asset.get_cached_hash(),
                 snapshot.inputs_hash,
