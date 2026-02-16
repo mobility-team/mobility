@@ -1,11 +1,12 @@
+import hashlib
+import logging
+import math
+import re
 import zipfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-import logging
-import math
-import re
-import hashlib
+
 import pandas as pd
 
 
@@ -40,6 +41,7 @@ class GTFSFeed:
         out_zip_path.write_bytes(buf.read())
         return out_zip_path
 
+
 def apply_gtfs_edits(gtfs_files, gtfs_edits, edits_folder: str | Path):
     edits_folder = Path(edits_folder)
     edits_folder.mkdir(parents=True, exist_ok=True)
@@ -65,21 +67,21 @@ def apply_gtfs_edits(gtfs_files, gtfs_edits, edits_folder: str | Path):
         return ((st["a"] == core_id(from_id)) & (st["b"] == core_id(to_id))).any()
 
     def expand_ops(rule_ops):
-        """Duplique les ops avec bidirectional=True en ajoutant l'op inversée."""
+        """Duplique les ops avec bidirectional=True en ajoutant l'op inversee."""
         expanded = []
         for op in rule_ops:
             expanded.append(op)
             if op.get("op") == "insert_stop_between" and op.get("bidirectional"):
                 op_rev = dict(op)
                 op_rev["from_stop_id"], op_rev["to_stop_id"] = op["to_stop_id"], op["from_stop_id"]
-                # on peut garder bidirectional=True ou le mettre à False pour éviter re-expansion
+                # On peut garder bidirectional=True ou le mettre a False pour eviter re-expansion.
                 op_rev["bidirectional"] = False
                 expanded.append(op_rev)
         return expanded
 
     # --- Precompute chain hits for each (from,to) actually needed ---
     chain_hits = {}
-    for rule in (gtfs_edits or []):
+    for rule in gtfs_edits or []:
         for op in expand_ops(rule.get("ops", [])):
             if op.get("op") != "insert_stop_between":
                 continue
@@ -98,7 +100,7 @@ def apply_gtfs_edits(gtfs_files, gtfs_edits, edits_folder: str | Path):
 
     # --- Build mapping: gtfs_path -> list of ops to apply ---
     ops_by_gtfs = {}
-    for rule in (gtfs_edits or []):
+    for rule in gtfs_edits or []:
         mode = (rule.get("mode") or "explicit").lower().strip()
         if mode not in {"explicit", "all"}:
             raise ValueError("rule.mode must be 'explicit' or 'all'")
@@ -116,7 +118,9 @@ def apply_gtfs_edits(gtfs_files, gtfs_edits, edits_folder: str | Path):
                 if not_covered:
                     logging.info(
                         "[GTFS edit] Note: chain %s -> %s also found in %s GTFS not targeted (mode=explicit).",
-                        key[0], key[1], len(not_covered)
+                        key[0],
+                        key[1],
+                        len(not_covered),
                     )
                     for p in not_covered:
                         logging.info("[GTFS edit]   - %s", p)
@@ -124,13 +128,15 @@ def apply_gtfs_edits(gtfs_files, gtfs_edits, edits_folder: str | Path):
                 targets = hits
                 logging.info(
                     "[GTFS edit] mode=all: applying chain %s -> %s edit to %s GTFS.",
-                    key[0], key[1], len(targets)
+                    key[0],
+                    key[1],
+                    len(targets),
                 )
 
             for p in targets:
                 ops_by_gtfs.setdefault(p, []).append(op)
 
-    # --- Apply edits (inchangé) ---
+    # --- Apply edits (inchange) ---
     new_files = []
     for gtfs_path in gtfs_files:
         ops = ops_by_gtfs.get(gtfs_path)
@@ -143,11 +149,11 @@ def apply_gtfs_edits(gtfs_files, gtfs_edits, edits_folder: str | Path):
         out_p = edits_folder / f"{src_p.stem}__edited_{h}{src_p.suffix}"
 
         if out_p.exists():
-            logging.info(f"[GTFS edit] Using cached edited GTFS: {out_p}")
+            logging.info("[GTFS edit] Using cached edited GTFS: %s", out_p)
             new_files.append(str(out_p))
             continue
 
-        logging.info(f"[GTFS edit] Editing GTFS: {src_p.name}")
+        logging.info("[GTFS edit] Editing GTFS: %s", src_p.name)
         feed = GTFSFeed(src_p).load()
 
         for op in ops:
@@ -169,11 +175,10 @@ def apply_gtfs_edits(gtfs_files, gtfs_edits, edits_folder: str | Path):
             )
 
         feed.save(out_p)
-        logging.info(f"[GTFS edit] Saved edited GTFS: {out_p}")
+        logging.info("[GTFS edit] Saved edited GTFS: %s", out_p)
         new_files.append(str(out_p))
 
     return new_files
-
 
 
 def insert_stop_between(
@@ -198,7 +203,6 @@ def insert_stop_between(
     Matching:
     - We match stops by their numeric suffix (e.g. "...87118257"), to ignore StopPoint/StopArea prefixes.
     """
-
     propagate = (propagate or "after").lower().strip()
     if propagate not in {"after", "before", "symmetric"}:
         raise ValueError("propagate must be one of: after, before, symmetric")
@@ -222,7 +226,7 @@ def insert_stop_between(
         return m.group(1) if m else x
 
     def hms_to_s(x: str):
-        # returns int seconds or NA
+        # Returns int seconds or NA.
         if not isinstance(x, str) or x == "":
             return pd.NA
         try:
@@ -258,7 +262,7 @@ def insert_stop_between(
             "stop_lat": new_stop.stop_lat,
             "stop_lon": new_stop.stop_lon,
         }
-        # ensure required cols exist; keep other cols untouched / NA
+        # Ensure required cols exist; keep other cols untouched / NA.
         for col in row.keys():
             if col not in stops.columns:
                 stops[col] = pd.NA
@@ -272,11 +276,10 @@ def insert_stop_between(
 
     # We accumulate "insertions" + "shifts" and apply them once at the end.
     insert_rows = []
-    seq_shifts = []   # (trip_id, start_seq, +1)
+    seq_shifts = []  # (trip_id, start_seq, +1)
     time_shifts = []  # (trip_id, mode, boundary_seq, seconds)
 
     modified_trips = set()
-
     delta_total = int(dwell_time_s) + int(extra_run_time_s)
 
     for trip_id, g in st.groupby("trip_id", sort=False):
@@ -302,10 +305,10 @@ def insert_stop_between(
             dep_a = int(round(float(dep_a)))
             arr_b = int(round(float(arr_b)))
 
-            # Original travel time between A departure and B arrival
+            # Original travel time between A departure and B arrival.
             t_ab = max(0, arr_b - dep_a)
 
-            # Place the new stop along A->B time axis
+            # Place the new stop along A->B time axis.
             t_an = int(t_ab * float(split_ratio))
 
             arr_n = dep_a + t_an
@@ -356,8 +359,8 @@ def insert_stop_between(
     if insert_rows:
         st = pd.concat([st, pd.DataFrame(insert_rows)], ignore_index=True)
         st.sort_values(["trip_id", "stop_sequence"], inplace=True)
-        
-    # Back to GTFS time strings
+
+    # Back to GTFS time strings.
     st["arrival_s"] = pd.to_numeric(st["arrival_s"], errors="coerce").round().astype("Int64")
     st["departure_s"] = pd.to_numeric(st["departure_s"], errors="coerce").round().astype("Int64")
     st["arrival_time"] = st["arrival_s"].map(lambda x: "" if pd.isna(x) else s_to_hms(int(x)))
