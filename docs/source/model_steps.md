@@ -8,15 +8,15 @@ Source : https://github.com/mobility-team/mobility/issues/145#issuecomment-32280
 Le fonctionnement actuel est le suivant :
 
 Initialisation :
-- Génération des séquences de motifs de déplacement dans chaque zone de transport, selon le profil de la population résidente (CSP, nombre de voitures du ménage, type de catégorie urbaine de la commune), et des besoins en heures d'activité pour chaque étape des séquences.
-- Calcul des opportunités disponibles (=heures d'activités disponibles) par motif, pour chaque zone de transport.
+- GÃ©nÃ©ration des sÃ©quences de motifs de dÃ©placement dans chaque zone de transport, selon le profil de la population rÃ©sidente (CSP, nombre de voitures du mÃ©nage, type de catÃ©gorie urbaine de la commune), et des besoins en heures d'activitÃ© pour chaque Ã©tape des sÃ©quences.
+- Calcul des opportunitÃ©s disponibles (=heures d'activitÃ©s disponibles) par motif, pour chaque zone de transport.
 
 Boucle :
-- Calcul des coûts généralisés de transport pour chaque couple motif - origine - destination (sans congestion pour la première itération).
-- Calcul des probabilités de choisir une destination en fonction du motif et de l'origine du déplacement ainsi que du lieu de résidence des personnes.
-- Echantillonnage d'une séquence de destinations pour chaque séquence de motifs, zone de transport de résidence et CSP.
-- Recherche des top k séquences de modes disponibles pour réaliser ces séquences de déplacements (k<=10)
-- Calcul des flux résultants par OD et par mode, puis recalcul des coûts généralisés.
-- Calcul d'une part de personnes qui vont changer d'assignation séquence de motifs + modes (en fonction de la saturation des opportunités à destination, de possibilités d'optimisation comparatives, et d'une part de changements aléatoires).
-- Calcul des opportunités restantes à destination.
-- Recommencement de la procédure avec cette part de personnes non assignées.
+- Calcul des coÃ»ts gÃ©nÃ©ralisÃ©s de transport pour chaque couple motif - origine - destination (sans congestion pour la premiÃ¨re itÃ©ration).
+- Calcul des probabilitÃ©s de choisir une destination en fonction du motif et de l'origine du dÃ©placement ainsi que du lieu de rÃ©sidence des personnes.
+- Echantillonnage d'une sÃ©quence de destinations pour chaque sÃ©quence de motifs, zone de transport de rÃ©sidence et CSP.
+- Recherche des top k sÃ©quences de modes disponibles pour rÃ©aliser ces sÃ©quences de dÃ©placements (k<=10)
+- Calcul des flux rÃ©sultants par OD et par mode, puis recalcul des coÃ»ts gÃ©nÃ©ralisÃ©s.
+- Calcul d'une part de personnes qui vont changer d'assignation sÃ©quence de motifs + modes (en fonction de la saturation des opportunitÃ©s Ã  destination, de possibilitÃ©s d'optimisation comparatives, et d'une part de changements alÃ©atoires).
+- Calcul des opportunitÃ©s restantes Ã  destination.
+- Recommencement de la procÃ©dure avec cette part de personnes non assignÃ©es.
