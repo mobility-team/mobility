@@ -39,5 +39,10 @@ global_metrics = pop_trips.evaluate("global_metrics")
 labels = pop_trips.get_prominent_cities()
 pop_trips.plot_od_flows(labels=labels)
 
-rapport = pop_trips.parameters_dict()
-print(rapport.T)
+# You can print a report of all parameters used in the model
+#report = pop_trips.parameters_dict()
+#print(report.T)
+
+tz_params = transport_zones.get_parameters()
+for p in tz_params:
+    print(p.to_dict())

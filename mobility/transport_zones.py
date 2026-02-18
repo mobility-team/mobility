@@ -10,6 +10,7 @@ from typing import Literal, List, Union
 from shapely.geometry import Point
 
 from mobility.file_asset import FileAsset
+from mobility.model_parameters import Parameter
 from mobility.study_area import StudyArea
 from mobility.parsers.osm import OSMData
 from mobility.r_utils.r_script import RScript
@@ -61,6 +62,16 @@ class TransportZones(FileAsset):
             cutout_geometries: gpd.GeoDataFrame = None
         ):
         
+        level_of_detail_param = Parameter(
+            name="level of detail",
+            name_fr="niveau de détail",
+            value=level_of_detail,
+            description="radius",
+            default_value=0,
+            possible_values = [0, 1],
+            parameter_type=bool
+        )
+
         # If the user does not choose an inner radius or a list of inner 
         # transport zones, we suppose that there is no inner / outer zones
         # (= all zones are inner zones)
@@ -83,7 +94,7 @@ class TransportZones(FileAsset):
         inputs = {
             "version": "1",
             "study_area": study_area,
-            "level_of_detail": level_of_detail,
+            "level_of_detail": level_of_detail_param,
             "osm_buildings": osm_buildings,
             "inner_radius": inner_radius,
             "inner_local_admin_unit_id": inner_local_admin_unit_id,
@@ -138,7 +149,7 @@ class TransportZones(FileAsset):
             args=[
                 study_area_fp,
                 osm_buildings_fp,
-                str(self.level_of_detail),
+                str(self.inputs["level_of_detail"].value),
                 self.cache_path
             ]
         )
