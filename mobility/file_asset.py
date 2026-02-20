@@ -3,7 +3,8 @@ import os
 import networkx as nx
 
 from mobility.asset import Asset
-from typing import Any
+from mobility.model_parameters import Parameter
+from typing import Any, List
 from abc import abstractmethod
 
 class FileAsset(Asset):
@@ -206,4 +207,25 @@ class FileAsset(Asset):
             path = pathlib.Path(self.cache_path)
             if path.exists():
                 path.unlink()
+
+    def get_parameters(self, recursive: bool = True) -> List[Parameter]:
+        
+        params = []
+
+        for inp in self.inputs.values():
+            if isinstance(inp, Parameter) :
+                params.append(inp)
+
+        if recursive:
+            for inp in self.inputs.values():
+                if isinstance(inp, FileAsset):
+                    params.extend(inp.get_parameters(recursive=True))
+
+        unique_params = {}
+        for p in params:
+            if p.name not in unique_params:
+                unique_params[p.name] = p
+
+        return list(unique_params.values())
+
             

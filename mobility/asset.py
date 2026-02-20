@@ -86,7 +86,7 @@ class Asset(ABC):
                 return value
     
         hashable_inputs = {k: serialize(v) for k, v in self.inputs.items()}
-        serialized_inputs = json.dumps(hashable_inputs, sort_keys=True).encode('utf-8')
+        serialized_inputs = json.dumps(hashable_inputs, sort_keys=True,default=lambda o: o.to_dict() if hasattr(o, 'to_dict') else str(o)).encode('utf-8')
         
         return hashlib.md5(serialized_inputs).hexdigest()
     

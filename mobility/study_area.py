@@ -7,6 +7,7 @@ import geojson
 from typing import Union, List
 
 from mobility.file_asset import FileAsset
+from mobility.model_parameters import Parameter
 from mobility.parsers.local_admin_units import LocalAdminUnits
 
 
@@ -38,11 +39,23 @@ class StudyArea(FileAsset):
             cutout_geometries: gpd.GeoDataFrame = None
         ):
 
+        radius_param = Parameter(
+            name="radius",
+            name_fr="rayon",
+            value=radius,
+            description="radius",
+            default_value=20.0,
+            parameter_type=float | int,
+            min_value=5.0,
+            max_value=100.0,
+            unit="km"
+        )
+
         inputs = {
             "version": "1",
             "local_admin_units": LocalAdminUnits(),
             "local_admin_unit_id": local_admin_unit_id,
-            "radius": radius,
+            "radius": radius_param,
             "cutout_geometries": cutout_geometries
         }
 
@@ -91,7 +104,7 @@ class StudyArea(FileAsset):
             local_admin_units = self.filter_within_radius(
                 local_admin_units,
                 local_admin_unit_id,
-                self.inputs["radius"]
+                self.inputs["radius"].value
             )
             
         else:
