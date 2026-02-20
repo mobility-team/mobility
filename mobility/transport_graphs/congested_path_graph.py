@@ -45,15 +45,17 @@ class CongestedPathGraph(FileAsset):
          
         return self.cache_path
 
-    def create_and_get_asset(self, enable_congestion: bool = False) -> pathlib.Path:
+    def create_and_get_asset(self, enable_congestion: bool = False, flows_file_path: pathlib.Path | None = None) -> pathlib.Path:
         
         logging.info("Loading graph with traffic...")
+        if flows_file_path is None:
+            flows_file_path = self.flows_file_path
 
         self.load_graph(
             self.modified_graph.get(),
             self.transport_zones.cache_path,
             enable_congestion,
-            self.flows_file_path,
+            flows_file_path,
             self.congestion_flows_scaling_factor,
         )
 
@@ -84,11 +86,16 @@ class CongestedPathGraph(FileAsset):
         return None
     
 
-    def update(self, od_flows):
+    def update(self, od_flows, flow_asset=None):
         
         if self.handles_congestion is True:
             
-            od_flows.write_parquet(self.flows_file_path)
-            self.create_and_get_asset(enable_congestion=True)
+            if flow_asset is None:
+                od_flows.write_parquet(self.flows_file_path)
+                self.create_and_get_asset(enable_congestion=True)
+            else:
+                # flow_asset is expected to already be a parquet with the right schema.
+                flow_asset.get()
+                self.create_and_get_asset(enable_congestion=True, flows_file_path=flow_asset.cache_path)
 
 

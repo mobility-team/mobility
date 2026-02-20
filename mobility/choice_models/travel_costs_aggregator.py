@@ -174,7 +174,7 @@ class TravelCostsAggregator(InMemoryAsset):
         return prob
         
         
-    def update(self, od_flows_by_mode):
+    def update(self, od_flows_by_mode, run_key=None, iteration=None):
         
         logging.info("Updating travel costs given OD flows...")
         
@@ -218,6 +218,19 @@ class TravelCostsAggregator(InMemoryAsset):
                     
                     raise ValueError("No flow volume to vehicle volume model for mode : " + mode.name)
                 
-                mode.travel_costs.update(flows)
+                flow_asset = None
+                if run_key is not None and iteration is not None:
+                    # Persist vehicle flows as a first-class asset so downstream congestion
+                    # snapshots are isolated per run/iteration and safe for parallel runs.
+                    from mobility.transport_costs.od_flows_asset import VehicleODFlowsAsset
+                    flow_asset = VehicleODFlowsAsset(
+                        flows.to_pandas(),
+                        run_key=str(run_key),
+                        iteration=int(iteration),
+                        mode_name=str(mode.name)
+                    )
+                    flow_asset.get()
+
+                mode.travel_costs.update(flows, flow_asset=flow_asset)
             
         

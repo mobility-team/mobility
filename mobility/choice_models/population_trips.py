@@ -421,7 +421,8 @@ class PopulationTrips(FileAsset):
                 iteration,
                 parameters.n_iter_per_cost_update,
                 current_states_steps,
-                costs_aggregator
+                costs_aggregator,
+                run_key=self.inputs_hash
             )
             
             remaining_sinks = self.state_updater.get_new_sinks(
