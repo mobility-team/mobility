@@ -25,9 +25,16 @@ Mobility est une librairie Python open source servant à calculer l'empreinte ca
 L'outil est principalement développé par [AREP](https://arep.fr) et [Elioth](https://elioth.com/) avec le soutien de l'[ADEME](https://wiki.resilience-territoire.ademe.fr/wiki/Mobility), mais toute personne peut nous rejoindre !
 Pour l'instant, la solution est centrée sur les territoires et les données françaises.
 
+![output](https://github.com/user-attachments/assets/ea547470-38a7-4901-8cd7-4860816f121c)
+
 [Documentation sur mobility.readthedocs.io](https://mobility.readthedocs.io/en/latest/)
 
 Plus d'infos sur [le site web](https://mobility-team.github.io/) !
+
+# Coverage by December 2025
+<img width="3507" height="2480" alt="Mobility fin 2025" src="https://github.com/user-attachments/assets/ddf85290-e659-41d4-a977-5d95e9f0f873" />
+
+
 
 # Contributeur·ices
 | Entreprise/école  | Participant·es |
@@ -35,7 +42,7 @@ Plus d'infos sur [le site web](https://mobility-team.github.io/) !
 | AREP  | Capucine-Marin Dubroca-Voisin <br> Antoine Gauchot <br> Félix Pouchain |
 | Elioth  | Louise Gontier <br> Arthur Haulon  |
 | École Centrale de Lyon | Anas Lahmar <br> Ayoub Foundou <br> Charles Pequignot <br> Lyes Kaya  <br> Zakariaa El Mhassani |
-| École nationale des sciences géographiques (ENSG) | 2025 : <br> Anaïs Floch <br> Liam Longfier <br> Gabin Potel <br> 2024 : <br> Marta Ducamp <br> Joanna Gosse <br> Baptiste Delaunay <br> Tony Thuillard
+| École nationale des sciences géographiques (ENSG) | 2025 : <br> Anaïs Floch <br> Liam Longfier <br> Gabin Potel <br> 2024 : <br> Marta Ducamp <br> Joanna Gosse <br> Baptiste Delaunay <br> Tony Thuillard
 
 # Utilisations
 | Utilisateur  | Date | Projet |
