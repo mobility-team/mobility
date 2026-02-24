@@ -352,7 +352,8 @@ class PopulationTrips(FileAsset):
         stay_home_state, current_states = self.state_initializer.get_stay_home_state(
             demand_groups,
             home_night_dur,
-            motives
+            motives,
+            parameters.min_activity_time_constant,
         )
         
         sinks = self.state_initializer.get_sinks(
