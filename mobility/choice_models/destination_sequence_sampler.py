@@ -37,7 +37,8 @@ class DestinationSequenceSampler:
         Args:
             motives: Iterable of Motive objects.
             transport_zones: Transport zone container used by motives.
-            remaining_sinks (pl.DataFrame): Current availability per (motive, to).
+            remaining_sinks (pl.DataFrame): Current sink state per (motive, to),
+                including capacity and saturation utility penalty.
             iteration (int): Iteration index (>=1).
             chains (pl.DataFrame): Chain steps with
                 ["demand_group_id","motive_seq_id","motive","is_anchor","seq_step_index"].
@@ -120,13 +121,13 @@ class DestinationSequenceSampler:
         Args:
             motives: Iterable of Motive objects exposing `get_utilities(transport_zones)`.
             transport_zones: Zone container passed to motives.
-            sinks (pl.DataFrame): ["to","motive","sink_available", …].
+            sinks (pl.DataFrame): ["to","motive","sink_capacity", …].
             costs (pl.DataFrame): ["from","to","cost"].
             cost_uncertainty_sd (float): Std-dev for the discrete Gaussian over deltas.
         
         Returns:
             tuple[pl.LazyFrame, pl.LazyFrame]:
-                - costs_bin: ["from","motive","cost_bin","sink_available"].
+                - costs_bin: ["from","motive","cost_bin","effective_sink"].
                 - cost_bin_to_dest: ["motive","from","cost_bin","to","p_to"].
         """
         
@@ -163,20 +164,18 @@ class DestinationSequenceSampler:
 
         costs = (
             costs.lazy()
-            .join(
-                ( 
-                    sinks
-                    .filter(pl.col("sink_available") > 0.0)
-                    .lazy()
-                ),
-                on="to"
-            )
+            .join(sinks.lazy(), on="to")
             .join(utilities.lazy(), on=["motive", "to"], how="left")
             .with_columns(
                 utility=pl.col("utility").fill_null(0.0),
-                sink_available=pl.col("sink_available")*pl.col("prob")
+                effective_sink=(
+                    pl.col("sink_capacity") 
+                    * pl.col("k_saturation_utility").fill_null(1.0) 
+                    * pl.col("prob"))
+                .clip(0.0)
             )
             .drop("prob")
+            .filter(pl.col("effective_sink") > 0.0)
             .with_columns(
                 cost_bin=(pl.col("cost") - pl.col("utility")).floor()
             )
@@ -184,14 +183,14 @@ class DestinationSequenceSampler:
 
         cost_bin_to_dest = (
             costs
-            .with_columns(p_to=pl.col("sink_available")/pl.col("sink_available").sum().over(["from", "motive", "cost_bin"]))
+            .with_columns(p_to=pl.col("effective_sink")/pl.col("effective_sink").sum().over(["from", "motive", "cost_bin"]))
             .select(["motive", "from", "cost_bin", "to", "p_to"])
         )
 
         costs_bin = (
             costs
             .group_by(["from", "motive", "cost_bin"])
-            .agg(pl.col("sink_available").sum())
+            .agg(pl.col("effective_sink").sum())
             .sort(["from", "motive", "cost_bin"])
         )
         
@@ -229,7 +228,7 @@ class DestinationSequenceSampler:
             # Apply the radiation model for each motive and origin
             costs_bin
             .with_columns(
-                s_ij=pl.col("sink_available").cum_sum().over(["from", "motive"]),
+                s_ij=pl.col("effective_sink").cum_sum().over(["from", "motive"]),
                 selection_lambda=pl.col("motive").replace_strict(motives_lambda)
             )
             .with_columns(

@@ -336,8 +336,7 @@ class StateInitializer:
             transport_zones: Zone container passed to motives.
         
         Returns:
-            pl.DataFrame: ["to","motive","sink_capacity","sink_available",
-                           "k_saturation_utility"] with initial availability=capacity.
+            pl.DataFrame: ["to","motive","sink_capacity","k_saturation_utility"].
         """
 
         demand = ( 
@@ -380,10 +379,7 @@ class StateInitializer:
                 ),
                 k_saturation_utility=pl.lit(1.0, dtype=pl.Float64())
             )
-            .with_columns(
-                sink_available=pl.col("sink_capacity")
-            )
-            .select(["to", "motive", "sink_capacity", "sink_available", "k_saturation_utility"])
+            .select(["to", "motive", "sink_capacity", "k_saturation_utility"])
         )
 
         return sinks
