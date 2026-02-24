@@ -39,7 +39,8 @@ class StateUpdater:
             demand_groups (pl.DataFrame): Demand groups (e.g., csp, counts).
             chains (pl.DataFrame): Chain templates with durations per step.
             costs_aggregator (TravelCostsAggregator): Provides mode/OD costs.
-            remaining_sinks (pl.DataFrame): Available opportunities per (motive,to).
+            remaining_sinks (pl.DataFrame): Sink state per (motive,to) with
+                capacity and saturation utility penalty.
             motive_dur (pl.DataFrame): Mean activity durations by (csp,motive).
             iteration (int): Current iteration (1-based).
             tmp_folders (dict[str, pathlib.Path]): Paths to “spatialized-chains” and “modes”.
@@ -109,7 +110,7 @@ class StateUpdater:
             demand_groups (pl.DataFrame): Demand groups with csp and sizes.
             chains (pl.DataFrame): Chain steps with durations per person.
             costs_aggregator (TravelCostsAggregator): Per-mode OD costs.
-            sinks (pl.DataFrame): Remaining sinks per (motive,to).
+            sinks (pl.DataFrame): Sink state per (motive,to).
             motive_dur (pl.DataFrame): Mean durations per (csp,motive).
             iteration (int): Current iteration to pick latest artifacts.
             activity_utility_coeff (float): Coefficient for activity utility.
@@ -524,7 +525,7 @@ class StateUpdater:
     
         Returns:
             pl.DataFrame: Updated sinks with
-                ["motive","to","sink_capacity","sink_available","k_saturation_utility"].
+                ["motive","to","sink_capacity","k_saturation_utility"].
         """
         
         logging.info("Computing remaining opportunities at destinations...")
@@ -566,13 +567,12 @@ class StateUpdater:
                 sink_occupation=pl.col("sink_occupation").fill_null(0.0)
             )
             .with_columns(
-                k=pl.col("sink_occupation")/pl.col("sink_capacity"),
-                sink_available=(pl.col("sink_capacity") - pl.col("sink_occupation")).clip(0.0)
+                k=pl.col("sink_occupation")/pl.col("sink_capacity")
             )
             .with_columns(
                 k_saturation_utility=(1.0 - pl.col("k").pow(pl.col("beta"))/(pl.col("ref_level").pow(pl.col("beta")))).clip(0.0)
             )
-            .select(["motive", "to", "sink_capacity", "sink_available", "k_saturation_utility"])
+            .select(["motive", "to", "sink_capacity", "k_saturation_utility"])
             
         )
         
