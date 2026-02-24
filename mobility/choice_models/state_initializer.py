@@ -1,3 +1,4 @@
+import math
 import polars as pl 
 
 class StateInitializer:
@@ -261,7 +262,13 @@ class StateInitializer:
         return mean_motive_durations, mean_home_night_durations
     
     
-    def get_stay_home_state(self, demand_groups, home_night_dur, motives):
+    def get_stay_home_state(
+            self,
+            demand_groups,
+            home_night_dur,
+            motives,
+            min_activity_time_constant: float,
+        ):
         
         """Create the baseline 'stay home all day' state.
 
@@ -271,7 +278,8 @@ class StateInitializer:
         Args:
             demand_groups (pl.DataFrame): ["demand_group_id","csp","n_persons"].
             home_night_dur (pl.DataFrame): ["csp","mean_home_night_per_pers"].
-            parameters: Model parameters (expects `stay_home_utility_coeff`).
+            min_activity_time_constant (float): Log-utility floor parameter
+                used consistently with state utility computation.
         
         Returns:
             tuple[pl.DataFrame, pl.DataFrame]:
@@ -297,7 +305,7 @@ class StateInitializer:
                 utility=( 
                     home_motive.value_of_time_stay_home 
                     * pl.col("mean_home_night_per_pers")
-                    * (pl.col("mean_home_night_per_pers")/0.1/pl.col("mean_home_night_per_pers")).log()
+                    * (pl.col("mean_home_night_per_pers")/pl.col("mean_home_night_per_pers")/math.exp(-min_activity_time_constant)).log().clip(0.0)
                 )
             )
             
