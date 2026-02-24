@@ -409,12 +409,12 @@ class DestinationSequenceSampler:
         
         logging.info("Spatializing other motives...")
         
-        chains_step = (
+        chains_step = ( 
             chains
             .filter(pl.col("seq_step_index") == 1)
-            .with_columns(pl.col("home_zone_id").cast(pl.Int32).alias("from"))
+            .with_columns(pl.col("home_zone_id").alias("from"))
         )
-                
+        
         seq_step_index = 1
         spatialized_chains = []
         
@@ -532,7 +532,7 @@ class DestinationSequenceSampler:
             chains_step
             .filter(pl.col("is_anchor"))
             .with_columns(
-                to=pl.col("anchor_to").cast(pl.Int32)
+                to=pl.col("anchor_to")
             )
             .select(["demand_group_id", "home_zone_id", "motive_seq_id", "motive", "anchor_to", "from", "to"])
         )
