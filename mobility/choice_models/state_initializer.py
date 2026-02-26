@@ -59,6 +59,9 @@ class StateInitializer:
                 "transport_zone_id": "home_zone_id",
                 "weight": "n_persons"
             })
+            .with_columns(
+                home_zone_id=pl.col("home_zone_id").cast(pl.Int32)
+            )
             .join(lau_to_city_cat.lazy(), on=["local_admin_unit_id"])
             .group_by(["country", "home_zone_id", "city_category", "csp", "n_cars"])
             .agg(pl.col("n_persons").sum())
