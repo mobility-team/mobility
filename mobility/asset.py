@@ -118,18 +118,16 @@ class Asset(ABC):
             A normalized pydantic parameters instance.
 
         Raises:
-            ValueError: If both ``parameters`` and explicit arguments are
-                provided, or if required explicit arguments are missing.
+            ValueError: If required explicit arguments are missing when
+                ``parameters`` is not provided.
         """
         explicit_provided = {k: v for k, v in explicit_args.items() if v is not None}
 
-        if parameters is not None and explicit_provided:
-            raise ValueError(
-                f"{owner_name}: provide either `parameters` or explicit arguments, not both."
-            )
-
         if parameters is not None:
-            return parameters
+            if not explicit_provided:
+                return parameters
+            merged = {**parameters.model_dump(mode="python"), **explicit_provided}
+            return parameters_cls.model_validate(merged)
 
         required_fields = required_fields or []
         missing = [field for field in required_fields if explicit_args.get(field) is None]

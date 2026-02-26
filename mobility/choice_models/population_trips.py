@@ -3,7 +3,6 @@ import pathlib
 import logging
 import shutil
 import random
-import warnings
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -59,23 +58,24 @@ class PopulationTrips(FileAsset):
             motives: List[Motive] = None,
             surveys: List[MobilitySurvey] = None,
             parameters: PopulationTripsParameters = None,
-            
-            # Old arguments kept for compatibility, will be removed in a future version
             n_iterations: int = None,
             alpha: float = None,
             k_mode_sequences: int = None,
             dest_prob_cutoff: float = None,
             n_iter_per_cost_update: int = None,
             cost_uncertainty_sd: float = None,
-            mode_sequence_search_parallel: bool = None
+            seed: int = None,
+            mode_sequence_search_parallel: bool = None,
+            min_activity_time_constant: float = None,
+            simulate_weekend: bool = None
             
         ):
         """
         Initialize a PopulationTrips model and its caching backend.
 
         This constructor validates core inputs (modes, motives, surveys),
-        resolves model parameters (preferably from a PopulationTripsParameters
-        instance, otherwise from legacy keyword arguments), and sets up internal
+        resolves model parameters (either from a PopulationTripsParameters
+        instance or from explicit keyword arguments), and sets up internal
         components used during simulation (state initialization, destination
         sampling, mode sequence search, and state updates). A TravelCostsAggregator
         is built from the provided modes. Cache file paths are derived from the
@@ -94,24 +94,15 @@ class PopulationTrips(FileAsset):
             Mobility surveys providing empirical activity chains. Must contain at
             least one MobilitySurvey.
         parameters : PopulationTripsParameters, optional
-            Preferred way to configure the model. If provided, legacy keyword
-            arguments must be None.
-
-        Legacy Parameters (deprecated)
-        ------------------------------
-        n_iterations, alpha, k_mode_sequences, dest_prob_cutoff,
-        n_iter_per_cost_update, cost_uncertainty_sd, mode_sequence_search_parallel :
-            Deprecated shortcuts for PopulationTripsParameters fields. If any are
-            provided, a PopulationTripsParameters is built from them and a
-            FutureWarning is emitted.
+            Parameter container. Must not be combined with explicit parameter
+            keyword arguments.
 
         Raises
         ------
         ValueError
             If modes, motives, or surveys are empty, or if required motives are missing.
         TypeError
-            If any element of modes, motives, or surveys has an incorrect type, or if
-            both `parameters` and legacy arguments are provided.
+            If any element of modes, motives, or surveys has an incorrect type.
 
         Notes
         -----
@@ -123,15 +114,22 @@ class PopulationTrips(FileAsset):
         self.validate_motives(motives)
         self.validate_surveys(surveys)
 
-        parameters = self.resolve_parameters(
-            parameters,
-            n_iterations,
-            alpha,
-            k_mode_sequences,
-            dest_prob_cutoff,
-            n_iter_per_cost_update,
-            cost_uncertainty_sd,
-            mode_sequence_search_parallel
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=PopulationTripsParameters,
+            explicit_args={
+                "n_iterations": n_iterations,
+                "alpha": alpha,
+                "k_mode_sequences": k_mode_sequences,
+                "dest_prob_cutoff": dest_prob_cutoff,
+                "n_iter_per_cost_update": n_iter_per_cost_update,
+                "cost_uncertainty_sd": cost_uncertainty_sd,
+                "seed": seed,
+                "mode_sequence_search_parallel": mode_sequence_search_parallel,
+                "min_activity_time_constant": min_activity_time_constant,
+                "simulate_weekend": simulate_weekend,
+            },
+            owner_name="PopulationTrips",
         )
             
         if parameters.seed is None:
@@ -179,78 +177,6 @@ class PopulationTrips(FileAsset):
         super().__init__(inputs, cache_path)
         
         
-    def resolve_parameters(
-            self,
-            parameters: PopulationTripsParameters = None,
-            n_iterations: int = None,
-            alpha: float = None,
-            k_mode_sequences: int = None,
-            dest_prob_cutoff: float = None,
-            n_iter_per_cost_update: int = None,
-            cost_uncertainty_sd: float = None,
-            mode_sequence_search_parallel: bool = None
-        ):
-        """
-        Resolve a PopulationTripsParameters instance from user input.
-        
-        Preferred usage is to pass a `PopulationTripsParameters` object directly
-        via the `parameters` argument.
-        
-        Legacy keyword arguments (e.g. `n_iterations`, `alpha`, …) are still
-        accepted for backward compatibility, but will be removed in a future
-        version. If both `parameters` and legacy arguments are provided, an
-        error is raised.
-        
-        Parameters
-        ----------
-        parameters : PopulationTripsParameters, optional
-            A pre-built parameters object (preferred).
-        n_iterations, alpha, k_mode_sequences, ... : various, optional
-            Legacy keyword arguments. Each corresponds to a field of
-            PopulationTripsParameters.
-        
-        Returns
-        -------
-        PopulationTripsParameters
-            A validated parameters object, either the one provided directly
-            or built from the legacy arguments.
-        """
-        
-        # Handle old arguments
-        old_args = {
-            "n_iterations": n_iterations,
-            "alpha": alpha,
-            "k_mode_sequences": k_mode_sequences,
-            "dest_prob_cutoff": dest_prob_cutoff,
-            "n_iter_per_cost_update": n_iter_per_cost_update,
-            "cost_uncertainty_sd": cost_uncertainty_sd,
-            "mode_sequence_search_parallel": mode_sequence_search_parallel
-        }
-        
-        old_args = {k: v for k, v in old_args.items() if v is not None}
-            
-        if parameters is not None and old_args:
-            raise TypeError(
-                "❌ Use the new `parameters` argument (preferred). "
-                "Old arguments are deprecated and cannot be combined with `parameters`."
-            )
-            
-        if parameters is None:
-            
-            if old_args:
-                warnings.warn(
-                    "⚠️ Passing old arguments (like n_iterations, alpha, …) is "
-                    "deprecated and will be removed in a future version. "
-                    "Please pass a PopulationTripsParameters instance instead.",
-                    FutureWarning,
-                    stacklevel=2
-                )
-                        
-            parameters = PopulationTripsParameters(**old_args)
-            
-        return parameters
-
-
     def validate_motives(self, motives: List[Motive]) -> None:
 
         if not motives:
