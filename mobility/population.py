@@ -9,6 +9,7 @@ import geopandas as gpd
 from rich.progress import Progress
 
 from mobility.file_asset import FileAsset
+from mobility.population_parameters import PopulationParameters
 from mobility.parsers import CityLegalPopulation
 from mobility.parsers import CensusLocalizedIndividuals
 from mobility.parsers.admin_boundaries import get_french_regions_boundaries, get_french_cities_boundaries
@@ -42,13 +43,24 @@ class Population(FileAsset):
     def __init__(
             self,
             transport_zones,
-            sample_size: int,
-            switzerland_census: CensusLocalizedIndividuals = None
+            sample_size: int | None = None,
+            switzerland_census: CensusLocalizedIndividuals = None,
+            parameters: PopulationParameters | None = None
         ):
+
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=PopulationParameters,
+            explicit_args={
+                "sample_size": sample_size,
+            },
+            required_fields=["sample_size"],
+            owner_name="Population",
+        )
 
         inputs = {
             "transport_zones": transport_zones,
-            "sample_size": sample_size,
+            "parameters": parameters,
             "switzerland_census": switzerland_census
         }
 
@@ -107,7 +119,7 @@ class Population(FileAsset):
         
 
         # Sample the population groups to get a representative sample of individuals
-        sample_sizes = self.get_sample_sizes(lau_to_tz_coeff, self.inputs["sample_size"])
+        sample_sizes = self.get_sample_sizes(lau_to_tz_coeff, self.inputs["parameters"].sample_size)
         sample_sizes = sample_sizes.set_index("transport_zone_id")["n_persons"].to_dict()
         
         individuals = (
