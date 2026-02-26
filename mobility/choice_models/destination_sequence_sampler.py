@@ -503,7 +503,7 @@ class DestinationSequenceSampler:
                 noise=( 
                     pl.struct(["demand_group_id", "motive_seq_id", "to"])
                     .hash(seed=seed)
-                    # .cast(pl.Float64) 
+                    .cast(pl.Float64) 
                     .truediv(pl.lit(18446744073709551616.0))
                     .log()
                     .neg()
