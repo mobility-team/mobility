@@ -222,3 +222,5 @@ mobility/data/insee/territories/UU2020_au_01-01-2023.xlsx
 certs/
 nngeo-master
 front/gtfsrouter-main
+
+.vscode/

@@ -141,8 +141,7 @@ class DestinationSequenceSampler:
             
             pl.concat(utilities)
             .with_columns(
-                motive=pl.col("motive").cast(pl.Enum(motive_values)),
-                to=pl.col("to").cast(pl.Int32)
+                motive=pl.col("motive").cast(pl.Enum(motive_values))
             )
 
         )
