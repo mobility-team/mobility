@@ -1,7 +1,7 @@
 import json
 import logging
-import polars as pl
 import numpy as np
+import polars as pl
 import plotly.express as px
 
 from typing import Literal
@@ -9,6 +9,7 @@ from mobility.choice_models.evaluation.travel_costs_evaluation import TravelCost
 from mobility.choice_models.evaluation.car_traffic_evaluation import CarTrafficEvaluation
 from mobility.choice_models.evaluation.routing_evaluation import RoutingEvaluation
 from mobility.choice_models.evaluation.public_transport_network_evaluation import PublicTransportNetworkEvaluation
+from mobility.choice_models.transition_metrics import state_waterfall as _state_waterfall
 
 class Results:
     
@@ -24,6 +25,8 @@ class Results:
             weekend_costs,
             weekday_chains,
             weekend_chains,
+            weekday_transitions,
+            weekend_transitions,
             surveys,
             modes
             ):
@@ -42,6 +45,9 @@ class Results:
         
         self.weekday_chains = weekday_chains
         self.weekend_chains = weekend_chains
+
+        self.weekday_transitions = weekday_transitions
+        self.weekend_transitions = weekend_transitions
         
         self.surveys = surveys
         self.modes = modes
@@ -50,6 +56,7 @@ class Results:
             "global_metrics": self.global_metrics,
             "metrics_by_variable": self.metrics_by_variable,
             "sink_occupation": self.sink_occupation,
+            "state_waterfall": self.state_waterfall,
             "trip_count_by_demand_group": self.trip_count_by_demand_group,
             "distance_per_person": self.distance_per_person,
             "ghg_per_person": self.ghg_per_person,
@@ -492,8 +499,49 @@ class Results:
             self.plot_map(tz, "sink_occupation", plot_motive)
         
         return sink_occupation
-    
-    
+
+    def state_waterfall(
+            self,
+            quantity: Literal["distance", "utility", "travel_time", "trip_count"],
+            weekday: bool = True,
+            plot: bool = True,
+            top_n: int = 5,
+            demand_group_ids: list[int] | None = None,
+        ) -> tuple[pl.DataFrame, pl.DataFrame]:
+        """Run one state-pair waterfall metric.
+
+        This is the single public entrypoint for state-waterfall diagnostics.
+        Use `quantity` to switch the decomposition target.
+
+        Args:
+            quantity (Literal["distance", "utility", "travel_time", "trip_count"]):
+                Quantity to decompose in the waterfall.
+            weekday (bool): Use weekday transitions when True, weekend otherwise.
+            plot (bool): Whether to render the interactive plot.
+            top_n (int): Number of largest absolute state-pair deltas per iteration.
+            demand_group_ids (list[int] | None): Optional demand-group filter.
+
+        Returns:
+            tuple[pl.DataFrame, pl.DataFrame]: Iteration totals and ranked state-pair deltas.
+
+        Example:
+            results.state_waterfall(
+                quantity="distance",
+                weekday=True,
+                top_n=5,
+            )
+        """
+        transitions = self.weekday_transitions if weekday else self.weekend_transitions
+        return _state_waterfall(
+            transitions=transitions,
+            quantity=quantity,
+            demand_groups=self.demand_groups,
+            transport_zones=self.transport_zones,
+            plot=plot,
+            top_n=top_n,
+            demand_group_ids=demand_group_ids,
+        )
+
     def trip_count_by_demand_group(
             self,
             weekday: bool = True,
@@ -891,3 +939,4 @@ class Results:
         
         
         
+
