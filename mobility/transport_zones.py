@@ -11,8 +11,10 @@ from shapely.geometry import Point
 
 from mobility.file_asset import FileAsset
 from mobility.study_area import StudyArea
+from mobility.study_area_parameters import StudyAreaParameters
 from mobility.parsers.osm import OSMData
 from mobility.r_utils.r_script import RScript
+from mobility.transport_zones_parameters import TransportZonesParameters
 
 class TransportZones(FileAsset):
     """
@@ -53,24 +55,36 @@ class TransportZones(FileAsset):
 
     def __init__(
             self,
-            local_admin_unit_id: Union[str, List[str]],
-            level_of_detail: Literal[0, 1] = 0,
-            radius: float = 40.0,
-            inner_radius: float = None,
-            inner_local_admin_unit_id: List[str] = None,
-            cutout_geometries: gpd.GeoDataFrame = None
+            local_admin_unit_id: Union[str, List[str]] | None = None,
+            level_of_detail: Literal[0, 1] | None = None,
+            radius: float | None = None,
+            inner_radius: float | None = None,
+            inner_local_admin_unit_id: List[str] | None = None,
+            cutout_geometries: gpd.GeoDataFrame = None,
+            parameters: TransportZonesParameters | None = None,
         ):
-        
-        # If the user does not choose an inner radius or a list of inner 
-        # transport zones, we suppose that there is no inner / outer zones
-        # (= all zones are inner zones)
-        if inner_radius is None:
-            inner_radius = radius
-        
-        if isinstance(local_admin_unit_id, list) and inner_local_admin_unit_id is None:
-            inner_local_admin_unit_id = local_admin_unit_id
-        
-        study_area = StudyArea(local_admin_unit_id, radius, cutout_geometries)
+
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=TransportZonesParameters,
+            explicit_args={
+                "local_admin_unit_id": local_admin_unit_id,
+                "level_of_detail": level_of_detail,
+                "radius": radius,
+                "inner_radius": inner_radius,
+                "inner_local_admin_unit_id": inner_local_admin_unit_id,
+            },
+            required_fields=["local_admin_unit_id"],
+            owner_name="TransportZones",
+        )
+
+        study_area = StudyArea(
+            parameters=StudyAreaParameters(
+                local_admin_unit_id=parameters.local_admin_unit_id,
+                radius=parameters.radius,
+            ),
+            cutout_geometries=cutout_geometries
+        )
         
         osm_buildings = OSMData(
             study_area,
@@ -83,10 +97,8 @@ class TransportZones(FileAsset):
         inputs = {
             "version": "2",
             "study_area": study_area,
-            "level_of_detail": level_of_detail,
             "osm_buildings": osm_buildings,
-            "inner_radius": inner_radius,
-            "inner_local_admin_unit_id": inner_local_admin_unit_id,
+            "parameters": parameters,
             "cutout_geometries": cutout_geometries
         }
 
@@ -138,7 +150,7 @@ class TransportZones(FileAsset):
             args=[
                 str(study_area_fp),
                 str(osm_buildings_fp),
-                str(self.level_of_detail),
+                str(self.inputs["parameters"].level_of_detail),
                 str(self.cache_path)
             ]
         )
@@ -151,9 +163,9 @@ class TransportZones(FileAsset):
         transport_zones = self.remove_isolated_zones(transport_zones)
         
         # Set inner / outer flag
-        local_admin_unit_id = self.study_area.inputs["local_admin_unit_id"]
-        inner_radius = self.inputs["inner_radius"]
-        inner_local_admin_unit_id = self.inputs["inner_local_admin_unit_id"]
+        local_admin_unit_id = self.inputs["parameters"].local_admin_unit_id
+        inner_radius = self.inputs["parameters"].inner_radius
+        inner_local_admin_unit_id = self.inputs["parameters"].inner_local_admin_unit_id
         
         transport_zones = self.flag_inner_zones(
             transport_zones,

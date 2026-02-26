@@ -8,7 +8,7 @@ from typing import Union, List
 
 from mobility.file_asset import FileAsset
 from mobility.parsers.local_admin_units import LocalAdminUnits
-
+from mobility.study_area_parameters import StudyAreaParameters
 
 class StudyArea(FileAsset):
     """
@@ -21,7 +21,7 @@ class StudyArea(FileAsset):
 
     Attributes:
         local_admin_unit_id (str or list of str): The geographical code of the centre commune, or of all the local admin units to include.
-        radius (int): Local admin units within this radius (in km) of the center commune will be included. Only used when local_admin_unit_id contains a single geographical code. Default is 40.
+        radius (float): Local admin units within this radius (in km) of the center commune will be included. Only used when local_admin_unit_id contains a single geographical code. Default is 40.
 
     Methods:
         get_cached_asset: Retrieve a cached transport zones GeoDataFrame.
@@ -33,16 +33,27 @@ class StudyArea(FileAsset):
 
     def __init__(
             self,
-            local_admin_unit_id: Union[str, List[str]],
-            radius: int = 40,
-            cutout_geometries: gpd.GeoDataFrame = None
+            local_admin_unit_id: Union[str, List[str]] | None = None,
+            radius: float | None = None,
+            cutout_geometries: gpd.GeoDataFrame = None,
+            parameters: StudyAreaParameters | None = None,
         ):
+
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=StudyAreaParameters,
+            explicit_args={
+                "local_admin_unit_id": local_admin_unit_id,
+                "radius": radius,
+            },
+            required_fields=["local_admin_unit_id"],
+            owner_name="StudyArea",
+        )
 
         inputs = {
             "version": "1",
             "local_admin_units": LocalAdminUnits(),
-            "local_admin_unit_id": local_admin_unit_id,
-            "radius": radius,
+            "parameters": parameters,
             "cutout_geometries": cutout_geometries
         }
 
@@ -83,7 +94,7 @@ class StudyArea(FileAsset):
 
         logging.info("Creating study area...")
 
-        local_admin_unit_id = self.inputs["local_admin_unit_id"]
+        local_admin_unit_id = self.inputs["parameters"].local_admin_unit_id
         local_admin_units = self.inputs["local_admin_units"].get()
 
         if isinstance(local_admin_unit_id, str):
@@ -91,7 +102,7 @@ class StudyArea(FileAsset):
             local_admin_units = self.filter_within_radius(
                 local_admin_units,
                 local_admin_unit_id,
-                self.inputs["radius"]
+                self.inputs["parameters"].radius
             )
             
         else:
