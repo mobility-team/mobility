@@ -182,7 +182,7 @@ class Asset(ABC):
             model_name = model.__class__.__name__
             asset_type = asset.__class__.__name__
 
-            for field_name, field_info in model.model_fields.items():
+            for field_name, field_info in model.__class__.model_fields.items():
                 field_schema = properties.get(field_name, {})
 
                 if field_info.is_required():
