@@ -250,14 +250,13 @@ def dependency_fakes(monkeypatch, tmp_path):
 
     # --- Fake StudyArea ---
     class _FakeStudyArea:
-        def __init__(self, local_admin_unit_id, radius, cutout_geometries=None):
+        def __init__(self, local_admin_unit_id, radius, cutout_geometries=None, parameters=None):
             self.local_admin_unit_id = local_admin_unit_id
             self.radius = radius
             self.cutout_geometries = cutout_geometries
-            # expose inputs so TZ code can read self.study_area.inputs["local_admin_unit_id"]
+            self.parameters = parameters
             self.inputs = {
-                "local_admin_unit_id": local_admin_unit_id,
-                "radius": radius,
+                "parameters": parameters,
                 "cutout_geometries": cutout_geometries,
             }
             # TransportZones.create_and_get_asset expects a dict-like cache_path with keys like "polygons"
@@ -268,8 +267,15 @@ def dependency_fakes(monkeypatch, tmp_path):
 
     state.study_area_inits = []
 
-    def _StudyArea_spy(local_admin_unit_id, radius, cutout_geometries=None, *args, **kwargs):
-        instance = _FakeStudyArea(local_admin_unit_id, radius, cutout_geometries)
+    def _StudyArea_spy(local_admin_unit_id=None, radius=None, cutout_geometries=None, *args, **kwargs):
+        parameters = kwargs.get("parameters")
+        if parameters is not None:
+            local_admin_unit_id = parameters.local_admin_unit_id
+            radius = parameters.radius
+            if cutout_geometries is None:
+                cutout_geometries = kwargs.get("cutout_geometries")
+
+        instance = _FakeStudyArea(local_admin_unit_id, radius, cutout_geometries, parameters=parameters)
         # Record only the keys asserted by tests
         state.study_area_inits.append(
             {

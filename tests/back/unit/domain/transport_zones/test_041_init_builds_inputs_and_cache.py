@@ -35,7 +35,7 @@ def test_init_builds_inputs_and_cache_path(project_dir, fake_inputs_hash, depend
     assert transport_zones.hash_path == expected_cache_path  # consistency with base asset patch
 
     # Inputs surfaced as attributes (via patched Asset.__init__)
-    assert transport_zones.level_of_detail == level_of_detail
+    assert transport_zones.inputs["parameters"].level_of_detail == level_of_detail
     assert getattr(transport_zones, "study_area") is not None
     assert getattr(transport_zones, "osm_buildings") is not None
 
