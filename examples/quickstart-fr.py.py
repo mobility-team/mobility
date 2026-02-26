@@ -38,3 +38,6 @@ global_metrics = pop_trips.evaluate("global_metrics")
 # You can also plot the flows, with labels for the cities that are bigger than their neighbours
 labels = pop_trips.get_prominent_cities()
 pop_trips.plot_od_flows(labels=labels)
+
+# You can get a report of the parameters used in the model (for now not all of them, but eventually all of them)
+report = pop_trips.parameters_dataframe()
