@@ -4,6 +4,9 @@ import polars as pl
 import pandas as pd
 
 from mobility.file_asset import FileAsset
+from mobility.parsers.mobility_survey.mobility_survey_parameters import (
+    MobilitySurveyParameters,
+)
 
 class MobilitySurvey(FileAsset):
     """
@@ -17,9 +20,38 @@ class MobilitySurvey(FileAsset):
         get_cached_asset: Returns the cached asset data as a dictionary of pandas DataFrames.
     """
     
-    def __init__(self, inputs, seq_prob_cutoff: float = 0.5):
-        
-        folder_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "mobility_surveys" / inputs["survey_name"]
+    def __init__(
+        self,
+        survey_name: str | None = None,
+        country: str | None = None,
+        seq_prob_cutoff: float | None = None,
+        parameters: MobilitySurveyParameters | None = None,
+    ):
+        """Initialize mobility survey asset inputs and cache paths.
+
+        Args:
+            survey_name: Survey dataset identifier.
+            country: Country code associated with the survey.
+            seq_prob_cutoff: Sequence probability cutoff used in chain filtering.
+            parameters: Optional pre-built pydantic parameters model.
+        """
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=MobilitySurveyParameters,
+            explicit_args={
+                "survey_name": survey_name,
+                "country": country,
+                "seq_prob_cutoff": seq_prob_cutoff,
+            },
+            required_fields=["survey_name", "country"],
+            owner_name="MobilitySurvey",
+        )
+
+        folder_path = (
+            pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"])
+            / "mobility_surveys"
+            / parameters.survey_name
+        )
         
         files = {
             "short_trips": "short_dist_trips.parquet",
@@ -33,9 +65,10 @@ class MobilitySurvey(FileAsset):
         }
         
         cache_path = {k: folder_path / file for k, file in files.items()}
-        
-        self.seq_prob_cutoff = seq_prob_cutoff
-
+        inputs = {
+            "version": "1",
+            "parameters": parameters,
+        }
         super().__init__(inputs, cache_path)
         
     def get_cached_asset(self) -> dict[str, pd.DataFrame]:
@@ -316,7 +349,7 @@ class MobilitySurvey(FileAsset):
         # Compute the probability of each subsequence, keeping only the first 
         # x % of the contribution to the average distance for each population 
         # group
-        cutoff = self.seq_prob_cutoff
+        cutoff = self.inputs["parameters"].seq_prob_cutoff
         
         p_seq = (
             
