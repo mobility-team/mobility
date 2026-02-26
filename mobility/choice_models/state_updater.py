@@ -78,7 +78,7 @@ class StateUpdater:
         possible_states_utility = self.get_possible_states_utility(
             possible_states_steps,
             home_night_dur,
-            home_motive.value_of_time_stay_home,
+            home_motive.inputs["parameters"].value_of_time_stay_home,
             stay_home_state,
             parameters.min_activity_time_constant
         )
@@ -212,7 +212,7 @@ class StateUpdater:
         # Get the activities values of time
         value_of_time = ( 
             pl.from_dicts(
-                [{"motive": m.name, "value_of_time": m.value_of_time} for m in motives]
+                [{"motive": m.name, "value_of_time": m.inputs["parameters"].value_of_time} for m in motives]
             )
             .with_columns(
                 motive=pl.col("motive").cast(pl.Enum(motive_dur["motive"].dtype.categories))
@@ -814,8 +814,8 @@ class StateUpdater:
                 [
                     {
                         "motive": m.name,
-                        "beta": m.saturation_fun_beta,
-                        "ref_level": m.saturation_fun_ref_level
+                        "beta": m.inputs["parameters"].saturation_fun_beta,
+                        "ref_level": m.inputs["parameters"].saturation_fun_ref_level
                     }
                     for m in motives
                 ]

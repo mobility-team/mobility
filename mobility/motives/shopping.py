@@ -4,28 +4,39 @@ import polars as pl
 from typing import List
 
 from mobility.motives.motive import Motive
+from mobility.motives.shopping_motive_parameters import ShoppingMotiveParameters
 from mobility.parsers.shops_turnover_distribution import ShopsTurnoverDistribution
 
 class ShoppingMotive(Motive):
 
     def __init__(
         self,
-        value_of_time: float = 10.0,
-        saturation_fun_ref_level: float = 1.5,
-        saturation_fun_beta: float = 4.0,
-        survey_ids: List[str] = ["2.20", "2.21"],
-        radiation_lambda: float = 0.99986,
-        opportunities: pd.DataFrame = None
+        value_of_time: float = None,
+        saturation_fun_ref_level: float = None,
+        saturation_fun_beta: float = None,
+        survey_ids: List[str] = None,
+        radiation_lambda: float = None,
+        opportunities: pd.DataFrame = None,
+        parameters: ShoppingMotiveParameters | None = None
     ):
+
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=ShoppingMotiveParameters,
+            explicit_args={
+                "value_of_time": value_of_time,
+                "saturation_fun_ref_level": saturation_fun_ref_level,
+                "saturation_fun_beta": saturation_fun_beta,
+                "survey_ids": survey_ids,
+                "radiation_lambda": radiation_lambda,
+            },
+            owner_name="ShoppingMotive",
+        )
 
         super().__init__(
             name="shopping",
-            value_of_time=value_of_time,
-            survey_ids=survey_ids,
-            radiation_lambda=radiation_lambda,
             opportunities=opportunities,
-            saturation_fun_ref_level=saturation_fun_ref_level,
-            saturation_fun_beta=saturation_fun_beta
+            parameters=parameters
         )
 
     

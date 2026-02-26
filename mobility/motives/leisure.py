@@ -7,27 +7,42 @@ import os
 
 from mobility.motives.motive import Motive
 from mobility.parsers.leisure_facilities_distribution import LeisureFacilitiesDistribution
+from mobility.motives.leisure_motive_parameters import LeisureMotiveParameters
+    
 
 class LeisureMotive(Motive):
 
     def __init__(
-            self,
-            value_of_time: float = 10.0,
-            saturation_fun_ref_level: float = 1.5,
-            saturation_fun_beta: float = 4.0,
-            survey_ids: List[str] = ["7.71", "7.72", "7.73", "7.74", "7.75", "7.76", "7.77", "7.78"],
-            radiation_lambda: float = 0.99986,
-            opportunities: pd.DataFrame = None
-        ):
+        self,
+        value_of_time: float = None,
+        saturation_fun_ref_level: float = None,
+        saturation_fun_beta: float = None,
+        survey_ids: List[str] = None,
+        radiation_lambda: float = None,
+        opportunities: pd.DataFrame = None,
+        parameters: LeisureMotiveParameters | None = None
+    ):
+        
+        if opportunities is None:
+            raise ValueError("No built in leisure opportunities data for now, please provide an opportunities dataframe when creating instantiating the LeisureMotive class (or don't use it at all and let the OtherMotive model handle this motive).")
+
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=LeisureMotiveParameters,
+            explicit_args={
+                "value_of_time": value_of_time,
+                "saturation_fun_ref_level": saturation_fun_ref_level,
+                "saturation_fun_beta": saturation_fun_beta,
+                "survey_ids": survey_ids,
+                "radiation_lambda": radiation_lambda,
+            },
+            owner_name="LeisureMotive",
+        )
 
         super().__init__(
             name="leisure",
-            value_of_time=value_of_time,
-            survey_ids=survey_ids,
-            radiation_lambda=radiation_lambda,
             opportunities=opportunities,
-            saturation_fun_ref_level=saturation_fun_ref_level,
-            saturation_fun_beta=saturation_fun_beta
+            parameters=parameters
         )
 
     

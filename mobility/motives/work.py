@@ -4,39 +4,44 @@ import polars as pl
 from typing import List, Dict
 
 from mobility.motives.motive import Motive
+from mobility.motives.work_motive_parameters import WorkMotiveParameters
 from mobility.parsers import JobsActivePopulationDistribution
 
 class WorkMotive(Motive):
 
     def __init__(
         self,
-        value_of_time: float = 10.0,
-        saturation_fun_ref_level: float = 1.5,
-        saturation_fun_beta: float = 4.0,
-        survey_ids: List[str] = ["9.91"],
-        radiation_lambda: float = 0.99986,
+        value_of_time: float = None,
+        saturation_fun_ref_level: float = None,
+        saturation_fun_beta: float = None,
+        survey_ids: List[str] = None,
+        radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
         utilities: pd.DataFrame = None,
-        country_utilities: Dict = None
+        country_utilities: Dict = None,
+        parameters: WorkMotiveParameters | None = None
     ):
 
-        if country_utilities is None:
-            country_utilities = {
-                "fr": 0.0,
-                "ch": 5.0
-            }
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=WorkMotiveParameters,
+            explicit_args={
+                "value_of_time": value_of_time,
+                "saturation_fun_ref_level": saturation_fun_ref_level,
+                "saturation_fun_beta": saturation_fun_beta,
+                "survey_ids": survey_ids,
+                "radiation_lambda": radiation_lambda,
+                "country_utilities": country_utilities,
+            },
+            owner_name="WorkMotive",
+        )
 
         super().__init__(
             name="work",
-            value_of_time=value_of_time,
-            survey_ids=survey_ids,
-            radiation_lambda=radiation_lambda,
             is_anchor=True,
             opportunities=opportunities,
             utilities=utilities,
-            country_utilities=country_utilities,
-            saturation_fun_ref_level=saturation_fun_ref_level,
-            saturation_fun_beta=saturation_fun_beta
+            parameters=parameters
         )
 
     def get_opportunities(self, transport_zones):

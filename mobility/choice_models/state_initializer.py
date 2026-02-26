@@ -306,7 +306,7 @@ class StateInitializer:
             .join(home_night_dur, on="csp")
             .with_columns(
                 utility=( 
-                    home_motive.value_of_time_stay_home 
+                    home_motive.inputs["parameters"].value_of_time_stay_home 
                     * pl.col("mean_home_night_per_pers")
                     * (pl.col("mean_home_night_per_pers")/pl.col("mean_home_night_per_pers")/math.exp(-min_activity_time_constant)).log().clip(0.0)
                 )
@@ -361,7 +361,7 @@ class StateInitializer:
                         .get_opportunities(transport_zones)
                         .with_columns(
                             motive=pl.lit(motive.name),
-                            sink_saturation_coeff=pl.lit(motive.sink_saturation_coeff)
+                            sink_saturation_coeff=pl.lit(motive.inputs["parameters"].sink_saturation_coeff)
                         )
                     )
                     for motive in motives if motive.has_opportunities is True

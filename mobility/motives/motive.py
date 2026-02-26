@@ -4,15 +4,16 @@ import polars as pl
 from typing import List, Dict
 
 from mobility.in_memory_asset import InMemoryAsset
+from mobility.motives.motive_parameters import MotiveParameters
 
 class Motive(InMemoryAsset):
 
     def __init__(
             self,
             name: str,
-            value_of_time: float,
-            saturation_fun_ref_level: float,
-            saturation_fun_beta: float,
+            value_of_time: float = None,
+            saturation_fun_ref_level: float = None,
+            saturation_fun_beta: float = None,
             value_of_time_v2: float = None,
             survey_ids: List[str] = None,
             radiation_lambda: float = None,
@@ -21,30 +22,35 @@ class Motive(InMemoryAsset):
             opportunities: pd.DataFrame = None,
             utilities: pd.DataFrame = None,
             country_utilities: Dict = None,
-            sink_saturation_coeff: float = 1.0
+            sink_saturation_coeff: float = None,
+            parameters: MotiveParameters | None = None,
         ):
 
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=MotiveParameters,
+            explicit_args={
+                "value_of_time": value_of_time,
+                "saturation_fun_ref_level": saturation_fun_ref_level,
+                "saturation_fun_beta": saturation_fun_beta,
+                "value_of_time_v2": value_of_time_v2,
+                "survey_ids": survey_ids,
+                "radiation_lambda": radiation_lambda,
+                "country_utilities": country_utilities,
+                "sink_saturation_coeff": sink_saturation_coeff,
+            },
+            required_fields=["value_of_time", "saturation_fun_ref_level", "saturation_fun_beta"],
+            owner_name=f"Motive({name})",
+        )
+
         self.name = name
-        self.value_of_time = value_of_time
-        self.value_of_time_v2 = value_of_time_v2
-        self.survey_ids = survey_ids
-        self.radiation_lambda = radiation_lambda
         self.has_opportunities = has_opportunities
         self.is_anchor = is_anchor
         self.opportunities = opportunities
         self.utilities = utilities
-        self.country_utilities = country_utilities
-        self.sink_saturation_coeff = sink_saturation_coeff
 
         inputs = {
-            "survey_ids": survey_ids,
-            "radiation_lambda": radiation_lambda,
-            "country_utilities": country_utilities,
-            "sink_saturation_coeff": sink_saturation_coeff,
-            "value_of_time": value_of_time,
-            "value_of_time_v2": value_of_time_v2,
-            "saturation_fun_ref_level": saturation_fun_ref_level,
-            "saturation_fun_beta": saturation_fun_beta
+            "parameters": parameters
         }
 
         super().__init__(inputs)
@@ -56,11 +62,11 @@ class Motive(InMemoryAsset):
 
             utilities = self.utilities
 
-        elif self.country_utilities is not None:
+        elif self.inputs["parameters"].country_utilities is not None:
             
             transport_zones = transport_zones.get().drop("geometry", axis=1)
             transport_zones["country"] = transport_zones["local_admin_unit_id"].str[0:2]
-            transport_zones["utility"] = transport_zones["country"].map(self.country_utilities)
+            transport_zones["utility"] = transport_zones["country"].map(self.inputs["parameters"].country_utilities)
 
             utilities = pl.from_pandas( 
                 transport_zones[["transport_zone_id", "utility"]]

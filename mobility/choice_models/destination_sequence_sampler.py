@@ -220,7 +220,7 @@ class DestinationSequenceSampler:
         costs_bin = utilities[0]
         cost_bin_to_dest = utilities[1]
 
-        motives_lambda = {motive.name: motive.radiation_lambda for motive in motives}
+        motives_lambda = {motive.name: motive.inputs["parameters"].radiation_lambda for motive in motives}
         
         prob = (
                 

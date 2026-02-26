@@ -6,28 +6,39 @@ import numpy as np
 import os
 
 from mobility.motives.motive import Motive
+from mobility.motives.studies_motive_parameters import StudiesMotiveParameters
 from mobility.parsers.schools_capacity_distribution import SchoolsCapacityDistribution
 
 class StudiesMotive(Motive):
 
     def __init__(
         self,
-        value_of_time: float = 10.0,
-        saturation_fun_ref_level: float = 1.5,
-        saturation_fun_beta: float = 4.0,
-        survey_ids: List[str] = ["1.11"], 
-        radiation_lambda: float = 0.99986,
-        opportunities: pd.DataFrame = None
+        value_of_time: float = None,
+        saturation_fun_ref_level: float = None,
+        saturation_fun_beta: float = None,
+        survey_ids: List[str] = None, 
+        radiation_lambda: float = None,
+        opportunities: pd.DataFrame = None,
+        parameters: StudiesMotiveParameters | None = None
     ):
+
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=StudiesMotiveParameters,
+            explicit_args={
+                "value_of_time": value_of_time,
+                "saturation_fun_ref_level": saturation_fun_ref_level,
+                "saturation_fun_beta": saturation_fun_beta,
+                "survey_ids": survey_ids,
+                "radiation_lambda": radiation_lambda,
+            },
+            owner_name="StudiesMotive",
+        )
 
         super().__init__(
             name="studies",
-            value_of_time=value_of_time,
-            survey_ids=survey_ids,
-            radiation_lambda=radiation_lambda,
             opportunities=opportunities,
-            saturation_fun_ref_level=saturation_fun_ref_level,
-            saturation_fun_beta=saturation_fun_beta
+            parameters=parameters
         )
 
     
