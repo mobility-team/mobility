@@ -4,7 +4,7 @@ from mobility.transport_modes.transport_mode import TransportMode
 
 
 class ModeRegistry:
-    """Register transport modes by id (``mode.name``)."""
+    """Register transport modes by id."""
 
     def __init__(
         self,
@@ -14,7 +14,7 @@ class ModeRegistry:
 
         Args:
             modes: Available transport modes. Mode ids are derived from
-                ``mode.name`` and must be unique.
+                ``mode.inputs['parameters'].name`` and must be unique.
 
         Raises:
             ValueError: If the list is empty or contains duplicate mode names.
@@ -30,11 +30,12 @@ class ModeRegistry:
                     "ModeRegistry expects TransportMode instances, "
                     f"got {type(mode)}."
                 )
-            if mode.name in self._modes:
+            mode_id = self._mode_id(mode)
+            if mode_id in self._modes:
                 raise ValueError(
-                    f"Duplicate mode id '{mode.name}' in ModeRegistry input."
+                    f"Duplicate mode id '{mode_id}' in ModeRegistry input."
                 )
-            self._modes[mode.name] = mode
+            self._modes[mode_id] = mode
 
     def get(self, mode_id: str) -> TransportMode:
         """Return a registered mode by id."""
@@ -43,3 +44,14 @@ class ModeRegistry:
                 f"Unknown mode id '{mode_id}'. Available mode ids: {list(self._modes.keys())}."
             )
         return self._modes[mode_id]
+
+    @staticmethod
+    def _mode_id(mode: TransportMode) -> str:
+        """Resolve mode id from TransportMode parameters."""
+        try:
+            return mode.inputs["parameters"].name
+        except Exception as exc:
+            raise ValueError(
+                f"Could not resolve mode id for {type(mode)}. Expected "
+                "`mode.inputs['parameters'].name`."
+            ) from exc
