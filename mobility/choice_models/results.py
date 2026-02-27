@@ -319,7 +319,7 @@ class Results:
             ( 
                 pl.DataFrame(s.get()["p_immobility"].reset_index())
                 .with_columns(
-                    country=pl.lit(s.inputs["country"], pl.String())
+                    country=pl.lit(s.inputs["parameters"].country, pl.String())
                 )
             )
             for s in self.surveys

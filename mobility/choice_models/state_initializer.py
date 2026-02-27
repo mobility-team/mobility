@@ -72,7 +72,10 @@ class StateInitializer:
         )
         
         # Get the chain probabilities from the mobility surveys
-        surveys = [s for s in surveys if s.country in countries]
+        surveys = [
+            s for s in surveys
+            if s.inputs["parameters"].country in countries
+        ]
         
         p_chain = (
             pl.concat(
@@ -81,7 +84,7 @@ class StateInitializer:
                         survey
                         .get_chains_probability(motives, modes)
                         .with_columns(
-                            country=pl.lit(survey.inputs["country"])
+                            country=pl.lit(survey.inputs["parameters"].country)
                         )
                     )
                     for survey in surveys

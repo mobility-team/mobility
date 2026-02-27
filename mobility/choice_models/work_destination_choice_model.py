@@ -341,13 +341,14 @@ class WorkDestinationChoiceModel(DestinationChoiceModel):
             utilities
         ):
         
-            selection_lambda = self.parameters.model["lambda"]
-            end_of_contract_rate = self.parameters.model["end_of_contract_rate"]
-            job_change_utility_constant = self.parameters.model["job_change_utility_constant"]
-            max_iterations = self.parameters.model["max_iterations"]
-            tolerance = self.parameters.model["tolerance"]
-            cost_update = self.parameters.model["cost_update"]
-            n_iter_cost_update = self.parameters.model["n_iter_cost_update"]
+            params = self.inputs["parameters"]
+            selection_lambda = params.model["lambda"]
+            end_of_contract_rate = params.model["end_of_contract_rate"]
+            job_change_utility_constant = params.model["job_change_utility_constant"]
+            max_iterations = params.model["max_iterations"]
+            tolerance = params.model["tolerance"]
+            cost_update = params.model["cost_update"]
+            n_iter_cost_update = params.model["n_iter_cost_update"]
         
             # Convert input DataFrames to Polars DataFrames
             sources = pl.DataFrame(sources.reset_index()).with_columns([

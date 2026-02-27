@@ -1,7 +1,9 @@
-from dataclasses import dataclass
+from typing import Annotated
 
-@dataclass
-class PublicTransportRoutingParameters():
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class PublicTransportRoutingParameters(BaseModel):
     
     """
     Dataclass for public transport routing parameters. Should be given as argument for the routing_parameters of PublicTransportMode
@@ -36,15 +38,24 @@ class PublicTransportRoutingParameters():
             The parameter is optional but helps to check if any important GTFS would have disappeared without throwing an error.
 
         """
-    
-    start_time_min: float = 6.5
-    start_time_max: float = 8.0
-    max_traveltime: float = 2.0
-    wait_time_coeff: float = 2.0
-    transfer_time_coeff: float = 2.0
-    no_show_perceived_prob: float = 0.2
-    target_time: float = 8.0
-    max_wait_time_at_destination: float = 0.25
-    max_perceived_time: float = 2.0
-    additional_gtfs_files: list = None
-    expected_agencies: list = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_time_min: Annotated[float, Field(default=6.5, ge=0.0, le=24.0)]
+    start_time_max: Annotated[float, Field(default=8.0, ge=0.0, le=24.0)]
+    max_traveltime: Annotated[float, Field(default=2.0, gt=0.0)]
+    wait_time_coeff: Annotated[float, Field(default=2.0, gt=0.0)]
+    transfer_time_coeff: Annotated[float, Field(default=2.0, gt=0.0)]
+    no_show_perceived_prob: Annotated[float, Field(default=0.2, ge=0.0, le=1.0)]
+    target_time: Annotated[float, Field(default=8.0, ge=0.0, le=24.0)]
+    max_wait_time_at_destination: Annotated[float, Field(default=0.25, ge=0.0)]
+    max_perceived_time: Annotated[float, Field(default=2.0, gt=0.0)]
+    additional_gtfs_files: Annotated[list[str] | None, Field(default=None)]
+    expected_agencies: Annotated[list[str] | None, Field(default=None)]
+
+    @model_validator(mode="after")
+    def validate_time_window(self) -> "PublicTransportRoutingParameters":
+        """Ensure the routing time window is coherent."""
+        if self.start_time_max < self.start_time_min:
+            raise ValueError("start_time_max should be greater than or equal to start_time_min.")
+        return self

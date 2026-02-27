@@ -33,11 +33,10 @@ class OtherMotive(Motive):
             owner_name="OtherMotive",
         )
 
-        self.population = population
-
         super().__init__(
             name="other",
             opportunities=opportunities,
+            extra_inputs={"population": population},
             parameters=parameters
         )
 
@@ -48,10 +47,10 @@ class OtherMotive(Motive):
 
             opportunities = self.opportunities
 
-        elif self.population is not None:
+        elif self.inputs["population"] is not None:
 
             opportunities = (
-                pl.scan_parquet(self.population.get()["population_groups"])
+                pl.scan_parquet(self.inputs["population"].get()["population_groups"])
                 .group_by(["transport_zone_id"])
                 .agg(
                     n_opp=pl.col("weight").sum()

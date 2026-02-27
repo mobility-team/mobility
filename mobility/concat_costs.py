@@ -3,15 +3,15 @@ import numpy as np
 
 def concat_travel_costs(modes, year):
     
-    mode_names = [mode.name for mode in modes]
+    mode_names = [mode.inputs["parameters"].name for mode in modes]
     
     def get_travel_costs(mode):
-        if mode.congestion:
-            return mode.travel_costs.get(congestion=mode.congestion)
+        if mode.inputs["parameters"].congestion:
+            return mode.inputs["travel_costs"].get(congestion=mode.inputs["parameters"].congestion)
         else:
-            return mode.travel_costs.get()
+            return mode.inputs["travel_costs"].get()
     
-    costs = {m.name: get_travel_costs(m) for m in modes}
+    costs = {m.inputs["parameters"].name: get_travel_costs(m) for m in modes}
     costs = [tc.assign(mode=m) for m, tc in costs.items()]
     costs = pd.concat(costs)
     
@@ -104,12 +104,12 @@ def concat_travel_costs(modes, year):
 def concat_generalized_cost(modes):
     
     def get_gen_costs(mode):
-        if mode.congestion:
-            return mode.generalized_cost.get(congestion=mode.congestion)
+        if mode.inputs["parameters"].congestion:
+            return mode.inputs["generalized_cost"].get(congestion=mode.inputs["parameters"].congestion)
         else:
-            return mode.generalized_cost.get()
+            return mode.inputs["generalized_cost"].get()
     
-    costs = {m.name: get_gen_costs(m) for m in modes}
+    costs = {m.inputs["parameters"].name: get_gen_costs(m) for m in modes}
     costs = [gc.assign(mode=m) for m, gc in costs.items()]
     costs = pd.concat(costs)
     

@@ -7,8 +7,6 @@ import shutil
 
 from importlib import resources
 
-from dataclasses import asdict
-
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_modes.carpool.detailed.detailed_carpool_routing_parameters import DetailedCarpoolRoutingParameters
@@ -60,9 +58,9 @@ class DetailedCarpoolTravelCosts(FileAsset):
             output_path = self.cache_path["congested"]
         
         costs = self.compute_travel_costs(
-            self.car_travel_costs,
-            self.parameters,
-            self.modal_transfer,
+            self.inputs["car_travel_costs"],
+            self.inputs["parameters"],
+            self.inputs["modal_transfer"],
             congestion,
             output_path
         )
@@ -94,7 +92,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
                 str(car_travel_costs.transport_zones.study_area.cache_path["polygons"]),
                 str(graph),
                 str(graph),
-                json.dumps(asdict(modal_transfer)),
+                json.dumps(modal_transfer.model_dump(mode="json")),
                 output_path
             ]
         )

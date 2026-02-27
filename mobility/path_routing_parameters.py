@@ -1,10 +1,12 @@
-from dataclasses import dataclass
+from typing import Annotated
 
-@dataclass
-class PathRoutingParameters: 
-    
-    # Routing parameters
-    # (use these parameters to filter ODs that will be in the model, based 
-    # on crowfly distance)
-    filter_max_speed: float # km/h
-    filter_max_time: float  # h
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class PathRoutingParameters(BaseModel):
+    """Routing filter parameters for path-based travel costs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filter_max_speed: Annotated[float, Field(gt=0.0)]  # km/h
+    filter_max_time: Annotated[float, Field(gt=0.0)]  # h

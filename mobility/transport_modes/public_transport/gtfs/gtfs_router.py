@@ -174,7 +174,7 @@ class GTFSRouter(FileAsset):
         - exports stops and shapes enriched with trip count and route name as a GeoPackage file
         """
                 
-        transport_zones = self.transport_zones
+        transport_zones = self.inputs["transport_zones"]
         stops = self.get_stops(transport_zones)
         gtfs_files = self.get_gtfs_files(stops)
 

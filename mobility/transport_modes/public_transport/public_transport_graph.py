@@ -7,7 +7,6 @@ import geopandas as gpd
 import numpy as np
 
 from importlib import resources
-from dataclasses import asdict
 
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
@@ -36,8 +35,10 @@ class PublicTransportGraph(FileAsset):
     def __init__(
             self,
             transport_zones: TransportZones,
-            parameters: PublicTransportRoutingParameters = PublicTransportRoutingParameters()
+            parameters: PublicTransportRoutingParameters | None = None
     ):
+        if parameters is None:
+            parameters = PublicTransportRoutingParameters()
         
         gtfs_router = GTFSRouter(
             transport_zones,
@@ -95,7 +96,7 @@ class PublicTransportGraph(FileAsset):
             args=[
                 str(transport_zones.cache_path),
                 str(gtfs_router.get()),
-                json.dumps(asdict(parameters)),
+                json.dumps(parameters.model_dump(mode="json")),
                 str(self.cache_path)
             ]
         )

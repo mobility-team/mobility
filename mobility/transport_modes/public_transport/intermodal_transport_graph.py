@@ -5,7 +5,6 @@ import json
 import pandas as pd
 
 from importlib import resources
-from dataclasses import asdict
 
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
@@ -56,21 +55,24 @@ class IntermodalTransportGraph(FileAsset):
             parkings_geofabrik_extract_date:
 
         """
-        
+        if first_modal_transfer is None or last_modal_transfer is None:
+            raise ValueError(
+                "IntermodalTransportGraph requires both `first_modal_transfer` and `last_modal_transfer`."
+            )
 
         public_transport_graph = PublicTransportGraph(transport_zones, parameters)
 
         inputs = {
             "transport_zones": transport_zones,
             "public_transport_graph": public_transport_graph,
-            "first_leg_graph": first_leg_mode.travel_costs.contracted_path_graph,
-            "last_leg_graph": last_leg_mode.travel_costs.contracted_path_graph,
+            "first_leg_graph": first_leg_mode.inputs["travel_costs"].contracted_path_graph,
+            "last_leg_graph": last_leg_mode.inputs["travel_costs"].contracted_path_graph,
             "first_modal_transfer": first_modal_transfer,
             "last_modal_transfer": last_modal_transfer,
             "parameters": parameters
         }
 
-        if first_leg_mode.name == "car":
+        if first_leg_mode.inputs["parameters"].name == "car":
             inputs["osm_parkings"] = OSMData(
                 transport_zones.study_area,
                 object_type="a",
@@ -79,10 +81,12 @@ class IntermodalTransportGraph(FileAsset):
                 geofabrik_extract_date=parkings_geofabrik_extract_date
             )
         
-        self.first_leg_mode = first_leg_mode
-        self.last_leg_mode = last_leg_mode
-
-        file_name = first_leg_mode.name + "_public_transport_" + last_leg_mode.name + "_intermodal_transport_graph/simplified/done"
+        file_name = (
+            first_leg_mode.inputs["parameters"].name
+            + "_public_transport_"
+            + last_leg_mode.inputs["parameters"].name
+            + "_intermodal_transport_graph/simplified/done"
+        )
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
 
         super().__init__(inputs, cache_path)
@@ -135,10 +139,10 @@ class IntermodalTransportGraph(FileAsset):
                 str(public_transport_graph.get()),
                 str(first_leg_graph.get()),
                 str(last_leg_graph.get()),
-                json.dumps(asdict(first_modal_transfer)),
-                json.dumps(asdict(last_modal_transfer)),
+                json.dumps(first_modal_transfer.model_dump(mode="json")),
+                json.dumps(last_modal_transfer.model_dump(mode="json")),
                 "" if osm_parkings is None else str(osm_parkings.get()),
-                json.dumps(asdict(parameters)),
+                json.dumps(parameters.model_dump(mode="json")),
                 str(self.cache_path)
             ]
         )
@@ -151,4 +155,4 @@ class IntermodalTransportGraph(FileAsset):
         self.create_and_get_asset()
 
     def audit_gtfs(self):
-        return self.public_transport_graph.audit_gtfs()
+        return self.inputs["public_transport_graph"].audit_gtfs()

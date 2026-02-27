@@ -8,7 +8,7 @@ class TravelCostsAggregator(InMemoryAsset):
     
     def __init__(self, modes):
         self.modes = modes
-        inputs = {mode.name: mode.generalized_cost for mode in modes}
+        inputs = {mode.inputs["parameters"].name: mode.inputs["generalized_cost"] for mode in modes}
         super().__init__(inputs)
         
         
@@ -74,14 +74,14 @@ class TravelCostsAggregator(InMemoryAsset):
         costs = []
         
         # Put the car first so that road congestion is computed first
-        modes = sorted(self.modes, key=lambda mode: mode.name != "car")
+        modes = sorted(self.modes, key=lambda mode: mode.inputs["parameters"].name != "car")
         
         for mode in modes:
             
-            if mode.congestion:
-                gc = pl.DataFrame(mode.generalized_cost.get(metrics, congestion, detail_distances=detail_distances))
+            if mode.inputs["parameters"].congestion:
+                gc = pl.DataFrame(mode.inputs["generalized_cost"].get(metrics, congestion, detail_distances=detail_distances))
             else:
-                gc = pl.DataFrame(mode.generalized_cost.get(metrics, detail_distances=detail_distances))
+                gc = pl.DataFrame(mode.inputs["generalized_cost"].get(metrics, detail_distances=detail_distances))
                 
             costs.append(
                 pl.DataFrame(gc)
@@ -111,12 +111,12 @@ class TravelCostsAggregator(InMemoryAsset):
             
             for mode in modes:
                 
-                mode_name = "public_transport" if mode.multimodal else mode.name
+                mode_name = "public_transport" if mode.inputs["parameters"].multimodal else mode.inputs["parameters"].name
                 ghg_col_name = mode_name + "_ghg_emissions"
                 dist_col_name = mode_name + "_distance"
                 
                 pl_columns[ghg_col_name] = ( 
-                    pl.col(dist_col_name)*mode.ghg_intensity
+                    pl.col(dist_col_name) * mode.inputs["parameters"].ghg_intensity
                 )
                 
                 dist_col_names.append(dist_col_name)
@@ -189,9 +189,9 @@ class TravelCostsAggregator(InMemoryAsset):
         
         for mode in self.modes:
             
-            if mode.congestion is True:
+            if mode.inputs["parameters"].congestion is True:
                 
-                if mode.name in ["car", "carpool"]:
+                if mode.inputs["parameters"].name in ["car", "carpool"]:
                     
                     flows = (
                         od_flows_by_mode
@@ -203,7 +203,7 @@ class TravelCostsAggregator(InMemoryAsset):
                         .select(["from", "to", "vehicle_volume"])
                     )
                     
-                elif mode.name == "car/public_transport/walk":
+                elif mode.inputs["parameters"].name == "car/public_transport/walk":
                     
                     logging.info(
                         """
@@ -216,7 +216,7 @@ class TravelCostsAggregator(InMemoryAsset):
                     
                 else:
                     
-                    raise ValueError("No flow volume to vehicle volume model for mode : " + mode.name)
+                    raise ValueError("No flow volume to vehicle volume model for mode : " + mode.inputs["parameters"].name)
                 
                 flow_asset = None
                 if run_key is not None and iteration is not None:
@@ -227,10 +227,10 @@ class TravelCostsAggregator(InMemoryAsset):
                         flows.to_pandas(),
                         run_key=str(run_key),
                         iteration=int(iteration),
-                        mode_name=str(mode.name)
+                        mode_name=str(mode.inputs["parameters"].name)
                     )
                     flow_asset.get()
 
-                mode.travel_costs.update(flows, flow_asset=flow_asset)
+                mode.inputs["travel_costs"].update(flows, flow_asset=flow_asset)
             
         

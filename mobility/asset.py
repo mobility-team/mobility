@@ -126,8 +126,18 @@ class Asset(ABC):
         if parameters is not None:
             if not explicit_provided:
                 return parameters
+
             merged = {**parameters.model_dump(mode="python"), **explicit_provided}
-            return parameters_cls.model_validate(merged)
+            validated = parameters_cls.model_validate(merged)
+
+            # Preserve provenance: explicit kwargs and fields explicitly set on
+            # the provided parameters model are marked as explicit.
+            provided_fields = set(parameters.model_fields_set) | set(explicit_provided.keys())
+
+            return parameters_cls.model_construct(
+                _fields_set=provided_fields,
+                **validated.model_dump(mode="python"),
+            )
 
         required_fields = required_fields or []
         missing = [field for field in required_fields if explicit_args.get(field) is None]

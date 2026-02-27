@@ -8,6 +8,7 @@ from mobility.generalized_cost_parameters import GeneralizedCostParameters
 from mobility.cost_of_time_parameters import CostOfTimeParameters
 from mobility.transport_costs.path_generalized_cost import PathGeneralizedCost
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
+from mobility.transport_modes.transport_mode_parameters import WalkModeParameters
 
 class WalkMode(TransportMode):
     
@@ -17,8 +18,9 @@ class WalkMode(TransportMode):
         routing_parameters: PathRoutingParameters = None,
         osm_capacity_parameters: OSMCapacityParameters = None,
         generalized_cost_parameters: GeneralizedCostParameters = None,
-        survey_ids: List[str] = ["1.10", "1.11", "1.13"],
-        ghg_intensity: float = 0.0
+        survey_ids: List[str] | None = None,
+        ghg_intensity: float | None = None,
+        parameters: WalkModeParameters | None = None,
     ):
         
         mode_name = "walk"
@@ -57,7 +59,9 @@ class WalkMode(TransportMode):
             travel_costs,
             generalized_cost, 
             ghg_intensity=ghg_intensity,
-            survey_ids=survey_ids
+            survey_ids=survey_ids,
+            parameters=parameters,
+            parameters_cls=WalkModeParameters,
         )
         
 

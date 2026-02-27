@@ -83,20 +83,20 @@ class MobilitySurvey(FileAsset):
 
     def get_chains_probability(self, motives, modes):
         
-        motive_mapping = [{"group": m.name, "motive": m.survey_ids} for m in motives if m.name != "other"]
-        motive_mapping = pd.DataFrame(motive_mapping)
-        motive_mapping = motive_mapping.explode("motive")
-        motive_mapping = motive_mapping.set_index("motive").to_dict()["group"]
+        motive_mapping = {
+            motive_id: m.name
+            for m in motives
+            if m.name != "other"
+            for motive_id in (m.inputs["parameters"].survey_ids or [])
+        }
         
-        mode_mapping = [
-            {"group": m.name, "mode": m.survey_ids} 
-            for m in modes if len(m.survey_ids) > 0
-        ]
-        mode_mapping = pd.DataFrame(mode_mapping)
-        mode_mapping = mode_mapping.explode("mode")
-        mode_mapping = mode_mapping.set_index("mode").to_dict()["group"]
+        mode_mapping = {
+            mode_id: m.inputs["parameters"].name
+            for m in modes
+            for mode_id in (m.inputs["parameters"].survey_ids or [])
+        }
         
-        mode_names = [m.name for m in modes] + ["other"]
+        mode_names = [m.inputs["parameters"].name for m in modes] + ["other"]
 
         days_trips = pl.from_pandas(self.get()["days_trip"].reset_index())
         short_trips = pl.from_pandas(self.get()["short_trips"].reset_index())

@@ -101,12 +101,12 @@ class RoutingEvaluation:
             If no mode with the given name is found.
         """
         
-        mode = [m for m in modes if m.name == mode_name]
+        mode = [m for m in modes if m.inputs["parameters"].name == mode_name]
         
         if len(mode) == 0:
             raise ValueError(f"No {mode_name} mode in the model.")
         
-        graph = mode[0].travel_costs.congested_path_graph 
+        graph = mode[0].inputs["travel_costs"].congested_path_graph 
         
         return graph
     

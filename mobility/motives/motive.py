@@ -23,6 +23,7 @@ class Motive(InMemoryAsset):
             utilities: pd.DataFrame = None,
             country_utilities: Dict = None,
             sink_saturation_coeff: float = None,
+            extra_inputs: dict | None = None,
             parameters: MotiveParameters | None = None,
         ):
 
@@ -52,6 +53,8 @@ class Motive(InMemoryAsset):
         inputs = {
             "parameters": parameters
         }
+        if extra_inputs is not None:
+            inputs.update(extra_inputs)
 
         super().__init__(inputs)
 

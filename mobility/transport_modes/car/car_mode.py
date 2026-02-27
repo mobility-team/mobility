@@ -9,6 +9,9 @@ from mobility.cost_of_time_parameters import CostOfTimeParameters
 from mobility.transport_costs.path_generalized_cost import PathGeneralizedCost
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport_graphs.speed_modifier import SpeedModifier
+from mobility.transport_modes.transport_mode_parameters import (
+    CarModeParameters,
+)
 
 class CarMode(TransportMode):
     """
@@ -25,15 +28,25 @@ class CarMode(TransportMode):
         routing_parameters: PathRoutingParameters = None,
         osm_capacity_parameters: OSMCapacityParameters = None,
         generalized_cost_parameters: GeneralizedCostParameters = None,
-        congestion: bool = False,
+        congestion: bool | None = None,
         congestion_flows_scaling_factor: float = 0.1,
         speed_modifiers: List[SpeedModifier] = [],
-        survey_ids: List[str] = ["3.30", "3.31", "3.32", "3.33", "3.39"],
-        ghg_intensity: float = 0.218
+        survey_ids: List[str] | None = None,
+        ghg_intensity: float | None = None,
+        parameters: CarModeParameters | None = None,
     ):
         
         mode_name = "car"
-        
+
+        mode_congestion = (
+            parameters.congestion
+            if (congestion is None and parameters is not None)
+            else congestion
+        )
+
+        if parameters is None:
+            mode_congestion = bool(mode_congestion)
+
         if routing_parameters is None:
             routing_parameters = PathRoutingParameters(
                 filter_max_time=1.0,
@@ -56,7 +69,7 @@ class CarMode(TransportMode):
             transport_zones, 
             routing_parameters, 
             osm_capacity_parameters,
-            congestion,
+            mode_congestion,
             congestion_flows_scaling_factor,
             speed_modifiers
         )
@@ -71,9 +84,11 @@ class CarMode(TransportMode):
             mode_name,
             travel_costs,
             generalized_cost,
-            congestion=congestion,
+            congestion=mode_congestion,
             ghg_intensity=ghg_intensity,
             vehicle="car",
-            survey_ids=survey_ids
+            survey_ids=survey_ids,
+            parameters=parameters,
+            parameters_cls=CarModeParameters,
         )
         

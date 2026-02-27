@@ -114,20 +114,20 @@ def compute_subtour_mode_probabilities_serial(
 def modes_list_to_dict(modes_list):
     
     modes = {
-        mode.name: {
-            "vehicle": mode.vehicle,
-            "multimodal": mode.multimodal,
+        mode.inputs["parameters"].name: {
+            "vehicle": mode.inputs["parameters"].vehicle,
+            "multimodal": mode.inputs["parameters"].multimodal,
             "is_return_mode": False,
-            "return_mode": mode.return_mode
+            "return_mode": mode.inputs["parameters"].return_mode
         }
         for mode in modes_list
     }
     
     for mode in modes_list:
-        if not mode.return_mode is None:
-            modes[mode.return_mode] = {
-                "vehicle": mode.vehicle,
-                "multimodal": mode.multimodal,
+        if mode.inputs["parameters"].return_mode is not None:
+            modes[mode.inputs["parameters"].return_mode] = {
+                "vehicle": mode.inputs["parameters"].vehicle,
+                "multimodal": mode.inputs["parameters"].multimodal,
                 "is_return_mode": True,
                 "return_mode": None
             }

@@ -15,10 +15,10 @@ class PathGeneralizedCost(InMemoryAsset):
     def get(self, metrics=["cost"], congestion: bool = False, detail_distances: bool = False) -> pd.DataFrame:
         
         metrics = list(metrics)
-        costs = self.travel_costs.get(congestion)
+        costs = self.inputs["travel_costs"].get(congestion)
         
         # study_area = self.travel_costs.transport_zones.study_area.get()
-        transport_zones_df = self.travel_costs.transport_zones.get().drop(columns="geometry")
+        transport_zones_df = self.inputs["travel_costs"].inputs["transport_zones"].get().drop(columns="geometry")
         
         
         # transport_zones = pd.merge(transport_zones, study_area[["local_admin_unit_id", "country"]], on="local_admin_unit_id")
@@ -38,9 +38,10 @@ class PathGeneralizedCost(InMemoryAsset):
             suffixes=["_from", "_to"]
         )
         
-        gen_cost = self.parameters.cost_constant
-        gen_cost += self.parameters.cost_of_distance*costs["distance"]
-        gen_cost += self.parameters.cost_of_time.compute(costs["distance"], costs["country_from"])*costs["time"]
+        params = self.inputs["parameters"]
+        gen_cost = params.cost_constant
+        gen_cost += params.cost_of_distance * costs["distance"]
+        gen_cost += params.cost_of_time.compute(costs["distance"], costs["country_from"]) * costs["time"]
         
         costs["cost"] = gen_cost
         

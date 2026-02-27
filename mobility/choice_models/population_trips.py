@@ -238,7 +238,7 @@ class PopulationTrips(FileAsset):
         
         demand_groups.write_parquet(self.cache_path["demand_groups"])
         
-        if self.parameters.simulate_weekend:
+        if self.inputs["parameters"].simulate_weekend:
             
             weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains, weekend_transitions = self.run_model(is_weekday=False)
         
@@ -544,7 +544,7 @@ class PopulationTrips(FileAsset):
             mode_name = mode.capitalize()
         mode_share = mode_share[mode_share["mode"] == mode]
 
-        transport_zones_df = self.population.transport_zones.get()
+        transport_zones_df = self.inputs["population"].transport_zones.get()
         
         gc = gpd.GeoDataFrame(
             transport_zones_df.merge(mode_share, how="left", right_on=left_column, left_on="transport_zone_id", suffixes=('', '_z'))).fillna(0)
@@ -627,7 +627,7 @@ class PopulationTrips(FileAsset):
         # Find all biggest origin-destination between different transport zones
         biggest_flows = population_df.groupby(["from", "to"]).sum("n_persons").reset_index()
         biggest_flows = biggest_flows.where(biggest_flows["from"] != biggest_flows["to"]).nlargest(n_largest, "n_persons")
-        transport_zones_df = self.population.transport_zones.get()
+        transport_zones_df = self.inputs["population"].transport_zones.get()
         biggest_flows = biggest_flows.merge(
             transport_zones_df, left_on="from", right_on="transport_zone_id", suffixes=('', '_from'))
         biggest_flows = biggest_flows.merge(
@@ -692,8 +692,8 @@ class PopulationTrips(FileAsset):
         """
         # Get the flows, the study area and the transport zones dataframes
         population_df = self.get()["weekday_flows"].collect().to_pandas()
-        study_area_df = self.population.transport_zones.study_area.get()
-        tzdf = self.population.transport_zones.get()
+        study_area_df = self.inputs["population"].transport_zones.study_area.get()
+        tzdf = self.inputs["population"].transport_zones.get()
 
         # Group flows per local admin unit
         flows_per_commune = population_df.merge(tzdf, left_on="from", right_on="transport_zone_id")

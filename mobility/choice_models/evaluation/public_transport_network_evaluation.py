@@ -15,14 +15,14 @@ class PublicTransportNetworkEvaluation:
             self
         ):
 
-        pt_mode = [m for m in self.results.modes if m.name == "walk/public_transport/walk"]
+        pt_mode = [m for m in self.results.modes if m.inputs["parameters"].name == "walk/public_transport/walk"]
         
         if len(pt_mode) == 0:
             raise ValueError("No public transport mode in the model.")
             
         pt_mode = pt_mode[0]
         
-        public_transport_graph = pt_mode.travel_costs.intermodal_graph.public_transport_graph
+        public_transport_graph = pt_mode.inputs["travel_costs"].intermodal_graph.public_transport_graph
         graph = self.build_graph_lines_dataframe(public_transport_graph)
         
         geoms = linestrings(
