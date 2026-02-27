@@ -19,6 +19,7 @@ For now, it is mainly focused on French and Swiss territories.
    trips
    radiation_model
    carbon
+   motives
    levers
    data
    quickstart/quickstart
