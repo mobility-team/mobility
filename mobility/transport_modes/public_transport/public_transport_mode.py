@@ -47,8 +47,6 @@ class PublicTransportMode(TransportMode):
         first_leg_mode: TransportMode | None = None,
         last_leg_mode: TransportMode | None = None,
         mode_registry: ModeRegistry | None = None,
-        default_first_leg_mode_name: str = "walk",
-        default_last_leg_mode_name: str = "walk",
         first_intermodal_transfer: IntermodalTransfer | None = None,
         last_intermodal_transfer: IntermodalTransfer | None = None,
         routing_parameters: PublicTransportRoutingParameters | None = None,
@@ -60,13 +58,11 @@ class PublicTransportMode(TransportMode):
         first_leg_mode = self._resolve_leg_mode(
             leg_mode=first_leg_mode,
             mode_registry=mode_registry,
-            default_mode_name=default_first_leg_mode_name,
             leg_label="first_leg_mode",
         )
         last_leg_mode = self._resolve_leg_mode(
             leg_mode=last_leg_mode,
             mode_registry=mode_registry,
-            default_mode_name=default_last_leg_mode_name,
             leg_label="last_leg_mode",
         )
 
@@ -154,7 +150,6 @@ class PublicTransportMode(TransportMode):
     def _resolve_leg_mode(
         leg_mode: TransportMode | None,
         mode_registry: ModeRegistry | None,
-        default_mode_name: str,
         leg_label: str,
     ) -> TransportMode:
         if leg_mode is not None:
@@ -167,10 +162,10 @@ class PublicTransportMode(TransportMode):
                 "(example: ModeRegistry([walk_mode, ...]))."
             )
 
-        resolved_mode = mode_registry.get(default_mode_name)
+        resolved_mode = mode_registry.get("walk")
         if resolved_mode is None:
             raise ValueError(
-                f"Could not resolve {leg_label} with mode id '{default_mode_name}'."
+                f"Could not resolve {leg_label} with mode id 'walk'."
             )
         return resolved_mode
 
