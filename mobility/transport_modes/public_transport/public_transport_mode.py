@@ -163,8 +163,14 @@ class PublicTransportMode(TransportMode):
         if mode_registry is None:
             raise ValueError(
                 "PublicTransportMode requires explicit `first_leg_mode` and "
+<<<<<<< HEAD
                 "`last_leg_mode`, or a `mode_registry` to resolve defaults "
                 "(example: ModeRegistry([walk_mode, ...]))."
+=======
+                "`last_leg_mode`, or a `mode_registry` configured with PT defaults "
+                "(example: ModeRegistry([walk_mode, ...], "
+                "pt_access_mode_id='walk', pt_egress_mode_id='walk'))."
+>>>>>>> 8ec11ea (clarify error message if a user passes neither access/egress modes or mode registry)
             )
 
         resolved_mode = mode_registry.get(default_mode_name)
