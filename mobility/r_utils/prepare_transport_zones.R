@@ -4,9 +4,7 @@ library(data.table)
 library(geos)
 library(wk)
 library(arrow)
-library(cluster)
-library(future)
-library(future.apply)
+library(FNN)
 library(log4r)
 
 logger <- logger(appenders = console_appender())
@@ -14,11 +12,11 @@ logger <- logger(appenders = console_appender())
 args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
-#   'D:\\dev\\mobility\\mobility', 
-#   'd:/data/mobility/projects/dolancourt/fcd6652ba13b6f4cb9bbda6f7ba35372-study_area.gpkg', 
-#   'd:/data/mobility/projects/dolancourt/building-osm_data',
+#   'D:\\dev\\mobility\\mobility',
+#   'd:\\data\\mobility\\projects\\dolancourt\\386d1f8bddcf868597b659355577e7e1-study_area.gpkg',
+#   'd:\\data\\mobility\\projects\\dolancourt\\building-osm_data',
 #   '1',
-#   'd:/data/mobility/projects/dolancourt/470538bc0411a93b96abf28c4e6848b8-transport_zones.gpkg'
+#   'd:/data/mobility/projects/dolancourt/333366a23660b51fecd5075c567670a9-transport_zones.gpkg'
 # )
 
 package_path <- args[1]
@@ -26,15 +24,6 @@ study_area_fp <- args[2]
 osm_buildings_fp <- args[3]
 level_of_detail <- as.integer(args[4])
 output_fp <- args[5]
-
-
-
-# package_path <- 'D:/dev/mobility_oss/mobility'
-# study_area_fp <- 'D:/data/mobility/projects/post-carbon/770d300c5e292c864d61ca4cd7bcbb62-study_area.gpkg'
-# osm_buildings_fp <- 'D:/data/mobility/projects/post-carbon/building-osm_data'
-# level_of_detail <- 1
-# output_fp <- 'D:/data/mobility/projects/study_area/51d687bdfde7cd7e33d288929ffe4ff6-transport_zones.gpkg'
-
 
 clusters_fp <- file.path(
   dirname(output_fp),
@@ -48,6 +37,7 @@ buildings_area_threshold <- 2e5
 n_buildings_sample <- 10
 min_building_area <- 20
 max_building_area <- 500e3
+rng_seed <- 0L
 
 convert_sf_to_geos_dt <- function(sf_df) {
   
@@ -72,8 +62,6 @@ compute_cluster_internal_distance <- function(buildings_dt) {
   
   # Compute the median distance between random buildings within each cluster 
   # with a coefficient of detour based and the crow fly distance
-  set.seed(0)
-  
   from_buildings <- buildings_dt[,
     .SD[sample(.N, 1000, replace = TRUE, prob = area)],
     by = cluster,
@@ -109,15 +97,17 @@ compute_k_medoids <- function(buildings_dt) {
     
     # Make sure at least 10 buildings are in each subcluster
     n <- max(1, min(i, floor(n_buildings/10)))
-    
-    pam_result <- cluster::clara(bdt[, list(X, Y)], n)
-    
-    bdt[, subcluster := pam_result$clustering]
+
+    kmeans_result <- kmeans_with_nearest_building_centers(
+      bdt,
+      k = n
+    )
+
+    bdt[, subcluster := kmeans_result$cluster]
     subcluster_area <- bdt[, list(area = sum(area)), by = subcluster]
     subcluster_area[, weight := area/sum(area)]
     
-    k_medoids <- as.data.table(pam_result$medoids)[, list(x = X, y = Y)]
-    k_medoids[, subcluster := 1:.N]
+    k_medoids <- copy(kmeans_result$medoids)[, list(subcluster, x, y)]
     
     k_medoids <- merge(k_medoids, subcluster_area, by = "subcluster")
     
@@ -129,6 +119,36 @@ compute_k_medoids <- function(buildings_dt) {
   
   return(k_medoids)
   
+}
+
+kmeans_with_nearest_building_centers <- function(buildings_dt, k, iter_max = 10L) {
+
+  coords <- as.matrix(buildings_dt[, list(X, Y)])
+  n <- nrow(coords)
+
+  n_unique <- uniqueN(buildings_dt[, list(X, Y)])
+  k <- max(1L, min(as.integer(k), n, n_unique))
+
+  fit <- kmeans(coords, centers = k, iter.max = iter_max, nstart = 1)
+  if (!is.null(fit$ifault) && fit$ifault == 2) {
+    fit <- kmeans(coords, centers = fit$centers, iter.max = max(2L * iter_max, 20L), nstart = 1)
+  }
+
+  cluster <- as.integer(fit$cluster)
+  centers <- as.matrix(fit$centers)
+
+  nn <- get.knnx(data = coords, query = centers, k = 1)
+  medoid_idx <- as.integer(nn$nn.index[, 1])
+  medoid_coords <- coords[medoid_idx, , drop = FALSE]
+
+  medoids <- data.table(
+    subcluster = seq_len(nrow(medoid_coords)),
+    x = medoid_coords[, 1],
+    y = medoid_coords[, 2]
+  )
+
+  return(list(cluster = cluster, medoids = medoids))
+
 }
 
 
@@ -160,12 +180,16 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
   # Split the transport zone into clusters based on the area of buildings
   if (level_of_detail == 1 & n_clusters > 1) {
     
-    k_medoids <- clara(buildings_dt[, list(X, Y)], n_clusters, samples = 50)
-    
-    clusters <- as.data.table(k_medoids$medoids)
-    clusters[, cluster := 1:.N]
-    
-    buildings_dt[, cluster := k_medoids$clustering]
+    kmeans_result <- kmeans_with_nearest_building_centers(
+      buildings_dt,
+      k = n_clusters
+    )
+
+    clusters <- copy(kmeans_result$medoids)
+    setnames(clusters, "subcluster", "cluster")
+    setnames(clusters, c("x", "y"), c("X", "Y"))
+
+    buildings_dt[, cluster := kmeans_result$cluster]
     
     cluster_area <- buildings_dt[, list(area = sum(area)), by = cluster]
     clusters <- merge(clusters, cluster_area, by = "cluster")
@@ -205,9 +229,8 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
 
     transport_zones[, geometry := voronoi[unlist(v_order)]]
     
-    #
     k_medoids <- buildings_dt[, compute_k_medoids(.SD), by = list(transport_zone_id = cluster)]
-    
+    # 
     # library(ggplot2)
     # p <- ggplot(buildings_dt)
     # p <- p + geom_point(aes(x = X, y = Y, color = factor(cluster)), alpha = 0.5)
@@ -215,7 +238,7 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
     # p <- p + geom_point(data = clusters, aes(x = X, y = Y), size = 3)
     # p <- p + coord_equal()
     # p
-    # 
+
 
     
   } else {
@@ -252,15 +275,11 @@ study_area <- st_read(study_area_fp, quiet = TRUE)
 study_area_dt <- convert_sf_to_geos_dt(study_area)
 study_area_dt[, geometry_wkb := geos_write_wkb(geometry)]
 
-set.seed(0)
-
-# plan(multisession, workers = max(parallel::detectCores(logical = FALSE)-3, 1))
-# plan(sequential)
+set.seed(rng_seed)
 
 transport_zones_buildings <- lapply(
   
   study_area_dt$local_admin_unit_id,
-  # future.seed = 0,
   
   FUN = function(lau_id) {
   
@@ -283,8 +302,6 @@ transport_zones_buildings <- lapply(
   
   }
 )
-
-# plan(sequential)
 
 transport_zones <- rbindlist(lapply(transport_zones_buildings, "[[", 1), use.names = TRUE)
 clusters <- rbindlist(lapply(transport_zones_buildings, "[[", 2), use.names = TRUE)
