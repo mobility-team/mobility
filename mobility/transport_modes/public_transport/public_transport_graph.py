@@ -5,15 +5,15 @@ import json
 import pandas as pd
 import geopandas as gpd
 import numpy as np
+from typing import Annotated
 
 from importlib import resources
-from dataclasses import asdict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
 from .gtfs.gtfs_router import GTFSRouter
-from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
 from mobility.transport_costs.path_travel_costs import PathTravelCosts
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
@@ -36,8 +36,10 @@ class PublicTransportGraph(FileAsset):
     def __init__(
             self,
             transport_zones: TransportZones,
-            parameters: PublicTransportRoutingParameters = PublicTransportRoutingParameters()
+            parameters: "PublicTransportRoutingParameters | None" = None
     ):
+        if parameters is None:
+            parameters = PublicTransportRoutingParameters()
         
         gtfs_router = GTFSRouter(
             transport_zones,
@@ -75,7 +77,7 @@ class PublicTransportGraph(FileAsset):
             self,
             transport_zones: TransportZones,
             gtfs_router: GTFSRouter,
-            parameters: PublicTransportRoutingParameters
+            parameters: "PublicTransportRoutingParameters"
         ) -> pd.DataFrame:
         """
         Calculates travel costs for public transport between transport zones using the R script prepare_public_transport_graph.R
@@ -95,7 +97,7 @@ class PublicTransportGraph(FileAsset):
             args=[
                 str(transport_zones.cache_path),
                 str(gtfs_router.get()),
-                json.dumps(asdict(parameters)),
+                json.dumps(parameters.model_dump(mode="json")),
                 str(self.cache_path)
             ]
         )
@@ -105,4 +107,31 @@ class PublicTransportGraph(FileAsset):
 
     
     def audit_gtfs(self):
-        return self.gtfs_router.audit_gtfs()    
+        return self.gtfs_router.audit_gtfs()
+
+
+class PublicTransportRoutingParameters(BaseModel):
+    """
+    Dataclass for public transport routing parameters. Should be given as argument for the routing_parameters of PublicTransportMode
+    By default, the period between 6:30 am and 7:30 am will be considered, with a maximum public transport traveltime of 1 hour.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_time_min: Annotated[float, Field(default=6.5, ge=0.0, le=24.0)]
+    start_time_max: Annotated[float, Field(default=8.0, ge=0.0, le=24.0)]
+    max_traveltime: Annotated[float, Field(default=2.0, gt=0.0)]
+    wait_time_coeff: Annotated[float, Field(default=2.0, gt=0.0)]
+    transfer_time_coeff: Annotated[float, Field(default=2.0, gt=0.0)]
+    no_show_perceived_prob: Annotated[float, Field(default=0.2, ge=0.0, le=1.0)]
+    target_time: Annotated[float, Field(default=8.0, ge=0.0, le=24.0)]
+    max_wait_time_at_destination: Annotated[float, Field(default=0.25, ge=0.0)]
+    max_perceived_time: Annotated[float, Field(default=2.0, gt=0.0)]
+    additional_gtfs_files: Annotated[list[str] | None, Field(default=None)]
+    expected_agencies: Annotated[list[str] | None, Field(default=None)]
+
+    @model_validator(mode="after")
+    def validate_time_window(self) -> "PublicTransportRoutingParameters":
+        if self.start_time_max < self.start_time_min:
+            raise ValueError("start_time_max should be greater than or equal to start_time_min.")
+        return self

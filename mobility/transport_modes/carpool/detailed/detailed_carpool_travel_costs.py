@@ -4,14 +4,13 @@ import logging
 import json
 import pandas as pd
 import shutil
+from typing import Annotated
 
 from importlib import resources
-
-from dataclasses import asdict
+from pydantic import BaseModel, ConfigDict, Field
 
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
-from mobility.transport_modes.carpool.detailed.detailed_carpool_routing_parameters import DetailedCarpoolRoutingParameters
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
 from mobility.transport_costs.path_travel_costs import PathTravelCosts
 
@@ -20,7 +19,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
     def __init__(
             self,
             car_travel_costs: PathTravelCosts,
-            parameters: DetailedCarpoolRoutingParameters,
+            parameters: "DetailedCarpoolRoutingParameters",
             modal_transfer: IntermodalTransfer,
         ):
 
@@ -60,9 +59,9 @@ class DetailedCarpoolTravelCosts(FileAsset):
             output_path = self.cache_path["congested"]
         
         costs = self.compute_travel_costs(
-            self.car_travel_costs,
-            self.parameters,
-            self.modal_transfer,
+            self.inputs["car_travel_costs"],
+            self.inputs["parameters"],
+            self.inputs["modal_transfer"],
             congestion,
             output_path
         )
@@ -75,7 +74,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
     def compute_travel_costs(
             self,
             car_travel_costs: PathTravelCosts,
-            params: DetailedCarpoolRoutingParameters,
+            params: "DetailedCarpoolRoutingParameters",
             modal_transfer: IntermodalTransfer,
             congestion: bool,
             output_path: pathlib.Path
@@ -94,7 +93,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
                 str(car_travel_costs.transport_zones.study_area.cache_path["polygons"]),
                 str(graph),
                 str(graph),
-                json.dumps(asdict(modal_transfer)),
+                json.dumps(modal_transfer.model_dump(mode="json")),
                 output_path
             ]
         )
@@ -107,3 +106,21 @@ class DetailedCarpoolTravelCosts(FileAsset):
     def update(self, od_flows):
         
         self.create_and_get_asset(congestion=True)
+
+
+class DetailedCarpoolRoutingParameters(BaseModel):
+    """
+    Attributes:
+        absolute_delay_per_passenger (int): absolute delay per supplementary passenger, in minutes. Default: 5
+        relative_delay_per_passenger (float): relative delay per supplementary passenger in proportion of total travel time. Default: 0.05
+        absolute_extra_distance_per_passenger (float): absolute extra distance per supplementary passenger, in km. Default: 1
+        relative_extra_distance_per_passenger (float): relative extra distance per supplementary passenger in proportion of total distance. Default: 0.05
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    parking_locations: Annotated[list[tuple[float, float]], Field(default_factory=list)]
+    absolute_delay_per_passenger: Annotated[int, Field(default=5, ge=0)]
+    relative_delay_per_passenger: Annotated[float, Field(default=0.05, ge=0.0)]
+    absolute_extra_distance_per_passenger: Annotated[float, Field(default=1.0, ge=0.0)]
+    relative_extra_distance_per_passenger: Annotated[float, Field(default=0.05, ge=0.0)]

@@ -1,31 +1,45 @@
+from __future__ import annotations
+
 import pandas as pd
 import polars as pl
 
-from typing import List
+from typing import Annotated, List
 
-from mobility.motives.motive import Motive
+from pydantic import Field
+from mobility.motives.motive import Motive, MotiveParameters
 from mobility.parsers.shops_turnover_distribution import ShopsTurnoverDistribution
+
 
 class ShoppingMotive(Motive):
 
     def __init__(
         self,
-        value_of_time: float = 10.0,
-        saturation_fun_ref_level: float = 1.5,
-        saturation_fun_beta: float = 4.0,
-        survey_ids: List[str] = ["2.20", "2.21"],
-        radiation_lambda: float = 0.99986,
-        opportunities: pd.DataFrame = None
+        value_of_time: float = None,
+        saturation_fun_ref_level: float = None,
+        saturation_fun_beta: float = None,
+        survey_ids: List[str] = None,
+        radiation_lambda: float = None,
+        opportunities: pd.DataFrame = None,
+        parameters: "ShoppingMotiveParameters" | None = None
     ):
+
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=ShoppingMotiveParameters,
+            explicit_args={
+                "value_of_time": value_of_time,
+                "saturation_fun_ref_level": saturation_fun_ref_level,
+                "saturation_fun_beta": saturation_fun_beta,
+                "survey_ids": survey_ids,
+                "radiation_lambda": radiation_lambda,
+            },
+            owner_name="ShoppingMotive",
+        )
 
         super().__init__(
             name="shopping",
-            value_of_time=value_of_time,
-            survey_ids=survey_ids,
-            radiation_lambda=radiation_lambda,
             opportunities=opportunities,
-            saturation_fun_ref_level=saturation_fun_ref_level,
-            saturation_fun_beta=saturation_fun_beta
+            parameters=parameters
         )
 
     
@@ -62,3 +76,11 @@ class ShoppingMotive(Motive):
         return opportunities
     
 
+class ShoppingMotiveParameters(MotiveParameters):
+    """Parameters specific to the shopping motive."""
+
+    value_of_time: Annotated[float, Field(default=10.0, ge=0.0)]
+    saturation_fun_ref_level: Annotated[float, Field(default=1.5, ge=0.0)]
+    saturation_fun_beta: Annotated[float, Field(default=4.0, ge=0.0)]
+    survey_ids: Annotated[list[str], Field(default_factory=lambda: ["2.20", "2.21"])]
+    radiation_lambda: Annotated[float, Field(default=0.99986, ge=0.0, le=1.0)]

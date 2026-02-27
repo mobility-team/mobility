@@ -1,2 +1,2 @@
-from .public_transport_mode import PublicTransportRoutingParameters
+from .public_transport_graph import PublicTransportRoutingParameters
 from .public_transport_mode import PublicTransportMode

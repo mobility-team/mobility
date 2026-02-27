@@ -196,14 +196,21 @@ class LeisureDestinationChoiceModel(DestinationChoiceModel):
             utilities
         ):
         
-            if self.parameters.model["type"] == "radiation_universal":
+            params = self.inputs["parameters"]
+            if params.model["type"] == "radiation_universal":
                 # NOT TESTED
-                flows, source_rest_volume, sink_rest_volume = radiation_model(sources, sinks, costs, self.parameters.model["alpha"], self.parameters.model["beta"])
+                flows, source_rest_volume, sink_rest_volume = radiation_model(
+                    sources,
+                    sinks,
+                    costs,
+                    params.model["alpha"],
+                    params.model["beta"],
+                )
                 return flows
         
-            if self.parameters.model["type"] == "radiation_selection":
+            if params.model["type"] == "radiation_selection":
                 # NOT TESTED
-                selection_lambda = self.parameters.model["lambda"]
+                selection_lambda = params.model["lambda"]
                 polar_sources = pl.from_pandas(sources).with_columns(pl.col("from").cast(pl.Int64))
                 polar_sinks = pl.from_pandas(sinks).with_columns(pl.col("to").cast(pl.Int64))
                 costs = costs.get()

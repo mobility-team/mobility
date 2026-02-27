@@ -1,33 +1,47 @@
+from __future__ import annotations
+
 import pandas as pd
 import polars as pl
+from typing import Annotated
 
-from mobility.motives.motive import Motive
+from pydantic import Field
+from mobility.motives.motive import Motive, MotiveParameters
 from mobility.population import Population
+
 
 class OtherMotive(Motive):
 
     def __init__(
         self,
-        value_of_time: float = 10.0,
-        saturation_fun_ref_level: float = 1.5,
-        saturation_fun_beta: float = 4.0,
-        radiation_lambda: float = 0.99986,
+        value_of_time: float = None,
+        saturation_fun_ref_level: float = None,
+        saturation_fun_beta: float = None,
+        radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
-        population: Population = None
+        population: Population = None,
+        parameters: "OtherMotiveParameters" | None = None
     ):
         
         if population is None and opportunities is None:
             raise ValueError("Please provide an opportunities proxy dataframe, or a Population instance if you want to use residents as proxy for the 'other' motive.")
         
-        self.population = population
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=OtherMotiveParameters,
+            explicit_args={
+                "value_of_time": value_of_time,
+                "saturation_fun_ref_level": saturation_fun_ref_level,
+                "saturation_fun_beta": saturation_fun_beta,
+                "radiation_lambda": radiation_lambda,
+            },
+            owner_name="OtherMotive",
+        )
 
         super().__init__(
             name="other",
-            value_of_time=value_of_time,
-            radiation_lambda=radiation_lambda,
             opportunities=opportunities,
-            saturation_fun_ref_level=saturation_fun_ref_level,
-            saturation_fun_beta=saturation_fun_beta
+            extra_inputs={"population": population},
+            parameters=parameters
         )
 
     
@@ -37,10 +51,10 @@ class OtherMotive(Motive):
 
             opportunities = self.opportunities
 
-        elif self.population is not None:
+        elif self.inputs["population"] is not None:
 
             opportunities = (
-                pl.scan_parquet(self.population.get()["population_groups"])
+                pl.scan_parquet(self.inputs["population"].get()["population_groups"])
                 .group_by(["transport_zone_id"])
                 .agg(
                     n_opp=pl.col("weight").sum()
@@ -56,3 +70,26 @@ class OtherMotive(Motive):
         return opportunities
             
     
+
+class OtherMotiveParameters(MotiveParameters):
+    """Parameters specific to the other motive."""
+
+    value_of_time: Annotated[
+        float,
+        Field(default=10.0, ge=0.0),
+    ]
+
+    saturation_fun_ref_level: Annotated[
+        float,
+        Field(default=1.5, ge=0.0),
+    ]
+
+    saturation_fun_beta: Annotated[
+        float,
+        Field(default=4.0, ge=0.0),
+    ]
+
+    radiation_lambda: Annotated[
+        float,
+        Field(default=0.99986, ge=0.0, le=1.0),
+    ]

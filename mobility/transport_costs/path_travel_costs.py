@@ -115,12 +115,12 @@ class PathTravelCosts(FileAsset):
             pd.DataFrame: A DataFrame of calculated travel costs.
         """
         
-        mode = self.mode_name
+        mode = self.inputs["mode_name"]
         
         logging.info("Preparing travel costs for mode " + mode)
         
-        self.transport_zones.get()
-        self.contracted_path_graph.get()
+        self.inputs["transport_zones"].get()
+        self.inputs["contracted_path_graph"].get()
         
         if congestion is False:
             output_path = self.cache_path["freeflow"]
@@ -131,7 +131,11 @@ class PathTravelCosts(FileAsset):
             # compute free-flow costs.
             output_path = self.cache_path["freeflow"]
         
-        costs = self.compute_costs_by_OD(self.transport_zones, self.contracted_path_graph, output_path)
+        costs = self.compute_costs_by_OD(
+            self.inputs["transport_zones"],
+            self.inputs["contracted_path_graph"],
+            output_path,
+        )
         
         if congestion is False:
             shutil.copy(self.cache_path["freeflow"], self.cache_path["congested"])
@@ -164,8 +168,8 @@ class PathTravelCosts(FileAsset):
             args=[
                 str(transport_zones.cache_path),
                 str(path_graph.cache_path),
-                str(self.routing_parameters.filter_max_speed),
-                str(self.routing_parameters.filter_max_time),
+                str(self.inputs["routing_parameters"].filter_max_speed),
+                str(self.inputs["routing_parameters"].filter_max_time),
                 str(output_path)
             ]
         )
@@ -184,7 +188,7 @@ class PathTravelCosts(FileAsset):
         """
 
         if flow_asset is None:
-            self.contracted_path_graph.update(od_flows)
+            self.inputs["contracted_path_graph"].update(od_flows)
             self._current_congested_snapshot = None
             self.create_and_get_asset(congestion=True)
             return
@@ -195,17 +199,17 @@ class PathTravelCosts(FileAsset):
         from mobility.transport_costs.path_travel_costs_snapshot import PathTravelCostsSnapshot
 
         congested_graph = CongestedPathGraphSnapshot(
-            modified_graph=self.modified_path_graph,
-            transport_zones=self.transport_zones,
+            modified_graph=self.inputs["modified_path_graph"],
+            transport_zones=self.inputs["transport_zones"],
             vehicle_flows=flow_asset,
-            congestion_flows_scaling_factor=self.congested_path_graph.congestion_flows_scaling_factor,
+            congestion_flows_scaling_factor=self.inputs["congested_path_graph"].congestion_flows_scaling_factor,
         )
         contracted_graph = ContractedPathGraphSnapshot(congested_graph)
 
         snapshot = PathTravelCostsSnapshot(
-            mode_name=self.mode_name,
-            transport_zones=self.transport_zones,
-            routing_parameters=self.routing_parameters,
+            mode_name=self.inputs["mode_name"],
+            transport_zones=self.inputs["transport_zones"],
+            routing_parameters=self.inputs["routing_parameters"],
             contracted_graph=contracted_graph,
         )
 
@@ -215,15 +219,16 @@ class PathTravelCosts(FileAsset):
     def clone(self):
         
         ptc = PathTravelCosts(
-            self.mode_name,
-            self.transport_zones,
-            self.routing_parameters,
-            self.contracted_path_graph.handles_congestion
+            self.inputs["mode_name"],
+            self.inputs["transport_zones"],
+            self.inputs["routing_parameters"],
+            self.inputs["simplified_path_graph"].inputs["osm_capacity_parameters"],
+            self.inputs["contracted_path_graph"].handles_congestion,
         )
-        
+
         ptc.cache_path = {
-            "freeflow": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / (self.inputs_hash + "-travel_costs_free_flow_" + self.mode_name + ".parquet"),
-            "congested": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / (self.inputs_hash + "-travel_costs_congested_" + self.mode_name + "_clone_" + shortuuid.uuid() + ".parquet")
+            "freeflow": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / (self.inputs_hash + "-travel_costs_free_flow_" + self.inputs["mode_name"] + ".parquet"),
+            "congested": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / (self.inputs_hash + "-travel_costs_congested_" + self.inputs["mode_name"] + "_clone_" + shortuuid.uuid() + ".parquet")
         }
     
         return ptc

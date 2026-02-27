@@ -52,11 +52,11 @@ class CongestedPathGraph(FileAsset):
             flows_file_path = self.flows_file_path
 
         self.load_graph(
-            self.modified_graph.get(),
-            self.transport_zones.cache_path,
+            self.inputs["modified_graph"].get(),
+            self.inputs["transport_zones"].cache_path,
             enable_congestion,
             flows_file_path,
-            self.congestion_flows_scaling_factor,
+            self.inputs["congestion_flows_scaling_factor"],
         )
 
         return self.cache_path
@@ -88,7 +88,7 @@ class CongestedPathGraph(FileAsset):
 
     def update(self, od_flows, flow_asset=None):
         
-        if self.handles_congestion is True:
+        if self.inputs["handles_congestion"] is True:
             
             if flow_asset is None:
                 od_flows.write_parquet(self.flows_file_path)

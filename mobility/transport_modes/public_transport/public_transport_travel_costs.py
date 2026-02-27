@@ -5,14 +5,12 @@ import json
 import pandas as pd
 
 from importlib import resources
-from dataclasses import asdict
 
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
-from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportGraph
+from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportGraph, PublicTransportRoutingParameters
 from mobility.transport_modes.public_transport.intermodal_transport_graph import IntermodalTransportGraph
-from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
 from mobility.transport_graphs import SimplifiedPathGraph, ContractedPathGraph
@@ -52,7 +50,10 @@ class PublicTransportTravelCosts(FileAsset):
             additional_gtfs_files : list of additional GTFS files to include in the calculations
 
         """
-        
+        if first_modal_transfer is None or last_modal_transfer is None:
+            raise ValueError(
+                "PublicTransportTravelCosts requires both `first_modal_transfer` and `last_modal_transfer`."
+            )
 
         intermodal_graph = IntermodalTransportGraph(
             transport_zones,
@@ -71,7 +72,12 @@ class PublicTransportTravelCosts(FileAsset):
             "parameters": parameters
         }
 
-        file_name = first_leg_mode.name + "_public_transport_" + last_leg_mode.name + "_travel_costs.parquet"
+        file_name = (
+            first_leg_mode.inputs["parameters"].name
+            + "_public_transport_"
+            + last_leg_mode.inputs["parameters"].name
+            + "_travel_costs.parquet"
+        )
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
 
         super().__init__(inputs, cache_path)
@@ -128,9 +134,9 @@ class PublicTransportTravelCosts(FileAsset):
             args=[
                 str(transport_zones.cache_path),
                 str(intermodal_graph.get()),
-                json.dumps(asdict(first_modal_transfer)),
-                json.dumps(asdict(last_modal_transfer)),
-                json.dumps(asdict(parameters)),
+                json.dumps(first_modal_transfer.model_dump(mode="json")),
+                json.dumps(last_modal_transfer.model_dump(mode="json")),
+                json.dumps(parameters.model_dump(mode="json")),
                 str(self.cache_path)
             ]
         )
@@ -142,8 +148,8 @@ class PublicTransportTravelCosts(FileAsset):
     
     def update(self, od_flows):
         
-        self.intermodal_graph.update()
+        self.inputs["intermodal_graph"].update()
         self.create_and_get_asset()
         
     def audit_gtfs(self):
-        return self.intermodal_graph.audit_gtfs()
+        return self.inputs["intermodal_graph"].audit_gtfs()

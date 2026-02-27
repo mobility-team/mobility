@@ -1,9 +1,12 @@
+from __future__ import annotations
 import os
 import pathlib
 import polars as pl
 import pandas as pd
-
+from typing import Annotated
+from pydantic import BaseModel, ConfigDict, Field
 from mobility.file_asset import FileAsset
+
 
 class MobilitySurvey(FileAsset):
     """
@@ -17,9 +20,38 @@ class MobilitySurvey(FileAsset):
         get_cached_asset: Returns the cached asset data as a dictionary of pandas DataFrames.
     """
     
-    def __init__(self, inputs, seq_prob_cutoff: float = 0.5):
-        
-        folder_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "mobility_surveys" / inputs["survey_name"]
+    def __init__(
+        self,
+        survey_name: str | None = None,
+        country: str | None = None,
+        seq_prob_cutoff: float | None = None,
+        parameters: "MobilitySurveyParameters" | None = None,
+    ):
+        """Initialize mobility survey asset inputs and cache paths.
+
+        Args:
+            survey_name: Survey dataset identifier.
+            country: Country code associated with the survey.
+            seq_prob_cutoff: Sequence probability cutoff used in chain filtering.
+            parameters: Optional pre-built pydantic parameters model.
+        """
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=MobilitySurveyParameters,
+            explicit_args={
+                "survey_name": survey_name,
+                "country": country,
+                "seq_prob_cutoff": seq_prob_cutoff,
+            },
+            required_fields=["survey_name", "country"],
+            owner_name="MobilitySurvey",
+        )
+
+        folder_path = (
+            pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"])
+            / "mobility_surveys"
+            / parameters.survey_name
+        )
         
         files = {
             "short_trips": "short_dist_trips.parquet",
@@ -33,9 +65,10 @@ class MobilitySurvey(FileAsset):
         }
         
         cache_path = {k: folder_path / file for k, file in files.items()}
-        
-        self.seq_prob_cutoff = seq_prob_cutoff
-
+        inputs = {
+            "version": "1",
+            "parameters": parameters,
+        }
         super().__init__(inputs, cache_path)
         
     def get_cached_asset(self) -> dict[str, pd.DataFrame]:
@@ -50,20 +83,20 @@ class MobilitySurvey(FileAsset):
 
     def get_chains_probability(self, motives, modes):
         
-        motive_mapping = [{"group": m.name, "motive": m.survey_ids} for m in motives if m.name != "other"]
-        motive_mapping = pd.DataFrame(motive_mapping)
-        motive_mapping = motive_mapping.explode("motive")
-        motive_mapping = motive_mapping.set_index("motive").to_dict()["group"]
+        motive_mapping = {
+            motive_id: m.name
+            for m in motives
+            if m.name != "other"
+            for motive_id in (m.inputs["parameters"].survey_ids or [])
+        }
         
-        mode_mapping = [
-            {"group": m.name, "mode": m.survey_ids} 
-            for m in modes if len(m.survey_ids) > 0
-        ]
-        mode_mapping = pd.DataFrame(mode_mapping)
-        mode_mapping = mode_mapping.explode("mode")
-        mode_mapping = mode_mapping.set_index("mode").to_dict()["group"]
+        mode_mapping = {
+            mode_id: m.inputs["parameters"].name
+            for m in modes
+            for mode_id in (m.inputs["parameters"].survey_ids or [])
+        }
         
-        mode_names = [m.name for m in modes] + ["other"]
+        mode_names = [m.inputs["parameters"].name for m in modes] + ["other"]
 
         days_trips = pl.from_pandas(self.get()["days_trip"].reset_index())
         short_trips = pl.from_pandas(self.get()["short_trips"].reset_index())
@@ -316,7 +349,7 @@ class MobilitySurvey(FileAsset):
         # Compute the probability of each subsequence, keeping only the first 
         # x % of the contribution to the average distance for each population 
         # group
-        cutoff = self.seq_prob_cutoff
+        cutoff = self.inputs["parameters"].seq_prob_cutoff
         
         p_seq = (
             
@@ -387,3 +420,37 @@ class MobilitySurvey(FileAsset):
             
             
         
+class MobilitySurveyParameters(BaseModel):
+    """Parameters used to configure a mobility survey asset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    survey_name: Annotated[
+        str,
+        Field(
+            title="Survey name",
+            description="Identifier of the survey dataset folder to load.",
+        ),
+    ]
+
+    country: Annotated[
+        str,
+        Field(
+            title="Country code",
+            description="ISO-like country code used to map surveys to population inputs.",
+        ),
+    ]
+
+    seq_prob_cutoff: Annotated[
+        float,
+        Field(
+            default=0.5,
+            gt=0.0,
+            le=1.0,
+            title="Sequence probability cutoff",
+            description=(
+                "Cumulative contribution cutoff used to keep the most relevant "
+                "motive/mode sequences per population group."
+            ),
+        ),
+    ]

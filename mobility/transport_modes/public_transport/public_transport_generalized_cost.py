@@ -37,10 +37,10 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
         last_leg_mode_name = self.inputs["last_leg_mode_name"]
         
         metrics = list(metrics)
-        costs = self.travel_costs.get()
+        costs = self.inputs["travel_costs"].get()
         
-        study_area = self.travel_costs.transport_zones.study_area.get()
-        transport_zones = self.travel_costs.transport_zones.get()
+        study_area = self.inputs["travel_costs"].inputs["transport_zones"].study_area.get()
+        transport_zones = self.inputs["travel_costs"].inputs["transport_zones"].get()
         
         transport_zones = pd.merge(transport_zones, study_area[["local_admin_unit_id", "country"]], on="local_admin_unit_id")
         
@@ -52,15 +52,18 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
         
         costs["distance"] = costs["start_distance"] + costs["mid_distance"] + costs["last_distance"]
         
-        gen_cost = self.start_parameters.cost_of_distance*costs["start_distance"]
-        gen_cost += self.start_parameters.cost_of_time.compute(costs["start_distance"], costs["country"])*costs["start_real_time"]
+        start_parameters = self.inputs["start_parameters"]
+        mid_parameters = self.inputs["mid_parameters"]
+        last_parameters = self.inputs["last_parameters"]
+        gen_cost = start_parameters.cost_of_distance * costs["start_distance"]
+        gen_cost += start_parameters.cost_of_time.compute(costs["start_distance"], costs["country"]) * costs["start_real_time"]
         
-        gen_cost += self.mid_parameters.cost_constant
-        gen_cost += self.mid_parameters.cost_of_distance*costs["mid_distance"]
-        gen_cost += self.mid_parameters.cost_of_time.compute(costs["mid_distance"], costs["country"])*costs["mid_perceived_time"]
+        gen_cost += mid_parameters.cost_constant
+        gen_cost += mid_parameters.cost_of_distance * costs["mid_distance"]
+        gen_cost += mid_parameters.cost_of_time.compute(costs["mid_distance"], costs["country"]) * costs["mid_perceived_time"]
         
-        gen_cost += self.last_parameters.cost_of_distance*costs["last_distance"]
-        gen_cost += self.last_parameters.cost_of_time.compute(costs["last_distance"], costs["country"])*costs["last_real_time"]
+        gen_cost += last_parameters.cost_of_distance * costs["last_distance"]
+        gen_cost += last_parameters.cost_of_time.compute(costs["last_distance"], costs["country"]) * costs["last_real_time"]
         
         costs["cost"] = gen_cost
         

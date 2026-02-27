@@ -1,8 +1,16 @@
-from dataclasses import dataclass, field
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field
 
 def OSMCapacityParameters(mode, **kwargs):
     
-    kwargs = {k: OSMEdgeCapacity(**v) for k,v in kwargs.items()}
+    kwargs = {
+        k: (
+            v if isinstance(v, OSMEdgeCapacity)
+            else OSMEdgeCapacity.model_validate(v)
+        )
+        for k, v in kwargs.items()
+    }
     
     if mode == "car":
         return CarOSMCapacityParameters(**kwargs)
@@ -13,21 +21,20 @@ def OSMCapacityParameters(mode, **kwargs):
     else:
         raise ValueError(f"Mode {mode} has no parameter dataclass.")
 
-@dataclass
-class OSMEdgeCapacity:
-    capacity: float = 1000.0
-    alpha: float = 0.15
-    beta: float = 4.0
+class OSMEdgeCapacity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
+    capacity: Annotated[float, Field(default=1000.0, gt=0.0)]
+    alpha: Annotated[float, Field(default=0.15, ge=0.0)]
+    beta: Annotated[float, Field(default=4.0, ge=0.0)]
 
-@dataclass
-class BaseOSMCapacityParameters:
+class BaseOSMCapacityParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     
     def get_highway_tags(self):
-        return list(self.__annotations__)
+        return list(self.__class__.model_fields)
 
 
-@dataclass
 class CarOSMCapacityParameters(BaseOSMCapacityParameters):
     
     # List of OSM highway types to extract from OSM data to feed dodgr weight_streenet function
@@ -37,22 +44,21 @@ class CarOSMCapacityParameters(BaseOSMCapacityParameters):
     # ferry ways are included in the default dodgr weighting profile, but we 
     # exclude them in mobility. We should handle car transport with a ferry in public transport.
 
-    motorway: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=2000.0))
-    trunk: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
-    primary: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
-    secondary: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
-    tertiary: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))
-    unclassified: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))
-    residential: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))
-    living_street: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=300.0))
-    motorway_link: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
-    trunk_link: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
-    primary_link: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
-    secondary_link: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))
-    tertiary_link: OSMEdgeCapacity = field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))
+    motorway: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=2000.0))]
+    trunk: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))]
+    primary: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))]
+    secondary: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))]
+    tertiary: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))]
+    unclassified: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))]
+    residential: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))]
+    living_street: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=300.0))]
+    motorway_link: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))]
+    trunk_link: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))]
+    primary_link: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))]
+    secondary_link: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=1000.0))]
+    tertiary_link: Annotated[OSMEdgeCapacity, Field(default_factory=lambda: OSMEdgeCapacity(capacity=600.0))]
 
 
-@dataclass
 class WalkOSMCapacityParameters(BaseOSMCapacityParameters):
     
     # List of OSM highway types to extract from OSM data to feed dodgr weight_streenet function
@@ -63,27 +69,26 @@ class WalkOSMCapacityParameters(BaseOSMCapacityParameters):
     # ferry ways are included in the default dodgr weighting profile, but we 
     # disable them here because they should be represented in the public transport graph
     
-    trunk: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    primary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    secondary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    tertiary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    unclassified: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    residential: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    track: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    cycleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    path: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    steps: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    living_street: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    bridleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    footway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    pedestrian: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    trunk_link: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    primary_link: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    secondary_link: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    tertiary_link: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
+    trunk: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    primary: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    secondary: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    tertiary: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    unclassified: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    residential: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    track: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    cycleway: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    path: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    steps: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    living_street: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    bridleway: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    footway: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    pedestrian: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    trunk_link: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    primary_link: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    secondary_link: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    tertiary_link: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
 
 
-@dataclass
 class BicycleOSMCapacityParameters(BaseOSMCapacityParameters):
     
     # List of OSM highway types to extract from OSM data to feed dodgr weight_streenet function
@@ -98,18 +103,18 @@ class BicycleOSMCapacityParameters(BaseOSMCapacityParameters):
 
     # we also remove ferry ways which should be included in the public transport graph instead
          
-    trunk: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    primary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    secondary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    tertiary: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    unclassified: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    residential: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    cycleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    living_street: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    bridleway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    footway: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    pedestrian: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    trunk_link: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    primary_link: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    secondary_link: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
-    tertiary_link: OSMEdgeCapacity = field(default_factory=OSMEdgeCapacity)
+    trunk: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    primary: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    secondary: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    tertiary: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    unclassified: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    residential: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    cycleway: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    living_street: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    bridleway: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    footway: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    pedestrian: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    trunk_link: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    primary_link: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    secondary_link: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]
+    tertiary_link: Annotated[OSMEdgeCapacity, Field(default_factory=OSMEdgeCapacity)]

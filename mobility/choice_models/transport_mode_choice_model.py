@@ -37,16 +37,16 @@ class TransportModeChoiceModel(FileAsset):
         costs = []
         for mode in self.inputs["destination_choice_model"].costs.modes:
             
-            if mode.congestion:
-                print(f"Getting congested costs for mode {mode.name}")
-                gc = mode.generalized_cost.get(congestion=True)
+            if mode.inputs["parameters"].congestion:
+                print(f"Getting congested costs for mode {mode.inputs['parameters'].name}")
+                gc = mode.inputs["generalized_cost"].get(congestion=True)
             else:
-                print(f"Getting costs for mode {mode.name}")
-                gc = mode.generalized_cost.get()
+                print(f"Getting costs for mode {mode.inputs['parameters'].name}")
+                gc = mode.inputs["generalized_cost"].get()
                 
             costs.append(
                 pl.DataFrame(gc)
-                .with_columns(pl.lit(mode.name).alias("mode"))
+                .with_columns(pl.lit(mode.inputs["parameters"].name).alias("mode"))
             )
             
         costs = pl.concat(costs)

@@ -7,6 +7,9 @@ import numpy as np
 
 from mobility.parsers.mobility_survey import MobilitySurvey
 from mobility.parsers.download_file import download_file
+from mobility.parsers.mobility_survey.mobility_survey import (
+    MobilitySurveyParameters,
+)
 
 class ENTDMobilitySurvey(MobilitySurvey):
     """
@@ -25,12 +28,28 @@ class ENTDMobilitySurvey(MobilitySurvey):
         prepare_survey_data_EMP_2019: Processes and formats EMP-2019 survey data.
     """
 
-    def __init__(self, seq_prob_cutoff: float = 0.95):
-        inputs = {
-            "survey_name": "fr-ENTD-2008",
-            "country": "fr"
-        }
-        super().__init__(inputs, seq_prob_cutoff)
+    def __init__(
+        self,
+        seq_prob_cutoff: float | None = None,
+        parameters: MobilitySurveyParameters | None = None,
+    ):
+        """Initialize ENTD mobility survey with optional parameter overrides.
+
+        Args:
+            seq_prob_cutoff: Sequence probability cutoff override.
+            parameters: Optional pre-built survey parameters model.
+        """
+        parameters = self.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=MobilitySurveyParameters,
+            explicit_args={
+                "survey_name": "fr-ENTD-2008",
+                "country": "fr",
+                "seq_prob_cutoff": seq_prob_cutoff,
+            },
+            owner_name="ENTDMobilitySurvey",
+        )
+        super().__init__(parameters=parameters)
 
 
     def create_and_get_asset(self) -> dict[str, pd.DataFrame]:

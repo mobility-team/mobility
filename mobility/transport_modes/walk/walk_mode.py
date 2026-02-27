@@ -1,13 +1,15 @@
 from typing import List
+from typing import Literal
 
 from mobility.transport_zones import TransportZones
 from mobility.transport_costs.path_travel_costs import PathTravelCosts
-from mobility.transport_modes.transport_mode import TransportMode
+from mobility.transport_modes.transport_mode import TransportMode, TransportModeParameters
 from mobility.path_routing_parameters import PathRoutingParameters
 from mobility.generalized_cost_parameters import GeneralizedCostParameters
 from mobility.cost_of_time_parameters import CostOfTimeParameters
 from mobility.transport_costs.path_generalized_cost import PathGeneralizedCost
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
+from pydantic import Field
 
 class WalkMode(TransportMode):
     
@@ -17,8 +19,9 @@ class WalkMode(TransportMode):
         routing_parameters: PathRoutingParameters = None,
         osm_capacity_parameters: OSMCapacityParameters = None,
         generalized_cost_parameters: GeneralizedCostParameters = None,
-        survey_ids: List[str] = ["1.10", "1.11", "1.13"],
-        ghg_intensity: float = 0.0
+        survey_ids: List[str] | None = None,
+        ghg_intensity: float | None = None,
+        parameters: "WalkModeParameters | None" = None,
     ):
         
         mode_name = "walk"
@@ -57,7 +60,20 @@ class WalkMode(TransportMode):
             travel_costs,
             generalized_cost, 
             ghg_intensity=ghg_intensity,
-            survey_ids=survey_ids
+            survey_ids=survey_ids,
+            parameters=parameters,
+            parameters_cls=WalkModeParameters,
         )
-        
+
+
+class WalkModeParameters(TransportModeParameters):
+    """Parameters for walk mode."""
+
+    name: Literal["walk"] = "walk"
+    ghg_intensity: float = 0.0
+    congestion: bool = False
+    vehicle: None = None
+    multimodal: bool = False
+    return_mode: None = None
+    survey_ids: list[str] = Field(default_factory=lambda: ["1.10", "1.11", "1.13"])
 

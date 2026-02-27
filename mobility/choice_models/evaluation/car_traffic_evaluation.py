@@ -16,15 +16,15 @@ class CarTrafficEvaluation:
             weekday: bool = True
         ):
 
-        car_mode = [m for m in self.results.modes if m.name == "car"]
+        car_mode = [m for m in self.results.modes if m.inputs["parameters"].name == "car"]
         
         if len(car_mode) == 0:
             raise ValueError("No car mode in the model.")
             
         car_mode = car_mode[0]
 
-        freeflow_graph = self.build_graph_lines_dataframe(car_mode.travel_costs.modified_path_graph)
-        congested_graph = self.build_graph_lines_dataframe(car_mode.travel_costs.congested_path_graph)
+        freeflow_graph = self.build_graph_lines_dataframe(car_mode.inputs["travel_costs"].modified_path_graph)
+        congested_graph = self.build_graph_lines_dataframe(car_mode.inputs["travel_costs"].congested_path_graph)
         
         comparison = (
             freeflow_graph
@@ -49,7 +49,7 @@ class CarTrafficEvaluation:
             crs="EPSG:3035"
         )
         
-        fp = car_mode.travel_costs.modified_path_graph.cache_path.parent / "congestion.gpkg"
+        fp = car_mode.inputs["travel_costs"].modified_path_graph.cache_path.parent / "congestion.gpkg"
         
         gdf.to_file(
             fp,

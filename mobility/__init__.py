@@ -27,7 +27,7 @@ from mobility.transport_modes.carpool import DetailedCarpoolRoutingParameters
 from mobility.transport_modes.public_transport import PublicTransportRoutingParameters
 
 from .generalized_cost_parameters import GeneralizedCostParameters
-from .transport_modes.carpool.detailed.detailed_carpool_generalized_cost_parameters import DetailedCarpoolGeneralizedCostParameters
+from .transport_modes.carpool.detailed.detailed_carpool_generalized_cost import DetailedCarpoolGeneralizedCostParameters
 
 from .cost_of_time_parameters import CostOfTimeParameters
 

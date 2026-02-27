@@ -12,7 +12,7 @@ def test_init_sets_inputs_and_hashed_cache_paths(project_dir, fake_inputs_hash, 
     )
 
     assert population.inputs["transport_zones"] is fake_transport_zones
-    assert population.inputs["sample_size"] == 10
+    assert population.inputs["parameters"].sample_size == 10
     assert population.inputs["switzerland_census"] is None
 
     individuals_cache_path = population.cache_path["individuals"]

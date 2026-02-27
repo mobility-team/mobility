@@ -1,7 +1,6 @@
 import os
 import pathlib
 import logging
-import dataclasses
 import json
 import geopandas as gpd
 
@@ -60,13 +59,13 @@ class SimplifiedPathGraph(FileAsset):
 
     def create_and_get_asset(self) -> pathlib.Path:
         
-        logging.info("Preparing travel costs for mode " + self.mode_name)
+        logging.info("Preparing travel costs for mode " + self.inputs["mode_name"])
 
         self.prepare_path_graph(
-            self.transport_zones,
-            self.osm.get(),
-            self.mode_name,
-            self.osm_capacity_parameters,
+            self.inputs["transport_zones"],
+            self.inputs["osm"].get(),
+            self.inputs["mode_name"],
+            self.inputs["osm_capacity_parameters"],
             self.cache_path
         )
 
@@ -91,7 +90,7 @@ class SimplifiedPathGraph(FileAsset):
                 str(transport_zones.cache_path),
                 str(osm_data_path),
                 mode,
-                json.dumps(dataclasses.asdict(osm_capacity_parameters)),
+                json.dumps(osm_capacity_parameters.model_dump(mode="json")),
                 str(output_file_path)
             ]
         )
