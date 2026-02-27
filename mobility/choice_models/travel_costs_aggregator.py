@@ -1,3 +1,4 @@
+import os
 import polars as pl
 import logging
 
@@ -223,6 +224,20 @@ class TravelCostsAggregator(InMemoryAsset):
                     # Persist vehicle flows as a first-class asset so downstream congestion
                     # snapshots are isolated per run/iteration and safe for parallel runs.
                     from mobility.transport_costs.od_flows_asset import VehicleODFlowsAsset
+                    if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+                        try:
+                            n_rows = flows.height
+                            vol_sum = float(flows["vehicle_volume"].sum()) if "vehicle_volume" in flows.columns else float("nan")
+                        except Exception:
+                            n_rows, vol_sum = None, None
+                        logging.info(
+                            "Congestion update input: run_key=%s iteration=%s mode=%s rows=%s vehicle_volume_sum=%s",
+                            str(run_key),
+                            str(iteration),
+                            str(mode.name),
+                            str(n_rows),
+                            str(vol_sum),
+                        )
                     flow_asset = VehicleODFlowsAsset(
                         flows.to_pandas(),
                         run_key=str(run_key),
@@ -230,7 +245,13 @@ class TravelCostsAggregator(InMemoryAsset):
                         mode_name=str(mode.inputs["parameters"].name)
                     )
                     flow_asset.get()
+                    if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+                        logging.info(
+                            "Flow asset ready: inputs_hash=%s path=%s",
+                            flow_asset.inputs_hash,
+                            str(flow_asset.cache_path),
+                        )
 
-                mode.inputs["travel_costs"].update(flows, flow_asset=flow_asset)
+                    mode.inputs["travel_costs"].update(flows, flow_asset=flow_asset)
             
         

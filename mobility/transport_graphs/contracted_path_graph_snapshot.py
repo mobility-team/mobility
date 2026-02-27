@@ -23,15 +23,29 @@ class ContractedPathGraphSnapshot(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pathlib.Path:
-        logging.info("Contracted snapshot graph already prepared. Reusing: " + str(self.cache_path))
+        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+            logging.info(
+                "Contracted snapshot graph cache hit: inputs_hash=%s path=%s",
+                self.inputs_hash,
+                str(self.cache_path),
+            )
+        else:
+            logging.info("Contracted snapshot graph already prepared. Reusing: " + str(self.cache_path))
         return self.cache_path
 
     def create_and_get_asset(self) -> pathlib.Path:
-        logging.info("Contracting snapshot graph...")
+        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+            logging.info(
+                "Contracting snapshot graph: inputs_hash=%s in=%s out=%s",
+                self.inputs_hash,
+                str(self.inputs["congested_graph"].cache_path),
+                str(self.cache_path),
+            )
+        else:
+            logging.info("Contracting snapshot graph...")
 
         congested_graph_path = self.inputs["congested_graph"].get()
         script = RScript(resources.files('mobility.transport_graphs').joinpath('contract_path_graph.R'))
         script.run(args=[str(congested_graph_path), str(self.cache_path)])
 
         return self.cache_path
-

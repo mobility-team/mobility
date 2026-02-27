@@ -36,11 +36,26 @@ class PathTravelCostsSnapshot(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pd.DataFrame:
-        logging.info("Congested travel costs snapshot already prepared. Reusing: " + str(self.cache_path))
+        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+            logging.info(
+                "Congested travel costs snapshot cache hit: inputs_hash=%s path=%s",
+                self.inputs_hash,
+                str(self.cache_path),
+            )
+        else:
+            logging.info("Congested travel costs snapshot already prepared. Reusing: " + str(self.cache_path))
         return pd.read_parquet(self.cache_path)
 
     def create_and_get_asset(self) -> pd.DataFrame:
-        logging.info("Computing congested travel costs snapshot...")
+        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
+            logging.info(
+                "Computing congested travel costs snapshot: inputs_hash=%s contracted_graph=%s out=%s",
+                self.inputs_hash,
+                str(self.inputs["contracted_graph"].cache_path),
+                str(self.cache_path),
+            )
+        else:
+            logging.info("Computing congested travel costs snapshot...")
 
         transport_zones: TransportZones = self.inputs["transport_zones"]
         contracted_graph: ContractedPathGraphSnapshot = self.inputs["contracted_graph"]
@@ -61,4 +76,3 @@ class PathTravelCostsSnapshot(FileAsset):
         )
 
         return pd.read_parquet(self.cache_path)
-
