@@ -20,6 +20,7 @@ from mobility.transport_modes.car import CarMode
 from mobility.transport_modes.carpool import CarpoolMode
 from mobility.transport_modes.public_transport import PublicTransportMode
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
+from mobility.transport_modes.mode_registry import ModeRegistry
 
 from .path_routing_parameters import PathRoutingParameters
 
