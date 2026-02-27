@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import polars as pl
 
 from typing import List
+from typing import Dict, Tuple
 
 from mobility.file_asset import FileAsset
 from mobility.population import Population
@@ -20,6 +21,7 @@ from mobility.choice_models.top_k_mode_sequence_search import TopKModeSequenceSe
 from mobility.choice_models.state_initializer import StateInitializer
 from mobility.choice_models.state_updater import StateUpdater
 from mobility.choice_models.results import Results
+from mobility.choice_models.transition_schema import TRANSITION_EVENT_SCHEMA
 from mobility.motives import Motive, HomeMotive, OtherMotive
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.parsers.mobility_survey import MobilitySurvey
@@ -145,7 +147,7 @@ class PopulationTrips(FileAsset):
         costs_aggregator = TravelCostsAggregator(modes)
         
         inputs = {
-            "version": 2,
+            "version": 3,
             "population": population,
             "costs_aggregator": costs_aggregator,
             "motives": motives,
@@ -162,11 +164,13 @@ class PopulationTrips(FileAsset):
             "weekday_sinks": project_folder / "population_trips" / "weekday" / "weekday_sinks.parquet",
             "weekday_costs": project_folder / "population_trips" / "weekday" / "weekday_costs.parquet",
             "weekday_chains": project_folder / "population_trips" / "weekday" / "weekday_chains.parquet",
+            "weekday_transitions": project_folder / "population_trips" / "weekday" / "weekday_transitions.parquet",
             
             "weekend_flows": project_folder / "population_trips" / "weekend" / "weekend_flows.parquet",
             "weekend_sinks": project_folder / "population_trips" / "weekend" / "weekend_sinks.parquet",
             "weekend_costs": project_folder / "population_trips" / "weekend" / "weekend_costs.parquet",
             "weekend_chains": project_folder / "population_trips" / "weekend" / "weekend_chains.parquet",
+            "weekend_transitions": project_folder / "population_trips" / "weekend" / "weekend_transitions.parquet",
             
             "demand_groups": project_folder / "population_trips" / "demand_groups.parquet"
             
@@ -282,29 +286,41 @@ class PopulationTrips(FileAsset):
                 raise TypeError(f"PopulationTrips surveys argument should be a list of `MobilitySurvey` instances, but received one object of class  {type(survey)}.")
 
         
-    def get_cached_asset(self):
+    def get_cached_asset(self) -> Dict[str, pl.LazyFrame]:
+        """Return lazy readers for all cached model outputs.
+
+        Returns:
+            dict[str, pl.LazyFrame]: Mapping of cache names to parquet scans.
+        """
         return {k: pl.scan_parquet(v) for k, v in self.cache_path.items()}
         
         
-    def create_and_get_asset(self):
+    def create_and_get_asset(self) -> Dict[str, pl.LazyFrame]:
+        """Create cached outputs and return lazy readers for all cache files.
+
+        Returns:
+            dict[str, pl.LazyFrame]: Mapping of cache names to parquet scans.
+        """
         
-        weekday_flows, weekday_sinks, demand_groups, weekday_costs, weekday_chains = self.run_model(is_weekday=True)
+        weekday_flows, weekday_sinks, demand_groups, weekday_costs, weekday_chains, weekday_transitions = self.run_model(is_weekday=True)
         
         weekday_flows.write_parquet(self.cache_path["weekday_flows"])
         weekday_sinks.write_parquet(self.cache_path["weekday_sinks"])
         weekday_costs.write_parquet(self.cache_path["weekday_costs"])
         weekday_chains.write_parquet(self.cache_path["weekday_chains"])
+        weekday_transitions.write_parquet(self.cache_path["weekday_transitions"])
         
         demand_groups.write_parquet(self.cache_path["demand_groups"])
         
         if self.parameters.simulate_weekend:
             
-            weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains = self.run_model(is_weekday=False)
+            weekend_flows, weekend_sinks, demand_groups, weekend_costs, weekend_chains, weekend_transitions = self.run_model(is_weekday=False)
         
             weekend_flows.write_parquet(self.cache_path["weekend_flows"])
             weekend_sinks.write_parquet(self.cache_path["weekend_sinks"])
             weekend_costs.write_parquet(self.cache_path["weekend_costs"])
             weekend_chains.write_parquet(self.cache_path["weekend_chains"])
+            weekend_transitions.write_parquet(self.cache_path["weekend_transitions"])
             
         else:
             if not os.path.exists(self.cache_path["weekend_flows"].parent):
@@ -313,17 +329,20 @@ class PopulationTrips(FileAsset):
             pl.DataFrame().write_parquet(self.cache_path["weekend_sinks"])
             pl.DataFrame().write_parquet(self.cache_path["weekend_costs"])
             pl.DataFrame().write_parquet(self.cache_path["weekend_chains"])
+            self._empty_transition_events().write_parquet(self.cache_path["weekend_transitions"])
                
         return {k: pl.scan_parquet(v) for k, v in self.cache_path.items()}
 
-    def run_model(self, is_weekday):
-        """Run the iterative assignment for weekday/weekend and return flows.
-        
+    def run_model(self, is_weekday: bool) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+        """Run the iterative assignment for weekday/weekend.
+
         Args:
-          is_weekday (bool): Whether to compute weekday flows.
-        
+            is_weekday (bool): Whether to compute weekday flows.
+
         Returns:
-          pl.DataFrame: Final step-level flows with utilities, durations, and flags.
+            tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+            Final step-level flows, sinks, demand groups, costs, reference chains,
+            and per-iteration transition events.
         """
 
         population = self.inputs["population"]
@@ -369,6 +388,8 @@ class PopulationTrips(FileAsset):
         
         remaining_sinks = sinks.clone()
         
+        transition_events_per_iter = []
+
         for iteration in range(1, parameters.n_iterations+1):
             
             logging.info(f"Iteration n°{iteration}")
@@ -402,7 +423,7 @@ class PopulationTrips(FileAsset):
                 .write_parquet(tmp_folders["modes"] / f"mode_sequences_{iteration}.parquet")
             )
             
-            current_states, current_states_steps = self.state_updater.get_new_states(
+            current_states, current_states_steps, transition_events = self.state_updater.get_new_states(
                 current_states,
                 demand_groups,
                 chains_by_motive,
@@ -416,6 +437,7 @@ class PopulationTrips(FileAsset):
                 parameters,
                 motives
             )
+            transition_events_per_iter.append(transition_events)
             
             costs = self.state_updater.get_new_costs(
                 costs,
@@ -463,7 +485,13 @@ class PopulationTrips(FileAsset):
             
         )
 
-        return current_states_steps, sinks, demand_groups, costs, chains
+        transitions = (
+            pl.concat(transition_events_per_iter, how="vertical")
+            if transition_events_per_iter
+            else self._empty_transition_events()
+        )
+
+        return current_states_steps, sinks, demand_groups, costs, chains, transitions
     
 
     def prepare_tmp_folders(self, cache_path):
@@ -525,6 +553,8 @@ class PopulationTrips(FileAsset):
             weekend_costs=pl.scan_parquet(self.cache_path["weekend_costs"]),
             weekday_chains=pl.scan_parquet(self.cache_path["weekday_chains"]),
             weekend_chains=pl.scan_parquet(self.cache_path["weekend_chains"]),
+            weekday_transitions=pl.scan_parquet(self.cache_path["weekday_transitions"]),
+            weekend_transitions=pl.scan_parquet(self.cache_path["weekend_transitions"]),
             demand_groups=pl.scan_parquet(self.cache_path["demand_groups"]),
             surveys=self.inputs["surveys"],
             modes=self.inputs["modes"]
@@ -771,3 +801,12 @@ class PopulationTrips(FileAsset):
         geoflows = geoflows.merge(xy_coords, left_index=True, right_index=True)
 
         return geoflows
+
+
+    def _empty_transition_events(self) -> pl.DataFrame:
+        """Build an empty transition-events table with the canonical schema.
+
+        Returns:
+            pl.DataFrame: Empty transition-events dataframe.
+        """
+        return pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA)

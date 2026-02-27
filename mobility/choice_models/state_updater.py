@@ -1,8 +1,10 @@
 import logging
 import math
+from typing import Any
 
 import polars as pl
 
+from mobility.choice_models.transition_schema import TRANSITION_EVENT_COLUMNS
 
 class StateUpdater:
     """Updates population state distributions over motive/destination/mode sequences.
@@ -14,19 +16,19 @@ class StateUpdater:
     
     def get_new_states(
             self,
-            current_states,
-            demand_groups,
-            chains,
-            costs_aggregator,
-            remaining_sinks,
-            motive_dur,
-            iteration,
-            tmp_folders,
-            home_night_dur,
-            stay_home_state,
-            parameters,
-            motives
-        ):
+            current_states: pl.DataFrame,
+            demand_groups: pl.DataFrame,
+            chains: pl.DataFrame,
+            costs_aggregator: Any,
+            remaining_sinks: pl.DataFrame,
+            motive_dur: pl.DataFrame,
+            iteration: int,
+            tmp_folders: dict[str, Any],
+            home_night_dur: pl.DataFrame,
+            stay_home_state: pl.DataFrame,
+            parameters: Any,
+            motives: list[Any]
+        ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
         """Advance one iteration of state updates.
 
         Orchestrates: candidate step generation → state utilities →
@@ -49,9 +51,8 @@ class StateUpdater:
             parameters (PopulationTripsParameters): Coefficients and tunables.
         
         Returns:
-            tuple[pl.DataFrame, pl.DataFrame]:
-                - updated `current_states`
-                - `current_states_steps` expanded to per-step rows.
+            tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+                Updated current states, expanded per-step states, and transition events.
         """
         
         possible_states_steps = self.get_possible_states_steps(
@@ -66,6 +67,11 @@ class StateUpdater:
             parameters.min_activity_time_constant,
             tmp_folders
         )
+        self._assert_current_states_covered_by_possible_steps(
+            current_states,
+            possible_states_steps,
+            iteration
+        )
         
         home_motive = [m for m in motives if m.name == "home"][0]
         
@@ -78,13 +84,54 @@ class StateUpdater:
         )
         
         transition_prob = self.get_transition_probabilities(current_states, possible_states_utility)
-        current_states = self.apply_transitions(current_states, transition_prob)
+        current_states, transition_events = self.apply_transitions(current_states, transition_prob, iteration)
+        transition_events = self.add_transition_state_details(transition_events, possible_states_steps)
         current_states_steps = self.get_current_states_steps(current_states, possible_states_steps)
         
         if current_states["n_persons"].is_null().any() or current_states["n_persons"].is_nan().any():
             raise ValueError("Null or NaN values in the n_persons column, something went wrong.")
         
-        return current_states, current_states_steps
+        return current_states, current_states_steps, transition_events
+
+    def _assert_current_states_covered_by_possible_steps(
+            self,
+            current_states: pl.DataFrame,
+            possible_states_steps: pl.LazyFrame,
+            iteration: int
+        ) -> None:
+        """Fail when non-stay-home current states have no step details.
+
+        Args:
+            current_states (pl.DataFrame): Current aggregate states.
+            possible_states_steps (pl.LazyFrame): Candidate state-step rows.
+            iteration (int): Current model iteration.
+
+        Raises:
+            ValueError: If any non-stay-home current-state key is absent from
+                `possible_states_steps`.
+        """
+        state_keys = ["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
+
+        missing_current = (
+            current_states.lazy()
+            .filter(pl.col("mode_seq_id") != 0)
+            .select(state_keys)
+            .join(
+                possible_states_steps.select(state_keys).unique(),
+                on=state_keys,
+                how="anti",
+            )
+            .collect(engine="streaming")
+        )
+        if missing_current.height == 0:
+            return
+
+        sample = missing_current.head(5).to_dicts()
+        raise ValueError(
+            "Current non-stay-home states are missing from possible_states_steps "
+            f"at iteration={iteration}. Missing={missing_current.height}. "
+            f"Sample keys={sample}"
+        )
     
     def get_possible_states_steps(
             self,
@@ -126,7 +173,7 @@ class StateUpdater:
         
         cost_by_od_and_modes = ( 
             costs_aggregator.get_costs_by_od_and_mode(
-                ["cost"],
+                ["cost", "distance", "time"],
                 congestion=True,
                 detail_distances=False
             )
@@ -274,10 +321,10 @@ class StateUpdater:
     
     def get_transition_probabilities(
             self,
-            current_states,
-            possible_states_utility,
+            current_states: pl.DataFrame,
+            possible_states_utility: pl.LazyFrame,
             transition_cost: float = 0.0
-        ): 
+        ) -> pl.DataFrame:
         """Compute transition probabilities from current to candidate states.
 
         Uses softmax over Δutility (with stabilization and pruning) within each
@@ -297,9 +344,10 @@ class StateUpdater:
         state_cols = ["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
         
         transition_probabilities = (
-            
+
             current_states.lazy()
-            .select(state_cols)
+            .select(state_cols + ["utility"])
+            .rename({"utility": "utility_prev_from"})
             
             # Join the updated utility of the current states
             .join(possible_states_utility, on=state_cols)
@@ -372,7 +420,10 @@ class StateUpdater:
                 "demand_group_id",
                 "motive_seq_id", "dest_seq_id", "mode_seq_id",
                 "motive_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans",
-                "utility_trans", "p_transition"
+                "utility_prev_from",
+                pl.col("utility").alias("utility_from_updated"),
+                "utility_trans",
+                "p_transition"
             ])
             
             .collect(engine="streaming")
@@ -382,8 +433,13 @@ class StateUpdater:
         return transition_probabilities
     
     
-    def apply_transitions(self, current_states, transition_probabilities):
-        """Apply transition probabilities to reweight populations and update states.
+    def apply_transitions(
+            self,
+            current_states: pl.DataFrame,
+            transition_probabilities: pl.DataFrame,
+            iteration: int
+        ) -> tuple[pl.DataFrame, pl.DataFrame]:
+        """Apply transition probabilities and emit transition events.
         
         Left-joins transitions onto current states, defaults to self-transition
         when absent, redistributes `n_persons` by `p_transition`, and aggregates
@@ -395,36 +451,259 @@ class StateUpdater:
                 `get_transition_probabilities`.
         
         Returns:
-            pl.DataFrame: Updated `current_states` aggregated by
-                ["demand_group_id","motive_seq_id","dest_seq_id","mode_seq_id"].
+            tuple[pl.DataFrame, pl.DataFrame]:
+                - Updated `current_states`, aggregated by destination state keys.
+                - `transition_events` with one row per realized transition split.
         """
         
         state_cols = ["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
         
-        new_states = (
-            
+        transitions = (
             current_states
             .join(transition_probabilities, on=state_cols, how="left")
             .with_columns(
                 p_transition=pl.col("p_transition").fill_null(1.0),
-                utility=pl.coalesce([pl.col("utility_trans"), pl.col("utility")]),
-                motive_seq_id=pl.coalesce([pl.col("motive_seq_id_trans"), pl.col("motive_seq_id")]),
-                dest_seq_id=pl.coalesce([pl.col("dest_seq_id_trans"), pl.col("dest_seq_id")]),
-                mode_seq_id=pl.coalesce([pl.col("mode_seq_id_trans"), pl.col("mode_seq_id")]),
+                utility_from_updated=pl.col("utility_from_updated").fill_null(pl.col("utility")),
+                utility_trans=pl.coalesce([pl.col("utility_trans"), pl.col("utility")]),
+                utility_prev_from=pl.coalesce([pl.col("utility_prev_from"), pl.col("utility")]),
+                motive_seq_id_trans=pl.coalesce([pl.col("motive_seq_id_trans"), pl.col("motive_seq_id")]),
+                dest_seq_id_trans=pl.coalesce([pl.col("dest_seq_id_trans"), pl.col("dest_seq_id")]),
+                mode_seq_id_trans=pl.coalesce([pl.col("mode_seq_id_trans"), pl.col("mode_seq_id")]),
             )
             .with_columns(
-                n_persons=pl.col("n_persons")*pl.col("p_transition")
+                n_persons_moved=pl.col("n_persons") * pl.col("p_transition")
             )
-            .group_by(state_cols)
+        )
+
+        # Previous-iteration utility for destination state if it existed already.
+        prev_to_lookup = (
+            current_states
+            .select(["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id", "utility"])
+            .rename(
+                {
+                    "motive_seq_id": "motive_seq_id_trans",
+                    "dest_seq_id": "dest_seq_id_trans",
+                    "mode_seq_id": "mode_seq_id_trans",
+                    "utility": "utility_prev_to",
+                }
+            )
+        )
+
+        transitions = transitions.join(
+            prev_to_lookup,
+            on=["demand_group_id", "motive_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"],
+            how="left",
+        )
+
+        transition_events = (
+            transitions
+            .with_columns(
+                iteration=pl.lit(iteration).cast(pl.UInt32),
+                utility_from=pl.col("utility_from_updated"),  # updated utility used by MNL for from-state
+                utility_to=pl.col("utility_trans"),
+                utility_prev_from=pl.col("utility_prev_from"),
+                utility_prev_to=pl.col("utility_prev_to"),
+                is_self_transition=(
+                    (pl.col("motive_seq_id") == pl.col("motive_seq_id_trans"))
+                    & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
+                    & (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
+                ),
+            )
+            .select(
+                [
+                    "iteration",
+                    "demand_group_id",
+                    "motive_seq_id",
+                    "dest_seq_id",
+                    "mode_seq_id",
+                    "motive_seq_id_trans",
+                    "dest_seq_id_trans",
+                    "mode_seq_id_trans",
+                    "n_persons_moved",
+                    "utility_prev_from",
+                    "utility_prev_to",
+                    "utility_from",
+                    "utility_to",
+                    "is_self_transition",
+                ]
+            )
+        )
+
+        new_states = (
+            transitions
+            .group_by(["demand_group_id", "motive_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"])
             .agg(
-                n_persons=pl.col("n_persons").sum(),
-                utility=pl.col("utility").first()
+                n_persons=pl.col("n_persons_moved").sum(),
+                utility=pl.col("utility_trans").first()
             )  
-           
-            
+            .rename(
+                {
+                    "motive_seq_id_trans": "motive_seq_id",
+                    "dest_seq_id_trans": "dest_seq_id",
+                    "mode_seq_id_trans": "mode_seq_id",
+                }
+            )
         )
         
-        return new_states
+        return new_states, transition_events
+
+    def add_transition_state_details(
+            self,
+            transition_events: pl.DataFrame,
+            possible_states_steps: pl.LazyFrame
+        ) -> pl.DataFrame:
+        """Attach full from/to state details to transition events.
+
+        This makes transition logs self-contained for diagnostics, so plotting
+        code does not need to recover sequence details from final-state tables.
+
+        Args:
+            transition_events (pl.DataFrame): Transition rows produced by
+                `apply_transitions`.
+            possible_states_steps (pl.LazyFrame): Candidate state-step rows used
+                to compute state-level details.
+
+        Returns:
+            pl.DataFrame: Transition events enriched with from/to state details.
+
+        Raises:
+            ValueError: If non-stay-home transition from/to keys are missing from
+                the state-details lookup.
+        """
+        state_keys = ["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
+
+        state_details = (
+            possible_states_steps
+            .with_columns(
+                step_desc=pl.format(
+                    "#{} | to: {} | motive: {} | mode: {} | dist_km: {} | time_h: {}",
+                    pl.col("seq_step_index"),
+                    pl.col("to").cast(pl.String),
+                    pl.col("motive").cast(pl.String),
+                    pl.col("mode").cast(pl.String),
+                    pl.col("distance").fill_null(0.0).round(3),
+                    pl.col("time").fill_null(0.0).round(3),
+                )
+            )
+            .group_by(state_keys)
+            .agg(
+                trip_count=pl.len().cast(pl.Float64),
+                activity_time=pl.col("duration_per_pers").fill_null(0.0).sum(),
+                travel_time=pl.col("time").fill_null(0.0).sum(),
+                distance=pl.col("distance").fill_null(0.0).sum(),
+                steps=pl.col("step_desc").sort_by("seq_step_index").str.concat("<br>"),
+            )
+            .collect(engine="streaming")
+        )
+
+        from_details = state_details.rename(
+            {
+                "trip_count": "trip_count_from",
+                "activity_time": "activity_time_from",
+                "travel_time": "travel_time_from",
+                "distance": "distance_from",
+                "steps": "steps_from",
+            }
+        )
+        to_details = state_details.rename(
+            {
+                "motive_seq_id": "motive_seq_id_trans",
+                "dest_seq_id": "dest_seq_id_trans",
+                "mode_seq_id": "mode_seq_id_trans",
+                "trip_count": "trip_count_to",
+                "activity_time": "activity_time_to",
+                "travel_time": "travel_time_to",
+                "distance": "distance_to",
+                "steps": "steps_to",
+            }
+        )
+
+        missing_from_keys = (
+            transition_events
+            .filter(pl.col("mode_seq_id") != 0)
+            .select(state_keys)
+            .join(from_details.select(state_keys), on=state_keys, how="anti")
+        )
+        missing_to_keys = (
+            transition_events
+            .filter(pl.col("mode_seq_id_trans") != 0)
+            .select(["demand_group_id", "motive_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"])
+            .join(
+                to_details.select(["demand_group_id", "motive_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"]),
+                on=["demand_group_id", "motive_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"],
+                how="anti",
+            )
+        )
+        if missing_from_keys.height > 0 or missing_to_keys.height > 0:
+            sample_from = missing_from_keys.head(5).to_dicts()
+            sample_to = missing_to_keys.head(5).to_dicts()
+            raise ValueError(
+                "Transition keys are missing from state-details lookup for non-stay-home states. "
+                f"Missing from-keys={missing_from_keys.height}, to-keys={missing_to_keys.height}. "
+                f"Sample from={sample_from}. Sample to={sample_to}."
+            )
+
+        events_with_details = (
+            transition_events
+            .join(from_details, on=state_keys, how="left")
+            .join(
+                to_details,
+                on=["demand_group_id", "motive_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"],
+                how="left",
+            )
+        )
+
+        missing_from = (
+            events_with_details
+            .filter(
+                (pl.col("mode_seq_id") != 0)
+                & (
+                    pl.col("trip_count_from").is_null()
+                    | pl.col("activity_time_from").is_null()
+                    | pl.col("travel_time_from").is_null()
+                    | pl.col("distance_from").is_null()
+                    | pl.col("steps_from").is_null()
+                )
+            )
+            .height
+        )
+        missing_to = (
+            events_with_details
+            .filter(
+                (pl.col("mode_seq_id_trans") != 0)
+                & (
+                    pl.col("trip_count_to").is_null()
+                    | pl.col("activity_time_to").is_null()
+                    | pl.col("travel_time_to").is_null()
+                    | pl.col("distance_to").is_null()
+                    | pl.col("steps_to").is_null()
+                )
+            )
+            .height
+        )
+        if missing_from > 0 or missing_to > 0:
+            raise ValueError(
+                "Transition details are missing for non-stay-home states "
+                f"(from={missing_from}, to={missing_to}). "
+                "This indicates inconsistent state keys between transitions and possible states."
+            )
+
+        return (
+            events_with_details
+            .with_columns(
+                trip_count_from=pl.when(pl.col("mode_seq_id") == 0).then(0.0).otherwise(pl.col("trip_count_from")).fill_null(0.0),
+                activity_time_from=pl.when(pl.col("mode_seq_id") == 0).then(24.0).otherwise(pl.col("activity_time_from")).fill_null(0.0),
+                travel_time_from=pl.when(pl.col("mode_seq_id") == 0).then(0.0).otherwise(pl.col("travel_time_from")).fill_null(0.0),
+                distance_from=pl.when(pl.col("mode_seq_id") == 0).then(0.0).otherwise(pl.col("distance_from")).fill_null(0.0),
+                steps_from=pl.when(pl.col("mode_seq_id") == 0).then(pl.lit("none")).otherwise(pl.col("steps_from")),
+                trip_count_to=pl.when(pl.col("mode_seq_id_trans") == 0).then(0.0).otherwise(pl.col("trip_count_to")).fill_null(0.0),
+                activity_time_to=pl.when(pl.col("mode_seq_id_trans") == 0).then(24.0).otherwise(pl.col("activity_time_to")).fill_null(0.0),
+                travel_time_to=pl.when(pl.col("mode_seq_id_trans") == 0).then(0.0).otherwise(pl.col("travel_time_to")).fill_null(0.0),
+                distance_to=pl.when(pl.col("mode_seq_id_trans") == 0).then(0.0).otherwise(pl.col("distance_to")).fill_null(0.0),
+                steps_to=pl.when(pl.col("mode_seq_id_trans") == 0).then(pl.lit("none")).otherwise(pl.col("steps_to")),
+            )
+            .select(TRANSITION_EVENT_COLUMNS)
+        )
     
     
     def get_current_states_steps(self, current_states, possible_states_steps):
