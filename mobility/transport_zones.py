@@ -81,7 +81,7 @@ class TransportZones(FileAsset):
         )
 
         inputs = {
-            "version": "1",
+            "version": "2",
             "study_area": study_area,
             "level_of_detail": level_of_detail,
             "osm_buildings": osm_buildings,
@@ -136,10 +136,10 @@ class TransportZones(FileAsset):
         script = RScript(resources.files('mobility.r_utils').joinpath('prepare_transport_zones.R'))
         script.run(
             args=[
-                study_area_fp,
-                osm_buildings_fp,
+                str(study_area_fp),
+                str(osm_buildings_fp),
                 str(self.level_of_detail),
-                self.cache_path
+                str(self.cache_path)
             ]
         )
         
