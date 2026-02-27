@@ -1,34 +1,21 @@
-import os
-import dotenv
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 
-import mobility
 
-dotenv.load_dotenv()
+def test_901_ensure_quickstart_works():
+    repo_root = Path(__file__).resolve().parents[3]
+    module_path = repo_root / "examples" / "quickstart-fr-ci.py"
 
-# Using Foix (a small town) and a limited radius for quick results
-transport_zones = mobility.TransportZones("fr-09122", radius = 10)
+    spec = spec_from_file_location("quickstart_fr_ci", module_path)
+    assert spec is not None
+    assert spec.loader is not None
 
-# Using EMP, the latest national mobility survey for France
-emp = mobility.EMPMobilitySurvey()
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    output = module.run_quickstart_ci()
 
-# Creating a synthetic population of 1000 for the area
-pop = mobility.Population(transport_zones, sample_size = 1000)
+    weekday_flows = output["weekday_flows"]
+    global_metrics = output["global_metrics"]
 
-# Simulating the trips for this population for three modes : car, walk and bicyle, and only home and work motives (OtherMotive is mandatory)
-pop_trips = mobility.PopulationTrips(
-    pop,
-    [mobility.CarMode(transport_zones), mobility.WalkMode(transport_zones), mobility.BicycleMode(transport_zones)],
-    [mobility.HomeMotive(), mobility.WorkMotive(), mobility.OtherMotive(population=pop)],
-    [emp],
-    n_iterations=1
-    )
-
-# You can get the weekday trips to inspect them
-weekday_flows = pop_trips.get()["weekday_flows"].collect()
-
-# You can can also get global metrics that will be compared to the theoetical values for this population 
-global_metrics = pop_trips.evaluate("global_metrics")
-
-# You can also plot the flows, with labels for the cities that are bigger than their neighbours
-labels = pop_trips.get_prominent_cities()
-pop_trips.plot_od_flows(labels=labels)
+    assert weekday_flows.height > 0
+    assert global_metrics is not None
