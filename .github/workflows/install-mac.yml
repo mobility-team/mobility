@@ -1,0 +1,46 @@
+on:
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    strategy:
+      max-parallel: 5
+      fail-fast: false
+
+    steps:
+    
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v3
+      with:
+        python-version: '3.11'
+
+    - name: Install conda dependencies
+      uses: mamba-org/setup-micromamba@v1
+      with:
+        micromamba-version: '2.0.5-0'
+        environment-file: environment-test.yml
+        init-shell: bash
+        cache-environment: true
+        post-cleanup: 'environment'
+
+    - name: Install pip dependencies
+      run: pip install .[dev]
+      shell: bash -el {0}
+
+    - name: Set up R
+      uses: r-lib/actions/setup-r@v2
+      with:
+        r-version: '4.4.1'
+        use-public-rspm: true
+
+    - name: Install R packages
+      uses: r-lib/actions/setup-r-dependencies@v2
+      with:
+        cache: true
+
+    - name: Test with pytest
+      run: pytest --cov --log-cli-level INFO --clear_inputs
+      shell: bash -el {0}

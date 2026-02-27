@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mobility"
+version = "0.1"
+dependencies = [
+  "geopandas",
+  "numpy",
+  "pandas",
+  "scipy",
+  "requests",
+  "shortuuid",
+  "pyarrow",
+  "openpyxl",
+  "py7zr",
+  "rich",
+  "python-dotenv",
+  "geojson",
+  "matplotlib",
+  "seaborn",
+  "pyogrio",
+  "polars",
+  "psutil",
+  "networkx",
+  "plotly",
+  "scikit-learn",
+  "gtfs_kit",
+  "kaleido",
+  "pydantic",
+]
+
+requires-python = ">=3.11"
+authors = [
+    { name = "Louise Gontier", email = "l.gontier@elioth.fr" },
+    { name = "Félix Pouchain", email = "felix.pouchain@arep.fr" },
+    { name = "Capucine-Marin Dubroca-Voisin", email = "capucine-marin.dubroca-voisin@arep.fr" },
+    { name = "Lucas Bohnenkamp", email = "lucas.bohnenkamp@arep.fr" }
+]
+maintainers = []
+description = "A tool to simulate the mobility behaviours of the inhabitants of a given region."
+readme = "README.md"
+keywords = ["mobility", "transport systems"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python"
+]
+
+[project.optional-dependencies]
+dev = [
+    "flake8",
+    "pytest",
+    "pytest-cov",
+    "pytest-dependency",
+    "sphinxcontrib-napoleon",
+     "myst_parser"
+]
+
+spyder = [
+    "spyder-kernels"
+]
+
+[project.urls]
+Homepage = "https://mobility-team.github.io/"
+Documentation = "https://mobility.readthedocs.io/en/latest/index.html"
+Repository = "https://github.com/mobility-team/mobility"
+Issues = "https://github.com/mobility-team/mobility/issues"
+Changelog = "https://github.com/mobility-team/mobility/releases"
+
+[tool.setuptools.package-data]
+mobility = [
+    "data/gtfs/gtfs_route_types.csv",
+    "resources/*",
+    "r_utils/*",
+    "**/*.R"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mobility*"]
+exclude = ["certs", "certs.*"]

@@ -1,3 +1,4 @@
+import logging
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -60,7 +61,7 @@ def radiation_model(sources, sinks, costs, alpha=0, beta=1):
                 sink_volume (float): rest of the volume of oopportunities of the transport zone.
     """
 
-    # The pseudo-code is in the documentation. 
+    # The pseudo-code is in the documentation.
 
     # Epsilon value under which values are set to 0 in order to avoid numerical errors
     # during the successive iterations
@@ -76,7 +77,7 @@ def radiation_model(sources, sinks, costs, alpha=0, beta=1):
     # Compute the number of "intervening opportunities"
     # = total volume of sinks in locations which are less costly than the location at hand
     # To do so for each origin, compute the cumulative sum of the sink volume in ascending ordrer of cost
-    matrix_origin_destinations.sort_values(by=["from", "cost"], inplace=True)
+    matrix_origin_destinations.sort_values(by=["from", "cost"], inplace=True, ascending=False)
     matrix_origin_destinations["s_ij"] = matrix_origin_destinations.groupby("from")[
         "sink_volume"
     ].cumsum()
@@ -131,7 +132,7 @@ def radiation_model(sources, sinks, costs, alpha=0, beta=1):
     # Set to 0 the small flow volume in order to avoid numerical errors
     # during the next iterations
     matrix_origin_destinations["flow_volume"].where(
-        matrix_origin_destinations["flow_volume"] > eps, 0, inplace=True
+        matrix_origin_destinations["flow_volume"] > eps, 0.0, inplace=True
     )
 
     # Compute the overflow for each sink : sum(flow_volume) - sink_volume
@@ -139,14 +140,14 @@ def radiation_model(sources, sinks, costs, alpha=0, beta=1):
         matrix_origin_destinations.groupby("to")["flow_volume"].sum()
         - matrix_origin_destinations.groupby("to")["sink_volume"].first()
     )
-    overflow = overflow.where(overflow > 0, 0)
+    overflow = overflow.where(overflow > 0, 0.0)
     overflow.name = "overflow"
     matrix_origin_destinations = pd.merge(
         matrix_origin_destinations, overflow, how="left", left_on="to", right_index=True
     )
 
     # Substract the overflow to the flow volume
-    # so that the flow volume stays lesser than the sink volume
+    # so that the flow volume stays samller than the sink volume
     # This overflow is split among the origins according to its contribution
 
     # Contribution of each origin to every sink
@@ -259,8 +260,9 @@ def iter_radiation_model(
             Name:
                 sink_volume (float): rest of the volume of oopportunities of the transport zone.
     """
-    iteration = 1
+
     # First iteration of the radiation model
+    iteration = 1
     flows, source_volume, sink_volume = radiation_model(
         sources, sinks, costs, alpha=alpha, beta=beta
     )
@@ -278,7 +280,7 @@ def iter_radiation_model(
     while (
         iteration < max_iter and flows["flow_volume"].sum() > 0.01 * total_source_volume
     ):
-        print("Iteration n°{} of the radiation model".format(iteration))
+        # logging.info("Iteration n°{} of the radiation model".format(iteration))
         iteration += 1
 
         # Compute the radiation model with the rest of the demand and sink volume
@@ -292,7 +294,7 @@ def iter_radiation_model(
         rest_sink.append(sink_volume.sum())
 
     if iteration == max_iter:
-        print("The iterations of the radiation model didn't converge")
+        logging.info("The iterations of the radiation model didn't converge")
     if plot:
         plt.figure(figsize=(18, 5))
         plt.subplot(121)
@@ -320,6 +322,9 @@ def iter_radiation_model(
                 iteration, rest_sink[-1]
             )
         )
+
+    # Remove possible null flows
+    total_flows = total_flows[total_flows > 0.0]
 
     return total_flows, source_volume, sink_volume
 
@@ -378,7 +383,7 @@ def plot_flow(
     flows, coordinates, sources=None, n_flows=100, n_locations=5, size=1, title=""
 ):
     """
-    Plots the flows between the locations.
+    Plot the flows between the locations.
 
     The bigger the flow is, the bigger the plot line
     will be. THe points are the locations. If sources=None, then the size of each location
@@ -404,13 +409,11 @@ def plot_flow(
                 CODGEO (str): geographic code of the location
             Columns:
                 source_volume (float): the source volume at the location
-        n_flows (int): plot only the n_flows biggest flows (to avoid too heavy computationss)
-            If n_flows=-1 then plot all the flows
-        n_locations (int): display the labels of only the biggest n_locations locations
-            according to the volume from sources
+        n_flows (int): plot only the n_flows biggest flows (to avoid too heavy computations).
+        If n_flows=-1 then plot all the flows
+        n_locations (int): display the labels of only the biggest n_locations locations according to the volume from sources
         size (int): determines the size of the figure (size>=1). Default is 1.
     """
-
     # Normalization
     flows["flow_volume"] = (
         size

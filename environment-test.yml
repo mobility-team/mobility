@@ -1,0 +1,9 @@
+name: mobility
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - geopandas
+  - osmium-tool
+  # - pip:
+  #     - mobility-tools
