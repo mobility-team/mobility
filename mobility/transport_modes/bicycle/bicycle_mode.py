@@ -1,14 +1,14 @@
 from mobility.transport_zones import TransportZones
 from mobility.transport_costs.path_travel_costs import PathTravelCosts
-from mobility.transport_modes.transport_mode import TransportMode
+from mobility.transport_modes.transport_mode import TransportMode, TransportModeParameters
 from mobility.path_routing_parameters import PathRoutingParameters
 from mobility.generalized_cost_parameters import GeneralizedCostParameters
 from mobility.cost_of_time_parameters import CostOfTimeParameters
 from mobility.transport_costs.path_generalized_cost import PathGeneralizedCost
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport_graphs.speed_modifier import SpeedModifier
-from typing import List
-from mobility.transport_modes.transport_mode_parameters import BicycleModeParameters
+from typing import List, Literal
+from pydantic import Field
 
 class BicycleMode(TransportMode):
     
@@ -21,7 +21,7 @@ class BicycleMode(TransportMode):
         speed_modifiers: List[SpeedModifier] = [],
         survey_ids: List[str] | None = None,
         ghg_intensity: float | None = None,
-        parameters: BicycleModeParameters | None = None,
+        parameters: "BicycleModeParameters | None" = None,
     ):
         
         mode_name = "bicycle"
@@ -55,4 +55,15 @@ class BicycleMode(TransportMode):
             parameters=parameters,
             parameters_cls=BicycleModeParameters,
         )
-        
+
+
+class BicycleModeParameters(TransportModeParameters):
+    """Parameters for bicycle mode."""
+
+    name: Literal["bicycle"] = "bicycle"
+    ghg_intensity: float = 0.00017
+    congestion: bool = False
+    vehicle: Literal["bicycle"] = "bicycle"
+    multimodal: bool = False
+    return_mode: None = None
+    survey_ids: list[str] = Field(default_factory=lambda: ["2.20"])

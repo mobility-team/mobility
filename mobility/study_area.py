@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import logging
 import pandas as pd
@@ -6,9 +7,12 @@ import pathlib
 import geojson
 from typing import Union, List
 
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+
 from mobility.file_asset import FileAsset
 from mobility.parsers.local_admin_units import LocalAdminUnits
-from mobility.study_area_parameters import StudyAreaParameters
+
 
 class StudyArea(FileAsset):
     """
@@ -36,7 +40,7 @@ class StudyArea(FileAsset):
             local_admin_unit_id: Union[str, List[str]] | None = None,
             radius: float | None = None,
             cutout_geometries: gpd.GeoDataFrame = None,
-            parameters: StudyAreaParameters | None = None,
+            parameters: "StudyAreaParameters" | None = None,
         ):
 
         parameters = self.prepare_parameters(
@@ -199,5 +203,31 @@ class StudyArea(FileAsset):
         return study_area
     
         
-        
-        
+class StudyAreaParameters(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    local_admin_unit_id: Annotated[
+        Union[str, list[str]],
+        Field(
+            title="Study area local admin unit ID(s)",
+            description=(
+                "Center local admin unit ID, or a list of local admin unit IDs "
+                "to define the study area."
+            ),
+        ),
+    ]
+
+    radius: Annotated[
+        float,
+        Field(
+            default=40.0,
+            ge=5.0,
+            le=100.0,
+            title="Study area radius",
+            description="Radius in km around the selected local admin unit.",
+            json_schema_extra={
+                "unit": "km"
+            },
+        ),
+    ]

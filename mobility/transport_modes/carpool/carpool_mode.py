@@ -1,10 +1,11 @@
-from typing import List
+from typing import List, Literal
 
 from mobility.transport_modes.transport_mode import TransportMode
-from mobility.transport_modes.transport_mode_parameters import CarpoolModeParameters
+from mobility.transport_modes.transport_mode import TransportModeParameters
 from mobility.transport_modes.car import CarMode
 from mobility.transport_modes.carpool.detailed import DetailedCarpoolRoutingParameters, DetailedCarpoolGeneralizedCostParameters, DetailedCarpoolTravelCosts, DetailedCarpoolGeneralizedCost
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
+from pydantic import Field
 
 class CarpoolMode(TransportMode):
     
@@ -16,7 +17,7 @@ class CarpoolMode(TransportMode):
         intermodal_transfer: IntermodalTransfer = None,
         survey_ids: List[str] | None = None,
         ghg_intensity: float | None = None,
-        parameters: CarpoolModeParameters | None = None,
+        parameters: "CarpoolModeParameters | None" = None,
     ):
             
         routing_parameters = routing_parameters or DetailedCarpoolRoutingParameters()
@@ -44,5 +45,13 @@ class CarpoolMode(TransportMode):
             parameters=parameters,
             parameters_cls=CarpoolModeParameters,
         )
-        
-        
+
+
+class CarpoolModeParameters(TransportModeParameters):
+    """Parameters for carpool mode."""
+
+    name: Literal["carpool"] = "carpool"
+    ghg_intensity: float = 0.109
+    multimodal: bool = True
+    return_mode: Literal["carpool_return"] = "carpool_return"
+    survey_ids: list[str] = Field(default_factory=list)

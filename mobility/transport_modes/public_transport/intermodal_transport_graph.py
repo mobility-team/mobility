@@ -9,10 +9,9 @@ from importlib import resources
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
-from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
 from mobility.transport_modes.transport_mode import TransportMode
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
-from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportGraph
+from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportGraph, PublicTransportRoutingParameters
 from mobility.transport_graphs.path_graph import ContractedPathGraph
 from mobility.parsers.osm import OSMData
 

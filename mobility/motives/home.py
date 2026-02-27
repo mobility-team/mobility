@@ -1,7 +1,9 @@
-from typing import List
+from __future__ import annotations
 
-from mobility.motives.motive import Motive
-from mobility.motives.home_motive_parameters import HomeMotiveParameters
+from typing import Annotated, List
+
+from pydantic import Field
+from mobility.motives.motive import Motive, MotiveParameters
 
 class HomeMotive(Motive):
 
@@ -12,7 +14,7 @@ class HomeMotive(Motive):
         saturation_fun_ref_level: float = None,
         saturation_fun_beta: float = None,
         survey_ids: List[str] = None,
-        parameters: HomeMotiveParameters | None = None
+        parameters: "HomeMotiveParameters" | None = None
     ):
 
         parameters = self.prepare_parameters(
@@ -38,3 +40,32 @@ class HomeMotive(Motive):
 
     def get_opportunities(self, transport_zones):
         return None
+
+
+class HomeMotiveParameters(MotiveParameters):
+    """Parameters specific to the home motive."""
+
+    value_of_time: Annotated[
+        float,
+        Field(default=10.0, ge=0.0),
+    ]
+
+    value_of_time_stay_home: Annotated[
+        float,
+        Field(default=0.0, ge=0.0),
+    ]
+
+    saturation_fun_ref_level: Annotated[
+        float,
+        Field(default=100.0, ge=0.0),
+    ]
+
+    saturation_fun_beta: Annotated[
+        float,
+        Field(default=4.0, ge=0.0),
+    ]
+
+    survey_ids: Annotated[
+        list[str],
+        Field(default_factory=lambda: ["1.1"]),
+    ]

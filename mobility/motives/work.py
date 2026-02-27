@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 import pandas as pd
 import polars as pl
 
-from typing import List, Dict
+from typing import Annotated, List, Dict
 
-from mobility.motives.motive import Motive
-from mobility.motives.work_motive_parameters import WorkMotiveParameters
+from pydantic import Field
+from mobility.motives.motive import Motive, MotiveParameters
 from mobility.parsers import JobsActivePopulationDistribution
+
 
 class WorkMotive(Motive):
 
@@ -19,7 +22,7 @@ class WorkMotive(Motive):
         opportunities: pd.DataFrame = None,
         utilities: pd.DataFrame = None,
         country_utilities: Dict = None,
-        parameters: WorkMotiveParameters | None = None
+        parameters: "WorkMotiveParameters" | None = None
     ):
 
         parameters = self.prepare_parameters(
@@ -77,3 +80,37 @@ class WorkMotive(Motive):
         opportunities = self.enforce_opportunities_schema(opportunities)
 
         return opportunities
+
+
+class WorkMotiveParameters(MotiveParameters):
+    """Parameters specific to the work motive."""
+
+    value_of_time: Annotated[
+        float,
+        Field(default=10.0, ge=0.0),
+    ]
+
+    saturation_fun_ref_level: Annotated[
+        float,
+        Field(default=1.5, ge=0.0),
+    ]
+
+    saturation_fun_beta: Annotated[
+        float,
+        Field(default=4.0, ge=0.0),
+    ]
+
+    survey_ids: Annotated[
+        list[str],
+        Field(default_factory=lambda: ["9.91"]),
+    ]
+
+    radiation_lambda: Annotated[
+        float,
+        Field(default=0.99986, ge=0.0, le=1.0),
+    ]
+
+    country_utilities: Annotated[
+        dict[str, float],
+        Field(default_factory=lambda: {"fr": 0.0, "ch": 5.0}),
+    ]

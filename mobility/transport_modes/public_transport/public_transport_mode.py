@@ -3,8 +3,8 @@ import logging
 from typing import List
 
 from mobility.transport_zones import TransportZones
-from mobility.transport_modes.transport_mode import TransportMode
-from mobility.transport_modes.public_transport.public_transport_routing_parameters import PublicTransportRoutingParameters
+from mobility.transport_modes.transport_mode import TransportMode, TransportModeParameters
+from mobility.transport_modes.public_transport.public_transport_graph import PublicTransportRoutingParameters
 from mobility.transport_modes.public_transport.public_transport_travel_costs import PublicTransportTravelCosts
 from mobility.transport_modes.public_transport.public_transport_generalized_cost import PublicTransportGeneralizedCost
 from mobility.transport_modes.modal_transfer import (
@@ -13,9 +13,7 @@ from mobility.transport_modes.modal_transfer import (
 )
 from mobility.generalized_cost_parameters import GeneralizedCostParameters
 from mobility.cost_of_time_parameters import CostOfTimeParameters
-from mobility.transport_modes.transport_mode_parameters import (
-    PublicTransportModeParameters,
-)
+from pydantic import Field
 
 class PublicTransportMode(TransportMode):
     """
@@ -44,7 +42,7 @@ class PublicTransportMode(TransportMode):
         generalized_cost_parameters: GeneralizedCostParameters = None,
         survey_ids: List[str] | None = None,
         ghg_intensity: float | None = None,
-        parameters: PublicTransportModeParameters | None = None,
+        parameters: "PublicTransportModeParameters | None" = None,
     ):
 
         if first_leg_mode is None or last_leg_mode is None:
@@ -131,3 +129,31 @@ class PublicTransportMode(TransportMode):
         logging.info("Auditing GTFS for this mode")
         travel_costs = self.inputs["travel_costs"].audit_gtfs()
         return travel_costs
+
+
+class PublicTransportModeParameters(TransportModeParameters):
+    """Parameters for public transport mode."""
+
+    ghg_intensity: float = 0.05
+    multimodal: bool = True
+    survey_ids: list[str] = Field(
+        default_factory=lambda: [
+            "4.42",
+            "4.43",
+            "5.50",
+            "5.51",
+            "5.52",
+            "5.53",
+            "5.54",
+            "5.55",
+            "5.56",
+            "5.57",
+            "5.58",
+            "5.59",
+            "6.60",
+            "6.61",
+            "6.62",
+            "6.63",
+            "6.69",
+        ]
+    )

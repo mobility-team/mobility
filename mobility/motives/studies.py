@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 import pandas as pd
 import polars as pl
 import geopandas as gpd
-from typing import List
+from typing import Annotated, List
 import numpy as np
 import os
 
-from mobility.motives.motive import Motive
-from mobility.motives.studies_motive_parameters import StudiesMotiveParameters
+from pydantic import Field
+from mobility.motives.motive import Motive, MotiveParameters
 from mobility.parsers.schools_capacity_distribution import SchoolsCapacityDistribution
+
 
 class StudiesMotive(Motive):
 
@@ -19,7 +22,7 @@ class StudiesMotive(Motive):
         survey_ids: List[str] = None, 
         radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
-        parameters: StudiesMotiveParameters | None = None
+        parameters: "StudiesMotiveParameters" | None = None
     ):
 
         parameters = self.prepare_parameters(
@@ -150,3 +153,12 @@ class StudiesMotive(Motive):
         
             return ax
         
+
+class StudiesMotiveParameters(MotiveParameters):
+    """Parameters specific to the studies motive."""
+
+    value_of_time: Annotated[float, Field(default=10.0, ge=0.0)]
+    saturation_fun_ref_level: Annotated[float, Field(default=1.5, ge=0.0)]
+    saturation_fun_beta: Annotated[float, Field(default=4.0, ge=0.0)]
+    survey_ids: Annotated[list[str], Field(default_factory=lambda: ["1.11"])]
+    radiation_lambda: Annotated[float, Field(default=0.99986, ge=0.0, le=1.0)]

@@ -7,7 +7,7 @@ import numpy as np
 
 from mobility.parsers.mobility_survey import MobilitySurvey
 from mobility.parsers.download_file import download_file
-from mobility.parsers.mobility_survey.mobility_survey_parameters import (
+from mobility.parsers.mobility_survey.mobility_survey import (
     MobilitySurveyParameters,
 )
 

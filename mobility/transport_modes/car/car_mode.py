@@ -1,17 +1,15 @@
-from typing import List
+from typing import List, Literal
 
 from mobility.transport_zones import TransportZones
 from mobility.transport_costs.path_travel_costs import PathTravelCosts
-from mobility.transport_modes.transport_mode import TransportMode
+from mobility.transport_modes.transport_mode import TransportMode, TransportModeParameters
 from mobility.path_routing_parameters import PathRoutingParameters
 from mobility.generalized_cost_parameters import GeneralizedCostParameters
 from mobility.cost_of_time_parameters import CostOfTimeParameters
 from mobility.transport_costs.path_generalized_cost import PathGeneralizedCost
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport_graphs.speed_modifier import SpeedModifier
-from mobility.transport_modes.transport_mode_parameters import (
-    CarModeParameters,
-)
+from pydantic import Field
 
 class CarMode(TransportMode):
     """
@@ -33,7 +31,7 @@ class CarMode(TransportMode):
         speed_modifiers: List[SpeedModifier] = [],
         survey_ids: List[str] | None = None,
         ghg_intensity: float | None = None,
-        parameters: CarModeParameters | None = None,
+        parameters: "CarModeParameters | None" = None,
     ):
         
         mode_name = "car"
@@ -91,4 +89,17 @@ class CarMode(TransportMode):
             parameters=parameters,
             parameters_cls=CarModeParameters,
         )
-        
+
+
+class CarModeParameters(TransportModeParameters):
+    """Parameters for car mode."""
+
+    name: Literal["car"] = "car"
+    ghg_intensity: float = 0.218
+    congestion: bool = False
+    vehicle: Literal["car"] = "car"
+    multimodal: bool = False
+    return_mode: None = None
+    survey_ids: list[str] = Field(
+        default_factory=lambda: ["3.30", "3.31", "3.32", "3.33", "3.39"]
+    )

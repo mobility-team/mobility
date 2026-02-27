@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import pandas as pd
 import polars as pl
+from typing import Annotated
 
-from mobility.motives.motive import Motive
-from mobility.motives.other_motive_parameters import OtherMotiveParameters
+from pydantic import Field
+from mobility.motives.motive import Motive, MotiveParameters
 from mobility.population import Population
+
 
 class OtherMotive(Motive):
 
@@ -15,7 +19,7 @@ class OtherMotive(Motive):
         radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
         population: Population = None,
-        parameters: OtherMotiveParameters | None = None
+        parameters: "OtherMotiveParameters" | None = None
     ):
         
         if population is None and opportunities is None:
@@ -66,3 +70,26 @@ class OtherMotive(Motive):
         return opportunities
             
     
+
+class OtherMotiveParameters(MotiveParameters):
+    """Parameters specific to the other motive."""
+
+    value_of_time: Annotated[
+        float,
+        Field(default=10.0, ge=0.0),
+    ]
+
+    saturation_fun_ref_level: Annotated[
+        float,
+        Field(default=1.5, ge=0.0),
+    ]
+
+    saturation_fun_beta: Annotated[
+        float,
+        Field(default=4.0, ge=0.0),
+    ]
+
+    radiation_lambda: Annotated[
+        float,
+        Field(default=0.99986, ge=0.0, le=1.0),
+    ]

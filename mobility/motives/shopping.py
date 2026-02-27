@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 import pandas as pd
 import polars as pl
 
-from typing import List
+from typing import Annotated, List
 
-from mobility.motives.motive import Motive
-from mobility.motives.shopping_motive_parameters import ShoppingMotiveParameters
+from pydantic import Field
+from mobility.motives.motive import Motive, MotiveParameters
 from mobility.parsers.shops_turnover_distribution import ShopsTurnoverDistribution
+
 
 class ShoppingMotive(Motive):
 
@@ -17,7 +20,7 @@ class ShoppingMotive(Motive):
         survey_ids: List[str] = None,
         radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
-        parameters: ShoppingMotiveParameters | None = None
+        parameters: "ShoppingMotiveParameters" | None = None
     ):
 
         parameters = self.prepare_parameters(
@@ -73,3 +76,11 @@ class ShoppingMotive(Motive):
         return opportunities
     
 
+class ShoppingMotiveParameters(MotiveParameters):
+    """Parameters specific to the shopping motive."""
+
+    value_of_time: Annotated[float, Field(default=10.0, ge=0.0)]
+    saturation_fun_ref_level: Annotated[float, Field(default=1.5, ge=0.0)]
+    saturation_fun_beta: Annotated[float, Field(default=4.0, ge=0.0)]
+    survey_ids: Annotated[list[str], Field(default_factory=lambda: ["2.20", "2.21"])]
+    radiation_lambda: Annotated[float, Field(default=0.99986, ge=0.0, le=1.0)]

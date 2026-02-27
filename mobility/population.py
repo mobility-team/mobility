@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import pathlib
 import logging
@@ -5,14 +7,16 @@ import shortuuid
 import pandas as pd
 import numpy as np
 import geopandas as gpd
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
 
 from rich.progress import Progress
 
 from mobility.file_asset import FileAsset
-from mobility.population_parameters import PopulationParameters
 from mobility.parsers import CityLegalPopulation
 from mobility.parsers import CensusLocalizedIndividuals
 from mobility.parsers.admin_boundaries import get_french_regions_boundaries, get_french_cities_boundaries
+
 
 class Population(FileAsset):
     """
@@ -45,7 +49,7 @@ class Population(FileAsset):
             transport_zones,
             sample_size: int | None = None,
             switzerland_census: CensusLocalizedIndividuals = None,
-            parameters: PopulationParameters | None = None
+            parameters: "PopulationParameters" | None = None
         ):
 
         parameters = self.prepare_parameters(
@@ -282,3 +286,20 @@ class Population(FileAsset):
         logging.info("Global sampling rate : " + str(round(10000*sampling_rate)/10000) + " %.")
         
         return population
+
+
+class PopulationParameters(BaseModel):
+    """Parameters controlling population sampling."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sample_size: Annotated[
+        int,
+        Field(
+            ge=1,
+            title="Population sample size",
+            description=(
+                "Number of inhabitants to sample within the selected transport zones."
+            ),
+        ),
+    ]

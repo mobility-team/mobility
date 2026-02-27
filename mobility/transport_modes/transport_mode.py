@@ -1,9 +1,7 @@
-from typing import List, TypeVar
+from typing import Annotated, List
 
 from mobility.in_memory_asset import InMemoryAsset
-from mobility.transport_modes.transport_mode_parameters import TransportModeParameters
-
-P = TypeVar("P", bound=TransportModeParameters)
+from pydantic import BaseModel, ConfigDict, Field
 
 class TransportMode(InMemoryAsset):
     """
@@ -31,8 +29,8 @@ class TransportMode(InMemoryAsset):
         multimodal: bool = False,
         return_mode: str = None,
         survey_ids: List[str] = None,
-        parameters: P | None = None,
-        parameters_cls: type[P] = TransportModeParameters,
+        parameters: "TransportModeParameters | None" = None,
+        parameters_cls: type["TransportModeParameters"] | None = None,
     ):
         """Initialize a transport mode and store its parameter metadata.
 
@@ -48,6 +46,9 @@ class TransportMode(InMemoryAsset):
             survey_ids: Survey mode identifiers mapped to this mode.
             parameters: Optional pre-built pydantic parameter model.
         """
+        if parameters_cls is None:
+            parameters_cls = TransportModeParameters
+
         parameters = self.prepare_parameters(
             parameters=parameters,
             parameters_cls=parameters_cls,
@@ -88,6 +89,75 @@ class TransportMode(InMemoryAsset):
             parameters=params.model_copy(),
             parameters_cls=params.__class__,
         )
-        
-    
-        
+
+
+class TransportModeParameters(BaseModel):
+    """Common parameters for transport mode definitions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[
+        str,
+        Field(
+            title="Mode name",
+            description="Unique name used to identify the transport mode.",
+        ),
+    ]
+
+    ghg_intensity: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            title="GHG intensity",
+            description="Greenhouse gas intensity in kgCO2e per passenger.km.",
+            json_schema_extra={"unit": "kgCO2e/pass.km"},
+        ),
+    ]
+
+    congestion: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Congestion enabled",
+            description=(
+                "Whether congestion feedback should be enabled for this mode "
+                "when supported by travel cost computations."
+            ),
+        ),
+    ]
+
+    vehicle: Annotated[
+        str | None,
+        Field(
+            default=None,
+            title="Vehicle type",
+            description="Vehicle family used by this mode, when relevant.",
+        ),
+    ]
+
+    multimodal: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Multimodal",
+            description="Whether this mode combines multiple sub-modes.",
+        ),
+    ]
+
+    return_mode: Annotated[
+        str | None,
+        Field(
+            default=None,
+            title="Return mode",
+            description="Optional return mode name for asymmetric multimodal chains.",
+        ),
+    ]
+
+    survey_ids: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            title="Survey IDs",
+            description="Survey mode identifiers mapped to this transport mode.",
+        ),
+    ]

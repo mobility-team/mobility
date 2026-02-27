@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pandas as pd
 import polars as pl
 import geopandas as gpd
@@ -7,8 +9,12 @@ import os
 
 from mobility.motives.motive import Motive
 from mobility.parsers.leisure_facilities_distribution import LeisureFacilitiesDistribution
-from mobility.motives.leisure_motive_parameters import LeisureMotiveParameters
-    
+ 
+from typing import Annotated, List
+
+from pydantic import Field
+from mobility.motives.motive import Motive, MotiveParameters
+
 
 class LeisureMotive(Motive):
 
@@ -20,7 +26,7 @@ class LeisureMotive(Motive):
         survey_ids: List[str] = None,
         radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
-        parameters: LeisureMotiveParameters | None = None
+        parameters: "LeisureMotiveParameters" | None = None
     ):
         
         if opportunities is None:
@@ -149,3 +155,16 @@ class LeisureMotive(Motive):
         
             return ax
         
+            
+
+class LeisureMotiveParameters(MotiveParameters):
+    """Parameters specific to the leisure motive."""
+
+    value_of_time: Annotated[float, Field(default=10.0, ge=0.0)]
+    saturation_fun_ref_level: Annotated[float, Field(default=1.5, ge=0.0)]
+    saturation_fun_beta: Annotated[float, Field(default=4.0, ge=0.0)]
+    survey_ids: Annotated[
+        list[str],
+        Field(default_factory=lambda: ["7.71", "7.72", "7.73", "7.74", "7.75", "7.76", "7.77", "7.78"]),
+    ]
+    radiation_lambda: Annotated[float, Field(default=0.99986, ge=0.0, le=1.0)]
