@@ -55,8 +55,26 @@ jobs:
       shell: bash -el {0}
 
     - name: Test with pytest
-      run: pytest --cov --log-cli-level INFO --clear_inputs --cov-report xml
+      run: |
+        pytest --cov=mobility --cov-config=.coveragerc \
+          --cov-report=xml:coverage.xml --cov-report=term-missing \
+          --log-cli-level=INFO --clear_inputs
+      shell: bash -el {0}
+
+    - name: Inspect coverage.xml paths
+      run: |
+        python - <<'PY'
+        import xml.etree.ElementTree as ET
+        r = ET.parse("coverage.xml").getroot()
+        classes = r.findall(".//class")
+        print("classes:", len(classes))
+        for c in classes[:20]:
+          print(c.get("filename"))
+        PY
       shell: bash -el {0}
 
     - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
+      with:
+        files: coverage.xml
+        verbose: true
