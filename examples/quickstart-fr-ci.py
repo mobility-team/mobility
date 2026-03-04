@@ -1,4 +1,5 @@
 import mobility
+from mobility.choice_models.population_trips_parameters import PopulationTripsParameters
 
 def run_quickstart_ci():
     # In CI/integration tests, test setup configures Mobility paths in conftest.py.
@@ -26,7 +27,10 @@ def run_quickstart_ci():
             mobility.OtherMotive(population=population),
         ],
         [survey],
-        n_iterations=1,
+        parameters=PopulationTripsParameters(
+            n_iterations=1,
+            mode_sequence_search_parallel=False,
+        ),
     )
 
     # You can get weekday trips to inspect them

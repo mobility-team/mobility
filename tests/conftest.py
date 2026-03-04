@@ -1,9 +1,10 @@
-import mobility
-import pytest
-import dotenv
-import shutil
 import os
 import pathlib
+import shutil
+
+import dotenv
+import mobility
+import pytest
 
 def pytest_addoption(parser):
     parser.addoption("--local", action="store_true", default=False)
@@ -27,45 +28,60 @@ def local(request):
 def use_truststore(request):
     return request.config.getoption("--use-truststore")
 
+def _repo_root() -> pathlib.Path:
+    # .../tests/conftest.py -> repo root
+    return pathlib.Path(__file__).resolve().parents[1]
+
+def _load_dotenv_from_repo_root() -> None:
+    dotenv.load_dotenv(_repo_root() / ".env")
+
 def do_mobility_setup(local, clear_inputs, clear_results):
-
     if local:
+        _load_dotenv_from_repo_root()
 
-        dotenv.load_dotenv()
+    data_folder = os.environ.get("MOBILITY_PACKAGE_DATA_FOLDER")
+    project_folder = os.environ.get("MOBILITY_PACKAGE_PROJECT_FOLDER")
 
-        if clear_inputs is True:
-            shutil.rmtree(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"], ignore_errors=True)
-
-        if clear_results is True:
-            shutil.rmtree(os.environ["MOBILITY_PACKAGE_PROJECT_FOLDER"], ignore_errors=True)
-
-        mobility.set_params(
-            package_data_folder_path=os.environ["MOBILITY_PACKAGE_DATA_FOLDER"],
-            project_data_folder_path=os.environ["MOBILITY_PACKAGE_PROJECT_FOLDER"],
-            debug=True
-        )
-
+    if data_folder and project_folder:
+        package_data_folder_path = data_folder
+        project_data_folder_path = project_folder
+        extra_params = {}
     else:
+        if local:
+            raise RuntimeError(
+                "MOBILITY_PACKAGE_DATA_FOLDER and MOBILITY_PACKAGE_PROJECT_FOLDER must be set in local mode "
+                "(e.g. in repo-root .env)."
+            )
+        package_data_folder_path = pathlib.Path.home() / ".mobility/data"
+        project_data_folder_path = pathlib.Path.home() / ".mobility/projects/tests"
+        extra_params = {"r_packages": False}
 
-        mobility.set_params(
-            package_data_folder_path=pathlib.Path.home() / ".mobility/data",
-            project_data_folder_path=pathlib.Path.home() / ".mobility/projects/tests",
-            r_packages=False,
-            debug=True
-        )
+    if clear_inputs is True:
+        shutil.rmtree(package_data_folder_path, ignore_errors=True)
 
-        # Set the env var directly for now
-        # TO DO : see how could do this differently...
-        os.environ["MOBILITY_GTFS_DOWNLOAD_DATE"] = "2025-01-01"
+    if clear_results is True:
+        shutil.rmtree(project_data_folder_path, ignore_errors=True)
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_mobility(local, clear_inputs, clear_results):
-    do_mobility_setup(local, clear_inputs, clear_results)
+    mobility.set_params(
+        package_data_folder_path=package_data_folder_path,
+        project_data_folder_path=project_data_folder_path,
+        debug=True,
+        **extra_params,
+    )
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_truststore(use_truststore):
-    if use_truststore:
+    # Default for tests; can be overridden by env/.env
+    os.environ.setdefault("MOBILITY_GTFS_DOWNLOAD_DATE", "2025-01-01")
+
+def pytest_configure(config):
+    do_mobility_setup(
+        config.getoption("--local"),
+        config.getoption("--clear_inputs"),
+        config.getoption("--clear_results"),
+    )
+
+    if config.getoption("--use-truststore"):
         import truststore
+
         truststore.inject_into_ssl()
 
 def get_test_data():
