@@ -17,7 +17,7 @@ def _read(path: Path) -> str:
 
 def test_quickstart_user_and_ci_follow_same_critical_flow():
     repo_root = Path(__file__).resolve().parents[3]
-    user_path = repo_root / "examples" / "quickstart-fr.py.py"
+    user_path = repo_root / "examples" / "quickstart-fr.py"
     ci_path = repo_root / "examples" / "quickstart-fr-ci.py"
 
     user_text = _read(user_path)
