@@ -65,7 +65,6 @@ def do_mobility_setup(local, clear_inputs, clear_results):
     mobility.set_params(
         package_data_folder_path=package_data_folder_path,
         project_data_folder_path=project_data_folder_path,
-        debug=True,
         **extra_params,
     )
 
