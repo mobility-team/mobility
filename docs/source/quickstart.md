@@ -7,7 +7,7 @@ As an example, this page shows you how to :
 - Get a table of trips made by a sample population, in which most trips only depend on individual characteristics but home to work place trips also take the local context into account : spatial distribution of active persons and jobs, and transport infrastructure (only car and bicycle in this example).
 
 We'll go through the example step by step, but you can also run the user quickstart script directly:
-- `examples/quickstart-fr.py.py`
+- `examples/quickstart-fr.py`
 
 ## Set up
 
