@@ -64,8 +64,9 @@ def setup_mobility(local, clear_inputs, clear_results):
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_truststore(use_truststore):
-    import truststore
-    truststore.inject_into_ssl()
+    if use_truststore:
+        import truststore
+        truststore.inject_into_ssl()
 
 def get_test_data():
     return {
