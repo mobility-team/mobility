@@ -9,6 +9,7 @@ def pytest_addoption(parser):
     parser.addoption("--local", action="store_true", default=False)
     parser.addoption("--clear_inputs", action="store_true", default=False)
     parser.addoption("--clear_results", action="store_true", default=False)
+    parser.addoption("--use-truststore", action="store_true", default=False)
 
 @pytest.fixture(scope="session")
 def clear_inputs(request):
@@ -21,6 +22,10 @@ def clear_results(request):
 @pytest.fixture(scope="session")
 def local(request):
     return request.config.getoption("--local")
+
+@pytest.fixture(scope="session")
+def use_truststore(request):
+    return request.config.getoption("--use-truststore")
 
 def do_mobility_setup(local, clear_inputs, clear_results):
 
@@ -36,7 +41,8 @@ def do_mobility_setup(local, clear_inputs, clear_results):
 
         mobility.set_params(
             package_data_folder_path=os.environ["MOBILITY_PACKAGE_DATA_FOLDER"],
-            project_data_folder_path=os.environ["MOBILITY_PACKAGE_PROJECT_FOLDER"]
+            project_data_folder_path=os.environ["MOBILITY_PACKAGE_PROJECT_FOLDER"],
+            debug=True
         )
 
     else:
@@ -44,7 +50,8 @@ def do_mobility_setup(local, clear_inputs, clear_results):
         mobility.set_params(
             package_data_folder_path=pathlib.Path.home() / ".mobility/data",
             project_data_folder_path=pathlib.Path.home() / ".mobility/projects/tests",
-            r_packages=False
+            r_packages=False,
+            debug=True
         )
 
         # Set the env var directly for now
@@ -55,6 +62,10 @@ def do_mobility_setup(local, clear_inputs, clear_results):
 def setup_mobility(local, clear_inputs, clear_results):
     do_mobility_setup(local, clear_inputs, clear_results)
 
+@pytest.fixture(scope="session", autouse=True)
+def setup_truststore(use_truststore):
+    import truststore
+    truststore.inject_into_ssl()
 
 def get_test_data():
     return {
