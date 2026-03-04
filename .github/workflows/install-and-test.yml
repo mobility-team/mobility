@@ -56,9 +56,8 @@ jobs:
 
     - name: Test with pytest
       run: |
-        pytest -q --disable-warnings --maxfail=1 \
-          --cov=mobility --cov-config=.coveragerc \
-          --cov-report=term-missing --cov-report=xml:coverage.xml \
+        pytest --cov=mobility --cov-config=.coveragerc \
+          --cov-report=xml:coverage.xml --cov-report=term-missing \
           --log-cli-level=INFO --clear_inputs
       shell: bash -el {0}
 
