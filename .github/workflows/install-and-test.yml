@@ -55,8 +55,12 @@ jobs:
       shell: bash -el {0}
 
     - name: Test with pytest
-      run: pytest --cov --log-cli-level INFO --clear_inputs --cov-report xml
+      run: |
+        pytest --cov=mobility --cov-config=.coveragerc --cov-report=xml:coverage.xml --log-cli-level=INFO --clear_inputs
       shell: bash -el {0}
 
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v5
+      with:
+        files: coverage.xml
+        verbose: true

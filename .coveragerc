@@ -1,2 +1,2 @@
-[coverage:run]
+[run]
 source = mobility
