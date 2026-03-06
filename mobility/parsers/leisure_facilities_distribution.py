@@ -55,7 +55,7 @@ class LeisureFacilitiesDistribution(FileAsset):
         admin_units = LocalAdminUnits().get()
         admin_units_ids = admin_units["local_admin_unit_id"].tolist()
 
-        study_area = StudyArea(admin_units_ids, radius=0)
+        study_area = StudyArea(admin_units_ids)
 
         pbf_path = OSMData(
             study_area,
