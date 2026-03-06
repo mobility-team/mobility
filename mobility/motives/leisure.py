@@ -29,9 +29,6 @@ class LeisureMotive(Motive):
         parameters: "LeisureMotiveParameters" | None = None
     ):
         
-        if opportunities is None:
-            raise ValueError("No built in leisure opportunities data for now, please provide an opportunities dataframe when creating instantiating the LeisureMotive class (or don't use it at all and let the OtherMotive model handle this motive).")
-
         parameters = self.prepare_parameters(
             parameters=parameters,
             parameters_cls=LeisureMotiveParameters,
