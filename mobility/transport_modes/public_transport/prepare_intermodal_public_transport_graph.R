@@ -177,7 +177,7 @@ travel_costs <- initialize_travel_costs(
 )
 
 # Filter out trips that are very long
-travel_costs <- travel_costs[distance < 80e3]
+travel_costs <- travel_costs[distance < parameters[["max_beeline_distance"]] * 1000]
 
 # Map start and last graph vertices (= vertices of the road network) to the mid 
 # graph vertices (= public transport stops)
