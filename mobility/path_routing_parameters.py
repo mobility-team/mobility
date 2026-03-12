@@ -24,8 +24,6 @@ class PathRoutingParameters(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def normalize_filter_definition(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
 
         normalized = dict(data)
 
