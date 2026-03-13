@@ -47,7 +47,7 @@ fonttools==4.62.0
     # via matplotlib
 geojson==3.0.0
     # via mobility (pyproject.toml)
-geopandas==1.1.0
+geopandas==1.1.2
     # via
     #   mobility (pyproject.toml)
     #   gtfs-kit
