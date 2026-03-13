@@ -3,7 +3,7 @@ import os
 import pathlib
 import polars as pl
 import pandas as pd
-from typing import Annotated
+from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field
 from mobility.file_asset import FileAsset
 
@@ -69,7 +69,12 @@ class MobilitySurvey(FileAsset):
             "version": "1",
             "parameters": parameters,
         }
+        inputs.update(self.get_additional_inputs())
         super().__init__(inputs, cache_path)
+
+    def get_additional_inputs(self) -> dict[str, Any]:
+        """Hook for specialized parsers to add extra hashed inputs before cache initialization."""
+        return {}
         
     def get_cached_asset(self) -> dict[str, pd.DataFrame]:
         """
@@ -204,12 +209,12 @@ class MobilitySurvey(FileAsset):
 
             # Map detailed motives to grouped motives
             .with_columns(
-                pl.col("motive").replace_strict(motive_mapping, default="other")
+                pl.col("motive").cast(pl.Utf8).replace_strict(motive_mapping, default="other")
             )
             
             # Map detailed modes to grouped modes
             .with_columns(
-                mode=pl.col("mode_id").replace_strict(mode_mapping, default="other")
+                mode=pl.col("mode_id").cast(pl.Utf8).replace_strict(mode_mapping, default="other")
             )
                      
             # Remove motive sequences that are longer than 10 motives to speed 
@@ -454,3 +459,4 @@ class MobilitySurveyParameters(BaseModel):
             ),
         ),
     ]
+

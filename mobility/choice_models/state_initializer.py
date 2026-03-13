@@ -196,7 +196,7 @@ class StateInitializer:
             
             .sort(["demand_group_id", "motive_seq_id",  "seq_step_index"])
             .with_columns(
-                is_anchor=pl.col("motive").replace_strict(anchors)
+                is_anchor=pl.col("motive").cast(pl.Utf8).replace_strict(anchors)
             )
         
         )
