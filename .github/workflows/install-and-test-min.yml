@@ -1,0 +1,12 @@
+on:
+  push:
+    branches: [ "main" ]
+    path-ignore:
+      - '**.md'
+
+jobs:
+  tests-min:
+    uses: ./.github/workflows/test-reusable.yml
+    with:
+      requirements_file: requirements-min.txt
+      use_min_dep_versions: true
