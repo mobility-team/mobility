@@ -3,7 +3,7 @@ import os
 import pathlib
 import polars as pl
 import pandas as pd
-from typing import Annotated
+from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field
 from mobility.file_asset import FileAsset
 
@@ -25,7 +25,6 @@ class MobilitySurvey(FileAsset):
         survey_name: str | None = None,
         country: str | None = None,
         seq_prob_cutoff: float | None = None,
-        patch: "MobilitySurvey | None" = None,
         parameters: "MobilitySurveyParameters" | None = None,
     ):
         """Initialize mobility survey asset inputs and cache paths.
@@ -34,7 +33,6 @@ class MobilitySurvey(FileAsset):
             survey_name: Survey dataset identifier.
             country: Country code associated with the survey.
             seq_prob_cutoff: Sequence probability cutoff used in chain filtering.
-            patch: Optional upstream survey asset used to reuse part of another survey cache.
             parameters: Optional pre-built pydantic parameters model.
         """
         parameters = self.prepare_parameters(
@@ -71,9 +69,12 @@ class MobilitySurvey(FileAsset):
             "version": "1",
             "parameters": parameters,
         }
-        if patch is not None:
-            inputs["patch"] = patch
+        inputs.update(self.get_additional_inputs())
         super().__init__(inputs, cache_path)
+
+    def get_additional_inputs(self) -> dict[str, Any]:
+        """Hook for specialized parsers to add extra hashed inputs before cache initialization."""
+        return {}
         
     def get_cached_asset(self) -> dict[str, pd.DataFrame]:
         """
