@@ -205,7 +205,7 @@ python-dotenv==1.2.2
     # via mobility (pyproject.toml)
 pyyaml==6.0.3
     # via myst-parser
-requests==2.32.5
+requests==2.32.4
     # via
     #   mobility (pyproject.toml)
     #   folium
