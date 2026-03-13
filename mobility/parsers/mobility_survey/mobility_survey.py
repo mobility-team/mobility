@@ -25,6 +25,8 @@ class MobilitySurvey(FileAsset):
         survey_name: str | None = None,
         country: str | None = None,
         seq_prob_cutoff: float | None = None,
+        dataset_path: pathlib.Path | str | None = None,
+        patch: "MobilitySurvey | None" = None,
         parameters: "MobilitySurveyParameters" | None = None,
     ):
         """Initialize mobility survey asset inputs and cache paths.
@@ -33,6 +35,8 @@ class MobilitySurvey(FileAsset):
             survey_name: Survey dataset identifier.
             country: Country code associated with the survey.
             seq_prob_cutoff: Sequence probability cutoff used in chain filtering.
+            dataset_path: Optional raw dataset location used by survey-specific parsers.
+            patch: Optional upstream survey asset used to reuse part of another survey cache.
             parameters: Optional pre-built pydantic parameters model.
         """
         parameters = self.prepare_parameters(
@@ -42,6 +46,7 @@ class MobilitySurvey(FileAsset):
                 "survey_name": survey_name,
                 "country": country,
                 "seq_prob_cutoff": seq_prob_cutoff,
+                "dataset_path": dataset_path,
             },
             required_fields=["survey_name", "country"],
             owner_name="MobilitySurvey",
@@ -69,6 +74,8 @@ class MobilitySurvey(FileAsset):
             "version": "1",
             "parameters": parameters,
         }
+        if patch is not None:
+            inputs["patch"] = patch
         super().__init__(inputs, cache_path)
         
     def get_cached_asset(self) -> dict[str, pd.DataFrame]:
@@ -452,5 +459,14 @@ class MobilitySurveyParameters(BaseModel):
                 "Cumulative contribution cutoff used to keep the most relevant "
                 "motive/mode sequences per population group."
             ),
+        ),
+    ]
+
+    dataset_path: Annotated[
+        pathlib.Path | None,
+        Field(
+            default=None,
+            title="Dataset path",
+            description="Optional path to the raw survey dataset consumed by survey-specific parsers.",
         ),
     ]
