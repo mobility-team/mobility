@@ -6,29 +6,29 @@ build-backend = "setuptools.build_meta"
 name = "mobility"
 version = "0.1"
 dependencies = [
-  "geopandas",
-  "numpy",
-  "pandas",
-  "scipy",
-  "requests",
-  "shortuuid",
-  "pyarrow",
-  "openpyxl",
-  "py7zr",
-  "rich",
-  "python-dotenv",
-  "geojson",
-  "matplotlib",
-  "seaborn",
-  "pyogrio",
-  "polars",
-  "psutil",
-  "networkx",
-  "plotly",
-  "scikit-learn",
-  "gtfs_kit",
-  "kaleido",
-  "pydantic",
+  "geopandas>=1.1,<1.2",
+  "numpy>=2.0,<3",
+  "pandas>=2.3,<3.1",
+  "scipy>=1.11,<2",
+  "requests>=2.32,<3",
+  "shortuuid>=1.0,<2",
+  "pyarrow>=23.0,<24",
+  "openpyxl>=3.1,<4",
+  "py7zr>=1.1,<2",
+  "rich>=14,<15",
+  "python-dotenv>=1,<2",
+  "geojson>=3,<4",
+  "matplotlib>=3.10,<4",
+  "seaborn>=0.13,<0.14",
+  "pyogrio>=0.12,<1",
+  "polars>=1.39,<1.40",
+  "psutil>=7,<8",
+  "networkx>=3.5,<4",
+  "plotly>=6.0,<7",
+  "scikit-learn>=1.8,<1.9",
+  "gtfs_kit>=12.0,<13",
+  "kaleido>=1.2,<2",
+  "pydantic>=2.12,<3",
 ]
 
 requires-python = ">=3.11"
@@ -49,13 +49,13 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = [
-    "coverage",
-    "flake8",
-    "pytest",
-    "pytest-cov",
-    "pytest-dependency",
-    "sphinxcontrib-napoleon",
-     "myst_parser"
+  "coverage>=7,<8",
+  "flake8>=7,<8",
+  "pytest>=8,<10",
+  "pytest-cov>=5,<7",
+  "pytest-dependency>=0.6,<1",
+  "sphinxcontrib-napoleon>=0.7,<1",
+  "myst_parser>=3,<5",
 ]
 
 spyder = [

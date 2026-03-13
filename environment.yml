@@ -3,6 +3,6 @@ channels:
   - conda-forge
 dependencies:
   - python=3.12
-  - r-base=4.5.1
   - osmium-tool=1.18.0
-  - uv=0.8.4
+  - uv=0.10.9
+  - r-base=4.5.2

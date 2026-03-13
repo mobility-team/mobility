@@ -2,8 +2,6 @@ name: mobility
 channels:
   - conda-forge
 dependencies:
-  - python=3.11
-  - geopandas
-  - osmium-tool
-  # - pip:
-  #     - mobility-tools
+  - python=3.12
+  - osmium-tool=1.18.0
+  - uv=0.10.9
