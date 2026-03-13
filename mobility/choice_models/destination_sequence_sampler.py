@@ -228,7 +228,7 @@ class DestinationSequenceSampler:
             costs_bin
             .with_columns(
                 s_ij=pl.col("effective_sink").cum_sum().over(["from", "motive"]),
-                selection_lambda=pl.col("motive").replace_strict(motives_lambda)
+                selection_lambda=pl.col("motive").cast(pl.Utf8).replace_strict(motives_lambda)
             )
             .with_columns(
                 p_a = (1 - pl.col("selection_lambda")**(1+pl.col('s_ij'))) / (1+pl.col('s_ij')) / (1-pl.col("selection_lambda"))

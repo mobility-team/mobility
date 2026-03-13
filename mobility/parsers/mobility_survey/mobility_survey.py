@@ -209,12 +209,12 @@ class MobilitySurvey(FileAsset):
 
             # Map detailed motives to grouped motives
             .with_columns(
-                pl.col("motive").replace_strict(motive_mapping, default="other")
+                pl.col("motive").cast(pl.Utf8).replace_strict(motive_mapping, default="other")
             )
             
             # Map detailed modes to grouped modes
             .with_columns(
-                mode=pl.col("mode_id").replace_strict(mode_mapping, default="other")
+                mode=pl.col("mode_id").cast(pl.Utf8).replace_strict(mode_mapping, default="other")
             )
                      
             # Remove motive sequences that are longer than 10 motives to speed 
