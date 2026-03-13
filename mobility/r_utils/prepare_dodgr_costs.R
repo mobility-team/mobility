@@ -24,9 +24,8 @@ args <- commandArgs(trailingOnly = TRUE)
 package_path <- args[1]
 tz_fp <- args[2]
 graph_fp <- args[3]
-max_speed <- as.numeric(args[4])
-max_time <- as.numeric(args[5])
-output_fp <- args[6]
+max_beeline_distance <- as.numeric(args[4])
+output_fp <- args[5]
 
 buildings_sample_fp <- file.path(
   dirname(tz_fp),
@@ -63,8 +62,7 @@ travel_costs <- merge(travel_costs, transport_zones[, list(transport_zone_id, x,
 travel_costs <- merge(travel_costs, transport_zones[, list(transport_zone_id, x, y)], by.x = "to", by.y = "transport_zone_id", suffixes = c("_from", "_to"))
 
 travel_costs[, distance := sqrt((x_from - x_to)^2 + (y_from - y_to)^2)]
-travel_costs[, time := distance/1000/max_speed]
-travel_costs <- travel_costs[time < max_time]
+travel_costs <- travel_costs[distance < max_beeline_distance * 1000]
 
 travel_costs[, n_clusters := round(1 + 4*exp(-distance/1000/2))]
 

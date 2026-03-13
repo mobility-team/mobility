@@ -68,7 +68,7 @@ travel_costs <- merge(travel_costs, transport_zones[, list(transport_zone_id, x,
 travel_costs <- merge(travel_costs, transport_zones[, list(transport_zone_id, x, y)], by.x = "to", by.y = "transport_zone_id", suffixes = c("_from", "_to"))
 
 travel_costs[, distance := sqrt((x_from - x_to)^2 + (y_from - y_to)^2)]
-travel_costs <- travel_costs[distance < 80e3]
+travel_costs <- travel_costs[distance < parameters[["max_beeline_distance"]] * 1000]
 
 travel_costs[, n_clusters := round(1 + 4*exp(-distance/1000/2))]
 

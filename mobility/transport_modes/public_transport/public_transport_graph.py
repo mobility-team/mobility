@@ -13,6 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from mobility.file_asset import FileAsset
 from mobility.r_utils.r_script import RScript
 from mobility.transport_zones import TransportZones
+from mobility.transport_modes.defaults import (
+    DEFAULT_LONG_RANGE_MOTORIZED_MAX_BEELINE_DISTANCE_KM,
+)
 from .gtfs.gtfs_router import GTFSRouter
 from mobility.transport_costs.path_travel_costs import PathTravelCosts
 from mobility.transport_modes.transport_mode import TransportMode
@@ -112,8 +115,15 @@ class PublicTransportGraph(FileAsset):
 
 class PublicTransportRoutingParameters(BaseModel):
     """
-    Dataclass for public transport routing parameters. Should be given as argument for the routing_parameters of PublicTransportMode
-    By default, the period between 6:30 am and 7:30 am will be considered, with a maximum public transport traveltime of 1 hour.
+    Routing parameters for public transport.
+
+    These parameters combine:
+    - a coarse outer OD envelope through `max_beeline_distance`, in km
+    - time-window and generalized-time constraints for the public transport leg
+
+    `max_beeline_distance` is only used to prune obviously too-distant OD pairs
+    before detailed multimodal routing. It does not replace the detailed public
+    transport time constraints below.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -127,6 +137,10 @@ class PublicTransportRoutingParameters(BaseModel):
     target_time: Annotated[float, Field(default=8.0, ge=0.0, le=24.0)]
     max_wait_time_at_destination: Annotated[float, Field(default=0.25, ge=0.0)]
     max_perceived_time: Annotated[float, Field(default=2.0, gt=0.0)]
+    max_beeline_distance: Annotated[
+        float,
+        Field(default=DEFAULT_LONG_RANGE_MOTORIZED_MAX_BEELINE_DISTANCE_KM, gt=0.0),
+    ]
     additional_gtfs_files: Annotated[list[str] | None, Field(default=None)]
     expected_agencies: Annotated[list[str] | None, Field(default=None)]
 
