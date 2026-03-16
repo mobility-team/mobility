@@ -28,8 +28,7 @@ class BicycleMode(TransportMode):
         
         if routing_parameters is None:
             routing_parameters = PathRoutingParameters(
-                filter_max_time=1.0,
-                filter_max_speed=20.0
+                max_beeline_distance=20.0
             )
             
         if osm_capacity_parameters is None:

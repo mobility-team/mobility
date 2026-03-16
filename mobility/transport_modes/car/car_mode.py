@@ -3,6 +3,9 @@ from typing import List, Literal
 from mobility.transport_zones import TransportZones
 from mobility.transport_costs.path_travel_costs import PathTravelCosts
 from mobility.transport_modes.transport_mode import TransportMode, TransportModeParameters
+from mobility.transport_modes.defaults import (
+    DEFAULT_LONG_RANGE_MOTORIZED_MAX_BEELINE_DISTANCE_KM,
+)
 from mobility.path_routing_parameters import PathRoutingParameters
 from mobility.generalized_cost_parameters import GeneralizedCostParameters
 from mobility.cost_of_time_parameters import CostOfTimeParameters
@@ -47,8 +50,7 @@ class CarMode(TransportMode):
 
         if routing_parameters is None:
             routing_parameters = PathRoutingParameters(
-                filter_max_time=1.0,
-                filter_max_speed=60.0
+                max_beeline_distance=DEFAULT_LONG_RANGE_MOTORIZED_MAX_BEELINE_DISTANCE_KM
             )
             
         if osm_capacity_parameters is None:

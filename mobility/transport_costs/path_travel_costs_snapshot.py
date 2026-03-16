@@ -69,8 +69,7 @@ class PathTravelCostsSnapshot(FileAsset):
             args=[
                 str(transport_zones.cache_path),
                 str(contracted_graph.cache_path),
-                str(routing_parameters.filter_max_speed),
-                str(routing_parameters.filter_max_time),
+                str(routing_parameters.max_beeline_distance),
                 str(self.cache_path),
             ]
         )

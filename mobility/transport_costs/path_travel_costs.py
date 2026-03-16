@@ -182,8 +182,7 @@ class PathTravelCosts(FileAsset):
             args=[
                 str(transport_zones.cache_path),
                 str(path_graph.cache_path),
-                str(self.inputs["routing_parameters"].filter_max_speed),
-                str(self.inputs["routing_parameters"].filter_max_time),
+                str(self.inputs["routing_parameters"].max_beeline_distance),
                 str(output_path)
             ]
         )
