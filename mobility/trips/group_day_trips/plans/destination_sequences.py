@@ -290,6 +290,7 @@ class DestinationSequences(FileAsset):
         self,
         activities: list[Any],
         resolved_activity_parameters: dict[str, Any] | None,
+        resolved_activity_parameters: dict[str, Any] | None,
         transport_zones: Any,
         opportunities: pl.DataFrame,
         costs: pl.DataFrame,
@@ -303,6 +304,7 @@ class DestinationSequences(FileAsset):
                 activity.name,
                 activity.get_utilities(
                     transport_zones,
+                    parameters=resolved_activity_parameters[activity.name],
                     parameters=resolved_activity_parameters[activity.name],
                 ),
             )
@@ -368,6 +370,7 @@ class DestinationSequences(FileAsset):
         self,
         utilities: tuple[pl.LazyFrame, pl.LazyFrame],
         activities: list[Any],
+        resolved_activity_parameters: dict[str, Any] | None,
         resolved_activity_parameters: dict[str, Any] | None,
         destination_probability_cutoff: float,
     ) -> pl.DataFrame:

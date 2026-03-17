@@ -142,7 +142,6 @@ class PlanUpdater:
 
         spat_chains = destination_sequences.get_cached_asset().lazy()
         modes = mode_sequences.get_cached_asset().lazy()
-
         value_of_time = (
             pl.from_dicts(
                 [
@@ -370,7 +369,6 @@ class PlanUpdater:
                 (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
                 & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
             )
-
         transition_probabilities = (
             current_plans_for_transitions
             .select(plan_cols + ["utility"])
@@ -753,11 +751,11 @@ class PlanUpdater:
         current_plan_steps,
         opportunities,
         resolved_activity_parameters: dict[str, Any],
+        resolved_activity_parameters: dict[str, Any],
     ):
         """Recompute remaining opportunities per (activity, destination)."""
 
         logging.info("Computing remaining opportunities at destinations...")
-
         saturation_fun_parameters = (
             pl.from_dicts(
                 [
@@ -766,6 +764,7 @@ class PlanUpdater:
                         "beta": activity_parameters.saturation_fun_beta,
                         "ref_level": activity_parameters.saturation_fun_ref_level,
                     }
+                    for activity_name, activity_parameters in resolved_activity_parameters.items()
                     for activity_name, activity_parameters in resolved_activity_parameters.items()
                 ]
             ).with_columns(activity=pl.col("activity").cast(pl.Enum(opportunities["activity"].dtype.categories)))
