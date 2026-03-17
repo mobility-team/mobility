@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Annotated, List
 
 from pydantic import Field
+from mobility.simulation_profile import ParameterProfile
 
 from mobility.activities.activity import Activity, ActivityParameters
 
@@ -48,13 +49,13 @@ class HomeParameters(ActivityParameters):
     """Parameters specific to the home activity."""
 
     value_of_time: Annotated[
-        float,
-        Field(default=10.0, ge=0.0),
+        float | ParameterProfile,
+        Field(default=10.0),
     ]
 
     value_of_time_stay_home: Annotated[
-        float,
-        Field(default=0.0, ge=0.0),
+        float | ParameterProfile,
+        Field(default=0.0),
     ]
 
     saturation_fun_ref_level: Annotated[

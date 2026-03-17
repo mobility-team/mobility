@@ -7,6 +7,7 @@ from scipy.stats import norm
 
 from .sequence_index import add_index
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.simulation_profile import SimulationStep
 
 
 class DestinationSequences(FileAsset):
@@ -74,8 +75,10 @@ class DestinationSequences(FileAsset):
         if self.seed is None:
             raise ValueError("Cannot build destination sequences without a seed.")
 
+        step = SimulationStep(iteration=self.iteration)
         utilities = self._get_utilities(
             self.activities,
+            step,
             self.transport_zones,
             self.remaining_opportunities,
             self.costs,
@@ -84,6 +87,7 @@ class DestinationSequences(FileAsset):
         destination_probability = self._get_destination_probability(
             utilities,
             self.activities,
+            step,
             self.parameters.dest_prob_cutoff,
         )
         chains = (
@@ -132,13 +136,23 @@ class DestinationSequences(FileAsset):
     def _get_utilities(
         self,
         activities: list[Any],
+        step: SimulationStep,
         transport_zones: Any,
         opportunities: pl.DataFrame,
         costs: pl.DataFrame,
         cost_uncertainty_sd: float,
     ) -> tuple[pl.LazyFrame, pl.LazyFrame]:
         """Assemble destination utilities with cost uncertainty."""
-        utilities = [(activity.name, activity.get_utilities(transport_zones)) for activity in activities]
+        utilities = [
+            (
+                activity.name,
+                activity.get_utilities(
+                    transport_zones,
+                    parameters=activity.get_parameters_at_step(step),
+                ),
+            )
+            for activity in activities
+        ]
         utilities = [utility for utility in utilities if utility[1] is not None]
         utilities = [utility[1].with_columns(activity=pl.lit(utility[0])) for utility in utilities]
 
@@ -199,6 +213,7 @@ class DestinationSequences(FileAsset):
         self,
         utilities: tuple[pl.LazyFrame, pl.LazyFrame],
         activities: list[Any],
+        step: SimulationStep,
         destination_probability_cutoff: float,
     ) -> pl.DataFrame:
         """Compute destination probabilities from utilities."""
@@ -208,7 +223,7 @@ class DestinationSequences(FileAsset):
         costs_by_bin = utilities[0]
         cost_bin_to_destination = utilities[1]
         activities_lambda = {
-            activity.name: activity.inputs["parameters"].radiation_lambda for activity in activities
+            activity.name: activity.get_parameters_at_step(step).radiation_lambda for activity in activities
         }
         return (
             costs_by_bin

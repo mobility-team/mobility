@@ -17,6 +17,7 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities import Activity
 from mobility.surveys import MobilitySurvey
 from mobility.population import Population
+from mobility.simulation_profile import SimulationStep
 from mobility.transport.modes.core.transport_mode import TransportMode
 
 
@@ -146,10 +147,13 @@ class Run(FileAsset):
             chains_by_activity,
             demand_groups,
         )
+        step = SimulationStep(iteration=1)
+        home_activity = [activity for activity in self.activities if activity.name == "home"][0]
         stay_home_plan, current_plans = self.initializer.get_stay_home_state(
             demand_groups,
             home_night_dur,
-            self.activities,
+            home_activity,
+            step,
             self.parameters.min_activity_time_constant,
         )
         opportunities = self.initializer.get_opportunities(
@@ -310,6 +314,7 @@ class Run(FileAsset):
         mode_sequences: ModeSequences,
     ) -> pl.DataFrame:
         """Advance the simulation state by one iteration and return transition events."""
+        step = SimulationStep(iteration=iteration.iteration)
         state.current_plans, state.current_plan_steps, transition_events = self.updater.get_new_plans(
             state.current_plans,
             state.current_plan_steps,
@@ -319,7 +324,7 @@ class Run(FileAsset):
             state.congestion_state,
             state.remaining_opportunities,
             state.activity_dur,
-            iteration.iteration,
+            step,
             destination_sequences,
             mode_sequences,
             state.home_night_dur,
@@ -341,6 +346,7 @@ class Run(FileAsset):
             state.current_plan_steps,
             state.opportunities,
             self.activities,
+            step,
         )
         return transition_events
 
