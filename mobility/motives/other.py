@@ -7,6 +7,8 @@ from typing import Annotated
 from pydantic import Field
 from mobility.motives.motive import Motive, MotiveParameters
 from mobility.population import Population
+from mobility.simulation_profile import ParameterProfile
+from mobility.validation_types import NonNegativeFloat, UnitIntervalFloat
 
 
 class OtherMotive(Motive):
@@ -75,8 +77,8 @@ class OtherMotiveParameters(MotiveParameters):
     """Parameters specific to the other motive."""
 
     value_of_time: Annotated[
-        float,
-        Field(default=10.0, ge=0.0),
+        float | ParameterProfile,
+        Field(default=10.0),
     ]
 
     saturation_fun_ref_level: Annotated[
@@ -90,6 +92,6 @@ class OtherMotiveParameters(MotiveParameters):
     ]
 
     radiation_lambda: Annotated[
-        float,
-        Field(default=0.99986, ge=0.0, le=1.0),
+        UnitIntervalFloat,
+        Field(default=0.99986),
     ]

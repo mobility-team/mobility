@@ -5,6 +5,7 @@ from typing import Any
 import polars as pl
 
 from mobility.choice_models.transition_schema import TRANSITION_EVENT_COLUMNS
+from mobility.simulation_profile import SimulationStep
 
 class StateUpdater:
     """Updates population state distributions over motive/destination/mode sequences.
@@ -22,12 +23,12 @@ class StateUpdater:
             costs_aggregator: Any,
             remaining_sinks: pl.DataFrame,
             motive_dur: pl.DataFrame,
-            iteration: int,
+            step: SimulationStep,
             tmp_folders: dict[str, Any],
             home_night_dur: pl.DataFrame,
             stay_home_state: pl.DataFrame,
             parameters: Any,
-            motives: list[Any]
+            motives: list[Any],
         ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
         """Advance one iteration of state updates.
 
@@ -44,7 +45,6 @@ class StateUpdater:
             remaining_sinks (pl.DataFrame): Sink state per (motive,to) with
                 capacity and saturation utility penalty.
             motive_dur (pl.DataFrame): Mean activity durations by (csp,motive).
-            iteration (int): Current iteration (1-based).
             tmp_folders (dict[str, pathlib.Path]): Paths to “spatialized-chains” and “modes”.
             home_night_dur (pl.DataFrame): Mean remaining home-night duration by csp.
             stay_home_state (pl.DataFrame): Baseline “stay-home” state rows.
@@ -62,7 +62,7 @@ class StateUpdater:
             costs_aggregator,
             remaining_sinks,
             motive_dur,
-            iteration,
+            step,
             motives,
             parameters.min_activity_time_constant,
             tmp_folders
@@ -70,21 +70,21 @@ class StateUpdater:
         self._assert_current_states_covered_by_possible_steps(
             current_states,
             possible_states_steps,
-            iteration
+            step.iteration
         )
         
         home_motive = [m for m in motives if m.name == "home"][0]
-        
+
         possible_states_utility = self.get_possible_states_utility(
             possible_states_steps,
             home_night_dur,
-            home_motive.inputs["parameters"].value_of_time_stay_home,
+            home_motive.get_parameters_at_step(step).value_of_time_stay_home,
             stay_home_state,
             parameters.min_activity_time_constant
         )
         
         transition_prob = self.get_transition_probabilities(current_states, possible_states_utility)
-        current_states, transition_events = self.apply_transitions(current_states, transition_prob, iteration)
+        current_states, transition_events = self.apply_transitions(current_states, transition_prob, step.iteration)
         transition_events = self.add_transition_state_details(transition_events, possible_states_steps)
         current_states_steps = self.get_current_states_steps(current_states, possible_states_steps)
         
@@ -141,7 +141,7 @@ class StateUpdater:
             costs_aggregator,
             sinks,
             motive_dur,
-            iteration,
+            step,
             motives,
             min_activity_time_constant,
             tmp_folders
@@ -159,7 +159,6 @@ class StateUpdater:
             costs_aggregator (TravelCostsAggregator): Per-mode OD costs.
             sinks (pl.DataFrame): Sink state per (motive,to).
             motive_dur (pl.DataFrame): Mean durations per (csp,motive).
-            iteration (int): Current iteration to pick latest artifacts.
             activity_utility_coeff (float): Coefficient for activity utility.
             tmp_folders (dict[str, pathlib.Path]): Must contain "spatialized-chains" and "modes".
         
@@ -209,16 +208,24 @@ class StateUpdater:
 
         )
         
+        motive_parameters_at_step = {
+            motive.name: motive.get_parameters_at_step(step)
+            for motive in motives
+        }
+
         # Get the activities values of time
         value_of_time = ( 
             pl.from_dicts(
-                [{"motive": m.name, "value_of_time": m.inputs["parameters"].value_of_time} for m in motives]
+                [
+                    {"motive": motive_name, "value_of_time": motive_parameters.value_of_time}
+                    for motive_name, motive_parameters in motive_parameters_at_step.items()
+                ]
             )
             .with_columns(
                 motive=pl.col("motive").cast(pl.Enum(motive_dur["motive"].dtype.categories))
             )
         )
-        
+
         possible_states_steps = (
             
             modes
@@ -309,6 +316,16 @@ class StateUpdater:
                 possible_states_utility,
                 ( 
                     stay_home_state.lazy()
+                    .with_columns(
+                        min_activity_time=pl.col("mean_home_night_per_pers")*math.exp(-min_activity_time_constant)
+                    )
+                    .with_columns(
+                        utility=(
+                            value_of_time_stay_home
+                            * pl.col("mean_home_night_per_pers")
+                            * (pl.col("mean_home_night_per_pers")/pl.col("min_activity_time")).log().clip(0.0)
+                        )
+                    )
                     .select(["demand_group_id", "motive_seq_id", "mode_seq_id", "dest_seq_id", "utility"])
                 )
             ])
@@ -791,7 +808,8 @@ class StateUpdater:
             self,
             current_states_steps,
             sinks,
-            motives
+            motives,
+            step: SimulationStep,
         ):
         """Recompute remaining opportunities per (motive, destination).
     
@@ -809,15 +827,20 @@ class StateUpdater:
         
         logging.info("Computing remaining opportunities at destinations...")
         
+        motive_parameters_at_step = {
+            motive.name: motive.get_parameters_at_step(step)
+            for motive in motives
+        }
+
         saturation_fun_parameters = ( 
             pl.from_dicts(
                 [
                     {
-                        "motive": m.name,
-                        "beta": m.inputs["parameters"].saturation_fun_beta,
-                        "ref_level": m.inputs["parameters"].saturation_fun_ref_level
+                        "motive": motive_name,
+                        "beta": motive_parameters.saturation_fun_beta,
+                        "ref_level": motive_parameters.saturation_fun_ref_level
                     }
-                    for m in motives
+                    for motive_name, motive_parameters in motive_parameters_at_step.items()
                 ]
             )
             .with_columns(
