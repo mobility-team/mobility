@@ -751,7 +751,6 @@ class PlanUpdater:
         current_plan_steps,
         opportunities,
         resolved_activity_parameters: dict[str, Any],
-        resolved_activity_parameters: dict[str, Any],
     ):
         """Recompute remaining opportunities per (activity, destination)."""
 
@@ -764,7 +763,6 @@ class PlanUpdater:
                         "beta": activity_parameters.saturation_fun_beta,
                         "ref_level": activity_parameters.saturation_fun_ref_level,
                     }
-                    for activity_name, activity_parameters in resolved_activity_parameters.items()
                     for activity_name, activity_parameters in resolved_activity_parameters.items()
                 ]
             ).with_columns(activity=pl.col("activity").cast(pl.Enum(opportunities["activity"].dtype.categories)))
