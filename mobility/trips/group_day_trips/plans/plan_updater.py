@@ -4,6 +4,7 @@ from typing import Any
 
 import polars as pl
 
+from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from .destination_sequences import DestinationSequences
 from .mode_sequences import ModeSequences
 from ..transitions.transition_schema import TRANSITION_EVENT_COLUMNS
@@ -61,7 +62,11 @@ class PlanUpdater:
             parameters.min_activity_time_constant,
         )
 
-        transition_prob = self.get_transition_probabilities(current_plans, possible_plan_utility)
+        transition_prob = self.get_transition_probabilities(
+            current_plans,
+            possible_plan_utility,
+            parameters.get_behavior_change_scope(iteration),
+        )
         current_plans, transition_events = self.apply_transitions(
             current_plans,
             transition_prob,
@@ -161,7 +166,6 @@ class PlanUpdater:
             "mode",
             "duration_per_pers",
             "iteration",
-            "anchor_to",
             "csp",
             "cost",
             "distance",
@@ -230,7 +234,6 @@ class PlanUpdater:
                 .with_columns(
                     duration_per_pers=pl.col("duration") / pl.col("n_persons"),
                     iteration=pl.lit(iteration).cast(pl.UInt32),
-                    anchor_to=pl.col("to"),
                 )
                 .join(demand_groups.select(["demand_group_id", "csp"]).lazy(), on="demand_group_id")
                 .join(cost_by_od_and_modes.lazy(), on=["from", "to", "mode"])
@@ -331,21 +334,41 @@ class PlanUpdater:
         self,
         current_plans: pl.DataFrame,
         possible_plan_utility: pl.LazyFrame,
+        behavior_change_scope: BehaviorChangeScope,
         transition_cost: float = 0.0,
     ) -> pl.DataFrame:
         """Compute transition probabilities from current to candidate plans."""
 
         plan_cols = ["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"]
 
+        current_plans_for_transitions = current_plans.lazy()
+        possible_plan_utility_for_transitions = possible_plan_utility
+
+        if behavior_change_scope != BehaviorChangeScope.FULL_REPLANNING:
+            current_plans_for_transitions = current_plans_for_transitions.filter(pl.col("mode_seq_id") != 0)
+            possible_plan_utility_for_transitions = possible_plan_utility_for_transitions.filter(
+                pl.col("mode_seq_id") != 0
+            )
+
+        scope_pair_constraint = pl.lit(True)
+        if behavior_change_scope == BehaviorChangeScope.DESTINATION_REPLANNING:
+            scope_pair_constraint = pl.col("activity_seq_id") == pl.col("activity_seq_id_trans")
+        elif behavior_change_scope == BehaviorChangeScope.MODE_REPLANNING:
+            scope_pair_constraint = (
+                (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
+                & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
+            )
+
         transition_probabilities = (
-            current_plans.lazy()
+            current_plans_for_transitions
             .select(plan_cols + ["utility"])
             .rename({"utility": "utility_prev_from"})
-            .join(possible_plan_utility, on=plan_cols)
+            .join(possible_plan_utility_for_transitions, on=plan_cols)
             .join_where(
-                possible_plan_utility,
+                possible_plan_utility_for_transitions,
                 (
                     (pl.col("demand_group_id") == pl.col("demand_group_id_trans"))
+                    & scope_pair_constraint
                     & (
                         (pl.col("utility_trans") > pl.col("utility") - 5.0)
                         | (
@@ -518,7 +541,7 @@ class PlanUpdater:
                 activity_time=pl.col("duration_per_pers").fill_null(0.0).sum(),
                 travel_time=pl.col("time").fill_null(0.0).sum(),
                 distance=pl.col("distance").fill_null(0.0).sum(),
-                steps=pl.col("step_desc").sort_by("seq_step_index").str.concat("<br>"),
+                steps=pl.col("step_desc").sort_by("seq_step_index").str.join("<br>"),
             )
             .collect(engine="streaming")
         )

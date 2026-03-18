@@ -287,6 +287,8 @@ class Run(FileAsset):
             activities=self.activities,
             resolved_activity_parameters=resolved_activity_parameters,
             transport_zones=self.population.transport_zones,
+            current_plans=state.current_plans,
+            current_plan_steps=state.current_plan_steps,
             remaining_opportunities=state.remaining_opportunities,
             chains=state.chains_by_activity,
             demand_groups=state.demand_groups,

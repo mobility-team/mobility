@@ -22,6 +22,8 @@ class DestinationSequences(FileAsset):
         activities: list[Any] | None = None,
         resolved_activity_parameters: dict[str, Any] | None = None,
         transport_zones: Any = None,
+        current_plans: pl.DataFrame | None = None,
+        current_plan_steps: pl.DataFrame | None = None,
         remaining_opportunities: pl.DataFrame | None = None,
         chains: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
@@ -33,6 +35,8 @@ class DestinationSequences(FileAsset):
         self.activities = activities
         self.resolved_activity_parameters = resolved_activity_parameters
         self.transport_zones = transport_zones
+        self.current_plans = current_plans
+        self.current_plan_steps = current_plan_steps
         self.remaining_opportunities = remaining_opportunities
         self.chains = chains
         self.demand_groups = demand_groups
@@ -77,34 +81,70 @@ class DestinationSequences(FileAsset):
             raise ValueError("Cannot build destination sequences without a seed.")
         if self.resolved_activity_parameters is None:
             raise ValueError("Cannot build destination sequences without resolved activity parameters.")
+        if self.current_plans is None:
+            raise ValueError("Cannot build destination sequences without current plans.")
 
+        from mobility.trips.group_day_trips.population_trips_candidates import get_spatialized_chains
+
+        destination_sequences = get_spatialized_chains(
+            behavior_change_scope=self.parameters.get_behavior_change_scope(self.iteration),
+            current_plans=self.current_plans,
+            current_plan_steps=self.current_plan_steps,
+            destination_sequence_sampler=self,
+            activities=self.activities,
+            transport_zones=self.transport_zones,
+            remaining_opportunities=self.remaining_opportunities,
+            iteration=self.iteration,
+            chains_by_activity=self.chains,
+            demand_groups=self.demand_groups,
+            costs=self.costs,
+            parameters=self.parameters,
+            seed=self.seed,
+        )
+
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        destination_sequences.write_parquet(self.cache_path)
+        return self.get_cached_asset()
+
+    def run(
+        self,
+        activities: list[Any],
+        transport_zones: Any,
+        remaining_opportunities: pl.DataFrame,
+        chains: pl.DataFrame,
+        demand_groups: pl.DataFrame,
+        costs: pl.DataFrame,
+        parameters: Any,
+        seed: int,
+    ) -> pl.DataFrame:
+        """Compute destination sequences for one iteration."""
         utilities = self._get_utilities(
-            self.activities,
+            activities,
             self.resolved_activity_parameters,
-            self.transport_zones,
-            self.remaining_opportunities,
-            self.costs,
-            self.parameters.cost_uncertainty_sd,
+            transport_zones,
+            remaining_opportunities,
+            costs,
+            parameters.cost_uncertainty_sd,
         )
         destination_probability = self._get_destination_probability(
             utilities,
-            self.activities,
+            activities,
             self.resolved_activity_parameters,
-            self.parameters.dest_prob_cutoff,
+            parameters.dest_prob_cutoff,
         )
         chains = (
-            self.chains
+            chains
             .filter(pl.col("activity_seq_id") != 0)
-            .join(self.demand_groups.select(["demand_group_id", "home_zone_id"]), on="demand_group_id")
+            .join(demand_groups.select(["demand_group_id", "home_zone_id"]), on="demand_group_id")
             .select(["demand_group_id", "home_zone_id", "activity_seq_id", "activity", "is_anchor", "seq_step_index"])
         )
-        chains = self._spatialize_anchor_activities(chains, destination_probability, self.seed)
+        chains = self._spatialize_anchor_activities(chains, destination_probability, seed)
         chains = self._spatialize_other_activities(
             chains,
             destination_probability,
-            self.costs,
-            self.parameters.alpha,
-            self.seed,
+            costs,
+            parameters.alpha,
+            seed,
         )
 
         destination_sequences = (
@@ -129,10 +169,7 @@ class DestinationSequences(FileAsset):
             .drop(["home_zone_id", "activity"])
             .with_columns(iteration=pl.lit(self.iteration).cast(pl.UInt32))
         )
-
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        destination_sequences.write_parquet(self.cache_path)
-        return self.get_cached_asset()
+        return destination_sequences
 
 
     def _get_utilities(
