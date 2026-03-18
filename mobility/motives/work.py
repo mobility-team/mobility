@@ -8,6 +8,8 @@ from typing import Annotated, List, Dict
 from pydantic import Field
 from mobility.motives.motive import Motive, MotiveParameters
 from mobility.parsers import JobsActivePopulationDistribution
+from mobility.simulation_profile import ParameterProfile
+from mobility.validation_types import NonNegativeFloat, UnitIntervalFloat
 
 
 class WorkMotive(Motive):
@@ -86,8 +88,8 @@ class WorkMotiveParameters(MotiveParameters):
     """Parameters specific to the work motive."""
 
     value_of_time: Annotated[
-        float,
-        Field(default=10.0, ge=0.0),
+        float | ParameterProfile,
+        Field(default=10.0),
     ]
 
     saturation_fun_ref_level: Annotated[
@@ -106,8 +108,8 @@ class WorkMotiveParameters(MotiveParameters):
     ]
 
     radiation_lambda: Annotated[
-        float,
-        Field(default=0.99986, ge=0.0, le=1.0),
+        UnitIntervalFloat,
+        Field(default=0.99986),
     ]
 
     country_utilities: Annotated[

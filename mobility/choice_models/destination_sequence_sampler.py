@@ -5,6 +5,7 @@ import polars as pl
 from scipy.stats import norm
 
 from mobility.choice_models.add_index import add_index
+from mobility.simulation_profile import SimulationStep
 
 class DestinationSequenceSampler:
     """Samples destination sequences for trip chains.
@@ -17,9 +18,9 @@ class DestinationSequenceSampler:
     def run(
             self,
             motives,
+            step: SimulationStep,
             transport_zones,
             remaining_sinks,
-            iteration,
             chains,
             demand_groups,
             costs,
@@ -39,7 +40,6 @@ class DestinationSequenceSampler:
             transport_zones: Transport zone container used by motives.
             remaining_sinks (pl.DataFrame): Current sink state per (motive, to),
                 including capacity and saturation utility penalty.
-            iteration (int): Iteration index (>=1).
             chains (pl.DataFrame): Chain steps with
                 ["demand_group_id","motive_seq_id","motive","is_anchor","seq_step_index"].
             demand_groups (pl.DataFrame): ["demand_group_id","home_zone_id"] (merged for origins).
@@ -55,6 +55,7 @@ class DestinationSequenceSampler:
         
         utilities = self.get_utilities(
             motives,
+            step,
             transport_zones,
             remaining_sinks,
             costs,
@@ -64,6 +65,7 @@ class DestinationSequenceSampler:
         dest_prob = self.get_destination_probability(
             utilities,
             motives,
+            step,
             parameters.dest_prob_cutoff
         )
 
@@ -103,13 +105,13 @@ class DestinationSequenceSampler:
                 on=["demand_group_id", "motive_seq_id"]
             )
             .drop(["home_zone_id", "motive"])
-            .with_columns(iteration=pl.lit(iteration).cast(pl.UInt32))
+            .with_columns(iteration=pl.lit(step.iteration).cast(pl.UInt32))
         )
         
         return chains
 
         
-    def get_utilities(self, motives, transport_zones, sinks, costs, cost_uncertainty_sd):
+    def get_utilities(self, motives, step: SimulationStep, transport_zones, sinks, costs, cost_uncertainty_sd):
         
         """Assemble per-(from,to,motive) utility with cost uncertainty.
         
@@ -131,7 +133,7 @@ class DestinationSequenceSampler:
                 - cost_bin_to_dest: ["motive","from","cost_bin","to","p_to"].
         """
         
-        utilities = [(m.name, m.get_utilities(transport_zones)) for m in motives]
+        utilities = [(m.name, m.get_utilities(transport_zones, parameters=m.get_parameters_at_step(step))) for m in motives]
         utilities = [u for u in utilities if u[1] is not None]
         utilities = [u[1].with_columns(motive=pl.lit(u[0])) for u in utilities]
         
@@ -196,7 +198,7 @@ class DestinationSequenceSampler:
         return costs_bin, cost_bin_to_dest
     
    
-    def get_destination_probability(self, utilities, motives, dest_prob_cutoff):
+    def get_destination_probability(self, utilities, motives, step: SimulationStep, dest_prob_cutoff):
         
         """Compute P(destination | from, motive) via a radiation-style model.
 
@@ -220,7 +222,10 @@ class DestinationSequenceSampler:
         costs_bin = utilities[0]
         cost_bin_to_dest = utilities[1]
 
-        motives_lambda = {motive.name: motive.inputs["parameters"].radiation_lambda for motive in motives}
+        motives_lambda = {
+            motive.name: motive.get_parameters_at_step(step).radiation_lambda
+            for motive in motives
+        }
         
         prob = (
                 

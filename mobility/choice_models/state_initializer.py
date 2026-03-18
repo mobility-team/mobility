@@ -1,6 +1,9 @@
 import math
 import polars as pl 
 
+from mobility.motives.motive import Motive
+from mobility.simulation_profile import SimulationStep
+
 class StateInitializer:
     """Builds initial chain demand, averages, and capacities for the model.
     
@@ -272,7 +275,8 @@ class StateInitializer:
             self,
             demand_groups,
             home_night_dur,
-            motives,
+            home_motive: Motive,
+            step: SimulationStep,
             min_activity_time_constant: float,
         ):
         
@@ -295,8 +299,8 @@ class StateInitializer:
                 - current_states: A clone of `stay_home_state` for iteration start.
         """
         
-        home_motive = [m for m in motives if m.name == "home"][0]
-        
+        value_of_time_stay_home = home_motive.get_parameters_at_step(step).value_of_time_stay_home
+
         stay_home_state = (
             
             demand_groups.select(["demand_group_id", "csp", "n_persons"])
@@ -309,13 +313,23 @@ class StateInitializer:
             .join(home_night_dur, on="csp")
             .with_columns(
                 utility=( 
-                    home_motive.inputs["parameters"].value_of_time_stay_home 
+                    value_of_time_stay_home
                     * pl.col("mean_home_night_per_pers")
                     * (pl.col("mean_home_night_per_pers")/pl.col("mean_home_night_per_pers")/math.exp(-min_activity_time_constant)).log().clip(0.0)
                 )
             )
             
-            .select(["demand_group_id", "iteration", "motive_seq_id", "mode_seq_id", "dest_seq_id", "utility", "n_persons"])
+            .select([
+                "demand_group_id",
+                "csp",
+                "mean_home_night_per_pers",
+                "iteration",
+                "motive_seq_id",
+                "mode_seq_id",
+                "dest_seq_id",
+                "utility",
+                "n_persons",
+            ])
         )
         
         current_states = ( 
