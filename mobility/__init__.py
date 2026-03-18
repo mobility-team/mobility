@@ -45,7 +45,7 @@ from .motives.other import OtherMotive
 
 
 from mobility.choice_models.population_trips import PopulationTrips
-from mobility.choice_models.population_trips_parameters import PopulationTripsParameters
+from mobility.choice_models.population_trips_parameters import PopulationTripsParameters, BehaviorChangePhase, BehaviorChangeScope
 
 
 from mobility.transport_graphs.speed_modifier import (

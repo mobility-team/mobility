@@ -4,6 +4,7 @@ from typing import Any
 
 import polars as pl
 
+from mobility.choice_models.population_trips_parameters import BehaviorChangeScope
 from mobility.choice_models.transition_schema import TRANSITION_EVENT_COLUMNS
 
 class StateUpdater:
@@ -65,7 +66,8 @@ class StateUpdater:
             iteration,
             motives,
             parameters.min_activity_time_constant,
-            tmp_folders
+            tmp_folders,
+            parameters.get_behavior_change_scope(iteration),
         )
         self._assert_current_states_covered_by_possible_steps(
             current_states,
@@ -83,7 +85,11 @@ class StateUpdater:
             parameters.min_activity_time_constant
         )
         
-        transition_prob = self.get_transition_probabilities(current_states, possible_states_utility)
+        transition_prob = self.get_transition_probabilities(
+            current_states,
+            possible_states_utility,
+            parameters.get_behavior_change_scope(iteration),
+        )
         current_states, transition_events = self.apply_transitions(current_states, transition_prob, iteration)
         transition_events = self.add_transition_state_details(transition_events, possible_states_steps)
         current_states_steps = self.get_current_states_steps(current_states, possible_states_steps)
@@ -144,7 +150,8 @@ class StateUpdater:
             iteration,
             motives,
             min_activity_time_constant,
-            tmp_folders
+            tmp_folders,
+            behavior_change_scope: BehaviorChangeScope,
         ):
         """Enumerate candidate state steps and compute per-step utilities.
 
@@ -160,9 +167,13 @@ class StateUpdater:
             sinks (pl.DataFrame): Sink state per (motive,to).
             motive_dur (pl.DataFrame): Mean durations per (csp,motive).
             iteration (int): Current iteration to pick latest artifacts.
-            activity_utility_coeff (float): Coefficient for activity utility.
+            motives (list[Motive]): Available motives for the simulation.
+            min_activity_time_constant (float): Controls the minimum activity
+                time used in utility calculations.
             tmp_folders (dict[str, pathlib.Path]): Must contain "spatialized-chains" and "modes".
-        
+            behavior_change_scope (BehaviorChangeScope): Highest level of
+                behavior change reachable during the current iteration.
+
         Returns:
             pl.DataFrame: Candidate per-step rows with columns including
                 ["demand_group_id","csp","motive_seq_id","dest_seq_id","mode_seq_id",
@@ -242,8 +253,62 @@ class StateUpdater:
             )
             
         )
+
+        possible_states_steps = self.filter_reachable_possible_states_steps(
+            possible_states_steps=possible_states_steps,
+            current_states=current_states,
+            behavior_change_scope=behavior_change_scope,
+        )
         
         return possible_states_steps
+
+    def filter_reachable_possible_states_steps(
+            self,
+            possible_states_steps: pl.LazyFrame,
+            current_states: pl.DataFrame,
+            behavior_change_scope: BehaviorChangeScope,
+        ) -> pl.LazyFrame:
+        """Restrict reachable candidate states to the active behavior scope.
+
+        Args:
+            possible_states_steps: Candidate state-step rows before reachability
+                filtering.
+            current_states: Aggregate states occupied before the iteration
+                update.
+            behavior_change_scope: Highest level of behavior change reachable
+                during the iteration.
+
+        Returns:
+            Reachable candidate state-step rows for the current scope.
+        """
+        active_states = (
+            current_states
+            .filter(pl.col("motive_seq_id") != 0)
+            .select(["demand_group_id", "motive_seq_id", "dest_seq_id"])
+            .unique()
+        )
+
+        if behavior_change_scope == BehaviorChangeScope.FULL_REPLANNING:
+            return possible_states_steps
+
+        if active_states.height == 0:
+            return possible_states_steps.filter(pl.lit(False))
+
+        if behavior_change_scope == BehaviorChangeScope.DESTINATION_REPLANNING:
+            return possible_states_steps.join(
+                active_states.lazy().select(["demand_group_id", "motive_seq_id"]).unique(),
+                on=["demand_group_id", "motive_seq_id"],
+                how="inner",
+            )
+
+        if behavior_change_scope == BehaviorChangeScope.MODE_REPLANNING:
+            return possible_states_steps.join(
+                active_states.lazy(),
+                on=["demand_group_id", "motive_seq_id", "dest_seq_id"],
+                how="inner",
+            )
+
+        raise ValueError(f"Unsupported behavior change scope: {behavior_change_scope}")
         
     
     def get_possible_states_utility(
@@ -323,6 +388,7 @@ class StateUpdater:
             self,
             current_states: pl.DataFrame,
             possible_states_utility: pl.LazyFrame,
+            behavior_change_scope: BehaviorChangeScope,
             transition_cost: float = 0.0
         ) -> pl.DataFrame:
         """Compute transition probabilities from current to candidate states.
@@ -333,6 +399,11 @@ class StateUpdater:
         Args:
             current_states (pl.DataFrame): Current states with utilities.
             possible_states_utility (pl.DataFrame): Candidate states with utilities.
+            behavior_change_scope (BehaviorChangeScope): Highest level of
+                behavior change reachable during the iteration. Restricted
+                scopes freeze stay-home and require the destination state to
+                share the appropriate motive/destination keys with the origin
+                state.
         
         Returns:
             pl.DataFrame: Transitions with
@@ -343,21 +414,38 @@ class StateUpdater:
         
         state_cols = ["demand_group_id", "motive_seq_id", "dest_seq_id", "mode_seq_id"]
         
+        current_states_for_transitions = current_states.lazy()
+        possible_states_utility_for_transitions = possible_states_utility
+
+        if behavior_change_scope != BehaviorChangeScope.FULL_REPLANNING:
+            current_states_for_transitions = current_states_for_transitions.filter(pl.col("mode_seq_id") != 0)
+            possible_states_utility_for_transitions = possible_states_utility_for_transitions.filter(pl.col("mode_seq_id") != 0)
+
+        scope_pair_constraint = pl.lit(True)
+        if behavior_change_scope == BehaviorChangeScope.DESTINATION_REPLANNING:
+            scope_pair_constraint = pl.col("motive_seq_id") == pl.col("motive_seq_id_trans")
+        elif behavior_change_scope == BehaviorChangeScope.MODE_REPLANNING:
+            scope_pair_constraint = (
+                (pl.col("motive_seq_id") == pl.col("motive_seq_id_trans"))
+                & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
+            )
+
         transition_probabilities = (
 
-            current_states.lazy()
+            current_states_for_transitions
             .select(state_cols + ["utility"])
             .rename({"utility": "utility_prev_from"})
-            
+             
             # Join the updated utility of the current states
-            .join(possible_states_utility, on=state_cols)
-            
+            .join(possible_states_utility_for_transitions, on=state_cols)
+             
             # Join the possible states when they can improve the utility compared to the current states
             # (join also the current state so it is included in the probability calculation)
             .join_where(
-                possible_states_utility,
+                possible_states_utility_for_transitions,
                 (
                     (pl.col("demand_group_id") == pl.col("demand_group_id_trans")) &
+                    scope_pair_constraint &
                     (
                         (pl.col("utility_trans") > pl.col("utility") - 5.0) | 
                         (
@@ -591,7 +679,7 @@ class StateUpdater:
                 activity_time=pl.col("duration_per_pers").fill_null(0.0).sum(),
                 travel_time=pl.col("time").fill_null(0.0).sum(),
                 distance=pl.col("distance").fill_null(0.0).sum(),
-                steps=pl.col("step_desc").sort_by("seq_step_index").str.concat("<br>"),
+                steps=pl.col("step_desc").sort_by("seq_step_index").str.join("<br>"),
             )
             .collect(engine="streaming")
         )
