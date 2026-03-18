@@ -1,5 +1,63 @@
-from pydantic import BaseModel, Field, ConfigDict
+from enum import Enum
 from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class BehaviorChangeScope(str, Enum):
+    """Highest adaptation layer allowed during one behavior-change phase.
+
+    Attributes:
+        FULL_REPLANNING: Resample motive sequences, then dependent destination
+            and mode sequences. Stay-home transitions remain available.
+        DESTINATION_REPLANNING: Keep each currently occupied non-stay-home
+            motive sequence fixed and resample destination sequences plus
+            dependent mode sequences. Stay-home is frozen.
+        MODE_REPLANNING: Keep each currently occupied non-stay-home motive and
+            destination sequence fixed and resample mode sequences only.
+            Stay-home is frozen.
+    """
+
+    FULL_REPLANNING = "full_replanning"
+    DESTINATION_REPLANNING = "destination_replanning"
+    MODE_REPLANNING = "mode_replanning"
+
+
+class BehaviorChangePhase(BaseModel):
+    """Behavior-change phase applied from ``start_iteration`` onward.
+
+    Attributes:
+        start_iteration: First simulation iteration where this phase applies.
+        scope: Highest adaptation layer allowed during the phase.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_iteration: Annotated[
+        int,
+        Field(
+            ge=1,
+            title="Start iteration",
+            description="First simulation iteration where this behavior-change phase applies.",
+        ),
+    ]
+
+    scope: Annotated[
+        BehaviorChangeScope,
+        Field(
+            title="Behavior change scope",
+            description=(
+                "Highest adaptation layer allowed during the phase. "
+                "`full_replanning` resamples motive, destination, and mode "
+                "sequences. `destination_replanning` keeps each currently "
+                "occupied non-stay-home motive sequence fixed and resamples "
+                "destination plus mode sequences. `mode_replanning` keeps each "
+                "currently occupied non-stay-home motive and destination "
+                "sequence fixed and resamples mode sequences only. "
+                "Stay-home is frozen in restricted phases."
+            ),
+        ),
+    ]
 
 
 class PopulationTripsParameters(BaseModel):
@@ -146,3 +204,67 @@ class PopulationTripsParameters(BaseModel):
             description="Wether to simulate a weekend day or only a week day.",
         ),
     ]
+
+    behavior_change_phases: Annotated[
+        list[BehaviorChangePhase] | None,
+        Field(
+            default=None,
+            title="Behavior change phases",
+            description=(
+                "Optional per-iteration adaptation policy. Each phase starts at a "
+                "given iteration and selects the highest state layer that may "
+                "adapt: `mode_replanning`, `destination_replanning`, or "
+                "`full_replanning`. Restricted phases apply to currently "
+                "occupied non-stay-home states and freeze stay-home. If omitted, "
+                "all iterations use `full_replanning`."
+            ),
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def validate_behavior_change_phases(self) -> "PopulationTripsParameters":
+        """Ensure phase definitions are sorted and non-overlapping.
+
+        Returns:
+            The validated parameter object.
+
+        Raises:
+            ValueError: If behavior-change phases are not sorted by
+                ``start_iteration`` or if two phases start on the same
+                iteration.
+        """
+        if self.behavior_change_phases is None:
+            return self
+
+        start_iterations = [phase.start_iteration for phase in self.behavior_change_phases]
+        if start_iterations != sorted(start_iterations):
+            raise ValueError("PopulationTripsParameters.behavior_change_phases must be sorted by start_iteration.")
+
+        if len(start_iterations) != len(set(start_iterations)):
+            raise ValueError("PopulationTripsParameters.behavior_change_phases cannot define the same start_iteration twice.")
+
+        return self
+
+    def get_behavior_change_scope(self, iteration: int) -> BehaviorChangeScope:
+        """Return the active behavior-change scope for a given iteration.
+
+        Args:
+            iteration: Current simulation iteration (1-based).
+
+        Returns:
+            The active behavior-change scope. If no phase applies yet, returns
+            ``BehaviorChangeScope.FULL_REPLANNING``.
+        """
+        if self.behavior_change_phases is None:
+            return BehaviorChangeScope.FULL_REPLANNING
+
+        active_phase = None
+        for phase in self.behavior_change_phases:
+            if phase.start_iteration > iteration:
+                break
+            active_phase = phase
+
+        if active_phase is None:
+            return BehaviorChangeScope.FULL_REPLANNING
+
+        return active_phase.scope
