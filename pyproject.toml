@@ -55,7 +55,7 @@ dev = [
   "pytest-cov>=5,<8",
   "pytest-dependency>=0.6,<1",
   "sphinxcontrib-napoleon>=0.7,<1",
-  "myst_parser>=3,<5",
+  "myst_parser>=3,<6",
 ]
 
 spyder = [
