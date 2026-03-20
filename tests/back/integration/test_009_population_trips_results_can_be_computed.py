@@ -142,11 +142,11 @@ def test_009_population_trips_results_can_be_computed(test_data, safe_json):
     )
 
     # Evaluate various metrics
-    global_metrics = pop_trips.evaluate("global_metrics")
-    weekday_sink_occupation = pop_trips.evaluate("sink_occupation", weekday=True)
-    weekday_trip_count_by_demand_group = pop_trips.evaluate("trip_count_by_demand_group", weekday=True)
-    weekday_distance_per_person = pop_trips.evaluate("distance_per_person", weekday=True)
-    weekday_time_per_person = pop_trips.evaluate("time_per_person", weekday=True)
+    global_metrics = pop_trips.weekday_run.evaluate("global_metrics")
+    weekday_sink_occupation = pop_trips.weekday_run.evaluate("sink_occupation")
+    weekday_trip_count_by_demand_group = pop_trips.weekday_run.evaluate("trip_count_by_demand_group")
+    weekday_distance_per_person = pop_trips.weekday_run.evaluate("distance_per_person")
+    weekday_time_per_person = pop_trips.weekday_run.evaluate("time_per_person")
 
     # Normalize results to pandas DataFrames
     gm_df = _to_pandas(global_metrics)

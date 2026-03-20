@@ -3,6 +3,7 @@ import numpy as np
 from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
+from mobility.choice_models.congestion_state import CongestionState
 from mobility.in_memory_asset import InMemoryAsset
 from mobility.cost_of_time_parameters import CostOfTimeParameters
 
@@ -16,10 +17,19 @@ class DetailedCarpoolGeneralizedCost(InMemoryAsset):
         super().__init__(inputs)
         
         
-    def get(self, metrics=["cost"], congestion: bool = False, detail_distances: bool = False) -> pd.DataFrame:
+    def get(
+        self,
+        metrics=["cost"],
+        congestion: bool = False,
+        detail_distances: bool = False,
+        congestion_state: CongestionState | None = None,
+    ) -> pd.DataFrame:
         
         metrics = list(metrics)
-        costs = self.inputs["travel_costs"].get(congestion)
+        costs = self.inputs["travel_costs"].get(
+            congestion=congestion,
+            congestion_state=congestion_state,
+        )
         
         study_area = self.inputs["travel_costs"].inputs["car_travel_costs"].inputs["transport_zones"].study_area.get()
         transport_zones = self.inputs["travel_costs"].inputs["car_travel_costs"].inputs["transport_zones"].get()

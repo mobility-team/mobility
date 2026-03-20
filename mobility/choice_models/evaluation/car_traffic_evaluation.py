@@ -12,8 +12,7 @@ class CarTrafficEvaluation:
     
     
     def get(
-            self,
-            weekday: bool = True
+            self
         ):
 
         car_mode = [m for m in self.results.modes if m.inputs["parameters"].name == "car"]

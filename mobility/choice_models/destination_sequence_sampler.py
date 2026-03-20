@@ -14,20 +14,19 @@ class DestinationSequenceSampler:
     steps into per-iteration destination sequences.
     """
     
-    def run(
-            self,
-            motives,
-            transport_zones,
-            remaining_sinks,
-            iteration,
-            chains,
-            demand_groups,
-            costs,
-            tmp_folders,
-            parameters,
-            seed
-        ):
-        
+    def sample(
+        self,
+        motives,
+        transport_zones,
+        remaining_sinks,
+        iteration,
+        chains,
+        demand_groups,
+        costs,
+        tmp_folders,
+        parameters,
+        seed,
+    ) -> pl.DataFrame:
         """Compute destination sequences for one iteration.
 
         Builds utilities with cost uncertainty, derives destination probabilities,

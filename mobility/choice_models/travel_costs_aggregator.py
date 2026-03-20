@@ -1,9 +1,10 @@
-import os
 import polars as pl
 import logging
 
 from typing import List
+from mobility.choice_models.congestion_state import CongestionState
 from mobility.in_memory_asset import InMemoryAsset
+from mobility.transport_costs.od_flows_asset import VehicleODFlowsAsset
 
 class TravelCostsAggregator(InMemoryAsset):
     
@@ -17,6 +18,7 @@ class TravelCostsAggregator(InMemoryAsset):
             self,
             metrics=["cost", "distance"],
             congestion: bool = False,
+            congestion_state: CongestionState | None = None,
             aggregate_by_od: bool = True,
             detail_distances: bool = False
         ):
@@ -24,16 +26,26 @@ class TravelCostsAggregator(InMemoryAsset):
         logging.info("Aggregating costs...")
         
         if aggregate_by_od is True:
-            costs = self.get_costs_by_od(metrics, congestion)
+            costs = self.get_costs_by_od(metrics, congestion, congestion_state=congestion_state)
         else:
-            costs = self.get_costs_by_od_and_mode(metrics, congestion, detail_distances)
+            costs = self.get_costs_by_od_and_mode(
+                metrics,
+                congestion,
+                detail_distances,
+                congestion_state=congestion_state,
+            )
         
         return costs
     
     
-    def get_costs_by_od(self, metrics: List, congestion: bool):
+    def get_costs_by_od(self, metrics: List, congestion: bool, congestion_state: CongestionState | None = None):
         
-        costs = self.get_costs_by_od_and_mode(metrics, congestion, detail_distances=False)
+        costs = self.get_costs_by_od_and_mode(
+            metrics,
+            congestion,
+            detail_distances=False,
+            congestion_state=congestion_state,
+        )
         
         costs = costs.with_columns([
             (pl.col("cost").neg().exp()).alias("prob")
@@ -58,7 +70,8 @@ class TravelCostsAggregator(InMemoryAsset):
             self,
             metrics: List,
             congestion: bool,
-            detail_distances: bool = False
+            detail_distances: bool = False,
+            congestion_state: CongestionState | None = None,
         ):
         
         # Hack to match the current API and compute the GHG emissions from
@@ -79,10 +92,14 @@ class TravelCostsAggregator(InMemoryAsset):
         
         for mode in modes:
             
-            if mode.inputs["parameters"].congestion:
-                gc = pl.DataFrame(mode.inputs["generalized_cost"].get(metrics, congestion, detail_distances=detail_distances))
-            else:
-                gc = pl.DataFrame(mode.inputs["generalized_cost"].get(metrics, detail_distances=detail_distances))
+            gc = pl.DataFrame(
+                mode.inputs["generalized_cost"].get(
+                    metrics,
+                    congestion=congestion,
+                    detail_distances=detail_distances,
+                    congestion_state=congestion_state,
+                )
+            )
                 
             costs.append(
                 pl.DataFrame(gc)
@@ -146,9 +163,19 @@ class TravelCostsAggregator(InMemoryAsset):
         return costs
     
     
-    def get_prob_by_od_and_mode(self, metrics: List, congestion: bool):
+    def get_prob_by_od_and_mode(
+        self,
+        metrics: List,
+        congestion: bool,
+        congestion_state: CongestionState | None = None,
+    ):
         
-        costs = self.get_costs_by_od_and_mode(metrics, congestion, detail_distances=False)
+        costs = self.get_costs_by_od_and_mode(
+            metrics,
+            congestion,
+            detail_distances=False,
+            congestion_state=congestion_state,
+        )
         
         prob = (
             
@@ -175,83 +202,175 @@ class TravelCostsAggregator(InMemoryAsset):
         return prob
         
         
-    def update(self, od_flows_by_mode, run_key=None, iteration=None):
-        
-        logging.info("Updating travel costs given OD flows...")
-        
-        # prob_by_od_and_mode = self.get_prob_by_od_and_mode(["cost"], congestion=True)
-        
-        # od_flows_by_mode = (
-        #     od_flows
-        #     .join(prob_by_od_and_mode, on=["from", "to"])
-        #     .with_columns((pl.col("flow_volume")*pl.col("prob")).alias("flow_volume"))
-        #     .select(["from", "to", "mode", "flow_volume"])
-        # )
-        
-        for mode in self.modes:
-            
-            if mode.inputs["parameters"].congestion is True:
-                
-                if mode.inputs["parameters"].name in ["car", "carpool"]:
-                    
-                    flows = (
-                        od_flows_by_mode
-                        .filter(pl.col("mode").is_in(["car", "carpool"]))
-                        .with_columns((pl.when(pl.col("mode") == "car").then(1.0).otherwise(0.5)).alias("veh_per_pers"))
-                        .with_columns((pl.col("flow_volume")*pl.col("veh_per_pers")).alias("vehicle_volume"))
-                        .group_by(["from", "to"])
-                        .agg(pl.col("vehicle_volume").sum())
-                        .select(["from", "to", "vehicle_volume"])
-                    )
-                    
-                elif mode.inputs["parameters"].name == "car/public_transport/walk":
-                    
-                    logging.info(
-                        """
-                        Intermodal mode car/public_transport/walk has no flow 
-                        volume to vehicle volume for now : no vehicle will be 
-                        assigned to the road network and the congestion will
-                        not account for this specific transport mode.
-                        """
-                    )
-                    
-                else:
-                    
-                    raise ValueError("No flow volume to vehicle volume model for mode : " + mode.inputs["parameters"].name)
-                
-                flow_asset = None
-                if run_key is not None and iteration is not None:
-                    # Persist vehicle flows as a first-class asset so downstream congestion
-                    # snapshots are isolated per run/iteration and safe for parallel runs.
-                    from mobility.transport_costs.od_flows_asset import VehicleODFlowsAsset
-                    if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
-                        try:
-                            n_rows = flows.height
-                            vol_sum = float(flows["vehicle_volume"].sum()) if "vehicle_volume" in flows.columns else float("nan")
-                        except Exception:
-                            n_rows, vol_sum = None, None
-                        logging.info(
-                            "Congestion update input: run_key=%s iteration=%s mode=%s rows=%s vehicle_volume_sum=%s",
-                            str(run_key),
-                            str(iteration),
-                            str(mode.name),
-                            str(n_rows),
-                            str(vol_sum),
-                        )
-                    flow_asset = VehicleODFlowsAsset(
-                        flows.to_pandas(),
-                        run_key=str(run_key),
-                        iteration=int(iteration),
-                        mode_name=str(mode.inputs["parameters"].name)
-                    )
-                    flow_asset.get()
-                    if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
-                        logging.info(
-                            "Flow asset ready: inputs_hash=%s path=%s",
-                            flow_asset.inputs_hash,
-                            str(flow_asset.cache_path),
-                        )
+    def iter_congestion_enabled_modes(self):
+        """Yield congestion-enabled modes in dependency-safe order."""
+        return iter(
+            sorted(
+                (mode for mode in self.modes if mode.inputs["parameters"].congestion),
+                key=lambda mode: (
+                    mode.inputs["parameters"].name != "car",
+                    mode.inputs["parameters"].name != "carpool",
+                    mode.inputs["parameters"].name,
+                ),
+            )
+        )
 
-                    mode.inputs["travel_costs"].update(flows, flow_asset=flow_asset)
-            
-        
+    def merge_congestion_flows(self, *congestion_flows):
+        """Merge multiple OD vehicle-flow contributions into one table.
+
+        Args:
+            *congestion_flows: Optional ``pl.DataFrame`` objects with
+                ``["from", "to", "vehicle_volume"]``.
+
+        Returns:
+            pl.DataFrame | None: Merged OD vehicle flows, or ``None`` when no
+            contribution is provided.
+        """
+        valid_flows = [flows for flows in congestion_flows if flows is not None]
+        if not valid_flows:
+            return None
+
+        return (
+            pl.concat(valid_flows)
+            .group_by(["from", "to"])
+            .agg(pl.col("vehicle_volume").sum())
+            .select(["from", "to", "vehicle_volume"])
+        )
+
+    def create_vehicle_flow_snapshot(
+        self,
+        congestion_flows,
+        *,
+        run_key=None,
+        is_weekday=None,
+        iteration=None,
+        mode_name: str,
+    ):
+        """Persist congestion flows as a period-scoped snapshot asset."""
+        if run_key is None or is_weekday is None or iteration is None:
+            return None
+
+        flow_asset = VehicleODFlowsAsset(
+            congestion_flows.to_pandas(),
+            run_key=str(run_key),
+            is_weekday=bool(is_weekday),
+            iteration=int(iteration),
+            mode_name=str(mode_name),
+        )
+        flow_asset.get()
+        return flow_asset
+
+    def build_congestion_state(self, od_flows_by_mode, *, run_key=None, is_weekday=None, iteration=None):
+        """Build the explicit congestion state for the current iteration."""
+        logging.info("Building congestion state from OD flows...")
+        congestion_flows_by_mode = {
+            mode.inputs["parameters"].name: mode.build_congestion_flows(od_flows_by_mode)
+            for mode in self.iter_congestion_enabled_modes()
+        }
+
+        merged_road_flows = self.merge_congestion_flows(
+            congestion_flows_by_mode.get("car"),
+            congestion_flows_by_mode.get("carpool"),
+        )
+
+        flow_assets_by_mode = {}
+        for mode in self.iter_congestion_enabled_modes():
+            mode_name = mode.inputs["parameters"].name
+            congestion_flows = (
+                merged_road_flows
+                if mode_name in {"car", "carpool"}
+                else congestion_flows_by_mode.get(mode_name)
+            )
+
+            if congestion_flows is None:
+                continue
+
+            flow_asset = self.create_vehicle_flow_snapshot(
+                congestion_flows,
+                run_key=run_key,
+                is_weekday=is_weekday,
+                iteration=iteration,
+                mode_name=mode_name,
+            )
+            if flow_asset is not None:
+                flow_assets_by_mode[mode_name] = flow_asset
+
+        if not flow_assets_by_mode or run_key is None or is_weekday is None or iteration is None:
+            return None
+
+        return CongestionState(
+            run_key=str(run_key),
+            is_weekday=bool(is_weekday),
+            iteration=int(iteration),
+            flow_assets_by_mode=flow_assets_by_mode,
+        )
+
+    def has_enabled_congestion(self) -> bool:
+        """Return whether any mode has congestion feedback enabled.
+
+        Returns:
+            bool: True when at least one configured mode has congestion enabled.
+        """
+        return any(mode.inputs["parameters"].congestion for mode in self.modes)
+
+    def should_recompute_congested_costs(self, iteration: int, update_interval: int) -> bool:
+        """Return whether congested costs should be recomputed this iteration.
+
+        Args:
+            iteration (int): Current model iteration, using 1-based indexing.
+            update_interval (int): Number of iterations between congestion
+                recomputations. Zero disables congestion updates.
+
+        Returns:
+            bool: True when congestion updates are enabled and this iteration
+            matches the configured recomputation schedule.
+        """
+        return update_interval > 0 and (iteration - 1) % update_interval == 0
+
+    def get_costs_for_next_iteration(
+        self,
+        *,
+        iteration: int,
+        cost_update_interval: int,
+        od_flows_by_mode,
+        congestion_state: CongestionState | None = None,
+        run_key=None,
+        is_weekday=None,
+    ):
+        """Return the costs to use after processing the current iteration.
+
+        When congestion is enabled and the update interval matches, this
+        recomputes congested costs from the current iteration OD flows before
+        returning the current congested view. Otherwise, it returns the current
+        cost view unchanged.
+
+        Args:
+            iteration (int): Current model iteration, using 1-based indexing.
+            cost_update_interval (int): Number of iterations between congestion
+                recomputations. Zero disables congestion updates.
+            od_flows_by_mode (pl.DataFrame): Aggregated OD flows with one row per
+                ``["from", "to", "mode"]`` and a ``flow_volume`` column.
+            run_key (str | None): Optional run identifier used to isolate
+                per-run congestion snapshots.
+            is_weekday (bool | None): Whether the current simulation pass is the
+                weekday pass. Used to isolate weekday/weekend flow snapshots.
+
+        Returns:
+            tuple[pl.DataFrame, CongestionState | None]: The OD costs to use
+                after processing the current iteration, and the explicit
+                congestion state that produced them.
+        """
+        if self.should_recompute_congested_costs(iteration, cost_update_interval):
+            congestion_state = self.build_congestion_state(
+                od_flows_by_mode,
+                run_key=run_key,
+                is_weekday=is_weekday,
+                iteration=iteration,
+            )
+        return (
+            self.get(
+                congestion=(congestion_state is not None),
+                congestion_state=congestion_state,
+            ),
+            congestion_state,
+        )

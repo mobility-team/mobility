@@ -13,6 +13,7 @@ from mobility.transport_costs.path_generalized_cost import PathGeneralizedCost
 from mobility.transport_modes.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport_graphs.speed_modifier import SpeedModifier
 from pydantic import Field
+import polars as pl
 
 class CarMode(TransportMode):
     """
@@ -90,6 +91,19 @@ class CarMode(TransportMode):
             survey_ids=survey_ids,
             parameters=parameters,
             parameters_cls=CarModeParameters,
+        )
+
+    def build_congestion_flows(self, od_flows_by_mode):
+        """Build road vehicle flows from car person flows."""
+        return (
+            od_flows_by_mode
+            .filter(pl.col("mode") == "car")
+            .with_columns(
+                pl.col("flow_volume").alias("vehicle_volume")
+            )
+            .group_by(["from", "to"])
+            .agg(pl.col("vehicle_volume").sum())
+            .select(["from", "to", "vehicle_volume"])
         )
 
 

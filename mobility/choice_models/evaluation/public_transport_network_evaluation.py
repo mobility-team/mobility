@@ -36,7 +36,7 @@ class PublicTransportNetworkEvaluation:
             crs="EPSG:3035"
         )
         
-        fp = public_transport_graph.cache_path.parent / "public_transport_network.gpkg"
+        fp = public_transport_graph.cache_path.parent / (self.results.inputs_hash + "-public_transport_network.gpkg")
         
         gdf.to_file(
             fp,

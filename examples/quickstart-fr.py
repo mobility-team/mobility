@@ -38,12 +38,13 @@ population_trips = mobility.PopulationTrips(
 # You can get weekday trips to inspect them
 weekday_flows = population_trips.get()["weekday_flows"].collect()
 
-# You can compute global metrics for this population
-global_metrics = population_trips.evaluate("global_metrics")
+# You can compute global metrics for weekday trips
+global_metrics = population_trips.weekday_run.evaluate("global_metrics")
 
-# You can plot OD flows, with labels for prominent cities
-labels = population_trips.get_prominent_cities()
-population_trips.plot_od_flows(labels=labels)
+# You can plot weekday OD flows, with labels for prominent cities
+weekday_results = population_trips.weekday_run.results()
+labels = weekday_results.get_prominent_cities()
+weekday_results.plot_od_flows(labels=labels)
 
 # You can get a report of the parameters used in the model
 report = population_trips.parameters_dataframe()

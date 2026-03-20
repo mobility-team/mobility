@@ -12,13 +12,22 @@ class VehicleODFlowsAsset(FileAsset):
     This intentionally stores only what the congestion builder needs:
     ["from","to","vehicle_volume"].
 
-    The cache key is (run_key, iteration, mode_name), where run_key should be
-    PopulationTrips.inputs_hash (includes the seed).
+    The cache key is (run_key, is_weekday, iteration, mode_name), where run_key
+    should be PopulationTrips.inputs_hash (includes the seed).
     """
 
-    def __init__(self, vehicle_od_flows: pd.DataFrame, *, run_key: str, iteration: int, mode_name: str):
+    def __init__(
+        self,
+        vehicle_od_flows: pd.DataFrame,
+        *,
+        run_key: str,
+        is_weekday: bool,
+        iteration: int,
+        mode_name: str,
+    ):
         inputs = {
             "run_key": str(run_key),
+            "is_weekday": bool(is_weekday),
             "iteration": int(iteration),
             "mode_name": str(mode_name),
             "schema_version": 1
@@ -30,15 +39,7 @@ class VehicleODFlowsAsset(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pd.DataFrame:
-        df = pd.read_parquet(self.cache_path)
-        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
-            logging.info(
-                "VehicleODFlowsAsset cache hit: inputs_hash=%s path=%s rows=%s",
-                self.inputs_hash,
-                str(self.cache_path),
-                df.shape[0],
-            )
-        return df
+        return pd.read_parquet(self.cache_path)
 
     def create_and_get_asset(self) -> pd.DataFrame:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,11 +50,4 @@ class VehicleODFlowsAsset(FileAsset):
         df = df[expected_cols] if all(c in df.columns for c in expected_cols) else df
         df.to_parquet(self.cache_path, index=False)
 
-        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
-            logging.info(
-                "VehicleODFlowsAsset written: inputs_hash=%s path=%s rows=%s",
-                self.inputs_hash,
-                str(self.cache_path),
-                df.shape[0],
-            )
         return df

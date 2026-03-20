@@ -6,6 +6,7 @@ from mobility.transport_modes.car import CarMode
 from mobility.transport_modes.carpool.detailed import DetailedCarpoolRoutingParameters, DetailedCarpoolGeneralizedCostParameters, DetailedCarpoolTravelCosts, DetailedCarpoolGeneralizedCost
 from mobility.transport_modes.modal_transfer import IntermodalTransfer
 from pydantic import Field
+import polars as pl
 
 class CarpoolMode(TransportMode):
     
@@ -46,12 +47,26 @@ class CarpoolMode(TransportMode):
             parameters_cls=CarpoolModeParameters,
         )
 
+    def build_congestion_flows(self, od_flows_by_mode):
+        """Build road vehicle flows from carpool person flows."""
+        vehicles_per_person = 1.0 / self.inputs["parameters"].persons_per_vehicle
+        return (
+            od_flows_by_mode
+            .filter(pl.col("mode") == "carpool")
+            .with_columns(
+                (pl.col("flow_volume") * vehicles_per_person).alias("vehicle_volume")
+            )
+            .group_by(["from", "to"])
+            .agg(pl.col("vehicle_volume").sum())
+            .select(["from", "to", "vehicle_volume"])
+        )
 
 class CarpoolModeParameters(TransportModeParameters):
     """Parameters for carpool mode."""
 
     name: Literal["carpool"] = "carpool"
     ghg_intensity: float = 0.109
+    persons_per_vehicle: float = Field(default=2.0, gt=0.0)
     multimodal: bool = True
     return_mode: Literal["carpool_return"] = "carpool_return"
     survey_ids: list[str] = Field(default_factory=list)

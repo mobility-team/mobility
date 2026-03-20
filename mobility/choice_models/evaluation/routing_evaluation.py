@@ -32,18 +32,15 @@ class RoutingEvaluation:
     
     def get(
             self,
-            routes: pl.DataFrame,
-            weekday: bool = True
+            routes: pl.DataFrame
         ):
         """
-        Generate and evaluate route paths on a given day type (weekday or weekend).
+        Generate and evaluate route paths for the current run.
         
         Parameters
         ----------
         routes : pl.DataFrame
             Route list with origin and destination coordinates.
-        weekday : bool, optional
-            If True, evaluate weekday conditions (default is True).
         
         Returns
         -------

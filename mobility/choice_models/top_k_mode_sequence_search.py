@@ -15,7 +15,7 @@ from rich.live import Live
 from mobility.transport_modes.compute_subtour_mode_probabilities import compute_subtour_mode_probabilities_serial, modes_list_to_dict
 from mobility.choice_models.add_index import add_index
 
-class TopKModeSequenceSearch:
+class ModeSequenceSearcher:
     """Finds top-k mode sequences for spatialized trip chains.
     
     Prepares per-iteration inputs (costs, allowed leg modes, location chains),
@@ -23,7 +23,7 @@ class TopKModeSequenceSearch:
     into per-chain mode sequences with a compact index.
     """
     
-    def run(self, iteration, costs_aggregator, tmp_folders, parameters):
+    def search(self, iteration, costs_aggregator, tmp_folders, parameters, congestion_state=None) -> pl.DataFrame:
         """Compute top-k mode sequences for all spatialized chains of an iteration.
         
         Builds temporary artifacts (mode props, OD costs, allowed leg modes,
@@ -34,7 +34,7 @@ class TopKModeSequenceSearch:
             iteration (int): Iteration number (>=1).
             costs_aggregator (TravelCostsAggregator): Provides per-mode OD costs.
             tmp_folders (dict[str, pathlib.Path]): Workspace; must include
-                "spatialized-chains", "modes", and a parent folder for temp files.
+                "destination-sequences", "modes", and a parent folder for temp files.
             parameters (PopulationTripsParameters): Provides k for top-k and other
                 tuning values.
         
@@ -46,13 +46,13 @@ class TopKModeSequenceSearch:
         Notes:
             - Spawns a subprocess running `compute_subtour_mode_probabilities.py`.
             - Uses on-disk intermediates (pickle/parquet/json) under the parent of
-              "spatialized-chains".
+              "destination-sequences".
             - Assigns stable small integers to `mode_seq_id` via `add_index`.
         """
         
-        parent_folder_path = tmp_folders["spatialized-chains"].parent
+        parent_folder_path = tmp_folders["destination-sequences"].parent
         
-        chains_path = tmp_folders["spatialized-chains"] / f"spatialized_chains_{iteration}.parquet"
+        chains_path = tmp_folders["destination-sequences"] / f"destination_sequences_{iteration}.parquet"
         
         tmp_path = parent_folder_path / "tmp_results"
         shutil.rmtree(tmp_path, ignore_errors=True)
@@ -86,8 +86,9 @@ class TopKModeSequenceSearch:
         costs = ( 
             costs_aggregator.get_costs_by_od_and_mode(
                 ["cost"],
-                congestion=True,
-                detail_distances=False
+                congestion=(congestion_state is not None),
+                detail_distances=False,
+                congestion_state=congestion_state,
             )
             # Cast costs to ints to avoid float comparison instabilities later
             .with_columns(

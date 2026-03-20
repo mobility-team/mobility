@@ -31,7 +31,6 @@ class TravelCostsEvaluation:
             self,
             ref_costs: List,
             variable: str = "time",
-            weekday: bool = True,
             plot: bool = True
         ):
         """
@@ -67,9 +66,6 @@ class TravelCostsEvaluation:
                 
         variable: str
             Controls wether the comparison is made on "time" or "distance".
-        
-        weekday:
-            Controls wether the comparison is made on weekday or weekend results.
             
         plot: bool
             Should a scatter plot of the results be displayed.
@@ -79,8 +75,8 @@ class TravelCostsEvaluation:
         pl.DataFrame
             Input ref_costs dataframe with a distance_model and a time_model column.
         """
-        
-        costs = self.results.weekday_costs if weekday else self.results.weekend_costs
+
+        costs = self.results.costs
         transport_zones = self.results.transport_zones.get()
         
         ref_costs = self.convert_to_dataframe(ref_costs)

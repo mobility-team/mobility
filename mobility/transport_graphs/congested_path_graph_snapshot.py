@@ -43,32 +43,12 @@ class CongestedPathGraphSnapshot(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pathlib.Path:
-        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
-            vf: VehicleODFlowsAsset = self.inputs["vehicle_flows"]
-            logging.info(
-                "Congested snapshot graph cache hit: inputs_hash=%s mode=%s flows_hash=%s path=%s",
-                self.inputs_hash,
-                self.inputs["mode_name"],
-                vf.get_cached_hash(),
-                str(self.cache_path),
-            )
-        else:
-            logging.info("Congested snapshot graph already prepared. Reusing: " + str(self.cache_path))
+        logging.info("Congested snapshot graph already prepared. Reusing: " + str(self.cache_path))
         return self.cache_path
 
     def create_and_get_asset(self) -> pathlib.Path:
         vehicle_flows: VehicleODFlowsAsset = self.inputs["vehicle_flows"]
-        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
-            logging.info(
-                "Building congested snapshot graph: inputs_hash=%s mode=%s flows_hash=%s flows_path=%s out=%s",
-                self.inputs_hash,
-                self.inputs["mode_name"],
-                vehicle_flows.get_cached_hash(),
-                str(vehicle_flows.cache_path),
-                str(self.cache_path),
-            )
-        else:
-            logging.info("Building congested snapshot graph...")
+        logging.info("Building congested snapshot graph...")
         vehicle_flows.get()  # ensure parquet exists
 
         script = RScript(resources.files('mobility.transport_graphs').joinpath('load_path_graph.R'))

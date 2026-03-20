@@ -20,6 +20,7 @@ class StateUpdater:
             demand_groups: pl.DataFrame,
             chains: pl.DataFrame,
             costs_aggregator: Any,
+            congestion_state: Any,
             remaining_sinks: pl.DataFrame,
             motive_dur: pl.DataFrame,
             iteration: int,
@@ -45,7 +46,7 @@ class StateUpdater:
                 capacity and saturation utility penalty.
             motive_dur (pl.DataFrame): Mean activity durations by (csp,motive).
             iteration (int): Current iteration (1-based).
-            tmp_folders (dict[str, pathlib.Path]): Paths to “spatialized-chains” and “modes”.
+            tmp_folders (dict[str, pathlib.Path]): Paths to “destination-sequences” and “modes”.
             home_night_dur (pl.DataFrame): Mean remaining home-night duration by csp.
             stay_home_state (pl.DataFrame): Baseline “stay-home” state rows.
             parameters (PopulationTripsParameters): Coefficients and tunables.
@@ -60,6 +61,7 @@ class StateUpdater:
             demand_groups,
             chains,
             costs_aggregator,
+            congestion_state,
             remaining_sinks,
             motive_dur,
             iteration,
@@ -139,6 +141,7 @@ class StateUpdater:
             demand_groups,
             chains,
             costs_aggregator,
+            congestion_state,
             sinks,
             motive_dur,
             iteration,
@@ -161,7 +164,7 @@ class StateUpdater:
             motive_dur (pl.DataFrame): Mean durations per (csp,motive).
             iteration (int): Current iteration to pick latest artifacts.
             activity_utility_coeff (float): Coefficient for activity utility.
-            tmp_folders (dict[str, pathlib.Path]): Must contain "spatialized-chains" and "modes".
+            tmp_folders (dict[str, pathlib.Path]): Must contain "destination-sequences" and "modes".
         
         Returns:
             pl.DataFrame: Candidate per-step rows with columns including
@@ -174,8 +177,9 @@ class StateUpdater:
         cost_by_od_and_modes = ( 
             costs_aggregator.get_costs_by_od_and_mode(
                 ["cost", "distance", "time"],
-                congestion=True,
-                detail_distances=False
+                congestion=(congestion_state is not None),
+                detail_distances=False,
+                congestion_state=congestion_state,
             )
         )
         
@@ -188,7 +192,7 @@ class StateUpdater:
         # Keep only the last occurrence of any motive - destination sequence
         # (the sampler might generate the same sequence twice)
         spat_chains = (
-            pl.scan_parquet(tmp_folders['spatialized-chains'])
+            pl.scan_parquet(tmp_folders['destination-sequences'])
             .sort("iteration", descending=True)
             .unique(
                 subset=["demand_group_id", "motive_seq_id", "dest_seq_id", "seq_step_index"],
@@ -747,44 +751,59 @@ class StateUpdater:
     
         
     
-    def get_new_costs(self, costs, iteration, n_iter_per_cost_update, current_states_steps, costs_aggregator, run_key=None):
-        """Optionally recompute congested costs from current flows.
+    def get_new_costs(
+        self,
+        costs,
+        iteration,
+        n_iter_per_cost_update,
+        current_states_steps,
+        costs_aggregator,
+        congestion_state=None,
+        run_key=None,
+        is_weekday=None,
+    ):
+        """Return the OD costs to use after the current iteration.
 
-        Aggregates OD flows by mode, updates network/user-equilibrium in the
-        `costs_aggregator`, and returns refreshed costs when the cadence matches.
-        
+        This method aggregates step-level flows by OD and mode, then delegates
+        the congestion update decision to ``costs_aggregator``. When congestion
+        updates are disabled, it returns the input ``costs`` unchanged.
+
         Args:
             costs (pl.DataFrame): Current OD costs.
-            iteration (int): Current iteration (1-based).
-            n_iter_per_cost_update (int): Update cadence; 0 disables updates.
-            current_states_steps (pl.DataFrame): Step-level flows (by mode).
-            costs_aggregator (TravelCostsAggregator): Cost updater.
-        
+            iteration (int): Current iteration, using 1-based indexing.
+            n_iter_per_cost_update (int): Number of iterations between cost
+                updates. Zero disables congestion updates.
+            current_states_steps (pl.DataFrame): Step-level flows by mode.
+            costs_aggregator (TravelCostsAggregator): Aggregator responsible for
+                updating and returning the current cost view.
+            run_key (str | None): Optional run identifier used to isolate
+                per-run congestion snapshots.
+
         Returns:
-            pl.DataFrame: Updated OD costs (or original if no update ran).
+            tuple[pl.DataFrame, Any]: The OD costs to use after the current
+            iteration, and the explicit congestion state that produced them.
         """
         
-        if n_iter_per_cost_update > 0 and (iteration-1) % n_iter_per_cost_update == 0:
-            
-            logging.info("Updating costs...")
-            
-            od_flows_by_mode = (
-                current_states_steps
-                .filter(pl.col("motive_seq_id") != 0)
-                .group_by(["from", "to", "mode"])
-                .agg(
-                    flow_volume=pl.col("n_persons").sum()
-                )
+        if n_iter_per_cost_update <= 0:
+            return costs, congestion_state
+
+        od_flows_by_mode = (
+            current_states_steps
+            .filter(pl.col("motive_seq_id") != 0)
+            .group_by(["from", "to", "mode"])
+            .agg(
+                flow_volume=pl.col("n_persons").sum()
             )
+        )
 
-            has_congestion = any(getattr(m, "congestion", False) for m in costs_aggregator.modes)
-
-            # Only build/update congestion snapshots when at least one mode handles congestion.
-            if has_congestion:
-                costs_aggregator.update(od_flows_by_mode, run_key=run_key, iteration=iteration)
-            costs = costs_aggregator.get(congestion=True)
-
-        return costs
+        return costs_aggregator.get_costs_for_next_iteration(
+            iteration=iteration,
+            cost_update_interval=n_iter_per_cost_update,
+            od_flows_by_mode=od_flows_by_mode,
+            congestion_state=congestion_state,
+            run_key=run_key,
+            is_weekday=is_weekday,
+        )
     
     
     def get_new_sinks(

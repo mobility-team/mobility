@@ -90,6 +90,18 @@ class TransportMode(InMemoryAsset):
             parameters_cls=params.__class__,
         )
 
+    def build_congestion_flows(self, od_flows_by_mode):
+        """Build congestion-relevant flows for this mode.
+
+        Args:
+            od_flows_by_mode (pl.DataFrame): Aggregated person flows by
+                ``["from", "to", "mode"]``.
+
+        Returns:
+            pl.DataFrame | None: Congestion-relevant flows for this mode, or
+            ``None`` when this mode does not directly refresh congestion.
+        """
+        return None
 
 class TransportModeParameters(BaseModel):
     """Common parameters for transport mode definitions."""

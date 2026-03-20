@@ -17,6 +17,7 @@ from mobility.transport_graphs.speed_modifier import SpeedModifier
 from mobility.transport_graphs.congested_path_graph_snapshot import CongestedPathGraphSnapshot
 from mobility.transport_graphs.contracted_path_graph_snapshot import ContractedPathGraphSnapshot
 from mobility.transport_costs.path_travel_costs_snapshot import PathTravelCostsSnapshot
+from mobility.choice_models.congestion_state import CongestionState
 
 from typing import List
 
@@ -84,9 +85,22 @@ class PathTravelCosts(FileAsset):
 
         super().__init__(inputs, cache_path)
 
-        # When congestion updates are used, we keep a pointer to the latest
-        # per-iteration snapshot so `get(congestion=True)` is isolated per run.
-        self._current_congested_snapshot = None
+    def get(self, congestion: bool = False, congestion_state: CongestionState | None = None) -> pd.DataFrame:
+        requested_congestion = congestion and congestion_state is None
+        self.update_ancestors_if_needed()
+
+        if self.is_update_needed():
+            asset = self.create_and_get_asset(congestion=requested_congestion)
+            self.update_hash(self.inputs_hash)
+            if congestion_state is None:
+                return asset
+
+        if congestion and congestion_state is not None:
+            snapshot = self.get_snapshot_asset(congestion_state)
+            if snapshot is not None:
+                return snapshot.get()
+
+        return self.get_cached_asset(congestion=congestion)
 
     def get_cached_asset(self, congestion: bool = False) -> pd.DataFrame:
         """
@@ -99,22 +113,7 @@ class PathTravelCosts(FileAsset):
         if congestion is False:
             path = self.cache_path["freeflow"]
         else:
-            if self._current_congested_snapshot is not None:
-                if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
-                    logging.info(
-                        "PathTravelCosts.get(congestion=True) using snapshot: snapshot_hash=%s snapshot_path=%s",
-                        self._current_congested_snapshot.inputs_hash,
-                        str(self._current_congested_snapshot.cache_path),
-                    )
-                return self._current_congested_snapshot.get()
-            # If no congestion snapshot has been applied in this run, treat
-            # "congested" as free-flow to avoid reusing stale shared caches.
-            if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
-                logging.info(
-                    "PathTravelCosts.get(congestion=True) no snapshot -> fallback to freeflow: %s",
-                    str(self.cache_path["freeflow"]),
-                )
-            path = self.cache_path["freeflow"]
+            path = self.cache_path["congested"]
 
         logging.info("Travel costs already prepared. Reusing the file : " + str(path))
         costs = pd.read_parquet(path)
@@ -134,20 +133,19 @@ class PathTravelCosts(FileAsset):
         logging.info("Preparing travel costs for mode " + mode)
         
         self.inputs["transport_zones"].get()
-        self.inputs["contracted_path_graph"].get()
         
         if congestion is False:
+            self.inputs["contracted_path_graph"].get()
             output_path = self.cache_path["freeflow"]
+            path_graph = self.inputs["contracted_path_graph"]
         else:
-            if self._current_congested_snapshot is not None:
-                return self._current_congested_snapshot.get()
-            # Same rationale as get_cached_asset(): without an applied snapshot,
-            # compute free-flow costs.
-            output_path = self.cache_path["freeflow"]
+            self.inputs["congested_path_graph"].get()
+            output_path = self.cache_path["congested"]
+            path_graph = self.inputs["congested_path_graph"]
         
         costs = self.compute_costs_by_OD(
             self.inputs["transport_zones"],
-            self.inputs["contracted_path_graph"],
+            path_graph,
             output_path,
         )
         
@@ -191,35 +189,19 @@ class PathTravelCosts(FileAsset):
 
         return costs
     
-    
-    def update(self, od_flows, flow_asset=None):
-        """
-            Update congestion state.
-        """
+    def get_congested_graph_path(self, flow_asset=None) -> pathlib.Path:
+        """Return the graph path backing the current congested cost view."""
+        if flow_asset is not None:
+            return self.build_snapshot_asset(flow_asset).inputs["contracted_graph"].inputs["congested_graph"].get()
+        return self.inputs["congested_path_graph"].get()
 
+    def get_snapshot_asset(self, congestion_state: CongestionState) -> PathTravelCostsSnapshot | None:
+        flow_asset = congestion_state.for_mode(self.inputs["mode_name"])
         if flow_asset is None:
-            if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
-                logging.info(
-                    "PathTravelCosts.update legacy(shared) path: mode=%s",
-                    str(self.inputs["mode_name"]),
-                )
-            self.inputs["contracted_path_graph"].update(od_flows)
-            self._current_congested_snapshot = None
-            self.create_and_get_asset(congestion=True)
-            return
+            return None
+        return self.build_snapshot_asset(flow_asset)
 
-        self._apply_flow_snapshot(flow_asset)
-
-    def apply_flow_snapshot(self, flow_asset) -> None:
-        """Repoint this mode's congested costs to the snapshot defined by `flow_asset`.
-
-        This is primarily used when resuming a run from a checkpoint: the snapshot
-        files exist on disk, but the in-memory pointer to the "current snapshot"
-        is lost on restart.
-        """
-        self._apply_flow_snapshot(flow_asset)
-
-    def _apply_flow_snapshot(self, flow_asset) -> None:
+    def build_snapshot_asset(self, flow_asset) -> PathTravelCostsSnapshot:
         congested_graph = CongestedPathGraphSnapshot(
             modified_graph=self.inputs["modified_path_graph"],
             transport_zones=self.inputs["transport_zones"],
@@ -234,17 +216,7 @@ class PathTravelCosts(FileAsset):
             routing_parameters=self.inputs["routing_parameters"],
             contracted_graph=contracted_graph,
         )
-
-        self._current_congested_snapshot = snapshot
-        if os.environ.get("MOBILITY_DEBUG_CONGESTION") == "1":
-            logging.info(
-                "PathTravelCosts snapshot selected: mode=%s flow_hash=%s snapshot_hash=%s snapshot_path=%s",
-                str(self.inputs["mode_name"]),
-                flow_asset.get_cached_hash(),
-                snapshot.inputs_hash,
-                str(snapshot.cache_path),
-            )
-        snapshot.get()
+        return snapshot
         
     def clone(self):
         

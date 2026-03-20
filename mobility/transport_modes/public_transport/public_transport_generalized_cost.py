@@ -1,5 +1,6 @@
 import pandas as pd
 
+from mobility.choice_models.congestion_state import CongestionState
 from mobility.in_memory_asset import InMemoryAsset
 
 class PublicTransportGeneralizedCost(InMemoryAsset):
@@ -30,7 +31,8 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
             self,
             metrics=["cost"],
             congestion: bool = True,
-            detail_distances: bool = False
+            detail_distances: bool = False,
+            congestion_state: CongestionState | None = None,
         ) -> pd.DataFrame:
 
         first_leg_mode_name = self.inputs["first_leg_mode_name"]

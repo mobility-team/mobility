@@ -43,7 +43,7 @@ def test_010_population_trips_results_are_reproducible(test_data):
         )
     )
 
-    metrics_run_1 = pop_trips.evaluate("global_metrics")
+    metrics_run_1 = pop_trips.weekday_run.evaluate("global_metrics")
     
     # Remove the results then re run the model with the same inputs
     pop_trips.remove()
@@ -65,7 +65,7 @@ def test_010_population_trips_results_are_reproducible(test_data):
         )
     )
 
-    metrics_run_2 = pop_trips.evaluate("global_metrics")
+    metrics_run_2 = pop_trips.weekday_run.evaluate("global_metrics")
     
     # Compare results between runs
     comparison = (

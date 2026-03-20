@@ -134,18 +134,28 @@ class FileAsset(Asset):
         
         # Build a graph of input assets
         graph = nx.DiGraph()
+
+        def iter_file_assets(value):
+            if isinstance(value, FileAsset):
+                yield value
+            elif isinstance(value, dict):
+                for nested in value.values():
+                    yield from iter_file_assets(nested)
+            elif isinstance(value, (list, tuple, set)):
+                for nested in value:
+                    yield from iter_file_assets(nested)
         
         def add_upstream_deps(asset):
             graph.add_node(asset)
             for inp in asset.inputs.values():
-                if isinstance(inp, FileAsset):
-                    graph.add_node(inp)
-                    graph.add_edge(inp, asset)
-                    add_upstream_deps(inp)
+                for dep in iter_file_assets(inp):
+                    graph.add_node(dep)
+                    graph.add_edge(dep, asset)
+                    add_upstream_deps(dep)
         
         for inp in self.inputs.values():
-            if isinstance(inp, FileAsset):
-                add_upstream_deps(inp)
+            for dep in iter_file_assets(inp):
+                add_upstream_deps(dep)
         
         # Find out which ones need to be updated and recompute them, as well
         # as all their descendants
