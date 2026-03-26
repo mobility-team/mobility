@@ -45,7 +45,7 @@ def patch_asset_init(monkeypatch, project_dir, fake_inputs_hash):
     Never call super().__init__ or do any I/O. Always set deterministic paths:
       <project_dir>/<fake_inputs_hash>-<file_name or asset.parquet>
 
-    We also patch the FileAsset class that mobility.trips imported (aliases/re-exports),
+    We also patch the FileAsset class that mobility.trips.individual_year_trips imported (aliases/re-exports),
     and walk its MRO to catch unexpected base classes.
     """
     from pathlib import Path as _Path
@@ -99,11 +99,11 @@ def patch_asset_init(monkeypatch, project_dir, fake_inputs_hash):
     fake_file_asset_init = make_fake_fileasset_init()
     fake_asset_init = make_fake_asset_init()
 
-    # Patch known modules + whatever Trips imported (handles aliases / re-exports)
+    # Patch known modules + whatever IndividualYearTrips imported.
     for module_name, class_name, replacement in [
-        ("mobility.file_asset", "FileAsset", fake_file_asset_init),
-        ("mobility.asset", "Asset", fake_asset_init),
-        ("mobility.trips", "FileAsset", fake_file_asset_init),
+        ("mobility.runtime.assets.file_asset", "FileAsset", fake_file_asset_init),
+        ("mobility.runtime.assets.asset", "Asset", fake_asset_init),
+        ("mobility.trips.individual_year_trips", "FileAsset", fake_file_asset_init),
     ]:
         try:
             module = __import__(module_name, fromlist=[class_name])
@@ -302,7 +302,7 @@ def parquet_stubs(monkeypatch):
 @pytest.fixture
 def fake_transport_zones():
     """
-    Minimal GeoDataFrames with the columns expected by Trips.get_population_trips().
+    Minimal GeoDataFrames with the columns expected by IndividualYearTrips.get_population_trips().
     """
     transport_zones_geodataframe = gpd.GeoDataFrame(
         {
@@ -345,7 +345,7 @@ def fake_transport_zones():
 @pytest.fixture
 def fake_population_asset(fake_transport_zones):
     """
-    Stand-in object for a population FileAsset with the exact attributes Trips.create_and_get_asset expects.
+    Stand-in object for a population FileAsset with the exact attributes IndividualYearTrips.create_and_get_asset expects.
     - .get() returns a mapping containing the path to individuals parquet (content provided by parquet stub).
     - .inputs contains {"transport_zones": <asset with .get() and .study_area.get()>}
     """
@@ -367,11 +367,11 @@ def fake_population_asset(fake_transport_zones):
 @pytest.fixture(autouse=True)
 def patch_filter_database(monkeypatch):
     """
-    Make mobility.safe_sample.filter_database robust for our test stubs:
+    Make mobility.trips.individual_year_trips.safe_sample.filter_database robust for our test stubs:
     - Accept filters via positional and/or keyword args without conflict
     - Work whether filters live in index levels or columns
     - If the filter would produce an empty dataframe, FALL BACK to the unfiltered rows
-      (keeps Trips flow alive and prevents 'No objects to concatenate')
+      (keeps IndividualYearTrips alive and prevents 'No objects to concatenate')
     """
     import pandas as pd
 
@@ -415,15 +415,15 @@ def patch_filter_database(monkeypatch):
 
         return result_dataframe
 
-    # Patch both the original module and the alias imported inside mobility.trips
+    # Patch both the original module and the alias imported inside mobility.trips.individual_year_trips
     try:
-        import mobility.safe_sample as safe_sample_module
+        import mobility.trips.individual_year_trips.safe_sample as safe_sample_module
         monkeypatch.setattr(safe_sample_module, "filter_database", stub_filter_database, raising=True)
     except Exception:
         pass
 
     try:
-        import mobility.trips as trips_module
+        import mobility.trips.individual_year_trips as trips_module
         monkeypatch.setattr(trips_module, "filter_database", stub_filter_database, raising=True)
     except Exception:
         pass
@@ -462,7 +462,7 @@ def patch_sampling_helpers(monkeypatch):
         expanded_dataframe = pd.concat([input_dataframe] * repetitions, ignore_index=True)
         return expanded_dataframe.iloc[:required_length].reset_index(drop=True)
 
-    # --- Stub for mobility.sample_travels.sample_travels
+    # --- Stub for mobility.trips.individual_year_trips.sample_travels.sample_travels
     def stub_sample_travels(
         travels_dataframe,
         start_col="day_of_year",
@@ -479,7 +479,7 @@ def patch_sampling_helpers(monkeypatch):
         chosen_positions = np.arange(min(k, total_rows), dtype=int)
         return [chosen_positions.copy() for _ in range(int(num_samples))]
 
-    # --- Stub for mobility.safe_sample.safe_sample
+    # --- Stub for mobility.trips.individual_year_trips.safe_sample.safe_sample
     def stub_safe_sample(
         input_dataframe,
         n,
@@ -513,24 +513,24 @@ def patch_sampling_helpers(monkeypatch):
 
         return result_dataframe
 
-    # Patch both the original modules and the aliases imported in mobility.trips
+    # Patch both the original modules and the aliases imported in mobility.trips.individual_year_trips
     try:
-        import mobility.sample_travels as module_sample_travels
+        import mobility.trips.individual_year_trips.sample_travels as module_sample_travels
         monkeypatch.setattr(module_sample_travels, "sample_travels", stub_sample_travels, raising=True)
     except Exception:
         pass
     try:
-        import mobility.trips as trips_module
+        import mobility.trips.individual_year_trips as trips_module
         monkeypatch.setattr(trips_module, "sample_travels", stub_sample_travels, raising=True)
     except Exception:
         pass
     try:
-        import mobility.safe_sample as module_safe_sample
+        import mobility.trips.individual_year_trips.safe_sample as module_safe_sample
         monkeypatch.setattr(module_safe_sample, "safe_sample", stub_safe_sample, raising=True)
     except Exception:
         pass
     try:
-        import mobility.trips as trips_module_again
+        import mobility.trips.individual_year_trips as trips_module_again
         monkeypatch.setattr(trips_module_again, "safe_sample", stub_safe_sample, raising=True)
     except Exception:
         pass
@@ -556,10 +556,10 @@ def patch_default_gwp_dataframe(monkeypatch):
             }
         )
 
-    # Patch source class and any alias imported in mobility.trips
+    # Patch source class and any alias imported in mobility.trips.individual_year_trips
     targets = [
-        "mobility.transport_modes.default_gwp.DefaultGWP.as_dataframe",
-        "mobility.trips.DefaultGWP.as_dataframe",
+        "mobility.impacts.default_gwp.DefaultGWP.as_dataframe",
+        "mobility.trips.individual_year_trips.DefaultGWP.as_dataframe",
     ]
     for target in targets:
         try:
@@ -575,13 +575,13 @@ def patch_default_gwp_dataframe(monkeypatch):
 @pytest.fixture
 def patch_mobility_survey(monkeypatch):
     """
-    Layout chosen to match how Trips + helpers slice:
+    Layout chosen to match how IndividualYearTrips + helpers slice:
       - short_trips: MultiIndex [country]           (one-level MultiIndex)
       - days_trip:   MultiIndex [country, csp]
       - travels:     MultiIndex [country, csp, n_cars, city_category]
       - long_trips:  MultiIndex [country, travel_id]
       - n_travels, p_immobility, p_car: MultiIndex [country, csp]
-    Also patches both the source modules and the mobility.trips aliases.
+    Also patches both the source modules and the mobility.trips.individual_year_trips aliases.
     """
     import pandas as pd
 
@@ -687,24 +687,24 @@ def patch_mobility_survey(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-    # Patch both the source modules and the mobility.trips aliases
+    # Patch both the source modules and the mobility.trips.individual_year_trips aliases
     monkeypatch.setattr(
-        "mobility.parsers.mobility_survey.MobilitySurveyAggregator",
+        "mobility.surveys.MobilitySurveyAggregator",
         StubMobilitySurveyAggregator,
         raising=True,
     )
     monkeypatch.setattr(
-        "mobility.trips.MobilitySurveyAggregator",
+        "mobility.trips.individual_year_trips.MobilitySurveyAggregator",
         StubMobilitySurveyAggregator,
         raising=True,
     )
     monkeypatch.setattr(
-        "mobility.parsers.mobility_survey.france.EMPMobilitySurvey",
+        "mobility.surveys.france.EMPMobilitySurvey",
         StubEMPMobilitySurvey,
         raising=True,
     )
     monkeypatch.setattr(
-        "mobility.trips.EMPMobilitySurvey",
+        "mobility.trips.individual_year_trips.EMPMobilitySurvey",
         StubEMPMobilitySurvey,
         raising=True,
     )
@@ -722,13 +722,13 @@ def patch_mobility_survey(monkeypatch):
 
 
 # ---------------------------------------------------------
-# Helper: seed a Trips instance attributes for direct calls
+# Helper: seed an IndividualYearTrips instance for direct calls
 # ---------------------------------------------------------
 
 @pytest.fixture
 def seed_trips_with_minimal_databases(patch_mobility_survey):
     """
-    Returns a function that seeds a Trips instance with minimal, consistent
+    Returns a function that seeds an IndividualYearTrips instance with minimal, consistent
     databases so get_individual_trips can be called directly.
     """
     def _seed(trips_instance):

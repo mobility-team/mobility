@@ -5,8 +5,8 @@ import polars as pl
 import pandas as pd
 from pydantic import BaseModel
 
-from mobility.choice_models.travel_costs_aggregator import TravelCostsAggregator
-from mobility.transport_costs.od_flows_asset import VehicleODFlowsAsset
+from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
+from mobility.transport.costs.transport_costs_aggregator import TransportCostsAggregator
 
 
 class _FakeModeParameters(BaseModel):
@@ -26,7 +26,7 @@ def _make_mode(*, name: str, congestion: bool):
 def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled():
     # Use a minimal mode stub with congestion enabled so the test only exercises
     # the aggregator decision logic, not the real routing/cost stack.
-    aggregator = TravelCostsAggregator(modes=[_make_mode(name="car", congestion=True)])
+    aggregator = TransportCostsAggregator(modes=[_make_mode(name="car", congestion=True)])
     od_flows_by_mode = pl.DataFrame(
         {"from": [1], "to": [2], "mode": ["car"], "flow_volume": [10.0]}
     )

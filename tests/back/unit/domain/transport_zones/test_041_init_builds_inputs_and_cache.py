@@ -1,6 +1,6 @@
 import pathlib
 
-from mobility.transport_zones import TransportZones
+from mobility.spatial.transport_zones import TransportZones
 
 def test_init_builds_inputs_and_cache_path(project_dir, fake_inputs_hash, dependency_fakes):
     # Construct with explicit arguments

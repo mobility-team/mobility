@@ -1,6 +1,6 @@
 import pandas as pd
-from mobility.trips import Trips
-from mobility.transport_modes.default_gwp import DefaultGWP
+from mobility.trips.individual_year_trips import IndividualYearTrips
+from mobility.impacts.default_gwp import DefaultGWP
 
 
 def test_get_individual_trips_edge_cases_zero_mobile_days(
@@ -13,7 +13,7 @@ def test_get_individual_trips_edge_cases_zero_mobile_days(
         def get(self):
             return {"individuals": "unused.parquet"}
 
-    trips_instance = Trips(population=DummyPopulationAsset(), gwp=DefaultGWP())
+    trips_instance = IndividualYearTrips(population=DummyPopulationAsset(), gwp=DefaultGWP())
     seed_trips_with_minimal_databases(trips_instance)
 
     trips_instance.p_immobility.loc[("FR", "1"), "immobility_weekday"] = 1.0
