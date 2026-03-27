@@ -14,7 +14,13 @@ from typing import Dict, Tuple
 from mobility.file_asset import FileAsset
 from mobility.population import Population
 from mobility.choice_models.travel_costs_aggregator import TravelCostsAggregator
-from mobility.choice_models.population_trips_parameters import PopulationTripsParameters
+from mobility.choice_models.population_trips_parameters import (
+    PopulationTripsParameters,
+)
+from mobility.choice_models.population_trips_candidates import (
+    get_mode_sequences,
+    get_spatialized_chains,
+)
 from mobility.choice_models.destination_sequence_sampler import DestinationSequenceSampler
 from mobility.choice_models.top_k_mode_sequence_search import TopKModeSequenceSearch
 from mobility.choice_models.state_initializer import StateInitializer
@@ -375,32 +381,36 @@ class PopulationTrips(FileAsset):
             
             seed = self.rng.getrandbits(64)
               
-            ( 
-                self.destination_sequence_sampler.run(
-                    motives,
-                    population.transport_zones,
-                    remaining_sinks,
-                    iteration,
-                    chains_by_motive,
-                    demand_groups,
-                    costs,
-                    tmp_folders,
-                    parameters,
-                    seed
-                )
-                .write_parquet(tmp_folders["spatialized-chains"] / f"spatialized_chains_{iteration}.parquet")
+            behavior_change_scope = parameters.get_behavior_change_scope(iteration)
+
+            spatialized_chains = get_spatialized_chains(
+                behavior_change_scope=behavior_change_scope,
+                current_states=current_states,
+                destination_sequence_sampler=self.destination_sequence_sampler,
+                motives=motives,
+                transport_zones=population.transport_zones,
+                remaining_sinks=remaining_sinks,
+                iteration=iteration,
+                chains_by_motive=chains_by_motive,
+                demand_groups=demand_groups,
+                costs=costs,
+                tmp_folders=tmp_folders,
+                parameters=parameters,
+                seed=seed,
             )
-            
-            
-            (
-                self.top_k_mode_sequence_search.run(
-                    iteration,
-                    costs_aggregator,
-                    tmp_folders,
-                    parameters
-                )
-                .write_parquet(tmp_folders["modes"] / f"mode_sequences_{iteration}.parquet")
+            spatialized_chains.write_parquet(
+                tmp_folders["spatialized-chains"] / f"spatialized_chains_{iteration}.parquet"
             )
+
+            mode_sequences = get_mode_sequences(
+                spatialized_chains=spatialized_chains,
+                top_k_mode_sequence_search=self.top_k_mode_sequence_search,
+                iteration=iteration,
+                costs_aggregator=costs_aggregator,
+                tmp_folders=tmp_folders,
+                parameters=parameters,
+            )
+            mode_sequences.write_parquet(tmp_folders["modes"] / f"mode_sequences_{iteration}.parquet")
             
             current_states, current_states_steps, transition_events = self.state_updater.get_new_states(
                 current_states,
@@ -459,7 +469,8 @@ class PopulationTrips(FileAsset):
                 parameters.n_iterations,
                 motives,
                 parameters.min_activity_time_constant,
-                tmp_folders
+                tmp_folders,
+                parameters.get_behavior_change_scope(parameters.n_iterations),
             )
             current_states_steps = self.state_updater.get_current_states_steps(current_states, possible_states_steps)
             
