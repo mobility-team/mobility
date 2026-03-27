@@ -1,5 +1,5 @@
 import mobility
-from mobility.choice_models.population_trips_parameters import PopulationTripsParameters
+from mobility.trips.group_day_trips import Parameters
 
 def run_quickstart_ci():
     # In CI/integration tests, test setup configures Mobility paths in conftest.py.
@@ -14,33 +14,33 @@ def run_quickstart_ci():
     population = mobility.Population(transport_zones, sample_size=100)
 
     # Simulating trips for this population for car, walk, bicycle
-    population_trips = mobility.PopulationTrips(
-        population,
-        [
-            mobility.CarMode(transport_zones),
-            mobility.WalkMode(transport_zones),
-            mobility.BicycleMode(transport_zones),
+    population_trips = mobility.GroupDayTrips(
+        population=population,
+        modes=[
+            mobility.Car(transport_zones),
+            mobility.Walk(transport_zones),
+            mobility.Bicycle(transport_zones),
         ],
-        [
-            mobility.HomeMotive(),
-            mobility.WorkMotive(),
-            mobility.OtherMotive(population=population),
+        activities=[
+            mobility.Home(),
+            mobility.Work(),
+            mobility.Other(population=population),
         ],
-        [survey],
-        parameters=PopulationTripsParameters(
+        surveys=[survey],
+        parameters=Parameters(
             n_iterations=1,
             mode_sequence_search_parallel=False,
         ),
     )
 
-    # You can get weekday trips to inspect them
-    weekday_flows = population_trips.get()["weekday_flows"].collect()
+    # You can get weekday plan steps to inspect them
+    weekday_plan_steps = population_trips.get()["weekday_plan_steps"].collect()
 
     # You can compute global metrics for this population
-    global_metrics = population_trips.evaluate("global_metrics")
+    global_metrics = population_trips.weekday_run.evaluate("global_metrics")
 
     return {
-        "weekday_flows": weekday_flows,
+        "weekday_plan_steps": weekday_plan_steps,
         "global_metrics": global_metrics,
     }
 

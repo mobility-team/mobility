@@ -101,6 +101,14 @@ ipython_config.py
 #   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
 #poetry.lock
 
+# pdm
+#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
+#pdm.lock
+#   pdm stores project-wide configurations in .pdm.toml, but it is recommended to not include it
+#   in version control.
+#   https://pdm.fming.dev/#use-with-ide
+.pdm.toml
+
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow
 __pypackages__/
 
@@ -151,6 +159,15 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# Poetry local configuration file
+poetry.toml
+
+# ruff
+.ruff_cache/
+
+# LSP config files
+pyrightconfig.json
+
 # History files
 .Rhistory
 .Rapp.history
@@ -198,29 +215,16 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 
-# Input data files
-mobility/data/surveys/emp-2019/*
-!mobility/data/surveys/emp-2019/.gitkeep 
-
-mobility/data/surveys/entd-2008/*
-!mobility/data/surveys/entd-2008/.gitkeep 
-
-mobility/data/insee/work/*
-mobility/data/insee/facilities/*
-mobility/data/insee/esane/*
-mobility/data/insee/work_home_flows/*
-
-mobility/data/ign/admin-express/*
-mobility/data/insee/territories/UU2020_au_01-01-2023.xlsx
-.Rproj.user
-
+# R package: bookdown caching files
+/*_files/
 
 **/.env
 
 .DS_Store
 
 certs/
-nngeo-master
-front/gtfsrouter-main
 
 .vscode/
+
+# Local scratch file created while refreshing ignore rules
+.gitignore-new

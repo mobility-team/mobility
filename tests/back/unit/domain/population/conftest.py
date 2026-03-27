@@ -42,10 +42,10 @@ def _maybe_stub_module(qualified_name: str):
     except Exception:
         return _ensure_dummy_module(qualified_name)
 
-file_asset_module = _maybe_stub_module("mobility.file_asset")
-parsers_module = _maybe_stub_module("mobility.parsers")
-parsers_admin_module = _maybe_stub_module("mobility.parsers.admin_boundaries")
-asset_module = _maybe_stub_module("mobility.asset")
+file_asset_module = _maybe_stub_module("mobility.runtime.assets.file_asset")
+population_pkg = _maybe_stub_module("mobility.population")
+parsers_admin_module = _maybe_stub_module("mobility.spatial.admin_boundaries")
+asset_module = _maybe_stub_module("mobility.runtime.assets.asset")
 
 # Only add stubs if attributes don’t exist yet (don’t overwrite real ones)
 if not hasattr(file_asset_module, "FileAsset"):
@@ -61,19 +61,19 @@ if not hasattr(asset_module, "Asset"):
             pass
     setattr(asset_module, "Asset", _DummyAsset)
 
-if not hasattr(parsers_module, "CityLegalPopulation"):
+if not hasattr(population_pkg, "CityLegalPopulation"):
     class _DummyCityLegalPopulation:
         def get(self):
             return pd.DataFrame({"local_admin_unit_id": [], "legal_population": []})
-    setattr(parsers_module, "CityLegalPopulation", _DummyCityLegalPopulation)
+    setattr(population_pkg, "CityLegalPopulation", _DummyCityLegalPopulation)
 
-if not hasattr(parsers_module, "CensusLocalizedIndividuals"):
+if not hasattr(population_pkg, "CensusLocalizedIndividuals"):
     class _DummyCensusLocalizedIndividuals:
         def __init__(self, region=None):
             self.region = region
         def get(self):
             return pd.DataFrame()
-    setattr(parsers_module, "CensusLocalizedIndividuals", _DummyCensusLocalizedIndividuals)
+    setattr(population_pkg, "CensusLocalizedIndividuals", _DummyCensusLocalizedIndividuals)
 
 if not hasattr(parsers_admin_module, "get_french_regions_boundaries"):
     def _dummy_regions_boundaries():
@@ -138,8 +138,8 @@ def patch_asset_init(monkeypatch, project_dir, fake_inputs_hash):
 
         monkeypatch.setattr(class_object, "__init__", _init, raising=True)
 
-    _patch_for("mobility.asset.Asset")
-    _patch_for("mobility.file_asset.FileAsset")
+    _patch_for("mobility.runtime.assets.asset.Asset")
+    _patch_for("mobility.runtime.assets.file_asset.FileAsset")
 
 
 @pytest.fixture(autouse=True)
@@ -307,11 +307,11 @@ def patch_geopandas_sjoin(monkeypatch):
 @pytest.fixture(autouse=True)
 def patch_mobility_parsers(monkeypatch):
     """
-    Patch parsers to provide consistent tiny datasets AND also patch the already-imported
+    Patch population loaders to provide consistent tiny datasets AND also patch the already-imported
     names inside mobility.population (because it uses `from ... import ...`).
     """
-    import mobility.parsers as parsers_module_local
-    import mobility.parsers.admin_boundaries as admin_boundaries_module
+    import mobility.population as population_pkg_local
+    import mobility.spatial.admin_boundaries as admin_boundaries_module
     population_module = sys.modules.get("mobility.population")
 
     class CityLegalPopulationFake:
@@ -347,18 +347,18 @@ def patch_mobility_parsers(monkeypatch):
             "INSEE_CAN": ["C1", "C2"],
         })
 
-    # Patch the parser modules
-    monkeypatch.setattr(parsers_module_local, "CityLegalPopulation", CityLegalPopulationFake, raising=True)
-    monkeypatch.setattr(parsers_module_local, "CensusLocalizedIndividuals", CensusLocalizedIndividualsFake, raising=True)
+    # Patch the population package
+    monkeypatch.setattr(population_pkg_local, "CityLegalPopulation", CityLegalPopulationFake, raising=True)
+    monkeypatch.setattr(population_pkg_local, "CensusLocalizedIndividuals", CensusLocalizedIndividualsFake, raising=True)
     monkeypatch.setattr(admin_boundaries_module, "get_french_regions_boundaries", regions_boundaries_fake, raising=True)
     monkeypatch.setattr(admin_boundaries_module, "get_french_cities_boundaries", cities_boundaries_fake, raising=True)
 
     # Also patch the already-imported names inside mobility.population (if loaded)
     if population_module is not None:
-        # population.py did: from mobility.parsers import CityLegalPopulation, CensusLocalizedIndividuals
+        # population.py did: from mobility.population import CityLegalPopulation, CensusLocalizedIndividuals
         monkeypatch.setattr(population_module, "CityLegalPopulation", CityLegalPopulationFake, raising=True)
         monkeypatch.setattr(population_module, "CensusLocalizedIndividuals", CensusLocalizedIndividualsFake, raising=True)
-        # and: from mobility.parsers.admin_boundaries import get_french_regions_boundaries, get_french_cities_boundaries
+        # and: from mobility.spatial.admin_boundaries import get_french_regions_boundaries, get_french_cities_boundaries
         monkeypatch.setattr(population_module, "get_french_regions_boundaries", regions_boundaries_fake, raising=True)
         monkeypatch.setattr(population_module, "get_french_cities_boundaries", cities_boundaries_fake, raising=True)
 

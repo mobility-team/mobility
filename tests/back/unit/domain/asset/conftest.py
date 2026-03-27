@@ -8,18 +8,18 @@ import pandas as pd
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_real_mobility_asset_module():
     """
-    Make sure mobility.asset is imported from your source tree and not replaced by any
+    Make sure mobility.runtime.assets.asset is imported from your source tree and not replaced by any
     higher-level test double. We reload the module to restore the real class.
     """
     # If the module was never imported, import it; if it was imported (possibly stubbed), reload it.
     try:
-        mod = sys.modules.get("mobility.asset")
+        mod = sys.modules.get("mobility.runtime.assets.asset")
         if mod is None:
-            import_module("mobility.asset")
+            import_module("mobility.runtime.assets.asset")
         else:
             reload(mod)
     except Exception as exc:  # surface import problems early and clearly
-        pytest.skip(f"Cannot import mobility.asset: {exc}")
+        pytest.skip(f"Cannot import mobility.runtime.assets.asset: {exc}")
 
 
 # ------------------------------------------------------------
@@ -120,9 +120,9 @@ def parquet_stubs(monkeypatch):
 # ---------------------------------------------------------
 @pytest.fixture
 def asset_base_class(_ensure_real_mobility_asset_module):
-    from mobility.asset import Asset
+    from mobility.runtime.assets.asset import Asset
     # Sanity: ensure this is the real class (has the abstract 'get' attribute)
-    assert hasattr(Asset, "get"), "mobility.asset.Asset does not define .get; a stub may be shadowing it"
+    assert hasattr(Asset, "get"), "mobility.runtime.assets.asset.Asset does not define .get; a stub may be shadowing it"
     return Asset
 
 
