@@ -32,6 +32,7 @@ from mobility.choice_models.population_trips_resume import (
     prune_tmp_artifacts,
     rehydrate_congestion_snapshot,
 )
+from mobility.simulation_profile import SimulationStep
 
 class PopulationTrips(FileAsset):
     """
@@ -183,8 +184,7 @@ class PopulationTrips(FileAsset):
         }
         
         super().__init__(inputs, cache_path)
-        
-        
+
     def validate_motives(self, motives: List[Motive]) -> None:
 
         if not motives:
@@ -303,7 +303,7 @@ class PopulationTrips(FileAsset):
                 str(is_weekday),
                 str(resume_plan.resume_from_iter),
             )
-        tmp_folders = self.prepare_tmp_folders(cache_path, resume=(resume_plan.resume_from_iter is not None))
+        tmp_folders = self.get_tmp_folders(cache_path, resume=(resume_plan.resume_from_iter is not None))
 
         chains_by_motive, chains, demand_groups = self.state_initializer.get_chains(
             population,
@@ -317,11 +317,15 @@ class PopulationTrips(FileAsset):
             chains_by_motive,
             demand_groups
         )
+
+        step = SimulationStep(iteration=1)
+        home_motive = [m for m in motives if m.name == "home"][0]
         
         stay_home_state, current_states = self.state_initializer.get_stay_home_state(
             demand_groups,
             home_night_dur,
-            motives,
+            home_motive,
+            step,
             parameters.min_activity_time_constant,
         )
         
@@ -374,13 +378,14 @@ class PopulationTrips(FileAsset):
             logging.info(f"Iteration n°{iteration}")
             
             seed = self.rng.getrandbits(64)
+            step = SimulationStep(iteration=iteration)
               
             ( 
                 self.destination_sequence_sampler.run(
                     motives,
+                    step,
                     population.transport_zones,
                     remaining_sinks,
-                    iteration,
                     chains_by_motive,
                     demand_groups,
                     costs,
@@ -409,12 +414,12 @@ class PopulationTrips(FileAsset):
                 costs_aggregator,
                 remaining_sinks,
                 motive_dur,
-                iteration,
+                step,
                 tmp_folders,
                 home_night_dur,
                 stay_home_state,
                 parameters,
-                motives
+                motives,
             )
             transition_events_per_iter.append(transition_events)
             
@@ -430,7 +435,8 @@ class PopulationTrips(FileAsset):
             remaining_sinks = self.state_updater.get_new_sinks(
                 current_states_steps,
                 sinks,
-                motives
+                motives,
+                step,
             )
 
             # Save per-iteration checkpoint after all state has been advanced.
@@ -449,6 +455,7 @@ class PopulationTrips(FileAsset):
         # If we resumed after completing all iterations (or start_iteration > n_iterations),
         # rebuild step-level flows from cached artifacts for final output.
         if "current_states_steps" not in locals():
+            step = SimulationStep(iteration=parameters.n_iterations)
             possible_states_steps = self.state_updater.get_possible_states_steps(
                 current_states,
                 demand_groups,
@@ -456,7 +463,7 @@ class PopulationTrips(FileAsset):
                 costs_aggregator,
                 remaining_sinks,
                 motive_dur,
-                parameters.n_iterations,
+                step,
                 motives,
                 parameters.min_activity_time_constant,
                 tmp_folders
@@ -519,11 +526,12 @@ class PopulationTrips(FileAsset):
                 logging.info("Removed %s checkpoint files for run_key=%s", str(removed), str(run_key))
     
 
-    def prepare_tmp_folders(self, cache_path, resume: bool = False):
-        """Create per-run temp folders next to the cache path.
+    def get_tmp_folders(self, cache_path: pathlib.Path, resume: bool = False) -> dict[str, pathlib.Path]:
+        """Return per-run temp folders next to the cache path.
         
         Args:
           cache_path (pathlib.Path): Target cache file used to derive temp roots.
+          resume (bool): When False, clears existing temp folders before reuse.
         
         Returns:
           dict[str, pathlib.Path]: Mapping of temp folder names to paths.
