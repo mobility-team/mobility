@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from mobility.trips.group_day_trips.transitions.congestion_state import CongestionState
+from mobility.transport.costs.congestion_state import CongestionState
 
 
 @dataclass

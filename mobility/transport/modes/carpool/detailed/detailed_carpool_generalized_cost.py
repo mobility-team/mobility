@@ -6,8 +6,8 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.transport.costs.congestion_state import CongestionState
 from mobility.transport.costs.parameters.cost_of_time_parameters import CostOfTimeParameters
-from mobility.trips.group_day_trips.transitions.congestion_state import CongestionState
 
 class DetailedCarpoolGeneralizedCost(InMemoryAsset):
     

@@ -17,8 +17,8 @@ from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityPar
 from mobility.transport.graphs.modified.modifiers.speed_modifier import SpeedModifier
 from mobility.transport.graphs.congested.congested_path_graph_snapshot import CongestedPathGraphSnapshot
 from mobility.transport.graphs.contracted.contracted_path_graph_snapshot import ContractedPathGraphSnapshot
+from mobility.transport.costs.congestion_state import CongestionState
 from mobility.transport.costs.path.path_travel_costs_snapshot import PathTravelCostsSnapshot
-from mobility.trips.group_day_trips.transitions.congestion_state import CongestionState
 
 from typing import List
 

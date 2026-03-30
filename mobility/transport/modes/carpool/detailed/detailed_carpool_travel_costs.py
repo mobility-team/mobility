@@ -13,12 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
+from mobility.transport.costs.congestion_state import CongestionState
 from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
 from mobility.transport.modes.carpool.detailed.detailed_carpool_travel_costs_snapshot import (
     DetailedCarpoolTravelCostsSnapshot,
 )
-from mobility.trips.group_day_trips.transitions.congestion_state import CongestionState
 
 class DetailedCarpoolTravelCosts(FileAsset):
 

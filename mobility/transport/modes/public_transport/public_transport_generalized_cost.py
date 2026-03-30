@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
-from mobility.trips.group_day_trips.transitions.congestion_state import CongestionState
+from mobility.transport.costs.congestion_state import CongestionState
 
 class PublicTransportGeneralizedCost(InMemoryAsset):
     

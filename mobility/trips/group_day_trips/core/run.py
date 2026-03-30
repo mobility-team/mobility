@@ -6,6 +6,7 @@ from typing import List
 
 import polars as pl
 
+from mobility.transport.costs.congestion_state import CongestionState
 from ..iterations import Iteration, Iterations
 from ..plans import DestinationSequences, ModeSequences, PlanInitializer, PlanUpdater
 from .parameters import Parameters
