@@ -31,11 +31,13 @@ def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled():
         {"from": [1], "to": [2], "mode": ["car"], "flow_volume": [10.0]}
     )
 
+    congestion_state = object()
+
     # Mock the expensive side effects and the final cost lookup: this test is a
     # regression guard for "did we trigger congestion recomputation at all?".
-    with patch.object(aggregator, "recompute_congested_costs") as recompute_mock:
+    with patch.object(aggregator, "build_congestion_state", return_value=congestion_state) as build_mock:
         with patch.object(aggregator, "get", return_value="costs") as get_mock:
-            result = aggregator.get_costs_for_next_iteration(
+            result_costs, result_congestion_state = aggregator.get_costs_for_next_iteration(
                 iteration=1,
                 cost_update_interval=1,
                 od_flows_by_mode=od_flows_by_mode,
@@ -45,14 +47,15 @@ def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled():
 
     # If congestion is enabled and the update interval matches, the aggregator
     # must rebuild congested costs before returning the next iteration cost view.
-    recompute_mock.assert_called_once_with(
+    build_mock.assert_called_once_with(
         od_flows_by_mode,
         run_key="run-key",
         is_weekday=True,
         iteration=1,
     )
-    get_mock.assert_called_once_with(congestion=True)
-    assert result == "costs"
+    get_mock.assert_called_once_with(congestion=True, congestion_state=congestion_state)
+    assert result_costs == "costs"
+    assert result_congestion_state is congestion_state
 
 
 def test_vehicle_od_flow_snapshot_hash_differs_between_weekday_and_weekend():

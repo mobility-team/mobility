@@ -20,7 +20,7 @@ package_fp <- args[1]
 cppr_graph_fp <- args[2]
 output_fp <- args[3]
 
-source(file.path(package_fp, "transport", "graphs", "common", "cpprouting_io.R"))
+source(file.path(package_fp, "transport", "graphs", "core", "cpprouting_io.R"))
 
 logger <- logger(appenders = console_appender())
 

@@ -21,7 +21,7 @@ gtfs_file_path <-args[3]
 parameters <- args[4]
 output_file_path <- args[5]
 
-source(file.path(package_path, "transport", "graphs", "common", "cpprouting_io.R"))
+source(file.path(package_path, "transport", "graphs", "core", "cpprouting_io.R"))
 
 logger <- logger(appenders = console_appender())
 

@@ -29,9 +29,9 @@ congestion_flows_scaling_factor <- args[6]
 output_fp <- args[7]
 
 
-source(file.path(package_fp, "transport", "graphs", "common", "cpprouting_io.R"))
-source(file.path(package_fp, "transport", "graphs", "common", "tz_pairs_to_vertex_pairs.R"))
-source(file.path(package_fp, "transport", "graphs", "common", "get_buildings_nearest_vertex_id.R"))
+source(file.path(package_fp, "transport", "graphs", "core", "cpprouting_io.R"))
+source(file.path(package_fp, "transport", "graphs", "core", "tz_pairs_to_vertex_pairs.R"))
+source(file.path(package_fp, "transport", "graphs", "core", "get_buildings_nearest_vertex_id.R"))
 
 logger <- logger(appenders = console_appender())
 

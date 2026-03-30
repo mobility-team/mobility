@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-import mobility.population as population_module
+import mobility.population.population as population_module
 
 
 def test_get_swiss_pop_groups_raises_without_census():

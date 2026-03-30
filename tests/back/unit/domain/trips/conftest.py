@@ -45,7 +45,7 @@ def patch_asset_init(monkeypatch, project_dir, fake_inputs_hash):
     Never call super().__init__ or do any I/O. Always set deterministic paths:
       <project_dir>/<fake_inputs_hash>-<file_name or asset.parquet>
 
-    We also patch the FileAsset class that mobility.trips.individual_year_trips imported (aliases/re-exports),
+    We also patch the FileAsset class that IndividualYearTrips imported,
     and walk its MRO to catch unexpected base classes.
     """
     from pathlib import Path as _Path
@@ -103,7 +103,7 @@ def patch_asset_init(monkeypatch, project_dir, fake_inputs_hash):
     for module_name, class_name, replacement in [
         ("mobility.runtime.assets.file_asset", "FileAsset", fake_file_asset_init),
         ("mobility.runtime.assets.asset", "Asset", fake_asset_init),
-        ("mobility.trips.individual_year_trips", "FileAsset", fake_file_asset_init),
+        ("mobility.trips.individual_year_trips.individual_year_trips", "FileAsset", fake_file_asset_init),
     ]:
         try:
             module = __import__(module_name, fromlist=[class_name])
@@ -415,7 +415,7 @@ def patch_filter_database(monkeypatch):
 
         return result_dataframe
 
-    # Patch both the original module and the alias imported inside mobility.trips.individual_year_trips
+    # Patch both the original module and the alias imported inside the implementation module
     try:
         import mobility.trips.individual_year_trips.safe_sample as safe_sample_module
         monkeypatch.setattr(safe_sample_module, "filter_database", stub_filter_database, raising=True)
@@ -423,7 +423,7 @@ def patch_filter_database(monkeypatch):
         pass
 
     try:
-        import mobility.trips.individual_year_trips as trips_module
+        import mobility.trips.individual_year_trips.individual_year_trips as trips_module
         monkeypatch.setattr(trips_module, "filter_database", stub_filter_database, raising=True)
     except Exception:
         pass
@@ -513,14 +513,14 @@ def patch_sampling_helpers(monkeypatch):
 
         return result_dataframe
 
-    # Patch both the original modules and the aliases imported in mobility.trips.individual_year_trips
+    # Patch both the original modules and the aliases imported in the implementation module
     try:
         import mobility.trips.individual_year_trips.sample_travels as module_sample_travels
         monkeypatch.setattr(module_sample_travels, "sample_travels", stub_sample_travels, raising=True)
     except Exception:
         pass
     try:
-        import mobility.trips.individual_year_trips as trips_module
+        import mobility.trips.individual_year_trips.individual_year_trips as trips_module
         monkeypatch.setattr(trips_module, "sample_travels", stub_sample_travels, raising=True)
     except Exception:
         pass
@@ -530,7 +530,7 @@ def patch_sampling_helpers(monkeypatch):
     except Exception:
         pass
     try:
-        import mobility.trips.individual_year_trips as trips_module_again
+        import mobility.trips.individual_year_trips.individual_year_trips as trips_module_again
         monkeypatch.setattr(trips_module_again, "safe_sample", stub_safe_sample, raising=True)
     except Exception:
         pass
@@ -556,10 +556,10 @@ def patch_default_gwp_dataframe(monkeypatch):
             }
         )
 
-    # Patch source class and any alias imported in mobility.trips.individual_year_trips
+    # Patch source class and the alias imported in the implementation module
     targets = [
         "mobility.impacts.default_gwp.DefaultGWP.as_dataframe",
-        "mobility.trips.individual_year_trips.DefaultGWP.as_dataframe",
+        "mobility.trips.individual_year_trips.individual_year_trips.DefaultGWP.as_dataframe",
     ]
     for target in targets:
         try:
@@ -581,7 +581,7 @@ def patch_mobility_survey(monkeypatch):
       - travels:     MultiIndex [country, csp, n_cars, city_category]
       - long_trips:  MultiIndex [country, travel_id]
       - n_travels, p_immobility, p_car: MultiIndex [country, csp]
-    Also patches both the source modules and the mobility.trips.individual_year_trips aliases.
+    Also patches both the source modules and the implementation-module aliases.
     """
     import pandas as pd
 
@@ -687,14 +687,14 @@ def patch_mobility_survey(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-    # Patch both the source modules and the mobility.trips.individual_year_trips aliases
+    # Patch both the source modules and the implementation-module aliases
     monkeypatch.setattr(
         "mobility.surveys.MobilitySurveyAggregator",
         StubMobilitySurveyAggregator,
         raising=True,
     )
     monkeypatch.setattr(
-        "mobility.trips.individual_year_trips.MobilitySurveyAggregator",
+        "mobility.trips.individual_year_trips.individual_year_trips.MobilitySurveyAggregator",
         StubMobilitySurveyAggregator,
         raising=True,
     )
@@ -704,7 +704,7 @@ def patch_mobility_survey(monkeypatch):
         raising=True,
     )
     monkeypatch.setattr(
-        "mobility.trips.individual_year_trips.EMPMobilitySurvey",
+        "mobility.trips.individual_year_trips.individual_year_trips.EMPMobilitySurvey",
         StubEMPMobilitySurvey,
         raising=True,
     )

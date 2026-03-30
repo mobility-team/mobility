@@ -52,7 +52,7 @@ source(file.path(package_path, "transport", "graphs", "congested", "duplicate_cp
 source(file.path(package_path, "transport", "graphs", "congested", "initialize_travel_costs.R"))
 source(file.path(package_path, "transport", "graphs", "modified", "concatenate_graphs.R"))
 source(file.path(package_path, "transport", "graphs", "simplified", "create_graph_from_travel_costs.R"))
-source(file.path(package_path, "transport", "graphs", "common", "cpprouting_io.R"))
+source(file.path(package_path, "transport", "graphs", "core", "cpprouting_io.R"))
 
 logger <- logger(appenders = console_appender())
 

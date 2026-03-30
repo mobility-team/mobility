@@ -23,7 +23,7 @@ cppr_graph_fp <- args[2]
 speed_modifiers <- args[3]
 output_fp <- args[4]
 
-source(file.path(package_fp, "transport", "graphs", "common", "cpprouting_io.R"))
+source(file.path(package_fp, "transport", "graphs", "core", "cpprouting_io.R"))
 source(file.path(package_fp, "transport", "graphs", "modified", "modifiers", "apply_limited_speed_zones_modifier.R"))
 source(file.path(package_fp, "transport", "graphs", "modified", "modifiers", "apply_border_crossing_speed_modifier.R"))
 source(file.path(package_fp, "transport", "graphs", "modified", "modifiers", "apply_road_lane_number_modifier.R"))

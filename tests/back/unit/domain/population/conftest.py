@@ -307,12 +307,12 @@ def patch_geopandas_sjoin(monkeypatch):
 @pytest.fixture(autouse=True)
 def patch_mobility_parsers(monkeypatch):
     """
-    Patch population loaders to provide consistent tiny datasets AND also patch the already-imported
-    names inside mobility.population (because it uses `from ... import ...`).
+    Patch population loaders to provide consistent tiny datasets and patch the
+    already-imported names inside mobility.population.population.
     """
     import mobility.population as population_pkg_local
     import mobility.spatial.admin_boundaries as admin_boundaries_module
-    population_module = sys.modules.get("mobility.population")
+    population_module = sys.modules.get("mobility.population.population")
 
     class CityLegalPopulationFake:
         def get(self):
@@ -353,12 +353,10 @@ def patch_mobility_parsers(monkeypatch):
     monkeypatch.setattr(admin_boundaries_module, "get_french_regions_boundaries", regions_boundaries_fake, raising=True)
     monkeypatch.setattr(admin_boundaries_module, "get_french_cities_boundaries", cities_boundaries_fake, raising=True)
 
-    # Also patch the already-imported names inside mobility.population (if loaded)
+    # Also patch the already-imported names inside mobility.population.population (if loaded)
     if population_module is not None:
-        # population.py did: from mobility.population import CityLegalPopulation, CensusLocalizedIndividuals
         monkeypatch.setattr(population_module, "CityLegalPopulation", CityLegalPopulationFake, raising=True)
         monkeypatch.setattr(population_module, "CensusLocalizedIndividuals", CensusLocalizedIndividualsFake, raising=True)
-        # and: from mobility.spatial.admin_boundaries import get_french_regions_boundaries, get_french_cities_boundaries
         monkeypatch.setattr(population_module, "get_french_regions_boundaries", regions_boundaries_fake, raising=True)
         monkeypatch.setattr(population_module, "get_french_cities_boundaries", cities_boundaries_fake, raising=True)
 
@@ -370,7 +368,7 @@ def patch_mobility_parsers(monkeypatch):
 @pytest.fixture(scope="session", autouse=True)
 def _import_population_module_once():
     # Just import; do NOT reload (avoids 'spec not found' under installed wheels).
-    import mobility.population  # noqa: F401
+    import mobility.population.population  # noqa: F401
 
 
 # --------------------------------------------------------------------------------------

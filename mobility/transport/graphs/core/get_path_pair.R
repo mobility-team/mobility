@@ -26,7 +26,7 @@ from <- args[3]
 to <- args[4]
 output_fp <- args[5]
 
-source(file.path(package_path, "transport", "graphs", "common", "cpprouting_io.R"))
+source(file.path(package_path, "transport", "graphs", "core", "cpprouting_io.R"))
 
 from <- fromJSON(from)
 to <- fromJSON(to)

@@ -15,7 +15,7 @@ tz_file_path <- 'D:\\data\\mobility\\projects\\haut-doubs\\94c4efec9c89bdd5fae5a
 graph_fp <- "D:\\data\\mobility\\projects\\haut-doubs\\path_graph_car\\contracted\\f92c93e808a0af018f4858ddcc6bb1b5-done"
 modal_shift <- '{"max_travel_time": 0.33, "average_speed": 50.0, "shift_time": 10.0, "shortcuts_shift_time": null, "shortcuts_locations": null}'
 
-source(file.path(package_path, "transport", "graphs", "common", "cpprouting_io.R"))
+source(file.path(package_path, "transport", "graphs", "core", "cpprouting_io.R"))
 
 transport_zones <- st_read(tz_file_path)
 
