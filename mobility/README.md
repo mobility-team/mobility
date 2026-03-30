@@ -40,7 +40,7 @@ Ils utilisent un lien permanent du fournisseur, ou, à défaut, les liens perman
 
 Pour les données plus légères (en dessous de 50 Mo), nous pouvons les stocker directement dans le package, en indiquant dans la documentation le moment où il faudra les mettre à jour.
 
-Les données sont décrites dans [mobility/data](https://github.com/mobility-team/mobility/tree/main/mobility/data).
+Les ressources statiques embarquées sont décrites dans [mobility/resources](https://github.com/mobility-team/mobility/tree/main/mobility/resources).
 
 
 [^1]: Nous autorisons 127 caractères au lieu des 79 prévus à la base dans PEP8.

@@ -1,10 +1,10 @@
 from pathlib import Path
-from mobility.trips import Trips
-from mobility.transport_modes.default_gwp import DefaultGWP
+from mobility.trips.individual_year_trips import IndividualYearTrips
+from mobility.impacts.default_gwp import DefaultGWP
 
 
 def test_init_builds_inputs_and_cache(project_dir, fake_population_asset, patch_mobility_survey, fake_inputs_hash):
-    trips_instance = Trips(population=fake_population_asset, gwp=DefaultGWP())
+    trips_instance = IndividualYearTrips(population=fake_population_asset, gwp=DefaultGWP())
 
     # Inputs are stored
     assert "population" in trips_instance.inputs

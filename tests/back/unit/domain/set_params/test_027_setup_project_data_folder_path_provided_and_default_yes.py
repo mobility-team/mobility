@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from mobility.set_params import setup_package_data_folder_path, setup_project_data_folder_path
+from mobility.config import setup_package_data_folder_path, setup_project_data_folder_path
 
 def test_setup_project_data_folder_provided_creates_and_sets_env(tmp_path):
     provided = tmp_path / "projdata"

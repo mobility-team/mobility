@@ -14,8 +14,8 @@ def test_901_ensure_quickstart_works():
     spec.loader.exec_module(module)
     output = module.run_quickstart_ci()
 
-    weekday_flows = output["weekday_flows"]
+    weekday_plan_steps = output["weekday_plan_steps"]
     global_metrics = output["global_metrics"]
 
-    assert weekday_flows.height > 0
+    assert weekday_plan_steps.height > 0
     assert global_metrics is not None
