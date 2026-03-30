@@ -45,36 +45,6 @@ def no_op_progress(monkeypatch):
         pass
 
 
-# ----------------------------------------------------------------------
-# Patch NumPy private _methods to ignore the _NoValue sentinel (pandas interop)
-# ----------------------------------------------------------------------
-@pytest.fixture(autouse=True)
-def patch_numpy__methods(monkeypatch):
-    try:
-        from numpy.core import _methods as _np_methods
-        from numpy import _NoValue as _NP_NoValue
-    except Exception:
-        return
-
-    def _wrap(func):
-        def _wrapped(a, axis=None, dtype=None, out=None,
-                    keepdims=_NP_NoValue, initial=_NP_NoValue, where=_NP_NoValue):
-            if keepdims is _NP_NoValue:
-                keepdims = False
-            if initial is _NP_NoValue:
-                initial = None
-            if where is _NP_NoValue:
-                where = True
-            return func(a, axis=axis, dtype=dtype, out=out,
-                        keepdims=keepdims, initial=initial, where=where)
-        return _wrapped
-
-    if hasattr(_np_methods, "_sum"):
-        monkeypatch.setattr(_np_methods, "_sum", _wrap(_np_methods._sum), raising=True)
-    if hasattr(_np_methods, "_amax"):
-        monkeypatch.setattr(_np_methods, "_amax", _wrap(_np_methods._amax), raising=True)
-
-
 # ---------------------------------------------------------
 # Parquet stubs helper (for future cache read/write tests)
 # ---------------------------------------------------------
