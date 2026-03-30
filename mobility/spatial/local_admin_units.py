@@ -16,7 +16,7 @@ class LocalAdminUnits(FileAsset):
     
     Use .get() method to get its content (under Parquet format).
     
-    In France, uses adminexpress base from IGN, stored on cquest.org. For Paris, Lyon and Marseille, each 'arrondissement' is considered a distinct admin unit.
+    In France, uses adminexpress base from IGN, stored on cartes.gouv.fr. For Paris, Lyon and Marseille, each 'arrondissement' is considered a distinct admin unit.
     
     In Switzerland, uses swisstopo data stored on geo.admin.ch
     
@@ -64,7 +64,7 @@ class LocalAdminUnits(FileAsset):
         
         logging.info("Preparing french city limits...")
         
-        url = "https://data.cquest.org/ign/adminexpress/ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2023-05-03.7z"
+        url = "https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG-CARTO/ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2024-02-22/ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2024-02-22.7z"
         path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express/ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2023-05-03.7z"
         download_file(url, path)
         
