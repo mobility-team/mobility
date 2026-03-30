@@ -73,23 +73,6 @@ class TransportMode(InMemoryAsset):
 
         super().__init__(inputs)
 
-    def clone(self):
-        """Create a shallow clone of the mode with cloned travel costs."""
-        params = self.inputs["parameters"]
-        return TransportMode(
-            name=params.name,
-            travel_costs=self.inputs["travel_costs"].clone(),
-            generalized_cost=self.inputs["generalized_cost"],
-            ghg_intensity=params.ghg_intensity,
-            congestion=params.congestion,
-            vehicle=params.vehicle,
-            multimodal=params.multimodal,
-            return_mode=params.return_mode,
-            survey_ids=params.survey_ids,
-            parameters=params.model_copy(),
-            parameters_cls=params.__class__,
-        )
-
     def build_congestion_flows(self, od_flows_by_mode):
         """Build congestion-relevant flows for this mode.
 

@@ -7,6 +7,7 @@ import numpy as np
 
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.io.download_file import download_file
+from mobility.runtime.io.patch_openpyxl import patch_openpyxl
 
 class LocalAdminUnitsCategories(FileAsset):
     
@@ -48,6 +49,9 @@ class LocalAdminUnitsCategories(FileAsset):
             zip_ref.extractall(path.parent)
        
         path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "insee/UU2020_au_01-01-2023.xlsx"
+
+        # This workbook contains malformed color values that require the openpyxl workaround.
+        patch_openpyxl()
         
         categories = pd.read_excel(
             path,

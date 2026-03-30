@@ -222,7 +222,7 @@ class StudyAreaParameters(BaseModel):
         float,
         Field(
             default=40.0,
-            ge=5.0,
+            ge=0.0,
             le=100.0,
             title="Study area radius",
             description="Radius in km around the selected local admin unit.",

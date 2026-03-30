@@ -1,7 +1,4 @@
 from .config import set_params
-from .runtime.io import patch_openpyxl
-
-patch_openpyxl()
 
 from .spatial.study_area import StudyArea
 from .spatial.transport_zones import TransportZones
@@ -27,6 +24,7 @@ from .activities import (
     Study,
     Work,
 )
+from .impacts import carbon_computation
 
 from .trips.individual_year_trips import IndividualYearTrips
 from .trips.group_day_trips import GroupDayTrips

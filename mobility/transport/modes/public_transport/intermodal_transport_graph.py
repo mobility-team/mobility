@@ -12,7 +12,7 @@ from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.modes.core.transport_mode import TransportMode
 from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
 from mobility.transport.modes.public_transport.public_transport_graph import PublicTransportGraph, PublicTransportRoutingParameters
-from mobility.transport.graphs.core.path_graph import ContractedPathGraph
+from mobility.transport.graphs.contracted.contracted_path_graph import ContractedPathGraph
 from mobility.spatial.osm import OSMData
 
 class IntermodalTransportGraph(FileAsset):
