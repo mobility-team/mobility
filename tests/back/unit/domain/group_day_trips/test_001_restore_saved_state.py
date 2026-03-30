@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
+from mobility.runtime.parameter_profiles import SimulationStep
 from mobility.trips.group_day_trips.core.parameters import Parameters
 from mobility.trips.group_day_trips.core.run import Run, RunState
 
@@ -29,6 +30,11 @@ class FakeCostsAggregator:
         self._congestion_state = congestion_state
         self.load_calls = []
         self.get_calls = []
+        self.resolve_calls = []
+
+    def resolve_for_step(self, step):
+        self.resolve_calls.append(step)
+        return self
 
     def load_congestion_state(self, **kwargs):
         self.load_calls.append(kwargs)
@@ -104,6 +110,7 @@ def test_restore_saved_state_happy_path_restores_mutable_state():
             "congestion_state": "congestion-state",
         }
     ]
+    assert run.costs_aggregator.resolve_calls == [SimulationStep(iteration=3)]
 
 
 def test_restore_saved_state_wraps_load_state_errors():
