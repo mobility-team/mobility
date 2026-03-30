@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated, List
 
 from pydantic import Field
-from mobility.simulation_profile import ParameterProfile
+from mobility.runtime.parameter_profiles import ParameterProfile
 
 from mobility.activities.activity import Activity, ActivityParameters
 

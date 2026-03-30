@@ -7,7 +7,7 @@ from typing import Annotated, List, Dict
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from pydantic import BaseModel, ConfigDict, Field
-from mobility.simulation_profile import ParameterProfile, SimulationStep, resolve_model_for_step
+from mobility.runtime.parameter_profiles import ParameterProfile, SimulationStep, resolve_model_for_step
 from mobility.validation_types import NonNegativeFloat, UnitIntervalFloat
 
 
@@ -64,21 +64,21 @@ class Activity(InMemoryAsset):
         super().__init__(inputs)
 
 
-    def get_parameters_at_step(self, step: SimulationStep) -> "MotiveParameters":
-        """Returns the motive parameters in effect at a simulation step.
+    def get_parameters_at_step(self, step: SimulationStep) -> "ActivityParameters":
+        """Returns the activity parameters in effect at a simulation step.
 
         Args:
             step: Simulation step used to evaluate step-varying parameter
                 profiles.
 
         Returns:
-            MotiveParameters: Parameter model with all step-varying fields
-            resolved to scalar values for ``step``.
+            ActivityParameters: Parameter model with all step-varying fields
+                resolved to scalar values for ``step``.
         """
         return resolve_model_for_step(self.inputs["parameters"], step)
 
 
-    def get_utilities(self, transport_zones, parameters: "MotiveParameters" | None = None):
+    def get_utilities(self, transport_zones, parameters: "ActivityParameters" | None = None):
 
         parameters = parameters or self.inputs["parameters"]
 
@@ -197,3 +197,15 @@ class ActivityParameters(BaseModel):
             description="Coefficient scaling sink saturation in activity utility.",
         ),
     ]
+
+
+def resolve_activity_parameters(
+    activities: list[Activity],
+    step: SimulationStep,
+) -> dict[str, ActivityParameters]:
+    """Resolve all activity parameter models for one simulation step."""
+
+    return {
+        activity.name: activity.get_parameters_at_step(step)
+        for activity in activities
+    }

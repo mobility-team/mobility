@@ -7,7 +7,6 @@ import polars as pl
 from .destination_sequences import DestinationSequences
 from .mode_sequences import ModeSequences
 from ..transitions.transition_schema import TRANSITION_EVENT_COLUMNS
-from mobility.simulation_profile import SimulationStep
 
 
 class PlanUpdater:
@@ -23,13 +22,13 @@ class PlanUpdater:
         congestion_state: Any,
         remaining_opportunities: pl.DataFrame,
         activity_dur: pl.DataFrame,
-        step: SimulationStep,
+        iteration: int,
+        resolved_activity_parameters: dict[str, Any],
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
         home_night_dur: pl.DataFrame,
         stay_home_plan: pl.DataFrame,
         parameters: Any,
-        activities: list[Any],
     ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
         """Advance one iteration of plan updates."""
 
@@ -42,8 +41,8 @@ class PlanUpdater:
             congestion_state,
             remaining_opportunities,
             activity_dur,
-            step,
-            activities,
+            iteration,
+            resolved_activity_parameters,
             parameters.min_activity_time_constant,
             destination_sequences,
             mode_sequences,
@@ -51,15 +50,13 @@ class PlanUpdater:
         self._assert_current_plans_covered_by_possible_plan_steps(
             current_plans,
             possible_plan_steps,
-            step.iteration,
+            iteration,
         )
-
-        home_activity = [activity for activity in activities if activity.name == "home"][0]
 
         possible_plan_utility = self.get_possible_plan_utility(
             possible_plan_steps,
             home_night_dur,
-            home_activity.get_parameters_at_step(step).value_of_time_stay_home,
+            resolved_activity_parameters["home"].value_of_time_stay_home,
             stay_home_plan,
             parameters.min_activity_time_constant,
         )
@@ -68,7 +65,7 @@ class PlanUpdater:
         current_plans, transition_events = self.apply_transitions(
             current_plans,
             transition_prob,
-            step.iteration,
+            iteration,
         )
         transition_events = self.add_transition_plan_details(transition_events, possible_plan_steps)
         current_plan_steps = self.get_current_plan_steps(current_plans, possible_plan_steps)
@@ -118,8 +115,8 @@ class PlanUpdater:
         congestion_state,
         opportunities,
         activity_dur,
-        step: SimulationStep,
-        activities,
+        iteration: int,
+        resolved_activity_parameters: dict[str, Any],
         min_activity_time_constant,
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
@@ -141,16 +138,11 @@ class PlanUpdater:
         spat_chains = destination_sequences.get_cached_asset().lazy()
         modes = mode_sequences.get_cached_asset().lazy()
 
-        activity_parameters_at_step = {
-            activity.name: activity.get_parameters_at_step(step)
-            for activity in activities
-        }
-
         value_of_time = (
             pl.from_dicts(
                 [
                     {"activity": activity_name, "value_of_time": activity_parameters.value_of_time}
-                    for activity_name, activity_parameters in activity_parameters_at_step.items()
+                    for activity_name, activity_parameters in resolved_activity_parameters.items()
                 ]
             ).with_columns(
                 activity=pl.col("activity").cast(pl.Enum(activity_dur["activity"].dtype.categories))
@@ -229,7 +221,7 @@ class PlanUpdater:
                 sample = zero_mass_steps.head(5).to_dicts()
                 raise ValueError(
                     "Found carried-forward current_plan_steps with non-positive n_persons while "
-                    f"building possible_plan_steps at iteration={step.iteration}. "
+                    f"building possible_plan_steps at iteration={iteration}. "
                     f"Invalid rows={zero_mass_steps.height}. Sample={sample}"
                 )
 
@@ -237,7 +229,7 @@ class PlanUpdater:
                 current_plan_steps.lazy()
                 .with_columns(
                     duration_per_pers=pl.col("duration") / pl.col("n_persons"),
-                    iteration=pl.lit(step.iteration).cast(pl.UInt32),
+                    iteration=pl.lit(iteration).cast(pl.UInt32),
                     anchor_to=pl.col("to"),
                 )
                 .join(demand_groups.select(["demand_group_id", "csp"]).lazy(), on="demand_group_id")
@@ -725,17 +717,11 @@ class PlanUpdater:
         self,
         current_plan_steps,
         opportunities,
-        activities,
-        step: SimulationStep,
+        resolved_activity_parameters: dict[str, Any],
     ):
         """Recompute remaining opportunities per (activity, destination)."""
 
         logging.info("Computing remaining opportunities at destinations...")
-
-        activity_parameters_at_step = {
-            activity.name: activity.get_parameters_at_step(step)
-            for activity in activities
-        }
 
         saturation_fun_parameters = (
             pl.from_dicts(
@@ -745,7 +731,7 @@ class PlanUpdater:
                         "beta": activity_parameters.saturation_fun_beta,
                         "ref_level": activity_parameters.saturation_fun_ref_level,
                     }
-                    for activity_name, activity_parameters in activity_parameters_at_step.items()
+                    for activity_name, activity_parameters in resolved_activity_parameters.items()
                 ]
             ).with_columns(activity=pl.col("activity").cast(pl.Enum(opportunities["activity"].dtype.categories)))
         )

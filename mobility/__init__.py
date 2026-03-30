@@ -46,7 +46,7 @@ from .transport.modes.public_transport import (
     PublicTransportRoutingParameters,
 )
 from .transport.modes.core import IntermodalTransfer, ModeRegistry
-from .simulation_profile import ParameterProfile, SimulationStep
+from .runtime.parameter_profiles import ParameterProfile, SimulationStep
 
 from .transport.graphs.modified.modifiers import (
     BorderCrossingSpeedModifier,

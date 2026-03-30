@@ -9,7 +9,7 @@ from pydantic import Field
 
 from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.work.jobs_active_population_distribution import JobsActivePopulationDistribution
-from mobility.simulation_profile import ParameterProfile
+from mobility.runtime.parameter_profiles import ParameterProfile
 from mobility.validation_types import UnitIntervalFloat
 
 

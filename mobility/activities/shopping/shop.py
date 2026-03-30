@@ -9,7 +9,7 @@ from pydantic import Field
 
 from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.shopping.shops_turnover_distribution import ShopsTurnoverDistribution
-from mobility.simulation_profile import ParameterProfile
+from mobility.runtime.parameter_profiles import ParameterProfile
 from mobility.validation_types import UnitIntervalFloat
 
 

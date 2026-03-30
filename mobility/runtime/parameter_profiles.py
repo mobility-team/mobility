@@ -38,15 +38,7 @@ class ParameterProfile(BaseModel):
 
     @model_validator(mode="after")
     def validate_points(self) -> "ParameterProfile":
-        """Validates control points after model initialization.
-
-        Returns:
-            ParameterProfile: The validated profile instance.
-
-        Raises:
-            ValueError: If no control point is provided or if an iteration
-                index is lower than 1.
-        """
+        """Validates control points after model initialization."""
         if not self.points:
             raise ValueError("ParameterProfile.points must not be empty.")
 
@@ -57,14 +49,7 @@ class ParameterProfile(BaseModel):
         return self
 
     def at(self, step: SimulationStep) -> float:
-        """Evaluates the profile at a simulation step.
-
-        Args:
-            step: Simulation step at which to evaluate the profile.
-
-        Returns:
-            float: Parameter value at the requested step.
-        """
+        """Evaluates the profile at a simulation step."""
         sorted_points = sorted(self.points.items())
         iterations = np.array([iteration for iteration, _ in sorted_points], dtype=float)
         values = np.array([value for _, value in sorted_points], dtype=float)
@@ -76,22 +61,9 @@ class ParameterProfile(BaseModel):
 
         return float(np.interp(step.iteration, iterations, values))
 
+
 def resolve_value_for_step(value: Any, step: SimulationStep) -> Any:
-    """Resolves one value for a simulation step.
-
-    Supported inputs are:
-    - ``ParameterProfile`` instances, which are evaluated at ``step``
-    - pydantic models, which are resolved field by field
-    - ``dict``/``list``/``tuple`` containers, which are resolved recursively
-    - plain leaf values, which are returned unchanged
-
-    Args:
-        value: Value to resolve.
-        step: Simulation step used for evaluation.
-
-    Returns:
-        Any: Resolved value for the requested step.
-    """
+    """Resolve one value for a simulation step."""
 
     if isinstance(value, ParameterProfile):
         return value.at(step)
@@ -112,16 +84,7 @@ def resolve_value_for_step(value: Any, step: SimulationStep) -> Any:
 
 
 def resolve_model_for_step(model: T, step: SimulationStep) -> T:
-    """Resolves step-varying fields of a pydantic model.
-
-    Args:
-        model: Pydantic model whose fields may contain step-varying values.
-        step: Simulation step used for evaluation.
-
-    Returns:
-        T: New validated model instance with step-varying fields replaced by
-        their scalar values at ``step``.
-    """
+    """Resolve step-varying fields of a pydantic model."""
 
     resolved_data = {
         field_name: resolve_value_for_step(getattr(model, field_name), step)

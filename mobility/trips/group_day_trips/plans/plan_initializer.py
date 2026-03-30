@@ -2,8 +2,7 @@ import math
 
 import polars as pl
 
-from mobility.activities.activity import Activity
-from mobility.simulation_profile import SimulationStep
+from mobility.activities.activity import ActivityParameters
 
 
 class PlanInitializer:
@@ -189,13 +188,12 @@ class PlanInitializer:
         self,
         demand_groups,
         home_night_dur,
-        home_activity: Activity,
-        step: SimulationStep,
+        home_activity_parameters: ActivityParameters,
         min_activity_time_constant: float,
     ):
         """Create the baseline 'stay home all day' state."""
 
-        value_of_time_stay_home = home_activity.get_parameters_at_step(step).value_of_time_stay_home
+        value_of_time_stay_home = home_activity_parameters.value_of_time_stay_home
 
         stay_home_state = (
             demand_groups.select(["demand_group_id", "csp", "n_persons"])

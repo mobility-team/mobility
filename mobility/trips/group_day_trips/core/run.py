@@ -15,9 +15,10 @@ from .run_state import RunState
 from mobility.transport.costs.transport_costs_aggregator import TransportCostsAggregator
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities import Activity
+from mobility.activities.activity import resolve_activity_parameters
 from mobility.surveys import MobilitySurvey
 from mobility.population import Population
-from mobility.simulation_profile import SimulationStep
+from mobility.runtime.parameter_profiles import SimulationStep
 from mobility.transport.modes.core.transport_mode import TransportMode
 
 
@@ -148,12 +149,11 @@ class Run(FileAsset):
             demand_groups,
         )
         step = SimulationStep(iteration=1)
-        home_activity = [activity for activity in self.activities if activity.name == "home"][0]
+        resolved_activity_parameters = resolve_activity_parameters(self.activities, step)
         stay_home_plan, current_plans = self.initializer.get_stay_home_state(
             demand_groups,
             home_night_dur,
-            home_activity,
-            step,
+            resolved_activity_parameters["home"],
             self.parameters.min_activity_time_constant,
         )
         opportunities = self.initializer.get_opportunities(
@@ -275,8 +275,11 @@ class Run(FileAsset):
         seed: int,
     ) -> DestinationSequences:
         """Run destination sampling and persist destination sequences for one iteration."""
+        step = SimulationStep(iteration=iteration.iteration)
+        resolved_activity_parameters = resolve_activity_parameters(self.activities, step)
         destination_sequences = iteration.destination_sequences(
             activities=self.activities,
+            resolved_activity_parameters=resolved_activity_parameters,
             transport_zones=self.population.transport_zones,
             remaining_opportunities=state.remaining_opportunities,
             chains=state.chains_by_activity,
@@ -315,6 +318,7 @@ class Run(FileAsset):
     ) -> pl.DataFrame:
         """Advance the simulation state by one iteration and return transition events."""
         step = SimulationStep(iteration=iteration.iteration)
+        resolved_activity_parameters = resolve_activity_parameters(self.activities, step)
         state.current_plans, state.current_plan_steps, transition_events = self.updater.get_new_plans(
             state.current_plans,
             state.current_plan_steps,
@@ -324,13 +328,13 @@ class Run(FileAsset):
             state.congestion_state,
             state.remaining_opportunities,
             state.activity_dur,
-            step,
+            iteration.iteration,
+            resolved_activity_parameters,
             destination_sequences,
             mode_sequences,
             state.home_night_dur,
             state.stay_home_plan,
             self.parameters,
-            self.activities,
         )
         state.costs, state.congestion_state = self.updater.get_new_costs(
             state.costs,
@@ -345,8 +349,7 @@ class Run(FileAsset):
         state.remaining_opportunities = self.updater.get_new_opportunities(
             state.current_plan_steps,
             state.opportunities,
-            self.activities,
-            step,
+            resolved_activity_parameters,
         )
         return transition_events
 
