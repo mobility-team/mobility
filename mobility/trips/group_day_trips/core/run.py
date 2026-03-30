@@ -2,39 +2,21 @@ import logging
 import os
 import pathlib
 import random
-from dataclasses import dataclass
 from typing import List
 
 import polars as pl
 
-from mobility.trips.group_day_trips.transitions.congestion_state import CongestionState
 from ..iterations import Iteration, Iterations
 from ..plans import DestinationSequences, ModeSequences, PlanInitializer, PlanUpdater
 from .parameters import Parameters
 from .results import RunResults
+from .run_state import RunState
 from mobility.transport.costs.transport_costs_aggregator import TransportCostsAggregator
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities import Activity
 from mobility.surveys import MobilitySurvey
 from mobility.population import Population
 from mobility.transport.modes.core.transport_mode import TransportMode
-
-
-@dataclass
-class RunState:
-    chains_by_activity: pl.DataFrame
-    chains: pl.DataFrame
-    demand_groups: pl.DataFrame
-    activity_dur: pl.DataFrame
-    home_night_dur: pl.DataFrame
-    stay_home_plan: pl.DataFrame
-    opportunities: pl.DataFrame
-    current_plans: pl.DataFrame
-    remaining_opportunities: pl.DataFrame
-    costs: pl.DataFrame
-    congestion_state: CongestionState | None
-    start_iteration: int
-    current_plan_steps: pl.DataFrame | None = None
 
 
 class Run(FileAsset):

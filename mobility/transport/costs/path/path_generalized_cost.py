@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.trips.group_day_trips.transitions.congestion_state import CongestionState
 
 class PathGeneralizedCost(InMemoryAsset):
     
@@ -20,7 +21,7 @@ class PathGeneralizedCost(InMemoryAsset):
         metrics=["cost"],
         congestion: bool = False,
         detail_distances: bool = False,
-        congestion_state: "CongestionState | None" = None,
+        congestion_state: CongestionState | None = None,
     ) -> pd.DataFrame:
         
         metrics = list(metrics)

@@ -7,6 +7,7 @@ from typing import Any
 
 import polars as pl
 
+from ..core.run_state import RunState
 from ..plans.destination_sequences import DestinationSequences
 from ..plans.mode_sequences import ModeSequences
 from .iteration_assets import (
@@ -113,7 +114,7 @@ class Iteration:
         )
 
 
-    def save_state(self, state: "RunState", rng_state: object) -> None:
+    def save_state(self, state: RunState, rng_state: object) -> None:
         """Persist the run state for this completed iteration."""
         iteration_state_folder = self.iterations.folder_paths["iteration-state"]
         try:

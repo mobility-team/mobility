@@ -18,6 +18,7 @@ from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
 from mobility.transport.modes.carpool.detailed.detailed_carpool_travel_costs_snapshot import (
     DetailedCarpoolTravelCostsSnapshot,
 )
+from mobility.trips.group_day_trips.transitions.congestion_state import CongestionState
 
 class DetailedCarpoolTravelCosts(FileAsset):
 
@@ -42,7 +43,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
 
         super().__init__(inputs, cache_path)
 
-    def get(self, congestion: bool = False, congestion_state: "CongestionState | None" = None) -> pd.DataFrame:
+    def get(self, congestion: bool = False, congestion_state: CongestionState | None = None) -> pd.DataFrame:
         requested_congestion = congestion and congestion_state is None
         self.update_ancestors_if_needed()
 
@@ -127,7 +128,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
     
     def get_snapshot_asset(
         self,
-        congestion_state: "CongestionState",
+        congestion_state: CongestionState,
     ) -> DetailedCarpoolTravelCostsSnapshot | None:
         flow_asset = congestion_state.for_mode("carpool")
         if flow_asset is None:
