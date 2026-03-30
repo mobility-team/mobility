@@ -4,7 +4,7 @@ import os
 import pandas as pd
 import pytest
 
-from mobility.parsers.mobility_survey.france import EMPMobilitySurvey, ENTDMobilitySurvey
+from mobility.surveys.france import EMPMobilitySurvey, ENTDMobilitySurvey
 
 
 @pytest.fixture

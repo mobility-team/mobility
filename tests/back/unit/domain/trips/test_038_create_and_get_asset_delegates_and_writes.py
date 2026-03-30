@@ -1,6 +1,6 @@
 from pathlib import Path
 import pandas as pd
-from mobility.trips import Trips
+from mobility.trips.individual_year_trips import IndividualYearTrips
 
 
 def test_create_and_get_asset_delegates_and_writes(
@@ -25,7 +25,7 @@ def test_create_and_get_asset_delegates_and_writes(
     parquet_stubs["install_read"](population_individuals_dataframe)
     parquet_stubs["install_write"]()
 
-    trips_instance = Trips(population=fake_population_asset)
+    trips_instance = IndividualYearTrips(population=fake_population_asset)
     result_trips_dataframe = trips_instance.create_and_get_asset()
 
     assert parquet_stubs["calls"]["write"], "to_parquet was not called"

@@ -1,6 +1,6 @@
 import pandas as pd
 from pathlib import Path
-from mobility.trips import Trips
+from mobility.trips.individual_year_trips import IndividualYearTrips
 
 
 def test_get_cached_asset_reads_parquet(project_dir, fake_population_asset, patch_mobility_survey, parquet_stubs, fake_inputs_hash):
@@ -9,7 +9,7 @@ def test_get_cached_asset_reads_parquet(project_dir, fake_population_asset, patc
     )
     parquet_stubs["install_read"](cached_trips_dataframe)
 
-    trips_instance = Trips(population=fake_population_asset)
+    trips_instance = IndividualYearTrips(population=fake_population_asset)
 
     result_dataframe = trips_instance.get_cached_asset()
     assert isinstance(result_dataframe, pd.DataFrame)

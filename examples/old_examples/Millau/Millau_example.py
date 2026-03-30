@@ -18,7 +18,7 @@ Prerequisites :
       (communes_surfaces_csv)
 """
 
-from mobility.radiation_departments import *
+from mobility.runtime.r_integrationadiation_departments import *
 import time
 
 

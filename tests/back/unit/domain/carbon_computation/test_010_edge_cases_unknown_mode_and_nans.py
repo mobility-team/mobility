@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from mobility import carbon_computation as cc
+from mobility.impacts import carbon_computation as cc
 
 
 def test_unknown_mode_uses_custom_zero_and_noncar_nan_passengers(monkeypatch):

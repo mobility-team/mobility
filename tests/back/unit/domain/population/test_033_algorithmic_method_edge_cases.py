@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-import mobility.population as population_module
+import mobility.population.population as population_module
 
 
 def test_get_swiss_pop_groups_raises_without_census():
@@ -70,7 +70,7 @@ def test_get_swiss_pop_groups_happy_path():
             })
             return geopandas_module.GeoDataFrame(data_frame, geometry="geometry")
 
-    import mobility.parsers as parsers_module_local
+    import mobility.population as population_pkg
 
     population = population_module.Population(
         transport_zones=TransportZonesSwissOnly(),
@@ -79,7 +79,7 @@ def test_get_swiss_pop_groups_happy_path():
     )
 
     transport_zones_geo_data_frame = population.inputs["transport_zones"].get()
-    legal_population_by_city = parsers_module_local.CityLegalPopulation().get()
+    legal_population_by_city = population_pkg.CityLegalPopulation().get()
     lau_to_transport_zone_coefficients = (
         transport_zones_geo_data_frame[["transport_zone_id", "local_admin_unit_id", "weight"]]
         .rename(columns={"weight": "lau_to_tz_coeff"})
