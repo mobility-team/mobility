@@ -5,29 +5,28 @@ import polars as pl
 import pytest
 
 import mobility
-from mobility.activities import Home, Other, Work
-from mobility.trips.group_day_trips import GroupDayTrips, Parameters
+from mobility.activities import HomeActivity, OtherActivity, WorkActivity
+from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
 from mobility.surveys.france import EMPMobilitySurvey
 
 
 def _select_subway_endpoints(transport_zones: mobility.TransportZones) -> tuple[dict, dict]:
-    study_area = transport_zones.inputs["study_area"].get().to_crs(4326)
+    zones = transport_zones.get().to_crs(4326)
     center_local_admin_unit_id = transport_zones.inputs["parameters"].local_admin_unit_id
 
-    center_candidates = study_area.loc[study_area["local_admin_unit_id"] == center_local_admin_unit_id].copy()
+    center_candidates = zones.loc[zones["local_admin_unit_id"] == center_local_admin_unit_id].copy()
     if center_candidates.empty:
         raise ValueError("Could not find the central local admin unit in transport zones.")
 
-    center_lau = center_candidates.iloc[0]
-    other_laus = study_area.loc[study_area["local_admin_unit_id"] != center_lau["local_admin_unit_id"]].copy()
-    if other_laus.empty:
-        raise ValueError("Need at least two local admin units to build a synthetic GTFS line.")
+    center_zone = center_candidates.iloc[0]
+    other_zones = zones.loc[zones["transport_zone_id"] != center_zone["transport_zone_id"]].copy()
+    if other_zones.empty:
+        raise ValueError("Need at least two transport zones to build a synthetic GTFS line.")
 
-    center_centroid = center_lau.geometry.centroid
-    other_laus["distance_to_center"] = other_laus.geometry.centroid.distance(center_centroid)
-    target_lau = other_laus.sort_values("distance_to_center", ascending=True).iloc[0]
+    other_zones["distance_to_center"] = other_zones.geometry.distance(center_zone.geometry)
+    target_zone = other_zones.sort_values("distance_to_center", ascending=False).iloc[0]
 
-    return center_lau, target_lau
+    return center_zone, target_zone
 
 
 def _build_gtfs_zip(
@@ -35,11 +34,11 @@ def _build_gtfs_zip(
     *,
     output_name: str,
     segment_travel_time: float,
-) -> tuple[str, str, str]:
-    center_lau, target_lau = _select_subway_endpoints(transport_zones)
+) -> tuple[str, int, int]:
+    center_zone, target_zone = _select_subway_endpoints(transport_zones)
 
-    center_centroid = center_lau.geometry.centroid
-    target_centroid = target_lau.geometry.centroid
+    center_centroid = center_zone.geometry.centroid
+    target_centroid = target_zone.geometry.centroid
 
     feed = mobility.GTFSFeedSpec(
         agency_id="test_subway",
@@ -52,12 +51,12 @@ def _build_gtfs_zip(
             "center": mobility.GTFSStopSpec(
                 lon=float(center_centroid.x),
                 lat=float(center_centroid.y),
-                name=str(center_lau["local_admin_unit_name"]),
+                name=f"Center {center_zone['transport_zone_id']}",
             ),
             "target": mobility.GTFSStopSpec(
                 lon=float(target_centroid.x),
                 lat=float(target_centroid.y),
-                name=str(target_lau["local_admin_unit_name"]),
+                name=f"Target {target_zone['transport_zone_id']}",
             ),
         },
         lines=[
@@ -75,19 +74,15 @@ def _build_gtfs_zip(
     output_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / output_name
     gtfs_zip = mobility.build_gtfs_zip(feed, output_path)
 
-    return (
-        str(gtfs_zip),
-        str(center_lau["local_admin_unit_id"]),
-        str(target_lau["local_admin_unit_id"]),
-    )
+    return str(gtfs_zip), int(center_zone["transport_zone_id"]), int(target_zone["transport_zone_id"])
 
 
 def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files):
-    car_mode = mobility.Car(transport_zones)
-    walk_mode = mobility.Walk(transport_zones)
-    bicycle_mode = mobility.Bicycle(transport_zones)
+    car_mode = mobility.CarMode(transport_zones)
+    walk_mode = mobility.WalkMode(transport_zones)
+    bicycle_mode = mobility.BicycleMode(transport_zones)
     mode_registry = mobility.ModeRegistry([car_mode, walk_mode, bicycle_mode])
-    public_transport_mode = mobility.PublicTransport(
+    public_transport_mode = mobility.PublicTransportMode(
         transport_zones,
         mode_registry=mode_registry,
         routing_parameters=mobility.PublicTransportRoutingParameters(
@@ -110,7 +105,7 @@ def test_008d_group_day_trips_pt_gtfs_profiles_change_iteration_2(test_data):
         local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
         radius=test_data["transport_zones_radius"],
     )
-    slow_gtfs_zip, center_lau_id, target_lau_id = _build_gtfs_zip(
+    slow_gtfs_zip, center_zone_id, target_zone_id = _build_gtfs_zip(
         transport_zones,
         output_name="test-slow-subway-line.zip",
         segment_travel_time=900.0,
@@ -139,7 +134,7 @@ def test_008d_group_day_trips_pt_gtfs_profiles_change_iteration_2(test_data):
         seed=0,
     )
 
-    static = GroupDayTrips(
+    static = PopulationGroupDayTrips(
         population=pop,
         modes=_build_modes(
             transport_zones,
@@ -151,15 +146,15 @@ def test_008d_group_day_trips_pt_gtfs_profiles_change_iteration_2(test_data):
             ),
         ),
         activities=[
-            Home(),
-            Work(value_of_time=5.0),
-            Other(population=pop),
+            HomeActivity(),
+            WorkActivity(value_of_time=5.0),
+            OtherActivity(population=pop),
         ],
         surveys=[emp],
         parameters=common_parameters,
     )
 
-    dynamic = GroupDayTrips(
+    dynamic = PopulationGroupDayTrips(
         population=pop,
         modes=_build_modes(
             transport_zones,
@@ -171,9 +166,9 @@ def test_008d_group_day_trips_pt_gtfs_profiles_change_iteration_2(test_data):
             ),
         ),
         activities=[
-            Home(),
-            Work(value_of_time=5.0),
-            Other(population=pop),
+            HomeActivity(),
+            WorkActivity(value_of_time=5.0),
+            OtherActivity(population=pop),
         ],
         surveys=[emp],
         parameters=common_parameters,
@@ -185,51 +180,16 @@ def test_008d_group_day_trips_pt_gtfs_profiles_change_iteration_2(test_data):
     static_costs = static_result["weekday_costs"].collect()
     dynamic_costs = dynamic_result["weekday_costs"].collect()
     dynamic_transitions = dynamic_result["weekday_transitions"].collect()
-    zones = pl.from_pandas(
-        transport_zones.get()[["transport_zone_id", "local_admin_unit_id"]]
-    ).with_columns(
-        transport_zone_id=pl.col("transport_zone_id").cast(pl.Int32),
-        local_admin_unit_id=pl.col("local_admin_unit_id").cast(pl.String),
-    )
 
     pt_mode_name = "walk/public_transport/walk"
-    def aggregate_lau_pair(costs: pl.DataFrame) -> pl.DataFrame:
-        return (
-            costs.filter(pl.col("mode") == pt_mode_name)
-            .join(
-                zones.rename(
-                    {
-                        "transport_zone_id": "from",
-                        "local_admin_unit_id": "from_local_admin_unit_id",
-                    }
-                ),
-                on="from",
-                how="left",
-            )
-            .join(
-                zones.rename(
-                    {
-                        "transport_zone_id": "to",
-                        "local_admin_unit_id": "to_local_admin_unit_id",
-                    }
-                ),
-                on="to",
-                how="left",
-            )
-            .filter(
-                (pl.col("from_local_admin_unit_id") == center_lau_id)
-                & (pl.col("to_local_admin_unit_id") == target_lau_id)
-            )
-            .group_by(["from_local_admin_unit_id", "to_local_admin_unit_id"])
-            .agg(
-                min_cost=pl.col("cost").min(),
-                min_time=pl.col("time").min(),
-                pair_count=pl.len(),
-            )
-        )
+    od_filter = (
+        (pl.col("from") == center_zone_id)
+        & (pl.col("to") == target_zone_id)
+        & (pl.col("mode") == pt_mode_name)
+    )
 
-    static_od = aggregate_lau_pair(static_costs)
-    dynamic_od = aggregate_lau_pair(dynamic_costs)
+    static_od = static_costs.filter(od_filter)
+    dynamic_od = dynamic_costs.filter(od_filter)
 
     assert static_costs.height > 0
     assert dynamic_costs.height > 0
@@ -237,10 +197,10 @@ def test_008d_group_day_trips_pt_gtfs_profiles_change_iteration_2(test_data):
     assert static_od.height == 1
     assert dynamic_od.height == 1
 
-    static_cost = static_od["min_cost"].item()
-    dynamic_cost = dynamic_od["min_cost"].item()
-    static_time = static_od["min_time"].item()
-    dynamic_time = dynamic_od["min_time"].item()
+    static_cost = static_od["cost"].item()
+    dynamic_cost = dynamic_od["cost"].item()
+    static_time = static_od["time"].item()
+    dynamic_time = dynamic_od["time"].item()
 
     assert dynamic_cost < static_cost
     assert dynamic_time < static_time
