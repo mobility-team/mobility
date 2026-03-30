@@ -40,13 +40,22 @@ from .transport.modes.carpool import (
     DetailedCarpoolGeneralizedCostParameters,
 )
 from .transport.modes.public_transport import (
+    build_gtfs_zip,
+    GTFSFeedSpec,
+    GTFSLineSpec,
+    GTFSStopSpec,
     PublicTransport,
     PublicTransportMode,
     PublicTransportParameters,
     PublicTransportRoutingParameters,
 )
 from .transport.modes.core import IntermodalTransfer, ModeRegistry
-from .runtime.parameter_profiles import ParameterProfile, SimulationStep
+from .runtime.parameter_profiles import (
+    ListParameterProfile,
+    ParameterProfile,
+    ScalarParameterProfile,
+    SimulationStep,
+)
 
 from .transport.graphs.modified.modifiers import (
     BorderCrossingSpeedModifier,

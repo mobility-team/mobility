@@ -9,7 +9,7 @@ from pydantic import Field
 
 from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.work.jobs_active_population_distribution import JobsActivePopulationDistribution
-from mobility.runtime.parameter_profiles import ParameterProfile
+from mobility.runtime.parameter_profiles import ScalarParameterProfile
 from mobility.validation_types import UnitIntervalFloat
 
 
@@ -89,7 +89,7 @@ class WorkParameters(ActivityParameters):
     """Parameters specific to the work activity."""
 
     value_of_time: Annotated[
-        float | ParameterProfile,
+        float | ScalarParameterProfile,
         Field(default=10.0),
     ]
 

@@ -7,7 +7,11 @@ from typing import Annotated, List, Dict
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from pydantic import BaseModel, ConfigDict, Field
-from mobility.runtime.parameter_profiles import ParameterProfile, SimulationStep, resolve_model_for_step
+from mobility.runtime.parameter_profiles import (
+    ScalarParameterProfile,
+    SimulationStep,
+    resolve_model_for_step,
+)
 from mobility.validation_types import NonNegativeFloat, UnitIntervalFloat
 
 
@@ -127,7 +131,7 @@ class ActivityParameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     value_of_time: Annotated[
-        NonNegativeFloat | ParameterProfile,
+        NonNegativeFloat | ScalarParameterProfile,
         Field(
             default=10.0,
             title="Value of time",
@@ -154,7 +158,7 @@ class ActivityParameters(BaseModel):
     ]
 
     value_of_time_v2: Annotated[
-        NonNegativeFloat | ParameterProfile | None,
+        NonNegativeFloat | ScalarParameterProfile | None,
         Field(
             default=None,
             title="Alternative value of time",

@@ -64,7 +64,7 @@ def test_008c_group_day_trips_parameter_profiles_change_iteration_2(test_data):
         activities=[
             Home(),
             Work(
-                value_of_time=mobility.ParameterProfile(
+                value_of_time=mobility.ScalarParameterProfile(
                     mode="step",
                     points={1: 5.0, 2: 50.0},
                 )

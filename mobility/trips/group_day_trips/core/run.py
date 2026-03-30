@@ -172,7 +172,7 @@ class Run(FileAsset):
             current_plans=current_plans,
             remaining_opportunities=opportunities.clone(),
             costs=self.initializer.get_current_costs(
-                self.costs_aggregator,
+                self.costs_aggregator.resolve_for_step(step),
                 congestion=False,
             ),
             congestion_state=None,
@@ -233,7 +233,9 @@ class Run(FileAsset):
             str(self.is_weekday),
             str(resume_from_iteration),
         )
-        state.costs = self.costs_aggregator.get(
+        state.costs = self.costs_aggregator.resolve_for_step(
+            SimulationStep(iteration=state.start_iteration)
+        ).get(
             congestion=(state.congestion_state is not None),
             congestion_state=state.congestion_state,
         )
@@ -248,6 +250,8 @@ class Run(FileAsset):
         """Execute one simulation iteration and update the mutable run state."""
         logging.info("Iteration %s", str(iteration.iteration))
         seed = self.rng.getrandbits(64)
+        step = SimulationStep(iteration=iteration.iteration)
+        resolved_costs_aggregator = self.costs_aggregator.resolve_for_step(step)
 
         destination_sequences = self._sample_and_write_destination_sequences(
             state,
@@ -258,12 +262,14 @@ class Run(FileAsset):
             state,
             iteration,
             destination_sequences,
+            resolved_costs_aggregator,
         )
         transition_events = self._update_iteration_state(
             state,
             iteration,
             destination_sequences,
             mode_sequences,
+            resolved_costs_aggregator,
         )
         iteration.save_transition_events(transition_events)
 
@@ -297,11 +303,12 @@ class Run(FileAsset):
         state: RunState,
         iteration: Iteration,
         destination_sequences: DestinationSequences,
+        resolved_costs_aggregator: TransportCostsAggregator,
     ) -> ModeSequences:
         """Run mode-sequence search and persist the results for one iteration."""
         mode_sequences = iteration.mode_sequences(
             destination_sequences=destination_sequences,
-            costs_aggregator=self.costs_aggregator,
+            costs_aggregator=resolved_costs_aggregator,
             parameters=self.parameters,
             congestion_state=state.congestion_state,
         )
@@ -315,6 +322,7 @@ class Run(FileAsset):
         iteration: Iteration,
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
+        resolved_costs_aggregator: TransportCostsAggregator,
     ) -> pl.DataFrame:
         """Advance the simulation state by one iteration and return transition events."""
         step = SimulationStep(iteration=iteration.iteration)
@@ -324,7 +332,7 @@ class Run(FileAsset):
             state.current_plan_steps,
             state.demand_groups,
             state.chains_by_activity,
-            self.costs_aggregator,
+            resolved_costs_aggregator,
             state.congestion_state,
             state.remaining_opportunities,
             state.activity_dur,
@@ -341,7 +349,7 @@ class Run(FileAsset):
             iteration.iteration,
             self.parameters.n_iter_per_cost_update,
             state.current_plan_steps,
-            self.costs_aggregator,
+            self.costs_aggregator.resolve_for_step(SimulationStep(iteration=iteration.iteration + 1)),
             congestion_state=state.congestion_state,
             run_key=iteration.iterations.run_inputs_hash,
             is_weekday=self.is_weekday,
@@ -368,7 +376,9 @@ class Run(FileAsset):
 
     def _build_final_costs(self, state: RunState) -> pl.DataFrame:
         """Compute the final OD costs to attach to the written outputs."""
-        return self.costs_aggregator.get_costs_by_od_and_mode(
+        return self.costs_aggregator.resolve_for_step(
+            SimulationStep(iteration=self.parameters.n_iterations)
+        ).get_costs_by_od_and_mode(
             ["cost", "distance", "time", "ghg_emissions"],
             congestion=(state.congestion_state is not None),
             congestion_state=state.congestion_state,

@@ -9,11 +9,7 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class SimulationStep(BaseModel):
-    """Identifies one simulation step.
-
-    Attributes:
-        iteration: One-based simulation iteration index.
-    """
+    """Identifies one simulation step."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -21,35 +17,33 @@ class SimulationStep(BaseModel):
 
 
 class ParameterProfile(BaseModel):
-    """Defines a parameter value profile over simulation iterations.
-
-    The profile is specified by control points keyed by iteration index.
-    Values can be evaluated with step-wise or linear interpolation.
-
-    Attributes:
-        mode: Evaluation mode used between control points.
-        points: Mapping from iteration index to parameter value.
-    """
+    """Base class for parameter profiles evaluated over simulation iterations."""
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_points(self) -> "ParameterProfile":
+        points = getattr(self, "points", None)
+        if not points:
+            raise ValueError(f"{self.__class__.__name__}.points must not be empty.")
+
+        invalid_steps = [step for step in points if step < 1]
+        if invalid_steps:
+            raise ValueError(f"{self.__class__.__name__}.points keys must be >= 1.")
+
+        return self
+
+    def at(self, step: SimulationStep) -> Any:
+        raise NotImplementedError
+
+
+class ScalarParameterProfile(ParameterProfile):
+    """Numeric parameter profile supporting step-wise and linear interpolation."""
 
     mode: Literal["step", "linear"] = "step"
     points: dict[int, float]
 
-    @model_validator(mode="after")
-    def validate_points(self) -> "ParameterProfile":
-        """Validates control points after model initialization."""
-        if not self.points:
-            raise ValueError("ParameterProfile.points must not be empty.")
-
-        invalid_steps = [step for step in self.points if step < 1]
-        if invalid_steps:
-            raise ValueError("ParameterProfile.points keys must be >= 1.")
-
-        return self
-
     def at(self, step: SimulationStep) -> float:
-        """Evaluates the profile at a simulation step."""
         sorted_points = sorted(self.points.items())
         iterations = np.array([iteration for iteration, _ in sorted_points], dtype=float)
         values = np.array([value for _, value in sorted_points], dtype=float)
@@ -60,6 +54,19 @@ class ParameterProfile(BaseModel):
             return float(values[idx])
 
         return float(np.interp(step.iteration, iterations, values))
+
+
+class ListParameterProfile(ParameterProfile):
+    """List-valued parameter profile supporting step-wise changes only."""
+
+    points: dict[int, list[str]]
+
+    def at(self, step: SimulationStep) -> list[str]:
+        sorted_points = sorted(self.points.items())
+        iterations = [iteration for iteration, _ in sorted_points]
+        idx = np.searchsorted(iterations, step.iteration, side="right") - 1
+        idx = max(idx, 0)
+        return list(sorted_points[idx][1])
 
 
 def resolve_value_for_step(value: Any, step: SimulationStep) -> Any:

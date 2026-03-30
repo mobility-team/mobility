@@ -4,3 +4,9 @@ from .public_transport import (
     PublicTransportMode,
     PublicTransportParameters,
 )
+from .gtfs_builder import (
+    build_gtfs_zip,
+    GTFSFeedSpec,
+    GTFSLineSpec,
+    GTFSStopSpec,
+)

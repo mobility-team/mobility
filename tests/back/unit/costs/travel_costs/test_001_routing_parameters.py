@@ -1,5 +1,10 @@
 import pytest
 
+from mobility.runtime.parameter_profiles import (
+    ListParameterProfile,
+    SimulationStep,
+    resolve_model_for_step,
+)
 from mobility.transport.costs.parameters.path_routing_parameters import PathRoutingParameters
 from mobility.transport.modes.public_transport.public_transport_graph import (
     PublicTransportRoutingParameters,
@@ -31,3 +36,20 @@ def test_public_transport_routing_parameters_exposes_explicit_outer_distance():
     params = PublicTransportRoutingParameters()
 
     assert params.max_beeline_distance == 80.0
+
+
+def test_public_transport_routing_parameters_resolve_list_profiles_by_iteration():
+    params = PublicTransportRoutingParameters(
+        additional_gtfs_files=ListParameterProfile(
+            points={
+                1: ["base.zip"],
+                2: ["base.zip", "event.zip"],
+            }
+        )
+    )
+
+    step_1 = resolve_model_for_step(params, SimulationStep(iteration=1))
+    step_2 = resolve_model_for_step(params, SimulationStep(iteration=2))
+
+    assert step_1.additional_gtfs_files == ["base.zip"]
+    assert step_2.additional_gtfs_files == ["base.zip", "event.zip"]

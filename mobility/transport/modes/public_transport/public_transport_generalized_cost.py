@@ -41,10 +41,11 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
         last_leg_mode_name = self.inputs["last_leg_mode_name"]
         
         metrics = list(metrics)
-        costs = self.inputs["travel_costs"].get()
+        travel_costs = self.inputs["travel_costs"]
+        costs = travel_costs.get()
         
-        study_area = self.inputs["travel_costs"].inputs["transport_zones"].study_area.get()
-        transport_zones = self.inputs["travel_costs"].inputs["transport_zones"].get()
+        study_area = travel_costs.inputs["transport_zones"].study_area.get()
+        transport_zones = travel_costs.inputs["transport_zones"].get()
         
         transport_zones = pd.merge(transport_zones, study_area[["local_admin_unit_id", "country"]], on="local_admin_unit_id")
         
