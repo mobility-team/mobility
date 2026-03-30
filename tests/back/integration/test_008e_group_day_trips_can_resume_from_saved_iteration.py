@@ -1,9 +1,9 @@
 import pytest
 
 import mobility
-from mobility.activities import Home, Other, Work
+from mobility.activities import HomeActivity, OtherActivity, WorkActivity
 from mobility.surveys.france import EMPMobilitySurvey
-from mobility.trips.group_day_trips import GroupDayTrips, Parameters
+from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
 
 
 def _build_group_day_trips(test_data):
@@ -18,19 +18,19 @@ def _build_group_day_trips(test_data):
         sample_size=test_data["population_sample_size"],
     )
 
-    car_mode = mobility.Car(transport_zones)
-    walk_mode = mobility.Walk(transport_zones)
-    bicycle_mode = mobility.Bicycle(transport_zones)
+    car_mode = mobility.CarMode(transport_zones)
+    walk_mode = mobility.WalkMode(transport_zones)
+    bicycle_mode = mobility.BicycleMode(transport_zones)
     mode_registry = mobility.ModeRegistry([car_mode, walk_mode, bicycle_mode])
-    public_transport_mode = mobility.PublicTransport(
+    public_transport_mode = mobility.PublicTransportMode(
         transport_zones,
         mode_registry=mode_registry,
     )
 
-    return GroupDayTrips(
+    return PopulationGroupDayTrips(
         population=pop,
         modes=[car_mode, walk_mode, bicycle_mode, public_transport_mode],
-        activities=[Home(), Work(), Other(population=pop)],
+        activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
         parameters=Parameters(
             n_iterations=2,

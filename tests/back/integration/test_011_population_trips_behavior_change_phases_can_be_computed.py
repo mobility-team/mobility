@@ -4,7 +4,12 @@ import pytest
 import mobility
 from mobility.activities import Home, Other, Work
 from mobility.surveys.france import EMPMobilitySurvey
-from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, GroupDayTrips, Parameters
+from mobility.trips.group_day_trips import (
+    BehaviorChangePhase,
+    BehaviorChangeScope,
+    Parameters,
+    PopulationGroupDayTrips,
+)
 
 
 @pytest.mark.dependency(
@@ -28,7 +33,7 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
     car_mode = mobility.Car(transport_zones)
     walk_mode = mobility.Walk(transport_zones)
 
-    pop_trips = GroupDayTrips(
+    pop_trips = PopulationGroupDayTrips(
         population=pop,
         modes=[car_mode, walk_mode],
         activities=[Home(), Work(), Other(population=pop)],
