@@ -218,6 +218,7 @@ class Run(FileAsset):
 
         iterations.discard_future_iterations(iteration=resume_from_iteration)
         state.current_plans = saved_state.current_plans
+        state.current_plan_steps = saved_state.current_plan_steps
         state.remaining_opportunities = saved_state.remaining_opportunities
         state.congestion_state = self.costs_aggregator.load_congestion_state(
             run_key=self.inputs_hash,

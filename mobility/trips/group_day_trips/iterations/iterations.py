@@ -12,6 +12,7 @@ from ..plans.destination_sequences import DestinationSequences
 from ..plans.mode_sequences import ModeSequences
 from .iteration_assets import (
     CurrentPlansAsset,
+    CurrentPlanStepsAsset,
     IterationCompleteAsset,
     RemainingOpportunitiesAsset,
     RngStateAsset,
@@ -24,6 +25,7 @@ class IterationState:
     """Minimal persisted plan distribution required to resume a run from one iteration."""
 
     current_plans: pl.DataFrame
+    current_plan_steps: pl.DataFrame
     remaining_opportunities: pl.DataFrame
     rng_state: object
 
@@ -98,6 +100,21 @@ class Iteration:
     def load_state(self) -> IterationState:
         """Load the saved run state for this completed iteration."""
         iteration_state_folder = self.iterations.folder_paths["iteration-state"]
+        current_plan_steps_asset = CurrentPlanStepsAsset(
+            run_key=self.iterations.run_inputs_hash,
+            is_weekday=self.iterations.is_weekday,
+            iteration=self.iteration,
+            base_folder=iteration_state_folder,
+        )
+        if current_plan_steps_asset.cache_path.exists() is False:
+            raise RuntimeError(
+                "Saved GroupDayTrips iteration state is incomplete. "
+                f"Missing current_plan_steps for run_inputs_hash={self.iterations.run_inputs_hash}, "
+                f"is_weekday={self.iterations.is_weekday}, iteration={self.iteration}. "
+                "This cache was likely created with an older code version. "
+                "Clear the saved iteration artifacts and rerun from scratch."
+            )
+
         return IterationState(
             current_plans=CurrentPlansAsset(
                 run_key=self.iterations.run_inputs_hash,
@@ -105,6 +122,7 @@ class Iteration:
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
             ).get(),
+            current_plan_steps=current_plan_steps_asset.get(),
             remaining_opportunities=RemainingOpportunitiesAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
@@ -130,6 +148,13 @@ class Iteration:
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
                 current_plans=state.current_plans,
+            ).create_and_get_asset()
+            CurrentPlanStepsAsset(
+                run_key=self.iterations.run_inputs_hash,
+                is_weekday=self.iterations.is_weekday,
+                iteration=self.iteration,
+                base_folder=iteration_state_folder,
+                current_plan_steps=state.current_plan_steps,
             ).create_and_get_asset()
             RemainingOpportunitiesAsset(
                 run_key=self.iterations.run_inputs_hash,
@@ -234,6 +259,7 @@ class Iterations:
             "transitions": ["*transition_events_*.parquet"],
             "iteration-state": [
                 "*current_plans_*.parquet",
+                "*current_plan_steps_*.parquet",
                 "*remaining_opportunities_*.parquet",
                 "*rng_state_*.pkl",
                 "*iteration_complete_*.json",

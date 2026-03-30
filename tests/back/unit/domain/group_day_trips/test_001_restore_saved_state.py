@@ -76,6 +76,7 @@ def test_restore_saved_state_happy_path_restores_mutable_state():
     saved_rng = random.Random(999)
     saved_state = SimpleNamespace(
         current_plans=pl.DataFrame({"plan_id": [11, 12]}),
+        current_plan_steps=pl.DataFrame({"step_id": [31, 32]}),
         remaining_opportunities=pl.DataFrame({"opportunity_id": [21, 22]}),
         rng_state=saved_rng.getstate(),
     )
@@ -92,6 +93,7 @@ def test_restore_saved_state_happy_path_restores_mutable_state():
     assert iterations.requested_iterations == [2]
     assert iterations.discarded_iteration == 2
     assert state.current_plans.equals(saved_state.current_plans)
+    assert state.current_plan_steps.equals(saved_state.current_plan_steps)
     assert state.remaining_opportunities.equals(saved_state.remaining_opportunities)
     assert state.congestion_state == "congestion-state"
     assert state.start_iteration == 3
@@ -126,9 +128,27 @@ def test_restore_saved_state_wraps_load_state_errors():
         )
 
 
+def test_restore_saved_state_wraps_incomplete_saved_state_errors():
+    iterations = FakeIterations(
+        saved_state=RuntimeError(
+            "Saved GroupDayTrips iteration state is incomplete. Missing current_plan_steps."
+        )
+    )
+    run = make_run(congestion_state=None)
+    state = make_state()
+
+    with pytest.raises(RuntimeError, match="Failed to load saved GroupDayTrips iteration state"):
+        run._restore_saved_state(
+            iterations=iterations,
+            state=state,
+            resume_from_iteration=2,
+        )
+
+
 def test_restore_saved_state_wraps_rng_restore_errors():
     saved_state = SimpleNamespace(
         current_plans=pl.DataFrame({"plan_id": [11]}),
+        current_plan_steps=pl.DataFrame({"step_id": [31]}),
         remaining_opportunities=pl.DataFrame({"opportunity_id": [21]}),
         rng_state=object(),
     )

@@ -236,7 +236,16 @@ class PlanUpdater:
                     iteration=pl.lit(iteration).cast(pl.UInt32),
                 )
                 .join(demand_groups.select(["demand_group_id", "csp"]).lazy(), on="demand_group_id")
-                .join(cost_by_od_and_modes.lazy(), on=["from", "to", "mode"])
+                # Keep current plans even when refreshed routing costs no longer
+                # provide a path for one carried-forward OD/mode combination.
+                # Those plans should remain valid "from" states for the
+                # transition model, but with a very poor refreshed utility so
+                # agents can move away from them.
+                .join(
+                    cost_by_od_and_modes.lazy(),
+                    on=["from", "to", "mode"],
+                    how="left",
+                )
                 .join(activity_dur.lazy(), on=["csp", "activity"])
                 .join(value_of_time.lazy(), on="activity")
                 .join(
@@ -245,6 +254,9 @@ class PlanUpdater:
                     how="left",
                 )
                 .with_columns(
+                    cost=pl.col("cost").fill_null(1e9),
+                    distance=pl.col("distance").fill_null(0.0),
+                    time=pl.col("time").fill_null(0.0),
                     k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0),
                     min_activity_time=pl.col("mean_duration_per_pers") * math.exp(-min_activity_time_constant),
                 )
