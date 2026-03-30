@@ -73,7 +73,7 @@ class LocalAdminUnits(FileAsset):
                 
         # Convert to geoparquet
         path = path.parent / "ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2023-05-03" / \
-         "ADMIN-EXPRESS-COG-CARTO" / "1_DONNEES_LIVRAISON_2023-05-03" / "ADECOGC_3-2_SHP_LAMB93_FXX"
+         "ADMIN-EXPRESS-COG-CARTO" / "1_DONNEES_LIVRAISON_2024-03-00169" / "ADECOGC_3-2_SHP_LAMB93_FXX"
         
         # Replace Paris / Lyon / Marseille cities with their constituting arrondissements
         arrond = gpd.read_file(path / "ARRONDISSEMENT_MUNICIPAL.shp")
