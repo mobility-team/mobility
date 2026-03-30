@@ -12,7 +12,7 @@ def prepare_french_admin_boundaries():
     
     logging.info("Preparing french city limits...")
     
-    url = "https://data.cquest.org/ign/adminexpress/ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2023-05-03.7z"
+    url = "https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG-CARTO/ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2024-02-22/ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2024-02-22.7z"
     path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "ign/admin-express/ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2023-05-03.7z"
     download_file(url, path)
     
@@ -20,9 +20,14 @@ def prepare_french_admin_boundaries():
         z.extractall(path.parent)
             
     # Convert to geoparquet
-    path = path.parent / "ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2023-05-03" / \
-     "ADMIN-EXPRESS-COG-CARTO" / "1_DONNEES_LIVRAISON_2023-05-03" / "ADECOGC_3-2_SHP_LAMB93_FXX"
-    
+    path = ( 
+        path.parent 
+        / "ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2024-02-22" 
+        / "ADMIN-EXPRESS-COG-CARTO" 
+        / "1_DONNEES_LIVRAISON_2024-03-00169" 
+        / "ADECOGC_3-2_SHP_LAMB93_FXX-ED2024-02-22"
+    )
+
     for shp_file in ["ARRONDISSEMENT_MUNICIPAL.shp", "COMMUNE.shp", "EPCI.shp", "REGION.shp"]:
             
          df = gpd.read_file(path / shp_file)
