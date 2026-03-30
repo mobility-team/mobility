@@ -1,8 +1,8 @@
 import enum
 import json
 import os
-import pandas as pd
 import pytest
+import pandas as pd
 
 import mobility
 from mobility.activities import Home, Other, Work
@@ -12,8 +12,10 @@ from mobility.surveys.france import EMPMobilitySurvey
 
 @pytest.fixture
 def safe_json(monkeypatch):
-    """Make json.dump/json.dumps (and orjson.dumps if present) resilient
-    to non-serializable objects during this test."""
+    """
+    Make json.dump/json.dumps (and orjson.dumps if present) resilient to
+    non-serializable objects during this test.
+    """
     def _fallback(o):
         if isinstance(o, enum.Enum):
             return getattr(o, "value", o.name)
@@ -58,12 +60,20 @@ def safe_json(monkeypatch):
 
 
 def _to_pandas(val):
-    """Convert various table-like results to a pandas DataFrame."""
+    """
+    Convert various table-like results to a pandas DataFrame:
+    - pandas DataFrame -> as is
+    - Polars LazyFrame/DataFrame -> collect/to_pandas
+    - PySpark DataFrame -> toPandas
+    - dict with a path-like -> read_parquet
+    - path-like -> read_parquet
+    - object with .collect() -> collect then recurse
+    """
     # pandas
     if hasattr(val, "shape") and hasattr(val, "columns"):
-        return val
+        return val  # assume pandas
 
-    # polars
+    # Polars
     try:
         import polars as pl  # type: ignore
         if isinstance(val, pl.LazyFrame):
@@ -73,7 +83,7 @@ def _to_pandas(val):
     except Exception:
         pass
 
-    # pyspark
+    # PySpark
     try:
         from pyspark.sql import DataFrame as SparkDF  # type: ignore
         if isinstance(val, SparkDF):
@@ -81,16 +91,18 @@ def _to_pandas(val):
     except Exception:
         pass
 
-    # mapping with a meaningful key
+    # dict with path or dataframe-ish
     if isinstance(val, dict):
-        for k in ("data", "df", "path", "output", "result"):
+        # common keys
+        for k in ("weekday_plan_steps", "plan_steps", "path", "data", "output"):
             if k in val:
                 return _to_pandas(val[k])
 
-    # lazy/collector
+    # has .collect() -> collect then recurse
     if hasattr(val, "collect") and callable(getattr(val, "collect")):
         try:
-            return _to_pandas(val.collect())
+            collected = val.collect()
+            return _to_pandas(collected)
         except Exception:
             pass
 
@@ -98,7 +110,7 @@ def _to_pandas(val):
     if isinstance(val, (str, os.PathLike)):
         return pd.read_parquet(val)
 
-    # last attempt
+    # last attempt: try treating as path-like string
     try:
         return pd.read_parquet(str(val))
     except Exception:
@@ -107,15 +119,18 @@ def _to_pandas(val):
 
 @pytest.mark.dependency(
     depends=[
-        "tests/back/integration/test_008_population_segment_day_plans_can_be_computed.py::test_008_population_segment_day_plans_can_be_computed"
+        "tests/back/integration/test_001_transport_zones_can_be_created.py::test_001_transport_zones_can_be_created",
+        "tests/back/integration/test_003_car_costs_can_be_computed.py::test_003_car_costs_can_be_computed",
+        "tests/back/integration/test_005_mobility_surveys_can_be_prepared.py::test_005_mobility_surveys_can_be_prepared",
     ],
     scope="session",
 )
-def test_009_population_segment_day_plans_results_can_be_computed(test_data, safe_json):
+def test_008_group_day_trips_can_be_computed(test_data, safe_json):
     transport_zones = mobility.TransportZones(
         local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
         radius=test_data["transport_zones_radius"],
     )
+
     emp = EMPMobilitySurvey()
 
     pop = mobility.Population(
@@ -123,9 +138,18 @@ def test_009_population_segment_day_plans_results_can_be_computed(test_data, saf
         sample_size=test_data["population_sample_size"],
     )
 
+    car_mode = mobility.Car(transport_zones)
+    walk_mode = mobility.Walk(transport_zones)
+    bicycle_mode = mobility.Bicycle(transport_zones)
+    mode_registry = mobility.ModeRegistry([car_mode, walk_mode, bicycle_mode])
+    public_transport_mode = mobility.PublicTransport(
+        transport_zones,
+        mode_registry=mode_registry,
+    )
+
     pop_trips = GroupDayTrips(
         population=pop,
-        modes=[mobility.Car(transport_zones)],
+        modes=[car_mode, walk_mode, bicycle_mode, public_transport_mode],
         activities=[Home(), Work(), Other(population=pop)],
         surveys=[emp],
         parameters=Parameters(
@@ -133,30 +157,17 @@ def test_009_population_segment_day_plans_results_can_be_computed(test_data, saf
             n_iter_per_cost_update=0,
             alpha=0.01,
             dest_prob_cutoff=0.9,
-            k_mode_sequences=3,
+            k_mode_sequences=6,
             cost_uncertainty_sd=1.0,
             mode_sequence_search_parallel=False,
-            seed=0
+            simulate_weekend=False
         ),
     )
 
-    # Evaluate various metrics
-    global_metrics = pop_trips.weekday_run.evaluate("global_metrics")
-    weekday_opportunity_occupation = pop_trips.weekday_run.evaluate("opportunity_occupation")
-    weekday_trip_count_by_demand_group = pop_trips.weekday_run.evaluate("trip_count_by_demand_group")
-    weekday_distance_per_person = pop_trips.weekday_run.evaluate("distance_per_person")
-    weekday_time_per_person = pop_trips.weekday_run.evaluate("time_per_person")
+    result = pop_trips.get()
+    # result is expected to expose 'weekday_plan_steps'
+    plan_steps_raw = result["weekday_plan_steps"] if isinstance(result, dict) else getattr(result, "weekday_plan_steps", result)
+    df = _to_pandas(plan_steps_raw)
 
-    # Normalize results to pandas DataFrames
-    gm_df = _to_pandas(global_metrics)
-    opportunity_df = _to_pandas(weekday_opportunity_occupation)
-    trips_df = _to_pandas(weekday_trip_count_by_demand_group)
-    dist_df = _to_pandas(weekday_distance_per_person)
-    time_df = _to_pandas(weekday_time_per_person)
-
-    # Assertions
-    assert gm_df.shape[0] > 0
-    assert opportunity_df.shape[0] > 0
-    assert trips_df.shape[0] > 0
-    assert dist_df.shape[0] > 0
-    assert time_df.shape[0] > 0
+    assert hasattr(df, "shape"), f"Expected a DataFrame-like, got {type(df)}"
+    assert df.shape[0] > 0

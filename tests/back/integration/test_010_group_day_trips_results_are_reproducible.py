@@ -8,11 +8,11 @@ from mobility.surveys.france import EMPMobilitySurvey
 
 @pytest.mark.dependency(
     depends=[
-        "tests/back/integration/test_008_population_segment_day_plans_can_be_computed.py::test_008_population_segment_day_plans_can_be_computed"
+        "tests/back/integration/test_008_group_day_trips_can_be_computed.py::test_008_group_day_trips_can_be_computed"
     ],
     scope="session",
 )
-def test_010_population_segment_day_plans_results_are_reproducible(test_data):
+def test_010_group_day_trips_results_are_reproducible(test_data):
     transport_zones = mobility.TransportZones(
         local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
         radius=test_data["transport_zones_radius"],
