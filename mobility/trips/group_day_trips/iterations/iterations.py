@@ -3,7 +3,7 @@ import re
 import shutil
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import polars as pl
 
@@ -16,9 +16,6 @@ from .iteration_assets import (
     RngStateAsset,
     TransitionEventsAsset,
 )
-
-if TYPE_CHECKING:
-    from ..core.run import RunState
 
 
 @dataclass(frozen=True)

@@ -19,10 +19,7 @@ from mobility.transport.graphs.congested.congested_path_graph_snapshot import Co
 from mobility.transport.graphs.contracted.contracted_path_graph_snapshot import ContractedPathGraphSnapshot
 from mobility.transport.costs.path.path_travel_costs_snapshot import PathTravelCostsSnapshot
 
-from typing import TYPE_CHECKING, List
-
-if TYPE_CHECKING:
-    from mobility.trips.group_day_trips.transitions.congestion_state import CongestionState
+from typing import List
 
 class PathTravelCosts(FileAsset):
     """
@@ -88,7 +85,7 @@ class PathTravelCosts(FileAsset):
 
         super().__init__(inputs, cache_path)
 
-    def get(self, congestion: bool = False, congestion_state: CongestionState | None = None) -> pd.DataFrame:
+    def get(self, congestion: bool = False, congestion_state: "CongestionState | None" = None) -> pd.DataFrame:
         requested_congestion = congestion and congestion_state is None
         self.update_ancestors_if_needed()
 
@@ -198,7 +195,7 @@ class PathTravelCosts(FileAsset):
             return self.build_snapshot_asset(flow_asset).inputs["contracted_graph"].inputs["congested_graph"].get()
         return self.inputs["congested_path_graph"].get()
 
-    def get_snapshot_asset(self, congestion_state: CongestionState) -> PathTravelCostsSnapshot | None:
+    def get_snapshot_asset(self, congestion_state: "CongestionState") -> PathTravelCostsSnapshot | None:
         flow_asset = congestion_state.for_mode(self.inputs["mode_name"])
         if flow_asset is None:
             return None

@@ -3,13 +3,11 @@ from __future__ import annotations
 import polars as pl
 import logging
 
-from typing import TYPE_CHECKING, List
+from typing import List
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
-
-if TYPE_CHECKING:
-    from mobility.trips.group_day_trips.transitions.congestion_state import CongestionState
+from mobility.trips.group_day_trips.transitions.congestion_state import CongestionState
 
 
 class TransportCostsAggregator(InMemoryAsset):
