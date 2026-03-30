@@ -1,7 +1,7 @@
 import pytest
 
-from mobility.path_routing_parameters import PathRoutingParameters
-from mobility.transport_modes.public_transport.public_transport_graph import (
+from mobility.transport.costs.parameters.path_routing_parameters import PathRoutingParameters
+from mobility.transport.modes.public_transport.public_transport_graph import (
     PublicTransportRoutingParameters,
 )
 

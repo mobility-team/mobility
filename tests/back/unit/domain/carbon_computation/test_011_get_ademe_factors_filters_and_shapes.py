@@ -1,7 +1,7 @@
 from pathlib import Path
 import pandas as pd
 
-from mobility import carbon_computation as cc
+from mobility.impacts import carbon_computation as cc
 
 
 def test_get_ademe_factors_structure_and_tagging_even_if_empty(tmp_path):

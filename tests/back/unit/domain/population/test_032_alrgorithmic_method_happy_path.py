@@ -1,6 +1,6 @@
 import pandas as pd
 
-import mobility.population as population_module
+import mobility.population.population as population_module
 
 
 def test_get_sample_sizes_happy_path(fake_transport_zones):

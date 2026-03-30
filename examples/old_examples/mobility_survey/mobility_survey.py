@@ -2,7 +2,7 @@ import os
 import dotenv
 import mobility
 
-from mobility.parsers import MobilitySurvey
+from mobility.surveys import MobilitySurvey
 
 dotenv.load_dotenv()
 
