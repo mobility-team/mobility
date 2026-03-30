@@ -12,7 +12,7 @@ from pydantic import Field
 from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.studies.schools_capacity_distribution import SchoolsCapacityDistribution
 from mobility.runtime.parameter_profiles import ScalarParameterProfile
-from mobility.validation_types import UnitIntervalFloat
+from mobility.runtime.validation_types import UnitIntervalFloat
 
 
 class Study(Activity):

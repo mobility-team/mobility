@@ -9,7 +9,7 @@ from pydantic import Field
 from mobility.activities.activity import Activity, ActivityParameters
 from mobility.population import Population
 from mobility.runtime.parameter_profiles import ScalarParameterProfile
-from mobility.validation_types import NonNegativeFloat, UnitIntervalFloat
+from mobility.runtime.validation_types import NonNegativeFloat, UnitIntervalFloat
 
 
 class Other(Activity):

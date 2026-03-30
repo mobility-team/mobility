@@ -12,7 +12,7 @@ from mobility.runtime.parameter_profiles import (
     SimulationStep,
     resolve_model_for_step,
 )
-from mobility.validation_types import NonNegativeFloat, UnitIntervalFloat
+from mobility.runtime.validation_types import NonNegativeFloat, UnitIntervalFloat
 
 
 class Activity(InMemoryAsset):

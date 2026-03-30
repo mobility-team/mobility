@@ -13,7 +13,7 @@ from pydantic import Field
 from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.leisure.leisure_facilities_distribution import LeisureFacilitiesDistribution
 from mobility.runtime.parameter_profiles import ScalarParameterProfile
-from mobility.validation_types import UnitIntervalFloat
+from mobility.runtime.validation_types import UnitIntervalFloat
 
 
 class Leisure(Activity):

@@ -10,7 +10,7 @@ from pydantic import Field
 from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.shopping.shops_turnover_distribution import ShopsTurnoverDistribution
 from mobility.runtime.parameter_profiles import ScalarParameterProfile
-from mobility.validation_types import UnitIntervalFloat
+from mobility.runtime.validation_types import UnitIntervalFloat
 
 
 class Shop(Activity):
