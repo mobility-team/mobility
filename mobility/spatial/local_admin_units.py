@@ -7,16 +7,16 @@ import shapely
 import geopandas as gpd
 import pandas as pd
 
-from mobility.file_asset import FileAsset
-from mobility.parsers.download_file import download_file
-from mobility.parsers.local_admin_units_categories import LocalAdminUnitsCategories
+from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.io.download_file import download_file
+from mobility.spatial.local_admin_units_categories import LocalAdminUnitsCategories
 
 class LocalAdminUnits(FileAsset):
     """FileAsset class preparing local admin units in France and Switzerland.
     
     Use .get() method to get its content (under Parquet format).
     
-    In France, uses adminexpress base from IGN, stored on https://cartes.gouv.fr/. For Paris, Lyon and Marseille, each 'arrondissement' is considered a distinct admin unit.
+    In France, uses adminexpress base from IGN, stored on cartes.gouv.fr. For Paris, Lyon and Marseille, each 'arrondissement' is considered a distinct admin unit.
     
     In Switzerland, uses swisstopo data stored on geo.admin.ch
     
@@ -72,13 +72,8 @@ class LocalAdminUnits(FileAsset):
             z.extractall(path.parent)
                 
         # Convert to geoparquet
-        path = ( 
-            path.parent 
-            / "ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2024-02-22" 
-            / "ADMIN-EXPRESS-COG-CARTO" 
-            / "1_DONNEES_LIVRAISON_2024-03-00169" 
-            / "ADECOGC_3-2_SHP_LAMB93_FXX-ED2024-02-22"
-        )
+        path = path.parent / "ADMIN-EXPRESS-COG-CARTO_3-2__SHP_LAMB93_FXX_2023-05-03" / \
+         "ADMIN-EXPRESS-COG-CARTO" / "1_DONNEES_LIVRAISON_2024-03-00169" / "ADECOGC_3-2_SHP_LAMB93_FXX"
         
         # Replace Paris / Lyon / Marseille cities with their constituting arrondissements
         arrond = gpd.read_file(path / "ARRONDISSEMENT_MUNICIPAL.shp")
