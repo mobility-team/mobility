@@ -32,7 +32,7 @@ class TravelCostsEvaluation:
             ref_costs: List,
             variable: str = "time",
             plot: bool = True,
-            iteration: int = 1,
+            iteration: int | None = None,
         ):
         """
         Compares the travel costs (time, distance) of the model with reference 
@@ -76,6 +76,9 @@ class TravelCostsEvaluation:
         pl.DataFrame
             Input ref_costs dataframe with a distance_model and a time_model column.
         """
+        if iteration is None:
+            iteration = int(self.results.parameters.n_iterations)
+
         costs = ( 
             self.results.run.transport_costs
             .asset_for_iteration(self.results.run, iteration)

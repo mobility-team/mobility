@@ -13,8 +13,10 @@ class CarTrafficEvaluation:
     
     def get(
             self,
-            iteration: int = 1
+            iteration: int | None = None
         ):
+        if iteration is None:
+            iteration = int(self.results.parameters.n_iterations)
 
         car_mode = [m for m in self.results.modes if m.inputs["parameters"].name == "car"]
         
