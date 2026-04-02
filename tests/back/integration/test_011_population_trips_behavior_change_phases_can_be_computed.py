@@ -50,7 +50,6 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
         ),
     )
 
-    pop_trips.remove()
     result = pop_trips.get()
     weekday_plan_steps = result["weekday_plan_steps"].collect()
     weekday_transitions = result["weekday_transitions"].collect()

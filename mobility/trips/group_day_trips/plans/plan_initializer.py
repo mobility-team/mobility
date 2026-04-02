@@ -278,15 +278,3 @@ class PlanInitializer:
         )
 
         return opportunities
-
-    def get_current_costs(self, costs, congestion):
-        """Fetch current OD costs and cast endpoint IDs."""
-
-        current_costs = costs.get(congestion=congestion).with_columns(
-            [
-                pl.col("from").cast(pl.Int32()),
-                pl.col("to").cast(pl.Int32()),
-            ]
-        )
-
-        return current_costs

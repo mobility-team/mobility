@@ -81,3 +81,8 @@ mobility = [
 where = ["."]
 include = ["mobility*"]
 exclude = ["certs", "certs.*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "dependency: mark a test as depending on one or more other tests",
+]

@@ -41,7 +41,13 @@ class Bicycle(TransportMode):
                 cost_of_time=CostOfTimeParameters()
             )
         
-        travel_costs = PathTravelCosts(mode_name, transport_zones, routing_parameters, osm_capacity_parameters, speed_modifiers=speed_modifiers)
+        travel_costs = PathTravelCosts(
+            mode_name=mode_name,
+            transport_zones=transport_zones,
+            routing_parameters=routing_parameters,
+            osm_capacity_parameters=osm_capacity_parameters,
+            speed_modifiers=speed_modifiers,
+        )
         generalized_cost = PathGeneralizedCost(travel_costs, generalized_cost_parameters, mode_name)
         
         super().__init__(

@@ -6,19 +6,17 @@ from typing import List
 
 import polars as pl
 
-from mobility.transport.costs.congestion_state import CongestionState
 from ..iterations import Iteration, Iterations
 from ..plans import DestinationSequences, ModeSequences, PlanInitializer, PlanUpdater
 from .parameters import Parameters
 from .results import RunResults
 from .run_state import RunState
-from mobility.transport.costs.transport_costs_aggregator import TransportCostsAggregator
+from mobility.transport.costs.transport_costs import TransportCosts
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities import Activity
 from mobility.activities.activity import resolve_activity_parameters
 from mobility.surveys import MobilitySurvey
 from mobility.population import Population
-from mobility.runtime.parameter_profiles import SimulationStep
 from mobility.transport.modes.core.transport_mode import TransportMode
 
 
@@ -29,7 +27,7 @@ class Run(FileAsset):
         self,
         *,
         population: Population,
-        costs_aggregator: TransportCostsAggregator,
+        transport_costs: TransportCosts,
         activities: List[Activity],
         modes: List[TransportMode],
         surveys: List[MobilitySurvey],
@@ -41,7 +39,6 @@ class Run(FileAsset):
         inputs = {
             "version": 1,
             "population": population,
-            "costs_aggregator": costs_aggregator,
             "activities": activities,
             "modes": modes,
             "surveys": surveys,
@@ -49,7 +46,8 @@ class Run(FileAsset):
             "is_weekday": is_weekday,
             "enabled": enabled,
         }
-
+        
+        self.transport_costs = transport_costs
         self.rng = random.Random(parameters.seed) if parameters.seed is not None else random.Random()
         self.initializer = PlanInitializer()
         self.updater = PlanUpdater()
@@ -148,8 +146,7 @@ class Run(FileAsset):
             chains_by_activity,
             demand_groups,
         )
-        step = SimulationStep(iteration=1)
-        resolved_activity_parameters = resolve_activity_parameters(self.activities, step)
+        resolved_activity_parameters = resolve_activity_parameters(self.activities, 1)
         stay_home_plan, current_plans = self.initializer.get_stay_home_state(
             demand_groups,
             home_night_dur,
@@ -171,11 +168,7 @@ class Run(FileAsset):
             opportunities=opportunities,
             current_plans=current_plans,
             remaining_opportunities=opportunities.clone(),
-            costs=self.initializer.get_current_costs(
-                self.costs_aggregator.resolve_for_step(step),
-                congestion=False,
-            ),
-            congestion_state=None,
+            costs=self.transport_costs.asset_for_iteration(self, 1).get_costs_by_od(["cost", "distance"]),
             start_iteration=1,
         )
         self._restore_saved_state(
@@ -220,12 +213,6 @@ class Run(FileAsset):
         state.current_plans = saved_state.current_plans
         state.current_plan_steps = saved_state.current_plan_steps
         state.remaining_opportunities = saved_state.remaining_opportunities
-        state.congestion_state = self.costs_aggregator.load_congestion_state(
-            run_key=self.inputs_hash,
-            is_weekday=self.is_weekday,
-            last_completed_iteration=resume_from_iteration,
-            cost_update_interval=self.parameters.n_iter_per_cost_update,
-        )
         state.start_iteration = resume_from_iteration + 1
 
         logging.info(
@@ -234,11 +221,11 @@ class Run(FileAsset):
             str(self.is_weekday),
             str(resume_from_iteration),
         )
-        state.costs = self.costs_aggregator.resolve_for_step(
-            SimulationStep(iteration=state.start_iteration)
-        ).get(
-            congestion=(state.congestion_state is not None),
-            congestion_state=state.congestion_state,
+        state.costs = self.transport_costs.asset_for_iteration(
+            self,
+            state.start_iteration,
+        ).get_costs_by_od(
+            ["cost", "distance"],
         )
 
 
@@ -251,8 +238,7 @@ class Run(FileAsset):
         """Execute one simulation iteration and update the mutable run state."""
         logging.info("Iteration %s", str(iteration.iteration))
         seed = self.rng.getrandbits(64)
-        step = SimulationStep(iteration=iteration.iteration)
-        resolved_costs_aggregator = self.costs_aggregator.resolve_for_step(step)
+        resolved_transport_costs = self.transport_costs.for_iteration(iteration.iteration)
 
         destination_sequences = self._sample_and_write_destination_sequences(
             state,
@@ -263,14 +249,14 @@ class Run(FileAsset):
             state,
             iteration,
             destination_sequences,
-            resolved_costs_aggregator,
+            resolved_transport_costs,
         )
         transition_events = self._update_iteration_state(
             state,
             iteration,
             destination_sequences,
             mode_sequences,
-            resolved_costs_aggregator,
+            resolved_transport_costs,
         )
         iteration.save_transition_events(transition_events)
 
@@ -282,8 +268,7 @@ class Run(FileAsset):
         seed: int,
     ) -> DestinationSequences:
         """Run destination sampling and persist destination sequences for one iteration."""
-        step = SimulationStep(iteration=iteration.iteration)
-        resolved_activity_parameters = resolve_activity_parameters(self.activities, step)
+        resolved_activity_parameters = resolve_activity_parameters(self.activities, iteration.iteration)
         destination_sequences = iteration.destination_sequences(
             activities=self.activities,
             resolved_activity_parameters=resolved_activity_parameters,
@@ -306,14 +291,13 @@ class Run(FileAsset):
         state: RunState,
         iteration: Iteration,
         destination_sequences: DestinationSequences,
-        resolved_costs_aggregator: TransportCostsAggregator,
+        resolved_transport_costs: TransportCosts,
     ) -> ModeSequences:
         """Run mode-sequence search and persist the results for one iteration."""
         mode_sequences = iteration.mode_sequences(
             destination_sequences=destination_sequences,
-            costs_aggregator=resolved_costs_aggregator,
+            transport_costs=resolved_transport_costs,
             parameters=self.parameters,
-            congestion_state=state.congestion_state,
         )
         mode_sequences.get()
         return mode_sequences
@@ -325,18 +309,16 @@ class Run(FileAsset):
         iteration: Iteration,
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
-        resolved_costs_aggregator: TransportCostsAggregator,
+        resolved_transport_costs: TransportCosts,
     ) -> pl.DataFrame:
         """Advance the simulation state by one iteration and return transition events."""
-        step = SimulationStep(iteration=iteration.iteration)
-        resolved_activity_parameters = resolve_activity_parameters(self.activities, step)
+        resolved_activity_parameters = resolve_activity_parameters(self.activities, iteration.iteration)
         state.current_plans, state.current_plan_steps, transition_events = self.updater.get_new_plans(
             state.current_plans,
             state.current_plan_steps,
             state.demand_groups,
             state.chains_by_activity,
-            resolved_costs_aggregator,
-            state.congestion_state,
+            resolved_transport_costs,
             state.remaining_opportunities,
             state.activity_dur,
             iteration.iteration,
@@ -347,15 +329,13 @@ class Run(FileAsset):
             state.stay_home_plan,
             self.parameters,
         )
-        state.costs, state.congestion_state = self.updater.get_new_costs(
+        state.costs = self.updater.get_new_costs(
             state.costs,
             iteration.iteration,
             self.parameters.n_iter_per_cost_update,
             state.current_plan_steps,
-            self.costs_aggregator.resolve_for_step(SimulationStep(iteration=iteration.iteration + 1)),
-            congestion_state=state.congestion_state,
-            run_key=iteration.iterations.run_inputs_hash,
-            is_weekday=self.is_weekday,
+            self.transport_costs.for_iteration(iteration.iteration + 1),
+            run=self,
         )
         state.remaining_opportunities = self.updater.get_new_opportunities(
             state.current_plan_steps,
@@ -379,12 +359,11 @@ class Run(FileAsset):
 
     def _build_final_costs(self, state: RunState) -> pl.DataFrame:
         """Compute the final OD costs to attach to the written outputs."""
-        return self.costs_aggregator.resolve_for_step(
-            SimulationStep(iteration=self.parameters.n_iterations)
+        return self.transport_costs.asset_for_iteration(
+            self,
+            self.parameters.n_iterations,
         ).get_costs_by_od_and_mode(
-            ["cost", "distance", "time", "ghg_emissions"],
-            congestion=(state.congestion_state is not None),
-            congestion_state=state.congestion_state,
+            ["cost", "distance", "time", "ghg_emissions_per_trip"]
         )
 
 
@@ -462,6 +441,8 @@ class Run(FileAsset):
             transitions=cached["transitions"],
             surveys=self.surveys,
             modes=self.modes,
+            parameters=self.parameters,
+            run=self,
         )
 
 

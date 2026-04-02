@@ -78,9 +78,8 @@ class Iteration:
         self,
         *,
         destination_sequences: DestinationSequences,
-        costs_aggregator: Any = None,
+        transport_costs: Any = None,
         parameters: Any = None,
-        congestion_state: Any = None,
     ) -> ModeSequences:
         """Return the mode-sequences asset for this iteration."""
         return ModeSequences(
@@ -89,11 +88,10 @@ class Iteration:
             iteration=self.iteration,
             base_folder=self.iterations.folder_paths["modes"],
             destination_sequences=destination_sequences,
-            costs_aggregator=costs_aggregator,
+            transport_costs=transport_costs,
             working_folder=self.iterations.base_folder,
             sequence_index_folder=self.iterations.folder_paths["sequences-index"],
             parameters=parameters,
-            congestion_state=congestion_state,
         )
 
 

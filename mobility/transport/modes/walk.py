@@ -42,10 +42,10 @@ class Walk(TransportMode):
             )
         
         travel_costs = PathTravelCosts(
-            mode_name,
-            transport_zones,
-            routing_parameters,
-            osm_capacity_parameters
+            mode_name=mode_name,
+            transport_zones=transport_zones,
+            routing_parameters=routing_parameters,
+            osm_capacity_parameters=osm_capacity_parameters,
         )
         
         generalized_cost = PathGeneralizedCost(

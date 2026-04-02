@@ -14,11 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.transport.costs.congestion_state import CongestionState
+from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
-from mobility.transport.modes.carpool.detailed.detailed_carpool_travel_costs_snapshot import (
-    DetailedCarpoolTravelCostsSnapshot,
-)
 
 class DetailedCarpoolTravelCosts(FileAsset):
 
@@ -27,12 +25,14 @@ class DetailedCarpoolTravelCosts(FileAsset):
             car_travel_costs: PathTravelCosts,
             parameters: "DetailedCarpoolRoutingParameters",
             modal_transfer: IntermodalTransfer,
+            road_flow_asset: VehicleODFlowsAsset | None = None,
         ):
 
         inputs = {
             "car_travel_costs": car_travel_costs,
             "parameters": parameters,
-            "modal_transfer": modal_transfer
+            "modal_transfer": modal_transfer,
+            "road_flow_asset": road_flow_asset,
         }
         
         cache_path = {
@@ -54,9 +54,9 @@ class DetailedCarpoolTravelCosts(FileAsset):
                 return asset
 
         if congestion and congestion_state is not None:
-            snapshot = self.get_snapshot_asset(congestion_state)
-            if snapshot is not None:
-                return snapshot.get()
+            asset = self.asset_for_congestion_state(congestion_state)
+            if asset is not None:
+                return asset.get()
 
         return self.get_cached_asset(congestion=congestion)
 
@@ -106,7 +106,7 @@ class DetailedCarpoolTravelCosts(FileAsset):
         script = RScriptRunner(resources.files('mobility.transport.modes.carpool.detailed').joinpath('compute_carpool_travel_costs.R'))
         
         if congestion is True:
-            graph = car_travel_costs.get_congested_graph_path()
+            graph = car_travel_costs.get_congested_graph_path(self.inputs["road_flow_asset"])
         else:
             graph = car_travel_costs.modified_path_graph.get()
         
@@ -126,20 +126,42 @@ class DetailedCarpoolTravelCosts(FileAsset):
         return costs
     
     
-    def get_snapshot_asset(
+    def asset_for_congestion_state(
         self,
         congestion_state: CongestionState,
-    ) -> DetailedCarpoolTravelCostsSnapshot | None:
+    ):
         flow_asset = congestion_state.for_mode("carpool")
         if flow_asset is None:
             return None
 
-        return DetailedCarpoolTravelCostsSnapshot(
+        return self.asset_for_flow_asset(flow_asset)
+
+    def asset_for_flow_asset(self, flow_asset: VehicleODFlowsAsset):
+        return DetailedCarpoolTravelCosts(
             car_travel_costs=self.inputs["car_travel_costs"],
             parameters=self.inputs["parameters"],
             modal_transfer=self.inputs["modal_transfer"],
             road_flow_asset=flow_asset,
         )
+
+    def asset_for_iteration(self, run, iteration: int):
+        if iteration < 1:
+            raise ValueError("Iteration should be >= 1.")
+        if iteration > int(run.parameters.n_iterations):
+            raise ValueError(
+                f"Iteration should be <= {int(run.parameters.n_iterations)} for this run."
+            )
+
+        flow_asset = self.inputs["car_travel_costs"].inputs["congested_path_graph"].get_flow_asset_for_iteration(
+            run,
+            iteration,
+        )
+        if flow_asset is None:
+            return self
+        return self.asset_for_flow_asset(flow_asset)
+
+    def get_for_iteration(self, run, iteration: int):
+        return self.asset_for_iteration(run, iteration).get()
 
 
 class DetailedCarpoolRoutingParameters(BaseModel):

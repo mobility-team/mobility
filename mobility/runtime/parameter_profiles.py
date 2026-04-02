@@ -3,17 +3,9 @@ from __future__ import annotations
 from typing import Any, Literal, TypeVar
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 T = TypeVar("T", bound=BaseModel)
-
-
-class SimulationStep(BaseModel):
-    """Identifies one simulation step."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    iteration: int = Field(ge=1)
 
 
 class ParameterProfile(BaseModel):
@@ -33,7 +25,7 @@ class ParameterProfile(BaseModel):
 
         return self
 
-    def at(self, step: SimulationStep) -> Any:
+    def at(self, iteration: int) -> Any:
         raise NotImplementedError
 
 
@@ -43,17 +35,17 @@ class ScalarParameterProfile(ParameterProfile):
     mode: Literal["step", "linear"] = "step"
     points: dict[int, float]
 
-    def at(self, step: SimulationStep) -> float:
+    def at(self, iteration: int) -> float:
         sorted_points = sorted(self.points.items())
         iterations = np.array([iteration for iteration, _ in sorted_points], dtype=float)
         values = np.array([value for _, value in sorted_points], dtype=float)
 
         if self.mode == "step":
-            idx = np.searchsorted(iterations, step.iteration, side="right") - 1
+            idx = np.searchsorted(iterations, iteration, side="right") - 1
             idx = max(idx, 0)
             return float(values[idx])
 
-        return float(np.interp(step.iteration, iterations, values))
+        return float(np.interp(iteration, iterations, values))
 
 
 class ListParameterProfile(ParameterProfile):
@@ -61,40 +53,40 @@ class ListParameterProfile(ParameterProfile):
 
     points: dict[int, list[str]]
 
-    def at(self, step: SimulationStep) -> list[str]:
+    def at(self, iteration: int) -> list[str]:
         sorted_points = sorted(self.points.items())
         iterations = [iteration for iteration, _ in sorted_points]
-        idx = np.searchsorted(iterations, step.iteration, side="right") - 1
+        idx = np.searchsorted(iterations, iteration, side="right") - 1
         idx = max(idx, 0)
         return list(sorted_points[idx][1])
 
 
-def resolve_value_for_step(value: Any, step: SimulationStep) -> Any:
-    """Resolve one value for a simulation step."""
+def resolve_value_for_iteration(value: Any, iteration: int) -> Any:
+    """Resolve one value for a simulation iteration."""
 
     if isinstance(value, ParameterProfile):
-        return value.at(step)
+        return value.at(iteration)
 
     if isinstance(value, BaseModel):
-        return resolve_model_for_step(value, step)
+        return resolve_model_for_iteration(value, iteration)
 
     if isinstance(value, dict):
-        return {key: resolve_value_for_step(item, step) for key, item in value.items()}
+        return {key: resolve_value_for_iteration(item, iteration) for key, item in value.items()}
 
     if isinstance(value, list):
-        return [resolve_value_for_step(item, step) for item in value]
+        return [resolve_value_for_iteration(item, iteration) for item in value]
 
     if isinstance(value, tuple):
-        return tuple(resolve_value_for_step(item, step) for item in value)
+        return tuple(resolve_value_for_iteration(item, iteration) for item in value)
 
     return value
 
 
-def resolve_model_for_step(model: T, step: SimulationStep) -> T:
-    """Resolve step-varying fields of a pydantic model."""
+def resolve_model_for_iteration(model: T, iteration: int) -> T:
+    """Resolve iteration-varying fields of a pydantic model."""
 
     resolved_data = {
-        field_name: resolve_value_for_step(getattr(model, field_name), step)
+        field_name: resolve_value_for_iteration(getattr(model, field_name), iteration)
         for field_name in model.__class__.model_fields
     }
     return model.__class__.model_validate(resolved_data)

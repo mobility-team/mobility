@@ -35,6 +35,8 @@ class RunResults:
         transitions,
         surveys,
         modes,
+        parameters,
+        run,
     ):
         self.inputs_hash = inputs_hash
         self.is_weekday = is_weekday
@@ -47,6 +49,8 @@ class RunResults:
         self.transitions = transitions
         self.surveys = surveys
         self.modes = modes
+        self.parameters = parameters
+        self.run = run
 
         self.metrics_methods = {
             "global_metrics": self.global_metrics,
@@ -106,7 +110,12 @@ class RunResults:
                     time=(pl.col("time") * pl.col("n_persons")).sum(),
                     distance=(pl.col("distance") * pl.col("n_persons")).sum(),
                 )
-                .unpivot(index="country")
+                .unpivot(
+                    index="country",
+                    on=["n_trips", "time", "distance"],
+                    variable_name="variable",
+                    value_name="value",
+                )
                 .collect(engine="streaming")
             )
 
@@ -170,7 +179,12 @@ class RunResults:
                     time=(pl.col("time") * pl.col("n_persons")).sum(),
                     distance=(pl.col("distance") * pl.col("n_persons")).sum(),
                 )
-                .melt(variable)
+                .unpivot(
+                    index=variable,
+                    on=["n_trips", "time", "distance"],
+                    variable_name="variable",
+                    value_name="value",
+                )
                 .collect(engine="streaming")
             )
 
@@ -201,7 +215,12 @@ class RunResults:
         if plot:
             comparison_plot_df = (
                 comparison.select(["variable", variable, "value", "value_ref"])
-                .melt(["variable", variable], variable_name="value_type")
+                .unpivot(
+                    index=["variable", variable],
+                    on=["value", "value_ref"],
+                    variable_name="value_type",
+                    value_name="value",
+                )
                 .sort(variable)
             )
 
@@ -270,7 +289,12 @@ class RunResults:
         if plot:
             immobility_m = (
                 immobility.select(["country", "csp", "n_persons_imm", "n_persons_imm_ref"])
-                .melt(["country", "csp"], value_name="n_pers_immobility")
+                .unpivot(
+                    index=["country", "csp"],
+                    on=["n_persons_imm", "n_persons_imm_ref"],
+                    variable_name="variable",
+                    value_name="n_pers_immobility",
+                )
                 .sort("csp")
             )
             fig = px.bar(
@@ -581,7 +605,6 @@ class RunResults:
             if mode == "count":
                 population_df["mode"] = population_df["mode"].fillna("unknown_mode")
                 count_modes = population_df.groupby("mode")[["mode"]].count()
-                print(count_modes)
                 return count_modes
             if mode == "public_transport":
                 mode_name = "Public transport"

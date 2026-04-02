@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
-from mobility.runtime.parameter_profiles import SimulationStep
 from mobility.trips.group_day_trips.core.parameters import Parameters
 from mobility.trips.group_day_trips.core.run import Run, RunState
 
@@ -26,31 +25,29 @@ class FakeIterations:
 
 
 class FakeCostsAggregator:
-    def __init__(self, congestion_state):
-        self._congestion_state = congestion_state
-        self.load_calls = []
+    def __init__(self):
         self.get_calls = []
         self.resolve_calls = []
 
-    def resolve_for_step(self, step):
-        self.resolve_calls.append(step)
+    def for_iteration(self, iteration):
+        self.resolve_calls.append(iteration)
         return self
 
-    def load_congestion_state(self, **kwargs):
-        self.load_calls.append(kwargs)
-        return self._congestion_state
+    def asset_for_iteration(self, run, iteration):
+        self.resolve_calls.append(iteration)
+        return self
 
-    def get(self, **kwargs):
-        self.get_calls.append(kwargs)
+    def get_costs_by_od(self, metrics):
+        self.get_calls.append(metrics)
         return pl.DataFrame({"cost": [1.5]})
 
 
-def make_run(*, congestion_state):
+def make_run():
     run = object.__new__(Run)
     run.inputs_hash = "run-hash"
     run.is_weekday = True
     run.parameters = Parameters(n_iter_per_cost_update=3)
-    run.costs_aggregator = FakeCostsAggregator(congestion_state=congestion_state)
+    run.transport_costs = FakeCostsAggregator()
     run.rng = random.Random(123)
     return run
 
@@ -67,7 +64,6 @@ def make_state():
         current_plans=pl.DataFrame({"plan_id": [0]}),
         remaining_opportunities=pl.DataFrame({"opportunity_id": [0]}),
         costs=pl.DataFrame({"cost": [0.0]}),
-        congestion_state=None,
         start_iteration=1,
     )
 
@@ -81,7 +77,7 @@ def test_restore_saved_state_happy_path_restores_mutable_state():
         rng_state=saved_rng.getstate(),
     )
     iterations = FakeIterations(saved_state=saved_state)
-    run = make_run(congestion_state="congestion-state")
+    run = make_run()
     state = make_state()
 
     run._restore_saved_state(
@@ -95,29 +91,15 @@ def test_restore_saved_state_happy_path_restores_mutable_state():
     assert state.current_plans.equals(saved_state.current_plans)
     assert state.current_plan_steps.equals(saved_state.current_plan_steps)
     assert state.remaining_opportunities.equals(saved_state.remaining_opportunities)
-    assert state.congestion_state == "congestion-state"
     assert state.start_iteration == 3
     assert state.costs.equals(pl.DataFrame({"cost": [1.5]}))
-    assert run.costs_aggregator.load_calls == [
-        {
-            "run_key": "run-hash",
-            "is_weekday": True,
-            "last_completed_iteration": 2,
-            "cost_update_interval": 3,
-        }
-    ]
-    assert run.costs_aggregator.get_calls == [
-        {
-            "congestion": True,
-            "congestion_state": "congestion-state",
-        }
-    ]
-    assert run.costs_aggregator.resolve_calls == [SimulationStep(iteration=3)]
+    assert run.transport_costs.get_calls == [["cost", "distance"]]
+    assert run.transport_costs.resolve_calls == [3]
 
 
 def test_restore_saved_state_wraps_load_state_errors():
     iterations = FakeIterations(saved_state=ValueError("broken state"))
-    run = make_run(congestion_state=None)
+    run = make_run()
     state = make_state()
 
     with pytest.raises(RuntimeError, match="Failed to load saved GroupDayTrips iteration state"):
@@ -134,7 +116,7 @@ def test_restore_saved_state_wraps_incomplete_saved_state_errors():
             "Saved GroupDayTrips iteration state is incomplete. Missing current_plan_steps."
         )
     )
-    run = make_run(congestion_state=None)
+    run = make_run()
     state = make_state()
 
     with pytest.raises(RuntimeError, match="Failed to load saved GroupDayTrips iteration state"):
@@ -153,7 +135,7 @@ def test_restore_saved_state_wraps_rng_restore_errors():
         rng_state=object(),
     )
     iterations = FakeIterations(saved_state=saved_state)
-    run = make_run(congestion_state=None)
+    run = make_run()
     state = make_state()
 
     with pytest.raises(RuntimeError, match="Failed to restore RNG state"):

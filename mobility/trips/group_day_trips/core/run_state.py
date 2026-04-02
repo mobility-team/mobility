@@ -2,8 +2,6 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from mobility.transport.costs.congestion_state import CongestionState
-
 
 @dataclass
 class RunState:
@@ -17,6 +15,5 @@ class RunState:
     current_plans: pl.DataFrame
     remaining_opportunities: pl.DataFrame
     costs: pl.DataFrame
-    congestion_state: CongestionState | None
     start_iteration: int
     current_plan_steps: pl.DataFrame | None = None

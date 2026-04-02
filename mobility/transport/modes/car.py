@@ -66,13 +66,13 @@ class Car(TransportMode):
             
         
         travel_costs = PathTravelCosts(
-            mode_name, 
-            transport_zones, 
-            routing_parameters, 
-            osm_capacity_parameters,
-            mode_congestion,
-            congestion_flows_scaling_factor,
-            speed_modifiers
+            mode_name=mode_name,
+            transport_zones=transport_zones,
+            routing_parameters=routing_parameters,
+            osm_capacity_parameters=osm_capacity_parameters,
+            congestion=mode_congestion,
+            congestion_flows_scaling_factor=congestion_flows_scaling_factor,
+            speed_modifiers=speed_modifiers,
         )
         
         generalized_cost = PathGeneralizedCost(

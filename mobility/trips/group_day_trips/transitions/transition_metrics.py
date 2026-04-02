@@ -161,7 +161,8 @@ def _load_demand_group_keys(
             empty/non-positive.
     """
     required = ["demand_group_id", "home_zone_id", "csp", "n_cars", "n_persons"]
-    missing = [c for c in required if c not in demand_groups.columns]
+    available = set(demand_groups.collect_schema().names())
+    missing = [c for c in required if c not in available]
     if missing:
         raise ValueError(
             "Missing required demand-group columns for `state_waterfall`: "
@@ -431,8 +432,8 @@ def _build_state_pair_details(transitions_enriched: pl.DataFrame) -> pl.DataFram
         )
         .group_by(["iteration", "state_pair"])
         .agg(
-            from_steps=pl.col("from_steps").unique().sort().str.concat("<br><br>"),
-            to_steps=pl.col("to_steps").unique().sort().str.concat("<br><br>"),
+            from_steps=pl.col("from_steps").unique().sort().str.join("<br><br>"),
+            to_steps=pl.col("to_steps").unique().sort().str.join("<br><br>"),
             home_start_desc=pl.col("home_start_desc").drop_nulls().first(),
             n_persons_moved_total=pl.col("n_persons_moved").sum(),
             demand_group_desc=pl.format(

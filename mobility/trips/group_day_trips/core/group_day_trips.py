@@ -2,7 +2,7 @@ import polars as pl
 from typing import Dict, List
 
 from mobility.runtime.assets.asset import Asset
-from mobility.transport.costs.transport_costs_aggregator import TransportCostsAggregator
+from mobility.transport.costs.transport_costs import TransportCosts
 from .parameters import Parameters
 from .run import Run
 from mobility.activities import Activity, Home, Other
@@ -36,7 +36,7 @@ class GroupDayTrips:
 
         The wrapper validates its high-level inputs, normalizes constructor
         parameters into a `Parameters` instance, builds a shared
-        `TransportCostsAggregator`, and creates one underlying `Run`
+        `TransportCosts`, and creates one underlying `Run`
         asset for weekdays plus one for weekends. The weekend run is enabled or
         disabled according to `simulate_weekend`.
 
@@ -99,11 +99,11 @@ class GroupDayTrips:
             owner_name="GroupDayTrips",
         )
 
-        costs_aggregator = TransportCostsAggregator(modes)
+        transport_costs = TransportCosts(modes)
 
         weekday_run = Run(
             population=population,
-            costs_aggregator=costs_aggregator,
+            transport_costs=transport_costs,
             activities=activities,
             modes=modes,
             surveys=surveys,
@@ -114,7 +114,7 @@ class GroupDayTrips:
 
         weekend_run = Run(
             population=population,
-            costs_aggregator=costs_aggregator,
+            transport_costs=transport_costs,
             activities=activities,
             modes=modes,
             surveys=surveys,

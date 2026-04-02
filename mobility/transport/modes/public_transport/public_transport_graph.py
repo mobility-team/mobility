@@ -142,7 +142,7 @@ class PublicTransportRoutingParameters(BaseModel):
         float,
         Field(default=DEFAULT_LONG_RANGE_MOTORIZED_MAX_BEELINE_DISTANCE_KM, gt=0.0),
     ]
-    additional_gtfs_files: Annotated[list[str] | ListParameterProfile | None, Field(default=None)]
+    additional_gtfs_files: Annotated[ListParameterProfile | list[str] | None, Field(default=None)]
     expected_agencies: Annotated[list[str] | None, Field(default=None)]
 
     @model_validator(mode="after")
