@@ -1,7 +1,7 @@
 # tests/unit/mobility/test_001_init_builds_inputs_and_cache.py
 from pathlib import Path
 
-import mobility.population as population_module
+import mobility.population.population as population_module
 
 
 def test_init_sets_inputs_and_hashed_cache_paths(project_dir, fake_inputs_hash, fake_transport_zones):

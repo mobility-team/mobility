@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+import pathlib
+import os
+import logging
+import json
+import pandas as pd
+import shutil
+from typing import Annotated
+
+from importlib import resources
+from pydantic import BaseModel, ConfigDict, Field
+
+from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.r_integration.r_script_runner import RScriptRunner
+from mobility.transport.costs.congestion_state import CongestionState
+from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
+from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
+from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
+
+class DetailedCarpoolTravelCosts(FileAsset):
+
+    def __init__(
+            self,
+            car_travel_costs: PathTravelCosts,
+            parameters: "DetailedCarpoolRoutingParameters",
+            modal_transfer: IntermodalTransfer,
+            road_flow_asset: VehicleODFlowsAsset | None = None,
+        ):
+
+        inputs = {
+            "car_travel_costs": car_travel_costs,
+            "parameters": parameters,
+            "modal_transfer": modal_transfer,
+            "road_flow_asset": road_flow_asset,
+        }
+        
+        cache_path = {
+            "freeflow": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / ("travel_costs_free_flow_carpool.parquet"),
+            "congested": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / ("travel_costs_congested_carpool.parquet")
+        }
+
+
+        super().__init__(inputs, cache_path)
+
+    def get(self, congestion: bool = False, congestion_state: CongestionState | None = None) -> pd.DataFrame:
+        requested_congestion = congestion and congestion_state is None
+        self.update_ancestors_if_needed()
+
+        if self.is_update_needed():
+            asset = self.create_and_get_asset(congestion=requested_congestion)
+            self.update_hash(self.inputs_hash)
+            if congestion_state is None:
+                return asset
+
+        if congestion and congestion_state is not None:
+            asset = self.asset_for_congestion_state(congestion_state)
+            if asset is not None:
+                return asset.get()
+
+        return self.get_cached_asset(congestion=congestion)
+
+    def get_cached_asset(self, congestion: bool = False) -> pd.DataFrame:
+
+        if congestion is False:
+            path = self.cache_path["freeflow"]
+        else:
+            path = self.cache_path["congested"]
+
+        logging.info("Travel costs already prepared. Reusing the file : " + str(path))
+        costs = pd.read_parquet(path)
+
+        return costs
+
+    def create_and_get_asset(self, congestion: bool = False) -> pd.DataFrame:
+        
+        logging.info("Preparing carpool travel costs for occupants...")
+        
+        if congestion is False:
+            output_path = self.cache_path["freeflow"]
+        else:
+            output_path = self.cache_path["congested"]
+        
+        costs = self.compute_travel_costs(
+            self.inputs["car_travel_costs"],
+            self.inputs["parameters"],
+            self.inputs["modal_transfer"],
+            congestion,
+            output_path
+        )
+        
+        if congestion is False:
+            shutil.copy(self.cache_path["freeflow"], self.cache_path["congested"])
+
+        return costs
+
+    def compute_travel_costs(
+            self,
+            car_travel_costs: PathTravelCosts,
+            params: "DetailedCarpoolRoutingParameters",
+            modal_transfer: IntermodalTransfer,
+            congestion: bool,
+            output_path: pathlib.Path
+        ) -> pd.DataFrame:
+        
+        script = RScriptRunner(resources.files('mobility.transport.modes.carpool.detailed').joinpath('compute_carpool_travel_costs.R'))
+        
+        if congestion is True:
+            graph = car_travel_costs.get_congested_graph_path(self.inputs["road_flow_asset"])
+        else:
+            graph = car_travel_costs.modified_path_graph.get()
+        
+        script.run(
+            args=[
+                str(car_travel_costs.transport_zones.cache_path),
+                str(car_travel_costs.transport_zones.study_area.cache_path["polygons"]),
+                str(graph),
+                str(graph),
+                json.dumps(modal_transfer.model_dump(mode="json")),
+                output_path
+            ]
+        )
+
+        costs = pd.read_parquet(output_path)
+        
+        return costs
+    
+    
+    def asset_for_congestion_state(
+        self,
+        congestion_state: CongestionState,
+    ):
+        flow_asset = congestion_state.for_mode("carpool")
+        if flow_asset is None:
+            return None
+
+        return self.asset_for_flow_asset(flow_asset)
+
+    def asset_for_flow_asset(self, flow_asset: VehicleODFlowsAsset):
+        return DetailedCarpoolTravelCosts(
+            car_travel_costs=self.inputs["car_travel_costs"],
+            parameters=self.inputs["parameters"],
+            modal_transfer=self.inputs["modal_transfer"],
+            road_flow_asset=flow_asset,
+        )
+
+    def asset_for_iteration(self, run, iteration: int):
+        if iteration < 1:
+            raise ValueError("Iteration should be >= 1.")
+        if iteration > int(run.parameters.n_iterations):
+            raise ValueError(
+                f"Iteration should be <= {int(run.parameters.n_iterations)} for this run."
+            )
+
+        flow_asset = self.inputs["car_travel_costs"].inputs["congested_path_graph"].get_flow_asset_for_iteration(
+            run,
+            iteration,
+        )
+        if flow_asset is None:
+            return self
+        return self.asset_for_flow_asset(flow_asset)
+
+    def get_for_iteration(self, run, iteration: int):
+        return self.asset_for_iteration(run, iteration).get()
+
+
+class DetailedCarpoolRoutingParameters(BaseModel):
+    """
+    Attributes:
+        absolute_delay_per_passenger (int): absolute delay per supplementary passenger, in minutes. Default: 5
+        relative_delay_per_passenger (float): relative delay per supplementary passenger in proportion of total travel time. Default: 0.05
+        absolute_extra_distance_per_passenger (float): absolute extra distance per supplementary passenger, in km. Default: 1
+        relative_extra_distance_per_passenger (float): relative extra distance per supplementary passenger in proportion of total distance. Default: 0.05
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    parking_locations: Annotated[list[tuple[float, float]], Field(default_factory=list)]
+    absolute_delay_per_passenger: Annotated[int, Field(default=5, ge=0)]
+    relative_delay_per_passenger: Annotated[float, Field(default=0.05, ge=0.0)]
+    absolute_extra_distance_per_passenger: Annotated[float, Field(default=1.0, ge=0.0)]
+    relative_extra_distance_per_passenger: Annotated[float, Field(default=0.05, ge=0.0)]

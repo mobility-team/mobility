@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from mobility import carbon_computation as cc
+from mobility.impacts import carbon_computation as cc
 
 
 def test_carbon_computation_merges_and_computes(monkeypatch):

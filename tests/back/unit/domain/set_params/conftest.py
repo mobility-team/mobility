@@ -63,34 +63,34 @@ def patch_importlib_resources_files(monkeypatch, resources_dir):
 @pytest.fixture(autouse=True)
 def patch_rscript(monkeypatch):
     """
-    Provide a fake RScript class at mobility.r_utils.r_script.RScript
+    Provide a fake RScriptRunner class at mobility.runtime.r_integration.r_script_runner.RScriptRunner
     that records the script path and args instead of running R.
     """
     # Ensure the module tree exists
     if "mobility" not in sys.modules:
         sys.modules["mobility"] = types.ModuleType("mobility")
-    if "mobility.r_utils" not in sys.modules:
-        sys.modules["mobility.r_utils"] = types.ModuleType("mobility.r_utils")
-    if "mobility.r_utils.r_script" not in sys.modules:
-        sys.modules["mobility.r_utils.r_script"] = types.ModuleType("mobility.r_utils.r_script")
+    if "mobility.runtime.r_integration" not in sys.modules:
+        sys.modules["mobility.runtime.r_integration"] = types.ModuleType("mobility.runtime.r_integration")
+    if "mobility.runtime.r_integration.r_script_runner" not in sys.modules:
+        sys.modules["mobility.runtime.r_integration.r_script_runner"] = types.ModuleType("mobility.runtime.r_integration.r_script_runner")
 
-    r_script_mod = sys.modules["mobility.r_utils.r_script"]
+    r_script_mod = sys.modules["mobility.runtime.r_integration.r_script_runner"]
 
-    class _FakeRScript:
+    class _FakeRScriptRunner:
         last_script_path = None
         last_args = None
         call_count = 0
 
         def __init__(self, script_path):
-            _FakeRScript.last_script_path = Path(script_path)
+            _FakeRScriptRunner.last_script_path = Path(script_path)
 
         def run(self, args):
-            _FakeRScript.last_args = list(args)
-            _FakeRScript.call_count += 1
+            _FakeRScriptRunner.last_args = list(args)
+            _FakeRScriptRunner.call_count += 1
             return 0  # pretend success
 
-    monkeypatch.setattr(r_script_mod, "RScript", _FakeRScript, raising=True)
-    return sys.modules["mobility.r_utils.r_script"].RScript  # so tests can inspect .last_*
+    monkeypatch.setattr(r_script_mod, "RScriptRunner", _FakeRScriptRunner, raising=True)
+    return sys.modules["mobility.runtime.r_integration.r_script_runner"].RScriptRunner  # so tests can inspect .last_*
 
 
 @pytest.fixture
