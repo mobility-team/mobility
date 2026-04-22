@@ -43,6 +43,11 @@ info(logger, "Loading simplified/modified graph...")
 hash <- strsplit(basename(cppr_graph_fp), "-")[[1]][1]
 cppr_graph <- read_cppr_graph(dirname(cppr_graph_fp), hash)
 vertices <- read_parquet(file.path(dirname(dirname(cppr_graph_fp)), paste0(hash, "-vertices.parquet")))
+od_vertex_map_fp <- file.path(dirname(dirname(cppr_graph_fp)), paste0(hash, "-od-vertex-map.parquet"))
+od_vertex_map <- NULL
+if (file.exists(od_vertex_map_fp)) {
+  od_vertex_map <- as.data.table(read_parquet(od_vertex_map_fp))
+}
 
 # If OD flows were provided, estimate the congestion on each link and update
 # the travel times 
@@ -71,14 +76,31 @@ if (congestion == TRUE & file.exists(flows_fp)) {
   
   buildings <- as.data.table(read_parquet(buildings_fp))
   buildings[, building_id := 1:.N]
-  buildings[, vertex_id := get_buildings_nearest_vertex_id(buildings, vertices)]
+
+  if (!is.null(od_vertex_map)) {
+    buildings <- merge(
+      buildings,
+      od_vertex_map[, list(building_id, vertex_id)],
+      by = "building_id",
+      all.x = TRUE,
+      sort = FALSE
+    )
+
+    if (any(is.na(buildings$vertex_id))) {
+      stop("OD vertex map is incomplete for the current buildings sample.")
+    }
+  } else {
+    buildings[, vertex_id := get_buildings_nearest_vertex_id(buildings, vertices)]
+  }
+
   buildings <- merge(buildings[, list(building_id, transport_zone_id, n_clusters, weight, vertex_id)], vertices, by = "vertex_id")
   
   vertex_pairs <- tz_pairs_to_vertex_pairs(
     tz_id_from = od_flows$from,
     tz_id_to = od_flows$to,
     transport_zones = as.data.table(transport_zones),
-    buildings = buildings
+    buildings = buildings,
+    vehicle_volume = od_flows$vehicle_volume
   )
   
   od_flows <- merge(od_flows, vertex_pairs, by.x = c("from", "to"), by.y = c("tz_id_from", "tz_id_to"))
@@ -120,5 +142,8 @@ info(logger, "Saving congested graph...")
 hash <- strsplit(basename(output_fp), "-")[[1]][1]
 save_cppr_graph(cppr_graph, dirname(output_fp), hash)
 write_parquet(vertices, file.path(dirname(dirname(output_fp)), paste0(hash, "-vertices.parquet")))
+if (!is.null(od_vertex_map)) {
+  write_parquet(od_vertex_map, file.path(dirname(dirname(output_fp)), paste0(hash, "-od-vertex-map.parquet")))
+}
 
 file.create(output_fp)

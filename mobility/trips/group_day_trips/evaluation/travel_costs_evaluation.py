@@ -147,12 +147,14 @@ class TravelCostsEvaluation:
         return ref_costs
     
 
-    def flatten_travel_costs(self, origin: Dict, destination: Dict, departure_hour: float, travel_costs: Dict):
+    def flatten_travel_costs(self, source: str, origin: Dict, destination: Dict, departure_hour: float, travel_costs: Dict):
         """
         Convert a single reference route definition into row entries.
         
         Parameters
         ----------
+        source: str
+            Description of the data source (example : Google Maps, 21-04-2026, manual extraction)
         origin : dict
             name, lon, and lat of the origin.
         destination : dict
@@ -172,6 +174,7 @@ class TravelCostsEvaluation:
         
         travel_costs = [
             {
+                "source": source,
                 "origin": origin["name"],
                 "destination": destination["name"],
                 "from_lon": origin["lon"],

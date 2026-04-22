@@ -3,7 +3,7 @@ from typing import Dict, List
 
 from mobility.runtime.assets.asset import Asset
 from mobility.transport.costs.transport_costs import TransportCosts
-from .parameters import Parameters
+from .parameters import BehaviorChangePhase, Parameters
 from .run import Run
 from mobility.activities import Activity, Home, Other
 from mobility.surveys import MobilitySurvey
@@ -23,13 +23,24 @@ class GroupDayTrips:
         parameters: Parameters = None,
         n_iterations: int = None,
         alpha: float = None,
+        k_activity_sequences: int | None = None,
+        k_destination_sequences: int = None,
         k_mode_sequences: int = None,
+        n_warmup_iterations: int = None,
+        max_inactive_age: int = None,
         dest_prob_cutoff: float = None,
         n_iter_per_cost_update: int = None,
         cost_uncertainty_sd: float = None,
         seed: int = None,
         mode_sequence_search_parallel: bool = None,
         min_activity_time_constant: float = None,
+        transition_distance_threshold: float = None,
+        enable_transition_distance_model: bool = None,
+        transition_revision_probability: float = None,
+        transition_logit_scale: float = None,
+        transition_distance_friction: float = None,
+        plan_embedding_dimension_weights: list[float] | None = None,
+        behavior_change_phases: list[BehaviorChangePhase] | None = None,
         simulate_weekend: bool = None,
     ):
         """Initialize the grouped day-trips asset.
@@ -55,8 +66,16 @@ class GroupDayTrips:
             n_iterations: Optional override for
                 `Parameters.n_iterations`.
             alpha: Optional override for `Parameters.alpha`.
+            k_activity_sequences: Optional override for
+                `Parameters.k_activity_sequences`.
+            k_destination_sequences: Optional override for
+                `Parameters.k_destination_sequences`.
             k_mode_sequences: Optional override for
                 `Parameters.k_mode_sequences`.
+            n_warmup_iterations: Optional override for
+                `Parameters.n_warmup_iterations`.
+            max_inactive_age: Optional override for
+                `Parameters.max_inactive_age`.
             dest_prob_cutoff: Optional override for
                 `Parameters.dest_prob_cutoff`.
             n_iter_per_cost_update: Optional override for
@@ -68,6 +87,20 @@ class GroupDayTrips:
                 `Parameters.mode_sequence_search_parallel`.
             min_activity_time_constant: Optional override for
                 `Parameters.min_activity_time_constant`.
+            transition_distance_threshold: Optional override for
+                `Parameters.transition_distance_threshold`.
+            enable_transition_distance_model: Optional override for
+                `Parameters.enable_transition_distance_model`.
+            transition_revision_probability: Optional override for
+                `Parameters.transition_revision_probability`.
+            transition_logit_scale: Optional override for
+                `Parameters.transition_logit_scale`.
+            transition_distance_friction: Optional override for
+                `Parameters.transition_distance_friction`.
+            plan_embedding_dimension_weights: Optional override for
+                `Parameters.plan_embedding_dimension_weights`.
+            behavior_change_phases: Optional override for
+                `Parameters.behavior_change_phases`.
             simulate_weekend: Optional override for
                 `Parameters.simulate_weekend`.
 
@@ -87,13 +120,24 @@ class GroupDayTrips:
             explicit_args={
                 "n_iterations": n_iterations,
                 "alpha": alpha,
+                "k_activity_sequences": k_activity_sequences,
+                "k_destination_sequences": k_destination_sequences,
                 "k_mode_sequences": k_mode_sequences,
+                "n_warmup_iterations": n_warmup_iterations,
+                "max_inactive_age": max_inactive_age,
                 "dest_prob_cutoff": dest_prob_cutoff,
                 "n_iter_per_cost_update": n_iter_per_cost_update,
                 "cost_uncertainty_sd": cost_uncertainty_sd,
                 "seed": seed,
                 "mode_sequence_search_parallel": mode_sequence_search_parallel,
                 "min_activity_time_constant": min_activity_time_constant,
+                "transition_distance_threshold": transition_distance_threshold,
+                "enable_transition_distance_model": enable_transition_distance_model,
+                "transition_revision_probability": transition_revision_probability,
+                "transition_logit_scale": transition_logit_scale,
+                "transition_distance_friction": transition_distance_friction,
+                "plan_embedding_dimension_weights": plan_embedding_dimension_weights,
+                "behavior_change_phases": behavior_change_phases,
                 "simulate_weekend": simulate_weekend,
             },
             owner_name="GroupDayTrips",

@@ -29,6 +29,11 @@ info(logger, "Loading simplified/modified/congested graph...")
 hash <- strsplit(basename(cppr_graph_fp), "-")[[1]][1]
 cppr_graph <- read_cppr_graph(dirname(cppr_graph_fp), hash)
 vertices <- read_parquet(file.path(dirname(dirname(cppr_graph_fp)), paste0(hash, "-vertices.parquet")))
+od_vertex_map_fp <- file.path(dirname(dirname(cppr_graph_fp)), paste0(hash, "-od-vertex-map.parquet"))
+od_vertex_map <- NULL
+if (file.exists(od_vertex_map_fp)) {
+  od_vertex_map <- read_parquet(od_vertex_map_fp)
+}
 
 # Contract the graph and save it
 info(logger, "Contracting graph...")
@@ -38,5 +43,8 @@ info(logger, "Saving contracted graph...")
 hash <- strsplit(basename(output_fp), "-")[[1]][1]
 save_cppr_contracted_graph(cppr_graph, dirname(output_fp), hash)
 write_parquet(vertices, file.path(dirname(dirname(output_fp)), paste0(hash, "-vertices.parquet")))
+if (!is.null(od_vertex_map)) {
+  write_parquet(od_vertex_map, file.path(dirname(dirname(output_fp)), paste0(hash, "-od-vertex-map.parquet")))
+}
 
 file.create(output_fp)

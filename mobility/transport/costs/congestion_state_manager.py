@@ -178,5 +178,5 @@ class CongestionStateManager:
             iteration=int(iteration),
             mode_name=str(mode_name),
         )
-        flow_asset.get()
+        flow_asset.create_and_get_asset()
         return flow_asset

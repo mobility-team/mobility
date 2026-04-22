@@ -5,6 +5,9 @@ from typing import Any
 import polars as pl
 
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
+from .candidate_plan_steps import CandidatePlanStepsAsset
+from .plan_distance import PlanDistance
+from .plan_ids import PLAN_KEY_COLS, add_plan_id
 from .destination_sequences import DestinationSequences
 from .mode_sequences import ModeSequences
 from ..transitions.transition_schema import TRANSITION_EVENT_COLUMNS
@@ -13,14 +16,34 @@ from ..transitions.transition_schema import TRANSITION_EVENT_COLUMNS
 class PlanUpdater:
     """Updates population plan distributions over activity/destination/mode sequences."""
 
+    @staticmethod
+    def _ensure_plan_id(frame: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame | pl.LazyFrame:
+        """Add a temporary plan id from the plan keys when tests pass raw frames."""
+        schema_names = frame.collect_schema().names() if isinstance(frame, pl.LazyFrame) else frame.columns
+        if "plan_id" in schema_names:
+            return frame
+
+        return frame.with_columns(
+            plan_id=pl.concat_str(
+                [
+                    pl.col("demand_group_id").cast(pl.String),
+                    pl.col("activity_seq_id").cast(pl.String),
+                    pl.col("dest_seq_id").cast(pl.String),
+                    pl.col("mode_seq_id").cast(pl.String),
+                ],
+                separator="|",
+            )
+        )
+
     def get_new_plans(
         self,
         current_plans: pl.DataFrame,
         current_plan_steps: pl.DataFrame | None,
+        candidate_plan_steps: pl.DataFrame | None,
         demand_groups: pl.DataFrame,
         chains: pl.DataFrame,
         transport_costs: Any,
-        remaining_opportunities: pl.DataFrame,
+        destination_saturation: pl.DataFrame,
         activity_dur: pl.DataFrame,
         iteration: int,
         resolved_activity_parameters: dict[str, Any],
@@ -28,24 +51,29 @@ class PlanUpdater:
         mode_sequences: ModeSequences,
         home_night_dur: pl.DataFrame,
         stay_home_plan: pl.DataFrame,
+        transport_zones: Any,
+        sequence_index_folder,
         parameters: Any,
-    ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
         """Advance one iteration of plan updates."""
 
         possible_plan_steps = self.get_possible_plan_steps(
             current_plans,
             current_plan_steps,
+            candidate_plan_steps,
             demand_groups,
             chains,
             transport_costs,
-            remaining_opportunities,
+            destination_saturation,
             activity_dur,
             iteration,
             resolved_activity_parameters,
             parameters.min_activity_time_constant,
             destination_sequences,
             mode_sequences,
+            parameters,
         )
+        possible_plan_steps = add_plan_id(possible_plan_steps, index_folder=sequence_index_folder)
         self._assert_current_plans_covered_by_possible_plan_steps(
             current_plans,
             possible_plan_steps,
@@ -58,25 +86,42 @@ class PlanUpdater:
             resolved_activity_parameters["home"].value_of_time_stay_home,
             stay_home_plan,
             parameters.min_activity_time_constant,
+            sequence_index_folder=sequence_index_folder,
+        )
+        candidate_plan_steps = possible_plan_steps.collect(engine="streaming")
+        possible_plan_steps = self.add_stay_home_plan_steps(
+            possible_plan_steps,
+            stay_home_plan,
+            sequence_index_folder=sequence_index_folder,
+        ).collect(
+            engine="streaming"
         )
 
         transition_prob = self.get_transition_probabilities(
             current_plans,
             possible_plan_utility,
+            possible_plan_steps,
             parameters.get_behavior_change_scope(iteration),
+            transport_zones=transport_zones,
+            transition_distance_threshold=parameters.transition_distance_threshold,
+            enable_transition_distance_model=parameters.enable_transition_distance_model,
+            transition_revision_probability=parameters.transition_revision_probability,
+            transition_logit_scale=parameters.transition_logit_scale,
+            transition_distance_friction=parameters.transition_distance_friction,
+            plan_embedding_dimension_weights=parameters.plan_embedding_dimension_weights,
         )
         current_plans, transition_events = self.apply_transitions(
             current_plans,
             transition_prob,
             iteration,
         )
-        transition_events = self.add_transition_plan_details(transition_events, possible_plan_steps)
-        current_plan_steps = self.get_current_plan_steps(current_plans, possible_plan_steps)
+        transition_events = self.add_transition_plan_details(transition_events, possible_plan_steps.lazy())
+        current_plan_steps = self.get_current_plan_steps(current_plans, possible_plan_steps.lazy())
 
         if current_plans["n_persons"].is_null().any() or current_plans["n_persons"].is_nan().any():
             raise ValueError("Null or NaN values in the n_persons column, something went wrong.")
 
-        return current_plans, current_plan_steps, transition_events
+        return current_plans, current_plan_steps, candidate_plan_steps, transition_events
 
     def _assert_current_plans_covered_by_possible_plan_steps(
         self,
@@ -112,32 +157,59 @@ class PlanUpdater:
         self,
         current_plans,
         current_plan_steps,
+        candidate_plan_steps,
         demand_groups,
         chains,
         transport_costs,
-        opportunities,
+        destination_saturation,
         activity_dur,
         iteration: int,
         resolved_activity_parameters: dict[str, Any],
         min_activity_time_constant,
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
+        parameters: Any,
     ):
         """Enumerate candidate plan steps and compute per-step utilities."""
+        aggregated_candidates = CandidatePlanStepsAsset.build_candidate_memory(
+            destination_sequences=destination_sequences,
+            mode_sequences=mode_sequences,
+            chains=chains,
+            demand_groups=demand_groups,
+            current_plans=current_plans,
+            previous_candidate_plan_steps=candidate_plan_steps,
+            current_iteration=iteration,
+            n_warmup_iterations=parameters.n_warmup_iterations,
+            max_inactive_age=parameters.max_inactive_age,
+        )
+
+        return self.compute_plan_steps_candidates_utility(
+            candidates=aggregated_candidates,
+            transport_costs=transport_costs,
+            destination_saturation=destination_saturation,
+            activity_dur=activity_dur,
+            resolved_activity_parameters=resolved_activity_parameters,
+            min_activity_time_constant=min_activity_time_constant,
+            allow_missing_costs_for_current_plans=(candidate_plan_steps is not None),
+        )
+
+    def compute_plan_steps_candidates_utility(
+        self,
+        *,
+        candidates: pl.LazyFrame,
+        transport_costs,
+        destination_saturation: pl.DataFrame,
+        activity_dur: pl.DataFrame,
+        resolved_activity_parameters: dict[str, Any],
+        min_activity_time_constant,
+        allow_missing_costs_for_current_plans: bool,
+    ) -> pl.LazyFrame:
+        """Score plan-step candidates under current costs and destination saturation."""
 
         cost_by_od_and_modes = transport_costs.get_costs_by_od_and_mode(
             ["cost", "distance", "time"],
             detail_distances=False,
         )
-
-        chains_w_home = (
-            chains.join(demand_groups.select(["demand_group_id", "csp"]), on="demand_group_id")
-            .with_columns(duration_per_pers=pl.col("duration") / pl.col("n_persons"))
-        )
-
-        spat_chains = destination_sequences.get_cached_asset().lazy()
-        modes = mode_sequences.get_cached_asset().lazy()
-
         value_of_time = (
             pl.from_dicts(
                 [
@@ -148,7 +220,6 @@ class PlanUpdater:
                 activity=pl.col("activity").cast(pl.Enum(activity_dur["activity"].dtype.categories))
             )
         )
-
         possible_plan_step_columns = [
             "demand_group_id",
             "activity_seq_id",
@@ -160,8 +231,13 @@ class PlanUpdater:
             "to",
             "mode",
             "duration_per_pers",
+            "departure_time",
+            "arrival_time",
+            "next_departure_time",
             "iteration",
             "csp",
+            "first_seen_iteration",
+            "last_active_iteration",
             "cost",
             "distance",
             "time",
@@ -172,18 +248,27 @@ class PlanUpdater:
             "utility",
         ]
 
-        possible_plan_steps = (
-            modes.join(spat_chains, on=["demand_group_id", "activity_seq_id", "dest_seq_id", "seq_step_index"])
-            .join(chains_w_home.lazy(), on=["demand_group_id", "activity_seq_id", "seq_step_index"])
-            .join(cost_by_od_and_modes.lazy(), on=["from", "to", "mode"])
+        scored_candidates = (
+            candidates
+            .with_columns(
+                activity=pl.col("activity").cast(pl.Enum(activity_dur["activity"].dtype.categories))
+            )
+            .join(
+                cost_by_od_and_modes.lazy(),
+                on=["from", "to", "mode"],
+                how="left" if allow_missing_costs_for_current_plans else "inner",
+            )
             .join(activity_dur.lazy(), on=["csp", "activity"])
             .join(value_of_time.lazy(), on="activity")
             .join(
-                opportunities.select(["to", "activity", "k_saturation_utility"]).lazy(),
+                destination_saturation.select(["to", "activity", "k_saturation_utility"]).lazy(),
                 on=["to", "activity"],
                 how="left",
             )
             .with_columns(
+                cost=pl.col("cost").fill_null(1e9) if allow_missing_costs_for_current_plans else pl.col("cost"),
+                distance=pl.col("distance").fill_null(0.0),
+                time=pl.col("time").fill_null(0.0),
                 k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0),
                 min_activity_time=pl.col("mean_duration_per_pers") * math.exp(-min_activity_time_constant),
             )
@@ -196,92 +281,10 @@ class PlanUpdater:
                     - pl.col("cost")
                 )
             )
-            .with_columns(iteration=pl.col("iteration"))
             .select(possible_plan_step_columns)
         )
 
-        if current_plan_steps is not None:
-            zero_mass_steps = (
-                current_plan_steps.lazy()
-                .filter(pl.col("n_persons") <= 0.0)
-                .select(
-                    [
-                        "demand_group_id",
-                        "activity_seq_id",
-                        "dest_seq_id",
-                        "mode_seq_id",
-                        "seq_step_index",
-                        "n_persons",
-                    ]
-                )
-                .collect(engine="streaming")
-            )
-            if zero_mass_steps.height > 0:
-                sample = zero_mass_steps.head(5).to_dicts()
-                raise ValueError(
-                    "Found carried-forward current_plan_steps with non-positive n_persons while "
-                    f"building possible_plan_steps at iteration={iteration}. "
-                    f"Invalid rows={zero_mass_steps.height}. Sample={sample}"
-                )
-
-            current_possible_plan_steps = (
-                current_plan_steps.lazy()
-                .with_columns(
-                    duration_per_pers=pl.col("duration") / pl.col("n_persons"),
-                    iteration=pl.lit(iteration).cast(pl.UInt32),
-                )
-                .join(demand_groups.select(["demand_group_id", "csp"]).lazy(), on="demand_group_id")
-                # Keep current plans even when refreshed routing costs no longer
-                # provide a path for one carried-forward OD/mode combination.
-                # Those plans should remain valid "from" states for the
-                # transition model, but with a very poor refreshed utility so
-                # agents can move away from them.
-                .join(
-                    cost_by_od_and_modes.lazy(),
-                    on=["from", "to", "mode"],
-                    how="left",
-                )
-                .join(activity_dur.lazy(), on=["csp", "activity"])
-                .join(value_of_time.lazy(), on="activity")
-                .join(
-                    opportunities.select(["to", "activity", "k_saturation_utility"]).lazy(),
-                    on=["to", "activity"],
-                    how="left",
-                )
-                .with_columns(
-                    cost=pl.col("cost").fill_null(1e9),
-                    distance=pl.col("distance").fill_null(0.0),
-                    time=pl.col("time").fill_null(0.0),
-                    k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0),
-                    min_activity_time=pl.col("mean_duration_per_pers") * math.exp(-min_activity_time_constant),
-                )
-                .with_columns(
-                    utility=(
-                        pl.col("k_saturation_utility")
-                        * pl.col("value_of_time")
-                        * pl.col("mean_duration_per_pers")
-                        * (pl.col("duration_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
-                        - pl.col("cost")
-                    )
-                )
-                .select(possible_plan_step_columns)
-            )
-
-            possible_plan_steps = (
-                pl.concat([possible_plan_steps, current_possible_plan_steps], how="vertical_relaxed")
-                .unique(
-                    subset=[
-                        "demand_group_id",
-                        "activity_seq_id",
-                        "dest_seq_id",
-                        "mode_seq_id",
-                        "seq_step_index",
-                    ],
-                    keep="first",
-                )
-            )
-
-        return possible_plan_steps
+        return scored_candidates
 
     def get_possible_plan_utility(
         self,
@@ -290,12 +293,14 @@ class PlanUpdater:
         value_of_time_stay_home,
         stay_home_plan,
         min_activity_time_constant,
+        *,
+        sequence_index_folder,
     ):
         """Aggregate per-step utilities to plan-level utilities."""
 
         possible_plan_utility = (
-            possible_plan_steps.group_by(
-                ["demand_group_id", "csp", "activity_seq_id", "dest_seq_id", "mode_seq_id"]
+            possible_plan_steps.filter(pl.col("mode_seq_id") != 0).group_by(
+                ["plan_id", "demand_group_id", "csp", "activity_seq_id", "dest_seq_id", "mode_seq_id"]
             )
             .agg(
                 utility=pl.col("utility").sum(),
@@ -313,7 +318,6 @@ class PlanUpdater:
                 )
             )
             .with_columns(utility=pl.col("utility") + pl.col("utility_stay_home"))
-            .filter(pl.col("utility") > pl.col("utility").max().over(["demand_group_id"]) - 5.0)
             .select(["demand_group_id", "activity_seq_id", "mode_seq_id", "dest_seq_id", "utility"])
         )
 
@@ -322,7 +326,7 @@ class PlanUpdater:
                 possible_plan_utility,
                 stay_home_plan.lazy()
                 .with_columns(
-                    min_activity_time=pl.col("mean_home_night_per_pers") * math.exp(-min_activity_time_constant)
+                    min_activity_time=pl.col("mean_home_night_per_pers") * math.exp(-min_activity_time_constant),
                 )
                 .with_columns(
                     utility=(
@@ -335,19 +339,119 @@ class PlanUpdater:
             ]
         )
 
-        return possible_plan_utility
+        return add_plan_id(possible_plan_utility, index_folder=sequence_index_folder)
+
+    def add_stay_home_plan_steps(
+        self,
+        possible_plan_steps: pl.LazyFrame,
+        stay_home_plan: pl.DataFrame,
+        *,
+        sequence_index_folder,
+    ) -> pl.LazyFrame:
+        """Append one synthetic timed step for the stay-home state so it can be embedded like other plans."""
+        step_columns = [col for col in possible_plan_steps.collect_schema().names() if col != "plan_id"]
+        possible_plan_steps_no_id = possible_plan_steps.filter(pl.col("mode_seq_id") != 0).select(step_columns)
+
+        stay_home_steps = (
+            stay_home_plan.lazy()
+            .with_columns(
+                cost=pl.lit(0.0),
+                distance=pl.lit(0.0),
+                time=pl.lit(0.0),
+                mean_duration_per_pers=pl.col("duration_per_pers"),
+                value_of_time=pl.lit(0.0),
+                k_saturation_utility=pl.lit(1.0),
+                min_activity_time=pl.lit(0.0),
+                first_seen_iteration=pl.lit(None, dtype=pl.UInt32),
+                last_active_iteration=pl.lit(None, dtype=pl.UInt32),
+            )
+            .select(step_columns)
+        )
+
+        return add_plan_id(
+            pl.concat([possible_plan_steps_no_id, stay_home_steps], how="vertical_relaxed"),
+            index_folder=sequence_index_folder,
+        )
 
     def get_transition_probabilities(
         self,
         current_plans: pl.DataFrame,
         possible_plan_utility: pl.LazyFrame,
+        possible_plan_steps: pl.DataFrame,
         behavior_change_scope: BehaviorChangeScope,
-        transition_cost: float = 0.0,
+        *,
+        transport_zones: Any,
+        transition_distance_threshold: float = math.inf,
+        enable_transition_distance_model: bool = False,
+        transition_revision_probability: float = 1.0,
+        transition_logit_scale: float = 1.0,
+        transition_distance_friction: float = 0.0,
+        plan_embedding_dimension_weights: list[float] | None = None,
     ) -> pl.DataFrame:
         """Compute transition probabilities from current to candidate plans."""
 
-        plan_cols = ["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"]
+        possible_plan_utility = self._ensure_plan_id(possible_plan_utility)
+        possible_plan_steps = self._ensure_plan_id(possible_plan_steps)
 
+        allowed_transitions = self.build_allowed_plan_transitions(
+            current_plans,
+            possible_plan_utility,
+            behavior_change_scope,
+            transition_logit_scale=transition_logit_scale,
+        )
+
+        if enable_transition_distance_model and math.isfinite(transition_distance_threshold):
+            allowed_transitions = self.attach_transition_distances(
+                allowed_transitions,
+                possible_plan_steps=possible_plan_steps,
+                transport_zones=transport_zones,
+                plan_embedding_dimension_weights=plan_embedding_dimension_weights,
+            )
+
+        if not enable_transition_distance_model:
+            transition_distance_threshold = math.inf
+            transition_distance_friction = 0.0
+
+        transition_probabilities = self.compute_transition_probabilities_from_utilities(
+            allowed_transitions,
+            transition_distance_threshold=transition_distance_threshold,
+            transition_revision_probability=transition_revision_probability,
+            transition_logit_scale=transition_logit_scale,
+            transition_distance_friction=transition_distance_friction,
+        )
+
+        return transition_probabilities
+
+    @staticmethod
+    def _scale_utility_pruning_delta(
+        base_delta: float,
+        transition_logit_scale: float,
+    ) -> float:
+        """Keep the pruning window consistent with the scaled logit utility."""
+        if transition_logit_scale <= 0.0:
+            return math.inf
+        return base_delta / transition_logit_scale
+
+    def build_allowed_plan_transitions(
+        self,
+        current_plans: pl.DataFrame,
+        possible_plan_utility: pl.LazyFrame,
+        behavior_change_scope: BehaviorChangeScope,
+        *,
+        transition_logit_scale: float = 1.0,
+    ) -> pl.LazyFrame:
+        """Build allowed from-to plan pairs under the active behavior scope."""
+
+        logging.info(
+            "Building GroupDayTrips allowed plan transitions: scope=%s",
+            str(behavior_change_scope),
+        )
+
+        utility_pruning_delta = self._scale_utility_pruning_delta(
+            base_delta=5.0,
+            transition_logit_scale=transition_logit_scale,
+        )
+        plan_cols = PLAN_KEY_COLS
         current_plans_for_transitions = current_plans.lazy()
         possible_plan_utility_for_transitions = possible_plan_utility
 
@@ -366,51 +470,141 @@ class PlanUpdater:
                 & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
             )
 
-        transition_probabilities = (
+        is_self_transition = (
+            (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
+            & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
+            & (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
+        )
+
+        utility_filter = pl.lit(True)
+        if math.isfinite(utility_pruning_delta):
+            utility_filter = (
+                is_self_transition
+                | (pl.col("utility_trans") >= pl.col("max_utility_trans") - utility_pruning_delta)
+            )
+
+        return (
             current_plans_for_transitions
             .select(plan_cols + ["utility"])
             .rename({"utility": "utility_prev_from"})
             .join(possible_plan_utility_for_transitions, on=plan_cols)
+            .rename({"plan_id": "plan_id_from"})
             .join_where(
                 possible_plan_utility_for_transitions,
                 (
                     (pl.col("demand_group_id") == pl.col("demand_group_id_trans"))
                     & scope_pair_constraint
-                    & (
-                        (pl.col("utility_trans") > pl.col("utility") - 5.0)
-                        | (
-                            (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
-                            & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
-                            & (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
-                        )
-                    )
                 ),
                 suffix="_trans",
             )
             .drop("demand_group_id_trans")
+            .rename({"plan_id": "plan_id_trans"})
             .with_columns(
-                utility_trans=pl.when(
-                    (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
-                    & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
-                    & (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
-                )
-                .then(pl.col("utility_trans") + transition_cost)
-                .otherwise(pl.col("utility_trans"))
+                max_utility_trans=pl.col("utility_trans").max().over(plan_cols),
             )
-            .with_columns(delta_utility=pl.col("utility_trans") - pl.col("utility_trans").max().over(plan_cols))
-            .filter(pl.col("delta_utility") > -5.0)
+            .filter(utility_filter)
+            .drop(["max_utility_trans"])
+        )
+
+    def attach_transition_distances(
+        self,
+        allowed_transitions: pl.LazyFrame,
+        *,
+        possible_plan_steps: pl.DataFrame,
+        transport_zones: Any,
+        plan_embedding_dimension_weights: list[float] | None = None,
+    ) -> pl.LazyFrame:
+        """Attach embedding distances to allowed plan transitions."""
+
+        logging.info("Computing GroupDayTrips transition distances")
+
+        is_self_transition = pl.col("plan_id_from") == pl.col("plan_id_trans")
+        self_distances = (
+            allowed_transitions
+            .filter(is_self_transition)
+            .select(["plan_id_from", "plan_id_trans"])
+            .with_columns(distance=pl.lit(0.0, dtype=pl.Float64))
+            .collect(engine="streaming")
+        )
+        pair_index = (
+            allowed_transitions
+            .filter(~is_self_transition)
+            .select(["plan_id_from", "plan_id_trans"])
+            .collect(engine="streaming")
+        )
+        non_self_distances = PlanDistance().get_plan_pair_distances(
+            pair_index,
+            possible_plan_steps,
+            plan_id_col="plan_id",
+            transport_zones=transport_zones,
+            dimension_weights=plan_embedding_dimension_weights,
+        )
+        pair_distances = pl.concat(
+            [self_distances, non_self_distances],
+            how="vertical_relaxed"
+        )
+
+        return allowed_transitions.join(pair_distances.lazy(), on=["plan_id_from", "plan_id_trans"])
+
+    def compute_transition_probabilities_from_utilities(
+        self,
+        allowed_transitions: pl.LazyFrame,
+        *,
+        transition_distance_threshold: float = math.inf,
+        transition_revision_probability: float = 1.0,
+        transition_logit_scale: float = 1.0,
+        transition_distance_friction: float = 0.0,
+    ) -> pl.DataFrame:
+        """Compute one-step transition probabilities with distance-threshold filtering and revision."""
+
+        logging.info("Collecting GroupDayTrips transition probabilities")
+
+        plan_cols = PLAN_KEY_COLS
+        if "distance" not in allowed_transitions.collect_schema().names():
+            allowed_transitions = allowed_transitions.with_columns(
+                distance=pl.lit(0.0, dtype=pl.Float64)
+            )
+        is_self_transition = pl.col("plan_id_from") == pl.col("plan_id_trans")
+        filtered_transitions = allowed_transitions
+        if math.isfinite(transition_distance_threshold):
+            filtered_transitions = allowed_transitions.filter(
+                is_self_transition | (pl.col("distance").fill_null(0.0) <= transition_distance_threshold)
+            )
+
+        friction = pl.lit(transition_distance_friction, dtype=pl.Float64)
+        scaled_transition_utility = (
+            pl.col("utility_trans") * pl.lit(transition_logit_scale, dtype=pl.Float64)
+            - friction * pl.col("distance").fill_null(0.0)
+        )
+        utility_weighted_transitions = (
+            filtered_transitions
+            .with_columns(scaled_transition_utility=scaled_transition_utility)
             .with_columns(
-                p_transition=pl.col("delta_utility").exp() / pl.col("delta_utility").exp().sum().over(plan_cols)
+                utility_weight=(
+                    pl.col("scaled_transition_utility") - pl.col("scaled_transition_utility").max().over(plan_cols)
+                ).exp()
             )
-            .sort("p_transition", descending=True)
+        )
+
+        q_transition = pl.col("utility_weight") / pl.col("utility_weight").sum().over(plan_cols)
+        revision_probability = pl.lit(transition_revision_probability, dtype=pl.Float64)
+
+        transition_probabilities = (
+            utility_weighted_transitions
             .with_columns(
-                p_transition_cum=pl.col("p_transition").cum_sum().over(plan_cols),
-                p_count=pl.col("p_transition").cum_count().over(plan_cols),
+                is_self_transition=is_self_transition,
+                q_transition=q_transition,
+                tau_transition=friction * pl.col("distance").fill_null(0.0),
+                adjustment_factor=revision_probability,
             )
-            .filter((pl.col("p_transition_cum") < 0.99) | (pl.col("p_count") == 1))
-            .with_columns(p_transition=pl.col("p_transition") / pl.col("p_transition").sum().over(plan_cols))
+            .with_columns(
+                p_transition=pl.when(pl.col("is_self_transition"))
+                .then(1.0 - revision_probability + revision_probability * pl.col("q_transition"))
+                .otherwise(revision_probability * pl.col("q_transition"))
+            )
             .select(
                 [
+                    "plan_id_trans",
                     "demand_group_id",
                     "activity_seq_id",
                     "dest_seq_id",
@@ -421,10 +615,17 @@ class PlanUpdater:
                     "utility_prev_from",
                     pl.col("utility").alias("utility_from_updated"),
                     "utility_trans",
+                    "tau_transition",
+                    "q_transition",
+                    "adjustment_factor",
                     "p_transition",
                 ]
             )
             .collect(engine="streaming")
+        )
+    
+        logging.info(
+            "Finished collecting GroupDayTrips transition probabilities."
         )
 
         return transition_probabilities
@@ -437,11 +638,12 @@ class PlanUpdater:
     ) -> tuple[pl.DataFrame, pl.DataFrame]:
         """Apply transition probabilities and emit transition events."""
 
-        plan_cols = ["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"]
+        plan_cols = PLAN_KEY_COLS
 
         transitions = (
             current_plans.join(transition_probabilities, on=plan_cols, how="left")
             .with_columns(
+                plan_id_trans=pl.coalesce([pl.col("plan_id_trans"), pl.col("plan_id")]),
                 p_transition=pl.col("p_transition").fill_null(1.0),
                 utility_from_updated=pl.col("utility_from_updated").fill_null(pl.col("utility")),
                 utility_trans=pl.coalesce([pl.col("utility_trans"), pl.col("utility")]),
@@ -478,11 +680,10 @@ class PlanUpdater:
                 utility_to=pl.col("utility_trans"),
                 utility_prev_from=pl.col("utility_prev_from"),
                 utility_prev_to=pl.col("utility_prev_to"),
-                is_self_transition=(
-                    (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
-                    & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
-                    & (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
-                ),
+                tau_transition=pl.col("tau_transition"),
+                q_transition=pl.col("q_transition"),
+                adjustment_factor=pl.col("adjustment_factor"),
+                is_self_transition=pl.col("plan_id") == pl.col("plan_id_trans"),
             ).select(
                 [
                     "iteration",
@@ -498,6 +699,9 @@ class PlanUpdater:
                     "utility_prev_to",
                     "utility_from",
                     "utility_to",
+                    "tau_transition",
+                    "q_transition",
+                    "adjustment_factor",
                     "is_self_transition",
                 ]
             )
@@ -505,7 +709,7 @@ class PlanUpdater:
 
         new_states = (
             transitions.group_by(
-                ["demand_group_id", "activity_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"]
+                ["plan_id_trans", "demand_group_id", "activity_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"]
             )
             .agg(
                 n_persons=pl.col("n_persons_moved").sum(),
@@ -513,6 +717,7 @@ class PlanUpdater:
             )
             .rename(
                 {
+                    "plan_id_trans": "plan_id",
                     "activity_seq_id_trans": "activity_seq_id",
                     "dest_seq_id_trans": "dest_seq_id",
                     "mode_seq_id_trans": "mode_seq_id",
@@ -686,7 +891,7 @@ class PlanUpdater:
         """Expand aggregate plans to per-step rows."""
 
         current_plan_steps = (
-            current_plans.lazy()
+            current_plans.drop("utility").lazy()
             .join(
                 possible_plan_steps.select(
                     [
@@ -699,7 +904,11 @@ class PlanUpdater:
                         "from",
                         "to",
                         "mode",
+                        "utility",
                         "duration_per_pers",
+                        "departure_time",
+                        "arrival_time",
+                        "next_departure_time",
                     ]
                 ),
                 on=["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"],
@@ -741,15 +950,20 @@ class PlanUpdater:
             od_flows_by_mode=od_flows_by_mode,
         )
 
-    def get_new_opportunities(
+    def get_destination_saturation(
         self,
         current_plan_steps,
         opportunities,
         resolved_activity_parameters: dict[str, Any],
     ):
-        """Recompute remaining opportunities per (activity, destination)."""
+        """Recompute destination saturation per (activity, destination).
 
-        logging.info("Computing remaining opportunities at destinations...")
+        This keeps the original ``opportunity_capacity`` and updates
+        ``k_saturation_utility`` from the currently occupied activity duration
+        at each destination. It is not a literal remaining-capacity stock.
+        """
+
+        logging.info("Computing destination saturation at destinations...")
 
         saturation_fun_parameters = (
             pl.from_dicts(
@@ -764,8 +978,9 @@ class PlanUpdater:
             ).with_columns(activity=pl.col("activity").cast(pl.Enum(opportunities["activity"].dtype.categories)))
         )
 
-        remaining_opportunities = (
+        destination_saturation = (
             current_plan_steps.filter((pl.col("activity_seq_id") != 0) & (pl.col("activity") != "home"))
+            .with_columns(activity=pl.col("activity").cast(pl.Enum(opportunities["activity"].dtype.categories)))
             .group_by(["to", "activity"])
             .agg(opportunity_occupation=pl.col("duration").sum())
             .join(opportunities, on=["to", "activity"], how="full", coalesce=True)
@@ -780,4 +995,4 @@ class PlanUpdater:
             .select(["activity", "to", "opportunity_capacity", "k_saturation_utility"])
         )
 
-        return remaining_opportunities
+        return destination_saturation

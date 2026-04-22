@@ -32,6 +32,13 @@ clusters_fp <- file.path(
     "-transport_zones_buildings.parquet"
   )
 )
+clusters_geoms_fp <- file.path(
+  dirname(output_fp),
+  paste0(
+    gsub("-transport_zones.gpkg", "", basename(output_fp)),
+    "-transport_zones_buildings_geoms.gpkg"
+  )
+)
 
 buildings_area_threshold <- 2e5
 n_buildings_sample <- 10
@@ -230,14 +237,6 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
     transport_zones[, geometry := voronoi[unlist(v_order)]]
     
     k_medoids <- buildings_dt[, compute_k_medoids(.SD), by = list(transport_zone_id = cluster)]
-    # 
-    # library(ggplot2)
-    # p <- ggplot(buildings_dt)
-    # p <- p + geom_point(aes(x = X, y = Y, color = factor(cluster)), alpha = 0.5)
-    # p <- p + geom_point(data = k_medoids[n_clusters == max(n_clusters)], aes(x = x, y = y), size = 2, alpha = 0.5)
-    # p <- p + geom_point(data = clusters, aes(x = X, y = Y), size = 3)
-    # p <- p + coord_equal()
-    # p
 
 
     
@@ -327,3 +326,11 @@ transport_zones <- st_as_sf(transport_zones)
 # Write the result
 st_write(transport_zones, output_fp, delete_dsn = TRUE, quiet = TRUE)
 write_parquet(clusters, clusters_fp)
+
+clusters_geoms <- st_as_sf(
+  clusters,
+  coords = c("x", "y"),
+  crs = "EPSG:3035",
+  remove = FALSE
+)
+st_write(clusters_geoms, clusters_geoms_fp, layer = "cluster_buildings", delete_dsn = TRUE, quiet = TRUE)

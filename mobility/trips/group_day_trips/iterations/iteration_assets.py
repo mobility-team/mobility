@@ -5,6 +5,7 @@ import pickle
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
+from ..plans.candidate_plan_steps import CandidatePlanStepsAsset
 
 
 class CurrentPlansAsset(FileAsset):
@@ -74,7 +75,11 @@ class CurrentPlanStepsAsset(FileAsset):
 
 
 class RemainingOpportunitiesAsset(FileAsset):
-    """Persisted remaining opportunities after one completed iteration."""
+    """Persisted destination saturation state after one completed iteration.
+
+    The class and filename keep the legacy "remaining opportunities" name so
+    previously written iteration caches can still be resumed.
+    """
 
     def __init__(
         self,
@@ -83,9 +88,9 @@ class RemainingOpportunitiesAsset(FileAsset):
         is_weekday: bool,
         iteration: int,
         base_folder: pathlib.Path,
-        remaining_opportunities: pl.DataFrame | None = None,
+        destination_saturation: pl.DataFrame | None = None,
     ) -> None:
-        self.remaining_opportunities = remaining_opportunities
+        self.destination_saturation = destination_saturation
         inputs = {
             "version": 1,
             "run_key": run_key,
@@ -99,10 +104,10 @@ class RemainingOpportunitiesAsset(FileAsset):
         return pl.read_parquet(self.cache_path)
 
     def create_and_get_asset(self) -> pl.DataFrame:
-        if self.remaining_opportunities is None:
-            raise ValueError("Cannot save remaining opportunities without a dataframe.")
+        if self.destination_saturation is None:
+            raise ValueError("Cannot save destination saturation without a dataframe.")
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.remaining_opportunities.write_parquet(self.cache_path)
+        self.destination_saturation.write_parquet(self.cache_path)
         return self.get_cached_asset()
 
 

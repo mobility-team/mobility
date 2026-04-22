@@ -127,6 +127,20 @@ class TransportCosts(FileAsset):
             last_completed_iteration=iteration - 1,
             cost_update_interval=run.parameters.n_iter_per_cost_update,
         )
+        logging.info(
+            "TransportCosts asset_for_iteration: run_key=%s is_weekday=%s iteration=%s "
+            "last_completed_iteration=%s congestion_state_iteration=%s congestion_enabled=%s",
+            run.inputs_hash,
+            str(run.is_weekday),
+            str(iteration),
+            str(iteration - 1),
+            (
+                str(congestion_state.iteration)
+                if congestion_state is not None
+                else "none"
+            ),
+            str(congestion_state is not None),
+        )
         return asset.asset_for_congestion_state(congestion_state)
 
     def get_for_iteration(self, run, iteration: int):

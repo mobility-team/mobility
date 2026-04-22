@@ -45,6 +45,7 @@ apply_road_lane_number_modifier <- function(
   cppr_graph$attrib$cap[edge_index] <- ifelse(
     cppr_graph$attrib$cap[edge_index] > 3999.0,
     cppr_graph$attrib$cap[edge_index] - 2000.0,
+    cppr_graph$attrib$cap[edge_index]
   )
   
   return(cppr_graph)

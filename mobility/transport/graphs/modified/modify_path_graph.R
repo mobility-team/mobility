@@ -42,6 +42,11 @@ speed_modifiers <- fromJSON(
 hash <- strsplit(basename(cppr_graph_fp), "-")[[1]][1]
 cppr_graph <- read_cppr_graph(dirname(cppr_graph_fp), hash)
 vertices <- read_parquet(file.path(dirname(dirname(cppr_graph_fp)), paste0(hash, "-vertices.parquet")))
+od_vertex_map_fp <- file.path(dirname(dirname(cppr_graph_fp)), paste0(hash, "-od-vertex-map.parquet"))
+od_vertex_map <- NULL
+if (file.exists(od_vertex_map_fp)) {
+  od_vertex_map <- read_parquet(od_vertex_map_fp)
+}
 
 
 # If speed modifiers are provided, update the speed of the links in the graph
@@ -65,5 +70,8 @@ hash <- strsplit(basename(output_fp), "-")[[1]][1]
 folder_path <- dirname(output_fp)
 save_cppr_graph(cppr_graph, folder_path, hash)
 write_parquet(vertices, file.path(dirname(dirname(output_fp)), paste0(hash, "-vertices.parquet")))
+if (!is.null(od_vertex_map)) {
+  write_parquet(od_vertex_map, file.path(dirname(dirname(output_fp)), paste0(hash, "-od-vertex-map.parquet")))
+}
 file.create(output_fp)
 

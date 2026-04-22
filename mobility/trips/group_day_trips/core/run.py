@@ -7,11 +7,13 @@ from typing import List
 import polars as pl
 
 from ..iterations import Iteration, Iterations
-from ..plans import DestinationSequences, ModeSequences, PlanInitializer, PlanUpdater
+from ..plans import ActivitySequences, DestinationSequences, ModeSequences, PlanInitializer, PlanUpdater
 from .parameters import Parameters
 from .results import RunResults
 from .run_state import RunState
 from mobility.transport.costs.transport_costs import TransportCosts
+from mobility.transport.costs.congestion_state import CongestionState
+from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities import Activity
 from mobility.activities.activity import resolve_activity_parameters
@@ -37,7 +39,7 @@ class Run(FileAsset):
     ) -> None:
         """Initialize a single weekday or weekend GroupDayTrips run."""
         inputs = {
-            "version": 1,
+            "version": 2,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -152,6 +154,7 @@ class Run(FileAsset):
             home_night_dur,
             resolved_activity_parameters["home"],
             self.parameters.min_activity_time_constant,
+            iterations.folder_paths["sequences-index"],
         )
         opportunities = self.initializer.get_opportunities(
             chains_by_activity,
@@ -167,7 +170,8 @@ class Run(FileAsset):
             stay_home_plan=stay_home_plan,
             opportunities=opportunities,
             current_plans=current_plans,
-            remaining_opportunities=opportunities.clone(),
+            candidate_plan_steps=None,
+            destination_saturation=opportunities.clone(),
             costs=self.transport_costs.asset_for_iteration(self, 1).get_costs_by_od(["cost", "distance"]),
             start_iteration=1,
         )
@@ -212,7 +216,8 @@ class Run(FileAsset):
         iterations.discard_future_iterations(iteration=resume_from_iteration)
         state.current_plans = saved_state.current_plans
         state.current_plan_steps = saved_state.current_plan_steps
-        state.remaining_opportunities = saved_state.remaining_opportunities
+        state.candidate_plan_steps = saved_state.candidate_plan_steps
+        state.destination_saturation = saved_state.destination_saturation
         state.start_iteration = resume_from_iteration + 1
 
         logging.info(
@@ -238,7 +243,8 @@ class Run(FileAsset):
         """Execute one simulation iteration and update the mutable run state."""
         logging.info("Iteration %s", str(iteration.iteration))
         seed = self.rng.getrandbits(64)
-        resolved_transport_costs = self.transport_costs.for_iteration(iteration.iteration)
+
+        resolved_transport_costs = self.transport_costs.asset_for_iteration(self, iteration.iteration)
 
         destination_sequences = self._sample_and_write_destination_sequences(
             state,
@@ -261,6 +267,22 @@ class Run(FileAsset):
         iteration.save_transition_events(transition_events)
 
 
+    def _sample_and_write_activity_sequences(
+        self,
+        state: RunState,
+        iteration: Iteration,
+        seed: int,
+    ) -> ActivitySequences:
+        """Admit timed survey activity-sequence seeds for one iteration."""
+        activity_sequences = iteration.activity_sequences(
+            current_plans=state.current_plans,
+            chains=state.chains_by_activity,
+            parameters=self.parameters,
+            seed=seed,
+        )
+        activity_sequences.get()
+        return activity_sequences
+
     def _sample_and_write_destination_sequences(
         self,
         state: RunState,
@@ -269,13 +291,19 @@ class Run(FileAsset):
     ) -> DestinationSequences:
         """Run destination sampling and persist destination sequences for one iteration."""
         resolved_activity_parameters = resolve_activity_parameters(self.activities, iteration.iteration)
+        activity_sequences = self._sample_and_write_activity_sequences(
+            state,
+            iteration,
+            seed,
+        )
         destination_sequences = iteration.destination_sequences(
+            activity_sequences=activity_sequences,
             activities=self.activities,
             resolved_activity_parameters=resolved_activity_parameters,
             transport_zones=self.population.transport_zones,
             current_plans=state.current_plans,
             current_plan_steps=state.current_plan_steps,
-            remaining_opportunities=state.remaining_opportunities,
+            destination_saturation=state.destination_saturation,
             chains=state.chains_by_activity,
             demand_groups=state.demand_groups,
             costs=state.costs,
@@ -313,13 +341,14 @@ class Run(FileAsset):
     ) -> pl.DataFrame:
         """Advance the simulation state by one iteration and return transition events."""
         resolved_activity_parameters = resolve_activity_parameters(self.activities, iteration.iteration)
-        state.current_plans, state.current_plan_steps, transition_events = self.updater.get_new_plans(
+        state.current_plans, state.current_plan_steps, state.candidate_plan_steps, transition_events = self.updater.get_new_plans(
             state.current_plans,
             state.current_plan_steps,
+            state.candidate_plan_steps,
             state.demand_groups,
             state.chains_by_activity,
             resolved_transport_costs,
-            state.remaining_opportunities,
+            state.destination_saturation,
             state.activity_dur,
             iteration.iteration,
             resolved_activity_parameters,
@@ -327,6 +356,8 @@ class Run(FileAsset):
             mode_sequences,
             state.home_night_dur,
             state.stay_home_plan,
+            self.inputs["population"].transport_zones,
+            iteration.iterations.folder_paths["sequences-index"],
             self.parameters,
         )
         state.costs = self.updater.get_new_costs(
@@ -337,7 +368,7 @@ class Run(FileAsset):
             self.transport_costs.for_iteration(iteration.iteration + 1),
             run=self,
         )
-        state.remaining_opportunities = self.updater.get_new_opportunities(
+        state.destination_saturation = self.updater.get_destination_saturation(
             state.current_plan_steps,
             state.opportunities,
             resolved_activity_parameters,
@@ -465,3 +496,102 @@ class Run(FileAsset):
             is_weekday=self.is_weekday,
             base_folder=self.cache_path["plan_steps"].parent,
         ).remove_all()
+        self._remove_run_owned_congestion_artifacts()
+
+    def _remove_run_owned_congestion_artifacts(self) -> None:
+        """Remove congestion snapshots and congestion-derived cost caches for this run."""
+        if self.transport_costs.has_enabled_congestion() is False:
+            return
+
+        update_interval = int(self.parameters.n_iter_per_cost_update)
+        if update_interval <= 0:
+            return
+
+        for completed_iteration in range(1, int(self.parameters.n_iterations) + 1):
+            if self.transport_costs.should_recompute_congested_costs(completed_iteration, update_interval) is False:
+                continue
+
+            next_transport_costs = self.transport_costs.for_iteration(completed_iteration + 1)
+            flow_assets_by_mode = {}
+            for mode in next_transport_costs.congestion_states._iter_congestion_enabled_modes():
+                mode_name = mode.inputs["parameters"].name
+                flow_asset = VehicleODFlowsAsset.from_inputs(
+                    run_key=self.inputs_hash,
+                    is_weekday=self.is_weekday,
+                    iteration=completed_iteration,
+                    mode_name=mode_name,
+                )
+                if flow_asset.cache_path.exists():
+                    flow_assets_by_mode[mode_name] = flow_asset
+
+            if not flow_assets_by_mode:
+                continue
+
+            congestion_state = CongestionState(
+                run_key=str(self.inputs_hash),
+                is_weekday=bool(self.is_weekday),
+                iteration=int(completed_iteration),
+                flow_assets_by_mode=flow_assets_by_mode,
+            )
+
+            self._remove_asset_if_possible(
+                next_transport_costs.asset_for_congestion_state(congestion_state)
+            )
+            for mode in next_transport_costs.modes:
+                self._remove_mode_congestion_variant_caches(
+                    mode.inputs.get("travel_costs"),
+                    congestion_state,
+                )
+
+            for flow_asset in flow_assets_by_mode.values():
+                flow_asset.remove()
+
+    def _remove_mode_congestion_variant_caches(
+        self,
+        travel_costs,
+        congestion_state: CongestionState,
+    ) -> None:
+        """Remove one mode's congestion-derived travel-cost and graph caches."""
+        if travel_costs is None or not hasattr(travel_costs, "asset_for_congestion_state"):
+            return
+
+        try:
+            variant = travel_costs.asset_for_congestion_state(congestion_state)
+        except Exception:
+            return
+
+        self._remove_congestion_variant_artifact_tree(variant)
+
+    def _remove_congestion_variant_artifact_tree(self, variant) -> None:
+        """Remove a congestion-specific asset variant and its derived graph caches."""
+        if variant is None:
+            return
+
+        self._remove_asset_if_possible(variant)
+
+        inputs = getattr(variant, "inputs", {})
+
+        contracted_graph = inputs.get("contracted_path_graph")
+        if contracted_graph is not None:
+            self._remove_asset_if_possible(contracted_graph)
+            congested_graph = getattr(contracted_graph, "inputs", {}).get("congested_graph")
+            self._remove_asset_if_possible(congested_graph)
+
+        nested_travel_costs = inputs.get("car_travel_costs")
+        nested_flow_asset = inputs.get("road_flow_asset")
+        if (
+            nested_travel_costs is not None
+            and nested_flow_asset is not None
+            and hasattr(nested_travel_costs, "asset_for_flow_asset")
+        ):
+            try:
+                nested_variant = nested_travel_costs.asset_for_flow_asset(nested_flow_asset)
+            except Exception:
+                return
+            self._remove_congestion_variant_artifact_tree(nested_variant)
+
+    @staticmethod
+    def _remove_asset_if_possible(asset) -> None:
+        """Remove one cache-bearing asset when the object supports it."""
+        if asset is not None and hasattr(asset, "remove"):
+            asset.remove()
