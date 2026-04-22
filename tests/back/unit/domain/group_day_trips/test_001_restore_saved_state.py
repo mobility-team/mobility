@@ -62,7 +62,8 @@ def make_state():
         stay_home_plan=pl.DataFrame(),
         opportunities=pl.DataFrame(),
         current_plans=pl.DataFrame({"plan_id": [0]}),
-        remaining_opportunities=pl.DataFrame({"opportunity_id": [0]}),
+        candidate_plan_steps=pl.DataFrame({"plan_id": [0], "seq_step_index": [0]}),
+        destination_saturation=pl.DataFrame({"opportunity_id": [0]}),
         costs=pl.DataFrame({"cost": [0.0]}),
         start_iteration=1,
     )
@@ -73,7 +74,8 @@ def test_restore_saved_state_happy_path_restores_mutable_state():
     saved_state = SimpleNamespace(
         current_plans=pl.DataFrame({"plan_id": [11, 12]}),
         current_plan_steps=pl.DataFrame({"step_id": [31, 32]}),
-        remaining_opportunities=pl.DataFrame({"opportunity_id": [21, 22]}),
+        candidate_plan_steps=pl.DataFrame({"plan_id": [41, 42], "seq_step_index": [0, 1]}),
+        destination_saturation=pl.DataFrame({"opportunity_id": [21, 22]}),
         rng_state=saved_rng.getstate(),
     )
     iterations = FakeIterations(saved_state=saved_state)
@@ -90,7 +92,8 @@ def test_restore_saved_state_happy_path_restores_mutable_state():
     assert iterations.discarded_iteration == 2
     assert state.current_plans.equals(saved_state.current_plans)
     assert state.current_plan_steps.equals(saved_state.current_plan_steps)
-    assert state.remaining_opportunities.equals(saved_state.remaining_opportunities)
+    assert state.candidate_plan_steps.equals(saved_state.candidate_plan_steps)
+    assert state.destination_saturation.equals(saved_state.destination_saturation)
     assert state.start_iteration == 3
     assert state.costs.equals(pl.DataFrame({"cost": [1.5]}))
     assert run.transport_costs.get_calls == [["cost", "distance"]]
@@ -131,7 +134,8 @@ def test_restore_saved_state_wraps_rng_restore_errors():
     saved_state = SimpleNamespace(
         current_plans=pl.DataFrame({"plan_id": [11]}),
         current_plan_steps=pl.DataFrame({"step_id": [31]}),
-        remaining_opportunities=pl.DataFrame({"opportunity_id": [21]}),
+        candidate_plan_steps=pl.DataFrame({"plan_id": [41], "seq_step_index": [0]}),
+        destination_saturation=pl.DataFrame({"opportunity_id": [21]}),
         rng_state=object(),
     )
     iterations = FakeIterations(saved_state=saved_state)

@@ -75,6 +75,13 @@ def test_008e_group_day_trips_can_resume_from_saved_iteration(test_data):
     saved_iteration_state = iterations.iteration(1).load_state()
     assert saved_iteration_state.current_plans.height > 0
     assert saved_iteration_state.current_plan_steps.height > 0
+    assert saved_iteration_state.candidate_plan_steps.height > 0
+    assert saved_iteration_state.destination_saturation.columns == [
+        "activity",
+        "to",
+        "opportunity_capacity",
+        "k_saturation_utility",
+    ]
 
     resumed_pop_trips = _build_group_day_trips(test_data)
     result = resumed_pop_trips.get()
