@@ -120,7 +120,7 @@ def test_restore_saved_state_wraps_load_state_errors():
     run = make_run(congestion_state=None)
     state = make_state()
 
-    with pytest.raises(RuntimeError, match="Failed to load saved GroupDayTrips iteration state"):
+    with pytest.raises(RuntimeError, match="Failed to load saved PopulationGroupDayTrips iteration state"):
         run._restore_saved_state(
             iterations=iterations,
             state=state,

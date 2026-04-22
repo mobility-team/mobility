@@ -20,7 +20,7 @@ survey = mobility.EMPMobilitySurvey()
 population = mobility.Population(transport_zones, sample_size=1000)
 
 # Simulating trips for this population for car, walk, bicycle
-population_trips = mobility.GroupDayTrips(
+population_trips = mobility.PopulationGroupDayTrips(
     population=population,
     modes=[
         mobility.Car(transport_zones),

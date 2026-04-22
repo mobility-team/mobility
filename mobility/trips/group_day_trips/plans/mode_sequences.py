@@ -22,7 +22,7 @@ from mobility.transport.modes.choice.compute_subtour_mode_probabilities import (
 
 
 class ModeSequences(FileAsset):
-    """Persist mode sequences produced for one GroupDayTrips iteration."""
+    """Persist mode sequences produced for one PopulationGroupDayTrips iteration."""
 
     def __init__(
         self,

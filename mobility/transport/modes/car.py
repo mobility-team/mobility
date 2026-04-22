@@ -15,7 +15,7 @@ from mobility.transport.graphs.modified.modifiers.speed_modifier import SpeedMod
 from pydantic import Field
 import polars as pl
 
-class Car(TransportMode):
+class CarMode(TransportMode):
     """
     A class for car transportation. Creates travel costs for the mode, using the provided parameters or default ones.
     
@@ -121,4 +121,3 @@ class CarParameters(TransportModeParameters):
     )
 
 
-CarMode = Car
