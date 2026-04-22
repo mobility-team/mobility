@@ -1,8 +1,8 @@
 import pytest
 
 import mobility
-from mobility.activities import Home, Other, Work
-from mobility.trips.group_day_trips import Parameters, GroupDayTrips
+from mobility.activities import HomeActivity, OtherActivity, WorkActivity
+from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
 from mobility.surveys.france import EMPMobilitySurvey
 
 
@@ -24,10 +24,10 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
         sample_size=test_data["population_sample_size"],
     )
 
-    pop_trips = GroupDayTrips(
+    pop_trips = PopulationGroupDayTrips(
         population=pop,
-        modes=[mobility.Car(transport_zones)],
-        activities=[Home(), Work(), Other(population=pop)],
+        modes=[mobility.CarMode(transport_zones)],
+        activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
         parameters=Parameters(
             n_iterations=1,

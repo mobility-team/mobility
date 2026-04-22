@@ -13,7 +13,7 @@ from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.studies.schools_capacity_distribution import SchoolsCapacityDistribution
 
 
-class Study(Activity):
+class StudyActivity(Activity):
 
     def __init__(
         self,
@@ -36,7 +36,7 @@ class Study(Activity):
                 "survey_ids": survey_ids,
                 "radiation_lambda": radiation_lambda,
             },
-            owner_name="Study",
+            owner_name="StudyActivity",
         )
 
         super().__init__(

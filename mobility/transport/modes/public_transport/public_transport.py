@@ -38,7 +38,7 @@ DEFAULT_PUBLIC_TRANSPORT_SURVEY_IDS = [
 ]
 
 
-class PublicTransport(TransportMode):
+class PublicTransportMode(TransportMode):
     """Public transport mode with configurable access and egress leg modes."""
 
     def __init__(
@@ -157,7 +157,7 @@ class PublicTransport(TransportMode):
 
         if mode_registry is None:
             raise ValueError(
-                "PublicTransport requires explicit `first_leg_mode` and "
+                "PublicTransportMode requires explicit `first_leg_mode` and "
                 "`last_leg_mode`, or a `mode_registry` to resolve defaults "
                 "(example: ModeRegistry([walk_mode, ...]))."
             )
@@ -178,4 +178,3 @@ class PublicTransportParameters(TransportModeParameters):
     survey_ids: list[str] = Field(default_factory=lambda: list(DEFAULT_PUBLIC_TRANSPORT_SURVEY_IDS))
 
 
-PublicTransportMode = PublicTransport

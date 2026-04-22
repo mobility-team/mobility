@@ -10,7 +10,7 @@ from mobility.runtime.assets.file_asset import FileAsset
 
 
 class DestinationSequences(FileAsset):
-    """Persist destination sequences produced for one GroupDayTrips iteration."""
+    """Persist destination sequences produced for one PopulationGroupDayTrips iteration."""
 
     def __init__(
         self,

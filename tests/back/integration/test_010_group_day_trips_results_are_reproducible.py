@@ -2,8 +2,8 @@ import pytest
 import polars as pl
 
 import mobility
-from mobility.activities import Home, Other, Work
-from mobility.trips.group_day_trips import Parameters, GroupDayTrips
+from mobility.activities import HomeActivity, OtherActivity, WorkActivity
+from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
 from mobility.surveys.france import EMPMobilitySurvey
 
 @pytest.mark.dependency(
@@ -25,10 +25,10 @@ def test_010_group_day_trips_results_are_reproducible(test_data):
     )
     
     # Reuse the results from test 009
-    pop_trips = GroupDayTrips(
+    pop_trips = PopulationGroupDayTrips(
         population=pop,
-        modes=[mobility.Car(transport_zones)],
-        activities=[Home(), Work(), Other(population=pop)],
+        modes=[mobility.CarMode(transport_zones)],
+        activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
         parameters=Parameters(
             n_iterations=1,
@@ -47,10 +47,10 @@ def test_010_group_day_trips_results_are_reproducible(test_data):
     # Remove the results then re run the model with the same inputs
     pop_trips.remove()
     
-    pop_trips = GroupDayTrips(
+    pop_trips = PopulationGroupDayTrips(
         population=pop,
-        modes=[mobility.Car(transport_zones)],
-        activities=[Home(), Work(), Other(population=pop)],
+        modes=[mobility.CarMode(transport_zones)],
+        activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
         parameters=Parameters(
             n_iterations=1,

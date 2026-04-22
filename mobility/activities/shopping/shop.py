@@ -11,7 +11,7 @@ from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.shopping.shops_turnover_distribution import ShopsTurnoverDistribution
 
 
-class Shop(Activity):
+class ShopActivity(Activity):
 
     def __init__(
         self,
@@ -34,7 +34,7 @@ class Shop(Activity):
                 "survey_ids": survey_ids,
                 "radiation_lambda": radiation_lambda,
             },
-            owner_name="Shop",
+            owner_name="ShopActivity",
         )
 
         super().__init__(

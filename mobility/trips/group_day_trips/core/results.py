@@ -19,7 +19,14 @@ from ..transitions.transition_metrics import state_waterfall as _state_waterfall
 
 
 class RunResults:
-    """Run-scoped analysis helper for one day-type output set."""
+    """Evaluation and plotting facade for one PopulationGroupDayTrips day-type run.
+
+    A ``RunResults`` instance wraps the cached outputs produced by one
+    weekday or weekend ``Run`` and exposes convenience methods to inspect the
+    simulated demand, compare it with survey-derived reference chains, and
+    render common transport-model diagnostics such as modal shares, OD flows,
+    and zone-level indicators.
+    """
 
     def __init__(
         self,
@@ -412,7 +419,7 @@ class RunResults:
                 plan_steps_comp = pl.scan_parquet(compare_with.cache_path[f"{prefix}_plan_steps"])
                 costs_comp = pl.scan_parquet(compare_with.cache_path[f"{prefix}_costs"])
             except Exception:
-                raise Exception("The GroupDayTrips to compare with did not work. Try to run it alone?")
+                raise Exception("The PopulationGroupDayTrips to compare with did not work. Try to run it alone?")
 
             metric_comp = metric + "_comp"
             metric_per_person_comp = metric + "_per_person_comp"

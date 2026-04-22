@@ -20,18 +20,18 @@ from .iteration_assets import (
 
 
 @dataclass(frozen=True)
-class IterationState:
-    """Minimal persisted plan distribution required to resume a run from one iteration."""
+class RunIterationState:
+    """Minimal persisted state required to resume one PopulationGroupDayTrips run iteration."""
 
     current_plans: pl.DataFrame
     remaining_opportunities: pl.DataFrame
     rng_state: object
 
 
-class Iteration:
-    """Persisted artifacts and saved state for one GroupDayTrips iteration."""
+class RunIteration:
+    """Persisted artifacts and saved state for one iteration of one run."""
 
-    def __init__(self, iterations: "Iterations", iteration: int) -> None:
+    def __init__(self, iterations: "RunIterations", iteration: int) -> None:
         self.iterations = iterations
         self.iteration = iteration
 
@@ -89,10 +89,10 @@ class Iteration:
         )
 
 
-    def load_state(self) -> IterationState:
+    def load_state(self) -> RunIterationState:
         """Load the saved run state for this completed iteration."""
         iteration_state_folder = self.iterations.folder_paths["iteration-state"]
-        return IterationState(
+        return RunIterationState(
             current_plans=CurrentPlansAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
@@ -147,7 +147,7 @@ class Iteration:
             ).create_and_get_asset()
         except Exception as exc:
             raise RuntimeError(
-                "Failed to save GroupDayTrips iteration state for "
+                "Failed to save PopulationGroupDayTrips iteration state for "
                 f"run_inputs_hash={self.iterations.run_inputs_hash}, "
                 f"is_weekday={self.iterations.is_weekday}, iteration={self.iteration}. "
                 "Call `remove()` to clear cached iteration artifacts and rerun from scratch."
@@ -165,8 +165,8 @@ class Iteration:
         ).create_and_get_asset()
 
 
-class Iterations:
-    """Persisted iteration collection for one GroupDayTrips run."""
+class RunIterations:
+    """Persisted collection of iteration artifacts for one PopulationGroupDayTrips run."""
 
     def __init__(
         self,
@@ -215,9 +215,9 @@ class Iterations:
         return resume_iteration
 
 
-    def iteration(self, iteration: int) -> Iteration:
+    def iteration(self, iteration: int) -> RunIteration:
         """Return the persisted object for one iteration."""
-        return Iteration(self, iteration)
+        return RunIteration(self, iteration)
 
 
     def discard_future_iterations(self, *, iteration: int) -> None:

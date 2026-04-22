@@ -10,7 +10,7 @@ from mobility.activities.activity import Activity, ActivityParameters
 from mobility.population import Population
 
 
-class Other(Activity):
+class OtherActivity(Activity):
 
     def __init__(
         self,
@@ -38,7 +38,7 @@ class Other(Activity):
                 "saturation_fun_beta": saturation_fun_beta,
                 "radiation_lambda": radiation_lambda,
             },
-            owner_name="Other",
+            owner_name="OtherActivity",
         )
 
         super().__init__(

@@ -11,7 +11,7 @@ from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.work.jobs_active_population_distribution import JobsActivePopulationDistribution
 
 
-class Work(Activity):
+class WorkActivity(Activity):
 
     def __init__(
         self,
@@ -37,7 +37,7 @@ class Work(Activity):
                 "radiation_lambda": radiation_lambda,
                 "country_utilities": country_utilities,
             },
-            owner_name="Work",
+            owner_name="WorkActivity",
         )
 
         super().__init__(

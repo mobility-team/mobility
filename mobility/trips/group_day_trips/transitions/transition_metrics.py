@@ -129,7 +129,7 @@ def _validate_transition_inputs(transitions_df: pl.DataFrame) -> None:
         raise ValueError(
             "Missing required transition columns for `state_waterfall`: "
             + ", ".join(missing)
-            + ". Rerun GroupDayTrips to regenerate transitions with embedded state details."
+            + ". Rerun PopulationGroupDayTrips to regenerate transitions with embedded state details."
         )
 
     null_utility = transitions_df.filter(
@@ -139,7 +139,7 @@ def _validate_transition_inputs(transitions_df: pl.DataFrame) -> None:
     if null_utility.height > 0:
         raise ValueError(
             "Found null utilities in transitions used by `state_waterfall` "
-            f"({null_utility.height} rows). Rerun GroupDayTrips."
+            f"({null_utility.height} rows). Rerun PopulationGroupDayTrips."
         )
 
 

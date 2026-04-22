@@ -7,7 +7,7 @@ from typing import List
 import polars as pl
 
 from mobility.transport.costs.congestion_state import CongestionState
-from ..iterations import Iteration, Iterations
+from ..iterations import RunIteration, RunIterations
 from ..plans import DestinationSequences, ModeSequences, PlanInitializer, PlanUpdater
 from .parameters import Parameters
 from .results import RunResults
@@ -21,7 +21,7 @@ from mobility.transport.modes.core.transport_mode import TransportMode
 
 
 class Run(FileAsset):
-    """Single day-type GroupDayTrips asset."""
+    """Single day-type PopulationGroupDayTrips asset."""
 
     def __init__(
         self,
@@ -35,7 +35,7 @@ class Run(FileAsset):
         is_weekday: bool,
         enabled: bool = True,
     ) -> None:
-        """Initialize a single weekday or weekend GroupDayTrips run."""
+        """Initialize a single weekday or weekend PopulationGroupDayTrips run."""
         inputs = {
             "version": 1,
             "population": population,
@@ -116,9 +116,9 @@ class Run(FileAsset):
     def _prepare_iterations(
         self,
         run_inputs_hash: str,
-    ) -> tuple[Iterations, int | None]:
+    ) -> tuple[RunIterations, int | None]:
         """Prepare persisted iterations and determine the resume iteration."""
-        iterations = Iterations(
+        iterations = RunIterations(
             run_inputs_hash=run_inputs_hash,
             is_weekday=self.is_weekday,
             base_folder=self.cache_path["plan_steps"].parent,
@@ -131,7 +131,7 @@ class Run(FileAsset):
     def _build_state(
         self,
         *,
-        iterations: Iterations,
+        iterations: RunIterations,
         resume_from_iteration: int | None,
     ) -> RunState:
         """Build the initial mutable state and restore it when resuming."""
@@ -185,7 +185,7 @@ class Run(FileAsset):
     def _restore_saved_state(
         self,
         *,
-        iterations: Iterations,
+        iterations: RunIterations,
         state: RunState,
         resume_from_iteration: int | None,
     ) -> None:
@@ -196,7 +196,7 @@ class Run(FileAsset):
             saved_state = iterations.iteration(resume_from_iteration).load_state()
         except Exception as exc:
             raise RuntimeError(
-                "Failed to load saved GroupDayTrips iteration state for "
+                "Failed to load saved PopulationGroupDayTrips iteration state for "
                 f"run_inputs_hash={self.inputs_hash}, is_weekday={self.is_weekday}, "
                 f"iteration={resume_from_iteration}. "
                 "Call `remove()` to clear cached iteration artifacts and rerun from scratch."
@@ -206,7 +206,7 @@ class Run(FileAsset):
             self.rng.setstate(saved_state.rng_state)
         except Exception as exc:
             raise RuntimeError(
-                "Failed to restore RNG state from saved GroupDayTrips iteration state for "
+                "Failed to restore RNG state from saved PopulationGroupDayTrips iteration state for "
                 f"run_inputs_hash={self.inputs_hash}, is_weekday={self.is_weekday}, "
                 f"iteration={resume_from_iteration}. "
                 "Call `remove()` to clear cached iteration artifacts and rerun from scratch."
@@ -239,7 +239,7 @@ class Run(FileAsset):
         self,
         *,
         state: RunState,
-        iteration: Iteration,
+        iteration: RunIteration,
     ) -> None:
         """Execute one simulation iteration and update the mutable run state."""
         logging.info("Iteration %s", str(iteration.iteration))
@@ -267,7 +267,7 @@ class Run(FileAsset):
     def _sample_and_write_destination_sequences(
         self,
         state: RunState,
-        iteration: Iteration,
+        iteration: RunIteration,
         seed: int,
     ) -> DestinationSequences:
         """Run destination sampling and persist destination sequences for one iteration."""
@@ -288,7 +288,7 @@ class Run(FileAsset):
     def _search_and_write_mode_sequences(
         self,
         state: RunState,
-        iteration: Iteration,
+        iteration: RunIteration,
         destination_sequences: DestinationSequences,
     ) -> ModeSequences:
         """Run mode-sequence search and persist the results for one iteration."""
@@ -305,7 +305,7 @@ class Run(FileAsset):
     def _update_iteration_state(
         self,
         state: RunState,
-        iteration: Iteration,
+        iteration: RunIteration,
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
     ) -> pl.DataFrame:
@@ -386,7 +386,7 @@ class Run(FileAsset):
         )
 
 
-    def _build_transitions(self, iterations: Iterations) -> pl.DataFrame:
+    def _build_transitions(self, iterations: RunIterations) -> pl.DataFrame:
         """Combine persisted per-iteration transition events into the final table."""
         transition_paths = iterations.list_transition_event_paths()
         if not transition_paths:
@@ -457,7 +457,7 @@ class Run(FileAsset):
     def remove(self) -> None:
         """Remove cached outputs and saved iteration artifacts for this run."""
         super().remove()
-        Iterations(
+        RunIterations(
             run_inputs_hash=self.inputs_hash,
             is_weekday=self.is_weekday,
             base_folder=self.cache_path["plan_steps"].parent,

@@ -14,7 +14,7 @@ from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.leisure.leisure_facilities_distribution import LeisureFacilitiesDistribution
 
 
-class Leisure(Activity):
+class LeisureActivity(Activity):
 
     def __init__(
         self,
@@ -37,7 +37,7 @@ class Leisure(Activity):
                 "survey_ids": survey_ids,
                 "radiation_lambda": radiation_lambda,
             },
-            owner_name="Leisure",
+            owner_name="LeisureActivity",
         )
 
         super().__init__(
