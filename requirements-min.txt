@@ -144,9 +144,9 @@ pluggy==1.6.0
     # via pytest
 pockets==0.9.1
     # via sphinxcontrib-napoleon
-polars==1.39.0
+polars==1.39.3
     # via mobility (pyproject.toml)
-polars-runtime-32==1.39.0
+polars-runtime-32==1.39.3
     # via polars
 psutil==7.0.0
     # via
