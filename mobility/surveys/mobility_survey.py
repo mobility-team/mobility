@@ -155,7 +155,7 @@ class MobilitySurvey(FileAsset):
         )
 
         plans = (
-            days_trips.select(["day_id", "day_of_week", "pondki"])
+            days_trips.select(["day_id", "day_of_week", "pondki", "city_category", "csp", "n_cars"])
             .join(short_trips, on="day_id")
             .join(incomplete_sequences, on=["individual_id", "day_id"], how="anti")
             .rename({"daily_trip_index": "seq_step_index"})

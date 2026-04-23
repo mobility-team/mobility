@@ -55,6 +55,24 @@ class PlanDistance:
             max(plan_features.width - 1, 0),
             perf_counter() - t1,
         )
+        return self._compute_pair_distances_from_plan_features(
+            pair_index,
+            plan_features,
+            plan_id_col=plan_id_col,
+            dimension_weights=dimension_weights,
+            total_start_time=t0,
+        )
+
+    def _compute_pair_distances_from_plan_features(
+        self,
+        pair_index: pl.DataFrame,
+        plan_features: pl.DataFrame,
+        *,
+        plan_id_col: str,
+        dimension_weights: list[float] | None,
+        total_start_time: float,
+    ) -> pl.DataFrame:
+        """Join plan features onto the requested pairs and compute Euclidean distances."""
 
         feature_cols = [col for col in plan_features.columns if col != plan_id_col]
         effective_dimension_weights = self._get_dimension_weights(
@@ -99,7 +117,7 @@ class PlanDistance:
             float(stats["min_distance"] or 0.0),
             float(stats["mean_distance"] or 0.0),
             float(stats["max_distance"] or 0.0),
-            perf_counter() - t0,
+            perf_counter() - total_start_time,
         )
         return result
 
@@ -144,21 +162,25 @@ class PlanDistance:
         logging.info("PlanDistance: zone join done in %.3fs", perf_counter() - t0)
 
         t1 = perf_counter()
-        boundary_segments = (
-            plans.group_by(plan_id_col)
-            .agg(
-                first_departure=pl.col("departure_time").min(),
-                last_arrival=pl.col("arrival_time").max(),
-                has_full_day_home_step=(
-                    (pl.col("activity").cast(pl.String) == "home")
-                    & (pl.col("departure_time") <= 0.0)
-                    & (pl.col("arrival_time") <= 0.0)
-                    & (pl.col("next_departure_time") >= 24.0)
-                ).any(),
-                home_x=(pl.col("x_from").sort_by("seq_step_index").first() if has_spatial_info else pl.lit(None)),
-                home_y=(pl.col("y_from").sort_by("seq_step_index").first() if has_spatial_info else pl.lit(None)),
+        boundary_aggs = [
+            pl.col("departure_time").min().alias("first_departure"),
+            pl.col("arrival_time").max().alias("last_arrival"),
+            (
+                (pl.col("activity").cast(pl.String) == "home")
+                & (pl.col("departure_time") <= 0.0)
+                & (pl.col("arrival_time") <= 0.0)
+                & (pl.col("next_departure_time") >= 24.0)
+            ).any().alias("has_full_day_home_step"),
+        ]
+        if has_spatial_info:
+            boundary_aggs.extend(
+                [
+                    pl.col("x_from").sort_by("seq_step_index").first().alias("home_x"),
+                    pl.col("y_from").sort_by("seq_step_index").first().alias("home_y"),
+                ]
             )
-        )
+
+        boundary_segments = plans.group_by(plan_id_col).agg(boundary_aggs)
 
         initial_home_segments = (
             boundary_segments
