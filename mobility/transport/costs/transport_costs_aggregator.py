@@ -318,6 +318,60 @@ class TransportCostsAggregator(InMemoryAsset):
             flow_assets_by_mode=flow_assets_by_mode,
         )
 
+    def load_congestion_state(
+        self,
+        *,
+        run_key,
+        is_weekday,
+        last_completed_iteration: int,
+        cost_update_interval: int,
+    ) -> CongestionState | None:
+        """Load the latest persisted congestion state available for a resumed run."""
+
+        if (
+            not self.has_enabled_congestion()
+            or cost_update_interval <= 0
+            or last_completed_iteration <= 0
+        ):
+            return None
+
+        latest_refresh_iteration = max(
+            iteration
+            for iteration in range(1, int(last_completed_iteration) + 1)
+            if self.should_recompute_congested_costs(iteration, cost_update_interval)
+        )
+
+        flow_assets_by_mode = {}
+        empty_flows = pl.DataFrame(
+            {
+                "from": pl.Series([], dtype=pl.Int64),
+                "to": pl.Series([], dtype=pl.Int64),
+                "vehicle_volume": pl.Series([], dtype=pl.Float64),
+            }
+        ).to_pandas()
+
+        for mode in self.iter_congestion_enabled_modes():
+            mode_name = mode.inputs["parameters"].name
+            flow_asset = VehicleODFlowsAsset(
+                empty_flows,
+                run_key=str(run_key),
+                is_weekday=bool(is_weekday),
+                iteration=int(latest_refresh_iteration),
+                mode_name=mode_name,
+            )
+            if flow_asset.cache_path.exists():
+                flow_assets_by_mode[mode_name] = flow_asset
+
+        if not flow_assets_by_mode:
+            return None
+
+        return CongestionState(
+            run_key=str(run_key),
+            is_weekday=bool(is_weekday),
+            iteration=int(latest_refresh_iteration),
+            flow_assets_by_mode=flow_assets_by_mode,
+        )
+
     def has_enabled_congestion(self) -> bool:
         """Return whether any mode has congestion feedback enabled.
 

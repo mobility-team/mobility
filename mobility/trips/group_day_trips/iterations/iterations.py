@@ -12,6 +12,7 @@ from ..plans.destination_sequences import DestinationSequences
 from ..plans.mode_sequences import ModeSequences
 from .iteration_assets import (
     CurrentPlansAsset,
+    CurrentPlanStepsAsset,
     IterationCompleteAsset,
     RemainingOpportunitiesAsset,
     RngStateAsset,
@@ -24,6 +25,7 @@ class RunIterationState:
     """Minimal persisted state required to resume one PopulationGroupDayTrips run iteration."""
 
     current_plans: pl.DataFrame
+    current_plan_steps: pl.DataFrame
     remaining_opportunities: pl.DataFrame
     rng_state: object
 
@@ -42,6 +44,8 @@ class RunIteration:
         activities: list[Any] | None = None,
         resolved_activity_parameters: dict[str, Any] | None = None,
         transport_zones: Any = None,
+        current_plans: pl.DataFrame | None = None,
+        current_plan_steps: pl.DataFrame | None = None,
         remaining_opportunities: pl.DataFrame | None = None,
         chains: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
@@ -58,6 +62,8 @@ class RunIteration:
             activities=activities,
             resolved_activity_parameters=resolved_activity_parameters,
             transport_zones=transport_zones,
+            current_plans=current_plans,
+            current_plan_steps=current_plan_steps,
             remaining_opportunities=remaining_opportunities,
             chains=chains,
             demand_groups=demand_groups,
@@ -94,6 +100,20 @@ class RunIteration:
     def load_state(self) -> RunIterationState:
         """Load the saved run state for this completed iteration."""
         iteration_state_folder = self.iterations.folder_paths["iteration-state"]
+        current_plan_steps_asset = CurrentPlanStepsAsset(
+            run_key=self.iterations.run_inputs_hash,
+            is_weekday=self.iterations.is_weekday,
+            iteration=self.iteration,
+            base_folder=iteration_state_folder,
+        )
+        if current_plan_steps_asset.cache_path.exists() is False:
+            raise RuntimeError(
+                "Saved PopulationGroupDayTrips iteration state is incomplete. "
+                f"Missing current_plan_steps for run_inputs_hash={self.iterations.run_inputs_hash}, "
+                f"is_weekday={self.iterations.is_weekday}, iteration={self.iteration}. "
+                "This cache was likely created with an older code version. "
+                "Clear the saved iteration artifacts and rerun from scratch."
+            )
         return RunIterationState(
             current_plans=CurrentPlansAsset(
                 run_key=self.iterations.run_inputs_hash,
@@ -101,6 +121,7 @@ class RunIteration:
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
             ).get(),
+            current_plan_steps=current_plan_steps_asset.get(),
             remaining_opportunities=RemainingOpportunitiesAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
@@ -126,6 +147,13 @@ class RunIteration:
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
                 current_plans=state.current_plans,
+            ).create_and_get_asset()
+            CurrentPlanStepsAsset(
+                run_key=self.iterations.run_inputs_hash,
+                is_weekday=self.iterations.is_weekday,
+                iteration=self.iteration,
+                base_folder=iteration_state_folder,
+                current_plan_steps=state.current_plan_steps,
             ).create_and_get_asset()
             RemainingOpportunitiesAsset(
                 run_key=self.iterations.run_inputs_hash,
@@ -230,6 +258,7 @@ class RunIterations:
             "transitions": ["*transition_events_*.parquet"],
             "iteration-state": [
                 "*current_plans_*.parquet",
+                "*current_plan_steps_*.parquet",
                 "*remaining_opportunities_*.parquet",
                 "*rng_state_*.pkl",
                 "*iteration_complete_*.json",

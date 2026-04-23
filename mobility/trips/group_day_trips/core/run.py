@@ -218,6 +218,7 @@ class Run(FileAsset):
 
         iterations.discard_future_iterations(iteration=resume_from_iteration)
         state.current_plans = saved_state.current_plans
+        state.current_plan_steps = saved_state.current_plan_steps
         state.remaining_opportunities = saved_state.remaining_opportunities
         state.congestion_state = self.costs_aggregator.load_congestion_state(
             run_key=self.inputs_hash,
@@ -287,6 +288,8 @@ class Run(FileAsset):
             activities=self.activities,
             resolved_activity_parameters=resolved_activity_parameters,
             transport_zones=self.population.transport_zones,
+            current_plans=state.current_plans,
+            current_plan_steps=state.current_plan_steps,
             remaining_opportunities=state.remaining_opportunities,
             chains=state.chains_by_activity,
             demand_groups=state.demand_groups,
@@ -337,12 +340,12 @@ class Run(FileAsset):
             state.remaining_opportunities,
             state.activity_dur,
             iteration.iteration,
+            resolved_activity_parameters,
             destination_sequences,
             mode_sequences,
             state.home_night_dur,
             state.stay_home_plan,
             self.parameters,
-            resolved_activity_parameters,
         )
         state.costs, state.congestion_state = self.updater.get_new_costs(
             state.costs,

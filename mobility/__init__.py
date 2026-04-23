@@ -27,7 +27,11 @@ from .activities import (
 from .impacts import carbon_computation
 
 from .trips.individual_year_trips import IndividualYearTrips
-from .trips.group_day_trips import PopulationGroupDayTrips
+from .trips.group_day_trips import (
+    BehaviorChangePhase,
+    BehaviorChangeScope,
+    PopulationGroupDayTrips,
+)
 
 from .transport.modes.bicycle import BicycleMode, BicycleParameters
 from .transport.modes.car import CarMode, CarParameters
