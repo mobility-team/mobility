@@ -324,18 +324,15 @@ class PlanUpdater:
         possible_plan_utility = pl.concat(
             [
                 possible_plan_utility,
-                stay_home_plan.lazy()
-                .with_columns(
-                    min_activity_time=pl.col("mean_home_night_per_pers") * math.exp(-min_activity_time_constant)
-                )
-                .with_columns(
-                    utility=(
-                        value_of_time_stay_home
-                        * pl.col("mean_home_night_per_pers")
-                        * (pl.col("mean_home_night_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
-                    )
-                )
-                .select(["demand_group_id", "activity_seq_id", "mode_seq_id", "dest_seq_id", "utility"]),
+                stay_home_plan.lazy().select(
+                    [
+                        "demand_group_id",
+                        "activity_seq_id",
+                        "mode_seq_id",
+                        "dest_seq_id",
+                        "utility",
+                    ]
+                ),
             ]
         )
 
