@@ -3,7 +3,6 @@ import math
 import polars as pl
 
 from mobility.activities.activity import ActivityParameters
-from mobility.activities.activity import ActivityParameters
 
 
 class PlanInitializer:
@@ -16,52 +15,92 @@ class PlanInitializer:
     """
 
     def get_chains(self, population, surveys, activities, modes, is_weekday):
-        """Aggregate demand groups and attach survey chain probabilities."""
+        """Aggregate demand groups and attach survey chain probabilities.
 
+        Produces per-group trip chains with durations and anchor flags by
+        joining population groups (zone/city category/CSP/cars) with survey
+        chain probabilities, filtering by weekday/weekend, and indexing
+        activity sequences.
+
+        Args:
+            population: Population container providing transport zones and groups.
+            surveys: Iterable of survey objects exposing `get_chains_probability`.
+            activities: Iterable of activities; used to mark anchors.
+            modes:
+            is_weekday (bool): Select weekday (True) or weekend (False) chains.
+
+        Returns:
+            tuple[pl.DataFrame, pl.DataFrame]:
+                - chains: Columns include
+                  ["demand_group_id","activity_seq_id","seq_step_index","activity",
+                   "n_persons","duration","is_anchor"].
+                - demand_groups: Aggregated groups with
+                  ["demand_group_id","home_zone_id","csp","n_cars","n_persons"].
+        """
+
+        # Map local admin units to urban unit categories (C, B, I, R) to be able
+        # to get population counts by urban unit category
         lau_to_city_cat = (
             pl.from_pandas(
                 population.transport_zones.study_area.get()
-                .drop("geometry", axis=1)[["local_admin_unit_id", "urban_unit_category"]]
+                .drop("geometry", axis=1)
+                [["local_admin_unit_id", "urban_unit_category"]]
                 .rename({"urban_unit_category": "city_category"}, axis=1)
-            ).with_columns(country=pl.col("local_admin_unit_id").str.slice(0, 2))
+            )
+            .with_columns(
+                country=pl.col("local_admin_unit_id").str.slice(0, 2)
+            )
         )
 
         countries = lau_to_city_cat["country"].unique().to_list()
 
+        # Aggregate population groups by transport zone, city category, socio pro
+        # category and number of cars in the household
         demand_groups = (
+
             pl.scan_parquet(population.get()["population_groups"])
-            .rename(
-                {
-                    "socio_pro_category": "csp",
-                    "transport_zone_id": "home_zone_id",
-                    "weight": "n_persons",
-                }
+            .rename({
+                "socio_pro_category": "csp",
+                "transport_zone_id": "home_zone_id",
+                "weight": "n_persons"
+            })
+            .with_columns(
+                home_zone_id=pl.col("home_zone_id").cast(pl.Int32)
             )
-            .with_columns(home_zone_id=pl.col("home_zone_id").cast(pl.Int32))
             .join(lau_to_city_cat.lazy(), on=["local_admin_unit_id"])
             .group_by(["country", "home_zone_id", "city_category", "csp", "n_cars"])
             .agg(pl.col("n_persons").sum())
+
             .collect(engine="streaming")
+
         )
 
-        surveys = [s for s in surveys if s.inputs["parameters"].country in countries]
+        # Get the chain probabilities from the mobility surveys
+        surveys = [
+            s for s in surveys
+            if s.inputs["parameters"].country in countries
+        ]
 
         p_chain = (
             pl.concat(
                 [
-                    survey.get_chains_probability(activities, modes).with_columns(
-                        country=pl.lit(survey.inputs["parameters"].country)
+                    (
+                        survey
+                        .get_chains_probability(activities, modes)
+                        .with_columns(
+                            country=pl.lit(survey.inputs["parameters"].country)
+                        )
                     )
                     for survey in surveys
                 ]
-            ).rename(
-                {
-                    "motive": "activity",
-                    "motive_seq": "activity_seq",
-                }
             )
+            .rename({
+                "motive": "activity",
+                "motive_seq": "activity_seq",
+            })
         )
 
+        # Cast string columns to enums for better perf
         def get_col_values(df1, df2, col):
             s = pl.concat([df1.select(col), df2.select(col)]).to_series()
             return s.unique().sort().to_list()
@@ -72,27 +111,39 @@ class PlanInitializer:
         activity_values = p_chain["activity"].unique().sort().to_list()
         mode_values = p_chain["mode"].unique().sort().to_list()
 
-        p_chain = p_chain.with_columns(
-            country=pl.col("country").cast(pl.Enum(countries)),
-            city_category=pl.col("city_category").cast(pl.Enum(city_category_values)),
-            csp=pl.col("csp").cast(pl.Enum(csp_values)),
-            n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values)),
-            activity=pl.col("activity").cast(pl.Enum(activity_values)),
-            mode=pl.col("mode").cast(pl.Enum(mode_values)),
-        )
-
-        demand_groups = (
-            demand_groups.with_columns(
+        p_chain = (
+            p_chain
+            .with_columns(
                 country=pl.col("country").cast(pl.Enum(countries)),
                 city_category=pl.col("city_category").cast(pl.Enum(city_category_values)),
                 csp=pl.col("csp").cast(pl.Enum(csp_values)),
                 n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values)),
+                activity=pl.col("activity").cast(pl.Enum(activity_values)),
+                mode=pl.col("mode").cast(pl.Enum(mode_values)),
+            )
+        )
+
+        # Create demand groups
+        # !!! Sorting before creating ids is VERY important for reproducibility
+        demand_groups = (
+            demand_groups
+            .with_columns(
+                country=pl.col("country").cast(pl.Enum(countries)),
+                city_category=pl.col("city_category").cast(pl.Enum(city_category_values)),
+                csp=pl.col("csp").cast(pl.Enum(csp_values)),
+                n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values))
             )
             .sort(["home_zone_id", "country", "city_category", "csp", "n_cars"])
             .with_row_index("demand_group_id")
         )
 
-        activity_seqs = p_chain.select(["activity_seq", "seq_step_index", "activity"]).unique()
+        # Create an index for activity sequences to avoid moving giant strings around
+        # !!! Sorting before creating ids is VERY important for reproducibility
+        activity_seqs = (
+            p_chain
+            .select(["activity_seq", "seq_step_index", "activity"])
+            .unique()
+        )
 
         activity_seq_index = (
             activity_seqs.select("activity_seq")
@@ -101,101 +152,157 @@ class PlanInitializer:
             .with_row_index("activity_seq_id")
         )
 
-        activity_seqs = activity_seqs.join(activity_seq_index, on="activity_seq")
-
-        p_chain = (
-            p_chain.join(
-                activity_seqs.select(["activity_seq", "activity_seq_id", "seq_step_index"]),
-                on=["activity_seq", "seq_step_index"],
-            ).drop("activity_seq")
+        activity_seqs = (
+            activity_seqs
+            .join(activity_seq_index, on="activity_seq")
         )
 
-        anchors = {activity.name: activity.is_anchor for activity in activities}
+
+        p_chain = (
+            p_chain
+            .join(
+                activity_seqs.select(["activity_seq", "activity_seq_id", "seq_step_index"]),
+                on=["activity_seq", "seq_step_index"]
+            )
+            .drop("activity_seq")
+        )
+
+        # Compute the amount of demand (= duration) per demand group and activity sequence
+        anchors = {m.name: m.is_anchor for m in activities}
 
         chains = (
-            demand_groups.join(p_chain, on=["country", "city_category", "csp", "n_cars"])
+
+            demand_groups
+            .join(p_chain, on=["country", "city_category", "csp", "n_cars"])
             .filter(pl.col("is_weekday") == is_weekday)
             .drop("is_weekday")
-            .with_columns(n_persons=pl.col("n_persons") * pl.col("p_seq"))
+            .with_columns(
+                n_persons=pl.col("n_persons")*pl.col("p_seq")
+            )
             .with_columns(
                 duration_per_pers=(
-                    pl.col("duration_morning") + pl.col("duration_midday") + pl.col("duration_evening")
+                    (
+                        pl.col("duration_morning")
+                        + pl.col("duration_midday")
+                        + pl.col("duration_evening")
+                    )
                 )
             )
+
+
         )
 
         chains_by_activity = (
-            chains.group_by(["demand_group_id", "activity_seq_id", "seq_step_index", "activity"])
+
+            chains
+
+            .group_by(["demand_group_id", "activity_seq_id", "seq_step_index", "activity"])
             .agg(
                 n_persons=pl.col("n_persons").sum(),
-                duration=(pl.col("n_persons") * pl.col("duration_per_pers")).sum(),
+                duration=(pl.col("n_persons")*pl.col("duration_per_pers")).sum()
             )
-            .sort(["demand_group_id", "activity_seq_id", "seq_step_index"])
-            .with_columns(is_anchor=pl.col("activity").cast(pl.Utf8).replace_strict(anchors))
+
+            .sort(["demand_group_id", "activity_seq_id",  "seq_step_index"])
+            .with_columns(
+                is_anchor=pl.col("activity").cast(pl.Utf8).replace_strict(anchors)
+            )
+
         )
 
-        demand_groups = demand_groups.drop(["country", "city_category"])
+        # Drop unecessary columns from demand groups
+        demand_groups = (
+            demand_groups
+            .drop(["country", "city_category"])
+        )
 
         return chains_by_activity, chains, demand_groups
 
-    def get_mean_activity_durations(self, chains, demand_groups):
-        """Compute mean per-person durations for activities and home-night."""
 
-        two_minutes = 120.0 / 3600.0
+    def get_mean_activity_durations(self, chains, demand_groups):
+
+        """Compute mean per-person durations for activities and home-night.
+
+        Uses chain step durations weighted by group sizes to estimate:
+        - mean activity duration per (CSP, activity) excluding final steps, and
+        - mean residual home-night duration per CSP.
+        Enforces a small positive floor (~2 min) for numerical stability.
+
+        Args:
+            chains (pl.DataFrame): Output from `get_chains`.
+            demand_groups (pl.DataFrame): Group metadata with CSP and sizes.
+
+        Returns:
+            tuple[pl.DataFrame, pl.DataFrame]:
+                - mean_activity_durations: ["csp","activity","mean_duration_per_pers"].
+                - mean_home_night_durations: ["csp","mean_home_night_per_pers"].
+        """
+
+        two_minutes = 120.0/3600.0
 
         chains = (
-            chains.join(demand_groups.select(["demand_group_id", "csp"]), on="demand_group_id")
-            .with_columns(duration_per_pers=pl.col("duration") / pl.col("n_persons"))
+            chains
+            .join(demand_groups.select(["demand_group_id", "csp"]), on="demand_group_id")
+            .with_columns(duration_per_pers=pl.col("duration")/pl.col("n_persons"))
         )
 
         mean_activity_durations = (
-            chains.filter(
-                pl.col("seq_step_index")
-                != pl.col("seq_step_index").max().over(["demand_group_id", "activity_seq_id"])
-            )
+            chains
+            .filter(pl.col("seq_step_index") != pl.col("seq_step_index").max().over(["demand_group_id", "activity_seq_id"]))
             .group_by(["csp", "activity"])
             .agg(
-                mean_duration_per_pers=pl.max_horizontal(
-                    [
-                        (pl.col("duration_per_pers") * pl.col("n_persons")).sum()
-                        / pl.col("n_persons").sum(),
-                        pl.lit(two_minutes),
-                    ]
-                )
+                mean_duration_per_pers=pl.max_horizontal([
+                    (pl.col("duration_per_pers")*pl.col("n_persons")).sum()/pl.col("n_persons").sum(),
+                    pl.lit(two_minutes)
+                ])
             )
         )
 
         mean_home_night_durations = (
-            chains.group_by(["demand_group_id", "csp", "activity_seq_id"])
+            chains
+            .group_by(["demand_group_id", "csp", "activity_seq_id"])
             .agg(
                 n_persons=pl.col("n_persons").first(),
-                home_night_per_pers=24.0 - pl.col("duration_per_pers").sum(),
+                home_night_per_pers=24.0 - pl.col("duration_per_pers").sum()
             )
             .group_by("csp")
             .agg(
-                mean_home_night_per_pers=pl.max_horizontal(
-                    [
-                        (pl.col("home_night_per_pers") * pl.col("n_persons")).sum()
-                        / pl.col("n_persons").sum(),
-                        pl.lit(two_minutes),
-                    ]
-                )
+                 mean_home_night_per_pers=pl.max_horizontal([
+                     (pl.col("home_night_per_pers")*pl.col("n_persons")).sum()/pl.col("n_persons").sum(),
+                     pl.lit(two_minutes)
+                  ])
             )
         )
 
         return mean_activity_durations, mean_home_night_durations
 
-    def get_stay_home_state(
-        self,
-        demand_groups,
-        home_night_dur,
-        home_activity_parameters: ActivityParameters,
-        home_activity_parameters: ActivityParameters,
-        min_activity_time_constant: float,
-    ):
-        """Create the baseline 'stay home all day' state."""
 
-        value_of_time_stay_home = home_activity_parameters.value_of_time_stay_home
+    def get_stay_home_state(
+            self,
+            demand_groups,
+            home_night_dur,
+            home_activity_parameters: ActivityParameters,
+            min_activity_time_constant: float,
+        ):
+
+        """Create the baseline 'stay home all day' state.
+
+        Builds an initial state (iteration 0) per demand group with utility
+        derived from mean home-night duration and the configured coefficient.
+
+        Args:
+            demand_groups (pl.DataFrame): ["demand_group_id","csp","n_persons"].
+            home_night_dur (pl.DataFrame): ["csp","mean_home_night_per_pers"].
+            min_activity_time_constant (float): Log-utility floor parameter
+                used consistently with state utility computation.
+
+        Returns:
+            tuple[pl.DataFrame, pl.DataFrame]:
+                - stay_home_state: Columns
+                  ["demand_group_id","iteration","activity_seq_id","mode_seq_id",
+                   "dest_seq_id","utility","n_persons"] with zeros for seq IDs.
+                - current_states: A clone of `stay_home_state` for iteration start.
+        """
+
         value_of_time_stay_home = home_activity_parameters.value_of_time_stay_home
 
         stay_home_state = (
@@ -218,13 +325,11 @@ class PlanInitializer:
                     )
                     .log()
                     .clip(0.0)
-                )
+                ),
             )
             .select(
                 [
                     "demand_group_id",
-                    "csp",
-                    "mean_home_night_per_pers",
                     "iteration",
                     "activity_seq_id",
                     "mode_seq_id",
@@ -236,60 +341,104 @@ class PlanInitializer:
         )
 
         current_states = (
-            stay_home_state.select(
-                ["demand_group_id", "iteration", "activity_seq_id", "mode_seq_id", "dest_seq_id", "utility", "n_persons"]
-            ).clone()
+            stay_home_state
+            .select(
+                [
+                    "demand_group_id",
+                    "iteration",
+                    "activity_seq_id",
+                    "mode_seq_id",
+                    "dest_seq_id",
+                    "utility",
+                    "n_persons",
+                ]
+            )
+            .clone()
         )
 
         return stay_home_state, current_states
 
+
     def get_opportunities(self, chains, activities, transport_zones):
-        """Compute destination opportunities per activity and zone."""
+
+        """Compute destination opportunities per activity and zone.
+
+        Scales available opportunities by demand per activity and a
+        activity-specific saturation coefficient to derive per-destination
+        capacity and initial availability.
+
+        Args:
+            chains (pl.DataFrame): Chains with total duration per activity.
+            activities: Iterable of activities exposing `get_opportunities(...)` and
+                `sink_saturation_coeff`.
+            transport_zones: Zone container passed to activities.
+
+        Returns:
+            pl.DataFrame: ["to","activity","opportunity_capacity","k_saturation_utility"].
+        """
 
         demand = (
-            chains.filter(pl.col("activity_seq_id") != 0).group_by(["activity"]).agg(pl.col("duration").sum())
+            chains
+            .filter(pl.col("activity_seq_id") != 0)
+            .group_by(["activity"])
+            .agg(pl.col("duration").sum())
         )
 
         activity_names = chains.schema["activity"].categories
 
         opportunities = (
+
             pl.concat(
                 [
-                    activity.get_opportunities(transport_zones).with_columns(
-                        activity=pl.lit(activity.name),
-                        sink_saturation_coeff=pl.lit(activity.inputs["parameters"].sink_saturation_coeff),
+                    (
+                        activity
+                        .get_opportunities(transport_zones)
+                        .with_columns(
+                            activity=pl.lit(activity.name),
+                            sink_saturation_coeff=pl.lit(activity.inputs["parameters"].sink_saturation_coeff)
+                        )
                     )
-                    for activity in activities
-                    if activity.has_opportunities is True
+                    for activity in activities if activity.has_opportunities is True
                 ]
             )
+
             .filter(pl.col("n_opp") > 0.0)
+
             .with_columns(
                 activity=pl.col("activity").cast(pl.Enum(activity_names)),
-                to=pl.col("to").cast(pl.Int32),
+                to=pl.col("to").cast(pl.Int32)
             )
             .join(demand, on="activity")
             .with_columns(
                 opportunity_capacity=(
-                    pl.col("n_opp") / pl.col("n_opp").sum().over("activity")
-                    * pl.col("duration")
-                    * pl.col("sink_saturation_coeff")
+                    pl.col("n_opp")/pl.col("n_opp").sum().over("activity")
+                    * pl.col("duration")*pl.col("sink_saturation_coeff")
                 ),
-                k_saturation_utility=pl.lit(1.0, dtype=pl.Float64()),
+                k_saturation_utility=pl.lit(1.0, dtype=pl.Float64())
             )
             .select(["to", "activity", "opportunity_capacity", "k_saturation_utility"])
         )
 
         return opportunities
 
-    def get_current_costs(self, costs, congestion):
-        """Fetch current OD costs and cast endpoint IDs."""
 
-        current_costs = costs.get(congestion=congestion).with_columns(
-            [
+    def get_current_costs(self, costs, congestion):
+        """Fetch current OD costs and cast endpoint IDs.
+
+        Args:
+            costs: TransportCostsAggregator-like provider with `.get(congestion=...)`.
+            congestion (bool): Whether to use congested costs.
+
+        Returns:
+            pl.DataFrame: At least ["from","to","cost"], with Int32 endpoints.
+        """
+
+        current_costs = (
+            costs.get(congestion=congestion)
+            .with_columns([
                 pl.col("from").cast(pl.Int32()),
-                pl.col("to").cast(pl.Int32()),
-            ]
+                pl.col("to").cast(pl.Int32())
+            ])
         )
 
         return current_costs

@@ -158,7 +158,6 @@ class LeisureParameters(ActivityParameters):
     """Parameters specific to the leisure activity."""
 
     value_of_time: Annotated[float | ScalarParameterProfile, Field(default=10.0)]
-    value_of_time: Annotated[float | ScalarParameterProfile, Field(default=10.0)]
     saturation_fun_ref_level: Annotated[float, Field(default=1.5, ge=0.0)]
     saturation_fun_beta: Annotated[float, Field(default=4.0, ge=0.0)]
     survey_ids: Annotated[

@@ -67,6 +67,7 @@ class Activity(InMemoryAsset):
 
         super().__init__(inputs)
 
+
     def get_parameters_at_step(self, step: SimulationStep) -> "ActivityParameters":
         """Returns the activity parameters in effect at a simulation step.
 
