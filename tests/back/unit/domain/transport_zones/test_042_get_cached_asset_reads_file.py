@@ -1,7 +1,7 @@
 import pathlib
 import geopandas as gpd
 
-from mobility.transport_zones import TransportZones
+from mobility.spatial.transport_zones import TransportZones
 
 def test_get_cached_asset_reads_expected_path(monkeypatch, project_dir, fake_inputs_hash, fake_transport_zones, dependency_fakes):
     transport_zones = TransportZones(local_admin_unit_id=["fr-09122", "fr-09121"])

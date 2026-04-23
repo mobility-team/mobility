@@ -37,13 +37,13 @@ def fake_inputs_hash():
 
 
 # -----------------------------------------------------------
-# Patch the exact FileAsset used by mobility.transport_zones
+# Patch the exact FileAsset used by mobility.spatial.transport_zones
 # -----------------------------------------------------------
 
 @pytest.fixture(autouse=True)
 def patch_transportzones_fileasset_init(monkeypatch, project_dir, fake_inputs_hash):
     """
-    Patch the *exact* FileAsset class used by mobility.transport_zones at import time.
+    Patch the *exact* FileAsset class used by mobility.spatial.transport_zones at import time.
     This avoids guessing module paths or MRO tricks and guarantees interception.
 
     Behavior:
@@ -52,7 +52,7 @@ def patch_transportzones_fileasset_init(monkeypatch, project_dir, fake_inputs_ha
       - exposes inputs as attributes on self
       - rewrites cache_path to <project_dir>/<fake_inputs_hash>-<basename>
     """
-    import mobility.transport_zones as tz_module
+    import mobility.spatial.transport_zones as tz_module
 
     # Grab the class object that TransportZones actually extends
     FileAssetClass = tz_module.FileAsset
@@ -239,11 +239,11 @@ def fake_population_asset(fake_transport_zones):
 @pytest.fixture
 def dependency_fakes(monkeypatch, tmp_path):
     """
-    Patch StudyArea, OSMData, and RScript to safe test doubles that:
+    Patch StudyArea, OSMData, and RScriptRunner to safe test doubles that:
       - record constructor calls/args
       - never touch network or external binaries
       - expose minimal interfaces used by the module.
-    Importantly: also patch the symbols *inside mobility.transport_zones* since that
+    Importantly: also patch the symbols *inside mobility.spatial.transport_zones* since that
     module imported the classes with `from ... import ...`.
     """
     state = types.SimpleNamespace()
@@ -314,8 +314,8 @@ def dependency_fakes(monkeypatch, tmp_path):
         )
         return instance
 
-    # --- Fake RScript ---
-    class _FakeRScript:
+    # --- Fake RScriptRunner ---
+    class _FakeRScriptRunner:
         def __init__(self, script_path):
             self.script_path = script_path
             state.rscript_init_path = script_path
@@ -326,19 +326,19 @@ def dependency_fakes(monkeypatch, tmp_path):
             state.rscript_runs.append({"args": list(args)})
 
     def _RScript_spy(script_path):
-        return _FakeRScript(script_path)
+        return _FakeRScriptRunner(script_path)
 
     # Apply patches both to the origin modules and to the names imported
-    # into mobility.transport_zones.
-    import mobility.transport_zones as tz_module
-    monkeypatch.setattr("mobility.study_area.StudyArea", _StudyArea_spy, raising=True)
-    monkeypatch.setattr("mobility.parsers.osm.OSMData", _OSMData_spy, raising=True)
-    monkeypatch.setattr("mobility.r_utils.r_script.RScript", _RScript_spy, raising=True)
+    # into mobility.spatial.transport_zones.
+    import mobility.spatial.transport_zones as tz_module
+    monkeypatch.setattr("mobility.spatial.study_area.StudyArea", _StudyArea_spy, raising=True)
+    monkeypatch.setattr("mobility.spatial.osm.OSMData", _OSMData_spy, raising=True)
+    monkeypatch.setattr("mobility.runtime.r_integration.r_script_runner.RScriptRunner", _RScript_spy, raising=True)
 
     # Crucial: patch the symbols inside the transport_zones module too
     monkeypatch.setattr(tz_module, "StudyArea", _StudyArea_spy, raising=True)
     monkeypatch.setattr(tz_module, "OSMData", _OSMData_spy, raising=True)
-    monkeypatch.setattr(tz_module, "RScript", _RScript_spy, raising=True)
+    monkeypatch.setattr(tz_module, "RScriptRunner", _RScript_spy, raising=True)
 
     return state
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import mobility.population as population_module
+import mobility.population.population as population_module
 
 
 def test_create_and_get_asset_french_path_writes_parquet_and_uses_hash(

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import mobility.population as population_module
+import mobility.population.population as population_module
 
 
 def test_get_cached_asset_returns_expected_cache_paths(fake_transport_zones):

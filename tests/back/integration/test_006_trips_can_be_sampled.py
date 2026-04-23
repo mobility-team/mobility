@@ -116,7 +116,7 @@ def test_006_trips_can_be_sampled(test_data, safe_json):
         sample_size=test_data["population_sample_size"],
     )
 
-    trips = mobility.Trips(population).get()
+    trips = mobility.IndividualYearTrips(population).get()
     trips_df = _to_pandas(trips)
 
     assert trips_df.shape[0] > 0

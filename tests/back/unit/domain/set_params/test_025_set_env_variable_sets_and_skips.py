@@ -1,5 +1,5 @@
 import os
-from mobility.set_params import set_env_variable
+from mobility.config import set_env_variable
 
 def test_set_env_variable_sets_when_value_present(monkeypatch):
     set_env_variable("MOBILITY_CERT_FILE", "/tmp/cert.pem")

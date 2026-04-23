@@ -1,8 +1,8 @@
 import pandas as pd
 from pathlib import Path
 
-from mobility.trips import Trips
-from mobility.transport_modes.default_gwp import DefaultGWP
+from mobility.trips.individual_year_trips import IndividualYearTrips
+from mobility.impacts.default_gwp import DefaultGWP
 
 
 def test_filter_population_is_applied(
@@ -15,7 +15,7 @@ def test_filter_population_is_applied(
     """
     Ensure the optional filter_population callable is used inside create_and_get_asset.
     We feed a population of 2 individuals, filter it down to 1, and verify:
-      - Trips.create_and_get_asset() runs without I/O outside tmp_path
+      - IndividualYearTrips.create_and_get_asset() runs without I/O outside tmp_path
       - The cached parquet path has the hashed prefix
       - Only the filtered individual_id remains in the output
     """
@@ -38,7 +38,7 @@ def test_filter_population_is_applied(
     def filter_population_keep_first(input_population_dataframe: pd.DataFrame) -> pd.DataFrame:
         return input_population_dataframe[input_population_dataframe["individual_id"] == 1].copy()
 
-    trips_instance = Trips(
+    trips_instance = IndividualYearTrips(
         population=fake_population_asset,
         filter_population=filter_population_keep_first,
         gwp=DefaultGWP(),

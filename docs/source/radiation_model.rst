@@ -2,13 +2,9 @@
 Radiation model
 ================
 
-With the implementation of the radiation model developed in
-`Liu et Yan 2020 <https://www.nature.com/articles/s41598-020-61613-y>`_,
-you can reproduce spatially the mobility flows linked to a purpose
-(such as home-work trips).
+The legacy radiation model module was removed from the package during the
+refactor and is no longer part of the documented public API.
 
- .. automodule:: mobility.radiation_model
-    :members:
-
-This radiation model could be used for any contiguous subset of French departments.
-You can find an example of this model in <https://github.com/mobility-team/mobility/tree/main/examples/Millau>.
+Older examples may still reference it historically, but this page is kept only
+to avoid broken documentation links while the replacement workflow is being
+documented.

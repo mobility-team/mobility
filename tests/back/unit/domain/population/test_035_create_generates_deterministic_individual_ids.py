@@ -31,7 +31,7 @@ def test_create_and_get_asset_generates_deterministic_individual_ids(
 
     monkeypatch.setattr(pandas_module.DataFrame, "to_parquet", capturing_to_parquet, raising=True)
 
-    import mobility.population as population_module
+    import mobility.population.population as population_module
     population = population_module.Population(
         transport_zones=fake_transport_zones,
         sample_size=5,  # any small positive sample size

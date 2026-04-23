@@ -1,0 +1,1 @@
+"""Trip-generating model packages."""
