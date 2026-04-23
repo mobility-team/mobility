@@ -3,8 +3,11 @@ import polars as pl
 from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, Parameters
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 from mobility.trips.group_day_trips.population_trips_candidates import (
+    empty_mode_sequences,
+    empty_spatialized_chains,
     get_active_activity_chains,
     get_active_destination_sequences,
+    get_mode_sequences,
     get_spatialized_chains,
 )
 
@@ -60,6 +63,42 @@ def test_get_active_activity_chains_keeps_only_non_stay_home_sequences():
     ]
 
 
+def test_get_active_activity_chains_returns_empty_when_no_active_non_stay_home_sequences():
+    chains_by_activity = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1],
+            "activity_seq_id": [10, 20],
+            "seq_step_index": [0, 0],
+            "activity": ["work", "other"],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt32,
+            "activity": pl.Utf8,
+        },
+    )
+    current_plans = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [0],
+            "dest_seq_id": [0],
+            "mode_seq_id": [0],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
+    )
+
+    result = get_active_activity_chains(chains_by_activity, current_plans)
+
+    assert result.height == 0
+    assert result.schema == chains_by_activity.schema
+
+
 def test_get_active_destination_sequences_reuses_current_plan_steps():
     current_plans = pl.DataFrame(
         {
@@ -104,6 +143,108 @@ def test_get_active_destination_sequences_reuses_current_plan_steps():
 
     assert result["iteration"].unique().to_list() == [4]
     assert result["seq_step_index"].sort().to_list() == [0, 1]
+
+
+def test_get_active_destination_sequences_returns_empty_when_no_active_non_stay_home_sequences():
+    current_plans = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [0],
+            "dest_seq_id": [0],
+            "mode_seq_id": [0],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
+    )
+
+    result = get_active_destination_sequences(
+        current_plans=current_plans,
+        current_plan_steps=None,
+        iteration=4,
+    )
+
+    assert result.height == 0
+    assert result.schema == empty_spatialized_chains().schema
+
+
+def test_get_active_destination_sequences_raises_when_current_plan_steps_missing():
+    current_plans = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [10],
+            "dest_seq_id": [100],
+            "mode_seq_id": [1000],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
+    )
+
+    try:
+        get_active_destination_sequences(
+            current_plans=current_plans,
+            current_plan_steps=None,
+            iteration=4,
+        )
+    except ValueError as exc:
+        assert "No current plan steps available" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError when current_plan_steps is missing")
+
+
+def test_get_active_destination_sequences_raises_when_active_states_cannot_be_reused():
+    current_plans = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [10],
+            "dest_seq_id": [100],
+            "mode_seq_id": [1000],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
+    )
+    current_plan_steps = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [10],
+            "dest_seq_id": [999],
+            "mode_seq_id": [1000],
+            "seq_step_index": [0],
+            "from": [21],
+            "to": [22],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt32,
+            "from": pl.Int32,
+            "to": pl.Int32,
+        },
+    )
+
+    try:
+        get_active_destination_sequences(
+            current_plans=current_plans,
+            current_plan_steps=current_plan_steps,
+            iteration=4,
+        )
+    except ValueError as exc:
+        assert "could not be matched to reusable destination chains" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError when active destination sequences cannot be reused")
 
 
 def test_get_spatialized_chains_limits_destination_resampling_to_active_activities():
@@ -177,6 +318,193 @@ def test_get_spatialized_chains_limits_destination_resampling_to_active_activiti
     )
 
     assert destination_sequence_sampler.seen_chains.select("activity_seq_id").to_series().to_list() == [10]
+
+
+def test_get_spatialized_chains_returns_empty_when_no_active_non_stay_home_plans():
+    class DummySampler:
+        def run(self, *args, **kwargs):
+            raise AssertionError("Sampler should not run when there are no active non-stay-home plans")
+
+    current_plans = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [0],
+            "dest_seq_id": [0],
+            "mode_seq_id": [0],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
+    )
+    chains_by_activity = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [10],
+            "seq_step_index": [0],
+            "activity": ["work"],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt32,
+            "activity": pl.Utf8,
+        },
+    )
+
+    result = get_spatialized_chains(
+        behavior_change_scope=BehaviorChangeScope.DESTINATION_REPLANNING,
+        current_plans=current_plans,
+        current_plan_steps=None,
+        destination_sequence_sampler=DummySampler(),
+        activities=[],
+        transport_zones=None,
+        remaining_opportunities=pl.DataFrame(),
+        iteration=3,
+        chains_by_activity=chains_by_activity,
+        demand_groups=pl.DataFrame(),
+        costs=pl.DataFrame(),
+        parameters=Parameters(),
+        seed=123,
+    )
+
+    assert result.height == 0
+    assert result.schema == empty_spatialized_chains().schema
+
+
+def test_get_spatialized_chains_raises_when_active_non_stay_home_plans_have_no_available_chains():
+    class DummySampler:
+        def run(self, *args, **kwargs):
+            raise AssertionError("Sampler should not run when no active chains are available")
+
+    current_plans = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [10],
+            "dest_seq_id": [100],
+            "mode_seq_id": [1000],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
+    )
+    chains_by_activity = pl.DataFrame(
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt32,
+            "activity": pl.Utf8,
+        }
+    )
+
+    try:
+        get_spatialized_chains(
+            behavior_change_scope=BehaviorChangeScope.DESTINATION_REPLANNING,
+            current_plans=current_plans,
+            current_plan_steps=None,
+            destination_sequence_sampler=DummySampler(),
+            activities=[],
+            transport_zones=None,
+            remaining_opportunities=pl.DataFrame(),
+            iteration=3,
+            chains_by_activity=chains_by_activity,
+            demand_groups=pl.DataFrame(),
+            costs=pl.DataFrame(),
+            parameters=Parameters(),
+            seed=123,
+        )
+    except ValueError as exc:
+        assert "No chains available for active non-stay-home states" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError when active non-stay-home states have no chains")
+
+
+def test_get_mode_sequences_returns_empty_when_no_spatialized_chains():
+    class DummySearcher:
+        def run(self, *args, **kwargs):
+            raise AssertionError("Searcher should not run when there are no spatialized chains")
+
+    result = get_mode_sequences(
+        spatialized_chains=empty_spatialized_chains(),
+        top_k_mode_sequence_search=DummySearcher(),
+        iteration=2,
+        costs_aggregator=None,
+        tmp_folders={},
+        parameters=Parameters(),
+    )
+
+    assert result.height == 0
+    assert result.schema == empty_mode_sequences().schema
+
+
+def test_get_mode_sequences_delegates_to_searcher():
+    class DummySearcher:
+        def __init__(self):
+            self.calls = []
+
+        def run(self, iteration, costs_aggregator, tmp_folders, parameters):
+            self.calls.append((iteration, costs_aggregator, tmp_folders, parameters))
+            return pl.DataFrame(
+                {
+                    "demand_group_id": [1],
+                    "activity_seq_id": [10],
+                    "dest_seq_id": [100],
+                    "mode_seq_id": [1000],
+                    "seq_step_index": [0],
+                    "mode": ["car"],
+                    "iteration": [2],
+                },
+                schema={
+                    "demand_group_id": pl.UInt32,
+                    "activity_seq_id": pl.UInt32,
+                    "dest_seq_id": pl.UInt32,
+                    "mode_seq_id": pl.UInt32,
+                    "seq_step_index": pl.UInt32,
+                    "mode": pl.Utf8,
+                    "iteration": pl.UInt32,
+                },
+            )
+
+    searcher = DummySearcher()
+    spatialized_chains = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [10],
+            "dest_seq_id": [100],
+            "seq_step_index": [0],
+            "from": [1],
+            "to": [2],
+            "iteration": [2],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt32,
+            "from": pl.Int32,
+            "to": pl.Int32,
+            "iteration": pl.UInt32,
+        },
+    )
+
+    parameters = Parameters()
+
+    result = get_mode_sequences(
+        spatialized_chains=spatialized_chains,
+        top_k_mode_sequence_search=searcher,
+        iteration=2,
+        costs_aggregator="costs",
+        tmp_folders={"tmp": "folder"},
+        parameters=parameters,
+    )
+
+    assert searcher.calls == [(2, "costs", {"tmp": "folder"}, parameters)]
+    assert result["mode"].to_list() == ["car"]
 
 
 def test_get_transition_probabilities_blocks_stay_home_in_mode_replanning():
