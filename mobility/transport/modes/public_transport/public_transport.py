@@ -147,7 +147,7 @@ class PublicTransportMode(TransportMode):
         travel_costs = self.inputs["travel_costs"].audit_gtfs()
         return travel_costs
 
-    def resolve_for_step(self, step: SimulationStep) -> "PublicTransport":
+    def resolve_for_step(self, step: SimulationStep) -> "PublicTransportMode":
         """Return a PT mode with routing parameters resolved for one iteration."""
 
         routing_parameters = self.inputs["travel_costs"].inputs["parameters"]
@@ -159,7 +159,7 @@ class PublicTransportMode(TransportMode):
         travel_costs = self.inputs["travel_costs"]
         generalized_cost = self.inputs["generalized_cost"]
 
-        return PublicTransport(
+        return PublicTransportMode(
             transport_zones=travel_costs.inputs["transport_zones"],
             first_leg_mode=travel_costs.first_leg_mode,
             last_leg_mode=travel_costs.last_leg_mode,
