@@ -20,6 +20,7 @@ class DestinationSequences(FileAsset):
         iteration: int,
         base_folder: pathlib.Path,
         activities: list[Any] | None = None,
+        resolved_activity_parameters: dict[str, Any] | None = None,
         transport_zones: Any = None,
         remaining_opportunities: pl.DataFrame | None = None,
         chains: pl.DataFrame | None = None,
@@ -30,6 +31,7 @@ class DestinationSequences(FileAsset):
         seed: int | None = None,
     ) -> None:
         self.activities = activities
+        self.resolved_activity_parameters = resolved_activity_parameters
         self.transport_zones = transport_zones
         self.remaining_opportunities = remaining_opportunities
         self.chains = chains
@@ -73,9 +75,12 @@ class DestinationSequences(FileAsset):
             raise ValueError("Cannot build destination sequences without parameters.")
         if self.seed is None:
             raise ValueError("Cannot build destination sequences without a seed.")
+        if self.resolved_activity_parameters is None:
+            raise ValueError("Cannot build destination sequences without resolved activity parameters.")
 
         utilities = self._get_utilities(
             self.activities,
+            self.resolved_activity_parameters,
             self.transport_zones,
             self.remaining_opportunities,
             self.costs,
@@ -84,6 +89,7 @@ class DestinationSequences(FileAsset):
         destination_probability = self._get_destination_probability(
             utilities,
             self.activities,
+            self.resolved_activity_parameters,
             self.parameters.dest_prob_cutoff,
         )
         chains = (
@@ -132,13 +138,25 @@ class DestinationSequences(FileAsset):
     def _get_utilities(
         self,
         activities: list[Any],
+        resolved_activity_parameters: dict[str, Any] | None,
         transport_zones: Any,
         opportunities: pl.DataFrame,
         costs: pl.DataFrame,
         cost_uncertainty_sd: float,
     ) -> tuple[pl.LazyFrame, pl.LazyFrame]:
         """Assemble destination utilities with cost uncertainty."""
-        utilities = [(activity.name, activity.get_utilities(transport_zones)) for activity in activities]
+        if resolved_activity_parameters is None:
+            raise ValueError("Cannot build destination utilities without resolved activity parameters.")
+        utilities = [
+            (
+                activity.name,
+                activity.get_utilities(
+                    transport_zones,
+                    parameters=resolved_activity_parameters[activity.name],
+                ),
+            )
+            for activity in activities
+        ]
         utilities = [utility for utility in utilities if utility[1] is not None]
         utilities = [utility[1].with_columns(activity=pl.lit(utility[0])) for utility in utilities]
 
@@ -199,6 +217,7 @@ class DestinationSequences(FileAsset):
         self,
         utilities: tuple[pl.LazyFrame, pl.LazyFrame],
         activities: list[Any],
+        resolved_activity_parameters: dict[str, Any] | None,
         destination_probability_cutoff: float,
     ) -> pl.DataFrame:
         """Compute destination probabilities from utilities."""
@@ -207,8 +226,11 @@ class DestinationSequences(FileAsset):
         )
         costs_by_bin = utilities[0]
         cost_bin_to_destination = utilities[1]
+        if resolved_activity_parameters is None:
+            raise ValueError("Cannot compute destination probabilities without resolved activity parameters.")
         activities_lambda = {
-            activity.name: activity.inputs["parameters"].radiation_lambda for activity in activities
+            activity.name: resolved_activity_parameters[activity.name].radiation_lambda
+            for activity in activities
         }
         return (
             costs_by_bin

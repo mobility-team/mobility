@@ -11,12 +11,12 @@ from ..transitions.transition_schema import TRANSITION_EVENT_COLUMNS
 
 class PlanUpdater:
     """Updates population plan distributions over activity/destination/mode sequences.
-    
+
     Builds candidate states, scores utilities (including home-night term),
     computes transition probabilities, applies transitions, and returns the
     updated aggregate states plus their per-step expansion.
     """
-    
+
     def get_new_plans(
             self,
             current_plans: pl.DataFrame,
@@ -33,13 +33,13 @@ class PlanUpdater:
             home_night_dur: pl.DataFrame,
             stay_home_plan: pl.DataFrame,
             parameters: Any,
-            activities: list[Any]
+            resolved_activity_parameters: dict[str, Any],
         ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
         """Advance one iteration of plan updates.
 
-        Orchestrates: candidate step generation → state utilities →
-        transition probabilities → transitioned states → per-step expansion.
-        
+        Orchestrates: candidate step generation â†’ state utilities â†’
+        transition probabilities â†’ transitioned states â†’ per-step expansion.
+
         Args:
             current_plans (pl.DataFrame): Current aggregate plans with columns
                 ["demand_group_id","activity_seq_id","dest_seq_id","mode_seq_id",
@@ -54,9 +54,9 @@ class PlanUpdater:
             destination_sequences (DestinationSequences): Persisted destination sequences for the iteration.
             mode_sequences (ModeSequences): Persisted mode sequences for the iteration.
             home_night_dur (pl.DataFrame): Mean remaining home-night duration by csp.
-            stay_home_plan (pl.DataFrame): Baseline “stay-home” plan rows.
+            stay_home_plan (pl.DataFrame): Baseline â€œstay-homeâ€ plan rows.
             parameters (Parameters): Coefficients and tunables.
-        
+
         Returns:
             tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
                 Updated current plans, expanded per-step plans, and transition events.
@@ -72,7 +72,7 @@ class PlanUpdater:
             remaining_opportunities,
             activity_dur,
             iteration,
-            activities,
+            resolved_activity_parameters,
             parameters.min_activity_time_constant,
             destination_sequences,
             mode_sequences,
@@ -80,21 +80,26 @@ class PlanUpdater:
         self._assert_current_plans_covered_by_possible_plan_steps(
             current_plans,
             possible_plan_steps,
-            iteration
+            iteration,
         )
-        
-        home_activity = [m for m in activities if m.name == "home"][0]
-        
+
         possible_plan_utility = self.get_possible_plan_utility(
             possible_plan_steps,
             home_night_dur,
-            home_activity.inputs["parameters"].value_of_time_stay_home,
+            resolved_activity_parameters["home"].value_of_time_stay_home,
             stay_home_plan,
             parameters.min_activity_time_constant
         )
 
-        transition_prob = self.get_transition_probabilities(current_plans, possible_plan_utility)
-        current_plans, transition_events = self.apply_transitions(current_plans, transition_prob, iteration)
+        transition_prob = self.get_transition_probabilities(
+            current_plans,
+            possible_plan_utility,
+        )
+        current_plans, transition_events = self.apply_transitions(
+            current_plans,
+            transition_prob,
+            iteration,
+        )
         transition_events = self.add_transition_plan_details(transition_events, possible_plan_steps)
         current_plan_steps = self.get_current_plan_steps(current_plans, possible_plan_steps)
 
@@ -142,7 +147,7 @@ class PlanUpdater:
             f"at iteration={iteration}. Missing={missing_current.height}. "
             f"Sample keys={sample}"
         )
-    
+
     def get_possible_plan_steps(
             self,
             current_plans,
@@ -154,7 +159,7 @@ class PlanUpdater:
             opportunities,
             activity_dur,
             iteration,
-            activities,
+            resolved_activity_parameters: dict[str, Any],
             min_activity_time_constant,
             destination_sequences: DestinationSequences,
             mode_sequences: ModeSequences,
@@ -163,8 +168,8 @@ class PlanUpdater:
 
         Joins latest spatialized chains and mode sequences, merges costs and
         mean activity durations, filters out saturated destinations, and
-        computes per-step utility = activity utility − travel cost.
-        
+        computes per-step utility = activity utility âˆ’ travel cost.
+
         Args:
             current_plans (pl.DataFrame): Current aggregate plans (used for scoping).
             demand_groups (pl.DataFrame): Demand groups with csp and sizes.
@@ -176,16 +181,14 @@ class PlanUpdater:
             activity_utility_coeff (float): Coefficient for activity utility.
             destination_sequences (DestinationSequences): Persisted destination sequences for the iteration.
             mode_sequences (ModeSequences): Persisted mode sequences for the iteration.
-        
+
         Returns:
             pl.DataFrame: Candidate per-step rows with columns including
                 ["demand_group_id","csp","activity_seq_id","dest_seq_id","mode_seq_id",
                  "seq_step_index","activity","from","to","mode",
                  "duration_per_pers","utility"].
         """
-        
-        
-        cost_by_od_and_modes = ( 
+        cost_by_od_and_modes = (
             costs_aggregator.get_costs_by_od_and_mode(
                 ["cost", "distance", "time"],
                 congestion=(congestion_state is not None),
@@ -193,32 +196,40 @@ class PlanUpdater:
                 congestion_state=congestion_state,
             )
         )
-        
-        chains_w_home = ( 
+
+        chains_w_home = (
             chains
             .join(demand_groups.select(["demand_group_id", "csp"]), on="demand_group_id")
             .with_columns(duration_per_pers=pl.col("duration")/pl.col("n_persons"))
         )
-        
+
         # Keep only the last occurrence of any activity - destination sequence
         # (the sampler might generate the same sequence twice)
         spat_chains = (
             destination_sequences.get_cached_asset().lazy()
         )
-        
+
         # Keep only the last occurrence of any activity - destination - mode sequence
         # (the sampler might generate the same sequence twice)
         modes = (
             mode_sequences.get_cached_asset().lazy()
         )
-        
+
         # Get the activities values of time
-        value_of_time = ( 
+        value_of_time = (
             pl.from_dicts(
-                [{"activity": m.name, "value_of_time": m.inputs["parameters"].value_of_time} for m in activities]
+                [
+                    {
+                        "activity": activity_name,
+                        "value_of_time": activity_parameters.value_of_time,
+                    }
+                    for activity_name, activity_parameters in resolved_activity_parameters.items()
+                ]
             )
             .with_columns(
-                activity=pl.col("activity").cast(pl.Enum(activity_dur["activity"].dtype.categories))
+                activity=pl.col("activity").cast(
+                    pl.Enum(activity_dur["activity"].dtype.categories)
+                )
             )
         )
 
@@ -245,9 +256,8 @@ class PlanUpdater:
             "min_activity_time",
             "utility",
         ]
-        
+
         possible_plan_steps = (
-            
             modes
             .join(spat_chains, on=["demand_group_id", "activity_seq_id", "dest_seq_id", "seq_step_index"])
             .join(chains_w_home.lazy(), on=["demand_group_id", "activity_seq_id", "seq_step_index"])
@@ -255,21 +265,29 @@ class PlanUpdater:
             .join(activity_dur.lazy(), on=["csp", "activity"])
             .join(value_of_time.lazy(), on="activity")
             .join(opportunities.select(["to", "activity", "k_saturation_utility"]).lazy(), on=["to", "activity"], how="left")
-            
             .with_columns(
                 k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0),
-                min_activity_time=pl.col("mean_duration_per_pers")*math.exp(-min_activity_time_constant)
+                min_activity_time=(
+                    pl.col("mean_duration_per_pers")
+                    * math.exp(-min_activity_time_constant)
+                ),
             )
-            
             .with_columns(
-                utility=( 
-                    pl.col("k_saturation_utility")*pl.col("value_of_time")*pl.col("mean_duration_per_pers")*(pl.col("duration_per_pers")/pl.col("min_activity_time")).log().clip(0.0)
+                utility=(
+                    pl.col("k_saturation_utility")
+                    * pl.col("value_of_time")
+                    * pl.col("mean_duration_per_pers")
+                    * (
+                        pl.col("duration_per_pers")
+                        / pl.col("min_activity_time")
+                    )
+                    .log()
+                    .clip(0.0)
                     - pl.col("cost")
-                )
+                ),
             )
             .with_columns(iteration=pl.col("iteration"))
             .select(possible_plan_step_columns)
-            
         )
 
         if current_plan_steps is not None:
@@ -332,10 +350,10 @@ class PlanUpdater:
                     keep="first",
                 )
             )
-        
+
         return possible_plan_steps
 
-    
+
     def get_possible_plan_utility(
             self,
             possible_plan_steps,
@@ -348,67 +366,71 @@ class PlanUpdater:
 
         Sums step utilities per state, adds home-night utility, prunes dominated
         states, and appends the explicit stay-home baseline.
-        
+
         Args:
             possible_plan_steps (pl.DataFrame): Candidate step rows with per-step utility.
             home_night_dur (pl.DataFrame): Mean home-night duration by csp.
             stay_home_utility_coeff (float): Coefficient for home-night utility.
             stay_home_plan (pl.DataFrame): Baseline plan rows to append.
-        
+
         Returns:
             pl.DataFrame: Plan-level utilities with
                 ["demand_group_id","activity_seq_id","mode_seq_id","dest_seq_id","utility"].
         """
-                    
+
         possible_plan_utility = (
-            
             possible_plan_steps
             .group_by(["demand_group_id", "csp", "activity_seq_id", "dest_seq_id", "mode_seq_id"])
             .agg(
                 utility=pl.col("utility").sum(),
-                home_night_per_pers=24.0 - pl.col("duration_per_pers").sum()
+                home_night_per_pers=24.0 - pl.col("duration_per_pers").sum(),
             )
-            
             .join(home_night_dur.lazy(), on="csp")
             .with_columns(
-                min_activity_time=pl.col("mean_home_night_per_pers")*math.exp(-min_activity_time_constant)
-            )
-            .with_columns(
-                utility_stay_home=( 
-                    value_of_time_stay_home*pl.col("mean_home_night_per_pers")
-                    * (pl.col("home_night_per_pers")/pl.col("min_activity_time")).log().clip(0.0)
+                min_activity_time=(
+                    pl.col("mean_home_night_per_pers")
+                    * math.exp(-min_activity_time_constant)
                 )
             )
-            
+            .with_columns(
+                utility_stay_home=(
+                    value_of_time_stay_home
+                    * pl.col("mean_home_night_per_pers")
+                    * (
+                        pl.col("home_night_per_pers")
+                        / pl.col("min_activity_time")
+                    )
+                    .log()
+                    .clip(0.0)
+                ),
+            )
             .with_columns(
                 utility=pl.col("utility") + pl.col("utility_stay_home")
             )
-            
             # Prune states that are below a certain distance from the best state
             # (because they will have very low probabilities to be selected)
             .filter(
                 (pl.col("utility") > pl.col("utility").max().over(["demand_group_id"]) - 5.0)
             )
-            
             .select(["demand_group_id", "activity_seq_id", "mode_seq_id", "dest_seq_id", "utility"])
         )
-        
-        possible_plan_utility = ( 
-            
+
+        possible_plan_utility = (
+
             pl.concat([
                 possible_plan_utility,
-                ( 
+                (
                     stay_home_plan.lazy()
                     .select(["demand_group_id", "activity_seq_id", "mode_seq_id", "dest_seq_id", "utility"])
                 )
             ])
-            
+
         )
-        
+
         return possible_plan_utility
-    
-    
-    
+
+
+
     def get_transition_probabilities(
             self,
             current_plans: pl.DataFrame,
@@ -417,31 +439,31 @@ class PlanUpdater:
         ) -> pl.DataFrame:
         """Compute transition probabilities from current to candidate plans.
 
-        Uses softmax over Δutility (with stabilization and pruning) within each
+        Uses softmax over Î”utility (with stabilization and pruning) within each
         demand group and current state key.
-        
+
         Args:
             current_plans (pl.DataFrame): Current plans with utilities.
             possible_plan_utility (pl.DataFrame): Candidate plans with utilities.
-        
+
         Returns:
             pl.DataFrame: Transitions with
                 ["demand_group_id","activity_seq_id","dest_seq_id","mode_seq_id",
                  "activity_seq_id_trans","dest_seq_id_trans","mode_seq_id_trans",
                  "utility_trans","p_transition"].
         """
-        
+
         plan_cols = ["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"]
-        
+
         transition_probabilities = (
 
             current_plans.lazy()
             .select(plan_cols + ["utility"])
             .rename({"utility": "utility_prev_from"})
-            
+
             # Join the updated utility of the current plans
             .join(possible_plan_utility, on=plan_cols)
-            
+
             # Join the possible plans when they can improve the utility compared to the current plans
             # (join also the current plan so it is included in the probability calculation)
             .join_where(
@@ -449,26 +471,26 @@ class PlanUpdater:
                 (
                     (pl.col("demand_group_id") == pl.col("demand_group_id_trans")) &
                     (
-                        (pl.col("utility_trans") > pl.col("utility") - 5.0) | 
+                        (pl.col("utility_trans") > pl.col("utility") - 5.0) |
                         (
-                            (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans")) & 
-                            (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans")) & 
+                            (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans")) &
+                            (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans")) &
                             (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
                         )
                     )
                 ),
                 suffix="_trans"
             )
-            
+
             .drop("demand_group_id_trans")
-            
+
             # Add a transition cost
             .with_columns(
-                utility_trans=( 
+                utility_trans=(
                     pl.when(
                         (
-                            (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans")) & 
-                            (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans")) & 
+                            (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans")) &
+                            (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans")) &
                             (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
                         )
                     ).then(
@@ -478,17 +500,17 @@ class PlanUpdater:
                     )
                 )
             )
-            
+
             .with_columns(delta_utility=pl.col("utility_trans") - pl.col("utility_trans").max().over(plan_cols))
-            
+
             .filter(
                 (pl.col("delta_utility") > -5.0)
             )
-            
+
             .with_columns(
                 p_transition=pl.col("delta_utility").exp()/pl.col("delta_utility").exp().sum().over(plan_cols)
             )
-            
+
             # Keep only the first 99% of the distribution
             .sort("p_transition", descending=True)
             .with_columns(
@@ -497,13 +519,13 @@ class PlanUpdater:
             )
             .filter((pl.col("p_transition_cum") < 0.99) | (pl.col("p_count") == 1))
             .with_columns(
-                p_transition=( 
+                p_transition=(
                     pl.col("p_transition")
                     /
                     pl.col("p_transition").sum()
                     .over(plan_cols))
                 )
-            
+
             .select([
                 "demand_group_id",
                 "activity_seq_id", "dest_seq_id", "mode_seq_id",
@@ -513,14 +535,14 @@ class PlanUpdater:
                 "utility_trans",
                 "p_transition"
             ])
-            
+
             .collect(engine="streaming")
-        
+
         )
-        
+
         return transition_probabilities
-    
-    
+
+
     def apply_transitions(
             self,
             current_plans: pl.DataFrame,
@@ -528,24 +550,24 @@ class PlanUpdater:
             iteration: int
         ) -> tuple[pl.DataFrame, pl.DataFrame]:
         """Apply transition probabilities and emit transition events.
-        
+
         Left-joins transitions onto current plans, defaults to self-transition
         when absent, redistributes `n_persons` by `p_transition`, and aggregates
         by the new state keys.
-        
+
         Args:
             current_plans (pl.DataFrame): Current plans with ["n_persons","utility"].
             transition_probabilities (pl.DataFrame): Probabilities produced by
                 `get_transition_probabilities`.
-        
+
         Returns:
             tuple[pl.DataFrame, pl.DataFrame]:
                 - Updated `current_plans`, aggregated by destination plan keys.
                 - `transition_events` with one row per realized transition split.
         """
-        
+
         plan_cols = ["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"]
-        
+
         transitions = (
             current_plans
             .join(transition_probabilities, on=plan_cols, how="left")
@@ -623,7 +645,7 @@ class PlanUpdater:
             .agg(
                 n_persons=pl.col("n_persons_moved").sum(),
                 utility=pl.col("utility_trans").first()
-            )  
+            )
             .rename(
                 {
                     "activity_seq_id_trans": "activity_seq_id",
@@ -632,7 +654,7 @@ class PlanUpdater:
                 }
             )
         )
-        
+
         return new_states, transition_events
 
     def add_transition_plan_details(
@@ -792,24 +814,24 @@ class PlanUpdater:
             )
             .select(TRANSITION_EVENT_COLUMNS)
         )
-    
-    
+
+
     def get_current_plan_steps(self, current_plans, possible_plan_steps):
         """Expand aggregate plans to per-step rows.
-        
+
         Joins selected states back to their step sequences and converts
         per-person durations to aggregate durations.
-        
+
         Args:
             current_plans (pl.DataFrame): Updated aggregate plans.
             possible_plan_steps (pl.DataFrame): Candidate steps universe.
-        
+
         Returns:
             pl.DataFrame: Per-step plan steps with columns including
                 ["demand_group_id","activity_seq_id","dest_seq_id","mode_seq_id",
                  "seq_step_index","activity","from","to","mode","n_persons","duration"].
         """
-        
+
         current_plan_steps = (
             current_plans.lazy()
             .join(
@@ -825,16 +847,16 @@ class PlanUpdater:
                 duration=pl.col("duration_per_pers").fill_null(24.0)*pl.col("n_persons")
             )
             .drop("duration_per_pers")
-            
+
             .collect(engine="streaming")
-            
+
         )
-        
+
         return current_plan_steps
-    
-    
-        
-    
+
+
+
+
     def get_new_costs(
         self,
         costs,
@@ -867,7 +889,7 @@ class PlanUpdater:
             tuple[pl.DataFrame, Any]: The OD costs to use after the current
             iteration, and the explicit congestion state that produced them.
         """
-        
+
         if n_iter_per_cost_update <= 0:
             return costs, congestion_state
 
@@ -888,74 +910,76 @@ class PlanUpdater:
             run_key=run_key,
             is_weekday=is_weekday,
         )
-    
-    
+
+
     def get_new_opportunities(
             self,
             current_plan_steps,
             opportunities,
-            activities
+            resolved_activity_parameters: dict[str, Any],
         ):
         """Recompute remaining opportunities per (activity, destination).
-    
+
         Subtracts assigned durations from capacities, computes availability and a
         saturation utility factor.
-    
+
         Args:
             current_plan_steps (pl.DataFrame): Step-level assigned durations.
             opportunities (pl.DataFrame): Initial capacities per (activity,to).
-    
+
         Returns:
             pl.DataFrame: Updated opportunities with
                 ["activity","to","opportunity_capacity","k_saturation_utility"].
         """
-        
+
         logging.info("Computing remaining opportunities at destinations...")
-        
-        saturation_fun_parameters = ( 
+
+        saturation_fun_parameters = (
             pl.from_dicts(
                 [
                     {
-                        "activity": m.name,
-                        "beta": m.inputs["parameters"].saturation_fun_beta,
-                        "ref_level": m.inputs["parameters"].saturation_fun_ref_level
+                        "activity": activity_name,
+                        "beta": activity_parameters.saturation_fun_beta,
+                        "ref_level": activity_parameters.saturation_fun_ref_level,
                     }
-                    for m in activities
+                    for activity_name, activity_parameters in resolved_activity_parameters.items()
                 ]
             )
             .with_columns(
-                activity=pl.col("activity").cast(pl.Enum(opportunities["activity"].dtype.categories))
+                activity=pl.col("activity").cast(
+                    pl.Enum(opportunities["activity"].dtype.categories)
+                )
             )
         )
 
         # Compute the remaining number of opportunities by activity and destination
         # once assigned flows are accounted for
         remaining_opportunities = (
-        
             current_plan_steps
             .filter(
-                (pl.col("activity_seq_id") != 0) & 
+                (pl.col("activity_seq_id") != 0) &
                 (pl.col("activity") != "home")
             )
             .group_by(["to", "activity"])
             .agg(
                 opportunity_occupation=pl.col("duration").sum()
             )
-            
             .join(opportunities, on=["to", "activity"], how="full", coalesce=True)
             .join(saturation_fun_parameters, on="activity")
-            
             .with_columns(
                 opportunity_occupation=pl.col("opportunity_occupation").fill_null(0.0)
             )
             .with_columns(
-                k=pl.col("opportunity_occupation")/pl.col("opportunity_capacity")
+                k=pl.col("opportunity_occupation") / pl.col("opportunity_capacity")
             )
             .with_columns(
-                k_saturation_utility=(1.0 - pl.col("k").pow(pl.col("beta"))/(pl.col("ref_level").pow(pl.col("beta")))).clip(0.0)
+                k_saturation_utility=(
+                    1.0
+                    - pl.col("k").pow(pl.col("beta"))
+                    / pl.col("ref_level").pow(pl.col("beta"))
+                ).clip(0.0)
             )
             .select(["activity", "to", "opportunity_capacity", "k_saturation_utility"])
-            
         )
-        
+
         return remaining_opportunities

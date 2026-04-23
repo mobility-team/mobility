@@ -2,6 +2,7 @@ import logging
 
 from typing import List
 
+from mobility.runtime.parameter_profiles import SimulationStep, resolve_model_for_step
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.modes.core.transport_mode import TransportMode, TransportModeParameters
 from mobility.transport.modes.core.mode_registry import ModeRegistry
@@ -145,6 +146,29 @@ class PublicTransportMode(TransportMode):
         logging.info("Auditing GTFS for this mode")
         travel_costs = self.inputs["travel_costs"].audit_gtfs()
         return travel_costs
+
+    def resolve_for_step(self, step: SimulationStep) -> "PublicTransportMode":
+        """Return a PT mode with routing parameters resolved for one iteration."""
+
+        routing_parameters = self.inputs["travel_costs"].inputs["parameters"]
+        resolved_routing_parameters = resolve_model_for_step(routing_parameters, step)
+
+        if resolved_routing_parameters == routing_parameters:
+            return self
+
+        travel_costs = self.inputs["travel_costs"]
+        generalized_cost = self.inputs["generalized_cost"]
+
+        return PublicTransportMode(
+            transport_zones=travel_costs.inputs["transport_zones"],
+            first_leg_mode=travel_costs.first_leg_mode,
+            last_leg_mode=travel_costs.last_leg_mode,
+            first_intermodal_transfer=travel_costs.inputs["first_modal_transfer"],
+            last_intermodal_transfer=travel_costs.inputs["last_modal_transfer"],
+            routing_parameters=resolved_routing_parameters,
+            generalized_cost_parameters=generalized_cost.inputs["mid_parameters"],
+            parameters=self.inputs["parameters"],
+        )
 
     @staticmethod
     def _resolve_leg_mode(

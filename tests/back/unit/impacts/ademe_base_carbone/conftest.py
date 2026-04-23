@@ -154,60 +154,6 @@ def no_op_progress(monkeypatch: pytest.MonkeyPatch):
         pass
 
 
-@pytest.fixture(autouse=True)
-def patch_numpy__methods(monkeypatch: pytest.MonkeyPatch):
-    """
-    Wrap NumPy’s private _methods._sum and _amax to ignore the _NoValue sentinel.
-    This prevents pandas/NumPy _NoValueType crashes in some environments.
-    """
-    try:
-        from numpy.core import _methods as _np_methods  # type: ignore
-        import numpy as _np  # noqa
-
-        sentinel_candidates: List[Any] = []
-        for attr_name in ("_NoValue", "NoValue", "noValue"):
-            if hasattr(_np, attr_name):
-                sentinel_candidates.append(getattr(_np, attr_name))
-        if hasattr(_np_methods, "_NoValue"):
-            sentinel_candidates.append(getattr(_np_methods, "_NoValue"))
-        _SENTINELS = tuple({id(x): x for x in sentinel_candidates}.values())
-
-        def _strip_no_value_from_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
-            clean = {}
-            for key, val in kwargs.items():
-                if val in _SENTINELS:
-                    # Behave like kwargs not provided at all
-                    continue
-                clean[key] = val
-            return clean
-
-        if hasattr(_np_methods, "_sum"):
-            _orig_sum = _np_methods._sum
-
-            def _wrapped_sum(a, axis=None, dtype=None, out=None, keepdims=False, initial=None, where=True):
-                kwargs = _strip_no_value_from_kwargs(
-                    dict(axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where=where)
-                )
-                return _orig_sum(a, **kwargs)
-
-            monkeypatch.setattr(_np_methods, "_sum", _wrapped_sum, raising=True)
-
-        if hasattr(_np_methods, "_amax"):
-            _orig_amax = _np_methods._amax
-
-            def _wrapped_amax(a, axis=None, out=None, keepdims=False, initial=None, where=True):
-                kwargs = _strip_no_value_from_kwargs(
-                    dict(axis=axis, out=out, keepdims=keepdims, initial=initial, where=where)
-                )
-                return _orig_amax(a, **kwargs)
-
-            monkeypatch.setattr(_np_methods, "_amax", _wrapped_amax, raising=True)
-
-    except Exception:
-        # If private API shape differs in the environment, avoid failing tests.
-        pass
-
-
 @pytest.fixture
 def parquet_stubs(monkeypatch: pytest.MonkeyPatch):
     """

@@ -11,6 +11,7 @@ from importlib import resources
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.parameter_profiles import ListParameterProfile
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.modes.core.defaults import (
@@ -141,7 +142,7 @@ class PublicTransportRoutingParameters(BaseModel):
         float,
         Field(default=DEFAULT_LONG_RANGE_MOTORIZED_MAX_BEELINE_DISTANCE_KM, gt=0.0),
     ]
-    additional_gtfs_files: Annotated[list[str] | None, Field(default=None)]
+    additional_gtfs_files: Annotated[list[str] | ListParameterProfile | None, Field(default=None)]
     expected_agencies: Annotated[list[str] | None, Field(default=None)]
 
     @model_validator(mode="after")

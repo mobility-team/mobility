@@ -9,6 +9,8 @@ from pydantic import Field
 
 from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.work.jobs_active_population_distribution import JobsActivePopulationDistribution
+from mobility.runtime.parameter_profiles import ScalarParameterProfile
+from mobility.runtime.validation_types import UnitIntervalFloat
 
 
 class WorkActivity(Activity):
@@ -87,8 +89,8 @@ class WorkParameters(ActivityParameters):
     """Parameters specific to the work activity."""
 
     value_of_time: Annotated[
-        float,
-        Field(default=10.0, ge=0.0),
+        float | ScalarParameterProfile,
+        Field(default=10.0),
     ]
 
     saturation_fun_ref_level: Annotated[
@@ -107,8 +109,8 @@ class WorkParameters(ActivityParameters):
     ]
 
     radiation_lambda: Annotated[
-        float,
-        Field(default=0.99986, ge=0.0, le=1.0),
+        UnitIntervalFloat,
+        Field(default=0.99986),
     ]
 
     country_utilities: Annotated[

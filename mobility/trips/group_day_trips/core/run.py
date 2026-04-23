@@ -15,8 +15,10 @@ from .run_state import RunState
 from mobility.transport.costs.transport_costs_aggregator import TransportCostsAggregator
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities import Activity
+from mobility.activities.activity import resolve_activity_parameters
 from mobility.surveys import MobilitySurvey
 from mobility.population import Population
+from mobility.runtime.parameter_profiles import SimulationStep
 from mobility.transport.modes.core.transport_mode import TransportMode
 
 
@@ -146,10 +148,12 @@ class Run(FileAsset):
             chains_by_activity,
             demand_groups,
         )
+        step = SimulationStep(iteration=1)
+        resolved_activity_parameters = resolve_activity_parameters(self.activities, step)
         stay_home_plan, current_plans = self.initializer.get_stay_home_state(
             demand_groups,
             home_night_dur,
-            self.activities,
+            resolved_activity_parameters["home"],
             self.parameters.min_activity_time_constant,
         )
         opportunities = self.initializer.get_opportunities(
@@ -168,7 +172,7 @@ class Run(FileAsset):
             current_plans=current_plans,
             remaining_opportunities=opportunities.clone(),
             costs=self.initializer.get_current_costs(
-                self.costs_aggregator,
+                self.costs_aggregator.resolve_for_step(step),
                 congestion=False,
             ),
             congestion_state=None,
@@ -229,7 +233,9 @@ class Run(FileAsset):
             str(self.is_weekday),
             str(resume_from_iteration),
         )
-        state.costs = self.costs_aggregator.get(
+        state.costs = self.costs_aggregator.resolve_for_step(
+            SimulationStep(iteration=state.start_iteration)
+        ).get(
             congestion=(state.congestion_state is not None),
             congestion_state=state.congestion_state,
         )
@@ -244,6 +250,8 @@ class Run(FileAsset):
         """Execute one simulation iteration and update the mutable run state."""
         logging.info("Iteration %s", str(iteration.iteration))
         seed = self.rng.getrandbits(64)
+        step = SimulationStep(iteration=iteration.iteration)
+        resolved_costs_aggregator = self.costs_aggregator.resolve_for_step(step)
 
         destination_sequences = self._sample_and_write_destination_sequences(
             state,
@@ -254,12 +262,14 @@ class Run(FileAsset):
             state,
             iteration,
             destination_sequences,
+            resolved_costs_aggregator,
         )
         transition_events = self._update_iteration_state(
             state,
             iteration,
             destination_sequences,
             mode_sequences,
+            resolved_costs_aggregator,
         )
         iteration.save_transition_events(transition_events)
 
@@ -271,8 +281,11 @@ class Run(FileAsset):
         seed: int,
     ) -> DestinationSequences:
         """Run destination sampling and persist destination sequences for one iteration."""
+        step = SimulationStep(iteration=iteration.iteration)
+        resolved_activity_parameters = resolve_activity_parameters(self.activities, step)
         destination_sequences = iteration.destination_sequences(
             activities=self.activities,
+            resolved_activity_parameters=resolved_activity_parameters,
             transport_zones=self.population.transport_zones,
             remaining_opportunities=state.remaining_opportunities,
             chains=state.chains_by_activity,
@@ -290,11 +303,12 @@ class Run(FileAsset):
         state: RunState,
         iteration: RunIteration,
         destination_sequences: DestinationSequences,
+        resolved_costs_aggregator: TransportCostsAggregator,
     ) -> ModeSequences:
         """Run mode-sequence search and persist the results for one iteration."""
         mode_sequences = iteration.mode_sequences(
             destination_sequences=destination_sequences,
-            costs_aggregator=self.costs_aggregator,
+            costs_aggregator=resolved_costs_aggregator,
             parameters=self.parameters,
             congestion_state=state.congestion_state,
         )
@@ -308,14 +322,17 @@ class Run(FileAsset):
         iteration: RunIteration,
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
+        resolved_costs_aggregator: TransportCostsAggregator,
     ) -> pl.DataFrame:
         """Advance the simulation state by one iteration and return transition events."""
+        step = SimulationStep(iteration=iteration.iteration)
+        resolved_activity_parameters = resolve_activity_parameters(self.activities, step)
         state.current_plans, state.current_plan_steps, transition_events = self.updater.get_new_plans(
             state.current_plans,
             state.current_plan_steps,
             state.demand_groups,
             state.chains_by_activity,
-            self.costs_aggregator,
+            resolved_costs_aggregator,
             state.congestion_state,
             state.remaining_opportunities,
             state.activity_dur,
@@ -325,14 +342,14 @@ class Run(FileAsset):
             state.home_night_dur,
             state.stay_home_plan,
             self.parameters,
-            self.activities,
+            resolved_activity_parameters,
         )
         state.costs, state.congestion_state = self.updater.get_new_costs(
             state.costs,
             iteration.iteration,
             self.parameters.n_iter_per_cost_update,
             state.current_plan_steps,
-            self.costs_aggregator,
+            self.costs_aggregator.resolve_for_step(SimulationStep(iteration=iteration.iteration + 1)),
             congestion_state=state.congestion_state,
             run_key=iteration.iterations.run_inputs_hash,
             is_weekday=self.is_weekday,
@@ -340,7 +357,7 @@ class Run(FileAsset):
         state.remaining_opportunities = self.updater.get_new_opportunities(
             state.current_plan_steps,
             state.opportunities,
-            self.activities,
+            resolved_activity_parameters,
         )
         return transition_events
 
@@ -359,7 +376,9 @@ class Run(FileAsset):
 
     def _build_final_costs(self, state: RunState) -> pl.DataFrame:
         """Compute the final OD costs to attach to the written outputs."""
-        return self.costs_aggregator.get_costs_by_od_and_mode(
+        return self.costs_aggregator.resolve_for_step(
+            SimulationStep(iteration=self.parameters.n_iterations)
+        ).get_costs_by_od_and_mode(
             ["cost", "distance", "time", "ghg_emissions"],
             congestion=(state.congestion_state is not None),
             congestion_state=state.congestion_state,

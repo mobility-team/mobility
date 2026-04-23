@@ -157,37 +157,6 @@ def no_op_progress(monkeypatch):
         pass
 
 
-@pytest.fixture(autouse=True)
-def patch_numpy__methods(monkeypatch):
-    """
-    Wrap NumPy private _methods._sum/_amax to ignore np._NoValue sentinel.
-    Prevents pandas/NumPy _NoValueType crash paths.
-    """
-    try:
-        from numpy import _methods as numpy_private_methods
-        numpy_no_value = getattr(np, "_NoValue", None)
-    except Exception:
-        numpy_private_methods = None
-        numpy_no_value = None
-
-    def _clean(kwargs: dict):
-        cleaned = dict(kwargs)
-        for key in ("initial", "where", "dtype", "out", "keepdims"):
-            if cleaned.get(key, None) is numpy_no_value:
-                cleaned.pop(key, None)
-        return cleaned
-
-    if numpy_private_methods is not None and hasattr(numpy_private_methods, "_sum"):
-        def safe_sum(a, axis=None, dtype=None, out=None, keepdims=False, initial=np._NoValue, where=np._NoValue):
-            return np.sum(**_clean(locals()))
-        monkeypatch.setattr(numpy_private_methods, "_sum", safe_sum, raising=True)
-
-    if numpy_private_methods is not None and hasattr(numpy_private_methods, "_amax"):
-        def safe_amax(a, axis=None, out=None, keepdims=False, initial=np._NoValue, where=np._NoValue):
-            return np.amax(**_clean(locals()))
-        monkeypatch.setattr(numpy_private_methods, "_amax", safe_amax, raising=True)
-
-
 @pytest.fixture
 def parquet_stubs(monkeypatch):
     """

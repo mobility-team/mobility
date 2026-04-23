@@ -16,6 +16,15 @@ class TransportCostsAggregator(InMemoryAsset):
         self.modes = modes
         inputs = {mode.inputs["parameters"].name: mode.inputs["generalized_cost"] for mode in modes}
         super().__init__(inputs)
+
+    def resolve_for_step(self, step):
+        """Return a transport-cost aggregator resolved for one simulation step."""
+
+        resolved_modes = [
+            mode.resolve_for_step(step) if hasattr(mode, "resolve_for_step") else mode
+            for mode in self.modes
+        ]
+        return TransportCostsAggregator(resolved_modes)
         
         
     def get(
@@ -24,7 +33,7 @@ class TransportCostsAggregator(InMemoryAsset):
             congestion: bool = False,
             congestion_state: CongestionState | None = None,
             aggregate_by_od: bool = True,
-            detail_distances: bool = False
+            detail_distances: bool = False,
         ):
         
         logging.info("Aggregating costs...")
@@ -95,9 +104,9 @@ class TransportCostsAggregator(InMemoryAsset):
         modes = sorted(self.modes, key=lambda mode: mode.inputs["parameters"].name != "car")
         
         for mode in modes:
-            
+            generalized_cost = mode.inputs["generalized_cost"]
             gc = pl.DataFrame(
-                mode.inputs["generalized_cost"].get(
+                generalized_cost.get(
                     metrics,
                     congestion=congestion,
                     detail_distances=detail_distances,

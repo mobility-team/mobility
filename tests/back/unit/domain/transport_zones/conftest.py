@@ -127,37 +127,6 @@ def no_op_progress(monkeypatch):
     monkeypatch.setattr("rich.progress.Progress", _NoOpProgress, raising=True)
 
 
-@pytest.fixture(autouse=True)
-def patch_numpy__methods(monkeypatch):
-    """
-    Wrap numpy.core._methods._sum and _amax to ignore numpy._NoValue sentinels.
-    This prevents pandas/NumPy _NoValueType crashes in some environments.
-    """
-    try:
-        import numpy.core._methods as _np_methods  # type: ignore
-    except Exception:
-        return
-
-    _NoValue = getattr(np, "_NoValue", object())
-
-    def _clean_args_and_call(func, *args, **kwargs):
-        cleaned_args = tuple(None if a is _NoValue else a for a in args)
-        cleaned_kwargs = {k: v for k, v in kwargs.items() if v is not _NoValue}
-        return func(*cleaned_args, **cleaned_kwargs)
-
-    if hasattr(_np_methods, "_sum"):
-        original_sum = _np_methods._sum
-        def wrapped_sum(*args, **kwargs):
-            return _clean_args_and_call(original_sum, *args, **kwargs)
-        monkeypatch.setattr(_np_methods, "_sum", wrapped_sum, raising=True)
-
-    if hasattr(_np_methods, "_amax"):
-        original_amax = _np_methods._amax
-        def wrapped_amax(*args, **kwargs):
-            return _clean_args_and_call(original_amax, *args, **kwargs)
-        monkeypatch.setattr(_np_methods, "_amax", wrapped_amax, raising=True)
-
-
 # -----------------------------------
 # Parquet stubs (available if needed)
 # -----------------------------------

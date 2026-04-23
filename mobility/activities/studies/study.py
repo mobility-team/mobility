@@ -11,6 +11,8 @@ from pydantic import Field
 
 from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.studies.schools_capacity_distribution import SchoolsCapacityDistribution
+from mobility.runtime.parameter_profiles import ScalarParameterProfile
+from mobility.runtime.validation_types import UnitIntervalFloat
 
 
 class StudyActivity(Activity):
@@ -158,8 +160,8 @@ class StudyActivity(Activity):
 class StudyParameters(ActivityParameters):
     """Parameters specific to the studies activity."""
 
-    value_of_time: Annotated[float, Field(default=10.0, ge=0.0)]
+    value_of_time: Annotated[float | ScalarParameterProfile, Field(default=10.0)]
     saturation_fun_ref_level: Annotated[float, Field(default=1.5, ge=0.0)]
     saturation_fun_beta: Annotated[float, Field(default=4.0, ge=0.0)]
     survey_ids: Annotated[list[str], Field(default_factory=lambda: ["1.11"])]
-    radiation_lambda: Annotated[float, Field(default=0.99986, ge=0.0, le=1.0)]
+    radiation_lambda: Annotated[UnitIntervalFloat, Field(default=0.99986)]

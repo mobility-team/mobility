@@ -55,6 +55,9 @@ class PublicTransportTravelCosts(FileAsset):
                 "PublicTransportTravelCosts requires both `first_modal_transfer` and `last_modal_transfer`."
             )
 
+        self.first_leg_mode = first_leg_mode
+        self.last_leg_mode = last_leg_mode
+
         intermodal_graph = IntermodalTransportGraph(
             transport_zones,
             parameters,

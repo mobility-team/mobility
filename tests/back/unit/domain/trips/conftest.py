@@ -149,30 +149,6 @@ def no_op_progress(monkeypatch):
     monkeypatch.setattr("rich.progress.Progress", NoOpProgress, raising=True)
 
 
-# -----------------------------------------------------------------------
-# Autouse: Wrap NumPy private _methods to ignore np._NoValue sentinels
-# -----------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def patch_numpy__methods(monkeypatch):
-    """
-    Wrap NumPy’s private _methods._sum and _amax to strip np._NoValue sentinels
-    from kwargs that Pandas sometimes forwards (prevents ValueErrors).
-    """
-    from numpy.core import _methods as numpy_private_methods
-
-    def wrap_ignore_no_value(original_function):
-        def inner(array, *args, **kwargs):
-            cleaned_kwargs = {k: v for k, v in kwargs.items() if not (v is getattr(np, "_NoValue", None))}
-            return original_function(array, *args, **cleaned_kwargs)
-        return inner
-
-    if hasattr(numpy_private_methods, "_sum"):
-        monkeypatch.setattr(numpy_private_methods, "_sum", wrap_ignore_no_value(numpy_private_methods._sum), raising=True)
-    if hasattr(numpy_private_methods, "_amax"):
-        monkeypatch.setattr(numpy_private_methods, "_amax", wrap_ignore_no_value(numpy_private_methods._amax), raising=True)
-
-
 # ---------------------------------------------------------
 # Deterministic shortuuid for stable trip_id generation
 # ---------------------------------------------------------
