@@ -1,6 +1,7 @@
 import os
 import dotenv
 import mobility
+from mobility.trips.group_day_trips import Parameters
 
 dotenv.load_dotenv()
 
@@ -19,31 +20,35 @@ survey = mobility.EMPMobilitySurvey()
 population = mobility.Population(transport_zones, sample_size=1000)
 
 # Simulating trips for this population for car, walk, bicycle
-population_trips = mobility.PopulationTrips(
-    population,
-    [
+population_trips = mobility.PopulationGroupDayTrips(
+    population=population,
+    modes=[
         mobility.CarMode(transport_zones),
         mobility.WalkMode(transport_zones),
         mobility.BicycleMode(transport_zones),
     ],
-    [
-        mobility.HomeMotive(),
-        mobility.WorkMotive(),
-        mobility.OtherMotive(population=population),
+    activities=[
+        mobility.HomeActivity(),
+        mobility.WorkActivity(),
+        mobility.OtherActivity(population=population),
     ],
-    [survey],
-    n_iterations=1,
+    surveys=[survey],
+    parameters=Parameters(
+        n_iterations=1,
+        mode_sequence_search_parallel=False,
+    ),
 )
 
-# You can get weekday trips to inspect them
-weekday_flows = population_trips.get()["weekday_flows"].collect()
+# You can get weekday plan steps to inspect them
+weekday_plan_steps = population_trips.get()["weekday_plan_steps"].collect()
 
-# You can compute global metrics for this population
-global_metrics = population_trips.evaluate("global_metrics")
+# You can compute global metrics for weekday trips
+global_metrics = population_trips.weekday_run.evaluate("global_metrics")
 
-# You can plot OD flows, with labels for prominent cities
-labels = population_trips.get_prominent_cities()
-population_trips.plot_od_flows(labels=labels)
+# You can plot weekday OD flows, with labels for prominent cities
+weekday_results = population_trips.weekday_run.results()
+labels = weekday_results.get_prominent_cities()
+weekday_results.plot_od_flows(labels=labels)
 
 # You can get a report of the parameters used in the model
 report = population_trips.parameters_dataframe()

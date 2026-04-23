@@ -8,7 +8,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def patch_asset_init(monkeypatch):
     """Make Asset.__init__ a no-op so TravelCosts doesn't run heavy I/O."""
-    import mobility.asset as asset_mod
+    import mobility.runtime.assets.asset as asset_mod
 
     def fake_init(self, inputs, cache_path):
         self.inputs = inputs
@@ -49,7 +49,7 @@ def patch_osmdata(monkeypatch, tmp_path):
 
 @pytest.fixture
 def patch_rscript(monkeypatch):
-    """Fake RScript to capture script paths and run() args."""
+    """Fake RScriptRunner to capture script paths and run() args."""
     import mobility.travel_costs as mod
 
     calls = {"scripts": [], "runs": []}
@@ -60,6 +60,6 @@ def patch_rscript(monkeypatch):
         def run(self, args):
             calls["runs"].append(list(args))
 
-    monkeypatch.setattr(mod, "RScript", FakeRScript)
+    monkeypatch.setattr(mod, "RScriptRunner", FakeRScript)
     return calls
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 import pandas as pd
-from mobility.trips import Trips
-from mobility.transport_modes.default_gwp import DefaultGWP
+from mobility.trips.individual_year_trips import IndividualYearTrips
+from mobility.impacts.default_gwp import DefaultGWP
 
 
 def test_get_population_trips_happy_path(
@@ -27,7 +27,7 @@ def test_get_population_trips_happy_path(
         def get(self):
             return {"individuals": "unused.parquet"}
 
-    trips_instance = Trips(population=DummyPopulationAsset(fake_transport_zones["asset"]), gwp=DefaultGWP())
+    trips_instance = IndividualYearTrips(population=DummyPopulationAsset(fake_transport_zones["asset"]), gwp=DefaultGWP())
 
     mobility_survey_mapping = trips_instance.inputs["mobility_survey"].get()
     trips_instance.short_trips_db = mobility_survey_mapping["short_trips"]

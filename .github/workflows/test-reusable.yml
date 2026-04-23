@@ -52,10 +52,22 @@ jobs:
         python -m flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
       shell: bash -el {0}
 
-    - name: Test with pytest
+    - name: Test unit with pytest
       if: ${{ !inputs.use_min_dep_versions }}
       run: |
-        python -m pytest --cov=mobility --cov-config=.coveragerc --cov-report=xml:coverage.xml --log-cli-level=INFO --clear_inputs
+        python -m pytest tests/back/unit --cov=mobility --cov-config=.coveragerc --cov-append --log-cli-level=INFO --clear_inputs
+      shell: bash -el {0}
+
+    - name: Test integration with pytest
+      if: ${{ !inputs.use_min_dep_versions }}
+      run: |
+        python -m pytest tests/back/integration --cov=mobility --cov-config=.coveragerc --cov-append --log-cli-level=INFO --clear_inputs
+      shell: bash -el {0}
+
+    - name: Build coverage report
+      if: ${{ !inputs.use_min_dep_versions }}
+      run: |
+        python -m coverage xml -o coverage.xml
       shell: bash -el {0}
 
     - name: Test with pytest without coverage
