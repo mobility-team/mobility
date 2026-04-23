@@ -260,6 +260,8 @@ sphinxcontrib-qthelp==2.0.0
     # via sphinx
 sphinxcontrib-serializinghtml==2.0.0
     # via sphinx
+tenacity==9.1.4
+    # via mobility (pyproject.toml)
 texttable==1.7.0
     # via py7zr
 threadpoolctl==3.6.0
