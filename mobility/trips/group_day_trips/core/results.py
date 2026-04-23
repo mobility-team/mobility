@@ -165,7 +165,7 @@ class RunResults:
         )
 
         def aggregate(df):
-            return (
+            aggregated = (
                 df.filter(pl.col("activity_seq_id") != 0)
                 .rename({"home_zone_id": "transport_zone_id"})
                 .join(transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]), on=["transport_zone_id"])
@@ -185,8 +185,10 @@ class RunResults:
                     variable_name="variable",
                     value_name="value",
                 )
-                .collect(engine="streaming")
             )
+            if variable in {"mode", "activity"}:
+                aggregated = aggregated.with_columns(pl.col(variable).cast(pl.String()))
+            return aggregated.collect(engine="streaming")
 
         with pl.StringCache():
             trip_count = aggregate(self.plan_steps)
@@ -322,9 +324,15 @@ class RunResults:
             self.plan_steps.filter(pl.col("activity_seq_id") != 0)
             .rename({"home_zone_id": "transport_zone_id"})
             .join(transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]), on=["transport_zone_id"])
+            .with_columns(pl.col("activity").cast(pl.String()))
             .group_by(["to", "activity"])
             .agg(pl.col("duration").sum())
-            .join(self.opportunities.select(["to", "activity", "opportunity_capacity"]), on=["to", "activity"])
+            .join(
+                self.opportunities.select(["to", "activity", "opportunity_capacity"]).with_columns(
+                    pl.col("activity").cast(pl.String())
+                ),
+                on=["to", "activity"],
+            )
             .with_columns(opportunity_occupation=pl.col("duration") / pl.col("opportunity_capacity"))
             .rename({"to": "transport_zone_id"})
             .collect(engine="streaming")

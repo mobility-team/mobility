@@ -11,7 +11,10 @@ from mobility.surveys.france import EMPMobilitySurvey
 
 
 def _select_subway_endpoints(transport_zones: mobility.TransportZones) -> tuple[dict, dict, str, str]:
-    transport_zones_df = transport_zones.get()
+    transport_zones_df = (
+        transport_zones.get()[["local_admin_unit_id", "geometry"]]
+        .dissolve(by="local_admin_unit_id", as_index=False)
+    )
     center_local_admin_unit_id = str(transport_zones.inputs["parameters"].local_admin_unit_id)
 
     center_lau = transport_zones_df.loc[
