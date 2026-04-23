@@ -11,25 +11,43 @@ from mobility.surveys.france import EMPMobilitySurvey
 
 
 def _select_subway_endpoints(transport_zones: mobility.TransportZones) -> tuple[dict, dict, str, str]:
-    transport_zones_df = (
-        transport_zones.get()[["local_admin_unit_id", "geometry"]]
-        .dissolve(by="local_admin_unit_id", as_index=False)
-    )
+    transport_zones_df = transport_zones.get()[["transport_zone_id", "local_admin_unit_id", "geometry"]].copy()
     center_local_admin_unit_id = str(transport_zones.inputs["parameters"].local_admin_unit_id)
 
-    center_lau = transport_zones_df.loc[
+    center_zones = transport_zones_df.loc[
         transport_zones_df["local_admin_unit_id"] == center_local_admin_unit_id
-    ].iloc[[0]].copy()
-    center_lau_id = str(center_lau.iloc[0]["local_admin_unit_id"])
-    other_laus = transport_zones_df.loc[transport_zones_df["local_admin_unit_id"] != center_lau_id].copy()
-    assert not other_laus.empty, "Need at least two local admin units to build a synthetic GTFS line."
+    ].copy()
+    assert not center_zones.empty, "Need at least one transport zone in the center local admin unit."
 
-    center_centroid = center_lau.geometry.iloc[0].centroid
-    other_laus_projected = other_laus.copy()
-    other_laus_projected["distance_to_center"] = other_laus_projected.geometry.centroid.distance(center_centroid)
-    target_lau = other_laus.loc[other_laus_projected.sort_values("distance_to_center", ascending=True).index[:1]].copy()
+    other_zones = transport_zones_df.loc[
+        transport_zones_df["local_admin_unit_id"] != center_local_admin_unit_id
+    ].copy()
+    assert not other_zones.empty, "Need at least two local admin units to build a synthetic GTFS line."
 
-    return center_lau, target_lau, center_lau_id, str(target_lau.iloc[0]["local_admin_unit_id"])
+    center_centroids = center_zones.geometry.centroid
+    other_centroids = other_zones.geometry.centroid
+
+    closest_pair = None
+    closest_distance = None
+    for center_idx, center_centroid in center_centroids.items():
+        distances = other_centroids.distance(center_centroid)
+        target_idx = distances.idxmin()
+        target_distance = float(distances.loc[target_idx])
+        if closest_distance is None or target_distance < closest_distance:
+            closest_pair = (center_idx, target_idx)
+            closest_distance = target_distance
+
+    assert closest_pair is not None, "Need one center/target transport-zone pair to build a synthetic GTFS line."
+
+    center_zone = center_zones.loc[[closest_pair[0]]].copy()
+    target_zone = other_zones.loc[[closest_pair[1]]].copy()
+
+    return (
+        center_zone,
+        target_zone,
+        center_local_admin_unit_id,
+        str(target_zone.iloc[0]["local_admin_unit_id"]),
+    )
 
 
 def _build_gtfs_zip(
@@ -38,12 +56,12 @@ def _build_gtfs_zip(
     output_name: str,
     segment_travel_time: float,
 ) -> tuple[str, str, str]:
-    center_lau, target_lau, center_lau_id, target_lau_id = _select_subway_endpoints(transport_zones)
+    center_zone, target_zone, center_lau_id, target_lau_id = _select_subway_endpoints(transport_zones)
 
     centroids = gpd.GeoDataFrame(
         geometry=[
-            center_lau.geometry.centroid.iloc[0],
-            target_lau.geometry.centroid.iloc[0],
+            center_zone.geometry.centroid.iloc[0],
+            target_zone.geometry.centroid.iloc[0],
         ],
         crs=3035,
     ).to_crs(4326)
