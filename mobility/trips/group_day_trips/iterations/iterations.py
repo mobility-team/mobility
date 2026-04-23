@@ -31,7 +31,7 @@ class IterationState:
 
 
 class Iteration:
-    """Persisted artifacts and saved state for one GroupDayTrips iteration."""
+    """Persisted artifacts and saved state for one PopulationGroupDayTrips iteration."""
 
     def __init__(self, iterations: "Iterations", iteration: int) -> None:
         self.iterations = iterations
@@ -106,7 +106,7 @@ class Iteration:
         )
         if current_plan_steps_asset.cache_path.exists() is False:
             raise RuntimeError(
-                "Saved GroupDayTrips iteration state is incomplete. "
+                "Saved PopulationGroupDayTrips iteration state is incomplete. "
                 f"Missing current_plan_steps for run_inputs_hash={self.iterations.run_inputs_hash}, "
                 f"is_weekday={self.iterations.is_weekday}, iteration={self.iteration}. "
                 "This cache was likely created with an older code version. "
@@ -176,7 +176,7 @@ class Iteration:
             ).create_and_get_asset()
         except Exception as exc:
             raise RuntimeError(
-                "Failed to save GroupDayTrips iteration state for "
+                "Failed to save PopulationGroupDayTrips iteration state for "
                 f"run_inputs_hash={self.iterations.run_inputs_hash}, "
                 f"is_weekday={self.iterations.is_weekday}, iteration={self.iteration}. "
                 "Call `remove()` to clear cached iteration artifacts and rerun from scratch."
@@ -195,7 +195,7 @@ class Iteration:
 
 
 class Iterations:
-    """Persisted iteration collection for one GroupDayTrips run."""
+    """Persisted iteration collection for one PopulationGroupDayTrips run."""
 
     def __init__(
         self,

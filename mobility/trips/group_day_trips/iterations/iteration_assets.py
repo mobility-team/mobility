@@ -8,7 +8,7 @@ from mobility.runtime.assets.file_asset import FileAsset
 
 
 class CurrentPlansAsset(FileAsset):
-    """Persisted current plan distribution after one completed iteration."""
+    """Cached current plan distribution after one completed iteration."""
 
     def __init__(
         self,
@@ -41,7 +41,7 @@ class CurrentPlansAsset(FileAsset):
 
 
 class CurrentPlanStepsAsset(FileAsset):
-    """Persisted step-level details for the current plans after one completed iteration."""
+    """Cached step-level details for the current plans after one completed iteration."""
 
     def __init__(
         self,
@@ -74,7 +74,7 @@ class CurrentPlanStepsAsset(FileAsset):
 
 
 class RemainingOpportunitiesAsset(FileAsset):
-    """Persisted remaining opportunities after one completed iteration."""
+    """Cached remaining opportunities after one completed iteration."""
 
     def __init__(
         self,
@@ -107,7 +107,13 @@ class RemainingOpportunitiesAsset(FileAsset):
 
 
 class RngStateAsset(FileAsset):
-    """Persisted RNG state after one completed iteration."""
+    """Cached RNG state after one completed iteration.
+
+    This stores the value returned by ``random.Random.getstate()`` so a
+    resumed run continues the same pseudo-random sequence that an uninterrupted
+    run would have used. Keeping that state alongside the cached iteration
+    tables is what preserves reproducibility after resume.
+    """
 
     def __init__(
         self,
@@ -142,7 +148,7 @@ class RngStateAsset(FileAsset):
 
 
 class IterationCompleteAsset(FileAsset):
-    """Persisted marker saying that one iteration state was fully written."""
+    """Cached marker saying that one iteration state was fully written."""
 
     def __init__(
         self,
@@ -217,7 +223,7 @@ class IterationCompleteAsset(FileAsset):
 
 
 class TransitionEventsAsset(FileAsset):
-    """Persisted transition events produced during one iteration."""
+    """Cached transition events produced during one iteration."""
 
     def __init__(
         self,

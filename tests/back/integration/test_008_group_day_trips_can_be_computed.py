@@ -2,7 +2,7 @@ import pytest
 
 import mobility
 from mobility.activities import Home, Other, Work
-from mobility.trips.group_day_trips import Parameters, GroupDayTrips
+from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
 from mobility.surveys.france import EMPMobilitySurvey
 
 
@@ -36,7 +36,7 @@ def test_008_group_day_trips_can_be_computed(test_data):
         mode_registry=mode_registry,
     )
 
-    group_day_trips = GroupDayTrips(
+    group_day_trips = PopulationGroupDayTrips(
         population=pop,
         modes=[car_mode, walk_mode, bicycle_mode, public_transport_mode],
         activities=[Home(), Work(), Other(population=pop)],

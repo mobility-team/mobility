@@ -3,7 +3,7 @@ import polars as pl
 
 import mobility
 from mobility.activities import Home, Other, Work
-from mobility.trips.group_day_trips import Parameters, GroupDayTrips
+from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
 from mobility.surveys.france import EMPMobilitySurvey
 
 
@@ -36,7 +36,7 @@ def test_008c_group_day_trips_parameter_profiles_change_iteration_2(test_data):
         )
         return [car_mode, walk_mode, bicycle_mode, public_transport_mode]
 
-    static = GroupDayTrips(
+    static = PopulationGroupDayTrips(
         population=pop,
         modes=build_modes(),
         activities=[
@@ -58,7 +58,7 @@ def test_008c_group_day_trips_parameter_profiles_change_iteration_2(test_data):
         ),
     )
 
-    dynamic = GroupDayTrips(
+    dynamic = PopulationGroupDayTrips(
         population=pop,
         modes=build_modes(),
         activities=[

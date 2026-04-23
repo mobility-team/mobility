@@ -2,7 +2,7 @@
 
 Used by:
 - `PlanUpdater` when producing transition events.
-- `GroupDayTrips` when writing empty transition tables.
+- `PopulationGroupDayTrips` when writing empty transition tables.
 - `transition_metrics` when validating cached transitions.
 """
 

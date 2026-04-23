@@ -102,7 +102,7 @@ def test_restore_saved_state_wraps_load_state_errors():
     run = make_run()
     state = make_state()
 
-    with pytest.raises(RuntimeError, match="Failed to load saved GroupDayTrips iteration state"):
+    with pytest.raises(RuntimeError, match="Failed to load saved PopulationGroupDayTrips iteration state"):
         run._restore_saved_state(
             iterations=iterations,
             state=state,
@@ -113,13 +113,13 @@ def test_restore_saved_state_wraps_load_state_errors():
 def test_restore_saved_state_wraps_incomplete_saved_state_errors():
     iterations = FakeIterations(
         saved_state=RuntimeError(
-            "Saved GroupDayTrips iteration state is incomplete. Missing current_plan_steps."
+            "Saved PopulationGroupDayTrips iteration state is incomplete. Missing current_plan_steps."
         )
     )
     run = make_run()
     state = make_state()
 
-    with pytest.raises(RuntimeError, match="Failed to load saved GroupDayTrips iteration state"):
+    with pytest.raises(RuntimeError, match="Failed to load saved PopulationGroupDayTrips iteration state"):
         run._restore_saved_state(
             iterations=iterations,
             state=state,

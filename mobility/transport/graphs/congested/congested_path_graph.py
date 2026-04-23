@@ -91,7 +91,13 @@ class CongestedPathGraph(FileAsset):
         return None
     
     def asset_for_iteration(self, run, iteration: int) -> "CongestedPathGraph":
-        """Return the graph instance corresponding to the congestion active at one iteration."""
+        """Return the graph instance corresponding to the congestion active at one iteration.
+
+        The graph does not cache one file per simulation iteration. Instead, it
+        rebuilds the graph view from the latest cached OD-flow asset that was
+        eligible to refresh congestion before ``iteration``. When no such flow
+        asset exists yet, the method returns the free-flow graph.
+        """
         if iteration < 1:
             raise ValueError("Iteration should be >= 1.")
         if iteration > int(run.parameters.n_iterations):
@@ -116,7 +122,13 @@ class CongestedPathGraph(FileAsset):
         return self.asset_for_iteration(run, iteration).get()
 
     def get_flow_asset_for_iteration(self, run, iteration: int) -> VehicleODFlowsAsset | None:
-        """Return the persisted flow asset backing the congestion active at one iteration."""
+        """Return the cached flow asset backing the congestion active at one iteration.
+
+        Congestion is refreshed only on iterations that match
+        ``n_iter_per_cost_update``. For a given target iteration, the active
+        congestion therefore comes from the latest completed refresh iteration
+        strictly before that target iteration.
+        """
         if self.inputs["handles_congestion"] is False:
             return None
 
@@ -138,10 +150,11 @@ class CongestedPathGraph(FileAsset):
         )
         if flow_asset.cache_path.exists() is False:
             raise RuntimeError(
-                "Missing persisted congestion flow asset for "
+                "Missing cached congestion flow asset for "
                 f"run_key={run.inputs_hash}, is_weekday={run.is_weekday}, "
                 f"mode={self.inputs['mode_name']}, source_iteration={source_iteration}. "
-                "Rerun the simulation from scratch."
+                "To rebuild it, rerun the simulation from iteration 1 or clear the "
+                "cached run artifacts and recompute the run."
             )
         return flow_asset
 

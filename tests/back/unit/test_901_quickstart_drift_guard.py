@@ -5,7 +5,7 @@ REQUIRED_SNIPPETS = [
     'mobility.TransportZones("fr-09122", radius=10.0)',
     "mobility.EMPMobilitySurvey()",
     "mobility.Population(",
-    "mobility.GroupDayTrips(",
+    "mobility.PopulationGroupDayTrips(",
     'population_trips.get()["weekday_plan_steps"].collect()',
     'population_trips.weekday_run.evaluate("global_metrics")',
 ]

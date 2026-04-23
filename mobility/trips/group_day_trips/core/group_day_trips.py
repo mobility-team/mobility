@@ -11,7 +11,7 @@ from mobility.population import Population
 from mobility.transport.modes.core.transport_mode import TransportMode
 
 
-class GroupDayTrips:
+class PopulationGroupDayTrips:
     """Top-level asset exposing weekday and weekend grouped day trips."""
 
     def __init__(
@@ -96,7 +96,7 @@ class GroupDayTrips:
                 "min_activity_time_constant": min_activity_time_constant,
                 "simulate_weekend": simulate_weekend,
             },
-            owner_name="GroupDayTrips",
+            owner_name="PopulationGroupDayTrips",
         )
 
         transport_costs = TransportCosts(modes)
@@ -184,20 +184,20 @@ class GroupDayTrips:
             TypeError: If any element is not an `Activity` instance.
         """
         if not activities:
-            raise ValueError("GroupDayTrips needs at least one activity in `activities`.")
+            raise ValueError("PopulationGroupDayTrips needs at least one activity in `activities`.")
 
         for activity in activities:
             if not isinstance(activity, Activity):
                 raise TypeError(
-                    "GroupDayTrips activities argument should be a list of `Activity` "
+                    "PopulationGroupDayTrips activities argument should be a list of `Activity` "
                     f"instances, but received one object of class {type(activity)}."
                 )
 
         if not any(isinstance(a, Other) for a in activities):
-            raise ValueError("GroupDayTrips `activities` argument should contain an `Other`.")
+            raise ValueError("PopulationGroupDayTrips `activities` argument should contain an `Other`.")
 
         if not any(isinstance(a, Home) for a in activities):
-            raise ValueError("GroupDayTrips `activities` argument should contain a `Home`.")
+            raise ValueError("PopulationGroupDayTrips `activities` argument should contain a `Home`.")
 
     def _validate_modes(self, modes: List[TransportMode]) -> None:
         """Validate the transport modes passed to the wrapper constructor.
@@ -210,12 +210,12 @@ class GroupDayTrips:
             TypeError: If any element is not a `TransportMode` instance.
         """
         if not modes:
-            raise ValueError("GroupDayTrips needs at least one mode in `modes`.")
+            raise ValueError("PopulationGroupDayTrips needs at least one mode in `modes`.")
 
         for mode in modes:
             if not isinstance(mode, TransportMode):
                 raise TypeError(
-                    "GroupDayTrips modes argument should be a list of `TransportMode` "
+                    "PopulationGroupDayTrips modes argument should be a list of `TransportMode` "
                     f"instances, but received one object of class {type(mode)}."
                 )
 
@@ -230,12 +230,12 @@ class GroupDayTrips:
             TypeError: If any element is not a `MobilitySurvey` instance.
         """
         if not surveys:
-            raise ValueError("GroupDayTrips needs at least one survey in `surveys`.")
+            raise ValueError("PopulationGroupDayTrips needs at least one survey in `surveys`.")
 
         for survey in surveys:
             if not isinstance(survey, MobilitySurvey):
                 raise TypeError(
-                    "GroupDayTrips surveys argument should be a list of `MobilitySurvey` "
+                    "PopulationGroupDayTrips surveys argument should be a list of `MobilitySurvey` "
                     f"instances, but received one object of class {type(survey)}."
                 )
 

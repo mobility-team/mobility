@@ -8,12 +8,13 @@ class BehaviorChangeScope(str, Enum):
     """Highest adaptation layer allowed during one behavior-change phase.
 
     Attributes:
-        FULL_REPLANNING: Resample motive sequences, then dependent destination
-            and mode sequences. Stay-home transitions remain available.
+        FULL_REPLANNING: Allow any currently modeled state layer to change:
+            activity sequence, destination sequence, and mode sequence.
+            Stay-home transitions remain available.
         DESTINATION_REPLANNING: Keep each currently occupied non-stay-home
-            motive sequence fixed and resample destination sequences plus
+            activity sequence fixed and resample destination sequences plus
             dependent mode sequences. Stay-home is frozen.
-        MODE_REPLANNING: Keep each currently occupied non-stay-home motive and
+        MODE_REPLANNING: Keep each currently occupied non-stay-home activity and
             destination sequence fixed and resample mode sequences only.
             Stay-home is frozen.
     """
@@ -48,11 +49,12 @@ class BehaviorChangePhase(BaseModel):
             title="Behavior change scope",
             description=(
                 "Highest adaptation layer allowed during the phase. "
-                "`full_replanning` resamples motive, destination, and mode "
-                "sequences. `destination_replanning` keeps each currently "
-                "occupied non-stay-home motive sequence fixed and resamples "
+                "`full_replanning` allows activity, destination, and mode "
+                "sequences to change within the current model scope. "
+                "`destination_replanning` keeps each currently occupied "
+                "non-stay-home activity sequence fixed and resamples "
                 "destination plus mode sequences. `mode_replanning` keeps each "
-                "currently occupied non-stay-home motive and destination "
+                "currently occupied non-stay-home activity and destination "
                 "sequence fixed and resamples mode sequences only. "
                 "Stay-home is frozen in restricted phases."
             ),
@@ -215,7 +217,9 @@ class Parameters(BaseModel):
                 "given iteration and selects the highest state layer that may "
                 "adapt: `mode_replanning`, `destination_replanning`, or "
                 "`full_replanning`. Restricted phases apply to currently "
-                "occupied non-stay-home states and freeze stay-home. If omitted, "
+                "occupied non-stay-home states and freeze stay-home. In the "
+                "current model, `full_replanning` means that activity, "
+                "destination, and mode sequences may all change. If omitted, "
                 "all iterations use `full_replanning`."
             ),
         ),

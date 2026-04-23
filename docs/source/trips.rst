@@ -3,11 +3,11 @@ Trips
 ================
 
 ----------------
-GroupDayTrips
+PopulationGroupDayTrips
 ----------------
 
 Group-level day plans for a given population can be generated using
-the class ``GroupDayTrips``.
+the class ``PopulationGroupDayTrips``.
 
  .. automodule:: mobility.trips.group_day_trips
     :members:
@@ -20,7 +20,7 @@ Use ``Parameters`` to change the model configuration.
 ----------------
 Helpers
 ----------------
-``GroupDayTrips`` produces results through ``RunResults`` and stores
+``PopulationGroupDayTrips`` produces results through ``RunResults`` and stores
 transition events that can be analyzed with the evaluation helpers.
 
  .. automodule:: mobility.trips.group_day_trips.core.results

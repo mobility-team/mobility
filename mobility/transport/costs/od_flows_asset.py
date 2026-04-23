@@ -13,7 +13,7 @@ class VehicleODFlowsAsset(FileAsset):
     ["from","to","vehicle_volume"].
 
     The cache key is (run_key, is_weekday, iteration, mode_name), where run_key
-    should be GroupDayTrips.inputs_hash (includes the seed).
+    should be PopulationGroupDayTrips.inputs_hash (includes the seed).
     """
 
     def __init__(
@@ -60,8 +60,10 @@ class VehicleODFlowsAsset(FileAsset):
     def create_and_get_asset(self) -> pd.DataFrame:
         if self._vehicle_od_flows is None:
             raise ValueError(
-                "Cannot create VehicleODFlowsAsset without flow data. "
-                "Use `from_inputs(...)` only to reconstruct an already persisted asset."
+                "Cannot create VehicleODFlowsAsset without flow data for "
+                f"run_key={self.inputs['run_key']}, is_weekday={self.inputs['is_weekday']}, "
+                f"iteration={self.inputs['iteration']}, mode={self.inputs['mode_name']}. "
+                "Use `from_inputs(...)` only to reconstruct an already cached asset."
             )
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
 

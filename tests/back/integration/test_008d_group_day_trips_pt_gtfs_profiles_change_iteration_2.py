@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 import mobility
 from mobility.activities import Home, Other, Work
-from mobility.trips.group_day_trips import GroupDayTrips, Parameters
+from mobility.trips.group_day_trips import PopulationGroupDayTrips, Parameters
 from mobility.surveys.france import EMPMobilitySurvey
 
 
@@ -144,7 +144,7 @@ def test_008d_group_day_trips_pt_gtfs_profiles_change_iteration_2(test_data):
         seed=0,
     )
 
-    static = GroupDayTrips(
+    static = PopulationGroupDayTrips(
         population=pop,
         modes=_build_modes(
             transport_zones,
@@ -164,7 +164,7 @@ def test_008d_group_day_trips_pt_gtfs_profiles_change_iteration_2(test_data):
         parameters=common_parameters,
     )
 
-    dynamic = GroupDayTrips(
+    dynamic = PopulationGroupDayTrips(
         population=pop,
         modes=_build_modes(
             transport_zones,

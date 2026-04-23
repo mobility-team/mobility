@@ -9,7 +9,7 @@ from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 
 
 class CongestionStateManager:
-    """Manage persisted congestion states for transport-cost iterations."""
+    """Manage cached congestion states for transport-cost iterations."""
 
     def __init__(self, transport_costs) -> None:
         """Initialize the manager for one transport-cost configuration.
@@ -21,7 +21,7 @@ class CongestionStateManager:
         self.transport_costs = transport_costs
 
     def build(self, od_flows_by_mode, *, run_key=None, is_weekday=None, iteration=None):
-        """Build and persist a congestion state from current OD flows.
+        """Build and cache a congestion state from current OD flows.
 
         Args:
             od_flows_by_mode: Per-mode OD flows aggregated from current plan steps.
@@ -30,8 +30,8 @@ class CongestionStateManager:
             iteration: Simulation iteration that produced these flows.
 
         Returns:
-            The persisted congestion state for the provided flows, or `None`
-            when no congestion-enabled mode produced any persisted flow asset.
+            The cached congestion state for the provided flows, or `None`
+            when no congestion-enabled mode produced any cached flow asset.
         """
         logging.info("Building congestion state from OD flows...")
         congestion_flows_by_mode = {
@@ -93,7 +93,7 @@ class CongestionStateManager:
             cost_update_interval: Number of iterations between congestion updates.
 
         Returns:
-            The latest persisted congestion state compatible with the completed
+            The latest cached congestion state compatible with the completed
             run history, or `None` when no congestion state should exist yet.
         """
         if (
@@ -167,7 +167,7 @@ class CongestionStateManager:
         iteration=None,
         mode_name: str,
     ):
-        """Persist one mode-specific OD vehicle-flow asset."""
+        """Cache one mode-specific OD vehicle-flow asset."""
         if run_key is None or is_weekday is None or iteration is None:
             return None
 

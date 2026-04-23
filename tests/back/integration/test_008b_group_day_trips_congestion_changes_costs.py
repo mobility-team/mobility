@@ -3,7 +3,7 @@ import polars as pl
 
 import mobility
 from mobility.activities import Home, Other, Work
-from mobility.trips.group_day_trips import Parameters, GroupDayTrips
+from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
 from mobility.surveys.france import EMPMobilitySurvey
 
 
@@ -36,7 +36,7 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
         mode_registry=baseline_mode_registry,
     )
 
-    baseline = GroupDayTrips(
+    baseline = PopulationGroupDayTrips(
         population=pop,
         modes=[
             baseline_car_mode,
@@ -73,7 +73,7 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
         mode_registry=congested_mode_registry,
     )
 
-    congested = GroupDayTrips(
+    congested = PopulationGroupDayTrips(
         population=pop,
         modes=[
             congested_car_mode,

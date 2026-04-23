@@ -26,7 +26,7 @@ class TransportCosts(FileAsset):
         Args:
             modes: Transport modes contributing generalized costs.
             congestion: Whether this asset should build congested costs.
-            congestion_state: Persisted congestion state applied to congested
+            congestion_state: Cached congestion state applied to congested
                 modes when building this asset variant.
         """
         self.modes = modes
@@ -88,7 +88,7 @@ class TransportCosts(FileAsset):
         """Return the transport-cost variant for an explicit congestion state.
 
         Args:
-            congestion_state: Persisted congestion state to apply.
+            congestion_state: Cached congestion state to apply.
 
         Returns:
             A transport-cost asset bound to the provided congestion state.
@@ -103,7 +103,7 @@ class TransportCosts(FileAsset):
         """Return the transport-cost asset used at one run iteration.
 
         Args:
-            run: GroupDayTrips run providing run identity and parameters.
+            run: PopulationGroupDayTrips run providing run identity and parameters.
             iteration: One-based simulation iteration.
 
         Returns:
@@ -133,7 +133,7 @@ class TransportCosts(FileAsset):
         """Materialize the transport costs used at one run iteration.
 
         Args:
-            run: GroupDayTrips run providing run identity and parameters.
+            run: PopulationGroupDayTrips run providing run identity and parameters.
             iteration: One-based simulation iteration.
 
         Returns:
@@ -143,7 +143,7 @@ class TransportCosts(FileAsset):
         return self.asset_for_iteration(run, iteration).get()
 
     def get_cached_asset(self) -> pl.DataFrame:
-        """Return the persisted canonical full-detail cost table.
+        """Return the cached canonical full-detail cost table.
 
         Returns:
             The cached multimodal cost table for this asset variant.
@@ -152,7 +152,7 @@ class TransportCosts(FileAsset):
         return pl.read_parquet(self.cache_path)
 
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Build and persist the canonical full-detail cost table.
+        """Build and cache the canonical full-detail cost table.
 
         Returns:
             The newly built multimodal cost table for this asset variant.
@@ -310,7 +310,7 @@ class TransportCosts(FileAsset):
         return prob
 
     def build_congestion_state(self, od_flows_by_mode, *, run_key=None, is_weekday=None, iteration=None):
-        """Build and persist a congestion state from current OD flows.
+        """Build and cache a congestion state from current OD flows.
 
         Args:
             od_flows_by_mode: Per-mode OD flows aggregated from current plans.
@@ -319,7 +319,7 @@ class TransportCosts(FileAsset):
             iteration: Simulation iteration that produced the OD flows.
 
         Returns:
-            The persisted congestion state, or `None` when no congestion state
+            The cached congestion state, or `None` when no congestion state
             should be produced from the provided flows.
         """
         return self.congestion_states.build(
@@ -346,7 +346,7 @@ class TransportCosts(FileAsset):
             cost_update_interval: Number of iterations between congestion updates.
 
         Returns:
-            The latest persisted congestion state compatible with the provided
+            The latest cached congestion state compatible with the provided
             completed run history, or `None` when no congestion state exists yet.
         """
         return self.congestion_states.load(
@@ -386,7 +386,7 @@ class TransportCosts(FileAsset):
         """Build next-iteration OD costs from current OD flows.
 
         Args:
-            run: GroupDayTrips run providing run identity.
+            run: PopulationGroupDayTrips run providing run identity.
             iteration: One-based simulation iteration that just completed.
             od_flows_by_mode: Per-mode OD flows aggregated from current plans.
 
