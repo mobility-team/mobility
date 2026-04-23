@@ -337,12 +337,12 @@ class Run(FileAsset):
             state.remaining_opportunities,
             state.activity_dur,
             iteration.iteration,
-            resolved_activity_parameters,
             destination_sequences,
             mode_sequences,
             state.home_night_dur,
             state.stay_home_plan,
             self.parameters,
+            resolved_activity_parameters,
         )
         state.costs, state.congestion_state = self.updater.get_new_costs(
             state.costs,
