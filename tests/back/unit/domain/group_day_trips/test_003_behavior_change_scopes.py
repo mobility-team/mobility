@@ -3,6 +3,7 @@ import polars as pl
 from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, Parameters
 from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
+from mobility.trips.group_day_trips.population_trips_candidates import get_spatialized_chains
 
 
 def test_parameters_returns_default_behavior_change_scope():
@@ -93,7 +94,21 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
         )
 
     destination_sequences.run = fake_run
-    destination_sequences._sample_active_destination_sequences()
+    get_spatialized_chains(
+        behavior_change_scope=BehaviorChangeScope.DESTINATION_REPLANNING,
+        current_plans=destination_sequences.current_plans,
+        current_plan_steps=destination_sequences.current_plan_steps,
+        destination_sequence_sampler=destination_sequences,
+        activities=destination_sequences.activities,
+        transport_zones=destination_sequences.transport_zones,
+        remaining_opportunities=destination_sequences.remaining_opportunities,
+        iteration=destination_sequences.iteration,
+        chains_by_activity=destination_sequences.chains,
+        demand_groups=destination_sequences.demand_groups,
+        costs=destination_sequences.costs,
+        parameters=destination_sequences.parameters,
+        seed=destination_sequences.seed,
+    )
 
     assert seen["chains"].select("activity_seq_id").to_series().to_list() == [10]
 
@@ -140,7 +155,21 @@ def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path)
         ),
     )
 
-    result = destination_sequences._reuse_current_destination_sequences()
+    result = get_spatialized_chains(
+        behavior_change_scope=BehaviorChangeScope.MODE_REPLANNING,
+        current_plans=destination_sequences.current_plans,
+        current_plan_steps=destination_sequences.current_plan_steps,
+        destination_sequence_sampler=destination_sequences,
+        activities=[],
+        transport_zones=None,
+        remaining_opportunities=pl.DataFrame(),
+        iteration=destination_sequences.iteration,
+        chains_by_activity=pl.DataFrame(),
+        demand_groups=pl.DataFrame(),
+        costs=pl.DataFrame(),
+        parameters=Parameters(),
+        seed=123,
+    )
 
     assert result["iteration"].unique().to_list() == [4]
     assert result["seq_step_index"].sort().to_list() == [0, 1]
