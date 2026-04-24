@@ -17,23 +17,27 @@ from .surveys.france import EMPMobilitySurvey
 from .activities import (
     Activity,
     ActivityParameters,
-    Home,
-    Leisure,
-    Other,
-    Shop,
-    Study,
-    Work,
+    HomeActivity,
+    LeisureActivity,
+    OtherActivity,
+    ShopActivity,
+    StudyActivity,
+    WorkActivity,
 )
 from .impacts import carbon_computation
 
 from .trips.individual_year_trips import IndividualYearTrips
-from .trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, GroupDayTrips
+from .trips.group_day_trips import (
+    BehaviorChangePhase,
+    BehaviorChangeScope,
+    GroupDayTrips,
+    PopulationGroupDayTrips,
+)
 
-from .transport.modes.bicycle import Bicycle, BicycleMode, BicycleParameters
-from .transport.modes.car import Car, CarMode, CarParameters
-from .transport.modes.walk import Walk, WalkMode, WalkParameters
+from .transport.modes.bicycle import BicycleMode, BicycleParameters
+from .transport.modes.car import CarMode, CarParameters
+from .transport.modes.walk import WalkMode, WalkParameters
 from .transport.modes.carpool import (
-    Carpool,
     CarpoolMode,
     CarpoolParameters,
     DetailedCarpoolRoutingParameters,
@@ -44,7 +48,6 @@ from .transport.modes.public_transport import (
     GTFSFeedSpec,
     GTFSLineSpec,
     GTFSStopSpec,
-    PublicTransport,
     PublicTransportMode,
     PublicTransportParameters,
     PublicTransportRoutingParameters,
@@ -62,3 +65,16 @@ from .transport.graphs.modified.modifiers import (
     NewRoadModifier,
     RoadLaneNumberModifier,
 )
+
+Home = HomeActivity
+Leisure = LeisureActivity
+Other = OtherActivity
+Shop = ShopActivity
+Study = StudyActivity
+Work = WorkActivity
+
+Bicycle = BicycleMode
+Car = CarMode
+Walk = WalkMode
+Carpool = CarpoolMode
+PublicTransport = PublicTransportMode

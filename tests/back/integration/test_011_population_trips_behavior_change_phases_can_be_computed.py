@@ -2,9 +2,9 @@ import polars as pl
 import pytest
 
 import mobility
-from mobility.activities import Home, Other, Work
+from mobility.activities import HomeActivity, OtherActivity, WorkActivity
 from mobility.surveys.france import EMPMobilitySurvey
-from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, GroupDayTrips, Parameters
+from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, PopulationGroupDayTrips, Parameters
 
 
 @pytest.mark.dependency(
@@ -25,13 +25,13 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
         sample_size=test_data["population_sample_size"],
     )
 
-    car_mode = mobility.Car(transport_zones)
-    walk_mode = mobility.Walk(transport_zones)
+    car_mode = mobility.CarMode(transport_zones)
+    walk_mode = mobility.WalkMode(transport_zones)
 
-    pop_trips = GroupDayTrips(
+    pop_trips = PopulationGroupDayTrips(
         population=pop,
         modes=[car_mode, walk_mode],
-        activities=[Home(), Work(), Other(population=pop)],
+        activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
         parameters=Parameters(
             n_iterations=3,

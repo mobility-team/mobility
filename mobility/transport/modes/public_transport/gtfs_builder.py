@@ -111,6 +111,7 @@ def create_gtfs_tables(
     gtfs_route_types = {
         "train": 2,
         "bus": 3,
+        "boat": 4,
     }
 
     routes = pd.DataFrame(

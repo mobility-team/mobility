@@ -443,7 +443,7 @@ class PlanUpdater:
         """Build allowed from-to plan pairs under the active behavior scope."""
 
         logging.info(
-            "Building GroupDayTrips allowed plan transitions: scope=%s",
+            "Building PopulationGroupDayTrips allowed plan transitions: scope=%s",
             str(behavior_change_scope),
         )
 
@@ -516,7 +516,7 @@ class PlanUpdater:
     ) -> pl.LazyFrame:
         """Attach embedding distances to allowed plan transitions."""
 
-        logging.info("Computing GroupDayTrips transition distances")
+        logging.info("Computing PopulationGroupDayTrips transition distances")
 
         is_self_transition = pl.col("plan_id_from") == pl.col("plan_id_trans")
         self_distances = (
@@ -524,13 +524,13 @@ class PlanUpdater:
             .filter(is_self_transition)
             .select(["plan_id_from", "plan_id_trans"])
             .with_columns(distance=pl.lit(0.0, dtype=pl.Float64))
-            .collect(engine="streaming")
+            .collect()
         )
         pair_index = (
             allowed_transitions
             .filter(~is_self_transition)
             .select(["plan_id_from", "plan_id_trans"])
-            .collect(engine="streaming")
+            .collect()
         )
         non_self_distances = PlanDistance().get_plan_pair_distances(
             pair_index,
@@ -557,7 +557,7 @@ class PlanUpdater:
     ) -> pl.DataFrame:
         """Compute one-step transition probabilities with distance-threshold filtering and revision."""
 
-        logging.info("Collecting GroupDayTrips transition probabilities")
+        logging.info("Collecting PopulationGroupDayTrips transition probabilities")
 
         plan_cols = PLAN_KEY_COLS
         if "distance" not in allowed_transitions.collect_schema().names():
@@ -621,11 +621,11 @@ class PlanUpdater:
                     "p_transition",
                 ]
             )
-            .collect(engine="streaming")
+            .collect()
         )
     
         logging.info(
-            "Finished collecting GroupDayTrips transition probabilities."
+            "Finished collecting PopulationGroupDayTrips transition probabilities."
         )
 
         return transition_probabilities

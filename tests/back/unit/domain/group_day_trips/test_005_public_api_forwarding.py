@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, GroupDayTrips
+from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, PopulationGroupDayTrips
 from mobility.trips.group_day_trips.core import group_day_trips as group_day_trips_module
 
 
@@ -22,13 +22,13 @@ class _FakeRun:
 
 
 def test_group_day_trips_wrapper_forwards_new_parameters(monkeypatch):
-    monkeypatch.setattr(GroupDayTrips, "_validate_modes", lambda self, modes: None)
-    monkeypatch.setattr(GroupDayTrips, "_validate_activities", lambda self, activities: None)
-    monkeypatch.setattr(GroupDayTrips, "_validate_surveys", lambda self, surveys: None)
+    monkeypatch.setattr(PopulationGroupDayTrips, "_validate_modes", lambda self, modes: None)
+    monkeypatch.setattr(PopulationGroupDayTrips, "_validate_activities", lambda self, activities: None)
+    monkeypatch.setattr(PopulationGroupDayTrips, "_validate_surveys", lambda self, surveys: None)
     monkeypatch.setattr(group_day_trips_module, "Run", _FakeRun)
     monkeypatch.setattr(group_day_trips_module, "TransportCosts", lambda modes: SimpleNamespace(modes=modes))
 
-    wrapper = GroupDayTrips(
+    wrapper = PopulationGroupDayTrips(
         population=object(),
         modes=[object()],
         activities=[object()],

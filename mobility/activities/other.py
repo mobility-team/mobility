@@ -12,7 +12,7 @@ from mobility.runtime.parameter_profiles import ScalarParameterProfile
 from mobility.runtime.validation_types import NonNegativeFloat, UnitIntervalFloat
 
 
-class Other(Activity):
+class OtherActivity(Activity):
 
     def __init__(
         self,
@@ -40,7 +40,7 @@ class Other(Activity):
                 "saturation_fun_beta": saturation_fun_beta,
                 "radiation_lambda": radiation_lambda,
             },
-            owner_name="Other",
+            owner_name="OtherActivity",
         )
 
         super().__init__(

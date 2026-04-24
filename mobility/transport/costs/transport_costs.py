@@ -103,7 +103,7 @@ class TransportCosts(FileAsset):
         """Return the transport-cost asset used at one run iteration.
 
         Args:
-            run: GroupDayTrips run providing run identity and parameters.
+            run: PopulationGroupDayTrips run providing run identity and parameters.
             iteration: One-based simulation iteration.
 
         Returns:
@@ -147,7 +147,7 @@ class TransportCosts(FileAsset):
         """Materialize the transport costs used at one run iteration.
 
         Args:
-            run: GroupDayTrips run providing run identity and parameters.
+            run: PopulationGroupDayTrips run providing run identity and parameters.
             iteration: One-based simulation iteration.
 
         Returns:
@@ -400,7 +400,7 @@ class TransportCosts(FileAsset):
         """Build next-iteration OD costs from current OD flows.
 
         Args:
-            run: GroupDayTrips run providing run identity.
+            run: PopulationGroupDayTrips run providing run identity.
             iteration: One-based simulation iteration that just completed.
             od_flows_by_mode: Per-mode OD flows aggregated from current plans.
 

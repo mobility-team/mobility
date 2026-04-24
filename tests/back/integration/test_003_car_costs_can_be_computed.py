@@ -65,7 +65,7 @@ def test_003_car_costs_can_be_computed(test_data, safe_json):
         radius=test_data["transport_zones_radius"],
     )
 
-    car = mobility.Car(transport_zones)
+    car = mobility.CarMode(transport_zones)
     costs = car.travel_costs.get()
 
     # Some implementations return a DataFrame; others return a dict with paths.

@@ -13,7 +13,7 @@ class VehicleODFlowsAsset(FileAsset):
     ["from","to","vehicle_volume"].
 
     The cache key is (run_key, is_weekday, iteration, mode_name), where run_key
-    should be GroupDayTrips.inputs_hash (includes the seed).
+    should be PopulationGroupDayTrips.inputs_hash (includes the seed).
     """
 
     def __init__(

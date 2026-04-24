@@ -23,7 +23,7 @@ from mobility.transport.modes.core.transport_mode import TransportMode
 
 
 class Run(FileAsset):
-    """Single day-type GroupDayTrips asset."""
+    """Single day-type PopulationGroupDayTrips asset."""
 
     def __init__(
         self,
@@ -37,7 +37,7 @@ class Run(FileAsset):
         is_weekday: bool,
         enabled: bool = True,
     ) -> None:
-        """Initialize a single weekday or weekend GroupDayTrips run."""
+        """Initialize a single weekday or weekend PopulationGroupDayTrips run."""
         inputs = {
             "version": 2,
             "population": population,
@@ -197,7 +197,7 @@ class Run(FileAsset):
             saved_state = iterations.iteration(resume_from_iteration).load_state()
         except Exception as exc:
             raise RuntimeError(
-                "Failed to load saved GroupDayTrips iteration state for "
+                "Failed to load saved PopulationGroupDayTrips iteration state for "
                 f"run_inputs_hash={self.inputs_hash}, is_weekday={self.is_weekday}, "
                 f"iteration={resume_from_iteration}. "
                 "Call `remove()` to clear cached iteration artifacts and rerun from scratch."
@@ -207,7 +207,7 @@ class Run(FileAsset):
             self.rng.setstate(saved_state.rng_state)
         except Exception as exc:
             raise RuntimeError(
-                "Failed to restore RNG state from saved GroupDayTrips iteration state for "
+                "Failed to restore RNG state from saved PopulationGroupDayTrips iteration state for "
                 f"run_inputs_hash={self.inputs_hash}, is_weekday={self.is_weekday}, "
                 f"iteration={resume_from_iteration}. "
                 "Call `remove()` to clear cached iteration artifacts and rerun from scratch."

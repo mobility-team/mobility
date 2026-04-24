@@ -29,6 +29,7 @@ dependencies = [
   "gtfs_kit>=12.0,<13",
   "kaleido>=1.2,<2",
   "pydantic>=2.12,<3",
+  "tenacity>=9,<10",
 ]
 
 requires-python = ">=3.11"

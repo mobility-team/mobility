@@ -10,3 +10,14 @@ from .gtfs_builder import (
     GTFSLineSpec,
     GTFSStopSpec,
 )
+
+__all__ = [
+    "PublicTransport",
+    "PublicTransportMode",
+    "PublicTransportParameters",
+    "PublicTransportRoutingParameters",
+    "build_gtfs_zip",
+    "GTFSFeedSpec",
+    "GTFSLineSpec",
+    "GTFSStopSpec",
+]
