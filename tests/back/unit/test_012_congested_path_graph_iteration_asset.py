@@ -45,6 +45,7 @@ def test_congested_graph_iteration_asset_resolves_latest_active_refresh(monkeypa
         transport_zones=transport_zones,
         handles_congestion=True,
         congestion_flows_scaling_factor=0.5,
+        max_vehicles_per_endpoint_cluster=1234,
     )
     run = SimpleNamespace(
         inputs_hash="run-key",
@@ -62,3 +63,4 @@ def test_congested_graph_iteration_asset_resolves_latest_active_refresh(monkeypa
     assert isinstance(iter_graph, CongestedPathGraph)
     assert iter_graph.inputs["vehicle_flows"] is not None
     assert iter_graph.inputs["vehicle_flows"].cache_path == flow_asset.cache_path
+    assert iter_graph.inputs["max_vehicles_per_endpoint_cluster"] == 1234

@@ -1,7 +1,6 @@
 library(dodgr)
 library(osmdata)
 library(log4r)
-library(sf)
 library(cppRouting)
 library(DBI)
 library(duckdb)
@@ -9,7 +8,7 @@ library(jsonlite)
 library(data.table)
 
 args <- commandArgs(trailingOnly = TRUE)
-# 
+
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\modified\\a4d8d9065e1217e8f5ef1ca48cca4789-car-modified-path-graph',
@@ -17,6 +16,7 @@ args <- commandArgs(trailingOnly = TRUE)
 #   'True',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\flows.parquet',
 #   '0.1',
+#   '1000.0',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\congested\\7e5144cf3db620565c9a9797be8a6df0-car-congested-path-graph'
 # )
 
@@ -26,17 +26,18 @@ transport_zones_fp <- args[3]
 congestion <- args[4]
 flows_fp <- args[5]
 congestion_flows_scaling_factor <- args[6]
-output_fp <- args[7]
+target_max_vehicles_per_od_endpoint <- args[7]
+output_fp <- args[8]
 
 
 source(file.path(package_fp, "transport", "graphs", "core", "cpprouting_io.R"))
-source(file.path(package_fp, "transport", "graphs", "core", "tz_pairs_to_vertex_pairs.R"))
-source(file.path(package_fp, "transport", "graphs", "core", "get_buildings_nearest_vertex_id.R"))
+source(file.path(package_fp, "transport", "graphs", "congested", "tz_pairs_to_vertex_pairs.R"))
 
 logger <- logger(appenders = console_appender())
 
 congestion <- as.logical(congestion)
 congestion_flows_scaling_factor <- as.numeric(congestion_flows_scaling_factor)
+target_max_vehicles_per_od_endpoint <- as.numeric(target_max_vehicles_per_od_endpoint)
 
 # Load the cpprouting graph
 info(logger, "Loading simplified/modified graph...")
@@ -44,10 +45,10 @@ hash <- strsplit(basename(cppr_graph_fp), "-")[[1]][1]
 cppr_graph <- read_cppr_graph(dirname(cppr_graph_fp), hash)
 vertices <- read_parquet(file.path(dirname(dirname(cppr_graph_fp)), paste0(hash, "-vertices.parquet")))
 od_vertex_map_fp <- file.path(dirname(dirname(cppr_graph_fp)), paste0(hash, "-od-vertex-map.parquet"))
-od_vertex_map <- NULL
-if (file.exists(od_vertex_map_fp)) {
-  od_vertex_map <- as.data.table(read_parquet(od_vertex_map_fp))
+if (!file.exists(od_vertex_map_fp)) {
+  stop("Missing OD vertex map for the input graph.")
 }
+od_vertex_map <- as.data.table(read_parquet(od_vertex_map_fp))
 
 # If OD flows were provided, estimate the congestion on each link and update
 # the travel times 
@@ -63,9 +64,6 @@ if (congestion == TRUE & file.exists(flows_fp)) {
     stop("Cannot assign traffic, some OD flows volumes are NA.")
   }
   
-  transport_zones <- st_read(transport_zones_fp, quiet = TRUE)
-  transport_zones <- as.data.table(st_drop_geometry(transport_zones))
-  
   buildings_fp <- file.path(
     dirname(transport_zones_fp),
     paste0(
@@ -76,31 +74,27 @@ if (congestion == TRUE & file.exists(flows_fp)) {
   
   buildings <- as.data.table(read_parquet(buildings_fp))
   buildings[, building_id := 1:.N]
+  buildings <- merge(
+    buildings,
+    od_vertex_map[, list(building_id, vertex_id)],
+    by = "building_id",
+    all.x = TRUE,
+    sort = FALSE
+  )
 
-  if (!is.null(od_vertex_map)) {
-    buildings <- merge(
-      buildings,
-      od_vertex_map[, list(building_id, vertex_id)],
-      by = "building_id",
-      all.x = TRUE,
-      sort = FALSE
-    )
-
-    if (any(is.na(buildings$vertex_id))) {
-      stop("OD vertex map is incomplete for the current buildings sample.")
-    }
-  } else {
-    buildings[, vertex_id := get_buildings_nearest_vertex_id(buildings, vertices)]
+  if (any(is.na(buildings$vertex_id))) {
+    stop("OD vertex map is incomplete for the current buildings sample.")
   }
 
   buildings <- merge(buildings[, list(building_id, transport_zone_id, n_clusters, weight, vertex_id)], vertices, by = "vertex_id")
-  
+
   vertex_pairs <- tz_pairs_to_vertex_pairs(
     tz_id_from = od_flows$from,
     tz_id_to = od_flows$to,
-    transport_zones = as.data.table(transport_zones),
     buildings = buildings,
-    vehicle_volume = od_flows$vehicle_volume
+    vehicle_volume = od_flows$vehicle_volume,
+    congestion_flows_scaling_factor = congestion_flows_scaling_factor,
+    target_max_vehicles_per_od_endpoint = target_max_vehicles_per_od_endpoint
   )
   
   od_flows <- merge(od_flows, vertex_pairs, by.x = c("from", "to"), by.y = c("tz_id_from", "tz_id_to"))
@@ -142,8 +136,6 @@ info(logger, "Saving congested graph...")
 hash <- strsplit(basename(output_fp), "-")[[1]][1]
 save_cppr_graph(cppr_graph, dirname(output_fp), hash)
 write_parquet(vertices, file.path(dirname(dirname(output_fp)), paste0(hash, "-vertices.parquet")))
-if (!is.null(od_vertex_map)) {
-  write_parquet(od_vertex_map, file.path(dirname(dirname(output_fp)), paste0(hash, "-od-vertex-map.parquet")))
-}
+write_parquet(od_vertex_map, file.path(dirname(dirname(output_fp)), paste0(hash, "-od-vertex-map.parquet")))
 
 file.create(output_fp)

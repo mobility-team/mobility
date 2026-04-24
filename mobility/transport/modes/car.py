@@ -32,6 +32,7 @@ class CarMode(TransportMode):
         generalized_cost_parameters: GeneralizedCostParameters = None,
         congestion: bool | None = None,
         congestion_flows_scaling_factor: float = 0.1,
+        target_max_vehicles_per_od_endpoint: float | None = None,
         speed_modifiers: List[SpeedModifier] = [],
         survey_ids: List[str] | None = None,
         ghg_intensity: float | None = None,
@@ -39,15 +40,23 @@ class CarMode(TransportMode):
     ):
         
         mode_name = "car"
-
-        mode_congestion = (
-            parameters.congestion
-            if (congestion is None and parameters is not None)
-            else congestion
+        mode_parameters = TransportMode.prepare_parameters(
+            parameters=parameters,
+            parameters_cls=CarParameters,
+            explicit_args={
+                "name": mode_name,
+                "ghg_intensity": ghg_intensity,
+                "congestion": congestion,
+                "vehicle": "car",
+                "multimodal": False,
+                "return_mode": None,
+                "survey_ids": survey_ids,
+                "target_max_vehicles_per_od_endpoint": target_max_vehicles_per_od_endpoint,
+            },
+            owner_name="CarMode",
         )
-
-        if parameters is None:
-            mode_congestion = bool(mode_congestion)
+        mode_congestion = mode_parameters.congestion
+        mode_target_max_vehicles_per_od_endpoint = mode_parameters.target_max_vehicles_per_od_endpoint
 
         if routing_parameters is None:
             routing_parameters = PathRoutingParameters(
@@ -72,6 +81,7 @@ class CarMode(TransportMode):
             osm_capacity_parameters=osm_capacity_parameters,
             congestion=mode_congestion,
             congestion_flows_scaling_factor=congestion_flows_scaling_factor,
+            target_max_vehicles_per_od_endpoint=mode_target_max_vehicles_per_od_endpoint,
             speed_modifiers=speed_modifiers,
         )
         
@@ -89,7 +99,7 @@ class CarMode(TransportMode):
             ghg_intensity=ghg_intensity,
             vehicle="car",
             survey_ids=survey_ids,
-            parameters=parameters,
+            parameters=mode_parameters,
             parameters_cls=CarParameters,
         )
 
@@ -113,6 +123,16 @@ class CarParameters(TransportModeParameters):
     name: Literal["car"] = "car"
     ghg_intensity: float = 0.218
     congestion: bool = False
+    target_max_vehicles_per_od_endpoint: float = Field(
+        default=1000.0,
+        gt=0.0,
+        title="Target max vehicles per OD endpoint",
+        description=(
+            "Target upper bound used when splitting one OD pair across "
+            "representative origin/destination points before congestion assignment."
+        ),
+        json_schema_extra={"unit": "veh"},
+    )
     vehicle: Literal["car"] = "car"
     multimodal: bool = False
     return_mode: None = None
