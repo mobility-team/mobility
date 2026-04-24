@@ -1,33 +1,32 @@
 import os
 import pathlib
 
+import geopandas as gpd
 import polars as pl
 import pytest
-
 import mobility
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
-from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
+from mobility.trips.group_day_trips import PopulationGroupDayTrips, Parameters
 from mobility.surveys.france import EMPMobilitySurvey
 
 
-def _select_subway_endpoints(transport_zones: mobility.TransportZones) -> tuple[dict, dict]:
-    study_area = transport_zones.inputs["study_area"].get().to_crs(4326)
-    center_local_admin_unit_id = transport_zones.inputs["parameters"].local_admin_unit_id
+def _select_subway_endpoints(transport_zones: mobility.TransportZones) -> tuple[dict, dict, str, str]:
+    transport_zones_df = transport_zones.get()
+    center_local_admin_unit_id = str(transport_zones.inputs["parameters"].local_admin_unit_id)
 
-    center_candidates = study_area.loc[study_area["local_admin_unit_id"] == center_local_admin_unit_id].copy()
-    if center_candidates.empty:
-        raise ValueError("Could not find the central local admin unit in transport zones.")
+    center_lau = transport_zones_df.loc[
+        transport_zones_df["local_admin_unit_id"] == center_local_admin_unit_id
+    ].iloc[[0]].copy()
+    center_lau_id = str(center_lau.iloc[0]["local_admin_unit_id"])
+    other_laus = transport_zones_df.loc[transport_zones_df["local_admin_unit_id"] != center_lau_id].copy()
+    assert not other_laus.empty, "Need at least two local admin units to build a synthetic GTFS line."
 
-    center_lau = center_candidates.iloc[0]
-    other_laus = study_area.loc[study_area["local_admin_unit_id"] != center_lau["local_admin_unit_id"]].copy()
-    if other_laus.empty:
-        raise ValueError("Need at least two local admin units to build a synthetic GTFS line.")
+    center_centroid = center_lau.geometry.iloc[0].centroid
+    other_laus_projected = other_laus.copy()
+    other_laus_projected["distance_to_center"] = other_laus_projected.geometry.centroid.distance(center_centroid)
+    target_lau = other_laus.loc[other_laus_projected.sort_values("distance_to_center", ascending=True).index[:1]].copy()
 
-    center_centroid = center_lau.geometry.centroid
-    other_laus["distance_to_center"] = other_laus.geometry.centroid.distance(center_centroid)
-    target_lau = other_laus.sort_values("distance_to_center", ascending=True).iloc[0]
-
-    return center_lau, target_lau
+    return center_lau, target_lau, center_lau_id, str(target_lau.iloc[0]["local_admin_unit_id"])
 
 
 def _build_gtfs_zip(
@@ -36,11 +35,17 @@ def _build_gtfs_zip(
     output_name: str,
     segment_travel_time: float,
 ) -> tuple[str, str, str]:
-    center_lau, target_lau = _select_subway_endpoints(transport_zones)
+    center_lau, target_lau, center_lau_id, target_lau_id = _select_subway_endpoints(transport_zones)
 
-    center_centroid = center_lau.geometry.centroid
-    target_centroid = target_lau.geometry.centroid
-
+    centroids = gpd.GeoDataFrame(
+        geometry=[
+            center_lau.geometry.centroid.iloc[0],
+            target_lau.geometry.centroid.iloc[0],
+        ],
+        crs=3035,
+    ).to_crs(4326)
+    center_centroid = centroids.geometry.iloc[0]
+    target_centroid = centroids.geometry.iloc[1]
     feed = mobility.GTFSFeedSpec(
         agency_id="test_subway",
         agency_name="Test Subway",
@@ -52,12 +57,12 @@ def _build_gtfs_zip(
             "center": mobility.GTFSStopSpec(
                 lon=float(center_centroid.x),
                 lat=float(center_centroid.y),
-                name=str(center_lau["local_admin_unit_name"]),
+                name="Center",
             ),
             "target": mobility.GTFSStopSpec(
                 lon=float(target_centroid.x),
                 lat=float(target_centroid.y),
-                name=str(target_lau["local_admin_unit_name"]),
+                name="Target",
             ),
         },
         lines=[
@@ -77,8 +82,8 @@ def _build_gtfs_zip(
 
     return (
         str(gtfs_zip),
-        str(center_lau["local_admin_unit_id"]),
-        str(target_lau["local_admin_unit_id"]),
+        center_lau_id,
+        target_lau_id,
     )
 
 

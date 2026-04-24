@@ -70,5 +70,3 @@ class CarpoolParameters(TransportModeParameters):
     multimodal: bool = True
     return_mode: Literal["carpool_return"] = "carpool_return"
     survey_ids: list[str] = Field(default_factory=list)
-
-

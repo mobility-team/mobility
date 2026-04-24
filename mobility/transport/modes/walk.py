@@ -42,10 +42,10 @@ class WalkMode(TransportMode):
             )
         
         travel_costs = PathTravelCosts(
-            mode_name,
-            transport_zones,
-            routing_parameters,
-            osm_capacity_parameters
+            mode_name=mode_name,
+            transport_zones=transport_zones,
+            routing_parameters=routing_parameters,
+            osm_capacity_parameters=osm_capacity_parameters,
         )
         
         generalized_cost = PathGeneralizedCost(
@@ -75,5 +75,3 @@ class WalkParameters(TransportModeParameters):
     multimodal: bool = False
     return_mode: None = None
     survey_ids: list[str] = Field(default_factory=lambda: ["1.10", "1.11", "1.13"])
-
-

@@ -1,9 +1,12 @@
 import polars as pl
 
 from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, Parameters
-from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+from mobility.trips.group_day_trips.plans.plan_candidates import (
+    get_active_activity_chains,
+    get_active_destination_sequences,
+    get_destination_sequences_for_scope,
+)
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
-from mobility.trips.group_day_trips.population_trips_candidates import get_spatialized_chains
 
 
 def test_parameters_returns_default_behavior_change_scope():
@@ -25,53 +28,76 @@ def test_parameters_resolves_active_behavior_change_scope():
     assert parameters.get_behavior_change_scope(6) == BehaviorChangeScope.DESTINATION_REPLANNING
 
 
-def test_sample_active_destination_sequences_keeps_only_active_activity_sequences(tmp_path):
-    destination_sequences = DestinationSequences(
-        run_key="run",
-        is_weekday=True,
-        iteration=3,
-        base_folder=tmp_path,
-        current_plans=pl.DataFrame(
-            {
-                "demand_group_id": [1],
-                "activity_seq_id": [10],
-                "dest_seq_id": [100],
-                "mode_seq_id": [1000],
-            },
-            schema={
-                "demand_group_id": pl.UInt32,
-                "activity_seq_id": pl.UInt32,
-                "dest_seq_id": pl.UInt32,
-                "mode_seq_id": pl.UInt32,
-            },
-        ),
-        chains=pl.DataFrame(
-            {
-                "demand_group_id": [1, 1],
-                "activity_seq_id": [10, 20],
-                "seq_step_index": [0, 0],
-                "activity": ["work", "other"],
-            },
-            schema={
-                "demand_group_id": pl.UInt32,
-                "activity_seq_id": pl.UInt32,
-                "seq_step_index": pl.UInt32,
-                "activity": pl.Utf8,
-            },
-        ),
-        activities=[],
-        transport_zones=None,
-        remaining_opportunities=pl.DataFrame(),
-        demand_groups=pl.DataFrame(),
-        costs=pl.DataFrame(),
-        parameters=Parameters(),
-        seed=123,
+def test_get_active_activity_chains_keeps_only_active_non_stay_home_sequences():
+    chains_by_activity = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1, 2],
+            "activity_seq_id": [10, 20, 30],
+            "seq_step_index": [0, 0, 0],
+            "activity": ["work", "other", "work"],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt32,
+            "activity": pl.Utf8,
+        },
+    )
+    current_plans = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1, 2],
+            "activity_seq_id": [10, 0, 0],
+            "dest_seq_id": [100, 0, 0],
+            "mode_seq_id": [1000, 0, 0],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
     )
 
+    result = get_active_activity_chains(chains_by_activity, current_plans)
+
+    assert result.select(["demand_group_id", "activity_seq_id"]).to_dicts() == [
+        {"demand_group_id": 1, "activity_seq_id": 10}
+    ]
+
+
+def test_destination_scope_keeps_only_active_activity_sequences():
+    current_plans = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [10],
+            "dest_seq_id": [100],
+            "mode_seq_id": [1000],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
+    )
+    chains = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1],
+            "activity_seq_id": [10, 20],
+            "seq_step_index": [0, 0],
+            "activity": ["work", "other"],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt32,
+            "activity": pl.Utf8,
+        },
+    )
     seen = {}
 
-    def fake_run(activities, transport_zones, remaining_opportunities, chains, demand_groups, costs, parameters, seed):
-        seen["chains"] = chains
+    def fake_sample(chains_to_sample):
+        seen["chains"] = chains_to_sample
         return pl.DataFrame(
             {
                 "demand_group_id": [1],
@@ -93,82 +119,58 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
             },
         )
 
-    destination_sequences.run = fake_run
-    get_spatialized_chains(
+    get_destination_sequences_for_scope(
         behavior_change_scope=BehaviorChangeScope.DESTINATION_REPLANNING,
-        current_plans=destination_sequences.current_plans,
-        current_plan_steps=destination_sequences.current_plan_steps,
-        destination_sequence_sampler=destination_sequences,
-        activities=destination_sequences.activities,
-        transport_zones=destination_sequences.transport_zones,
-        remaining_opportunities=destination_sequences.remaining_opportunities,
-        iteration=destination_sequences.iteration,
-        chains_by_activity=destination_sequences.chains,
-        demand_groups=destination_sequences.demand_groups,
-        costs=destination_sequences.costs,
-        parameters=destination_sequences.parameters,
-        seed=destination_sequences.seed,
+        current_plans=current_plans,
+        current_plan_steps=None,
+        iteration=3,
+        chains_by_activity=chains,
+        sample_destination_sequences=fake_sample,
     )
 
     assert seen["chains"].select("activity_seq_id").to_series().to_list() == [10]
 
 
-def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path):
-    destination_sequences = DestinationSequences(
-        run_key="run",
-        is_weekday=True,
-        iteration=4,
-        base_folder=tmp_path,
-        current_plans=pl.DataFrame(
-            {
-                "demand_group_id": [1],
-                "activity_seq_id": [10],
-                "dest_seq_id": [100],
-                "mode_seq_id": [1000],
-            },
-            schema={
-                "demand_group_id": pl.UInt32,
-                "activity_seq_id": pl.UInt32,
-                "dest_seq_id": pl.UInt32,
-                "mode_seq_id": pl.UInt32,
-            },
-        ),
-        current_plan_steps=pl.DataFrame(
-            {
-                "demand_group_id": [1, 1],
-                "activity_seq_id": [10, 10],
-                "dest_seq_id": [100, 100],
-                "mode_seq_id": [1000, 1001],
-                "seq_step_index": [0, 1],
-                "from": [21, 22],
-                "to": [22, 23],
-            },
-            schema={
-                "demand_group_id": pl.UInt32,
-                "activity_seq_id": pl.UInt32,
-                "dest_seq_id": pl.UInt32,
-                "mode_seq_id": pl.UInt32,
-                "seq_step_index": pl.UInt32,
-                "from": pl.Int32,
-                "to": pl.Int32,
-            },
-        ),
+def test_reuse_current_destination_sequences_reuses_current_plan_steps():
+    current_plans = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [10],
+            "dest_seq_id": [100],
+            "mode_seq_id": [1000],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
+    )
+    current_plan_steps = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1],
+            "activity_seq_id": [10, 10],
+            "dest_seq_id": [100, 100],
+            "mode_seq_id": [1000, 1001],
+            "seq_step_index": [0, 1],
+            "from": [21, 22],
+            "to": [22, 23],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt32,
+            "from": pl.Int32,
+            "to": pl.Int32,
+        },
     )
 
-    result = get_spatialized_chains(
-        behavior_change_scope=BehaviorChangeScope.MODE_REPLANNING,
-        current_plans=destination_sequences.current_plans,
-        current_plan_steps=destination_sequences.current_plan_steps,
-        destination_sequence_sampler=destination_sequences,
-        activities=[],
-        transport_zones=None,
-        remaining_opportunities=pl.DataFrame(),
-        iteration=destination_sequences.iteration,
-        chains_by_activity=pl.DataFrame(),
-        demand_groups=pl.DataFrame(),
-        costs=pl.DataFrame(),
-        parameters=Parameters(),
-        seed=123,
+    result = get_active_destination_sequences(
+        current_plans=current_plans,
+        current_plan_steps=current_plan_steps,
+        iteration=4,
     )
 
     assert result["iteration"].unique().to_list() == [4]

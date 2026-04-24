@@ -5,19 +5,15 @@ from .iteration_assets import (
     RngStateAsset,
     TransitionEventsAsset,
 )
-from .iterations import (
-    RunIteration,
-    RunIterationState,
-    RunIterations,
-)
+from .iterations import Iteration, IterationState, Iterations
 
 __all__ = [
     "CurrentPlansAsset",
+    "Iteration",
     "IterationCompleteAsset",
+    "Iterations",
+    "IterationState",
     "RemainingOpportunitiesAsset",
-    "RunIteration",
-    "RunIterations",
-    "RunIterationState",
     "RngStateAsset",
     "TransitionEventsAsset",
 ]

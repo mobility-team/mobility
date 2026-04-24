@@ -9,8 +9,7 @@ from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from pydantic import BaseModel, ConfigDict, Field
 from mobility.runtime.parameter_profiles import (
     ScalarParameterProfile,
-    SimulationStep,
-    resolve_model_for_step,
+    resolve_model_for_iteration,
 )
 from mobility.runtime.validation_types import NonNegativeFloat, UnitIntervalFloat
 
@@ -68,18 +67,18 @@ class Activity(InMemoryAsset):
         super().__init__(inputs)
 
 
-    def get_parameters_at_step(self, step: SimulationStep) -> "ActivityParameters":
-        """Returns the activity parameters in effect at a simulation step.
+    def get_parameters_for_iteration(self, iteration: int) -> "ActivityParameters":
+        """Returns the activity parameters in effect at one simulation iteration.
 
         Args:
-            step: Simulation step used to evaluate step-varying parameter
+            iteration: Simulation iteration used to evaluate iteration-varying parameter
                 profiles.
 
         Returns:
-            ActivityParameters: Parameter model with all step-varying fields
-                resolved to scalar values for ``step``.
+            ActivityParameters: Parameter model with all iteration-varying fields
+                resolved to scalar values for ``iteration``.
         """
-        return resolve_model_for_step(self.inputs["parameters"], step)
+        return resolve_model_for_iteration(self.inputs["parameters"], iteration)
 
 
     def get_utilities(self, transport_zones, parameters: "ActivityParameters" | None = None):
@@ -205,11 +204,11 @@ class ActivityParameters(BaseModel):
 
 def resolve_activity_parameters(
     activities: list[Activity],
-    step: SimulationStep,
+    iteration: int,
 ) -> dict[str, ActivityParameters]:
-    """Resolve all activity parameter models for one simulation step."""
+    """Resolve all activity parameter models for one simulation iteration."""
 
     return {
-        activity.name: activity.get_parameters_at_step(step)
+        activity.name: activity.get_parameters_for_iteration(iteration)
         for activity in activities
     }

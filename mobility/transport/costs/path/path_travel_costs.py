@@ -15,10 +15,9 @@ from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.costs.parameters.path_routing_parameters import PathRoutingParameters
 from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport.graphs.modified.modifiers.speed_modifier import SpeedModifier
-from mobility.transport.graphs.congested.congested_path_graph_snapshot import CongestedPathGraphSnapshot
-from mobility.transport.graphs.contracted.contracted_path_graph_snapshot import ContractedPathGraphSnapshot
+from mobility.transport.graphs.congested.congested_path_graph import CongestedPathGraph
+from mobility.transport.graphs.contracted.contracted_path_graph import ContractedPathGraph
 from mobility.transport.costs.congestion_state import CongestionState
-from mobility.transport.costs.path.path_travel_costs_snapshot import PathTravelCostsSnapshot
 
 from typing import List
 
@@ -51,6 +50,7 @@ class PathTravelCosts(FileAsset):
             congestion: bool = False,
             congestion_flows_scaling_factor: float = 1.0,
             speed_modifiers: List[SpeedModifier] = [],
+            contracted_graph: ContractedPathGraph | None = None,
         ):
         """
         Initializes a TravelCosts object with the given transport zones and travel mode.
@@ -60,23 +60,35 @@ class PathTravelCosts(FileAsset):
             mode (str): Mode of transportation for calculating travel costs.
         """
 
-        path_graph = PathGraph(
-            mode_name,
-            transport_zones,
-            osm_capacity_parameters,
-            congestion,
-            congestion_flows_scaling_factor,
-            speed_modifiers
-        )
+        if contracted_graph is None:
+            path_graph = PathGraph(
+                mode_name,
+                transport_zones,
+                osm_capacity_parameters,
+                congestion,
+                congestion_flows_scaling_factor,
+                speed_modifiers
+            )
+            simplified_path_graph = path_graph.simplified
+            modified_path_graph = path_graph.modified
+            congested_path_graph = path_graph.congested
+            contracted_path_graph = path_graph.contracted
+        else:
+            path_graph = None
+            contracted_path_graph = contracted_graph
+            congested_path_graph = contracted_graph.inputs["congested_graph"]
+            modified_path_graph = congested_path_graph.inputs["modified_graph"]
+            simplified_path_graph = None
         
         inputs = {
             "transport_zones": transport_zones,
             "mode_name": mode_name,
-            "simplified_path_graph": path_graph.simplified,
-            "modified_path_graph": path_graph.modified,
-            "congested_path_graph": path_graph.congested,
-            "contracted_path_graph": path_graph.contracted,
-            "routing_parameters": routing_parameters
+            "simplified_path_graph": simplified_path_graph,
+            "modified_path_graph": modified_path_graph,
+            "congested_path_graph": congested_path_graph,
+            "contracted_path_graph": contracted_path_graph,
+            "routing_parameters": routing_parameters,
+            "osm_capacity_parameters": osm_capacity_parameters,
         }
 
         cache_path = {
@@ -97,9 +109,9 @@ class PathTravelCosts(FileAsset):
                 return asset
 
         if congestion and congestion_state is not None:
-            snapshot = self.get_snapshot_asset(congestion_state)
-            if snapshot is not None:
-                return snapshot.get()
+            asset = self.asset_for_congestion_state(congestion_state)
+            if asset is not None:
+                return asset.get()
 
         return self.get_cached_asset(congestion=congestion)
 
@@ -193,29 +205,49 @@ class PathTravelCosts(FileAsset):
     def get_congested_graph_path(self, flow_asset=None) -> pathlib.Path:
         """Return the graph path backing the current congested cost view."""
         if flow_asset is not None:
-            return self.build_snapshot_asset(flow_asset).inputs["contracted_graph"].inputs["congested_graph"].get()
+            return self.asset_for_flow_asset(flow_asset).inputs["contracted_path_graph"].inputs["congested_graph"].get()
         return self.inputs["congested_path_graph"].get()
 
-    def get_snapshot_asset(self, congestion_state: CongestionState) -> PathTravelCostsSnapshot | None:
+    def asset_for_iteration(self, run, iteration: int):
+        """Return the travel-cost asset instance corresponding to one simulation iteration."""
+        if iteration < 1:
+            raise ValueError("Iteration should be >= 1.")
+        if iteration > int(run.parameters.n_iterations):
+            raise ValueError(
+                f"Iteration should be <= {int(run.parameters.n_iterations)} for this run."
+            )
+
+        flow_asset = self.inputs["congested_path_graph"].get_flow_asset_for_iteration(run, iteration)
+        if flow_asset is None:
+            return self
+        return self.asset_for_flow_asset(flow_asset)
+
+    def get_for_iteration(self, run, iteration: int):
+        """Materialize the travel costs corresponding to one simulation iteration."""
+        return self.asset_for_iteration(run, iteration).get()
+
+    def asset_for_congestion_state(self, congestion_state: CongestionState):
         flow_asset = congestion_state.for_mode(self.inputs["mode_name"])
         if flow_asset is None:
             return None
-        return self.build_snapshot_asset(flow_asset)
+        return self.asset_for_flow_asset(flow_asset)
 
-    def build_snapshot_asset(self, flow_asset) -> PathTravelCostsSnapshot:
-        congested_graph = CongestedPathGraphSnapshot(
+    def asset_for_flow_asset(self, flow_asset):
+        congested_graph = CongestedPathGraph(
             modified_graph=self.inputs["modified_path_graph"],
             transport_zones=self.inputs["transport_zones"],
-            vehicle_flows=flow_asset,
+            handles_congestion=self.inputs["congested_path_graph"].handles_congestion,
             congestion_flows_scaling_factor=self.inputs["congested_path_graph"].congestion_flows_scaling_factor,
+            vehicle_flows=flow_asset,
         )
-        contracted_graph = ContractedPathGraphSnapshot(congested_graph)
+        contracted_graph = ContractedPathGraph(congested_graph)
 
-        snapshot = PathTravelCostsSnapshot(
+        variant = PathTravelCosts(
             mode_name=self.inputs["mode_name"],
             transport_zones=self.inputs["transport_zones"],
             routing_parameters=self.inputs["routing_parameters"],
+            osm_capacity_parameters=self.inputs["osm_capacity_parameters"],
             contracted_graph=contracted_graph,
         )
-        return snapshot
+        return variant
         

@@ -85,13 +85,10 @@ def test_008c_group_day_trips_parameter_profiles_change_iteration_2(test_data):
         ),
     )
 
-    static_result = static.get()
-    dynamic_result = dynamic.get()
-
-    static_plan_steps = static_result["weekday_plan_steps"].collect()
-    dynamic_plan_steps = dynamic_result["weekday_plan_steps"].collect()
-    static_transitions = static_result["weekday_transitions"].collect()
-    dynamic_transitions = dynamic_result["weekday_transitions"].collect()
+    static_plan_steps = static.weekday_run.get()["plan_steps"].collect()
+    dynamic_plan_steps = dynamic.weekday_run.get()["plan_steps"].collect()
+    static_transitions = static.weekday_run.get()["transitions"].collect()
+    dynamic_transitions = dynamic.weekday_run.get()["transitions"].collect()
 
     assert static_plan_steps.height > 0
     assert dynamic_plan_steps.height > 0

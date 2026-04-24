@@ -2,8 +2,7 @@ import pytest
 
 from mobility.runtime.parameter_profiles import (
     ListParameterProfile,
-    SimulationStep,
-    resolve_model_for_step,
+    resolve_model_for_iteration,
 )
 from mobility.transport.costs.parameters.path_routing_parameters import PathRoutingParameters
 from mobility.transport.modes.public_transport.public_transport_graph import (
@@ -25,7 +24,8 @@ def test_path_routing_parameters_requires_explicit_or_legacy_definition():
 
 
 def test_path_routing_parameters_normalizes_legacy_speed_time_inputs():
-    params = PathRoutingParameters(filter_max_speed=60.0, filter_max_time=1.0)
+    with pytest.deprecated_call():
+        params = PathRoutingParameters(filter_max_speed=60.0, filter_max_time=1.0)
 
     assert params.max_beeline_distance == 60.0
     assert params.filter_max_speed is None
@@ -48,8 +48,8 @@ def test_public_transport_routing_parameters_resolve_list_profiles_by_iteration(
         )
     )
 
-    step_1 = resolve_model_for_step(params, SimulationStep(iteration=1))
-    step_2 = resolve_model_for_step(params, SimulationStep(iteration=2))
+    step_1 = resolve_model_for_iteration(params, 1)
+    step_2 = resolve_model_for_iteration(params, 2)
 
     assert step_1.additional_gtfs_files == ["base.zip"]
     assert step_2.additional_gtfs_files == ["base.zip", "event.zip"]

@@ -7,6 +7,7 @@ import polars as pl
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from .destination_sequences import DestinationSequences
 from .mode_sequences import ModeSequences
+from .plan_candidates import get_transition_scope_inputs
 from ..transitions.transition_schema import TRANSITION_EVENT_COLUMNS
 
 
@@ -19,8 +20,7 @@ class PlanUpdater:
         current_plan_steps: pl.DataFrame | None,
         demand_groups: pl.DataFrame,
         chains: pl.DataFrame,
-        costs_aggregator: Any,
-        congestion_state: Any,
+        transport_costs: Any,
         remaining_opportunities: pl.DataFrame,
         activity_dur: pl.DataFrame,
         iteration: int,
@@ -38,8 +38,7 @@ class PlanUpdater:
             current_plan_steps,
             demand_groups,
             chains,
-            costs_aggregator,
-            congestion_state,
+            transport_costs,
             remaining_opportunities,
             activity_dur,
             iteration,
@@ -116,8 +115,7 @@ class PlanUpdater:
         current_plan_steps,
         demand_groups,
         chains,
-        costs_aggregator,
-        congestion_state,
+        transport_costs,
         opportunities,
         activity_dur,
         iteration: int,
@@ -128,11 +126,9 @@ class PlanUpdater:
     ):
         """Enumerate candidate plan steps and compute per-step utilities."""
 
-        cost_by_od_and_modes = costs_aggregator.get_costs_by_od_and_mode(
+        cost_by_od_and_modes = transport_costs.get_costs_by_od_and_mode(
             ["cost", "distance", "time"],
-            congestion=(congestion_state is not None),
             detail_distances=False,
-            congestion_state=congestion_state,
         )
 
         chains_w_home = (
@@ -142,6 +138,7 @@ class PlanUpdater:
 
         spat_chains = destination_sequences.get_cached_asset().lazy()
         modes = mode_sequences.get_cached_asset().lazy()
+
         value_of_time = (
             pl.from_dicts(
                 [
@@ -324,15 +321,18 @@ class PlanUpdater:
         possible_plan_utility = pl.concat(
             [
                 possible_plan_utility,
-                stay_home_plan.lazy().select(
-                    [
-                        "demand_group_id",
-                        "activity_seq_id",
-                        "mode_seq_id",
-                        "dest_seq_id",
-                        "utility",
-                    ]
-                ),
+                stay_home_plan.lazy()
+                .with_columns(
+                    min_activity_time=pl.col("mean_home_night_per_pers") * math.exp(-min_activity_time_constant)
+                )
+                .with_columns(
+                    utility=(
+                        value_of_time_stay_home
+                        * pl.col("mean_home_night_per_pers")
+                        * (pl.col("mean_home_night_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
+                    )
+                )
+                .select(["demand_group_id", "activity_seq_id", "mode_seq_id", "dest_seq_id", "utility"]),
             ]
         )
 
@@ -349,23 +349,16 @@ class PlanUpdater:
 
         plan_cols = ["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"]
 
-        current_plans_for_transitions = current_plans.lazy()
-        possible_plan_utility_for_transitions = possible_plan_utility
+        (
+            current_plans_for_transitions,
+            possible_plan_utility_for_transitions,
+            scope_pair_constraint,
+        ) = get_transition_scope_inputs(
+            current_plans=current_plans,
+            possible_plan_utility=possible_plan_utility,
+            behavior_change_scope=behavior_change_scope,
+        )
 
-        if behavior_change_scope != BehaviorChangeScope.FULL_REPLANNING:
-            current_plans_for_transitions = current_plans_for_transitions.filter(pl.col("mode_seq_id") != 0)
-            possible_plan_utility_for_transitions = possible_plan_utility_for_transitions.filter(
-                pl.col("mode_seq_id") != 0
-            )
-
-        scope_pair_constraint = pl.lit(True)
-        if behavior_change_scope == BehaviorChangeScope.DESTINATION_REPLANNING:
-            scope_pair_constraint = pl.col("activity_seq_id") == pl.col("activity_seq_id_trans")
-        elif behavior_change_scope == BehaviorChangeScope.MODE_REPLANNING:
-            scope_pair_constraint = (
-                (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
-                & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
-            )
         transition_probabilities = (
             current_plans_for_transitions
             .select(plan_cols + ["utility"])
@@ -718,15 +711,16 @@ class PlanUpdater:
         iteration,
         n_iter_per_cost_update,
         current_plan_steps,
-        costs_aggregator,
-        congestion_state=None,
-        run_key=None,
-        is_weekday=None,
+        transport_costs,
+        run,
     ):
         """Return the OD costs to use after the current iteration."""
 
-        if n_iter_per_cost_update <= 0:
-            return costs, congestion_state
+        if (
+            n_iter_per_cost_update <= 0
+            or transport_costs.should_recompute_congested_costs(iteration, n_iter_per_cost_update) is False
+        ):
+            return costs
 
         od_flows_by_mode = (
             current_plan_steps.filter(pl.col("activity_seq_id") != 0)
@@ -734,13 +728,10 @@ class PlanUpdater:
             .agg(flow_volume=pl.col("n_persons").sum())
         )
 
-        return costs_aggregator.get_costs_for_next_iteration(
+        return transport_costs.get_costs_for_next_iteration(
+            run=run,
             iteration=iteration,
-            cost_update_interval=n_iter_per_cost_update,
             od_flows_by_mode=od_flows_by_mode,
-            congestion_state=congestion_state,
-            run_key=run_key,
-            is_weekday=is_weekday,
         )
 
     def get_new_opportunities(
@@ -752,6 +743,7 @@ class PlanUpdater:
         """Recompute remaining opportunities per (activity, destination)."""
 
         logging.info("Computing remaining opportunities at destinations...")
+
         saturation_fun_parameters = (
             pl.from_dicts(
                 [

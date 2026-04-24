@@ -32,18 +32,16 @@ class ModeSequences(FileAsset):
         iteration: int,
         base_folder: pathlib.Path,
         destination_sequences: FileAsset | None = None,
-        costs_aggregator: Any = None,
+        transport_costs: Any = None,
         working_folder: pathlib.Path | None = None,
         sequence_index_folder: pathlib.Path | None = None,
         parameters: Any = None,
-        congestion_state: Any = None,
     ) -> None:
         self.destination_sequences = destination_sequences
-        self.costs_aggregator = costs_aggregator
+        self.transport_costs = transport_costs
         self.working_folder = working_folder
         self.sequence_index_folder = sequence_index_folder
         self.parameters = parameters
-        self.congestion_state = congestion_state
         inputs = {
             "version": 1,
             "run_key": run_key,
@@ -64,8 +62,8 @@ class ModeSequences(FileAsset):
         """Compute and persist mode sequences for one iteration."""
         if self.destination_sequences is None:
             raise ValueError("Cannot build mode sequences without destination sequences.")
-        if self.costs_aggregator is None:
-            raise ValueError("Cannot build mode sequences without a costs aggregator.")
+        if self.transport_costs is None:
+            raise ValueError("Cannot build mode sequences without transport costs.")
         if self.working_folder is None:
             raise ValueError("Cannot build mode sequences without a working folder.")
         if self.sequence_index_folder is None:
@@ -93,16 +91,14 @@ class ModeSequences(FileAsset):
             .sort("dest_seq_id")
         )
 
-        modes = modes_list_to_dict(self.costs_aggregator.modes)
+        modes = modes_list_to_dict(self.transport_costs.modes)
         mode_id = {name: index for index, name in enumerate(modes)}
         id_to_mode = {index: name for index, name in enumerate(modes)}
 
         costs = (
-            self.costs_aggregator.get_costs_by_od_and_mode(
+            self.transport_costs.get_costs_by_od_and_mode(
                 ["cost"],
-                congestion=(self.congestion_state is not None),
                 detail_distances=False,
-                congestion_state=self.congestion_state,
             )
             .with_columns(
                 mode_id=pl.col("mode").replace_strict(mode_id, return_dtype=pl.UInt8()),

@@ -1,16 +1,13 @@
 import os
 import pathlib
 import logging
-import dataclasses
-import json
 
 from importlib import resources
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
+from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.graphs.modified.modified_path_graph import ModifiedPathGraph
 from mobility.spatial.transport_zones import TransportZones
-
-from typing import List
 
 class CongestedPathGraph(FileAsset):
 
@@ -19,13 +16,15 @@ class CongestedPathGraph(FileAsset):
             modified_graph: ModifiedPathGraph,
             transport_zones: TransportZones,
             handles_congestion: bool = False,
-            congestion_flows_scaling_factor: float = 1.0
+            congestion_flows_scaling_factor: float = 1.0,
+            vehicle_flows: VehicleODFlowsAsset | None = None,
         ):
         
         inputs = {
             "mode_name": modified_graph.mode_name,
             "modified_graph": modified_graph,
             "transport_zones": transport_zones,
+            "vehicle_flows": vehicle_flows,
             "handles_congestion": handles_congestion,
             "congestion_flows_scaling_factor": congestion_flows_scaling_factor
         }
@@ -45,11 +44,17 @@ class CongestedPathGraph(FileAsset):
          
         return self.cache_path
 
-    def create_and_get_asset(self, enable_congestion: bool = False, flows_file_path: pathlib.Path | None = None) -> pathlib.Path:
+    def create_and_get_asset(self) -> pathlib.Path:
         
         logging.info("Loading graph with traffic...")
-        if flows_file_path is None:
+        vehicle_flows = self.inputs["vehicle_flows"]
+        if vehicle_flows is None:
             flows_file_path = self.flows_file_path
+            enable_congestion = False
+        else:
+            vehicle_flows.get()
+            flows_file_path = vehicle_flows.cache_path
+            enable_congestion = True
 
         self.load_graph(
             self.inputs["modified_graph"].get(),
@@ -85,17 +90,72 @@ class CongestedPathGraph(FileAsset):
 
         return None
     
+    def asset_for_iteration(self, run, iteration: int) -> "CongestedPathGraph":
+        """Return the graph instance corresponding to the congestion active at one iteration.
 
-    def update(self, od_flows, flow_asset=None):
-        
-        if self.inputs["handles_congestion"] is True:
-            
-            if flow_asset is None:
-                od_flows.write_parquet(self.flows_file_path)
-                self.create_and_get_asset(enable_congestion=True)
-            else:
-                # flow_asset is expected to already be a parquet with the right schema.
-                flow_asset.get()
-                self.create_and_get_asset(enable_congestion=True, flows_file_path=flow_asset.cache_path)
+        The graph does not cache one file per simulation iteration. Instead, it
+        rebuilds the graph view from the latest cached OD-flow asset that was
+        eligible to refresh congestion before ``iteration``. When no such flow
+        asset exists yet, the method returns the free-flow graph.
+        """
+        if iteration < 1:
+            raise ValueError("Iteration should be >= 1.")
+        if iteration > int(run.parameters.n_iterations):
+            raise ValueError(
+                f"Iteration should be <= {int(run.parameters.n_iterations)} for this run."
+            )
+
+        flow_asset = self.get_flow_asset_for_iteration(run, iteration)
+        if flow_asset is None:
+            return self
+
+        return CongestedPathGraph(
+            modified_graph=self.inputs["modified_graph"],
+            transport_zones=self.inputs["transport_zones"],
+            vehicle_flows=flow_asset,
+            handles_congestion=self.inputs["handles_congestion"],
+            congestion_flows_scaling_factor=self.inputs["congestion_flows_scaling_factor"],
+        )
+
+    def get_for_iteration(self, run, iteration: int):
+        """Materialize the graph payload corresponding to one simulation iteration."""
+        return self.asset_for_iteration(run, iteration).get()
+
+    def get_flow_asset_for_iteration(self, run, iteration: int) -> VehicleODFlowsAsset | None:
+        """Return the cached flow asset backing the congestion active at one iteration.
+
+        Congestion is refreshed only on iterations that match
+        ``n_iter_per_cost_update``. For a given target iteration, the active
+        congestion therefore comes from the latest completed refresh iteration
+        strictly before that target iteration.
+        """
+        if self.inputs["handles_congestion"] is False:
+            return None
+
+        cost_update_interval = int(run.parameters.n_iter_per_cost_update)
+        if cost_update_interval <= 0 or iteration <= 1:
+            return None
+
+        source_iteration = max(
+            update_iteration
+            for update_iteration in range(1, int(iteration))
+            if (update_iteration - 1) % cost_update_interval == 0
+        )
+
+        flow_asset = VehicleODFlowsAsset.from_inputs(
+            run_key=str(run.inputs_hash),
+            is_weekday=bool(run.is_weekday),
+            iteration=int(source_iteration),
+            mode_name=str(self.inputs["mode_name"]),
+        )
+        if flow_asset.cache_path.exists() is False:
+            raise RuntimeError(
+                "Missing cached congestion flow asset for "
+                f"run_key={run.inputs_hash}, is_weekday={run.is_weekday}, "
+                f"mode={self.inputs['mode_name']}, source_iteration={source_iteration}. "
+                "To rebuild it, rerun the simulation from iteration 1 or clear the "
+                "cached run artifacts and recompute the run."
+            )
+        return flow_asset
 
 

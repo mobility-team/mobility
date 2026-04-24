@@ -6,7 +6,6 @@ from importlib import resources
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.transport.graphs.congested.congested_path_graph import CongestedPathGraph
-from mobility.spatial.transport_zones import TransportZones
 
 class ContractedPathGraph(FileAsset):
 
@@ -59,14 +58,5 @@ class ContractedPathGraph(FileAsset):
         )
 
         return None
-    
-    def update(self, od_flows, flow_asset=None):
-        
-        if self.congested_graph.handles_congestion is True:
-            
-            logging.info("Rebuilding contracted graph given OD flows and congestion...")
-
-            self.congested_graph.update(od_flows, flow_asset=flow_asset)
-            self.create_and_get_asset()
 
 

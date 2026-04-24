@@ -21,8 +21,8 @@ from .iteration_assets import (
 
 
 @dataclass(frozen=True)
-class RunIterationState:
-    """Minimal persisted state required to resume one PopulationGroupDayTrips run iteration."""
+class IterationState:
+    """Minimal persisted plan distribution required to resume a run from one iteration."""
 
     current_plans: pl.DataFrame
     current_plan_steps: pl.DataFrame
@@ -30,10 +30,10 @@ class RunIterationState:
     rng_state: object
 
 
-class RunIteration:
-    """Persisted artifacts and saved state for one iteration of one run."""
+class Iteration:
+    """Persisted artifacts and saved state for one PopulationGroupDayTrips iteration."""
 
-    def __init__(self, iterations: "RunIterations", iteration: int) -> None:
+    def __init__(self, iterations: "Iterations", iteration: int) -> None:
         self.iterations = iterations
         self.iteration = iteration
 
@@ -78,9 +78,8 @@ class RunIteration:
         self,
         *,
         destination_sequences: DestinationSequences,
-        costs_aggregator: Any = None,
+        transport_costs: Any = None,
         parameters: Any = None,
-        congestion_state: Any = None,
     ) -> ModeSequences:
         """Return the mode-sequences asset for this iteration."""
         return ModeSequences(
@@ -89,15 +88,14 @@ class RunIteration:
             iteration=self.iteration,
             base_folder=self.iterations.folder_paths["modes"],
             destination_sequences=destination_sequences,
-            costs_aggregator=costs_aggregator,
+            transport_costs=transport_costs,
             working_folder=self.iterations.base_folder,
             sequence_index_folder=self.iterations.folder_paths["sequences-index"],
             parameters=parameters,
-            congestion_state=congestion_state,
         )
 
 
-    def load_state(self) -> RunIterationState:
+    def load_state(self) -> IterationState:
         """Load the saved run state for this completed iteration."""
         iteration_state_folder = self.iterations.folder_paths["iteration-state"]
         current_plan_steps_asset = CurrentPlanStepsAsset(
@@ -114,7 +112,8 @@ class RunIteration:
                 "This cache was likely created with an older code version. "
                 "Clear the saved iteration artifacts and rerun from scratch."
             )
-        return RunIterationState(
+
+        return IterationState(
             current_plans=CurrentPlansAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
@@ -195,8 +194,8 @@ class RunIteration:
         ).create_and_get_asset()
 
 
-class RunIterations:
-    """Persisted collection of iteration artifacts for one PopulationGroupDayTrips run."""
+class Iterations:
+    """Persisted iteration collection for one PopulationGroupDayTrips run."""
 
     def __init__(
         self,
@@ -245,9 +244,9 @@ class RunIterations:
         return resume_iteration
 
 
-    def iteration(self, iteration: int) -> RunIteration:
+    def iteration(self, iteration: int) -> Iteration:
         """Return the persisted object for one iteration."""
-        return RunIteration(self, iteration)
+        return Iteration(self, iteration)
 
 
     def discard_future_iterations(self, *, iteration: int) -> None:

@@ -3,7 +3,7 @@ import pytest
 import mobility
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
 from mobility.surveys.france import EMPMobilitySurvey
-from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
+from mobility.trips.group_day_trips import PopulationGroupDayTrips, Parameters
 
 
 def _build_group_day_trips(test_data):

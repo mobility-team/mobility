@@ -5,9 +5,8 @@ from typing import Any
 import polars as pl
 from scipy.stats import norm
 
-from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
-from mobility.trips.group_day_trips.population_trips_candidates import get_spatialized_chains
 from .sequence_index import add_index
+from .plan_candidates import get_destination_sequences_for_scope
 from mobility.runtime.assets.file_asset import FileAsset
 
 
@@ -86,21 +85,7 @@ class DestinationSequences(FileAsset):
         if self.current_plans is None:
             raise ValueError("Cannot build destination sequences without current plans.")
 
-        destination_sequences = get_spatialized_chains(
-            behavior_change_scope=self.parameters.get_behavior_change_scope(self.iteration),
-            current_plans=self.current_plans,
-            current_plan_steps=self.current_plan_steps,
-            destination_sequence_sampler=self,
-            activities=self.activities,
-            transport_zones=self.transport_zones,
-            remaining_opportunities=self.remaining_opportunities,
-            iteration=self.iteration,
-            chains_by_activity=self.chains,
-            demand_groups=self.demand_groups,
-            costs=self.costs,
-            parameters=self.parameters,
-            seed=self.seed,
-        )
+        destination_sequences = self._build_destination_sequences_for_scope()
 
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         destination_sequences.write_parquet(self.cache_path)
@@ -170,6 +155,27 @@ class DestinationSequences(FileAsset):
             .with_columns(iteration=pl.lit(self.iteration).cast(pl.UInt32))
         )
         return destination_sequences
+
+    def _build_destination_sequences_for_scope(self) -> pl.DataFrame:
+        """Return the destination sequences to use for this iteration."""
+        scope = self.parameters.get_behavior_change_scope(self.iteration)
+        return get_destination_sequences_for_scope(
+            behavior_change_scope=scope,
+            current_plans=self.current_plans,
+            current_plan_steps=self.current_plan_steps,
+            iteration=self.iteration,
+            chains_by_activity=self.chains,
+            sample_destination_sequences=lambda chains: self.run(
+                self.activities,
+                self.transport_zones,
+                self.remaining_opportunities,
+                chains,
+                self.demand_groups,
+                self.costs,
+                self.parameters,
+                self.seed,
+            ),
+        )
 
 
     def _get_utilities(

@@ -2,7 +2,7 @@ import polars as pl
 from typing import Dict, List
 
 from mobility.runtime.assets.asset import Asset
-from mobility.transport.costs.transport_costs_aggregator import TransportCostsAggregator
+from mobility.transport.costs.transport_costs import TransportCosts
 from .parameters import Parameters
 from .run import Run
 from mobility.activities import Activity, HomeActivity, OtherActivity
@@ -12,13 +12,7 @@ from mobility.transport.modes.core.transport_mode import TransportMode
 
 
 class PopulationGroupDayTrips:
-    """Top-level asset for one-day trip demand generated from population groups.
-
-    ``PopulationGroupDayTrips`` runs the model at the population-group level
-    rather than the individual level. It produces one representative weekday
-    run and, optionally, one representative weekend run for the demand groups
-    defined in the input population.
-    """
+    """Top-level asset exposing weekday and weekend grouped day trips."""
 
     def __init__(
         self,
@@ -42,7 +36,7 @@ class PopulationGroupDayTrips:
 
         The wrapper validates its high-level inputs, normalizes constructor
         parameters into a `Parameters` instance, builds a shared
-        `TransportCostsAggregator`, and creates one underlying `Run`
+        `TransportCosts`, and creates one underlying `Run`
         asset for weekdays plus one for weekends. The weekend run is enabled or
         disabled according to `simulate_weekend`.
 
@@ -52,8 +46,8 @@ class PopulationGroupDayTrips:
             modes: Available transport modes. Must contain at least one
                 `TransportMode`.
             activities: Activities used to build and spatialize schedules.
-                Must contain at least one `Activity` and include
-                `HomeActivity` and `OtherActivity`.
+                Must contain at least one `Activity` and include `HomeActivity`
+                and `OtherActivity`.
             surveys: Mobility surveys providing empirical activity chains. Must
                 contain at least one `MobilitySurvey`.
             parameters: Parameter container. When provided, explicit keyword
@@ -105,11 +99,11 @@ class PopulationGroupDayTrips:
             owner_name="PopulationGroupDayTrips",
         )
 
-        costs_aggregator = TransportCostsAggregator(modes)
+        transport_costs = TransportCosts(modes)
 
         weekday_run = Run(
             population=population,
-            costs_aggregator=costs_aggregator,
+            transport_costs=transport_costs,
             activities=activities,
             modes=modes,
             surveys=surveys,
@@ -120,7 +114,7 @@ class PopulationGroupDayTrips:
 
         weekend_run = Run(
             population=population,
-            costs_aggregator=costs_aggregator,
+            transport_costs=transport_costs,
             activities=activities,
             modes=modes,
             surveys=surveys,
@@ -185,8 +179,8 @@ class PopulationGroupDayTrips:
                 the simulation.
 
         Raises:
-            ValueError: If no activities are provided, or if `HomeActivity`
-                or `OtherActivity` is missing.
+            ValueError: If no activities are provided, or if `HomeActivity` or
+                `OtherActivity` is missing.
             TypeError: If any element is not an `Activity` instance.
         """
         if not activities:
@@ -200,14 +194,10 @@ class PopulationGroupDayTrips:
                 )
 
         if not any(isinstance(a, OtherActivity) for a in activities):
-            raise ValueError(
-                "PopulationGroupDayTrips `activities` argument should contain an `OtherActivity`."
-            )
+            raise ValueError("PopulationGroupDayTrips `activities` argument should contain an `OtherActivity`.")
 
         if not any(isinstance(a, HomeActivity) for a in activities):
-            raise ValueError(
-                "PopulationGroupDayTrips `activities` argument should contain a `HomeActivity`."
-            )
+            raise ValueError("PopulationGroupDayTrips `activities` argument should contain a `HomeActivity`.")
 
     def _validate_modes(self, modes: List[TransportMode]) -> None:
         """Validate the transport modes passed to the wrapper constructor.

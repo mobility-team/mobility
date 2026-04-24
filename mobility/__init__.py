@@ -56,7 +56,6 @@ from .runtime.parameter_profiles import (
     ListParameterProfile,
     ParameterProfile,
     ScalarParameterProfile,
-    SimulationStep,
 )
 
 from .transport.graphs.modified.modifiers import (

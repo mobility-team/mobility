@@ -18,7 +18,7 @@ class VehicleODFlowsAsset(FileAsset):
 
     def __init__(
         self,
-        vehicle_od_flows: pd.DataFrame,
+        vehicle_od_flows: pd.DataFrame | None,
         *,
         run_key: str,
         is_weekday: bool,
@@ -38,10 +38,33 @@ class VehicleODFlowsAsset(FileAsset):
         self._vehicle_od_flows = vehicle_od_flows
         super().__init__(inputs, cache_path)
 
+    @staticmethod
+    def from_inputs(
+        *,
+        run_key: str,
+        is_weekday: bool,
+        iteration: int,
+        mode_name: str,
+    ) -> "VehicleODFlowsAsset":
+        return VehicleODFlowsAsset(
+            vehicle_od_flows=None,
+            run_key=run_key,
+            is_weekday=is_weekday,
+            iteration=iteration,
+            mode_name=mode_name,
+        )
+
     def get_cached_asset(self) -> pd.DataFrame:
         return pd.read_parquet(self.cache_path)
 
     def create_and_get_asset(self) -> pd.DataFrame:
+        if self._vehicle_od_flows is None:
+            raise ValueError(
+                "Cannot create VehicleODFlowsAsset without flow data for "
+                f"run_key={self.inputs['run_key']}, is_weekday={self.inputs['is_weekday']}, "
+                f"iteration={self.inputs['iteration']}, mode={self.inputs['mode_name']}. "
+                "Use `from_inputs(...)` only to reconstruct an already cached asset."
+            )
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Ensure the file always exists and has the expected schema, even if empty.

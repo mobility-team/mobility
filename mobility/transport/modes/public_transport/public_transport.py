@@ -2,7 +2,7 @@ import logging
 
 from typing import List
 
-from mobility.runtime.parameter_profiles import SimulationStep, resolve_model_for_step
+from mobility.runtime.parameter_profiles import resolve_model_for_iteration
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.modes.core.transport_mode import TransportMode, TransportModeParameters
 from mobility.transport.modes.core.mode_registry import ModeRegistry
@@ -147,11 +147,11 @@ class PublicTransportMode(TransportMode):
         travel_costs = self.inputs["travel_costs"].audit_gtfs()
         return travel_costs
 
-    def resolve_for_step(self, step: SimulationStep) -> "PublicTransportMode":
+    def for_iteration(self, iteration: int) -> "PublicTransportMode":
         """Return a PT mode with routing parameters resolved for one iteration."""
-
+        
         routing_parameters = self.inputs["travel_costs"].inputs["parameters"]
-        resolved_routing_parameters = resolve_model_for_step(routing_parameters, step)
+        resolved_routing_parameters = resolve_model_for_iteration(routing_parameters, iteration)
 
         if resolved_routing_parameters == routing_parameters:
             return self
@@ -200,5 +200,3 @@ class PublicTransportParameters(TransportModeParameters):
     ghg_intensity: float = 0.05
     multimodal: bool = True
     survey_ids: list[str] = Field(default_factory=lambda: list(DEFAULT_PUBLIC_TRANSPORT_SURVEY_IDS))
-
-

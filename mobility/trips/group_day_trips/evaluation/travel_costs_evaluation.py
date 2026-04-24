@@ -31,7 +31,8 @@ class TravelCostsEvaluation:
             self,
             ref_costs: List,
             variable: str = "time",
-            plot: bool = True
+            plot: bool = True,
+            iteration: int | None = None,
         ):
         """
         Compares the travel costs (time, distance) of the model with reference 
@@ -75,8 +76,14 @@ class TravelCostsEvaluation:
         pl.DataFrame
             Input ref_costs dataframe with a distance_model and a time_model column.
         """
+        if iteration is None:
+            iteration = int(self.results.parameters.n_iterations)
 
-        costs = self.results.costs
+        costs = ( 
+            self.results.run.transport_costs
+            .asset_for_iteration(self.results.run, iteration)
+            .get_costs_by_od_and_mode(["time", "distance"])
+        )
         transport_zones = self.results.transport_zones.get()
         
         ref_costs = self.convert_to_dataframe(ref_costs)
@@ -84,7 +91,7 @@ class TravelCostsEvaluation:
         
         ref_costs = (
             ref_costs
-            .join(costs.collect(), on=["from", "to", "mode"], suffix="_model")
+            .join(costs, on=["from", "to", "mode"], suffix="_model")
         )
         
         if plot:
@@ -93,6 +100,7 @@ class TravelCostsEvaluation:
                 x=variable,
                 y=variable + "_model",
                 color="mode",
+                title=f"Travel costs comparison at iteration {iteration}",
                 hover_data={
                     "origin": True,
                     "destination": True,

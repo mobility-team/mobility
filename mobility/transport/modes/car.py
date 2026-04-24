@@ -66,13 +66,13 @@ class CarMode(TransportMode):
             
         
         travel_costs = PathTravelCosts(
-            mode_name, 
-            transport_zones, 
-            routing_parameters, 
-            osm_capacity_parameters,
-            mode_congestion,
-            congestion_flows_scaling_factor,
-            speed_modifiers
+            mode_name=mode_name,
+            transport_zones=transport_zones,
+            routing_parameters=routing_parameters,
+            osm_capacity_parameters=osm_capacity_parameters,
+            congestion=mode_congestion,
+            congestion_flows_scaling_factor=congestion_flows_scaling_factor,
+            speed_modifiers=speed_modifiers,
         )
         
         generalized_cost = PathGeneralizedCost(
@@ -119,5 +119,3 @@ class CarParameters(TransportModeParameters):
     survey_ids: list[str] = Field(
         default_factory=lambda: ["3.30", "3.31", "3.32", "3.33", "3.39"]
     )
-
-

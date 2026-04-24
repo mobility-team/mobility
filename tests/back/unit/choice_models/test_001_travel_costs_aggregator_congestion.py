@@ -6,7 +6,7 @@ import pandas as pd
 from pydantic import BaseModel
 
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
-from mobility.transport.costs.transport_costs_aggregator import TransportCostsAggregator
+from mobility.transport.costs.transport_costs import TransportCosts
 
 
 class _FakeModeParameters(BaseModel):
@@ -26,7 +26,7 @@ def _make_mode(*, name: str, congestion: bool):
 def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled():
     # Use a minimal mode stub with congestion enabled so the test only exercises
     # the aggregator decision logic, not the real routing/cost stack.
-    aggregator = TransportCostsAggregator(modes=[_make_mode(name="car", congestion=True)])
+    aggregator = TransportCosts(modes=[_make_mode(name="car", congestion=True)])
     od_flows_by_mode = pl.DataFrame(
         {"from": [1], "to": [2], "mode": ["car"], "flow_volume": [10.0]}
     )
@@ -36,13 +36,13 @@ def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled():
     # Mock the expensive side effects and the final cost lookup: this test is a
     # regression guard for "did we trigger congestion recomputation at all?".
     with patch.object(aggregator, "build_congestion_state", return_value=congestion_state) as build_mock:
-        with patch.object(aggregator, "get", return_value="costs") as get_mock:
-            result_costs, result_congestion_state = aggregator.get_costs_for_next_iteration(
+        with patch.object(aggregator, "asset_for_congestion_state", return_value=SimpleNamespace(
+            get_costs_by_od=lambda metrics: "costs"
+        )) as asset_mock:
+            result_costs = aggregator.get_costs_for_next_iteration(
+                run=SimpleNamespace(inputs_hash="run-key", is_weekday=True),
                 iteration=1,
-                cost_update_interval=1,
                 od_flows_by_mode=od_flows_by_mode,
-                run_key="run-key",
-                is_weekday=True,
             )
 
     # If congestion is enabled and the update interval matches, the aggregator
@@ -53,9 +53,8 @@ def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled():
         is_weekday=True,
         iteration=1,
     )
-    get_mock.assert_called_once_with(congestion=True, congestion_state=congestion_state)
+    asset_mock.assert_called_once_with(congestion_state)
     assert result_costs == "costs"
-    assert result_congestion_state is congestion_state
 
 
 def test_vehicle_od_flow_snapshot_hash_differs_between_weekday_and_weekend():
