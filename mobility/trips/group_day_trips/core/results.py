@@ -438,13 +438,10 @@ class RunResults:
         )
 
         if compare_with is not None:
-            try:
-                compare_with.get()
-                prefix = "weekday" if self.is_weekday else "weekend"
-                plan_steps_comp = pl.scan_parquet(compare_with.cache_path[f"{prefix}_plan_steps"])
-                costs_comp = pl.scan_parquet(compare_with.cache_path[f"{prefix}_costs"])
-            except Exception:
-                raise Exception("The PopulationGroupDayTrips to compare with did not work. Try to run it alone?")
+            compare_with.get()
+            prefix = "weekday" if self.is_weekday else "weekend"
+            plan_steps_comp = pl.scan_parquet(compare_with.cache_path[f"{prefix}_plan_steps"])
+            costs_comp = pl.scan_parquet(compare_with.cache_path[f"{prefix}_costs"])
 
             metric_comp = metric + "_comp"
             metric_per_person_comp = metric + "_per_person_comp"

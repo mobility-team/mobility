@@ -205,7 +205,7 @@ class IterationCompleteAsset(FileAsset):
             try:
                 with open(path, "r", encoding="utf-8") as file:
                     marker = json.load(file)
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 continue
 
             if marker.get("run_key") != run_key or marker.get("is_weekday") != is_weekday:

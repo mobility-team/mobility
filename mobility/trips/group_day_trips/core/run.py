@@ -503,8 +503,8 @@ class Run(FileAsset):
         if self.transport_costs.has_enabled_congestion() is False:
             return
 
-        update_interval = int(self.parameters.n_iter_per_cost_update)
-        if update_interval <= 0:
+        update_interval = self.parameters.n_iter_per_cost_update
+        if update_interval == 0:
             return
 
         for completed_iteration in range(1, int(self.parameters.n_iterations) + 1):
@@ -552,14 +552,10 @@ class Run(FileAsset):
         congestion_state: CongestionState,
     ) -> None:
         """Remove one mode's congestion-derived travel-cost and graph caches."""
-        if travel_costs is None or not hasattr(travel_costs, "asset_for_congestion_state"):
+        if travel_costs is None:
             return
 
-        try:
-            variant = travel_costs.asset_for_congestion_state(congestion_state)
-        except Exception:
-            return
-
+        variant = travel_costs.asset_for_congestion_state(congestion_state)
         self._remove_congestion_variant_artifact_tree(variant)
 
     def _remove_congestion_variant_artifact_tree(self, variant) -> None:
@@ -584,10 +580,7 @@ class Run(FileAsset):
             and nested_flow_asset is not None
             and hasattr(nested_travel_costs, "asset_for_flow_asset")
         ):
-            try:
-                nested_variant = nested_travel_costs.asset_for_flow_asset(nested_flow_asset)
-            except Exception:
-                return
+            nested_variant = nested_travel_costs.asset_for_flow_asset(nested_flow_asset)
             self._remove_congestion_variant_artifact_tree(nested_variant)
 
     @staticmethod
