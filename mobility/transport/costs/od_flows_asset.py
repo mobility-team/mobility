@@ -60,10 +60,8 @@ class VehicleODFlowsAsset(FileAsset):
     def create_and_get_asset(self) -> pd.DataFrame:
         if self._vehicle_od_flows is None:
             raise ValueError(
-                "Cannot create VehicleODFlowsAsset without flow data for "
-                f"run_key={self.inputs['run_key']}, is_weekday={self.inputs['is_weekday']}, "
-                f"iteration={self.inputs['iteration']}, mode={self.inputs['mode_name']}. "
-                "Use `from_inputs(...)` only to reconstruct an already cached asset."
+                "Cannot create VehicleODFlowsAsset without flow data. "
+                "Use `from_inputs(...)` only to reconstruct an already persisted asset."
             )
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
 

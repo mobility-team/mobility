@@ -13,7 +13,8 @@ class RunState:
     stay_home_plan: pl.DataFrame
     opportunities: pl.DataFrame
     current_plans: pl.DataFrame
-    remaining_opportunities: pl.DataFrame
+    candidate_plan_steps: pl.DataFrame | None
+    destination_saturation: pl.DataFrame
     costs: pl.DataFrame
     start_iteration: int
     current_plan_steps: pl.DataFrame | None = None

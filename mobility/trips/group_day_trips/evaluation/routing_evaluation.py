@@ -507,6 +507,7 @@ class RoutingEvaluation:
             .join(
                 ( 
                     routes.select([
+                        "ref_index", "n_clusters", "building_id", "building_id_to",
                         "origin", "local_admin_unit_id", "from",
                         "destination", "local_admin_unit_id_to", "to",
                         "vertex_id", "vertex_id_to"
@@ -518,9 +519,18 @@ class RoutingEvaluation:
                 ),
                 on=["origin_vertex_id", "destination_vertex_id"]
             )
-            
-
             .with_columns(
+                route_unique_id=(
+                    pl.concat_str(
+                        [
+                            pl.col("ref_index").cast(pl.String),
+                            pl.col("n_clusters").cast(pl.String),
+                            pl.col("building_id").cast(pl.String),
+                            pl.col("building_id_to").cast(pl.String),
+                        ],
+                        separator="-",
+                    )
+                ),
                 path_id=pl.struct("origin_vertex_id", "destination_vertex_id", "path_section_id").rank("dense")-1
             )
             .sort(["origin_vertex_id", "destination_vertex_id", "path_section_id"])
@@ -559,7 +569,7 @@ class RoutingEvaluation:
         
         gdf.to_file(
             path,
-            layer="graph",
+            layer="routes",
             driver="GPKG"
         )
         

@@ -24,7 +24,6 @@ class MobilitySurvey(FileAsset):
         self,
         survey_name: str | None = None,
         country: str | None = None,
-        seq_prob_cutoff: float | None = None,
         parameters: "MobilitySurveyParameters" | None = None,
     ):
         """Initialize mobility survey asset inputs and cache paths.
@@ -32,7 +31,6 @@ class MobilitySurvey(FileAsset):
         Args:
             survey_name: Survey dataset identifier.
             country: Country code associated with the survey.
-            seq_prob_cutoff: Sequence probability cutoff used in chain filtering.
             parameters: Optional pre-built pydantic parameters model.
         """
         parameters = self.prepare_parameters(
@@ -41,7 +39,6 @@ class MobilitySurvey(FileAsset):
             explicit_args={
                 "survey_name": survey_name,
                 "country": country,
-                "seq_prob_cutoff": seq_prob_cutoff,
             },
             required_fields=["survey_name", "country"],
             owner_name="MobilitySurvey",
@@ -86,345 +83,185 @@ class MobilitySurvey(FileAsset):
         return {k: pd.read_parquet(path) for k, path in self.cache_path.items()}
     
 
-    def get_chains_probability(self, motives, modes):
-        
-        motive_mapping = {
-            motive_id: m.name
-            for m in motives
-            if m.name != "other"
-            for motive_id in (m.inputs["parameters"].survey_ids or [])
-        }
-        
-        mode_mapping = {
-            mode_id: m.inputs["parameters"].name
-            for m in modes
-            for mode_id in (m.inputs["parameters"].survey_ids or [])
-        }
-        
-        mode_names = [m.inputs["parameters"].name for m in modes] + ["other"]
+    def _get_survey_plan_mappings(
+        self,
+        activities,
+        modes,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Return raw-to-canonical survey mappings for activities and modes."""
 
-        days_trips = pl.from_pandas(self.get()["days_trip"].reset_index())
-        short_trips = pl.from_pandas(self.get()["short_trips"].reset_index())
-        
-        # About 3 % of the sequences for the swiss MRMT survey are incomplete 
-        # (missing steps). For now they are filtered out to avoid bugs in 
-        # further processing steps.
-        # TO DO : check if the issue comes from the survey parsing or from the 
-        # raw survey data.
+        activity_mapping = {
+            activity_id: activity.name
+            for activity in activities
+            if activity.name != "other"
+            for activity_id in (activity.inputs["parameters"].survey_ids or [])
+        }
+        mode_mapping = {
+            mode_id: mode.inputs["parameters"].name
+            for mode in modes
+            for mode_id in (mode.inputs["parameters"].survey_ids or [])
+        }
+        return activity_mapping, mode_mapping
+
+    def prepare_survey_plans(self, activities, modes) -> pl.DataFrame:
+        """Return a cleaned step-level survey plan table before aggregation."""
+
+        activity_mapping, mode_mapping = self._get_survey_plan_mappings(activities, modes)
+
+        cached = self.get()
+        days_trips = pl.from_pandas(cached["days_trip"].reset_index())
+        short_trips = pl.from_pandas(cached["short_trips"].reset_index())
+
+        # About 3 % of the sequences for the swiss MRMT survey are incomplete
+        # (missing steps). For now they are filtered out to avoid bugs in later
+        # processing steps.
         incomplete_sequences = (
-            short_trips
-            .group_by(["individual_id", "day_id"])
+            short_trips.group_by(["individual_id", "day_id"])
             .agg(
-                min_step = pl.col("daily_trip_index").min(),
-                max_step = pl.col("daily_trip_index").max(),
-                n_steps = pl.col("daily_trip_index").n_unique(),
+                min_step=pl.col("daily_trip_index").min(),
+                max_step=pl.col("daily_trip_index").max(),
+                n_steps=pl.col("daily_trip_index").n_unique(),
             )
-            .with_columns(
-                dense_ok=(pl.col("min_step")==1) & (pl.col("max_step")==pl.col("n_steps"))
-            )
+            .with_columns(dense_ok=(pl.col("min_step") == 1) & (pl.col("max_step") == pl.col("n_steps")))
             .filter(~pl.col("dense_ok"))
-            .select(["individual_id","day_id"])
+            .select(["individual_id", "day_id"])
         )
-        
-        
+
         short_trips_fixed_times = (
-            
-            short_trips
-            .select(["day_id", "individual_id", "daily_trip_index", "departure_time", "arrival_time"])
+            short_trips.select(["day_id", "individual_id", "daily_trip_index", "departure_time", "arrival_time"])
             .unpivot(index=["day_id", "individual_id", "daily_trip_index"], value_name="event_time")
-            
-            .with_columns(
-                is_arrival=pl.col("variable") == "arrival_time"
-            )
-            
+            .with_columns(is_arrival=pl.col("variable") == "arrival_time")
             .sort(["day_id", "individual_id", "daily_trip_index", "is_arrival"])
-            
-            # Force time to be in the 0 to 24 hour interval
-            .with_columns(
-                event_time=pl.col("event_time").mod(24.0*3600.0)
-            )
-        
-            # Detect day changes when the times suddenly drop a lot
+            .with_columns(event_time=pl.col("event_time").mod(24.0 * 3600.0))
             .with_columns(
                 prev_event_time=pl.col("event_time").shift(n=1).over(["day_id", "individual_id"]),
-                next_event_time=pl.col("event_time").shift(n=-1).over(["day_id", "individual_id"])
+                next_event_time=pl.col("event_time").shift(n=-1).over(["day_id", "individual_id"]),
             )
             .with_columns(
-                day_change=( 
+                day_change=(
                     (
-                        ((pl.col("event_time") - pl.col("prev_event_time")) < -12.0*3600.0)
-                        & ((pl.col("next_event_time") - pl.col("prev_event_time")) < -12.0*3600.0).fill_null(True)
+                        ((pl.col("event_time") - pl.col("prev_event_time")) < -12.0 * 3600.0)
+                        & ((pl.col("next_event_time") - pl.col("prev_event_time")) < -12.0 * 3600.0).fill_null(True)
                     )
                     .fill_null(False)
                     .cast(pl.Int8())
                 )
             )
-            .with_columns(
-                n_day_changes=pl.col("day_change").cum_sum().over(["day_id", "individual_id"])
-            )
-            
-            # Compute the time in seconds after 00:00:00 of the first day
-            .with_columns(
-                event_time_corr=pl.col("event_time") + 24.0*3600.0*pl.col("n_day_changes")
-            )
-            
-            # Force time to increase
-            .with_columns(
-                event_time_corr=pl.col("event_time_corr").cum_max().over(["day_id", "individual_id"])
-            )
-            
-            .pivot(
-                on="variable",
-                index=["day_id", "individual_id", "daily_trip_index"],
-                values=["event_time_corr"]
-            )
-            
-        )
-        
-        short_trips = (
-        
-            short_trips
-            .drop(["departure_time", "arrival_time"])
-            .join(
-                short_trips_fixed_times,
-                on=["day_id", "individual_id", "daily_trip_index"]
-            )
-            
-        )
-        
-        
-
-        sequences_by_motives_and_modes = (
-            
-            days_trips.select(["day_id", "day_of_week", "pondki"])
-            .join(short_trips, on="day_id")
-            .join(incomplete_sequences, on=["individual_id","day_id"], how="anti")
+            .with_columns(n_day_changes=pl.col("day_change").cum_sum().over(["day_id", "individual_id"]))
+            .with_columns(event_time_corr=pl.col("event_time") + 24.0 * 3600.0 * pl.col("n_day_changes"))
+            .with_columns(event_time_corr=pl.col("event_time_corr").cum_max().over(["day_id", "individual_id"]))
+            .pivot(on="variable", index=["day_id", "individual_id", "daily_trip_index"], values=["event_time_corr"])
             .rename({"daily_trip_index": "seq_step_index"})
-            .sort("seq_step_index")
+        )
+
+        plans = (
+            days_trips.select(["day_id", "day_of_week", "pondki", "city_category", "csp", "n_cars"])
+            .join(short_trips, on="day_id")
+            .join(incomplete_sequences, on=["individual_id", "day_id"], how="anti")
+            .rename({"daily_trip_index": "seq_step_index"})
+            .sort(["day_id", "individual_id", "seq_step_index"])
+            .drop(["departure_time", "arrival_time"])
+            .join(short_trips_fixed_times, on=["day_id", "individual_id", "seq_step_index"])
             .with_columns(
                 is_weekday=pl.col("day_of_week") < 5,
-                departure_time=pl.col("departure_time")/3600.0,
-                arrival_time=pl.col("arrival_time")/3600.0
+                departure_time=pl.col("departure_time") / 3600.0,
+                arrival_time=pl.col("arrival_time") / 3600.0,
             )
-
-            # Map detailed motives to grouped motives
-            .with_columns(
-                pl.col("motive").cast(pl.Utf8).replace_strict(motive_mapping, default="other")
-            )
-            
-            # Map detailed modes to grouped modes
-            .with_columns(
-                mode=pl.col("mode_id").cast(pl.Utf8).replace_strict(mode_mapping, default="other")
-            )
-                     
-            # Remove motive sequences that are longer than 10 motives to speed 
-            # up further processing steps. We lose approx. 1 % of the travelled 
-            # distance.
-            # TO DO : break up these motive sequences into smaller ones.
-            .with_columns(
-                max_seq_step_index=( 
-                    pl.col("seq_step_index")
-                    .max().over(["individual_id", "day_id"])
-                )
-            )
-            
+            .with_columns(activity=pl.col("motive").cast(pl.Utf8).replace_strict(activity_mapping, default="other"))
+            .with_columns(mode=pl.col("mode_id").cast(pl.Utf8).replace_strict(mode_mapping, default="other"))
+            .with_columns(max_seq_step_index=pl.col("seq_step_index").max().over(["individual_id", "day_id"]))
             .filter(pl.col("max_seq_step_index") < 11)
-            
-            # Remove trips that go over midnight of the survey day because 
-            # we model a single day of travel
-            # TO DO : see how to handle those trips ?
-            .filter((pl.col("departure_time") < 24.0) &( pl.col("arrival_time") < 24.0))
-            
-            # Force motive sequences to end up at home because further processing
-            # steps can only work on such sequences. Approx. 5 % of the trips 
-            # are affected.
-            # TO DO : handle this special case in the destination / mode choice 
-            # algos.
+            .filter((pl.col("departure_time") < 24.0) & (pl.col("arrival_time") < 24.0))
             .with_columns(
-                motive=pl.when(
-                    (pl.col("seq_step_index") == pl.col("max_seq_step_index")) & 
-                    (pl.col("motive") != "home")
-                ).then(
-                    pl.lit("home")
-                ).otherwise(
-                    pl.col("motive")
+                activity=pl.when(
+                    (pl.col("seq_step_index") == pl.col("max_seq_step_index")) & (pl.col("activity") != "home")
+                )
+                .then(pl.lit("home"))
+                .otherwise(pl.col("activity"))
+            )
+            .with_columns(
+                activity_seq=pl.col("activity").str.join("-").over(["individual_id", "day_id"]),
+                mode_seq=pl.col("mode").str.join("-").over(["individual_id", "day_id"]),
+                travel_time=pl.col("arrival_time") - pl.col("departure_time"),
+            )
+            .with_columns(
+                next_departure_time=(
+                    pl.col("departure_time").shift(n=-1).over(["day_id", "individual_id"]).fill_null(pl.col("arrival_time"))
                 )
             )
-        
-                
-            # Combine motives within each sequence to identify unique sequences
-            .with_columns(
-                motive_seq=( 
-                    pl.col("motive")
-                    .str.join("-")
-                    .over(["individual_id", "day_id"])
-                ),
-                mode_seq=( 
-                    pl.col("mode")
-                    .str.join("-")
-                    .over(["individual_id", "day_id"])
-                ),
-                travel_time=(pl.col("arrival_time") - pl.col("departure_time"))
-            ) 
-            
-            .with_columns(
-                next_departure_time=( 
-                    pl.col("departure_time")
-                    .shift(n=-1)
-                    .over(["day_id", "individual_id"])
-                    .fill_null(pl.col("arrival_time"))
-                )
-            )
-            .with_columns(
-                duration_morning=(
-                    (pl.min_horizontal([pl.col("next_departure_time"), pl.lit(10.0)]) - pl.max_horizontal([pl.col("arrival_time"), pl.lit(0.0)]))
-                    .clip(0.0, 10.0)
-                    +
-                    (pl.min_horizontal([pl.col("next_departure_time"), pl.lit(24.0+10.0)]) - pl.max_horizontal([pl.col("arrival_time"), pl.lit(24.0)]))
-                    .clip(0.0, 10.0)
-                ).clip(0.0, 10.0),
-                duration_midday=(
-                    (pl.min_horizontal([pl.col("next_departure_time"), pl.lit(16.0)]) - pl.max_horizontal([pl.col("arrival_time"), pl.lit(10.0)]))
-                    .clip(0.0, 6.0)
-                    +
-                    (pl.min_horizontal([pl.col("next_departure_time"), pl.lit(24.0+16.0)]) - pl.max_horizontal([pl.col("arrival_time"), pl.lit(24.0+10.0)]))
-                    .clip(0.0, 6.0)
-                ).clip(0.0, 6.0),
-                duration_evening=(
-                    (pl.min_horizontal([pl.col("next_departure_time"), pl.lit(24.0)]) - pl.max_horizontal([pl.col("arrival_time"), pl.lit(16.0)]))
-                    .clip(0.0, 8.0)
-                    +
-                    (pl.min_horizontal([pl.col("next_departure_time"), pl.lit(24.0+24.0)]) - pl.max_horizontal([pl.col("arrival_time"), pl.lit(24.0+16.0)]))
-                    .clip(0.0/60.0, 8.0)
-                ).clip(0.0, 8.0)
-            )
-            
-            # Compute the average departure and arrival time of each trip in each sequence
-            .group_by([
-                "is_weekday", "city_category", "csp", "n_cars",
-                "motive_seq", "motive", "mode_seq", "mode",
-                "seq_step_index"
-            ])
-            .agg(
-                pondki=pl.col("pondki").sum(),
-                duration_morning=(pl.col("duration_morning")*pl.col("pondki")).sum()/pl.col("pondki").sum(),
-                duration_midday=(pl.col("duration_midday")*pl.col("pondki")).sum()/pl.col("pondki").sum(),
-                duration_evening=(pl.col("duration_evening")*pl.col("pondki")).sum()/pl.col("pondki").sum(),
-                travel_time=(pl.col("travel_time")*pl.col("pondki")).sum()/pl.col("pondki").sum(),
-                distance=(pl.col("distance")*pl.col("pondki")).sum()/pl.col("pondki").sum()
-            )
-            .sort(["seq_step_index"])
-        
-            
-            .select([
-                "is_weekday", "city_category", "csp", "n_cars",
-                "motive_seq", "motive",
-                "mode_seq", "mode",
-                "seq_step_index",
-                "duration_morning", "duration_midday", "duration_evening",
-                "distance",
-                "travel_time",
-                "pondki"
-            ])
-            
-        )
-                    
-        # Some rare schedules are still more than 24 hour long at this point
-        # We remove them for now !
-        # TO DO : find out what's wrong with the correction and filtering logic above
-        sequences_sup_24 = ( 
-            sequences_by_motives_and_modes
-            .group_by(["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq"])
-            .agg(
-                sequence_duration=(pl.col("duration_morning") + pl.col("duration_midday") + pl.col("duration_evening")).sum()
-            )
-            .filter(pl.col("sequence_duration") > 24.0)
-            .drop("sequence_duration")
-        )
-        
-        sequences_by_motives_and_modes = (
-            sequences_by_motives_and_modes
-            .join(
-                sequences_sup_24,
-                on=["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq"],
-                how="anti"
+            .select(
+                [
+                    "day_id",
+                    "individual_id",
+                    "seq_step_index",
+                    "is_weekday",
+                    "day_of_week",
+                    "city_category",
+                    "csp",
+                    "n_cars",
+                    "activity",
+                    "mode",
+                    "departure_time",
+                    "arrival_time",
+                    "travel_time",
+                    "next_departure_time",
+                    "distance",
+                    "pondki",
+                    "activity_seq",
+                    "mode_seq",
+                    "max_seq_step_index",
+                ]
             )
         )
-        
-        # Compute the probability of each subsequence, keeping only the first 
-        # x % of the contribution to the average distance for each population 
-        # group
-        cutoff = self.inputs["parameters"].seq_prob_cutoff
-        
-        p_seq = (
-            
-            # Compute the probability of each sequence, given day status, city category, 
-            # csp and number of cars in the household
-            sequences_by_motives_and_modes
-            .group_by(["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq"])
+
+        # Some rare schedules are still more than 24 hours long at this point.
+        sequences_sup_24 = plans.group_by(["is_weekday", "city_category", "csp", "n_cars", "activity_seq", "mode_seq"]).agg(
+            sequence_duration=pl.col("travel_time").sum()
+        ).filter(pl.col("sequence_duration") > 24.0).drop("sequence_duration")
+
+        plans = plans.join(
+            sequences_sup_24,
+            on=["is_weekday", "city_category", "csp", "n_cars", "activity_seq", "mode_seq"],
+            how="anti",
+        )
+
+        survey_plans = (
+            plans.select(["individual_id", "day_id"])
+            .unique()
+            .sort(["individual_id", "day_id"])
+            .with_row_index("survey_plan_id")
+            .with_columns(survey_plan_id=pl.col("survey_plan_id").cast(pl.UInt32))
+        )
+
+        return (
+            plans.join(survey_plans, on=["individual_id", "day_id"])
+            .drop("day_of_week")
+        )
+
+    def get_plans_probability(self, activities, modes):
+        """Return raw timed survey plans with segment-level survey frequencies."""
+
+        plans = self.prepare_survey_plans(activities, modes)
+        plan_probabilities = (
+            plans.group_by(["survey_plan_id", "is_weekday", "city_category", "csp", "n_cars"])
             .agg(
                 pondki=pl.col("pondki").first(),
-                distance=pl.col("distance").sum()
             )
-            
             .with_columns(
-                p_seq=(
-                    pl.col("pondki")
-                    /
-                    pl.col("pondki").sum().over(["is_weekday", "city_category", "csp", "n_cars"])
-                )
+                p_plan=pl.col("pondki") / pl.col("pondki").sum().over(["is_weekday", "city_category", "csp", "n_cars"])
             )
-            
-            .with_columns(
-                distance_p=pl.col("distance")*pl.col("p_seq")
-            )
-            
-            .sort("distance_p", descending=True)
-            
-            .with_columns(
-                distance_p_cum_share=(
-                    pl.col("distance_p").cum_sum().over(["is_weekday", "city_category", "csp", "n_cars"])
-                    /
-                    pl.col("distance_p").sum().over(["is_weekday", "city_category", "csp", "n_cars"])
-                )
-            )
-            
-            # Filter subsequences
-            .with_columns(
-                group_count=pl.len().over(["is_weekday", "city_category", "csp", "n_cars"]),
-                cross_threshold=(
-                    (pl.col("distance_p_cum_share") >= cutoff) & 
-                    (pl.col("distance_p_cum_share").shift(1).over(["is_weekday", "city_category", "csp", "n_cars"]) < cutoff)
-                )
-            )
-            
-            .filter(
-                (pl.col("distance_p_cum_share") < cutoff)
-                | (pl.col("cross_threshold"))
-                | (pl.col("group_count") == 1)
-            )
-            
-            # Rescale probabilities
-            .with_columns(
-                p_seq=pl.col("p_seq")/pl.col("p_seq").sum().over(["is_weekday", "city_category", "csp", "n_cars"])
-            )
-            
-            .select([
-                "is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq", "p_seq"
-            ])
-            
+            .select(["survey_plan_id", "is_weekday", "city_category", "csp", "n_cars", "p_plan"])
         )
 
-        
-        sequences_by_motives_and_modes = (
-            sequences_by_motives_and_modes.drop("pondki")
-            .join(p_seq, on=["is_weekday", "city_category", "csp", "n_cars", "motive_seq", "mode_seq"])    
+        return (
+            plans.join(
+                plan_probabilities,
+                on=["survey_plan_id", "is_weekday", "city_category", "csp", "n_cars"],
+                how="left",
+            )
+            .drop(["pondki", "mode_seq", "max_seq_step_index"])
         )
-        
-        return sequences_by_motives_and_modes
-            
-            
-        
+
 class MobilitySurveyParameters(BaseModel):
     """Parameters used to configure a mobility survey asset."""
 
@@ -445,18 +282,3 @@ class MobilitySurveyParameters(BaseModel):
             description="ISO-like country code used to map surveys to population inputs.",
         ),
     ]
-
-    seq_prob_cutoff: Annotated[
-        float,
-        Field(
-            default=0.5,
-            gt=0.0,
-            le=1.0,
-            title="Sequence probability cutoff",
-            description=(
-                "Cumulative contribution cutoff used to keep the most relevant "
-                "motive/mode sequences per population group."
-            ),
-        ),
-    ]
-

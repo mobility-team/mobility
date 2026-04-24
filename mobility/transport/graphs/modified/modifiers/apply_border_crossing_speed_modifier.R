@@ -19,17 +19,17 @@ apply_border_crossing_speed_modifier <- function(
 
     # Create sf line segments for all graph edges
     data <- as.data.table(cppr_graph$data)
+    data[, edge_id := .I]
     dict <- as.data.table(cppr_graph$dict)
     edges <- merge(data, dict, by.x = "from", by.y = "id")
     edges <- merge(edges, dict, by.x = "to", by.y = "id", suffixes = c("_from", "_to"))
     edges <- merge(edges, vertices, by.x = "ref_from", by.y = "vertex_id")
     edges <- merge(edges, vertices, by.x = "ref_to", by.y = "vertex_id", suffixes = c("_from", "_to"))
-    edges[, edge_id := 1:.N]
     
     edges <- rbindlist(
       list(
-        edges[, list(from, to, edge_id, x = x_from, y = y_from)],
-        edges[, list(from, to, edge_id, x = x_to, y = y_to)]
+        edges[, list(edge_id, x = x_from, y = y_from)],
+        edges[, list(edge_id, x = x_to, y = y_to)]
       )
     )
     
@@ -52,8 +52,7 @@ apply_border_crossing_speed_modifier <- function(
     index <- st_intersects(edges_sf, borders)
     index <- lengths(index) > 0
     
-    from_ids <- edges_sf$from[index]
-    to_ids <- edges_sf$to[index]
+    edge_ids <- edges_sf$edge_id[index]
     
     # Convert the max speed to m/s and the time penalty to s to match the graph units
     max_speed <- max_speed/3.6
@@ -65,18 +64,10 @@ apply_border_crossing_speed_modifier <- function(
     data[, speed := cppr_graph$attrib$aux/dist]
     
     # Cap the speed of the edges that go through a border
-    data[, speed := ifelse(
-      data$from %in% from_ids & data$to %in% to_ids,
-      pmin(max_speed, speed),
-      speed
-    )]
+    data[edge_id %in% edge_ids, speed := pmin(max_speed, speed)]
     
     # Recompute the travel time and add the time penalty for those edges
-    data[, dist := ifelse(
-      data$from %in% from_ids & data$to %in% to_ids,
-      cppr_graph$attrib$aux/speed + time_penalty,
-      dist
-    )]
+    data[edge_id %in% edge_ids, dist := cppr_graph$attrib$aux[edge_id]/speed + time_penalty]
     
     cppr_graph$data <- data[, list(from, to, dist)]
     

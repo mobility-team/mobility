@@ -95,7 +95,7 @@ class TransportZones(FileAsset):
         )
 
         inputs = {
-            "version": "2",
+            "version": "3.2",
             "study_area": study_area,
             "osm_buildings": osm_buildings,
             "parameters": parameters,

@@ -12,8 +12,8 @@ from mobility.transport.costs.parameters.cost_of_time_parameters import CostOfTi
 from mobility.transport.costs.path.path_generalized_cost import PathGeneralizedCost
 from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport.graphs.modified.modifiers.speed_modifier import SpeedModifier
-from pydantic import Field
 import polars as pl
+from pydantic import Field
 
 class CarMode(TransportMode):
     """

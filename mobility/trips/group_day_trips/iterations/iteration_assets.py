@@ -5,10 +5,11 @@ import pickle
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
+from ..plans.candidate_plan_steps import CandidatePlanStepsAsset
 
 
 class CurrentPlansAsset(FileAsset):
-    """Cached current plan distribution after one completed iteration."""
+    """Persisted current plan distribution after one completed iteration."""
 
     def __init__(
         self,
@@ -41,7 +42,7 @@ class CurrentPlansAsset(FileAsset):
 
 
 class CurrentPlanStepsAsset(FileAsset):
-    """Cached step-level details for the current plans after one completed iteration."""
+    """Persisted step-level details for the current plans after one completed iteration."""
 
     def __init__(
         self,
@@ -74,7 +75,11 @@ class CurrentPlanStepsAsset(FileAsset):
 
 
 class RemainingOpportunitiesAsset(FileAsset):
-    """Cached remaining opportunities after one completed iteration."""
+    """Persisted destination saturation state after one completed iteration.
+
+    The class and filename keep the legacy "remaining opportunities" name so
+    previously written iteration caches can still be resumed.
+    """
 
     def __init__(
         self,
@@ -83,9 +88,9 @@ class RemainingOpportunitiesAsset(FileAsset):
         is_weekday: bool,
         iteration: int,
         base_folder: pathlib.Path,
-        remaining_opportunities: pl.DataFrame | None = None,
+        destination_saturation: pl.DataFrame | None = None,
     ) -> None:
-        self.remaining_opportunities = remaining_opportunities
+        self.destination_saturation = destination_saturation
         inputs = {
             "version": 1,
             "run_key": run_key,
@@ -99,21 +104,15 @@ class RemainingOpportunitiesAsset(FileAsset):
         return pl.read_parquet(self.cache_path)
 
     def create_and_get_asset(self) -> pl.DataFrame:
-        if self.remaining_opportunities is None:
-            raise ValueError("Cannot save remaining opportunities without a dataframe.")
+        if self.destination_saturation is None:
+            raise ValueError("Cannot save destination saturation without a dataframe.")
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.remaining_opportunities.write_parquet(self.cache_path)
+        self.destination_saturation.write_parquet(self.cache_path)
         return self.get_cached_asset()
 
 
 class RngStateAsset(FileAsset):
-    """Cached RNG state after one completed iteration.
-
-    This stores the value returned by ``random.Random.getstate()`` so a
-    resumed run continues the same pseudo-random sequence that an uninterrupted
-    run would have used. Keeping that state alongside the cached iteration
-    tables is what preserves reproducibility after resume.
-    """
+    """Persisted RNG state after one completed iteration."""
 
     def __init__(
         self,
@@ -148,7 +147,7 @@ class RngStateAsset(FileAsset):
 
 
 class IterationCompleteAsset(FileAsset):
-    """Cached marker saying that one iteration state was fully written."""
+    """Persisted marker saying that one iteration state was fully written."""
 
     def __init__(
         self,
@@ -206,7 +205,7 @@ class IterationCompleteAsset(FileAsset):
             try:
                 with open(path, "r", encoding="utf-8") as file:
                     marker = json.load(file)
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 continue
 
             if marker.get("run_key") != run_key or marker.get("is_weekday") != is_weekday:
@@ -223,7 +222,7 @@ class IterationCompleteAsset(FileAsset):
 
 
 class TransitionEventsAsset(FileAsset):
-    """Cached transition events produced during one iteration."""
+    """Persisted transition events produced during one iteration."""
 
     def __init__(
         self,

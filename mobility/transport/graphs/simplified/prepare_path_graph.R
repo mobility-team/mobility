@@ -13,13 +13,13 @@ library(dplyr)
 
 args <- commandArgs(trailingOnly = TRUE)
 
-# args <- c(
+# args <- c( 
 #   'D:\\dev\\mobility\\mobility',
-#   'd:\\data\\mobility\\projects\\dolancourt\\b8f2f9296a57c29bb6aa2d11e02994c7-transport_zones.gpkg',
-#   'd:\\data\\mobility\\projects\\dolancourt\\dbdb0e14874405c398e1c237890c12ab-highway-osm_data.osm',
+#   'd:\\data\\mobility\\projects\\grand-geneve\\ea95e5a2d2f493ea6d032389e2f8fc96-transport_zones.gpkg',
+#   'd:\\data\\mobility\\projects\\grand-geneve\\603caa00c5f5d439f9cce20cd9aa639d-highway-osm_data.osm',
 #   'car',
 #   '{"motorway": {"capacity": 2000.0, "alpha": 0.15, "beta": 4.0}, "trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 300.0, "alpha": 0.15, "beta": 4.0}, "motorway_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}}',
-#   'd:\\data\\mobility\\projects\\dolancourt\\path_graph_car\\simplified\\957d77e3fac8b10fa874c88552c68145-car-simplified-path-graph'
+#   'd:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\00bde099cdb7f4a1c1346d3428fd26ac-car-simplified-path-graph'
 # )
 
 package_path <- args[1]
@@ -44,6 +44,7 @@ osm_capacity_parameters <- cbind(
 )
 
 source(file.path(package_path, "transport", "graphs", "core", "cpprouting_io.R"))
+source(file.path(package_path, "transport", "graphs", "core", "project_od_nodes.R"))
 
 logger <- logger(appenders = console_appender())
 
@@ -150,7 +151,7 @@ info(logger, "Extracting edges and nodes..")
 # Compute road capacity
 if (mode == "car") {
   
-  edges <- as.data.table(graph[, c(".vx0", ".vx1", "time_weighted", "highway", "lanes")])
+  edges <- as.data.table(graph[, c(".vx0", ".vx1", "time_weighted", "d", "highway", "lanes", "access")])
   edges <- merge(edges, osm_capacity_parameters, by = "highway", sort = FALSE)
   edges[, lanes := as.numeric(lanes)]
   edges[is.na(lanes) | lanes == 0, lanes := 1]
@@ -158,7 +159,7 @@ if (mode == "car") {
   
 } else {
   
-  edges <- as.data.table(graph[, c(".vx0", ".vx1", "time_weighted")])
+  edges <- as.data.table(graph[, c(".vx0", ".vx1", "time_weighted", "d")])
   
 }
 
@@ -179,62 +180,53 @@ setnames(vertices_3035, c("vertex_id", "x", "y"))
 
 
 # Create the cppRouting graph
-cppr_graph <- makegraph(
-  df = edges[, list(.vx0, .vx1, time_weighted)],
-  directed = TRUE,
-  aux = graph$d,
-  capacity = edges$capacity,
-  alpha = edges$alpha,
-  beta = edges$beta
-)
+if (mode == "car") {
+  cppr_graph <- makegraph(
+    df = edges[, list(.vx0, .vx1, time_weighted)],
+    directed = TRUE,
+    aux = edges$d,
+    capacity = edges$capacity,
+    alpha = edges$alpha,
+    beta = edges$beta
+  )
+} else {
+  cppr_graph <- makegraph(
+    df = edges[, list(.vx0, .vx1, time_weighted)],
+    directed = TRUE,
+    aux = edges$d
+  )
+}
 
-cppr_graph$attrib$n_edges <- 1.0
+cppr_graph[["attrib"]][["n_edges"]] <- rep(1.0, nrow(cppr_graph[["data"]]))
+
+if (mode == "car") {
+  direct_access_highways <- c(
+    "primary",
+    "secondary",
+    "tertiary",
+    "unclassified",
+    "residential",
+    "living_street",
+    "service",
+    "road"
+  )
+
+  direct_access <- edges$highway %in% direct_access_highways
+
+  if ("access" %in% colnames(edges)) {
+    direct_access <- direct_access & !(edges$access %in% c("private", "no"))
+    direct_access[is.na(direct_access)] <- FALSE
+  }
+
+  cppr_graph[["attrib"]][["direct_access"]] <- as.numeric(direct_access)
+}
 
 # Simplify the graph and accumulate travel times along edges that can be 
 # collapsed (avoid dropping nodes that are close to the buildings that were 
 # selected in the transport zones creation process)
 info(logger, "Simplifying graph...")
 
-cppr_graph_simple <- cpp_simplify(
-  cppr_graph,
-  rm_loop = TRUE,
-  iterate = TRUE,
-  # keep = vertices_to_keep
-)
-
-# Replace edges times costs by distance, capacity, alpha, beta to be able to 
-# aggregate these when simplifying the network
-aggregate_aux_data <- function(cppr_graph, dist_var) {
-  
-  cppr_graph$data$dist <- cppr_graph$attrib[[dist_var]]
-  
-  cppr_graph_s_dist <- cpp_simplify(
-    cppr_graph,
-    rm_loop = TRUE,
-    iterate = TRUE,
-    # keep = vertices_to_keep
-  )
-  
-  return(cppr_graph_s_dist$data$dist)
-  
-}
-
-
-dist <- aggregate_aux_data(cppr_graph, "aux")
-cppr_graph_simple$attrib$aux <- dist
-
-if (mode == "car") {
-  
-  n_edges <- aggregate_aux_data(cppr_graph, "n_edges")
-  cap <- aggregate_aux_data(cppr_graph, "cap")
-  alpha <- aggregate_aux_data(cppr_graph, "alpha")
-  beta <- aggregate_aux_data(cppr_graph, "beta")
-  
-  cppr_graph_simple$attrib$cap <- cap/n_edges
-  cppr_graph_simple$attrib$alpha <- alpha/n_edges
-  cppr_graph_simple$attrib$beta <- beta/n_edges
-  
-}
+cppr_graph_simple <- simplify_cppr_graph(cppr_graph, mode = mode)
 
 
 # Remove all dead ends
@@ -243,7 +235,7 @@ info(logger, "Removing dead ends...")
 # Remove all nodes that have a degree that is less than 3
 # (which means all nodes that are dead ends because the simplification step
 # has already removed all non junction nodes)
-edges <- as.data.table(cppr_graph_simple$data)
+edges <- as.data.table(cppr_graph_simple[["data"]])
 
 nodes <- c(0)
 
@@ -273,13 +265,13 @@ while(length(nodes) > 0) {
 # Filter and recreate the cpprouting graph
 remaining_node_index <- unique(c(edges$from, edges$to))
 
-data <- as.data.table(cppr_graph_simple$data)
+data <- as.data.table(cppr_graph_simple[["data"]])
 data[, keep_from := from %in% remaining_node_index]
 data[, keep_to := to %in% remaining_node_index]
 
 keep_index <- data[, keep_from & keep_to]
 
-dict <- as.data.table(cppr_graph_simple$dict)
+dict <- as.data.table(cppr_graph_simple[["dict"]])
 dict <- dict[id %in% remaining_node_index]
 dict[, new_index := 0:(.N-1)]
 
@@ -289,18 +281,40 @@ data <- data[, list(from = new_index.x, to = new_index.y, dist)]
 
 dict <- dict[, list(ref, id = new_index)]
 
-cppr_graph_simple$attrib$aux <- cppr_graph_simple$attrib$aux[keep_index]
-cppr_graph_simple$attrib$alpha <- cppr_graph_simple$attrib$alpha[keep_index]
-cppr_graph_simple$attrib$beta <- cppr_graph_simple$attrib$beta[keep_index]
-cppr_graph_simple$attrib$cap <- cppr_graph_simple$attrib$cap[keep_index]
+cppr_graph_simple[["attrib"]][["aux"]] <- cppr_graph_simple[["attrib"]][["aux"]][keep_index]
+cppr_graph_simple[["attrib"]][["n_edges"]] <- cppr_graph_simple[["attrib"]][["n_edges"]][keep_index]
+if ("direct_access" %in% names(cppr_graph_simple[["attrib"]])) {
+  cppr_graph_simple[["attrib"]][["direct_access"]] <- cppr_graph_simple[["attrib"]][["direct_access"]][keep_index]
+}
+cppr_graph_simple[["attrib"]][["alpha"]] <- cppr_graph_simple[["attrib"]][["alpha"]][keep_index]
+cppr_graph_simple[["attrib"]][["beta"]] <- cppr_graph_simple[["attrib"]][["beta"]][keep_index]
+cppr_graph_simple[["attrib"]][["cap"]] <- cppr_graph_simple[["attrib"]][["cap"]][keep_index]
 
-cppr_graph_simple$data <- data
-cppr_graph_simple$dict <- dict
-cppr_graph_simple$nbnode <- nrow(dict)
+cppr_graph_simple[["data"]] <- data
+cppr_graph_simple[["dict"]] <- dict
+cppr_graph_simple[["nbnode"]] <- nrow(dict)
+
+info(logger, "Simplifying pruned graph...")
+
+cppr_graph_simple <- simplify_cppr_graph(cppr_graph_simple, mode = mode)
+
+vertices_3035 <- vertices_3035[vertex_id %in% cppr_graph_simple[["dict"]][["ref"]]]
+
+buildings_sample <- as.data.table(read_parquet(buildings_sample_fp))
+
+info(logger, "Projecting OD points onto the final graph...")
+
+projection_result <- insert_projected_od_nodes(
+  cppr_graph_simple,
+  vertices_3035,
+  buildings_sample,
+  mode
+)
 
 
-
-vertices_3035 <- vertices_3035[vertex_id %in% cppr_graph_simple$dict$ref]
+cppr_graph_simple <- projection_result$graph
+vertices_3035 <- projection_result$vertices
+od_vertex_map <- projection_result$od_vertex_map
 
 info(logger, "Saving cppRouting graph and vertices coordinates...")
 
@@ -314,6 +328,14 @@ write_parquet(
   file.path(
     dirname(folder_path),
     paste0(hash, "-vertices.parquet")
+  )
+)
+
+write_parquet(
+  od_vertex_map,
+  file.path(
+    dirname(folder_path),
+    paste0(hash, "-od-vertex-map.parquet")
   )
 )
 

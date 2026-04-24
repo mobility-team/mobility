@@ -1,10 +1,13 @@
 from types import SimpleNamespace
+from pathlib import Path
+from uuid import uuid4
 from unittest.mock import patch
 
 import polars as pl
 import pandas as pd
 from pydantic import BaseModel
 
+from mobility.transport.costs.congestion_state_manager import CongestionStateManager
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.costs.transport_costs import TransportCosts
 
@@ -23,7 +26,17 @@ def _make_mode(*, name: str, congestion: bool):
     )
 
 
-def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled():
+def _make_project_data_folder() -> Path:
+    root = Path(".pytest-local-tmp") / "project-data"
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"mobility-tests-{uuid4().hex}"
+    path.mkdir()
+    return path
+
+
+def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled(monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(_make_project_data_folder()))
+
     # Use a minimal mode stub with congestion enabled so the test only exercises
     # the aggregator decision logic, not the real routing/cost stack.
     aggregator = TransportCosts(modes=[_make_mode(name="car", congestion=True)])
@@ -57,7 +70,8 @@ def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled():
     assert result_costs == "costs"
 
 
-def test_vehicle_od_flow_snapshot_hash_differs_between_weekday_and_weekend():
+def test_vehicle_od_flow_snapshot_hash_differs_between_weekday_and_weekend(monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(_make_project_data_folder()))
     flows = pd.DataFrame({"from": [1], "to": [2], "vehicle_volume": [10.0]})
 
     weekday_asset = VehicleODFlowsAsset(
@@ -77,3 +91,26 @@ def test_vehicle_od_flow_snapshot_hash_differs_between_weekday_and_weekend():
 
     assert weekday_asset.inputs_hash != weekend_asset.inputs_hash
     assert weekday_asset.cache_path != weekend_asset.cache_path
+
+
+def test_congestion_state_manager_overwrites_existing_vehicle_flow_snapshot(monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(_make_project_data_folder()))
+    manager = CongestionStateManager(SimpleNamespace())
+
+    manager._create_vehicle_flow_snapshot(
+        pl.DataFrame({"from": [1], "to": [2], "vehicle_volume": [3.0]}),
+        run_key="run-key",
+        is_weekday=True,
+        iteration=1,
+        mode_name="car",
+    )
+    overwritten = manager._create_vehicle_flow_snapshot(
+        pl.DataFrame({"from": [1], "to": [2], "vehicle_volume": [7.0]}),
+        run_key="run-key",
+        is_weekday=True,
+        iteration=1,
+        mode_name="car",
+    )
+
+    persisted = overwritten.get_cached_asset()
+    assert persisted["vehicle_volume"].tolist() == [7.0]

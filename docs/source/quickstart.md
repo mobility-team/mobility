@@ -1,251 +1,205 @@
-# Quickstart - Local home-work travel behavior
+# Quickstart - First local run
 
-The goal of Mobility is to make it easy to get detailed estimated travel behavior data for a sample population, living in a given region. The main final output is a table of trips taken over a given period by each individual in the population, each trip having a motive, an origin, a destination, a mode or a sequence of modes used, and travel distance and time. Intermediate outputs may also be used to compute aggregated metrics over the whole region or a subset of cities, over a given motive, over an origin - destination pair...
+This page shows the main first run for Mobility.
 
-As an example, this page shows you how to :
-- Estimate the travel times and modal shares for home to work place trips, by transport zone, in the region of Dijon, France.
-- Get a table of trips made by a sample population, in which most trips only depend on individual characteristics but home to work place trips also take the local context into account : spatial distribution of active persons and jobs, and transport infrastructure (only car and bicycle in this example).
+The goal is to:
 
-We'll go through the example step by step, but you can also run the user quickstart script directly:
-- `examples/quickstart-fr.py`
+* define a small study area,
+* build a synthetic population,
+* simulate weekday trips for that population,
+* inspect a first set of outputs.
 
-## Set up
+The code on this page follows the maintained example script in ``examples/quickstart-fr.py``.
 
-Once Mobility is installed, as with all python libraries, we can `import mobility` to access its functionnality. We have to call `mobility.set_params()` at the beginning of a script, to make sure all needed dependencies and environment variables are set up. The first call can take some time to run, but subsequent ones should be much faster.
+## Before you start
+
+Install Mobility first by following the installation page.
+
+This quickstart assumes that your Mobility data folders are already configured. The example script reads them from the environment variables:
+
+* ``MOBILITY_PACKAGE_DATA_FOLDER``
+* ``MOBILITY_PROJECT_DATA_FOLDER``
+
+If you prefer, you can also call ``mobility.set_params()`` with explicit paths.
+
+## What this example does
+
+The example uses:
+
+* Foix, France, with a 10 km radius, for a small and relatively fast run,
+* the French EMP mobility survey,
+* a synthetic population of 1000 people,
+* three transport modes: car, walk, and bicycle,
+* three activities: home, work, and other.
+
+It then computes weekday trip plans, global metrics, and a first origin-destination flow plot.
+
+## Complete example
 
 ```python
+import os
+import dotenv
 import mobility
-import pandas as pd
-import geopandas as gpd
-import matplotlib.pyplot as plt
+from mobility.trips.group_day_trips import Parameters
 
-mobility.set_params()
+dotenv.load_dotenv()
+
+mobility.set_params(
+    package_data_folder_path=os.environ["MOBILITY_PACKAGE_DATA_FOLDER"],
+    project_data_folder_path=os.environ["MOBILITY_PROJECT_DATA_FOLDER"]
+)
+
+# Using Foix (a small town) and a limited radius for quick results
+transport_zones = mobility.TransportZones("fr-09122", radius=10.0)
+
+# Using EMP, the latest national mobility survey for France
+survey = mobility.EMPMobilitySurvey()
+
+# Creating a synthetic population of 1000 for the area
+population = mobility.Population(transport_zones, sample_size=1000)
+
+# Simulating trips for this population for car, walk, bicycle
+population_trips = mobility.PopulationGroupDayTrips(
+    population=population,
+    modes=[
+        mobility.CarMode(transport_zones),
+        mobility.WalkMode(transport_zones),
+        mobility.BicycleMode(transport_zones),
+    ],
+    activities=[
+        mobility.HomeActivity(),
+        mobility.WorkActivity(),
+        mobility.OtherActivity(population=population),
+    ],
+    surveys=[survey],
+    parameters=Parameters(
+        n_iterations=1,
+        mode_sequence_search_parallel=False,
+    ),
+)
+
+# You can get weekday plan steps to inspect them
+weekday_plan_steps = population_trips.get()["weekday_plan_steps"].collect()
+
+# You can compute global metrics for weekday trips
+global_metrics = population_trips.weekday_run.evaluate("global_metrics")
+
+# You can plot weekday OD flows, with labels for prominent cities
+weekday_results = population_trips.weekday_run.results()
+labels = weekday_results.get_prominent_cities()
+weekday_results.plot_od_flows(labels=labels)
+
+# You can get a report of the parameters used in the model
+report = population_trips.parameters_dataframe()
 ```
 
-## Transport zones
+## Reading the example
 
-We first need to define the region we want to study, as well as its spatial subdivisions, that we call transport zones. Mobility uses administrative boundaries at city level as the first level of spatial subdivision, with the possibility to further subdivide them in high density areas, based on building density (by switching the level of detail to 1).
+### 1. Configure Mobility
 
-We can define the region by providing an explicit list of city ids, like ["fr-21231", "fr-21355"] (for the cities of Dijon and Longvic, in the "country_code-city_code" format), or select all cities within a circle centered on a given city (with a radius in km).
+``mobility.set_params(...)`` tells Mobility where to store shared datasets and project-specific datasets.
+
+On a first run, this step can also trigger data preparation and R package setup depending on your environment.
+
+### 2. Define the study area
 
 ```python
-transport_zones = mobility.TransportZones(
-    local_admin_unit_id="fr-21231",
-    radius=40,
-    level_of_detail=0
-)
+transport_zones = mobility.TransportZones("fr-09122", radius=10.0)
 ```
 
-Mobility tries to compute things only when and if they are needed, so at this point our transport_zones object did not create anything. We need to explicitly access its content to first create and then retrieve the pandas.GeoDataFrame, so we can plot or inspect it for example.
+This creates the study area around Foix and builds the transport-zone input used by the rest of the workflow.
+
+### 3. Build the population and model inputs
 
 ```python
-tz_gdf = transport_zones.get()
-tz_gdf.plot()
-tz_gdf.head()
+survey = mobility.EMPMobilitySurvey()
+population = mobility.Population(transport_zones, sample_size=1000)
 ```
 
-## Transport modes
+The survey provides observed mobility behaviour patterns. The synthetic population provides the local population that will be simulated.
 
-We then need to define the available transport modes for our local population, and their perception : cost of distance (€/km), cost of time (€/h), cost constant (€/trip). For this example we can use only two modes, only differentiate the cost of distance, and use Mobility's default values for the other generalized costs parameters.
+### 4. Simulate weekday trips
 
 ```python
-car = mobility.CarMode(
-    transport_zones=transport_zones,
-    generalized_cost_parameters=mobility.GeneralizedCostParameters(
-        cost_of_distance=0.1
-    )
+population_trips = mobility.PopulationGroupDayTrips(
+    population=population,
+    modes=[
+        mobility.CarMode(transport_zones),
+        mobility.WalkMode(transport_zones),
+        mobility.BicycleMode(transport_zones),
+    ],
+    activities=[
+        mobility.HomeActivity(),
+        mobility.WorkActivity(),
+        mobility.OtherActivity(population=population),
+    ],
+    surveys=[survey],
+    parameters=Parameters(
+        n_iterations=1,
+        mode_sequence_search_parallel=False,
+    ),
 )
-
-bicycle = mobility.BicycleMode(
-    transport_zones=transport_zones,
-    generalized_cost_parameters=mobility.GeneralizedCostParameters(
-        cost_of_distance=0.0
-    )
-)
-
-modes = [
-    car,
-    bicycle
-]
 ```
 
-## Work destination and mode choice models
+``PopulationGroupDayTrips`` is the main workflow object in this quickstart. It combines:
 
-We can then create two choice models that will estimate the probability of choosing a work place given the transport zone in which an active person lives, and the probability of using a car or a bicycle to get from one transport zone to another. As we saw earlier, don't forget to access the model contents by calling `get`,  to create and retrieve them.
+* a population,
+* available transport modes,
+* daily activities,
+* survey data,
+* model parameters.
 
+### 5. Inspect the outputs
 
 ```python
-work_choice_model = mobility.WorkDestinationChoiceModel(
-    transport_zones,
-    modes=modes
-)
-
-mode_choice_model = mobility.TransportModeChoiceModel(
-    destination_choice_model=work_choice_model
-)
-
-work_choice_model.get()
-mode_df = mode_choice_model.get()
+weekday_plan_steps = population_trips.get()["weekday_plan_steps"].collect()
+global_metrics = population_trips.weekday_run.evaluate("global_metrics")
+weekday_results = population_trips.weekday_run.results()
+report = population_trips.parameters_dataframe()
 ```
 
-## Comparing to reference data
+These outputs are useful for a first check:
 
-We can see how well the model matches the home - work place pair counts estimated by INSEE and OFS, by comparing them directly on a log-log plot (so we don't only see big counts) or by computing their Sorensen Similarity Index (SSI) at different minimum count thresholds (the SSI goes from 0 to 1, 1 being a perfect fit).
+* ``weekday_plan_steps`` gives access to simulated weekday trip-plan steps,
+* ``global_metrics`` provides aggregated indicators,
+* ``weekday_results`` gives access to result plots and summaries,
+* ``report`` lists the parameters used for the run.
 
+## What to expect
 
-```python
-comparison = work_choice_model.get_comparison()
+A successful run should give you:
 
-work_choice_model.plot_model_fit(comparison)
+* a dataframe-like table of weekday plan steps,
+* aggregated weekday indicators,
+* an origin-destination flow plot,
+* a parameter report for traceability.
 
-work_choice_model.compute_ssi(comparison, 200)
-work_choice_model.compute_ssi(comparison, 400)
-work_choice_model.compute_ssi(comparison, 1000)
-```
+The first execution can take noticeably longer than later ones because Mobility may need to prepare local data and dependencies.
 
-This toy model does OK but does not fit very well, so we could try to tweak the different parameters to improve the fit ! Keep in mind that reference data are also estimates, and that small counts (< 200) are likely to be very uncertain.
+## Common first-run issues
 
-## Extracting metrics (to improve)
+### Missing environment variables
 
-We can also use data generated by the choice models to compute and then plot maps of different metrics of interest, for example the average time to get to work, from each transport zone.
+If ``MOBILITY_PACKAGE_DATA_FOLDER`` or ``MOBILITY_PROJECT_DATA_FOLDER`` are not defined, the example script will fail before the model starts.
 
-```python
-car_travel_costs = car.travel_costs.get()
-car_travel_costs["mode"] = "car"
+In that case, either:
 
-bicycle_travel_costs = bicycle.travel_costs.get()
-bicycle_travel_costs["mode"] = "bicycle"
+* define these variables in your environment or ``.env`` file,
+* or replace the ``set_params`` call with explicit folder paths.
 
-travel_costs = pd.concat([
-    car_travel_costs,
-    bicycle_travel_costs]
-)
+### Long setup time
 
+The first run can be slow because Mobility may download, prepare, or cache data, and may also install required R packages.
 
-ids = transport_zones.get()[["local_admin_unit_id", "transport_zone_id"]]
-ori_dest_counts = pd.merge(comparison, ids, left_on="local_admin_unit_id_from", right_on="local_admin_unit_id")
-ori_dest_counts = pd.merge(ori_dest_counts, ids, left_on="local_admin_unit_id_to", right_on="local_admin_unit_id")
-ori_dest_counts = ori_dest_counts[["transport_zone_id_x", "transport_zone_id_y", "flow_volume"]]
-ori_dest_counts = ori_dest_counts.rename(columns={"transport_zone_id_x": "from", "transport_zone_id_y":"to"})
-modal_shares = pd.merge(mode_df, ori_dest_counts, on=["from", "to"])
-modal_shares["flow_volume"] = modal_shares["flow_volume"] * modal_shares["prob"]
+### Windows and R package installation
 
-travel_time_by_ori = pd.merge(modal_shares, travel_costs, on=["from", "to", "mode"])
-travel_time_by_ori["tot_time"] = travel_time_by_ori["time"]*travel_time_by_ori["flow_volume"]
-travel_time_by_ori = travel_time_by_ori.groupby("from")["tot_time"].sum()/travel_time_by_ori.groupby("from")["flow_volume"].sum()
-travel_time_by_ori.name = "average_travel_time"
-travel_time_by_ori = pd.merge(transport_zones.get(), travel_time_by_ori.reset_index(), left_on="transport_zone_id", right_on="from")
-travel_time_by_ori = gpd.GeoDataFrame(travel_time_by_ori)
-travel_time_by_ori.plot(column="average_travel_time", legend=True)
-plt.show()
+If R package installation fails behind a proxy, see the installation page for the Windows-specific workaround using ``r_packages_download_method="wininet"``.
 
-```
+## Next steps
 
-## Sample trips (to do)
+After this first run, the next useful pages are:
 
-One last step is needed to get a table of trips made by a sample population. We need to initialize this population by sampling individuals in each transport zone, sample activity programmes and the related trips for each individual, and finally contextualize some of the trips given the work place and mode choice models we have.
-
-
-## Complete script
-```python
-# -----------------------------------------------------------------------------
-# Set up
-
-import mobility
-import pandas as pd
-import geopandas as gpd
-import matplotlib.pyplot as plt
-
-mobility.set_params()
-
-# -----------------------------------------------------------------------------
-# Transport modes
-
-transport_zones = mobility.TransportZones(
-    local_admin_unit_id="fr-21231",
-    radius=40,
-    level_of_detail=0
-)
-
-# -----------------------------------------------------------------------------
-# Transport modes
-
-car = mobility.CarMode(
-    transport_zones=transport_zones,
-    generalized_cost_parameters=mobility.GeneralizedCostParameters(
-        cost_of_distance=0.1
-    )
-)
-
-bicycle = mobility.BicycleMode(
-    transport_zones=transport_zones,
-    generalized_cost_parameters=mobility.GeneralizedCostParameters(
-        cost_of_distance=0.0
-    )
-)
-
-modes = [
-    car,
-    bicycle
-]
-
-# -----------------------------------------------------------------------------
-# Work destination and mode choice models
-
-work_choice_model = mobility.WorkDestinationChoiceModel(
-    transport_zones,
-    modes=modes
-)
-
-mode_choice_model = mobility.TransportModeChoiceModel(
-    destination_choice_model=work_choice_model
-)
-
-work_choice_model.get()
-mode_df = mode_choice_model.get()
-
-# -----------------------------------------------------------------------------
-# Comparing to reference data
-
-comparison = work_choice_model.get_comparison()
-
-work_choice_model.plot_model_fit(comparison)
-
-work_choice_model.compute_ssi(comparison, 200)
-work_choice_model.compute_ssi(comparison, 400)
-work_choice_model.compute_ssi(comparison, 1000)
-
-# -----------------------------------------------------------------------------
-# Extracting metrics
-
-# Average travel time by origin
-car_travel_costs = car.travel_costs.get()
-car_travel_costs["mode"] = "car"
-
-bicycle_travel_costs = bicycle.travel_costs.get()
-bicycle_travel_costs["mode"] = "bicycle"
-
-travel_costs = pd.concat([
-    car_travel_costs,
-    bicycle_travel_costs]
-)
-
-
-ids = transport_zones.get()[["local_admin_unit_id", "transport_zone_id"]]
-ori_dest_counts = pd.merge(comparison, ids, left_on="local_admin_unit_id_from", right_on="local_admin_unit_id")
-ori_dest_counts = pd.merge(ori_dest_counts, ids, left_on="local_admin_unit_id_to", right_on="local_admin_unit_id")
-ori_dest_counts = ori_dest_counts[["transport_zone_id_x", "transport_zone_id_y", "flow_volume"]]
-ori_dest_counts = ori_dest_counts.rename(columns={"transport_zone_id_x": "from", "transport_zone_id_y":"to"})
-modal_shares = pd.merge(mode_df, ori_dest_counts, on=["from", "to"])
-modal_shares["flow_volume"] = modal_shares["flow_volume"] * modal_shares["prob"]
-
-travel_time_by_ori = pd.merge(modal_shares, travel_costs, on=["from", "to", "mode"])
-travel_time_by_ori["tot_time"] = travel_time_by_ori["time"]*travel_time_by_ori["flow_volume"]
-travel_time_by_ori = travel_time_by_ori.groupby("from")["tot_time"].sum()/travel_time_by_ori.groupby("from")["flow_volume"].sum()
-travel_time_by_ori.name = "average_travel_time"
-travel_time_by_ori = pd.merge(transport_zones.get(), travel_time_by_ori.reset_index(), left_on="transport_zone_id", right_on="from")
-travel_time_by_ori = gpd.GeoDataFrame(travel_time_by_ori)
-travel_time_by_ori.plot(column="average_travel_time", legend=True)
-plt.show()
-
-```
+* transport zones,
+* transport modes,
+* trips,
+* carbon computation and scenario analysis.

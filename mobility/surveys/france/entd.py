@@ -30,13 +30,11 @@ class ENTDMobilitySurvey(MobilitySurvey):
 
     def __init__(
         self,
-        seq_prob_cutoff: float | None = None,
         parameters: MobilitySurveyParameters | None = None,
     ):
         """Initialize ENTD mobility survey with optional parameter overrides.
 
         Args:
-            seq_prob_cutoff: Sequence probability cutoff override.
             parameters: Optional pre-built survey parameters model.
         """
         parameters = self.prepare_parameters(
@@ -45,7 +43,6 @@ class ENTDMobilitySurvey(MobilitySurvey):
             explicit_args={
                 "survey_name": "fr-ENTD-2008",
                 "country": "fr",
-                "seq_prob_cutoff": seq_prob_cutoff,
             },
             owner_name="ENTDMobilitySurvey",
         )

@@ -39,7 +39,7 @@ class SimplifiedPathGraph(FileAsset):
         )
         
         inputs = {
-            "version": "3.1",
+            "version": "4.8.7",
             "transport_zones": transport_zones,
             "osm": osm,
             "osm_capacity_parameters": osm_capacity_parameters,

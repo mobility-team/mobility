@@ -9,6 +9,30 @@ import polars as pl
 import numpy as np
 
 
+CUMULATIVE_PROB_THRESHOLD = 0.98
+COST_RESCALE_FACTOR = 1e6
+
+
+def _weight_from_cost(cost, best_cost):
+    return np.exp(-(cost - best_cost) / COST_RESCALE_FACTOR)
+
+
+def _can_stop_early(results, heap, k):
+    # Bound the mass of unseen solutions using the cheapest remaining state
+    # as a lower bound on any complete sequence that has not been found yet.
+    if len(results) == 0 or len(results) >= k or len(heap) == 0:
+        return False
+
+    best_cost = results[0][0]
+    found_weight = sum(_weight_from_cost(cost, best_cost) for cost, _ in results)
+
+    remaining_slots = k - len(results)
+    next_cost_lower_bound = heap[0][0]
+    max_remaining_weight = remaining_slots * _weight_from_cost(next_cost_lower_bound, best_cost)
+
+    covered_mass_lower_bound = found_weight / (found_weight + max_remaining_weight)
+    return covered_mass_lower_bound >= CUMULATIVE_PROB_THRESHOLD
+
 
 def chunked(seq, batch_size):
     for i in range(0, len(seq), batch_size):
@@ -197,12 +221,12 @@ def run_top_k_search(
     for locations in locations_parts:
     
         if len(locations) == 2:
-            
+            # Short tours can be evaluated directly without the heap search.
             available_mode_ids = sorted(leg_modes[(locations[0], locations[1])])
             results = [(costs[(locations[0], locations[1], m_id)], [m_id]) for m_id in available_mode_ids]
             
         else:
-        
+            # Longer tours are explored in increasing accumulated cost order.
             subtours = get_possible_subtours_from_locations(locations)
                 
             n_legs = len(locations) - 1
@@ -223,7 +247,7 @@ def run_top_k_search(
             subtour_first_leg_eq_last_leg = {k: v[1] for k, v in subtour_first_leg_eq_last_leg.items() if v[0] is True}
             
             while heap and len(results) < k:
-                
+                # Pop the cheapest partial state and either accept it or expand it.
                 cost, _, (leg_idx, vehicle_locations, mode_sequence, return_mode_constraints) = heapq.heappop(heap)
                 
                 # If we reached the end of the tour and all vehicle are at home,
@@ -231,18 +255,31 @@ def run_top_k_search(
                 if leg_idx == n_legs:
                     if all(vl == locations[0] for vl in vehicle_locations):
                         results.append((cost, mode_sequence))
+                        
+                        # Stop once the unseen mass cannot change the 98 % cutoff anymore.
+                        if _can_stop_early(results, heap, k):
+                            break
                     continue
                 
                 current_location = locations[leg_idx]
                 next_location = locations[leg_idx+1]
                 
+                # Apply any return-mode constraint induced by a multimodal subtour.
                 enforced_mode = return_mode_constraints.get(leg_idx, None)
-                available_mode_ids = sorted(leg_modes[(current_location, next_location)]) if enforced_mode is None else [enforced_mode]
+                if enforced_mode is None:
+                    available_mode_ids = sorted(leg_modes[(current_location, next_location)])
+                else:
+                    # If the forced return mode is not available on this OD pair,
+                    # the branch is infeasible and should not be expanded further.
+                    if enforced_mode not in leg_modes[(current_location, next_location)]:
+                        continue
+                    available_mode_ids = [enforced_mode]
                     
                 for m_id in available_mode_ids:
                         
                     mode_cost = costs[(current_location, next_location, m_id)]
                     
+                    # Build the next search state after applying this leg's mode.
                     next_vehicle_locations = list(vehicle_locations)
                     next_return_mode_constraints = dict(return_mode_constraints)
                     
@@ -252,7 +289,7 @@ def run_top_k_search(
             
                         # Check if the vehicle needed is available for the trip,
                         # if not go to the next value on the heap
-                        if vehicle_locations[v_id] != current_location:# and enforced_mode is None:
+                        if vehicle_locations[v_id] != current_location:
                             continue
                         
                         # Move the vehicle to next location
@@ -298,7 +335,7 @@ def run_top_k_search(
         # Transform costs into utilities
         # (rescale the costs that we multiplied by 1e6 in compute_subtour_mode_probs_top_k_mode_sequeance_searchparalle)
         # (remove the max so that exponentials don't overflow in the next step)
-        utilities = -np.array([r[0] for r in results]) / 1e6
+        utilities = -np.array([r[0] for r in results]) / COST_RESCALE_FACTOR
         utilities -= np.max(utilities)
         
         # Compute probabilities
@@ -307,7 +344,7 @@ def run_top_k_search(
         
         # Keep only the first 98 % of the cumulative distribution
         cum = prob.cumsum()
-        cut = int(np.searchsorted(cum, 0.98, side="left"))
+        cut = int(np.searchsorted(cum, CUMULATIVE_PROB_THRESHOLD, side="left"))
         keep = min(len(results), max(1, cut + 1))
         results = results[:keep]
           

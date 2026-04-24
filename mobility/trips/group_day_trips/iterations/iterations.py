@@ -8,9 +8,11 @@ from typing import Any
 import polars as pl
 
 from ..core.run_state import RunState
+from ..plans.activity_sequences import ActivitySequences
 from ..plans.destination_sequences import DestinationSequences
 from ..plans.mode_sequences import ModeSequences
 from .iteration_assets import (
+    CandidatePlanStepsAsset,
     CurrentPlansAsset,
     CurrentPlanStepsAsset,
     IterationCompleteAsset,
@@ -26,7 +28,8 @@ class IterationState:
 
     current_plans: pl.DataFrame
     current_plan_steps: pl.DataFrame
-    remaining_opportunities: pl.DataFrame
+    candidate_plan_steps: pl.DataFrame
+    destination_saturation: pl.DataFrame
     rng_state: object
 
 
@@ -41,12 +44,13 @@ class Iteration:
     def destination_sequences(
         self,
         *,
+        activity_sequences: ActivitySequences | None = None,
         activities: list[Any] | None = None,
         resolved_activity_parameters: dict[str, Any] | None = None,
         transport_zones: Any = None,
         current_plans: pl.DataFrame | None = None,
         current_plan_steps: pl.DataFrame | None = None,
-        remaining_opportunities: pl.DataFrame | None = None,
+        destination_saturation: pl.DataFrame | None = None,
         chains: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
         costs: pl.DataFrame | None = None,
@@ -59,16 +63,37 @@ class Iteration:
             is_weekday=self.iterations.is_weekday,
             iteration=self.iteration,
             base_folder=self.iterations.folder_paths["destination-sequences"],
+            activity_sequences=activity_sequences,
             activities=activities,
             resolved_activity_parameters=resolved_activity_parameters,
             transport_zones=transport_zones,
             current_plans=current_plans,
             current_plan_steps=current_plan_steps,
-            remaining_opportunities=remaining_opportunities,
+            destination_saturation=destination_saturation,
             chains=chains,
             demand_groups=demand_groups,
             costs=costs,
             sequence_index_folder=self.iterations.folder_paths["sequences-index"],
+            parameters=parameters,
+            seed=seed,
+        )
+
+    def activity_sequences(
+        self,
+        *,
+        current_plans: pl.DataFrame | None = None,
+        chains: pl.DataFrame | None = None,
+        parameters: Any = None,
+        seed: int | None = None,
+    ) -> ActivitySequences:
+        """Return the activity-sequences asset for this iteration."""
+        return ActivitySequences(
+            run_key=self.iterations.run_inputs_hash,
+            is_weekday=self.iterations.is_weekday,
+            iteration=self.iteration,
+            base_folder=self.iterations.folder_paths["activity-sequences"],
+            current_plans=current_plans,
+            chains=chains,
             parameters=parameters,
             seed=seed,
         )
@@ -104,10 +129,24 @@ class Iteration:
             iteration=self.iteration,
             base_folder=iteration_state_folder,
         )
+        candidate_plan_steps_asset = CandidatePlanStepsAsset(
+            run_key=self.iterations.run_inputs_hash,
+            is_weekday=self.iterations.is_weekday,
+            iteration=self.iteration,
+            base_folder=iteration_state_folder,
+        )
         if current_plan_steps_asset.cache_path.exists() is False:
             raise RuntimeError(
                 "Saved PopulationGroupDayTrips iteration state is incomplete. "
                 f"Missing current_plan_steps for run_inputs_hash={self.iterations.run_inputs_hash}, "
+                f"is_weekday={self.iterations.is_weekday}, iteration={self.iteration}. "
+                "This cache was likely created with an older code version. "
+                "Clear the saved iteration artifacts and rerun from scratch."
+            )
+        if candidate_plan_steps_asset.cache_path.exists() is False:
+            raise RuntimeError(
+                "Saved PopulationGroupDayTrips iteration state is incomplete. "
+                f"Missing candidate_plan_steps for run_inputs_hash={self.iterations.run_inputs_hash}, "
                 f"is_weekday={self.iterations.is_weekday}, iteration={self.iteration}. "
                 "This cache was likely created with an older code version. "
                 "Clear the saved iteration artifacts and rerun from scratch."
@@ -121,7 +160,8 @@ class Iteration:
                 base_folder=iteration_state_folder,
             ).get(),
             current_plan_steps=current_plan_steps_asset.get(),
-            remaining_opportunities=RemainingOpportunitiesAsset(
+            candidate_plan_steps=candidate_plan_steps_asset.get(),
+            destination_saturation=RemainingOpportunitiesAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
                 iteration=self.iteration,
@@ -154,12 +194,19 @@ class Iteration:
                 base_folder=iteration_state_folder,
                 current_plan_steps=state.current_plan_steps,
             ).create_and_get_asset()
+            CandidatePlanStepsAsset(
+                run_key=self.iterations.run_inputs_hash,
+                is_weekday=self.iterations.is_weekday,
+                iteration=self.iteration,
+                base_folder=iteration_state_folder,
+                candidate_plan_steps=state.candidate_plan_steps,
+            ).create_and_get_asset()
             RemainingOpportunitiesAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
-                remaining_opportunities=state.remaining_opportunities,
+                destination_saturation=state.destination_saturation,
             ).create_and_get_asset()
             RngStateAsset(
                 run_key=self.iterations.run_inputs_hash,
@@ -252,6 +299,7 @@ class Iterations:
     def discard_future_iterations(self, *, iteration: int) -> None:
         """Delete per-iteration artifacts strictly after the given iteration."""
         artifact_patterns = {
+            "activity-sequences": ["activity_sequences_*.parquet"],
             "destination-sequences": ["destination_sequences_*.parquet"],
             "modes": ["mode_sequences_*.parquet"],
             "transitions": ["*transition_events_*.parquet"],
@@ -287,6 +335,7 @@ class Iterations:
     def _build_folder_paths(self) -> dict[str, pathlib.Path]:
         """Return the run-scoped folders used for iteration artifacts."""
         folder_names = [
+            "activity-sequences",
             "destination-sequences",
             "modes",
             "sequences-index",

@@ -329,8 +329,11 @@ gtfs <- transfer_table(gtfs, d_limit = 200, crs = 2154)
 
 info(logger, "Preparing the timetable for one day (tuesday with a maximum of running services)...")
 
-# Find the date with the maximum number of services running
-# Taking into account both calendar and calendar dates info
+# Find the Tuesday with the maximum number of active services after the GTFS
+# dates have been aligned. This representative day is then used to keep a
+# single timetable snapshot in the router asset.
+
+tuesday_wday <- 3
 
 # Prepare the data
 if ("calendar" %in% names(gtfs)) {
@@ -367,63 +370,80 @@ if ("calendar_dates" %in% names(gtfs)) {
   
   cal_dates <- copy(gtfs$calendar_dates)
   cal_dates[, date := ymd(date)]
-  cal_dates <- cal_dates[wday(date) == 2]
-  cal_dates[, n_services := ifelse(exception_type == 1, 1, -1)]
+  cal_dates <- cal_dates[wday(date) == tuesday_wday]
   
 } else {
   
   cal_dates <- data.table(
-    date = Date(),
-    n_services = numeric()
+    service_id = character(),
+    date = as.Date(character()),
+    exception_type = integer()
   )
   
 }
 
 
-
-# Create the list of tuesdays covering all dates in the GTFS
-has_tuesday <- function(s, e) s <= e & (s + ((3 - wday(s) + 7) %% 7)) <= e
+# Create the list of candidate Tuesdays covering all GTFS service periods.
+has_tuesday <- function(s, e) s <= e & (s + ((tuesday_wday - wday(s) + 7) %% 7)) <= e
 cal <- cal[has_tuesday(start_date, end_date)]
 
-end_date <- max(c(cal$end_date, cal_dates$date), na.rm = TRUE)
-start_date <- min(c(cal$start_date, cal_dates$date), na.rm = TRUE)
-
 adjust_to_tuesday <- function(date, direction = "past") {
-  while(wday(date) != 2) {
+  while(wday(date) != tuesday_wday) {
     date <- date + ifelse(direction == "past", -1.0, 1.0)*days(1)
   }
   return(date)
 }
 
-start_date <- adjust_to_tuesday(start_date, "past")
-end_date <- adjust_to_tuesday(end_date, "future")
+candidate_tuesdays <- as.Date(character())
 
-tuesdays <- data.table(date = seq(from = start_date, to = end_date, by = "1 week"))
+if (nrow(cal) > 0) {
+  start_date <- adjust_to_tuesday(min(cal$start_date), "past")
+  end_date <- adjust_to_tuesday(max(cal$end_date), "future")
+  candidate_tuesdays <- seq(from = start_date, to = end_date, by = "1 week")
+}
 
-# Compute the number of services running at each date in the calendar table
-n_services <- tuesdays[cal, list(n = .N), on = list(date >= start_date, date <= end_date), by = date]
+if (nrow(cal_dates) > 0) {
+  candidate_tuesdays <- sort(unique(c(candidate_tuesdays, cal_dates$date)))
+}
 
-# Compute the number of services added or cancelled in the calendar_dates table
-delta_n_services <- cal_dates[, list(delta_n = sum(n_services)), by = date]
+resolve_service_ids_for_date <- function(candidate_date) {
+  service_ids <- cal[
+    start_date <= candidate_date & end_date >= candidate_date & tuesday == 1,
+    service_id
+  ]
 
-# Compute the actual number of services for each date
-n_services <- merge(n_services, delta_n_services, by = "date", all = TRUE)
-n_services[is.na(n), n := 0]
-n_services[is.na(delta_n), delta_n := 0]
-n_services[, n := n + delta_n]
+  if (nrow(cal_dates) > 0) {
+    service_ids <- unique(c(
+      service_ids,
+      cal_dates[date == candidate_date & exception_type == 1, service_id]
+    ))
+    service_ids <- setdiff(
+      service_ids,
+      cal_dates[date == candidate_date & exception_type == 2, service_id]
+    )
+  }
 
-# Select the month with the most services on average
-n_services[, n_month_average := mean(n), by = list(year(date), month(date))]
-n_services <- n_services[n_month_average == max(n_month_average)]
+  unique(service_ids)
+}
 
-# Select the day with the most services
-max_services_date <- n_services[n == max(n), date][1]
-max_services_date <- as.integer(format(max_services_date, "%Y%m%d"))
+if (length(candidate_tuesdays) == 0) {
+  # Synthetic or malformed feeds may not yield any candidate Tuesday at all.
+  # In that case keep all declared services instead of failing during selection.
+  service_ids <- unique(gtfs$trips$service_id)
+} else {
+  n_services <- data.table(date = candidate_tuesdays)
+  n_services[, service_ids := lapply(date, resolve_service_ids_for_date)]
+  n_services[, n := lengths(service_ids)]
 
-# Filter trips
-service_ids <- gtfs$calendar[start_date < max_services_date & end_date > max_services_date & tuesday == 1, service_id]
-service_ids <- unique(c(service_ids, gtfs$calendar_dates[date == max_services_date & exception_type == 1, service_id]))
-service_ids <- setdiff(service_ids, gtfs$calendar_dates[date == max_services_date & exception_type == 2, service_id])
+  if (all(n_services$n == 0)) {
+    # If every candidate Tuesday resolves to zero active services, keep all trips
+    # instead of writing an empty router.
+    service_ids <- unique(gtfs$trips$service_id)
+  } else {
+    max_services_date <- n_services[n == max(n), date][1]
+    service_ids <- n_services[date == max_services_date, service_ids][[1]]
+  }
+}
 
 trip_ids <- gtfs$trips[service_id %in% service_ids, trip_id]
 gtfs$stop_times <- gtfs$stop_times[trip_id %in% trip_ids]

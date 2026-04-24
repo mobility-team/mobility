@@ -8,13 +8,12 @@ class BehaviorChangeScope(str, Enum):
     """Highest adaptation layer allowed during one behavior-change phase.
 
     Attributes:
-        FULL_REPLANNING: Allow any currently modeled state layer to change:
-            activity sequence, destination sequence, and mode sequence.
-            Stay-home transitions remain available.
+        FULL_REPLANNING: Resample motive sequences, then dependent destination
+            and mode sequences. Stay-home transitions remain available.
         DESTINATION_REPLANNING: Keep each currently occupied non-stay-home
-            activity sequence fixed and resample destination sequences plus
+            motive sequence fixed and resample destination sequences plus
             dependent mode sequences. Stay-home is frozen.
-        MODE_REPLANNING: Keep each currently occupied non-stay-home activity and
+        MODE_REPLANNING: Keep each currently occupied non-stay-home motive and
             destination sequence fixed and resample mode sequences only.
             Stay-home is frozen.
     """
@@ -49,12 +48,11 @@ class BehaviorChangePhase(BaseModel):
             title="Behavior change scope",
             description=(
                 "Highest adaptation layer allowed during the phase. "
-                "`full_replanning` allows activity, destination, and mode "
-                "sequences to change within the current model scope. "
-                "`destination_replanning` keeps each currently occupied "
-                "non-stay-home activity sequence fixed and resamples "
+                "`full_replanning` resamples motive, destination, and mode "
+                "sequences. `destination_replanning` keeps each currently "
+                "occupied non-stay-home motive sequence fixed and resamples "
                 "destination plus mode sequences. `mode_replanning` keeps each "
-                "currently occupied non-stay-home activity and destination "
+                "currently occupied non-stay-home motive and destination "
                 "sequence fixed and resamples mode sequences only. "
                 "Stay-home is frozen in restricted phases."
             ),
@@ -94,16 +92,75 @@ class Parameters(BaseModel):
         ),
     ]
 
+    k_activity_sequences: Annotated[
+        int | None,
+        Field(
+            default=3,
+            ge=1,
+            title="Number of activity-sequence seeds",
+            description=(
+                "Maximum number of timed survey activity-sequence seeds sampled "
+                "without replacement per demand group during full replanning. "
+                "If omitted, all available seeds are admitted."
+            ),
+        ),
+    ]
+
+    k_destination_sequences: Annotated[
+        int,
+        Field(
+            default=3,
+            ge=1,
+            title="Number of destination sequences",
+            description=(
+                "Number of destination-chain sequences generated per admitted "
+                "activity sequence. Sequences branch at the anchor-destination "
+                "sampling stage and then complete the remaining destinations "
+                "conditionally."
+            ),
+        ),
+    ]
+    
     k_mode_sequences: Annotated[
         int,
         Field(
-            default=6,
+            default=3,
             ge=1,
             title="Number of mode combinations",
             description=(
                 "Number of mode combinations considered in the simulation, for "
                 "a given destination sequence. Only the top k combinations are "
                 "considered."
+            ),
+        ),
+    ]
+
+    n_warmup_iterations: Annotated[
+        int,
+        Field(
+            default=1,
+            ge=0,
+            title="Candidate memory warm-up iterations",
+            description=(
+                "Number of initial iterations during which no candidate-plan "
+                "memory is forgotten. This gives newly generated plans at "
+                "least one iteration to become active before age-based pruning "
+                "starts."
+            ),
+        ),
+    ]
+
+    max_inactive_age: Annotated[
+        int,
+        Field(
+            default=2,
+            ge=0,
+            title="Maximum inactive candidate-plan age",
+            description=(
+                "Maximum number of iterations an inactive candidate plan is "
+                "kept in memory after it was last active. Plans that were "
+                "never active use their first-seen iteration as the age "
+                "reference."
             ),
         ),
     ]
@@ -198,6 +255,92 @@ class Parameters(BaseModel):
         ),
     ]
 
+    transition_distance_threshold: Annotated[
+        float,
+        Field(
+            default=float("inf"),
+            ge=0.0,
+            title="Transition distance threshold",
+            description=(
+                "Maximum embedding distance allowed between a current plan state "
+                "and a candidate plan state. Candidates beyond this threshold are "
+                "excluded from the transition choice set."
+            ),
+        ),
+    ]
+
+    enable_transition_distance_model: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Enable transition distance model",
+            description=(
+                "Whether to compute plan-embedding distances during transition "
+                "probability calculation. When disabled, the distance threshold "
+                "and distance friction are ignored to avoid the costly distance "
+                "join and pairwise distance calculation."
+            ),
+        ),
+    ]
+
+    transition_revision_probability: Annotated[
+        float,
+        Field(
+            default=0.5,
+            ge=0.0,
+            le=1.0,
+            title="Transition revision probability",
+            description=(
+                "Share of persons in a current plan state who reconsider their "
+                "plan at each iteration. Revising persons are redistributed over "
+                "the filtered candidate states according to MNL probabilities."
+            ),
+        ),
+    ]
+
+    transition_logit_scale: Annotated[
+        float,
+        Field(
+            default=1.0,
+            ge=0.0,
+            title="Transition logit scale",
+            description=(
+                "Scale applied to plan utilities in the day-to-day plan "
+                "revision multinomial logit. Lower values flatten "
+                "revision probabilities without changing the underlying "
+                "plan utility formulation."
+            ),
+        ),
+    ]
+
+    transition_distance_friction: Annotated[
+        float,
+        Field(
+            default=0.5,
+            ge=0.0,
+            title="Transition distance friction",
+            description=(
+                "Penalty applied per unit of plan-embedding distance in the "
+                "day-to-day plan revision model. Higher values reduce the "
+                "probability of large jumps between daily programmes."
+            ),
+        ),
+    ]
+
+    plan_embedding_dimension_weights: Annotated[
+        list[float] | None,
+        Field(
+            default=None,
+            title="Plan embedding dimension weights",
+            description=(
+                "Optional per-dimension weights used when computing weighted "
+                "Euclidean distances between plan embeddings. If omitted, "
+                "state dimensions use a weight of 1.0 and spatial dimensions "
+                "use the default PlanDistance spatial scaling."
+            ),
+        ),
+    ]
+
     simulate_weekend: Annotated[
         bool,
         Field(
@@ -217,9 +360,7 @@ class Parameters(BaseModel):
                 "given iteration and selects the highest state layer that may "
                 "adapt: `mode_replanning`, `destination_replanning`, or "
                 "`full_replanning`. Restricted phases apply to currently "
-                "occupied non-stay-home states and freeze stay-home. In the "
-                "current model, `full_replanning` means that activity, "
-                "destination, and mode sequences may all change. If omitted, "
+                "occupied non-stay-home states and freeze stay-home. If omitted, "
                 "all iterations use `full_replanning`."
             ),
         ),

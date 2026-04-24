@@ -26,7 +26,7 @@ class TransportCosts(FileAsset):
         Args:
             modes: Transport modes contributing generalized costs.
             congestion: Whether this asset should build congested costs.
-            congestion_state: Cached congestion state applied to congested
+            congestion_state: Persisted congestion state applied to congested
                 modes when building this asset variant.
         """
         self.modes = modes
@@ -88,7 +88,7 @@ class TransportCosts(FileAsset):
         """Return the transport-cost variant for an explicit congestion state.
 
         Args:
-            congestion_state: Cached congestion state to apply.
+            congestion_state: Persisted congestion state to apply.
 
         Returns:
             A transport-cost asset bound to the provided congestion state.
@@ -127,6 +127,20 @@ class TransportCosts(FileAsset):
             last_completed_iteration=iteration - 1,
             cost_update_interval=run.parameters.n_iter_per_cost_update,
         )
+        logging.info(
+            "TransportCosts asset_for_iteration: run_key=%s is_weekday=%s iteration=%s "
+            "last_completed_iteration=%s congestion_state_iteration=%s congestion_enabled=%s",
+            run.inputs_hash,
+            str(run.is_weekday),
+            str(iteration),
+            str(iteration - 1),
+            (
+                str(congestion_state.iteration)
+                if congestion_state is not None
+                else "none"
+            ),
+            str(congestion_state is not None),
+        )
         return asset.asset_for_congestion_state(congestion_state)
 
     def get_for_iteration(self, run, iteration: int):
@@ -143,7 +157,7 @@ class TransportCosts(FileAsset):
         return self.asset_for_iteration(run, iteration).get()
 
     def get_cached_asset(self) -> pl.DataFrame:
-        """Return the cached canonical full-detail cost table.
+        """Return the persisted canonical full-detail cost table.
 
         Returns:
             The cached multimodal cost table for this asset variant.
@@ -152,7 +166,7 @@ class TransportCosts(FileAsset):
         return pl.read_parquet(self.cache_path)
 
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Build and cache the canonical full-detail cost table.
+        """Build and persist the canonical full-detail cost table.
 
         Returns:
             The newly built multimodal cost table for this asset variant.
@@ -310,7 +324,7 @@ class TransportCosts(FileAsset):
         return prob
 
     def build_congestion_state(self, od_flows_by_mode, *, run_key=None, is_weekday=None, iteration=None):
-        """Build and cache a congestion state from current OD flows.
+        """Build and persist a congestion state from current OD flows.
 
         Args:
             od_flows_by_mode: Per-mode OD flows aggregated from current plans.
@@ -319,7 +333,7 @@ class TransportCosts(FileAsset):
             iteration: Simulation iteration that produced the OD flows.
 
         Returns:
-            The cached congestion state, or `None` when no congestion state
+            The persisted congestion state, or `None` when no congestion state
             should be produced from the provided flows.
         """
         return self.congestion_states.build(
@@ -346,7 +360,7 @@ class TransportCosts(FileAsset):
             cost_update_interval: Number of iterations between congestion updates.
 
         Returns:
-            The latest cached congestion state compatible with the provided
+            The latest persisted congestion state compatible with the provided
             completed run history, or `None` when no congestion state exists yet.
         """
         return self.congestion_states.load(

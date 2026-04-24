@@ -49,6 +49,11 @@ buildings_sample[, building_id := 1:.N]
 hash <- strsplit(basename(graph_fp), "-")[[1]][1]
 graph <- read_cppr_contracted_graph(dirname(graph_fp), hash)
 vertices <- read_parquet(file.path(dirname(dirname(graph_fp)), paste0(hash, "-vertices.parquet")))
+od_vertex_map_fp <- file.path(dirname(dirname(graph_fp)), paste0(hash, "-od-vertex-map.parquet"))
+od_vertex_map <- NULL
+if (file.exists(od_vertex_map_fp)) {
+  od_vertex_map <- as.data.table(read_parquet(od_vertex_map_fp))
+}
 
 # Compute crowfly distances between transport zones to compute the number of 
 # points within the origin and destination zones that should be used
@@ -89,14 +94,34 @@ travel_costs <- merge(
 travel_costs <- travel_costs[building_id_from_cluster != building_id_to_cluster]
 
 
-# Match transport zones centroids with graph vertices
-knn <- get.knnx(
-  vertices[, list(x, y)],
-  buildings_sample[, list(x, y)],
-  k = 1
-)
+# Match buildings with graph vertices.
+if (!is.null(od_vertex_map)) {
+  buildings_sample <- merge(
+    buildings_sample,
+    od_vertex_map[, list(building_id, vertex_id)],
+    by = "building_id",
+    all.x = TRUE,
+    sort = FALSE
+  )
 
-buildings_sample[, vertex_id := vertices$vertex_id[knn$nn.index]]
+  if (any(is.na(buildings_sample$vertex_id))) {
+    stop("OD vertex map is incomplete for contracted travel-cost preparation.")
+  }
+} else {
+  knn <- get.knnx(
+    vertices[, list(x, y)],
+    buildings_sample[, list(x, y)],
+    k = 1
+  )
+
+  buildings_sample[, vertex_id := vertices$vertex_id[knn$nn.index]]
+}
+
+graph_refs <- as.character(graph$dict$ref)
+buildings_sample[, vertex_id := as.character(vertex_id)]
+if (any(!buildings_sample$vertex_id %in% graph_refs)) {
+  stop("Some building vertex ids are missing from the contracted graph dictionary.")
+}
 
 
 travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, vertex_id)], by.x = "building_id_from_cluster", by.y = "building_id")
@@ -122,6 +147,14 @@ travel_costs$time <- get_distance_pair(
   to = travel_costs$vertex_id_to,
   aggregate_aux = FALSE
 )
+
+dropped_rows <- travel_costs[is.na(time) | is.na(distance), .N]
+if (dropped_rows > 0) {
+  warning(sprintf(
+    "Dropping %s travel-cost rows with NA time or distance before aggregation.",
+    format(dropped_rows, big.mark = ",")
+  ))
+}
 
 travel_costs <- travel_costs[!is.na(time) & !is.na(distance)]
 
