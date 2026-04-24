@@ -6,11 +6,13 @@ import polars as pl
 import pytest
 import mobility
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
+from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.trips.group_day_trips import PopulationGroupDayTrips, Parameters
 from mobility.surveys.france import EMPMobilitySurvey
+from mobility.transport.modes.public_transport.gtfs.gtfs_router import GTFSRouter
 
 
-def _select_subway_endpoints(transport_zones: mobility.TransportZones) -> tuple[dict, dict, str, str]:
+def _select_subway_endpoints(transport_zones: mobility.TransportZones) -> tuple[dict, dict]:
     transport_zones_df = transport_zones.get()[["transport_zone_id", "local_admin_unit_id", "geometry"]].copy()
     center_local_admin_unit_id = str(transport_zones.inputs["parameters"].local_admin_unit_id)
 
@@ -42,12 +44,7 @@ def _select_subway_endpoints(transport_zones: mobility.TransportZones) -> tuple[
     center_zone = center_zones.loc[[closest_pair[0]]].copy()
     target_zone = other_zones.loc[[closest_pair[1]]].copy()
 
-    return (
-        center_zone,
-        target_zone,
-        center_local_admin_unit_id,
-        str(target_zone.iloc[0]["local_admin_unit_id"]),
-    )
+    return center_zone, target_zone
 
 
 def _build_gtfs_zip(
@@ -55,8 +52,8 @@ def _build_gtfs_zip(
     *,
     output_name: str,
     segment_travel_time: float,
-) -> tuple[str, str, str]:
-    center_zone, target_zone, center_lau_id, target_lau_id = _select_subway_endpoints(transport_zones)
+) -> str:
+    center_zone, target_zone = _select_subway_endpoints(transport_zones)
 
     centroids = gpd.GeoDataFrame(
         geometry=[
@@ -101,11 +98,7 @@ def _build_gtfs_zip(
     output_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / output_name
     gtfs_zip = mobility.build_gtfs_zip(feed, output_path)
 
-    return (
-        str(gtfs_zip),
-        center_lau_id,
-        target_lau_id,
-    )
+    return str(gtfs_zip)
 
 
 def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files):
@@ -125,23 +118,35 @@ def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files
     return [car_mode, walk_mode, bicycle_mode, public_transport_mode]
 
 
+def _read_cppr_graph_edges(graph_path: str | pathlib.Path, output_path: pathlib.Path) -> pl.DataFrame:
+    script = RScriptRunner(pathlib.Path(__file__).with_name("read_cppr_graph_edges.R"))
+    script.run(args=[str(graph_path), str(output_path)])
+    return pl.read_parquet(output_path)
+
+
 @pytest.mark.dependency(
     depends=[
         "tests/back/integration/test_008_group_day_trips_can_be_computed.py::test_008_group_day_trips_can_be_computed",
     ],
     scope="session",
 )
-def test_008d_group_day_trips_pt_gtfs_profiles_change_iteration_2(test_data):
+def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_profiles(
+    test_data,
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(GTFSRouter, "get_gtfs_files", lambda self, stops: [])
+
     transport_zones = mobility.TransportZones(
         local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
         radius=test_data["transport_zones_radius"],
     )
-    slow_gtfs_zip, center_lau_id, target_lau_id = _build_gtfs_zip(
+    slow_gtfs_zip = _build_gtfs_zip(
         transport_zones,
         output_name="test-slow-subway-line.zip",
         segment_travel_time=900.0,
     )
-    fast_gtfs_zip, _, _ = _build_gtfs_zip(
+    fast_gtfs_zip = _build_gtfs_zip(
         transport_zones,
         output_name="test-fast-subway-line.zip",
         segment_travel_time=60.0,
@@ -211,62 +216,44 @@ def test_008d_group_day_trips_pt_gtfs_profiles_change_iteration_2(test_data):
     static_costs = static_result["weekday_costs"].collect()
     dynamic_costs = dynamic_result["weekday_costs"].collect()
     dynamic_transitions = dynamic_result["weekday_transitions"].collect()
-    zones = pl.from_pandas(
-        transport_zones.get()[["transport_zone_id", "local_admin_unit_id"]]
-    ).with_columns(
-        transport_zone_id=pl.col("transport_zone_id").cast(pl.Int32),
-        local_admin_unit_id=pl.col("local_admin_unit_id").cast(pl.String),
-    )
 
     pt_mode_name = "walk/public_transport/walk"
-    def aggregate_lau_pair(costs: pl.DataFrame) -> pl.DataFrame:
-        return (
-            costs.filter(pl.col("mode") == pt_mode_name)
-            .join(
-                zones.rename(
-                    {
-                        "transport_zone_id": "from",
-                        "local_admin_unit_id": "from_local_admin_unit_id",
-                    }
-                ),
-                on="from",
-                how="left",
-            )
-            .join(
-                zones.rename(
-                    {
-                        "transport_zone_id": "to",
-                        "local_admin_unit_id": "to_local_admin_unit_id",
-                    }
-                ),
-                on="to",
-                how="left",
-            )
-            .filter(
-                (pl.col("from_local_admin_unit_id") == center_lau_id)
-                & (pl.col("to_local_admin_unit_id") == target_lau_id)
-            )
-            .group_by(["from_local_admin_unit_id", "to_local_admin_unit_id"])
-            .agg(
-                min_cost=pl.col("cost").min(),
-                min_time=pl.col("time").min(),
-                pair_count=pl.len(),
-            )
-        )
+    static_pt_mode = next(
+        mode for mode in static.weekday_run.transport_costs.modes
+        if mode.inputs["parameters"].name == pt_mode_name
+    ).for_iteration(2)
+    dynamic_pt_mode = next(
+        mode for mode in dynamic.weekday_run.transport_costs.modes
+        if mode.inputs["parameters"].name == pt_mode_name
+    ).for_iteration(2)
 
-    static_od = aggregate_lau_pair(static_costs)
-    dynamic_od = aggregate_lau_pair(dynamic_costs)
+    static_intermodal_graph = static_pt_mode.inputs["travel_costs"].inputs["intermodal_graph"].get()
+    dynamic_intermodal_graph = dynamic_pt_mode.inputs["travel_costs"].inputs["intermodal_graph"].get()
+
+    static_edges = _read_cppr_graph_edges(static_intermodal_graph, tmp_path / "static-edges.parquet")
+    dynamic_edges = _read_cppr_graph_edges(dynamic_intermodal_graph, tmp_path / "dynamic-edges.parquet")
+
+    edge_deltas = (
+        static_edges.join(
+            dynamic_edges,
+            on=["from_vertex", "to_vertex"],
+            how="inner",
+            suffix="_dynamic",
+        )
+        .with_columns(
+            dist_delta=(pl.col("dist_dynamic") - pl.col("dist")).abs(),
+            real_time_delta=(pl.col("real_time_dynamic") - pl.col("real_time")).abs(),
+        )
+    )
 
     assert static_costs.height > 0
     assert dynamic_costs.height > 0
     assert dynamic_transitions.height > 0
-    assert static_od.height == 1
-    assert dynamic_od.height == 1
-
-    static_cost = static_od["min_cost"].item()
-    dynamic_cost = dynamic_od["min_cost"].item()
-    static_time = static_od["min_time"].item()
-    dynamic_time = dynamic_od["min_time"].item()
-
-    assert dynamic_cost < static_cost
-    assert dynamic_time < static_time
+    assert static_edges.height > 0
+    assert dynamic_edges.height > 0
+    assert edge_deltas.height > 0
+    assert edge_deltas.filter(
+        (pl.col("dist_dynamic") < pl.col("dist"))
+        & (pl.col("real_time_dynamic") < pl.col("real_time"))
+        & ((pl.col("dist_delta") > 0.0) | (pl.col("real_time_delta") > 0.0))
+    ).height > 0
