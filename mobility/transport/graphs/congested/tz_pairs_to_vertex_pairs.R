@@ -19,7 +19,7 @@ tz_pairs_to_vertex_pairs <- function(
   flows_to <- pairs[, list(veh_vol_to = sum(vehicle_volume*congestion_flows_scaling_factor)), by = tz_id_to]
   
   veh_col_from_to <- merge(flows_from, flows_to, by.x = "tz_id_from", by.y = "tz_id_to")
-  veh_col_from_to[, veh_vol := pmax(veh_vol_from, veh_vol_to)]
+  veh_col_from_to[, veh_vol := veh_vol_from + veh_vol_to]
   setnames(veh_col_from_to, "tz_id_from", "tz_id")
   
   # Split enough so the busiest OD endpoint stays below the target when the
