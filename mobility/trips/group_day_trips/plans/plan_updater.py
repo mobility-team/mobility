@@ -7,6 +7,7 @@ import polars as pl
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from .destination_sequences import DestinationSequences
 from .mode_sequences import ModeSequences
+from .plan_candidates import get_transition_scope_inputs
 from ..transitions.transition_schema import TRANSITION_EVENT_COLUMNS
 
 
@@ -348,23 +349,15 @@ class PlanUpdater:
 
         plan_cols = ["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"]
 
-        current_plans_for_transitions = current_plans.lazy()
-        possible_plan_utility_for_transitions = possible_plan_utility
-
-        if behavior_change_scope != BehaviorChangeScope.FULL_REPLANNING:
-            current_plans_for_transitions = current_plans_for_transitions.filter(pl.col("mode_seq_id") != 0)
-            possible_plan_utility_for_transitions = possible_plan_utility_for_transitions.filter(
-                pl.col("mode_seq_id") != 0
-            )
-
-        scope_pair_constraint = pl.lit(True)
-        if behavior_change_scope == BehaviorChangeScope.DESTINATION_REPLANNING:
-            scope_pair_constraint = pl.col("activity_seq_id") == pl.col("activity_seq_id_trans")
-        elif behavior_change_scope == BehaviorChangeScope.MODE_REPLANNING:
-            scope_pair_constraint = (
-                (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
-                & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
-            )
+        (
+            current_plans_for_transitions,
+            possible_plan_utility_for_transitions,
+            scope_pair_constraint,
+        ) = get_transition_scope_inputs(
+            current_plans=current_plans,
+            possible_plan_utility=possible_plan_utility,
+            behavior_change_scope=behavior_change_scope,
+        )
 
         transition_probabilities = (
             current_plans_for_transitions

@@ -5,8 +5,8 @@ from typing import Any
 import polars as pl
 from scipy.stats import norm
 
-from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from .sequence_index import add_index
+from .plan_candidates import get_destination_sequences_for_scope
 from mobility.runtime.assets.file_asset import FileAsset
 
 
@@ -159,130 +159,22 @@ class DestinationSequences(FileAsset):
     def _build_destination_sequences_for_scope(self) -> pl.DataFrame:
         """Return the destination sequences to use for this iteration."""
         scope = self.parameters.get_behavior_change_scope(self.iteration)
-
-        if scope == BehaviorChangeScope.FULL_REPLANNING:
-            return self._sample_all_destination_sequences()
-
-        if scope == BehaviorChangeScope.DESTINATION_REPLANNING:
-            return self._sample_active_destination_sequences()
-
-        if scope == BehaviorChangeScope.MODE_REPLANNING:
-            return self._reuse_current_destination_sequences()
-
-        raise ValueError(f"Unsupported behavior change scope: {scope}")
-
-    def _sample_all_destination_sequences(self) -> pl.DataFrame:
-        """Sample destination sequences from all non-stay-home activity chains."""
-        return self.run(
-            self.activities,
-            self.transport_zones,
-            self.remaining_opportunities,
-            self.chains,
-            self.demand_groups,
-            self.costs,
-            self.parameters,
-            self.seed,
-        )
-
-    def _sample_active_destination_sequences(self) -> pl.DataFrame:
-        """Sample destination sequences for currently active activity sequences only."""
-        active_activity_sequences = self._get_active_non_stay_home_plans().select(
-            ["demand_group_id", "activity_seq_id"]
-        ).unique()
-
-        if active_activity_sequences.height == 0:
-            return self._empty_destination_sequences()
-
-        filtered_chains = self.chains.join(
-            active_activity_sequences.with_columns(
-                demand_group_id=pl.col("demand_group_id").cast(self.chains.schema["demand_group_id"]),
-                activity_seq_id=pl.col("activity_seq_id").cast(self.chains.schema["activity_seq_id"]),
+        return get_destination_sequences_for_scope(
+            behavior_change_scope=scope,
+            current_plans=self.current_plans,
+            current_plan_steps=self.current_plan_steps,
+            iteration=self.iteration,
+            chains_by_activity=self.chains,
+            sample_destination_sequences=lambda chains: self.run(
+                self.activities,
+                self.transport_zones,
+                self.remaining_opportunities,
+                chains,
+                self.demand_groups,
+                self.costs,
+                self.parameters,
+                self.seed,
             ),
-            on=["demand_group_id", "activity_seq_id"],
-            how="inner",
-        )
-
-        return self.run(
-            self.activities,
-            self.transport_zones,
-            self.remaining_opportunities,
-            filtered_chains,
-            self.demand_groups,
-            self.costs,
-            self.parameters,
-            self.seed,
-        )
-
-    def _reuse_current_destination_sequences(self) -> pl.DataFrame:
-        """Reuse the current iteration's destination sequences without resampling."""
-        active_dest_sequences = self._get_active_non_stay_home_plans().select(
-            ["demand_group_id", "activity_seq_id", "dest_seq_id"]
-        ).unique()
-
-        if active_dest_sequences.height == 0:
-            return self._empty_destination_sequences()
-
-        if self.current_plan_steps is None:
-            raise ValueError(
-                "No current plan steps available for active non-stay-home "
-                f"plans at iteration={self.iteration}."
-            )
-
-        reused = (
-            self.current_plan_steps.lazy()
-            .join(
-                active_dest_sequences.lazy(),
-                on=["demand_group_id", "activity_seq_id", "dest_seq_id"],
-                how="inner",
-            )
-            .with_columns(iteration=pl.lit(self.iteration).cast(pl.UInt32()))
-            .select(
-                [
-                    "demand_group_id",
-                    "activity_seq_id",
-                    "dest_seq_id",
-                    "seq_step_index",
-                    "from",
-                    "to",
-                    "iteration",
-                ]
-            )
-            .unique(
-                subset=["demand_group_id", "activity_seq_id", "dest_seq_id", "seq_step_index"],
-                keep="first",
-            )
-            .collect(engine="streaming")
-        )
-
-        if reused.height == 0:
-            raise ValueError(
-                "Active non-stay-home plans could not be matched to reusable "
-                f"destination sequences at iteration={self.iteration}."
-            )
-
-        return reused
-
-    def _get_active_non_stay_home_plans(self) -> pl.DataFrame:
-        """Return the distinct currently active non-stay-home plans."""
-        return (
-            self.current_plans
-            .filter(pl.col("activity_seq_id") != 0)
-            .select(["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"])
-            .unique()
-        )
-
-    def _empty_destination_sequences(self) -> pl.DataFrame:
-        """Return an empty destination-sequences dataframe with the expected schema."""
-        return pl.DataFrame(
-            schema={
-                "demand_group_id": pl.UInt32,
-                "activity_seq_id": pl.UInt32,
-                "dest_seq_id": pl.UInt32,
-                "seq_step_index": pl.UInt32,
-                "from": pl.Int32,
-                "to": pl.Int32,
-                "iteration": pl.UInt32,
-            }
         )
 
 
