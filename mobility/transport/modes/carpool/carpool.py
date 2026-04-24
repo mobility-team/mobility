@@ -2,17 +2,17 @@ from typing import List, Literal
 
 from mobility.transport.modes.core.transport_mode import TransportMode
 from mobility.transport.modes.core.transport_mode import TransportModeParameters
-from mobility.transport.modes.car import Car
+from mobility.transport.modes.car import CarMode
 from mobility.transport.modes.carpool.detailed import DetailedCarpoolRoutingParameters, DetailedCarpoolGeneralizedCostParameters, DetailedCarpoolTravelCosts, DetailedCarpoolGeneralizedCost
 from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
 from pydantic import Field
 import polars as pl
 
-class Carpool(TransportMode):
+class CarpoolMode(TransportMode):
     
     def __init__(
         self,
-        car_mode: Car,
+        car_mode: CarMode,
         routing_parameters: DetailedCarpoolRoutingParameters = None,
         generalized_cost_parameters: DetailedCarpoolGeneralizedCostParameters = None,
         intermodal_transfer: IntermodalTransfer = None,
@@ -70,6 +70,3 @@ class CarpoolParameters(TransportModeParameters):
     multimodal: bool = True
     return_mode: Literal["carpool_return"] = "carpool_return"
     survey_ids: list[str] = Field(default_factory=list)
-
-
-CarpoolMode = Carpool

@@ -87,7 +87,7 @@ def test_004_public_transport_costs_can_be_computed(test_data, safe_json):
         radius=test_data["transport_zones_radius"],
     )
 
-    walk = mobility.Walk(transport_zones)
+    walk = mobility.WalkMode(transport_zones)
 
     transfer = mobility.IntermodalTransfer(
         max_travel_time=20.0 / 60.0,
@@ -106,7 +106,7 @@ def test_004_public_transport_costs_can_be_computed(test_data, safe_json):
         ),
     )
 
-    public_transport = mobility.PublicTransport(
+    public_transport = mobility.PublicTransportMode(
         transport_zones,
         first_leg_mode=walk,
         first_intermodal_transfer=transfer,

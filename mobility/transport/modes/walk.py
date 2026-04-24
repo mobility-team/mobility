@@ -11,7 +11,7 @@ from mobility.transport.costs.path.path_generalized_cost import PathGeneralizedC
 from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityParameters
 from pydantic import Field
 
-class Walk(TransportMode):
+class WalkMode(TransportMode):
     
     def __init__(
         self,
@@ -75,7 +75,3 @@ class WalkParameters(TransportModeParameters):
     multimodal: bool = False
     return_mode: None = None
     survey_ids: list[str] = Field(default_factory=lambda: ["1.10", "1.11", "1.13"])
-
-
-WalkMode = Walk
-

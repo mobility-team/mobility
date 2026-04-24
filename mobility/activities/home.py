@@ -8,7 +8,7 @@ from mobility.runtime.parameter_profiles import ScalarParameterProfile
 from mobility.activities.activity import Activity, ActivityParameters
 
 
-class Home(Activity):
+class HomeActivity(Activity):
 
     def __init__(
         self,
@@ -31,7 +31,7 @@ class Home(Activity):
                 "survey_ids": survey_ids,
                 "value_of_time_v2": value_of_time_stay_home,
             },
-            owner_name="Home",
+            owner_name="HomeActivity",
         )
 
         super().__init__(

@@ -2,7 +2,7 @@ import pytest
 import polars as pl
 
 import mobility
-from mobility.activities import Home, Other, Work
+from mobility.activities import HomeActivity, OtherActivity, WorkActivity
 from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
 from mobility.surveys.france import EMPMobilitySurvey
 
@@ -25,13 +25,13 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
         sample_size=test_data["population_sample_size"],
     )
 
-    baseline_car_mode = mobility.Car(transport_zones)
-    baseline_walk_mode = mobility.Walk(transport_zones)
-    baseline_bicycle_mode = mobility.Bicycle(transport_zones)
+    baseline_car_mode = mobility.CarMode(transport_zones)
+    baseline_walk_mode = mobility.WalkMode(transport_zones)
+    baseline_bicycle_mode = mobility.BicycleMode(transport_zones)
     baseline_mode_registry = mobility.ModeRegistry(
         [baseline_car_mode, baseline_walk_mode, baseline_bicycle_mode]
     )
-    baseline_public_transport_mode = mobility.PublicTransport(
+    baseline_public_transport_mode = mobility.PublicTransportMode(
         transport_zones,
         mode_registry=baseline_mode_registry,
     )
@@ -44,7 +44,7 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
             baseline_bicycle_mode,
             baseline_public_transport_mode,
         ],
-        activities=[Home(), Work(), Other(population=pop)],
+        activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
         parameters=Parameters(
             n_iterations=1,
@@ -58,17 +58,17 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
         ),
     )
 
-    congested_car_mode = mobility.Car(
+    congested_car_mode = mobility.CarMode(
         transport_zones,
         congestion=True,
         congestion_flows_scaling_factor=1.0,
     )
-    congested_walk_mode = mobility.Walk(transport_zones)
-    congested_bicycle_mode = mobility.Bicycle(transport_zones)
+    congested_walk_mode = mobility.WalkMode(transport_zones)
+    congested_bicycle_mode = mobility.BicycleMode(transport_zones)
     congested_mode_registry = mobility.ModeRegistry(
         [congested_car_mode, congested_walk_mode, congested_bicycle_mode]
     )
-    congested_public_transport_mode = mobility.PublicTransport(
+    congested_public_transport_mode = mobility.PublicTransportMode(
         transport_zones,
         mode_registry=congested_mode_registry,
     )
@@ -81,7 +81,7 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
             congested_bicycle_mode,
             congested_public_transport_mode,
         ],
-        activities=[Home(), Work(), Other(population=pop)],
+        activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
         parameters=Parameters(
             n_iterations=2,

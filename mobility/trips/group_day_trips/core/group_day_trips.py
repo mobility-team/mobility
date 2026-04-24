@@ -5,7 +5,7 @@ from mobility.runtime.assets.asset import Asset
 from mobility.transport.costs.transport_costs import TransportCosts
 from .parameters import Parameters
 from .run import Run
-from mobility.activities import Activity, Home, Other
+from mobility.activities import Activity, HomeActivity, OtherActivity
 from mobility.surveys import MobilitySurvey
 from mobility.population import Population
 from mobility.transport.modes.core.transport_mode import TransportMode
@@ -46,8 +46,8 @@ class PopulationGroupDayTrips:
             modes: Available transport modes. Must contain at least one
                 `TransportMode`.
             activities: Activities used to build and spatialize schedules.
-                Must contain at least one `Activity` and include `Home`
-                and `Other`.
+                Must contain at least one `Activity` and include `HomeActivity`
+                and `OtherActivity`.
             surveys: Mobility surveys providing empirical activity chains. Must
                 contain at least one `MobilitySurvey`.
             parameters: Parameter container. When provided, explicit keyword
@@ -179,8 +179,8 @@ class PopulationGroupDayTrips:
                 the simulation.
 
         Raises:
-            ValueError: If no activities are provided, or if `Home` or
-                `Other` is missing.
+            ValueError: If no activities are provided, or if `HomeActivity` or
+                `OtherActivity` is missing.
             TypeError: If any element is not an `Activity` instance.
         """
         if not activities:
@@ -193,11 +193,11 @@ class PopulationGroupDayTrips:
                     f"instances, but received one object of class {type(activity)}."
                 )
 
-        if not any(isinstance(a, Other) for a in activities):
-            raise ValueError("PopulationGroupDayTrips `activities` argument should contain an `Other`.")
+        if not any(isinstance(a, OtherActivity) for a in activities):
+            raise ValueError("PopulationGroupDayTrips `activities` argument should contain an `OtherActivity`.")
 
-        if not any(isinstance(a, Home) for a in activities):
-            raise ValueError("PopulationGroupDayTrips `activities` argument should contain a `Home`.")
+        if not any(isinstance(a, HomeActivity) for a in activities):
+            raise ValueError("PopulationGroupDayTrips `activities` argument should contain a `HomeActivity`.")
 
     def _validate_modes(self, modes: List[TransportMode]) -> None:
         """Validate the transport modes passed to the wrapper constructor.

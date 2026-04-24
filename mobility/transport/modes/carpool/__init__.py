@@ -1,2 +1,2 @@
 from .detailed import DetailedCarpoolRoutingParameters, DetailedCarpoolGeneralizedCostParameters
-from .carpool import Carpool, CarpoolMode, CarpoolParameters
+from .carpool import CarpoolMode, CarpoolParameters

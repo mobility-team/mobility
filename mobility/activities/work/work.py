@@ -13,7 +13,7 @@ from mobility.runtime.parameter_profiles import ScalarParameterProfile
 from mobility.runtime.validation_types import UnitIntervalFloat
 
 
-class Work(Activity):
+class WorkActivity(Activity):
 
     def __init__(
         self,
@@ -39,7 +39,7 @@ class Work(Activity):
                 "radiation_lambda": radiation_lambda,
                 "country_utilities": country_utilities,
             },
-            owner_name="Work",
+            owner_name="WorkActivity",
         )
 
         super().__init__(

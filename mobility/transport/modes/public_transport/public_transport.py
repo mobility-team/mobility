@@ -39,7 +39,7 @@ DEFAULT_PUBLIC_TRANSPORT_SURVEY_IDS = [
 ]
 
 
-class PublicTransport(TransportMode):
+class PublicTransportMode(TransportMode):
     """Public transport mode with configurable access and egress leg modes."""
 
     def __init__(
@@ -147,7 +147,7 @@ class PublicTransport(TransportMode):
         travel_costs = self.inputs["travel_costs"].audit_gtfs()
         return travel_costs
 
-    def for_iteration(self, iteration: int) -> "PublicTransport":
+    def for_iteration(self, iteration: int) -> "PublicTransportMode":
         """Return a PT mode with routing parameters resolved for one iteration."""
         
         routing_parameters = self.inputs["travel_costs"].inputs["parameters"]
@@ -159,7 +159,7 @@ class PublicTransport(TransportMode):
         travel_costs = self.inputs["travel_costs"]
         generalized_cost = self.inputs["generalized_cost"]
 
-        return PublicTransport(
+        return PublicTransportMode(
             transport_zones=travel_costs.inputs["transport_zones"],
             first_leg_mode=travel_costs.first_leg_mode,
             last_leg_mode=travel_costs.last_leg_mode,
@@ -181,7 +181,7 @@ class PublicTransport(TransportMode):
 
         if mode_registry is None:
             raise ValueError(
-                "PublicTransport requires explicit `first_leg_mode` and "
+                "PublicTransportMode requires explicit `first_leg_mode` and "
                 "`last_leg_mode`, or a `mode_registry` to resolve defaults "
                 "(example: ModeRegistry([walk_mode, ...]))."
             )
@@ -200,6 +200,3 @@ class PublicTransportParameters(TransportModeParameters):
     ghg_intensity: float = 0.05
     multimodal: bool = True
     survey_ids: list[str] = Field(default_factory=lambda: list(DEFAULT_PUBLIC_TRANSPORT_SURVEY_IDS))
-
-
-PublicTransportMode = PublicTransport

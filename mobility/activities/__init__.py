@@ -1,18 +1,18 @@
 from .activity import Activity, ActivityParameters
-from .home import Home
-from .leisure import Leisure
-from .other import Other
-from .shopping import Shop
-from .studies import Study
-from .work import Work
+from .home import HomeActivity
+from .leisure import LeisureActivity
+from .other import OtherActivity
+from .shopping import ShopActivity
+from .studies import StudyActivity
+from .work import WorkActivity
 
 __all__ = [
     "Activity",
     "ActivityParameters",
-    "Home",
-    "Leisure",
-    "Other",
-    "Shop",
-    "Study",
-    "Work",
+    "HomeActivity",
+    "LeisureActivity",
+    "OtherActivity",
+    "ShopActivity",
+    "StudyActivity",
+    "WorkActivity",
 ]
