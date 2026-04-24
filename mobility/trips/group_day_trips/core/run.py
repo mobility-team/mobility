@@ -12,8 +12,6 @@ from .parameters import Parameters
 from .results import RunResults
 from .run_state import RunState
 from mobility.transport.costs.transport_costs import TransportCosts
-from mobility.transport.costs.congestion_state import CongestionState
-from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities import Activity
 from mobility.activities.activity import resolve_activity_parameters
@@ -491,100 +489,27 @@ class Run(FileAsset):
     def remove(self) -> None:
         """Remove cached outputs and saved iteration artifacts for this run."""
         super().remove()
+        self._remove_run_iteration_artifacts()
+
+    def _remove_run_iteration_artifacts(self) -> None:
+        """Remove all iteration-derived artifacts for this run."""
+        self._remove_run_iteration_state_artifacts()
+        self._remove_run_iteration_congestion_artifacts()
+
+    def _remove_run_iteration_state_artifacts(self) -> None:
+        """Remove saved run iteration state folders."""
         Iterations(
             run_inputs_hash=self.inputs_hash,
             is_weekday=self.is_weekday,
             base_folder=self.cache_path["plan_steps"].parent,
         ).remove_all()
-        self._remove_run_owned_congestion_artifacts()
 
-    def _remove_run_owned_congestion_artifacts(self) -> None:
-        """Remove congestion snapshots and congestion-derived cost caches for this run."""
-        if self.transport_costs.has_enabled_congestion() is False:
-            return
-
-        update_interval = self.parameters.n_iter_per_cost_update
-        if update_interval == 0:
-            return
-
-        for completed_iteration in range(1, int(self.parameters.n_iterations) + 1):
-            if self.transport_costs.should_recompute_congested_costs(completed_iteration, update_interval) is False:
-                continue
-
-            next_transport_costs = self.transport_costs.for_iteration(completed_iteration + 1)
-            flow_assets_by_mode = {}
-            for mode in next_transport_costs.congestion_states._iter_congestion_enabled_modes():
-                mode_name = mode.inputs["parameters"].name
-                flow_asset = VehicleODFlowsAsset.from_inputs(
-                    run_key=self.inputs_hash,
-                    is_weekday=self.is_weekday,
-                    iteration=completed_iteration,
-                    mode_name=mode_name,
-                )
-                if flow_asset.cache_path.exists():
-                    flow_assets_by_mode[mode_name] = flow_asset
-
-            if not flow_assets_by_mode:
-                continue
-
-            congestion_state = CongestionState(
-                run_key=str(self.inputs_hash),
-                is_weekday=bool(self.is_weekday),
-                iteration=int(completed_iteration),
-                flow_assets_by_mode=flow_assets_by_mode,
-            )
-
-            self._remove_asset_if_possible(
-                next_transport_costs.asset_for_congestion_state(congestion_state)
-            )
-            for mode in next_transport_costs.modes:
-                self._remove_mode_congestion_variant_caches(
-                    mode.inputs.get("travel_costs"),
-                    congestion_state,
-                )
+    def _remove_run_iteration_congestion_artifacts(self) -> None:
+        """Remove congestion snapshots and congestion-derived caches for this run."""
+        for next_transport_costs, congestion_state, flow_assets_by_mode in (
+            self.transport_costs.iter_run_congestion_artifacts(self)
+        ):
+            next_transport_costs.remove_congestion_artifacts(congestion_state)
 
             for flow_asset in flow_assets_by_mode.values():
                 flow_asset.remove()
-
-    def _remove_mode_congestion_variant_caches(
-        self,
-        travel_costs,
-        congestion_state: CongestionState,
-    ) -> None:
-        """Remove one mode's congestion-derived travel-cost and graph caches."""
-        if travel_costs is None:
-            return
-
-        variant = travel_costs.asset_for_congestion_state(congestion_state)
-        self._remove_congestion_variant_artifact_tree(variant)
-
-    def _remove_congestion_variant_artifact_tree(self, variant) -> None:
-        """Remove a congestion-specific asset variant and its derived graph caches."""
-        if variant is None:
-            return
-
-        self._remove_asset_if_possible(variant)
-
-        inputs = getattr(variant, "inputs", {})
-
-        contracted_graph = inputs.get("contracted_path_graph")
-        if contracted_graph is not None:
-            self._remove_asset_if_possible(contracted_graph)
-            congested_graph = getattr(contracted_graph, "inputs", {}).get("congested_graph")
-            self._remove_asset_if_possible(congested_graph)
-
-        nested_travel_costs = inputs.get("car_travel_costs")
-        nested_flow_asset = inputs.get("road_flow_asset")
-        if (
-            nested_travel_costs is not None
-            and nested_flow_asset is not None
-            and hasattr(nested_travel_costs, "asset_for_flow_asset")
-        ):
-            nested_variant = nested_travel_costs.asset_for_flow_asset(nested_flow_asset)
-            self._remove_congestion_variant_artifact_tree(nested_variant)
-
-    @staticmethod
-    def _remove_asset_if_possible(asset) -> None:
-        """Remove one cache-bearing asset when the object supports it."""
-        if asset is not None and hasattr(asset, "remove"):
-            asset.remove()

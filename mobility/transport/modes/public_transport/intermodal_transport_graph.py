@@ -9,7 +9,6 @@ from importlib import resources
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.spatial.transport_zones import TransportZones
-from mobility.transport.modes.core.transport_mode import TransportMode
 from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
 from mobility.transport.modes.public_transport.public_transport_graph import PublicTransportGraph, PublicTransportRoutingParameters
 from mobility.transport.graphs.contracted.contracted_path_graph import ContractedPathGraph
@@ -32,12 +31,15 @@ class IntermodalTransportGraph(FileAsset):
             self,
             transport_zones: TransportZones,
             parameters: PublicTransportRoutingParameters,
-            first_leg_mode: TransportMode,
-            last_leg_mode: TransportMode,
+            first_leg_travel_costs,
+            last_leg_travel_costs,
+            first_leg_mode_name: str,
+            last_leg_mode_name: str,
             first_modal_transfer: IntermodalTransfer = None,
             last_modal_transfer: IntermodalTransfer = None,
             parkings_geofabrik_extract_date: str = "250101"
     ):
+        """Build the intermodal PT graph from leg graphs and PT routing inputs."""
         """
         Retrieves public transport travel costs if they already exist for these transport zones and parameters,
         otherwise calculates them.
@@ -64,14 +66,17 @@ class IntermodalTransportGraph(FileAsset):
         inputs = {
             "transport_zones": transport_zones,
             "public_transport_graph": public_transport_graph,
-            "first_leg_graph": first_leg_mode.inputs["travel_costs"].contracted_path_graph,
-            "last_leg_graph": last_leg_mode.inputs["travel_costs"].contracted_path_graph,
+            # PT only needs the contracted leg graphs here, not the full leg
+            # mode objects that were previously threaded through this constructor.
+            "first_leg_graph": first_leg_travel_costs.contracted_path_graph,
+            "last_leg_graph": last_leg_travel_costs.contracted_path_graph,
             "first_modal_transfer": first_modal_transfer,
             "last_modal_transfer": last_modal_transfer,
             "parameters": parameters
         }
 
-        if first_leg_mode.inputs["parameters"].name == "car":
+        # Parking supply is only relevant when access to PT starts by car.
+        if first_leg_mode_name == "car":
             inputs["osm_parkings"] = OSMData(
                 transport_zones.study_area,
                 object_type="a",
@@ -81,9 +86,9 @@ class IntermodalTransportGraph(FileAsset):
             )
         
         file_name = (
-            first_leg_mode.inputs["parameters"].name
+            first_leg_mode_name
             + "_public_transport_"
-            + last_leg_mode.inputs["parameters"].name
+            + last_leg_mode_name
             + "_intermodal_transport_graph/simplified/done"
         )
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / file_name
@@ -91,10 +96,12 @@ class IntermodalTransportGraph(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pd.DataFrame:
+        """Return the persisted intermodal graph marker path."""
         logging.info("Intermodal graph already created. Reusing the file : " + str(self.cache_path))
         return self.cache_path
 
     def create_and_get_asset(self) -> pd.DataFrame:
+        """Build and persist the intermodal graph marker path."""
         self.prepare_intermodal_graph(**self.inputs)
         return self.cache_path
 
@@ -110,23 +117,7 @@ class IntermodalTransportGraph(FileAsset):
             parameters: PublicTransportRoutingParameters,
             osm_parkings: OSMData = None
         ) -> pd.DataFrame:
-        """
-        Calculates intermodal travel costs between transport zones. Uses the R script called prepare_intermodal_public_transport_graph.R
-
-        Args:
-            transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
-            public_transport_graph (PublicTransportGraph): public transport part of the intermodal graph
-            first_leg_graph: graph for the first leg mode
-            last_leg_graph: graph for the last leg mode
-            first_modal_transfer: transfer parameters between the first mode and public transport
-            last_modal_transfer: transfer parameters between public transport and the last mode
-            osm_parkings: 
-            parameters: PublicTransportRoutingParameters
-
-
-        Returns:
-            None, but a file is prepared
-        """
+        """Build the routable intermodal PT graph on disk."""
 
         logging.info("Computing public transport travel costs...")
         
@@ -150,8 +141,10 @@ class IntermodalTransportGraph(FileAsset):
     
 
     def update(self):
+        """Refresh the persisted intermodal graph."""
         
         self.create_and_get_asset()
 
     def audit_gtfs(self):
+        """Expose GTFS audit information from the PT subgraph."""
         return self.inputs["public_transport_graph"].audit_gtfs()

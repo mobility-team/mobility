@@ -56,6 +56,7 @@ class PublicTransportMode(TransportMode):
         ghg_intensity: float | None = None,
         parameters: "PublicTransportParameters | None" = None,
     ):
+        """Build one PT mode from explicit or registry-resolved leg modes."""
         first_leg_mode = self._resolve_leg_mode(
             leg_mode=first_leg_mode,
             mode_registry=mode_registry,
@@ -83,13 +84,21 @@ class PublicTransportMode(TransportMode):
             routing_parameters = PublicTransportRoutingParameters()
 
         travel_costs = PublicTransportTravelCosts(
-            transport_zones,
-            routing_parameters,
-            first_leg_mode,
-            last_leg_mode,
-            first_intermodal_transfer,
-            last_intermodal_transfer,
+            transport_zones=transport_zones,
+            parameters=routing_parameters,
+            first_leg_travel_costs=first_leg_mode.inputs["travel_costs"],
+            last_leg_travel_costs=last_leg_mode.inputs["travel_costs"],
+            first_leg_mode_name=first_leg_mode.inputs["parameters"].name,
+            last_leg_mode_name=last_leg_mode.inputs["parameters"].name,
+            first_modal_transfer=first_intermodal_transfer,
+            last_modal_transfer=last_intermodal_transfer,
         )
+
+        # Keep the original leg modes on the mode instance so `for_iteration`
+        # can rebuild a PT mode with the same leg definitions but different
+        # routing parameters.
+        self.first_leg_mode = first_leg_mode
+        self.last_leg_mode = last_leg_mode
 
         congestion = (
             first_leg_mode.inputs["parameters"].congestion
@@ -143,6 +152,7 @@ class PublicTransportMode(TransportMode):
         )
 
     def audit_gtfs(self):
+        """Audit GTFS inputs through the PT travel-cost asset."""
         logging.info("Auditing GTFS for this mode")
         travel_costs = self.inputs["travel_costs"].audit_gtfs()
         return travel_costs
@@ -161,8 +171,8 @@ class PublicTransportMode(TransportMode):
 
         return PublicTransportMode(
             transport_zones=travel_costs.inputs["transport_zones"],
-            first_leg_mode=travel_costs.first_leg_mode,
-            last_leg_mode=travel_costs.last_leg_mode,
+            first_leg_mode=self.first_leg_mode,
+            last_leg_mode=self.last_leg_mode,
             first_intermodal_transfer=travel_costs.inputs["first_modal_transfer"],
             last_intermodal_transfer=travel_costs.inputs["last_modal_transfer"],
             routing_parameters=resolved_routing_parameters,
@@ -176,6 +186,7 @@ class PublicTransportMode(TransportMode):
         mode_registry: ModeRegistry | None,
         leg_label: str,
     ) -> TransportMode:
+        """Return an explicit leg mode or resolve the default from the registry."""
         if leg_mode is not None:
             return leg_mode
 

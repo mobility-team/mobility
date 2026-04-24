@@ -11,14 +11,14 @@ from typing import Annotated
 from importlib import resources
 from pydantic import BaseModel, ConfigDict, Field
 
-from mobility.runtime.assets.file_asset import FileAsset
+from mobility.transport.costs.travel_costs_asset import TravelCostsAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.transport.costs.congestion_state import CongestionState
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
 
-class DetailedCarpoolTravelCosts(FileAsset):
+class DetailedCarpoolTravelCosts(TravelCostsAsset):
 
     def __init__(
             self,
