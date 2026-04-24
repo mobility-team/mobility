@@ -49,6 +49,7 @@ class PathTravelCosts(FileAsset):
             osm_capacity_parameters: OSMCapacityParameters,
             congestion: bool = False,
             congestion_flows_scaling_factor: float = 1.0,
+            target_max_vehicles_per_od_endpoint: float = 1000.0,
             speed_modifiers: List[SpeedModifier] = [],
             contracted_graph: ContractedPathGraph | None = None,
         ):
@@ -67,6 +68,7 @@ class PathTravelCosts(FileAsset):
                 osm_capacity_parameters,
                 congestion,
                 congestion_flows_scaling_factor,
+                target_max_vehicles_per_od_endpoint,
                 speed_modifiers
             )
             simplified_path_graph = path_graph.simplified
@@ -89,6 +91,7 @@ class PathTravelCosts(FileAsset):
             "contracted_path_graph": contracted_path_graph,
             "routing_parameters": routing_parameters,
             "osm_capacity_parameters": osm_capacity_parameters,
+            "target_max_vehicles_per_od_endpoint": target_max_vehicles_per_od_endpoint,
         }
 
         cache_path = {
@@ -238,6 +241,7 @@ class PathTravelCosts(FileAsset):
             transport_zones=self.inputs["transport_zones"],
             handles_congestion=self.inputs["congested_path_graph"].handles_congestion,
             congestion_flows_scaling_factor=self.inputs["congested_path_graph"].congestion_flows_scaling_factor,
+            target_max_vehicles_per_od_endpoint=self.inputs["congested_path_graph"].target_max_vehicles_per_od_endpoint,
             vehicle_flows=flow_asset,
         )
         contracted_graph = ContractedPathGraph(congested_graph)
@@ -247,6 +251,7 @@ class PathTravelCosts(FileAsset):
             transport_zones=self.inputs["transport_zones"],
             routing_parameters=self.inputs["routing_parameters"],
             osm_capacity_parameters=self.inputs["osm_capacity_parameters"],
+            target_max_vehicles_per_od_endpoint=self.inputs["target_max_vehicles_per_od_endpoint"],
             contracted_graph=contracted_graph,
         )
         return variant

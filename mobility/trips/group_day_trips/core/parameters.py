@@ -286,7 +286,7 @@ class Parameters(BaseModel):
     transition_revision_probability: Annotated[
         float,
         Field(
-            default=0.5,
+            default=0.3,
             ge=0.0,
             le=1.0,
             title="Transition revision probability",

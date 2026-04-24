@@ -17,16 +17,19 @@ class CongestedPathGraph(FileAsset):
             transport_zones: TransportZones,
             handles_congestion: bool = False,
             congestion_flows_scaling_factor: float = 1.0,
+            target_max_vehicles_per_od_endpoint: float = 1000.0,
             vehicle_flows: VehicleODFlowsAsset | None = None,
         ):
         
         inputs = {
+            "version": "1",
             "mode_name": modified_graph.mode_name,
             "modified_graph": modified_graph,
             "transport_zones": transport_zones,
             "vehicle_flows": vehicle_flows,
             "handles_congestion": handles_congestion,
-            "congestion_flows_scaling_factor": congestion_flows_scaling_factor
+            "congestion_flows_scaling_factor": congestion_flows_scaling_factor,
+            "target_max_vehicles_per_od_endpoint": target_max_vehicles_per_od_endpoint,
         }
         
         mode_name = modified_graph.mode_name
@@ -62,6 +65,7 @@ class CongestedPathGraph(FileAsset):
             enable_congestion,
             flows_file_path,
             self.inputs["congestion_flows_scaling_factor"],
+            self.inputs["target_max_vehicles_per_od_endpoint"],
         )
 
         return self.cache_path
@@ -73,6 +77,7 @@ class CongestedPathGraph(FileAsset):
             enable_congestion: bool,
             flows_file_path: pathlib.Path,
             congestion_flows_scaling_factor: float,
+            target_max_vehicles_per_od_endpoint: float,
         ) -> None:
          
         script = RScriptRunner(resources.files('mobility.transport.graphs.congested').joinpath('load_path_graph.R'))
@@ -84,6 +89,7 @@ class CongestedPathGraph(FileAsset):
                 str(enable_congestion),
                 str(flows_file_path),
                 str(congestion_flows_scaling_factor),
+                str(target_max_vehicles_per_od_endpoint),
                 str(self.cache_path)
             ]
         )
@@ -109,6 +115,7 @@ class CongestedPathGraph(FileAsset):
             vehicle_flows=flow_asset,
             handles_congestion=self.inputs["handles_congestion"],
             congestion_flows_scaling_factor=self.inputs["congestion_flows_scaling_factor"],
+            target_max_vehicles_per_od_endpoint=self.inputs["target_max_vehicles_per_od_endpoint"],
         )
 
     def get_for_iteration(self, run, iteration: int):

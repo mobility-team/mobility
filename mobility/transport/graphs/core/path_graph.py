@@ -20,6 +20,7 @@ class PathGraph:
         osm_capacity_parameters: OSMCapacityParameters,
         congestion: bool = False,
         congestion_flows_scaling_factor: float = 1.0,
+        target_max_vehicles_per_od_endpoint: float = 1000.0,
         speed_modifiers: List[SpeedModifier] = []
     ):
         
@@ -38,7 +39,8 @@ class PathGraph:
             self.modified,
             transport_zones,
             congestion,
-            congestion_flows_scaling_factor
+            congestion_flows_scaling_factor,
+            target_max_vehicles_per_od_endpoint
         )
         
         self.contracted = ContractedPathGraph(
