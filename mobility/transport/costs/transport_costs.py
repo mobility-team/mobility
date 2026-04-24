@@ -3,15 +3,12 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
-from collections.abc import Iterator
 
 import polars as pl
 
 from mobility.transport.costs.congestion_state_manager import CongestionStateManager
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.transport.costs.congestion_state import CongestionState
-from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
-from mobility.transport.costs.travel_costs_asset import TravelCostsAsset
 
 
 class TransportCosts(FileAsset):
@@ -392,64 +389,6 @@ class TransportCosts(FileAsset):
             `True` when the iteration triggers a congestion refresh.
         """
         return update_interval > 0 and (iteration - 1) % update_interval == 0
-
-    def remove_congestion_artifacts(
-        self,
-        congestion_state: CongestionState,
-    ) -> None:
-        """Remove congestion-derived artifacts owned by this transport-cost state."""
-        variant = self.asset_for_congestion_state(congestion_state)
-        if variant is not self:
-            variant.remove()
-
-        for mode in self.modes:
-            travel_costs = mode.inputs.get("travel_costs")
-            if travel_costs is None or isinstance(travel_costs, TravelCostsAsset) is False:
-                continue
-            travel_costs.remove_congestion_artifacts(congestion_state)
-
-    def iter_run_congestion_artifacts(
-        self,
-        run,
-    ) -> Iterator[tuple["TransportCosts", CongestionState, dict[str, VehicleODFlowsAsset]]]:
-        """Yield persisted congestion states and flow assets for one run."""
-        if self.has_enabled_congestion() is False:
-            return
-
-        update_interval = run.parameters.n_iter_per_cost_update
-        if update_interval == 0:
-            return
-
-        for completed_iteration in range(1, int(run.parameters.n_iterations) + 1):
-            if self.should_recompute_congested_costs(completed_iteration, update_interval) is False:
-                continue
-
-            next_transport_costs = self.for_iteration(completed_iteration + 1)
-            flow_assets_by_mode = {}
-            for mode in next_transport_costs.congestion_states._iter_congestion_enabled_modes():
-                mode_name = mode.inputs["parameters"].name
-                flow_asset = VehicleODFlowsAsset.from_inputs(
-                    run_key=run.inputs_hash,
-                    is_weekday=run.is_weekday,
-                    iteration=completed_iteration,
-                    mode_name=mode_name,
-                )
-                if flow_asset.cache_path.exists():
-                    flow_assets_by_mode[mode_name] = flow_asset
-
-            if not flow_assets_by_mode:
-                continue
-
-            yield (
-                next_transport_costs,
-                CongestionState(
-                    run_key=str(run.inputs_hash),
-                    is_weekday=bool(run.is_weekday),
-                    iteration=int(completed_iteration),
-                    flow_assets_by_mode=flow_assets_by_mode,
-                ),
-                flow_assets_by_mode,
-            )
 
     def get_costs_for_next_iteration(
         self,

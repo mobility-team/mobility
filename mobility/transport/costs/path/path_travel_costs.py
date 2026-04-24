@@ -9,7 +9,7 @@ import geopandas as gpd
 
 from importlib import resources
 from mobility.transport.graphs.core.path_graph import PathGraph
-from mobility.transport.costs.travel_costs_asset import TravelCostsAsset
+from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.costs.parameters.path_routing_parameters import PathRoutingParameters
@@ -21,7 +21,7 @@ from mobility.transport.costs.congestion_state import CongestionState
 
 from typing import List
 
-class PathTravelCosts(TravelCostsAsset):
+class PathTravelCosts(FileAsset):
     """
     A class for managing travel cost calculations for certain modes using OpenStreetMap (OSM) data, inheriting from the Asset class.
 
@@ -255,19 +255,4 @@ class PathTravelCosts(TravelCostsAsset):
             contracted_graph=contracted_graph,
         )
         return variant
-
-    def remove_congestion_artifacts(self, congestion_state: CongestionState) -> None:
-        """Remove one congestion-specific travel-cost variant and owned graph caches."""
-        variant = self.asset_for_congestion_state(congestion_state)
-        if variant is None or variant is self:
-            return
-
-        variant.remove()
-
-        contracted_graph = variant.inputs.get("contracted_path_graph")
-        if contracted_graph is not None:
-            contracted_graph.remove()
-            congested_graph = getattr(contracted_graph, "inputs", {}).get("congested_graph")
-            if congested_graph is not None:
-                congested_graph.remove()
         
