@@ -124,7 +124,7 @@ class ShopsTurnoverDistribution(FileAsset):
         insee_data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "insee"
 
         # Download shop location data
-        url = "https://www.insee.fr/fr/statistiques/fichier/8217525/BPE24.parquet"
+        url = "https://www.data.gouv.fr/api/1/datasets/r/b532ef31-edd9-4017-adda-b077aa0d39e3"
         parquet_path = insee_data_folder / "BPE24.parquet"
         download_file(url, parquet_path)
 
