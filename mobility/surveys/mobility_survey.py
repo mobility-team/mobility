@@ -24,7 +24,6 @@ class MobilitySurvey(FileAsset):
         self,
         survey_name: str | None = None,
         country: str | None = None,
-        seq_prob_cutoff: float | None = None,
         parameters: "MobilitySurveyParameters" | None = None,
     ):
         """Initialize mobility survey asset inputs and cache paths.
@@ -32,7 +31,6 @@ class MobilitySurvey(FileAsset):
         Args:
             survey_name: Survey dataset identifier.
             country: Country code associated with the survey.
-            seq_prob_cutoff: Sequence probability cutoff used in chain filtering.
             parameters: Optional pre-built pydantic parameters model.
         """
         parameters = self.prepare_parameters(
@@ -41,7 +39,6 @@ class MobilitySurvey(FileAsset):
             explicit_args={
                 "survey_name": survey_name,
                 "country": country,
-                "seq_prob_cutoff": seq_prob_cutoff,
             },
             required_fields=["survey_name", "country"],
             owner_name="MobilitySurvey",
@@ -283,16 +280,5 @@ class MobilitySurveyParameters(BaseModel):
         Field(
             title="Country code",
             description="ISO-like country code used to map surveys to population inputs.",
-        ),
-    ]
-
-    seq_prob_cutoff: Annotated[
-        float,
-        Field(
-            default=0.95,
-            ge=0.0,
-            le=1.0,
-            title="Sequence probability cutoff",
-            description="Minimum cumulative survey probability retained when filtering sequences.",
         ),
     ]

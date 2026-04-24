@@ -1,8 +1,7 @@
 from .detailed import DetailedCarpoolRoutingParameters, DetailedCarpoolGeneralizedCostParameters
-from .carpool import Carpool, CarpoolMode, CarpoolParameters
+from .carpool import CarpoolMode, CarpoolParameters
 
 __all__ = [
-    "Carpool",
     "CarpoolMode",
     "CarpoolParameters",
     "DetailedCarpoolRoutingParameters",

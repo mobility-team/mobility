@@ -30,7 +30,6 @@ from .trips.individual_year_trips import IndividualYearTrips
 from .trips.group_day_trips import (
     BehaviorChangePhase,
     BehaviorChangeScope,
-    GroupDayTrips,
     PopulationGroupDayTrips,
 )
 
@@ -65,16 +64,3 @@ from .transport.graphs.modified.modifiers import (
     NewRoadModifier,
     RoadLaneNumberModifier,
 )
-
-Home = HomeActivity
-Leisure = LeisureActivity
-Other = OtherActivity
-Shop = ShopActivity
-Study = StudyActivity
-Work = WorkActivity
-
-Bicycle = BicycleMode
-Car = CarMode
-Walk = WalkMode
-Carpool = CarpoolMode
-PublicTransport = PublicTransportMode

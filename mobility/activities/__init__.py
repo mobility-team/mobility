@@ -6,26 +6,13 @@ from .shopping import ShopActivity
 from .studies import StudyActivity
 from .work import WorkActivity
 
-Home = HomeActivity
-Leisure = LeisureActivity
-Other = OtherActivity
-Shop = ShopActivity
-Study = StudyActivity
-Work = WorkActivity
-
 __all__ = [
     "Activity",
     "ActivityParameters",
-    "Home",
     "HomeActivity",
-    "Leisure",
     "LeisureActivity",
-    "Other",
     "OtherActivity",
-    "Shop",
     "ShopActivity",
-    "Study",
     "StudyActivity",
-    "Work",
     "WorkActivity",
 ]

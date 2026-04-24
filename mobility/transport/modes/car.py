@@ -12,10 +12,10 @@ from mobility.transport.costs.parameters.cost_of_time_parameters import CostOfTi
 from mobility.transport.costs.path.path_generalized_cost import PathGeneralizedCost
 from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport.graphs.modified.modifiers.speed_modifier import SpeedModifier
-from pydantic import Field
 import polars as pl
+from pydantic import Field
 
-class Car(TransportMode):
+class CarMode(TransportMode):
     """
     A class for car transportation. Creates travel costs for the mode, using the provided parameters or default ones.
     
@@ -119,6 +119,3 @@ class CarParameters(TransportModeParameters):
     survey_ids: list[str] = Field(
         default_factory=lambda: ["3.30", "3.31", "3.32", "3.33", "3.39"]
     )
-
-
-CarMode = Car

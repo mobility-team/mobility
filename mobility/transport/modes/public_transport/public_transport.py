@@ -200,6 +200,3 @@ class PublicTransportParameters(TransportModeParameters):
     ghg_intensity: float = 0.05
     multimodal: bool = True
     survey_ids: list[str] = Field(default_factory=lambda: list(DEFAULT_PUBLIC_TRANSPORT_SURVEY_IDS))
-
-
-PublicTransport = PublicTransportMode

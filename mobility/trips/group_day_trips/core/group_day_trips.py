@@ -299,6 +299,3 @@ class PopulationGroupDayTrips:
             weekend_paths = self.weekend_run.cache_path
             cache_paths.update({f"weekend_{key}": weekend_paths[key] for key in keys})
         return cache_paths
-
-
-GroupDayTrips = PopulationGroupDayTrips

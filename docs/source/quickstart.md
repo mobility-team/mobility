@@ -59,17 +59,17 @@ survey = mobility.EMPMobilitySurvey()
 population = mobility.Population(transport_zones, sample_size=1000)
 
 # Simulating trips for this population for car, walk, bicycle
-population_trips = mobility.GroupDayTrips(
+population_trips = mobility.PopulationGroupDayTrips(
     population=population,
     modes=[
-        mobility.Car(transport_zones),
-        mobility.Walk(transport_zones),
-        mobility.Bicycle(transport_zones),
+        mobility.CarMode(transport_zones),
+        mobility.WalkMode(transport_zones),
+        mobility.BicycleMode(transport_zones),
     ],
     activities=[
-        mobility.Home(),
-        mobility.Work(),
-        mobility.Other(population=population),
+        mobility.HomeActivity(),
+        mobility.WorkActivity(),
+        mobility.OtherActivity(population=population),
     ],
     surveys=[survey],
     parameters=Parameters(
@@ -121,17 +121,17 @@ The survey provides observed mobility behaviour patterns. The synthetic populati
 ### 4. Simulate weekday trips
 
 ```python
-population_trips = mobility.GroupDayTrips(
+population_trips = mobility.PopulationGroupDayTrips(
     population=population,
     modes=[
-        mobility.Car(transport_zones),
-        mobility.Walk(transport_zones),
-        mobility.Bicycle(transport_zones),
+        mobility.CarMode(transport_zones),
+        mobility.WalkMode(transport_zones),
+        mobility.BicycleMode(transport_zones),
     ],
     activities=[
-        mobility.Home(),
-        mobility.Work(),
-        mobility.Other(population=population),
+        mobility.HomeActivity(),
+        mobility.WorkActivity(),
+        mobility.OtherActivity(population=population),
     ],
     surveys=[survey],
     parameters=Parameters(
@@ -141,7 +141,7 @@ population_trips = mobility.GroupDayTrips(
 )
 ```
 
-``GroupDayTrips`` is the main workflow object in this quickstart. It combines:
+``PopulationGroupDayTrips`` is the main workflow object in this quickstart. It combines:
 
 * a population,
 * available transport modes,

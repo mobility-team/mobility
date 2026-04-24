@@ -10,7 +10,7 @@ from mobility.transport.graphs.modified.modifiers.speed_modifier import SpeedMod
 from typing import List, Literal
 from pydantic import Field
 
-class Bicycle(TransportMode):
+class BicycleMode(TransportMode):
     
     def __init__(
         self,
@@ -72,6 +72,3 @@ class BicycleParameters(TransportModeParameters):
     multimodal: bool = False
     return_mode: None = None
     survey_ids: list[str] = Field(default_factory=lambda: ["2.20"])
-
-
-BicycleMode = Bicycle
