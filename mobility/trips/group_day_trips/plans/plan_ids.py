@@ -7,7 +7,7 @@ import polars as pl
 from .sequence_index import add_plan_index
 
 
-PLAN_KEY_COLS = ["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"]
+PLAN_KEY_COLS = ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]
 
 
 def add_plan_id(

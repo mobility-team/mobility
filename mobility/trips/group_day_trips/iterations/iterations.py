@@ -18,8 +18,8 @@ from .iteration_assets import (
     IterationCompleteAsset,
     RemainingOpportunitiesAsset,
     RngStateAsset,
-    TransitionEventsAsset,
 )
+from ..transitions.transition_events import TransitionEventsAsset
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,6 @@ class Iteration:
         current_plans: pl.DataFrame | None = None,
         current_plan_steps: pl.DataFrame | None = None,
         destination_saturation: pl.DataFrame | None = None,
-        chains: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
         costs: pl.DataFrame | None = None,
         parameters: Any = None,
@@ -70,7 +69,6 @@ class Iteration:
             current_plans=current_plans,
             current_plan_steps=current_plan_steps,
             destination_saturation=destination_saturation,
-            chains=chains,
             demand_groups=demand_groups,
             costs=costs,
             sequence_index_folder=self.iterations.folder_paths["sequences-index"],
@@ -82,7 +80,9 @@ class Iteration:
         self,
         *,
         current_plans: pl.DataFrame | None = None,
-        chains: pl.DataFrame | None = None,
+        survey_plans: pl.DataFrame | None = None,
+        survey_plan_steps: pl.DataFrame | None = None,
+        demand_groups: pl.DataFrame | None = None,
         parameters: Any = None,
         seed: int | None = None,
     ) -> ActivitySequences:
@@ -93,7 +93,9 @@ class Iteration:
             iteration=self.iteration,
             base_folder=self.iterations.folder_paths["activity-sequences"],
             current_plans=current_plans,
-            chains=chains,
+            survey_plans=survey_plans,
+            survey_plan_steps=survey_plan_steps,
+            demand_groups=demand_groups,
             parameters=parameters,
             seed=seed,
         )
@@ -230,7 +232,7 @@ class Iteration:
             ) from exc
 
 
-    def save_transition_events(self, transition_events: pl.DataFrame) -> None:
+    def save_transition_events(self, transition_events: pl.LazyFrame) -> None:
         """Persist transition events produced during this iteration."""
         TransitionEventsAsset(
             run_key=self.iterations.run_inputs_hash,

@@ -3,9 +3,9 @@ from .iteration_assets import (
     IterationCompleteAsset,
     RemainingOpportunitiesAsset,
     RngStateAsset,
-    TransitionEventsAsset,
 )
 from .iterations import Iteration, IterationState, Iterations
+from ..transitions.transition_events import TransitionEventsAsset
 
 __all__ = [
     "CurrentPlansAsset",

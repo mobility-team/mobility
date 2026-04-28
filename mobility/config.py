@@ -18,7 +18,8 @@ def set_params(
     r_packages=True,
     r_packages_force_reinstall=False,
     r_packages_download_method="auto",
-    debug=False
+    debug=False,
+    logging_level="INFO",
 ):
     """
     Sets up the necessary environment for the Mobility package.
@@ -36,9 +37,10 @@ def set_params(
     r_packages_force_reinstall (bool, optional)
     r_packages_download_method (str, optional): set this parameter to "wininet" to be able to install packages on some proxies. See the installation.md page for details.
     debug (bool, optional): set debug to True to see the R logs, including error messages
+    logging_level (str|int, optional): root logging level, e.g. "INFO" or "DEBUG"
     """
 
-    setup_logging()
+    setup_logging(logging_level)
     
     set_env_variable("MOBILITY_ENV_PATH", str(pathlib.Path(sys.executable).parent))
     set_env_variable("MOBILITY_CERT_FILE", path_to_pem_file)
@@ -65,16 +67,24 @@ def set_env_variable(key, value):
         os.environ[key] = value
 
 
-def setup_logging():
+def setup_logging(logging_level="INFO"):
     """
     Configures the logging for the Mobility package.
 
     This function sets up basic logging configuration including format, level, and date format.
     """
+    if isinstance(logging_level, str):
+        level = getattr(logging, logging_level.upper(), None)
+        if not isinstance(level, int):
+            raise ValueError(f"Unknown logging level: {logging_level}")
+    else:
+        level = int(logging_level)
+
     logging.basicConfig(
         format='%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s',
-        level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S'
+        level=level,
+        datefmt='%Y-%m-%d %H:%M:%S',
+        force=True,
     )
 
 

@@ -33,11 +33,14 @@ class PopulationGroupDayTrips:
         cost_uncertainty_sd: float = None,
         seed: int = None,
         mode_sequence_search_parallel: bool = None,
+        save_transition_events: bool = None,
+        persist_iteration_artifacts: bool = None,
         min_activity_time_constant: float = None,
         transition_distance_threshold: float = None,
         enable_transition_distance_model: bool = None,
         transition_revision_probability: float = None,
         transition_logit_scale: float = None,
+        transition_utility_pruning_delta: float = None,
         transition_distance_friction: float = None,
         plan_embedding_dimension_weights: list[float] | None = None,
         behavior_change_phases: list[BehaviorChangePhase] | None = None,
@@ -59,7 +62,7 @@ class PopulationGroupDayTrips:
             activities: Activities used to build and spatialize schedules.
                 Must contain at least one `Activity` and include `HomeActivity`
                 and `OtherActivity`.
-            surveys: Mobility surveys providing empirical activity chains. Must
+            surveys: Mobility surveys providing empirical activity programs. Must
                 contain at least one `MobilitySurvey`.
             parameters: Parameter container. When provided, explicit keyword
                 arguments are merged into this model and revalidated.
@@ -85,6 +88,10 @@ class PopulationGroupDayTrips:
             seed: Optional override for `Parameters.seed`.
             mode_sequence_search_parallel: Optional override for
                 `Parameters.mode_sequence_search_parallel`.
+            save_transition_events: Optional override for
+                `Parameters.save_transition_events`.
+            persist_iteration_artifacts: Optional override for
+                `Parameters.persist_iteration_artifacts`.
             min_activity_time_constant: Optional override for
                 `Parameters.min_activity_time_constant`.
             transition_distance_threshold: Optional override for
@@ -95,6 +102,8 @@ class PopulationGroupDayTrips:
                 `Parameters.transition_revision_probability`.
             transition_logit_scale: Optional override for
                 `Parameters.transition_logit_scale`.
+            transition_utility_pruning_delta: Optional override for
+                `Parameters.transition_utility_pruning_delta`.
             transition_distance_friction: Optional override for
                 `Parameters.transition_distance_friction`.
             plan_embedding_dimension_weights: Optional override for
@@ -130,11 +139,14 @@ class PopulationGroupDayTrips:
                 "cost_uncertainty_sd": cost_uncertainty_sd,
                 "seed": seed,
                 "mode_sequence_search_parallel": mode_sequence_search_parallel,
+                "save_transition_events": save_transition_events,
+                "persist_iteration_artifacts": persist_iteration_artifacts,
                 "min_activity_time_constant": min_activity_time_constant,
                 "transition_distance_threshold": transition_distance_threshold,
                 "enable_transition_distance_model": enable_transition_distance_model,
                 "transition_revision_probability": transition_revision_probability,
                 "transition_logit_scale": transition_logit_scale,
+                "transition_utility_pruning_delta": transition_utility_pruning_delta,
                 "transition_distance_friction": transition_distance_friction,
                 "plan_embedding_dimension_weights": plan_embedding_dimension_weights,
                 "behavior_change_phases": behavior_change_phases,
@@ -267,7 +279,7 @@ class PopulationGroupDayTrips:
         """Validate the mobility surveys passed to the wrapper constructor.
 
         Args:
-            surveys: Survey assets used to derive reference activity chains.
+            surveys: Survey assets used to derive survey-based schedules.
 
         Raises:
             ValueError: If no surveys are provided.
@@ -292,7 +304,7 @@ class PopulationGroupDayTrips:
             the weekend run is enabled.
         """
         weekday_paths = self.weekday_run.cache_path
-        keys = ("plan_steps", "opportunities", "costs", "chains", "transitions")
+        keys = ("plan_steps", "opportunities", "costs", "transitions")
         cache_paths = {f"weekday_{key}": weekday_paths[key] for key in keys}
         cache_paths["demand_groups"] = weekday_paths["demand_groups"]
         if self.weekend_run.enabled:

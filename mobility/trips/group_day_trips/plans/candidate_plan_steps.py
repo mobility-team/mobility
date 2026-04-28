@@ -10,7 +10,9 @@ class CandidatePlanStepsAsset(FileAsset):
 
     STRUCTURAL_COLUMNS = [
         "demand_group_id",
+        "country",
         "activity_seq_id",
+        "time_seq_id",
         "dest_seq_id",
         "mode_seq_id",
         "seq_step_index",
@@ -34,6 +36,7 @@ class CandidatePlanStepsAsset(FileAsset):
     DEDUPE_COLUMNS = [
         "demand_group_id",
         "activity_seq_id",
+        "time_seq_id",
         "dest_seq_id",
         "mode_seq_id",
         "seq_step_index",
@@ -74,22 +77,34 @@ class CandidatePlanStepsAsset(FileAsset):
         *,
         destination_sequences,
         mode_sequences,
-        chains: pl.DataFrame,
+        survey_plan_steps: pl.DataFrame,
         demand_groups: pl.DataFrame,
     ) -> pl.LazyFrame:
         """Build structural plan-step candidates generated at one iteration."""
 
-        chains_w_home = (
-            chains.join(demand_groups.select(["demand_group_id", "csp"]), on="demand_group_id")
-            .with_columns(duration_per_pers=pl.col("duration") / pl.col("n_persons"))
+        survey_plan_steps = (
+            survey_plan_steps
+            .select(
+                [
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "seq_step_index",
+                    "activity",
+                    "duration_per_pers",
+                    "departure_time",
+                    "arrival_time",
+                    "next_departure_time",
+                ]
+            )
         )
         return (
             mode_sequences.get_cached_asset().lazy()
             .join(
                 destination_sequences.get_cached_asset().lazy(),
-                on=["demand_group_id", "activity_seq_id", "dest_seq_id", "seq_step_index"],
+                on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "seq_step_index"],
             )
-            .join(chains_w_home.lazy(), on=["demand_group_id", "activity_seq_id", "seq_step_index"])
+            .join(survey_plan_steps.lazy(), on=["activity_seq_id", "time_seq_id", "seq_step_index"])
+            .join(demand_groups.select(["demand_group_id", "country", "csp"]).lazy(), on="demand_group_id")
             .select(cls.STRUCTURAL_COLUMNS)
         )
 
@@ -99,7 +114,7 @@ class CandidatePlanStepsAsset(FileAsset):
         *,
         destination_sequences,
         mode_sequences,
-        chains: pl.DataFrame,
+        survey_plan_steps: pl.DataFrame,
         demand_groups: pl.DataFrame,
         current_plans: pl.DataFrame,
         previous_candidate_plan_steps: pl.DataFrame | None,
@@ -121,8 +136,8 @@ class CandidatePlanStepsAsset(FileAsset):
                 previous_candidate_plan_steps.lazy()
                 .filter(pl.col("mode_seq_id") != 0)
                 .join(
-                    current_plans.select(["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"]).lazy(),
-                    on=["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"],
+                    current_plans.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]).lazy(),
+                    on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"],
                     how="inner",
                 )
                 .with_columns(
@@ -134,7 +149,7 @@ class CandidatePlanStepsAsset(FileAsset):
             cls.build_iteration_candidates(
                 destination_sequences=destination_sequences,
                 mode_sequences=mode_sequences,
-                chains=chains,
+                survey_plan_steps=survey_plan_steps,
                 demand_groups=demand_groups,
             )
             .with_columns(
@@ -157,6 +172,7 @@ class CandidatePlanStepsAsset(FileAsset):
                 arrival_time=pl.col("arrival_time").first(),
                 next_departure_time=pl.col("next_departure_time").first(),
                 iteration=pl.col("iteration").min(),
+                country=pl.col("country").first(),
                 csp=pl.col("csp").first(),
                 first_seen_iteration=pl.col("first_seen_iteration").min(),
                 last_active_iteration=pl.col("last_active_iteration").max(),

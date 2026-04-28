@@ -31,7 +31,7 @@ class RunResults:
         plan_steps,
         opportunities,
         costs,
-        chains,
+        population_weighted_plan_steps,
         transitions,
         surveys,
         modes,
@@ -45,7 +45,7 @@ class RunResults:
         self.plan_steps = plan_steps
         self.opportunities = opportunities
         self.costs = costs
-        self.chains = chains
+        self.population_weighted_plan_steps = population_weighted_plan_steps
         self.transitions = transitions
         self.surveys = surveys
         self.modes = modes
@@ -78,7 +78,7 @@ class RunResults:
     def global_metrics(self, normalize: bool = True):
         """Compute high-level trip, time, and distance metrics for this run."""
         ref_plan_steps = (
-            self.chains.rename({"travel_time": "time"})
+            self.population_weighted_plan_steps.rename({"travel_time": "time"})
             .with_columns(country=pl.col("country").cast(pl.String()))
         )
 
@@ -95,6 +95,7 @@ class RunResults:
             .join(study_area_df.select(["local_admin_unit_id", "country"]), on=["local_admin_unit_id"])
             .group_by("country")
             .agg(pl.col("n_persons").sum())
+            .with_columns(country=pl.col("country").cast(pl.String()))
             .collect(engine="streaming")
         )
 
@@ -145,9 +146,9 @@ class RunResults:
         normalize: bool = True,
         plot: bool = False,
     ):
-        """Compare model outputs and reference chains by one categorical variable."""
+        """Compare model outputs and population-weighted plan steps by one variable."""
         ref_plan_steps = (
-            self.chains.rename({"travel_time": "time"})
+            self.population_weighted_plan_steps.rename({"travel_time": "time"})
             .with_columns(mode=pl.col("mode").cast(pl.String()))
         )
 

@@ -5,8 +5,8 @@ import polars as pl
 
 @dataclass
 class RunState:
-    chains_by_activity: pl.DataFrame
-    chains: pl.DataFrame
+    survey_plans: pl.DataFrame
+    survey_plan_steps: pl.DataFrame
     demand_groups: pl.DataFrame
     activity_dur: pl.DataFrame
     home_night_dur: pl.DataFrame
