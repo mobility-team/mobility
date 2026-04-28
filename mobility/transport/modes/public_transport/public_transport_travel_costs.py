@@ -37,7 +37,22 @@ class PublicTransportTravelCosts(TravelCostsAsset):
             first_modal_transfer: IntermodalTransfer = None,
             last_modal_transfer: IntermodalTransfer = None
     ):
-        """Build the PT travel-cost asset for one pair of access and egress legs."""
+        """
+        Build the PT travel-cost asset for one pair of access and egress legs.
+        Retrieves public transport travel costs if they already exist for these transport zones and parameters,
+        otherwise calculates them.
+        
+        Expected running time : between a few seconds and a few minutes.
+        
+        Args:
+            transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
+            gtfs_router : GTFSRouter object containing data about public transport routes and schedules.
+            start_time_min : float containing the start hour to consider for cost determination
+            start_time_max : float containing the end hour to consider for cost determination, should be superior to start_time_min
+            max_traveltime : float with the maximum travel time to consider for public transport, in hours
+            additional_gtfs_files : list of additional GTFS files to include in the calculations
+
+        """
         if first_modal_transfer is None or last_modal_transfer is None:
             raise ValueError(
                 "PublicTransportTravelCosts requires both `first_modal_transfer` and `last_modal_transfer`."
