@@ -128,6 +128,27 @@ def test_download_file_deletes_preexisting_partial_file_before_retrying(monkeypa
     assert temp_path.exists() is False
 
 
+def test_download_file_can_warn_instead_of_raising_on_request_error(monkeypatch, tmp_path, caplog):
+    session = _FakeSession(request_exc=requests.exceptions.ConnectionError("boom"))
+    monkeypatch.setattr(download_file_module, "Progress", _FakeProgress)
+    monkeypatch.setattr(download_file_module.requests, "Session", lambda: session)
+
+    path = tmp_path / "file.txt"
+
+    with caplog.at_level("WARNING"):
+        result = download_file(
+            "https://example.com/file.txt",
+            path,
+            max_retries=0,
+            raise_on_error=False,
+        )
+
+    assert result == path
+    assert path.exists() is False
+    assert (tmp_path / "file.txt.part").exists() is False
+    assert "Error during requests to https://example.com/file.txt after 1 attempts" in caplog.text
+
+
 def test_download_file_uses_large_default_chunk_size(monkeypatch, tmp_path):
     response = _FakeResponse(
         status_code=200,

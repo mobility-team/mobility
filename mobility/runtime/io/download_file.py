@@ -14,7 +14,7 @@ from tenacity import (
 )
 
 
-def download_file(url, path, max_retries=5, timeout=(10, 120)):
+def download_file(url, path, max_retries=5, timeout=(10, 120), raise_on_error=True):
     """
     Downloads a file to a given path. Creates the containing parent folder, if
     it does not exist. Handles retries and timeouts to avoid common download issues.
@@ -25,6 +25,8 @@ def download_file(url, path, max_retries=5, timeout=(10, 120)):
         max_retries (int): the maximum number of retries for failed requests.
         timeout (int or tuple): the timeout setting for requests (in seconds).
             A tuple is interpreted as ``(connect_timeout, read_timeout)``.
+        raise_on_error (bool): whether to raise if the download still fails
+            after retries. If False, logs a warning and returns the target path.
 
     Returns:
         pathlib.Path: The path where the file was downloaded.
@@ -98,13 +100,12 @@ def download_file(url, path, max_retries=5, timeout=(10, 120)):
     try:
         retryer(_download_once)
     except requests.exceptions.RequestException as req_err:
-        logging.error(
-            "Error during requests to %s after %s attempts: %s",
-            url,
-            max_retries + 1,
-            req_err,
-        )
-        raise
+        log_message = "Error during requests to %s after %s attempts: %s"
+        if raise_on_error:
+            logging.error(log_message, url, max_retries + 1, req_err)
+            raise
+
+        logging.warning(log_message, url, max_retries + 1, req_err)
 
     return path
 

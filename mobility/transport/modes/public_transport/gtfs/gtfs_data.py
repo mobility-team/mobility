@@ -43,7 +43,8 @@ class GTFSData(FileAsset):
         
         download_file(
             self.url,
-            self.cache_path
+            self.cache_path,
+            raise_on_error=False
         )
         
         file_ok = self.is_gtfs_file_ok(self.cache_path)
