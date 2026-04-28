@@ -22,26 +22,6 @@ from .mode_sequences import ModeSequences
 class PlanUpdater:
     """Updates population plan distributions over activity/destination/mode sequences."""
 
-    @staticmethod
-    def _ensure_plan_id(frame: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame | pl.LazyFrame:
-        """Add a temporary plan id from the plan keys when tests pass raw frames."""
-        schema_names = frame.collect_schema().names() if isinstance(frame, pl.LazyFrame) else frame.columns
-        if "plan_id" in schema_names:
-            return frame
-
-        return frame.with_columns(
-            plan_id=pl.concat_str(
-                [
-                    pl.col("demand_group_id").cast(pl.String),
-                    pl.col("activity_seq_id").cast(pl.String),
-                    pl.col("time_seq_id").cast(pl.String),
-                    pl.col("dest_seq_id").cast(pl.String),
-                    pl.col("mode_seq_id").cast(pl.String),
-                ],
-                separator="|",
-            )
-        )
-
     def get_new_plans(
         self,
         current_plans: pl.DataFrame,
@@ -442,9 +422,6 @@ class PlanUpdater:
         plan_embedding_dimension_weights: list[float] | None = None,
     ) -> pl.DataFrame:
         """Compute transition probabilities from current to candidate plans."""
-
-        possible_plan_utility = self._ensure_plan_id(possible_plan_utility)
-        possible_plan_steps = self._ensure_plan_id(possible_plan_steps)
 
         allowed_transitions = self.build_allowed_plan_transitions(
             current_plans,
