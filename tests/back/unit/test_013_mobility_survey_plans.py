@@ -47,7 +47,6 @@ class _StubSurvey(Asset):
     def is_update_needed(self):
         return False
 
-
 def _make_activity(name: str, survey_ids: list[str]):
     asset = _HashableStubAsset(name=name, survey_ids=survey_ids, is_anchor=(name == "home"))
     asset.name = name

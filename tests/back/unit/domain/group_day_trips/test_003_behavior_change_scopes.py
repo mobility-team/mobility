@@ -96,14 +96,12 @@ def _make_local_tmp_path(name: str) -> pathlib.Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
 
-
 def _with_plan_id(
     frame: pl.DataFrame | pl.LazyFrame,
     *,
     name: str,
 ) -> pl.DataFrame | pl.LazyFrame:
     return add_plan_id(frame, index_folder=_make_local_tmp_path(name))
-
 def test_parameters_returns_default_behavior_change_scope():
     parameters = Parameters()
 
@@ -646,7 +644,6 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
 
     assert result.select("activity_seq_id").sort("activity_seq_id").to_series().to_list() == [10]
 
-
 def test_candidate_memory_is_already_compact_before_persistence():
     class _StubAsset:
         def __init__(self, df):
@@ -770,8 +767,6 @@ def test_candidate_memory_is_already_compact_before_persistence():
     assert result.schema["first_seen_iteration"] == pl.UInt16
     assert result.schema["last_active_iteration"] == pl.UInt16
     assert isinstance(result.schema["mode"], pl.Enum)
-
-
 def test_get_transition_probabilities_limits_destination_replanning_to_same_timing_profile():
     updater = PlanUpdater()
     current_plans = _make_current_plans(
