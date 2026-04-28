@@ -1,18 +1,39 @@
+from dataclasses import dataclass
+
 import pandas as pd
 import polars as pl
-
 from mobility.runtime.assets.asset import Asset
-from mobility.surveys.mobility_survey import MobilitySurvey
 from mobility.surveys import MobilitySurveyPlans, MobilitySurveyPlanSteps
 
+@dataclass
+class _SurveyParams:
+    survey_name: str
+    country: str
 
-class _StubSurvey(MobilitySurvey):
+
+@dataclass
+class _ActivityOrModeParams:
+    name: str | None
+    survey_ids: list[str]
+
+
+class _HashableStubAsset(Asset):
+    def __init__(self, *, name: str | None = None, survey_ids: list[str] | None = None, is_anchor: bool = False):
+        self.name = name
+        self.is_anchor = is_anchor
+        super().__init__({"parameters": _ActivityOrModeParams(name=name, survey_ids=survey_ids or [])})
+
+    def get(self):
+        return self
+
+    def get_cached_hash(self):
+        return self.inputs_hash
+
+
+class _StubSurvey(Asset):
     def __init__(self, cached):
         self._cached = cached
-        self.inputs_hash = "stub-survey-hash"
-        self.inputs = {
-            "parameters": type("Params", (), {"survey_name": "stub-survey", "country": "fr"})()
-        }
+        super().__init__({"parameters": _SurveyParams(survey_name="stub-survey", country="fr")})
 
     def get(self):
         return self._cached
@@ -21,33 +42,10 @@ class _StubSurvey(MobilitySurvey):
         return self._cached
 
     def get_cached_hash(self):
-        return "stub-survey-hash"
+        return self.inputs_hash
 
     def is_update_needed(self):
         return False
-
-
-class _HashableStubAsset(Asset):
-    def __init__(self, *, name: str | None = None, survey_ids: list[str] | None = None, is_anchor: bool = False):
-        self.name = name
-        self.is_anchor = is_anchor
-        super().__init__({"name": name, "survey_ids": survey_ids or []})
-        self.inputs = {
-            "parameters": type(
-                "Params",
-                (),
-                {
-                    "name": name,
-                    "survey_ids": survey_ids or [],
-                },
-            )()
-        }
-
-    def get(self):
-        return self
-
-    def get_cached_hash(self):
-        return self.inputs_hash
 
 
 def _make_activity(name: str, survey_ids: list[str]):

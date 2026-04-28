@@ -1,6 +1,6 @@
-def test_mixed_list_inputs_serialize_assets_and_scalars(use_real_asset_init):
-    Asset = use_real_asset_init
+from mobility.runtime.assets.asset import Asset
 
+def test_mixed_list_inputs_serialize_assets_and_scalars():
     class ChildAsset(Asset):
         def __init__(self, child_hash_value: str):
             super().__init__({"kind": "child"})

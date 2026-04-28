@@ -1,8 +1,7 @@
 from dataclasses import dataclass
+from mobility.runtime.assets.asset import Asset
 
-def test_compute_inputs_hash_stable_for_equivalent_inputs(use_real_asset_init):
-    Asset = use_real_asset_init
-
+def test_compute_inputs_hash_stable_for_equivalent_inputs():
     class DummyAsset(Asset):
         def get(self):
             return None

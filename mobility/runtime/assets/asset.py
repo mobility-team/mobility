@@ -1,15 +1,11 @@
-import json
-import hashlib
-import pathlib
 from typing import Any, TypeVar
 
-import geopandas as gpd
 import pandas as pd
 
 from abc import ABC, abstractmethod
-from dataclasses import is_dataclass, fields
-from pandas.util import hash_pandas_object
 from pydantic import BaseModel
+
+from .input_hashing import hash_inputs
 
 P = TypeVar("P", bound=BaseModel)
 
@@ -54,45 +50,7 @@ class Asset(ABC):
         Returns:
             A hash string representing the current state of the inputs.
         """
-        def serialize(value):
-            """
-            Recursively serializes a value, handling nested dataclasses and sets.
-            """
-
-            if isinstance(value, Asset):
-                return value.get_cached_hash()
-            
-            elif isinstance(value, (list, tuple)):
-                return [serialize(v) for v in value]
-            
-            elif is_dataclass(value):
-                return {field.name: serialize(getattr(value, field.name)) for field in fields(value)}
-            
-            elif isinstance(value, dict):
-               
-               return {k: serialize(v) for k, v in value.items()}
-            
-            elif isinstance(value, set):
-                return sorted(serialize(v) for v in value)
-            
-            elif isinstance(value, pathlib.Path):
-                return str(value)
-            
-            elif isinstance(value, gpd.GeoDataFrame):
-                geom_hash = hashlib.sha256(b"".join(value.geometry.to_wkb())).hexdigest()
-                attr_hash = hash_pandas_object(value.drop(columns="geometry")).sum()
-                return hashlib.sha256((geom_hash + str(attr_hash)).encode()).hexdigest()
-            
-            elif isinstance(value, BaseModel):
-                return value.model_dump(mode="json")
-            
-            else:
-                return value
-    
-        hashable_inputs = {k: serialize(v) for k, v in self.inputs.items()}
-        serialized_inputs = json.dumps(hashable_inputs, sort_keys=True).encode('utf-8')
-        
-        return hashlib.md5(serialized_inputs).hexdigest()
+        return hash_inputs(self.inputs)
 
     @staticmethod
     def prepare_parameters(

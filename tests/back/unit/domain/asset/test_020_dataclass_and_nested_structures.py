@@ -1,8 +1,7 @@
 from dataclasses import dataclass
+from mobility.runtime.assets.asset import Asset
 
-def test_dataclass_and_nested_structures_serialization(use_real_asset_init):
-    Asset = use_real_asset_init
-
+def test_dataclass_and_nested_structures_serialization():
     class DummyAsset(Asset):
         def get(self):
             return None
