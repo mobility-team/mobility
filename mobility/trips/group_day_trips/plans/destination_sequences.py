@@ -27,7 +27,6 @@ class DestinationSequences(FileAsset):
         current_plans: pl.DataFrame | None = None,
         current_plan_steps: pl.DataFrame | None = None,
         destination_saturation: pl.DataFrame | None = None,
-        chains: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
         costs: pl.DataFrame | None = None,
         sequence_index_folder: pathlib.Path | None = None,
@@ -41,7 +40,6 @@ class DestinationSequences(FileAsset):
         self.current_plans = current_plans
         self.current_plan_steps = current_plan_steps
         self.destination_saturation = destination_saturation
-        self.chains = chains
         self.demand_groups = demand_groups
         self.costs = costs
         self.sequence_index_folder = sequence_index_folder
@@ -96,7 +94,7 @@ class DestinationSequences(FileAsset):
         activities: list[Any],
         transport_zones: Any,
         destination_saturation: pl.DataFrame,
-        chains: pl.DataFrame,
+        activity_sequences: pl.DataFrame,
         demand_groups: pl.DataFrame,
         costs: pl.DataFrame,
         parameters: Any,
@@ -117,8 +115,8 @@ class DestinationSequences(FileAsset):
             self.resolved_activity_parameters,
             parameters.dest_prob_cutoff,
         )
-        chains = (
-            chains
+        activity_sequences = (
+            activity_sequences
             .filter(pl.col("activity_seq_id") != 0)
             .join(demand_groups.select(["demand_group_id", "home_zone_id"]), on="demand_group_id")
             .select(
@@ -126,6 +124,7 @@ class DestinationSequences(FileAsset):
                     "demand_group_id",
                     "home_zone_id",
                     "activity_seq_id",
+                    "time_seq_id",
                     "activity",
                     "is_anchor",
                     "seq_step_index",
@@ -135,9 +134,9 @@ class DestinationSequences(FileAsset):
                 ]
             )
         )
-        chains = self._spatialize_anchor_activities(chains, destination_probability, seed)
-        chains = self._spatialize_other_activities(
-            chains,
+        activity_sequences = self._spatialize_anchor_activities(activity_sequences, destination_probability, seed)
+        activity_sequences = self._spatialize_other_activities(
+            activity_sequences,
             destination_probability,
             costs,
             parameters.alpha,
@@ -145,11 +144,11 @@ class DestinationSequences(FileAsset):
         )
 
         destination_sequences = (
-            chains
-            .group_by(["demand_group_id", "activity_seq_id", "dest_draw_id"])
+            activity_sequences
+            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
             .agg(to=pl.col("to").sort_by("seq_step_index").cast(pl.Utf8()))
             .with_columns(to=pl.col("to").list.join("-"))
-            .sort(["demand_group_id", "activity_seq_id", "dest_draw_id"])
+            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
         )
         destination_sequences = add_index(
             destination_sequences,
@@ -158,13 +157,21 @@ class DestinationSequences(FileAsset):
             index_folder=self.sequence_index_folder,
         )
         destination_sequences = (
-            chains
+            activity_sequences
             .join(
-                destination_sequences.select(["demand_group_id", "activity_seq_id", "dest_draw_id", "dest_seq_id"]),
-                on=["demand_group_id", "activity_seq_id", "dest_draw_id"],
+                destination_sequences.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "dest_seq_id"]),
+                on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"],
             )
             .drop(["home_zone_id", "activity", "dest_draw_id"])
-            .with_columns(iteration=pl.lit(self.iteration).cast(pl.UInt32))
+            .with_columns(
+                pl.col("seq_step_index").cast(pl.UInt8),
+                pl.col("from").cast(pl.UInt16),
+                pl.col("to").cast(pl.UInt16),
+                pl.col("departure_time").cast(pl.Float32),
+                pl.col("arrival_time").cast(pl.Float32),
+                pl.col("next_departure_time").cast(pl.Float32),
+                pl.lit(self.iteration).cast(pl.UInt16).alias("iteration"),
+            )
         )
         return destination_sequences
 
@@ -220,7 +227,7 @@ class DestinationSequences(FileAsset):
     def _reuse_current_destination_sequences(self) -> pl.DataFrame:
         """Reuse the current iteration's destination sequences without resampling."""
         active_dest_sequences = self._get_active_non_stay_home_plans().select(
-            ["demand_group_id", "activity_seq_id", "dest_seq_id"]
+            ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"]
         ).unique()
 
         if active_dest_sequences.height == 0:
@@ -236,14 +243,15 @@ class DestinationSequences(FileAsset):
             self.current_plan_steps.lazy()
             .join(
                 active_dest_sequences.lazy(),
-                on=["demand_group_id", "activity_seq_id", "dest_seq_id"],
+                on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"],
                 how="inner",
             )
-            .with_columns(iteration=pl.lit(self.iteration).cast(pl.UInt32()))
+            .with_columns(iteration=pl.lit(self.iteration).cast(pl.UInt16()))
             .select(
                 [
                     "demand_group_id",
                     "activity_seq_id",
+                    "time_seq_id",
                     "dest_seq_id",
                     "seq_step_index",
                     "from",
@@ -255,7 +263,7 @@ class DestinationSequences(FileAsset):
                 ]
             )
             .unique(
-                subset=["demand_group_id", "activity_seq_id", "dest_seq_id", "seq_step_index"],
+                subset=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "seq_step_index"],
                 keep="first",
             )
             .collect(engine="streaming")
@@ -273,8 +281,8 @@ class DestinationSequences(FileAsset):
         """Return the distinct currently active non-stay-home plans."""
         return (
             self.current_plans
-            .filter(pl.col("activity_seq_id") != 0)
-            .select(["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id"])
+            .filter(pl.col("time_seq_id") != 0)
+            .select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"])
             .unique()
         )
 
@@ -284,14 +292,15 @@ class DestinationSequences(FileAsset):
             schema={
                 "demand_group_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
-                "seq_step_index": pl.UInt32,
-                "from": pl.Int32,
-                "to": pl.Int32,
-                "departure_time": pl.Float64,
-                "arrival_time": pl.Float64,
-                "next_departure_time": pl.Float64,
-                "iteration": pl.UInt32,
+                "seq_step_index": pl.UInt8,
+                "from": pl.UInt16,
+                "to": pl.UInt16,
+                "departure_time": pl.Float32,
+                "arrival_time": pl.Float32,
+                "next_departure_time": pl.Float32,
+                "iteration": pl.UInt16,
             }
         )
 
@@ -326,23 +335,25 @@ class DestinationSequences(FileAsset):
             .with_columns(activity=pl.col("activity").cast(pl.Enum(activity_values)))
         )
 
-        def offset_costs(costs_df: pl.DataFrame, delta: float, probability: float) -> pl.DataFrame:
-            return costs_df.with_columns(
-                [
-                    (pl.col("cost") + delta).alias("cost"),
-                    pl.lit(probability).alias("prob"),
-                ]
-            )
-
         x = [-2.0, -1.0, 0.0, 1.0, 2.0]
         probabilities = norm.pdf(x, loc=0.0, scale=cost_uncertainty_sd)
         probabilities /= probabilities.sum()
 
-        costs = pl.concat(
-            [offset_costs(costs, x[i], probabilities[i]) for i in range(len(probabilities))]
+        uncertainty_offsets = pl.DataFrame(
+            {
+                "cost_delta": x,
+                "prob": probabilities.tolist(),
+            },
+            schema={
+                "cost_delta": pl.Float64,
+                "prob": pl.Float64,
+            },
         )
         costs = (
             costs.lazy()
+            .join(uncertainty_offsets.lazy(), how="cross")
+            .with_columns(cost=pl.col("cost") + pl.col("cost_delta"))
+            .drop("cost_delta")
             .join(opportunities.lazy(), on="to")
             .join(utilities.lazy(), on=["activity", "to"], how="left")
             .with_columns(
@@ -442,29 +453,32 @@ class DestinationSequences(FileAsset):
     ) -> pl.DataFrame:
         """Sample destinations for anchor activities and fill anchor destinations."""
         logging.info("Spatializing anchor activities...")
+        chains_lf = chains.lazy()
+        destination_probability_lf = destination_probability.lazy()
+
         anchor_activities = (
-            chains
+            chains_lf
             .filter((pl.col("is_anchor")) & (pl.col("activity") != "home"))
-            .select(["demand_group_id", "home_zone_id", "activity_seq_id", "activity"])
+            .select(["demand_group_id", "home_zone_id", "activity_seq_id", "time_seq_id", "activity"])
             .unique()
         )
 
         required_anchor_counts = (
             anchor_activities
-            .group_by(["demand_group_id", "activity_seq_id"])
+            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id"])
             .agg(required_anchor_activities=pl.col("activity").n_unique())
         )
 
         sampled_anchors = (
             anchor_activities
             .join(
-                destination_probability,
+                destination_probability_lf,
                 left_on=["home_zone_id", "activity"],
                 right_on=["from", "activity"],
             )
             .with_columns(
                 noise=(
-                    pl.struct(["demand_group_id", "activity_seq_id", "activity", "to"])
+                    pl.struct(["demand_group_id", "activity_seq_id", "time_seq_id", "activity", "to"])
                     .hash(seed=seed)
                     .cast(pl.Float64)
                     .truediv(pl.lit(18446744073709551616.0))
@@ -478,41 +492,47 @@ class DestinationSequences(FileAsset):
                     + pl.col("to").cast(pl.Float64) * 1e-18
                 )
             )
-            .sort(["demand_group_id", "activity_seq_id", "activity", "sample_score", "to"])
+            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "activity", "sample_score", "to"])
             .with_columns(
-                dest_draw_id=pl.col("to").cum_count().over(["demand_group_id", "activity_seq_id", "activity"])
+                dest_draw_id=pl.col("to").cum_count().over(
+                    ["demand_group_id", "activity_seq_id", "time_seq_id", "activity"]
+                )
                 .cast(pl.UInt32)
             )
             .filter(pl.col("dest_draw_id") <= self.parameters.k_destination_sequences)
-            .select(["demand_group_id", "activity_seq_id", "activity", "dest_draw_id", "to"])
+            .select(["demand_group_id", "activity_seq_id", "time_seq_id", "activity", "dest_draw_id", "to"])
         )
 
         valid_anchor_draws = (
             sampled_anchors
-            .group_by(["demand_group_id", "activity_seq_id", "dest_draw_id"])
+            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
             .agg(sampled_anchor_activities=pl.col("activity").n_unique())
-            .join(required_anchor_counts, on=["demand_group_id", "activity_seq_id"], how="left")
+            .join(required_anchor_counts, on=["demand_group_id", "activity_seq_id", "time_seq_id"], how="left")
             .filter(pl.col("sampled_anchor_activities") == pl.col("required_anchor_activities"))
-            .select(["demand_group_id", "activity_seq_id", "dest_draw_id"])
+            .select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
         )
 
-        all_sequences = chains.select(["demand_group_id", "home_zone_id", "activity_seq_id"]).unique()
+        all_sequences = (
+            chains_lf
+            .select(["demand_group_id", "home_zone_id", "activity_seq_id", "time_seq_id"])
+            .unique()
+        )
         destination_draw_ids = pl.DataFrame(
             {"dest_draw_id": list(range(1, int(self.parameters.k_destination_sequences) + 1))},
             schema={"dest_draw_id": pl.UInt32},
-        )
+        ).lazy()
         sequences_without_non_home_anchor = (
             all_sequences
             .join(
-                required_anchor_counts.select(["demand_group_id", "activity_seq_id"]),
-                on=["demand_group_id", "activity_seq_id"],
+                required_anchor_counts.select(["demand_group_id", "activity_seq_id", "time_seq_id"]),
+                on=["demand_group_id", "activity_seq_id", "time_seq_id"],
                 how="anti",
             )
             .join(destination_draw_ids, how="cross")
         )
         sequences_with_valid_draws = all_sequences.join(
             valid_anchor_draws,
-            on=["demand_group_id", "activity_seq_id"],
+            on=["demand_group_id", "activity_seq_id", "time_seq_id"],
             how="inner",
         )
         sequence_draws = pl.concat(
@@ -520,15 +540,15 @@ class DestinationSequences(FileAsset):
             how="vertical_relaxed",
         )
         return (
-            chains
+            chains_lf
             .join(
-                sequence_draws.select(["demand_group_id", "activity_seq_id", "dest_draw_id"]),
-                on=["demand_group_id", "activity_seq_id"],
+                sequence_draws.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]),
+                on=["demand_group_id", "activity_seq_id", "time_seq_id"],
                 how="inner",
             )
             .join(
                 sampled_anchors.rename({"to": "anchor_to"}),
-                on=["demand_group_id", "activity_seq_id", "activity", "dest_draw_id"],
+                on=["demand_group_id", "activity_seq_id", "time_seq_id", "activity", "dest_draw_id"],
                 how="left",
             )
             .with_columns(
@@ -536,12 +556,13 @@ class DestinationSequences(FileAsset):
                 .then(pl.col("home_zone_id"))
                 .otherwise(pl.col("anchor_to"))
             )
-            .sort(["demand_group_id", "activity_seq_id", "dest_draw_id", "seq_step_index"])
+            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "seq_step_index"])
             .with_columns(
                 anchor_to=pl.col("anchor_to").backward_fill().over(
-                    ["demand_group_id", "activity_seq_id", "dest_draw_id"]
+                    ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
                 )
             )
+            .collect(engine="streaming")
         )
 
 
@@ -573,19 +594,20 @@ class DestinationSequences(FileAsset):
                     alpha,
                     seed,
                 )
-                .with_columns(seq_step_index=pl.lit(seq_step_index).cast(pl.UInt32))
+                .with_columns(seq_step_index=pl.lit(seq_step_index).cast(pl.UInt8))
             )
             spatialized_chains.append(spatialized_step)
             seq_step_index += 1
             chains_step = (
-                chains
+                chains.lazy()
                 .filter(pl.col("seq_step_index") == seq_step_index)
                 .join(
-                    spatialized_step
-                    .select(["demand_group_id", "home_zone_id", "activity_seq_id", "dest_draw_id", "to"])
+                    spatialized_step.lazy()
+                    .select(["demand_group_id", "home_zone_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"])
                     .rename({"to": "from"}),
-                    on=["demand_group_id", "home_zone_id", "activity_seq_id", "dest_draw_id"],
+                    on=["demand_group_id", "home_zone_id", "activity_seq_id", "time_seq_id", "dest_draw_id"],
                 )
+                .collect(engine="streaming")
             )
         return pl.concat(spatialized_chains)
 
@@ -600,15 +622,19 @@ class DestinationSequences(FileAsset):
         seed: int,
     ) -> pl.DataFrame:
         """Sample destinations for one step between anchors."""
+        chains_step_lf = chains_step.lazy()
+        destination_probability_lf = destination_probability.lazy()
+        costs_lf = costs.lazy()
+
         steps = (
-            chains_step
+            chains_step_lf
             .filter(pl.col("is_anchor").not_())
-            .join(destination_probability, on=["from", "activity"])
-            .join(costs, left_on=["to", "anchor_to"], right_on=["from", "to"])
+            .join(destination_probability_lf, on=["from", "activity"])
+            .join(costs_lf, left_on=["to", "anchor_to"], right_on=["from", "to"])
             .with_columns(
                 p_ij=((pl.col("p_ij").clip(1e-18).log() - alpha * pl.col("cost")).exp()),
                 noise=(
-                    pl.struct(["demand_group_id", "activity_seq_id", "dest_draw_id", "to"])
+                    pl.struct(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"])
                     .hash(seed=seed)
                     .cast(pl.Float64)
                     .truediv(pl.lit(18446744073709551616.0))
@@ -621,19 +647,47 @@ class DestinationSequences(FileAsset):
                 + pl.col("to").cast(pl.Float64) * 1e-18
             )
             .with_columns(
-                min_score=pl.col("sample_score").min().over(["demand_group_id", "activity_seq_id", "dest_draw_id"])
+                min_score=pl.col("sample_score").min().over(
+                    ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+                )
             )
             .filter(pl.col("sample_score") == pl.col("min_score"))
             .select(
-                ["demand_group_id", "home_zone_id", "activity_seq_id", "dest_draw_id", "activity", "anchor_to", "from", "to"]
+                [
+                    "demand_group_id",
+                    "home_zone_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "dest_draw_id",
+                    "activity",
+                    "anchor_to",
+                    "from",
+                    "to",
+                    "departure_time",
+                    "arrival_time",
+                    "next_departure_time",
+                ]
             )
         )
         steps_anchor = (
-            chains_step
+            chains_step_lf
             .filter(pl.col("is_anchor"))
             .with_columns(to=pl.col("anchor_to"))
             .select(
-                ["demand_group_id", "home_zone_id", "activity_seq_id", "dest_draw_id", "activity", "anchor_to", "from", "to"]
+                [
+                    "demand_group_id",
+                    "home_zone_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "dest_draw_id",
+                    "activity",
+                    "anchor_to",
+                    "from",
+                    "to",
+                    "departure_time",
+                    "arrival_time",
+                    "next_departure_time",
+                ]
             )
         )
-        return pl.concat([steps, steps_anchor])
+        return pl.concat([steps, steps_anchor]).collect(engine="streaming")

@@ -91,14 +91,6 @@ if not hasattr(parsers_admin_module, "get_french_cities_boundaries"):
 # --------------------------------------------------------------------------------------
 
 @pytest.fixture
-def project_dir(tmp_path, monkeypatch):
-    """Isolated project data folder for tests."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
-    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
-    return tmp_path
-
-
-@pytest.fixture
 def fake_inputs_hash():
     return "deadbeefdeadbeefdeadbeefdeadbeef"
 

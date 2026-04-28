@@ -166,6 +166,8 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_profil
         k_mode_sequences=6,
         cost_uncertainty_sd=1.0,
         mode_sequence_search_parallel=False,
+        persist_iteration_artifacts=True,
+        save_transition_events=True,
         simulate_weekend=False,
         seed=0,
     )

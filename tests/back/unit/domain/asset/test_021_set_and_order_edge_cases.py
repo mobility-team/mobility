@@ -1,6 +1,6 @@
-def test_set_serialization_is_consistent_for_same_content(use_real_asset_init):
-    Asset = use_real_asset_init
+from mobility.runtime.assets.asset import Asset
 
+def test_set_serialization_is_consistent_for_same_content():
     class DummyAsset(Asset):
         def get(self):
             return None

@@ -1,4 +1,3 @@
-import os
 from types import SimpleNamespace
 
 import pandas as pd
@@ -15,14 +14,6 @@ def patch_asset_init(monkeypatch):
         self.cache_path = cache_path
 
     monkeypatch.setattr(asset_mod.Asset, "__init__", fake_init)
-
-
-@pytest.fixture
-def project_dir(tmp_path, monkeypatch):
-    """Keep all cache paths inside pytest's temp dir."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
-    return tmp_path
-
 
 @pytest.fixture
 def fake_transport_zones(tmp_path):

@@ -17,20 +17,6 @@ import geopandas as gpd
 # ----------------------------
 
 @pytest.fixture
-def project_dir(tmp_path, monkeypatch):
-    """
-    Create an isolated project data directory and set required env vars.
-    Always compare paths with pathlib.Path in tests (Windows-safe).
-    """
-    mobility_project_path = tmp_path / "project_data"
-    mobility_project_path.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(mobility_project_path))
-    # Some codepaths may use this; safe to point it to the same tmp.
-    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(mobility_project_path))
-    return mobility_project_path
-
-
-@pytest.fixture
 def fake_inputs_hash():
     """Deterministic fake inputs hash used by Asset hashing logic in tests."""
     return "deadbeefdeadbeefdeadbeefdeadbeef"

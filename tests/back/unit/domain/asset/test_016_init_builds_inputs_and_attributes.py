@@ -1,10 +1,8 @@
 from pathlib import Path
 from dataclasses import dataclass
+from mobility.runtime.assets.asset import Asset
 
-def test_init_builds_inputs_and_attributes(use_real_asset_init, tmp_path):
-    # Local subclass because Asset is abstract
-    Asset = use_real_asset_init
-
+def test_init_builds_inputs_and_attributes(tmp_path):
     class DummyAsset(Asset):
         def get(self):
             return None

@@ -11,8 +11,9 @@ from mobility.runtime.assets.file_asset import FileAsset
 
 from .safe_sample import safe_sample, filter_database
 from .sample_travels import sample_travels
-from mobility.surveys import MobilitySurvey, MobilitySurveyAggregator
+from mobility.surveys.aggregator import MobilitySurveyAggregator
 from mobility.surveys.france import EMPMobilitySurvey
+from mobility.surveys.mobility_survey import MobilitySurvey
 from mobility.impacts.default_gwp import DefaultGWP
 
 from typing import Callable, Dict

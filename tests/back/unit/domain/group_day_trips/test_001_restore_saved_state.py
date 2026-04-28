@@ -54,8 +54,8 @@ def make_run():
 
 def make_state():
     return RunState(
-        chains_by_activity=pl.DataFrame(),
-        chains=pl.DataFrame(),
+        survey_plans=pl.DataFrame(),
+        survey_plan_steps=pl.DataFrame(),
         demand_groups=pl.DataFrame(),
         activity_dur=pl.DataFrame(),
         home_night_dur=pl.DataFrame(),
@@ -66,6 +66,7 @@ def make_state():
         destination_saturation=pl.DataFrame({"opportunity_id": [0]}),
         costs=pl.DataFrame({"cost": [0.0]}),
         start_iteration=1,
+        current_plan_steps=None,
     )
 
 

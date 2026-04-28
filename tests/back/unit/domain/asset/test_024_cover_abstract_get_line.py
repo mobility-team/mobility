@@ -1,7 +1,7 @@
 # tests/unit/domain/asset/test_024_cover_abstract_get_line.py
-def test_calling_base_get_executes_pass_for_coverage(asset_base_class):
-    Asset = asset_base_class
+from mobility.runtime.assets.asset import Asset
 
+def test_calling_base_get_executes_pass_for_coverage():
     class ConcreteAsset(Asset):
         def get(self):
             return "ok"

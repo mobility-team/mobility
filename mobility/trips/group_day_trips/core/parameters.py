@@ -241,6 +241,33 @@ class Parameters(BaseModel):
         ),
     ]
 
+    save_transition_events: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Save transition events",
+            description=(
+                "Whether to persist per-iteration transition-event logs. "
+                "These logs are useful for post-run analysis but are not "
+                "required to advance the simulation state."
+            ),
+        ),
+    ]
+
+    persist_iteration_artifacts: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Persist iteration artifacts",
+            description=(
+                "Whether to persist resumable per-iteration run-state artifacts "
+                "such as current plans, current plan steps, candidate plan steps, "
+                "destination saturation, RNG state, and completion markers. "
+                "Disable this to keep only the final outputs."
+            ),
+        ),
+    ]
+
     min_activity_time_constant: Annotated[
         float,
         Field(
@@ -313,6 +340,21 @@ class Parameters(BaseModel):
         ),
     ]
 
+    transition_utility_pruning_delta: Annotated[
+        float,
+        Field(
+            default=3.0,
+            ge=0.0,
+            title="Transition utility pruning delta",
+            description=(
+                "Keep only candidate plans whose scaled utility is within this "
+                "delta of the best candidate utility for a given current plan "
+                "state before computing transition probabilities. Lower values "
+                "shrink the transition choice set and speed up the simulation."
+            ),
+        ),
+    ]
+
     transition_distance_friction: Annotated[
         float,
         Field(
@@ -378,6 +420,12 @@ class Parameters(BaseModel):
                 ``start_iteration`` or if two phases start on the same
                 iteration.
         """
+        if self.persist_iteration_artifacts is False and self.save_transition_events:
+            raise ValueError(
+                "Parameters.save_transition_events cannot be True when "
+                "Parameters.persist_iteration_artifacts is False."
+            )
+
         if self.behavior_change_phases is None:
             return self
 

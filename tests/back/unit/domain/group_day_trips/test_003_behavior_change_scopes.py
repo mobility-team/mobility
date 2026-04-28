@@ -1,4 +1,6 @@
 import math
+import pathlib
+import shutil
 
 import polars as pl
 
@@ -11,6 +13,8 @@ from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 
 def _make_possible_plan_steps(rows: dict[str, list]) -> pl.DataFrame:
     rows = {
+        "country": rows.get("country", ["fr"] * len(rows["demand_group_id"])),
+        "time_seq_id": rows.get("time_seq_id", [0] * len(rows["demand_group_id"])),
         "first_seen_iteration": rows.get("first_seen_iteration", [None] * len(rows["demand_group_id"])),
         "last_active_iteration": rows.get("last_active_iteration", [None] * len(rows["demand_group_id"])),
         **rows,
@@ -19,7 +23,9 @@ def _make_possible_plan_steps(rows: dict[str, list]) -> pl.DataFrame:
         rows,
         schema={
             "demand_group_id": pl.UInt32,
+            "country": pl.Utf8,
             "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
             "dest_seq_id": pl.UInt32,
             "mode_seq_id": pl.UInt32,
             "seq_step_index": pl.UInt32,
@@ -47,6 +53,57 @@ def _make_possible_plan_steps(rows: dict[str, list]) -> pl.DataFrame:
     )
 
 
+def _make_current_plans(rows: dict[str, list]) -> pl.DataFrame:
+    rows = {
+        "time_seq_id": rows.get("time_seq_id", [0] * len(rows["demand_group_id"])),
+        **rows,
+    }
+    return pl.DataFrame(
+        rows,
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+            "utility": pl.Float64,
+            "n_persons": pl.Float64,
+        },
+    )
+
+
+def _make_possible_plan_utility(rows: dict[str, list]) -> pl.LazyFrame:
+    rows = {
+        "time_seq_id": rows.get("time_seq_id", [0] * len(rows["demand_group_id"])),
+        **rows,
+    }
+    return pl.DataFrame(
+        rows,
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+            "utility": pl.Float64,
+        },
+    ).lazy()
+
+
+def _make_local_tmp_path(name: str) -> pathlib.Path:
+    path = pathlib.Path(".pytest-local-tmp") / "group_day_trips" / name
+    shutil.rmtree(path, ignore_errors=True)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _with_plan_id(
+    frame: pl.DataFrame | pl.LazyFrame,
+    *,
+    name: str,
+) -> pl.DataFrame | pl.LazyFrame:
+    return add_plan_id(frame, index_folder=_make_local_tmp_path(name))
+
 def test_parameters_returns_default_behavior_change_scope():
     parameters = Parameters()
 
@@ -66,7 +123,7 @@ def test_parameters_resolves_active_behavior_change_scope():
     assert parameters.get_behavior_change_scope(6) == BehaviorChangeScope.DESTINATION_REPLANNING
 
 
-def test_sample_active_destination_sequences_keeps_only_active_activity_sequences(tmp_path):
+def test_sample_active_destination_sequences_keeps_only_active_activity_sequences():
     class _StubAsset:
         def __init__(self, df):
             self._df = df
@@ -78,17 +135,19 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
         run_key="run",
         is_weekday=True,
         iteration=3,
-        base_folder=tmp_path,
+        base_folder=_make_local_tmp_path("active_destination_sequences"),
         current_plans=pl.DataFrame(
             {
                 "demand_group_id": [1],
                 "activity_seq_id": [10],
+                "time_seq_id": [1],
                 "dest_seq_id": [100],
                 "mode_seq_id": [1000],
             },
             schema={
                 "demand_group_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
                 "mode_seq_id": pl.UInt32,
             },
@@ -98,12 +157,14 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
                 {
                     "demand_group_id": [1],
                     "activity_seq_id": [10],
+                    "time_seq_id": [0],
                     "seq_step_index": [0],
                     "activity": ["work"],
                 },
                 schema={
                     "demand_group_id": pl.UInt32,
                     "activity_seq_id": pl.UInt32,
+                    "time_seq_id": pl.UInt32,
                     "seq_step_index": pl.UInt32,
                     "activity": pl.Utf8,
                 },
@@ -155,22 +216,24 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
     assert seen["chains"].select("activity_seq_id").to_series().to_list() == [10]
 
 
-def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path):
+def test_reuse_current_destination_sequences_reuses_current_plan_steps():
     destination_sequences = DestinationSequences(
         run_key="run",
         is_weekday=True,
         iteration=4,
-        base_folder=tmp_path,
+        base_folder=_make_local_tmp_path("reuse_current_destination_sequences"),
         current_plans=pl.DataFrame(
             {
                 "demand_group_id": [1],
                 "activity_seq_id": [10],
+                "time_seq_id": [1],
                 "dest_seq_id": [100],
                 "mode_seq_id": [1000],
             },
             schema={
                 "demand_group_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
                 "mode_seq_id": pl.UInt32,
             },
@@ -179,8 +242,9 @@ def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path)
             {
                 "demand_group_id": [1, 1],
                 "activity_seq_id": [10, 10],
+                "time_seq_id": [1, 1],
                 "dest_seq_id": [100, 100],
-                "mode_seq_id": [1000, 1001],
+                "mode_seq_id": [1000, 1000],
                 "seq_step_index": [0, 1],
                 "from": [21, 22],
                 "to": [22, 23],
@@ -191,6 +255,7 @@ def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path)
             schema={
                 "demand_group_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
                 "mode_seq_id": pl.UInt32,
                 "seq_step_index": pl.UInt32,
@@ -211,7 +276,7 @@ def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path)
 
 def test_get_transition_probabilities_blocks_stay_home_in_mode_replanning():
     updater = PlanUpdater()
-    current_plans = pl.DataFrame(
+    current_plans = _make_current_plans(
         {
             "demand_group_id": [1, 1],
             "activity_seq_id": [0, 10],
@@ -219,32 +284,17 @@ def test_get_transition_probabilities_blocks_stay_home_in_mode_replanning():
             "mode_seq_id": [0, 1000],
             "utility": [0.0, 1.0],
             "n_persons": [5.0, 5.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-            "n_persons": pl.Float64,
-        },
+        }
     )
-    possible_plan_utility = pl.DataFrame(
+    possible_plan_utility = _make_possible_plan_utility(
         {
             "demand_group_id": [1, 1, 1, 1],
             "activity_seq_id": [0, 10, 10, 11],
             "dest_seq_id": [0, 100, 100, 101],
             "mode_seq_id": [0, 1001, 1002, 1003],
             "utility": [10.0, 2.0, 3.0, 4.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-        },
-    ).lazy()
+        }
+    )
 
     possible_plan_steps = _make_possible_plan_steps(
         {
@@ -276,8 +326,14 @@ def test_get_transition_probabilities_blocks_stay_home_in_mode_replanning():
 
     result = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_mode_replanning_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_mode_replanning_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.MODE_REPLANNING,
         transport_zones=None,
     )
@@ -289,23 +345,26 @@ def test_get_transition_probabilities_blocks_stay_home_in_mode_replanning():
     assert result.filter(pl.col("activity_seq_id_trans") == 0).height == 0
 
 
-def test_add_plan_id_keeps_stay_home_and_non_stay_home_states_distinct(tmp_path):
+def test_add_plan_id_keeps_stay_home_and_non_stay_home_states_distinct():
+    index_folder = _make_local_tmp_path("add_plan_id")
     plans = pl.DataFrame(
         {
             "demand_group_id": [1, 1],
             "activity_seq_id": [0, 10],
+            "time_seq_id": [0, 0],
             "dest_seq_id": [0, 100],
             "mode_seq_id": [0, 1000],
         },
         schema={
             "demand_group_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
             "dest_seq_id": pl.UInt32,
             "mode_seq_id": pl.UInt32,
         },
     )
 
-    result = add_plan_id(plans, index_folder=tmp_path)
+    result = add_plan_id(plans, index_folder=index_folder)
 
     assert result["plan_id"].n_unique() == 2
     assert (
@@ -319,7 +378,7 @@ def test_add_plan_id_keeps_stay_home_and_non_stay_home_states_distinct(tmp_path)
         .item()
     )
 
-    repeated = add_plan_id(plans, index_folder=tmp_path)
+    repeated = add_plan_id(plans, index_folder=index_folder)
     assert result["plan_id"].to_list() == repeated["plan_id"].to_list()
 
 
@@ -364,6 +423,7 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
             {
                 "demand_group_id": [1],
                 "activity_seq_id": [10],
+                "time_seq_id": [0],
                 "dest_seq_id": [100],
                 "seq_step_index": [0],
                 "from": [1],
@@ -376,6 +436,7 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
             schema={
                 "demand_group_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
                 "seq_step_index": pl.UInt32,
                 "from": pl.Int32,
@@ -392,6 +453,7 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
             {
                 "demand_group_id": [1],
                 "activity_seq_id": [10],
+                "time_seq_id": [0],
                 "dest_seq_id": [100],
                 "mode_seq_id": [1000],
                 "seq_step_index": [0],
@@ -401,6 +463,7 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
             schema={
                 "demand_group_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
                 "mode_seq_id": pl.UInt32,
                 "seq_step_index": pl.UInt32,
@@ -411,29 +474,35 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
     )
     chains = pl.DataFrame(
         {
-            "demand_group_id": [1],
             "activity_seq_id": [10],
+            "time_seq_id": [0],
             "seq_step_index": [0],
             "activity": ["work"],
-            "duration": [8.0],
-            "n_persons": [1.0],
+            "duration_per_pers": [8.0],
+            "departure_time": [8.0],
+            "arrival_time": [9.0],
+            "next_departure_time": [17.0],
         },
         schema={
-            "demand_group_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
             "seq_step_index": pl.UInt32,
             "activity": pl.Utf8,
-            "duration": pl.Float64,
-            "n_persons": pl.Float64,
+            "duration_per_pers": pl.Float64,
+            "departure_time": pl.Float64,
+            "arrival_time": pl.Float64,
+            "next_departure_time": pl.Float64,
         },
     )
     demand_groups = pl.DataFrame(
         {
             "demand_group_id": [1],
+            "country": ["fr"],
             "csp": ["x"],
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "country": pl.Utf8,
             "csp": pl.Utf8,
         },
     )
@@ -441,12 +510,13 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
     result = CandidatePlanStepsAsset.build_candidate_memory(
         destination_sequences=destination_sequences,
         mode_sequences=mode_sequences,
-        chains=chains,
+        survey_plan_steps=chains,
         demand_groups=demand_groups,
         current_plans=pl.DataFrame(
             schema={
                 "demand_group_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
                 "mode_seq_id": pl.UInt32,
             }
@@ -503,6 +573,7 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
             schema={
                 "demand_group_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
                 "seq_step_index": pl.UInt32,
                 "from": pl.Int32,
@@ -519,6 +590,7 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
             schema={
                 "demand_group_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
                 "mode_seq_id": pl.UInt32,
                 "seq_step_index": pl.UInt32,
@@ -529,21 +601,25 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
     )
     chains = pl.DataFrame(
         schema={
-            "demand_group_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
             "seq_step_index": pl.UInt32,
             "activity": pl.Utf8,
-            "duration": pl.Float64,
-            "n_persons": pl.Float64,
+            "duration_per_pers": pl.Float64,
+            "departure_time": pl.Float64,
+            "arrival_time": pl.Float64,
+            "next_departure_time": pl.Float64,
         }
     )
     demand_groups = pl.DataFrame(
         {
             "demand_group_id": [1],
+            "country": ["fr"],
             "csp": ["x"],
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "country": pl.Utf8,
             "csp": pl.Utf8,
         },
     )
@@ -551,12 +627,13 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
     result = CandidatePlanStepsAsset.build_candidate_memory(
         destination_sequences=destination_sequences,
         mode_sequences=mode_sequences,
-        chains=chains,
+        survey_plan_steps=chains,
         demand_groups=demand_groups,
         current_plans=pl.DataFrame(
             schema={
                 "demand_group_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
                 "mode_seq_id": pl.UInt32,
             }
@@ -570,9 +647,134 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
     assert result.select("activity_seq_id").sort("activity_seq_id").to_series().to_list() == [10]
 
 
-def test_get_transition_probabilities_limits_destination_replanning_to_same_activity():
+def test_candidate_memory_is_already_compact_before_persistence():
+    class _StubAsset:
+        def __init__(self, df):
+            self._df = df
+
+        def get_cached_asset(self):
+            return self._df
+
+    destination_sequences = _StubAsset(
+        pl.DataFrame(
+            {
+                "demand_group_id": [1],
+                "activity_seq_id": [10],
+                "time_seq_id": [0],
+                "dest_seq_id": [100],
+                "seq_step_index": [1],
+                "from": [11],
+                "to": [22],
+                "departure_time": [8.0],
+                "arrival_time": [8.5],
+                "next_departure_time": [17.0],
+                "iteration": [1],
+            },
+            schema={
+                "demand_group_id": pl.UInt32,
+                "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
+                "dest_seq_id": pl.UInt32,
+                "seq_step_index": pl.UInt8,
+                "from": pl.UInt16,
+                "to": pl.UInt16,
+                "departure_time": pl.Float32,
+                "arrival_time": pl.Float32,
+                "next_departure_time": pl.Float32,
+                "iteration": pl.UInt16,
+            },
+        )
+    )
+    mode_sequences = _StubAsset(
+        pl.DataFrame(
+            {
+                "demand_group_id": [1],
+                "activity_seq_id": [10],
+                "time_seq_id": [0],
+                "dest_seq_id": [100],
+                "mode_seq_id": [1000],
+                "seq_step_index": [1],
+                "mode": ["car"],
+                "iteration": [1],
+            },
+            schema={
+                "demand_group_id": pl.UInt32,
+                "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
+                "dest_seq_id": pl.UInt32,
+                "mode_seq_id": pl.UInt32,
+                "seq_step_index": pl.UInt8,
+                "mode": pl.Enum(["car", "walk", "stay_home"]),
+                "iteration": pl.UInt16,
+            },
+        )
+    )
+    survey_plan_steps = pl.DataFrame(
+        {
+            "activity_seq_id": [10],
+            "time_seq_id": [0],
+            "seq_step_index": [1],
+            "activity": ["work"],
+            "duration_per_pers": [8.0],
+            "departure_time": [8.0],
+            "arrival_time": [8.5],
+            "next_departure_time": [17.0],
+        },
+        schema={
+            "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt8,
+            "activity": pl.Utf8,
+            "duration_per_pers": pl.Float32,
+            "departure_time": pl.Float32,
+            "arrival_time": pl.Float32,
+            "next_departure_time": pl.Float32,
+        },
+    )
+    demand_groups = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "country": ["fr"],
+            "csp": ["x"],
+        }
+    )
+
+    result = CandidatePlanStepsAsset.build_candidate_memory(
+        destination_sequences=destination_sequences,
+        mode_sequences=mode_sequences,
+        survey_plan_steps=survey_plan_steps,
+        demand_groups=demand_groups,
+        current_plans=pl.DataFrame(
+            schema={
+                "demand_group_id": pl.UInt32,
+                "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
+                "dest_seq_id": pl.UInt32,
+                "mode_seq_id": pl.UInt32,
+            }
+        ),
+        previous_candidate_plan_steps=None,
+        current_iteration=1,
+        n_warmup_iterations=1,
+        max_inactive_age=2,
+    ).collect()
+
+    assert result.schema["seq_step_index"] == pl.UInt8
+    assert result.schema["from"] == pl.UInt16
+    assert result.schema["to"] == pl.UInt16
+    assert result.schema["duration_per_pers"] == pl.Float32
+    assert result.schema["departure_time"] == pl.Float32
+    assert result.schema["arrival_time"] == pl.Float32
+    assert result.schema["next_departure_time"] == pl.Float32
+    assert result.schema["iteration"] == pl.UInt16
+    assert result.schema["first_seen_iteration"] == pl.UInt16
+    assert result.schema["last_active_iteration"] == pl.UInt16
+    assert isinstance(result.schema["mode"], pl.Enum)
+
+
+def test_get_transition_probabilities_limits_destination_replanning_to_same_timing_profile():
     updater = PlanUpdater()
-    current_plans = pl.DataFrame(
+    current_plans = _make_current_plans(
         {
             "demand_group_id": [1],
             "activity_seq_id": [10],
@@ -580,32 +782,17 @@ def test_get_transition_probabilities_limits_destination_replanning_to_same_acti
             "mode_seq_id": [1000],
             "utility": [1.0],
             "n_persons": [5.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-            "n_persons": pl.Float64,
-        },
+        }
     )
-    possible_plan_utility = pl.DataFrame(
+    possible_plan_utility = _make_possible_plan_utility(
         {
             "demand_group_id": [1, 1, 1],
             "activity_seq_id": [10, 10, 11],
             "dest_seq_id": [100, 101, 100],
             "mode_seq_id": [1000, 1001, 1002],
             "utility": [1.0, 2.0, 3.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-        },
-    ).lazy()
+        }
+    )
 
     possible_plan_steps = _make_possible_plan_steps(
         {
@@ -637,18 +824,31 @@ def test_get_transition_probabilities_limits_destination_replanning_to_same_acti
 
     result = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_destination_replanning_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_destination_replanning_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.DESTINATION_REPLANNING,
         transport_zones=None,
     )
 
-    assert result.select("activity_seq_id_trans").unique().to_series().to_list() == [10]
+    assert result.select("time_seq_id_trans").unique().to_series().to_list() == [0]
 
 
 def test_get_transition_probabilities_filters_candidates_by_distance_threshold():
     updater = PlanUpdater()
-    current_plans = pl.DataFrame(
+    updater.attach_transition_distances = lambda allowed_transitions, **kwargs: allowed_transitions.with_columns(
+        distance=pl.when(pl.col("dest_seq_id_trans") == pl.col("dest_seq_id"))
+        .then(0.0)
+        .when(pl.col("dest_seq_id_trans") == 101)
+        .then(0.05)
+        .otherwise(1.0)
+    )
+    current_plans = _make_current_plans(
         {
             "demand_group_id": [1],
             "activity_seq_id": [10],
@@ -656,26 +856,11 @@ def test_get_transition_probabilities_filters_candidates_by_distance_threshold()
             "mode_seq_id": [1000],
             "utility": [1.0],
             "n_persons": [5.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-            "n_persons": pl.Float64,
-        },
+        }
     )
-    possible_plan_utility = pl.DataFrame(
+    possible_plan_utility = _make_possible_plan_utility(
         {"demand_group_id": [1, 1, 1], "activity_seq_id": [10, 10, 10], "dest_seq_id": [100, 101, 102], "mode_seq_id": [1000, 1001, 1002], "utility": [1.0, 2.0, 3.0]},
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-        },
-    ).lazy()
+    )
 
     possible_plan_steps = _make_possible_plan_steps(
         {
@@ -707,8 +892,14 @@ def test_get_transition_probabilities_filters_candidates_by_distance_threshold()
 
     result = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_distance_threshold_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_distance_threshold_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
         enable_transition_distance_model=True,
@@ -721,7 +912,12 @@ def test_get_transition_probabilities_filters_candidates_by_distance_threshold()
 
 def test_get_transition_probabilities_uses_revision_probability_for_redistribution():
     updater = PlanUpdater()
-    current_plans = pl.DataFrame(
+    updater.attach_transition_distances = lambda allowed_transitions, **kwargs: allowed_transitions.with_columns(
+        distance=pl.when(pl.col("dest_seq_id_trans") == pl.col("dest_seq_id"))
+        .then(0.0)
+        .otherwise(1.0)
+    )
+    current_plans = _make_current_plans(
         {
             "demand_group_id": [1],
             "activity_seq_id": [10],
@@ -729,32 +925,17 @@ def test_get_transition_probabilities_uses_revision_probability_for_redistributi
             "mode_seq_id": [1000],
             "utility": [1.0],
             "n_persons": [5.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-            "n_persons": pl.Float64,
-        },
+        }
     )
-    possible_plan_utility = pl.DataFrame(
+    possible_plan_utility = _make_possible_plan_utility(
         {
             "demand_group_id": [1, 1],
             "activity_seq_id": [10, 10],
             "dest_seq_id": [100, 101],
             "mode_seq_id": [1000, 1001],
             "utility": [1.0, 2.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-        },
-    ).lazy()
+        }
+    )
 
     possible_plan_steps = _make_possible_plan_steps(
         {
@@ -786,8 +967,14 @@ def test_get_transition_probabilities_uses_revision_probability_for_redistributi
 
     result = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_revision_probability_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_revision_probability_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
         enable_transition_distance_model=True,
@@ -808,7 +995,7 @@ def test_get_transition_probabilities_uses_revision_probability_for_redistributi
 
 def test_get_transition_probabilities_transition_logit_scale_softens_choice_probabilities():
     updater = PlanUpdater()
-    current_plans = pl.DataFrame(
+    current_plans = _make_current_plans(
         {
             "demand_group_id": [1],
             "activity_seq_id": [10],
@@ -816,32 +1003,17 @@ def test_get_transition_probabilities_transition_logit_scale_softens_choice_prob
             "mode_seq_id": [1000],
             "utility": [1.0],
             "n_persons": [5.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-            "n_persons": pl.Float64,
-        },
+        }
     )
-    possible_plan_utility = pl.DataFrame(
+    possible_plan_utility = _make_possible_plan_utility(
         {
             "demand_group_id": [1, 1],
             "activity_seq_id": [10, 10],
             "dest_seq_id": [100, 101],
             "mode_seq_id": [1000, 1001],
             "utility": [1.0, 2.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-        },
-    ).lazy()
+        }
+    )
 
     possible_plan_steps = _make_possible_plan_steps(
         {
@@ -873,15 +1045,27 @@ def test_get_transition_probabilities_transition_logit_scale_softens_choice_prob
 
     result_default = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_logit_scale_default_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_logit_scale_default_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
     )
     result_scaled = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_logit_scale_scaled_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_logit_scale_scaled_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
         transition_logit_scale=0.25,
@@ -896,7 +1080,7 @@ def test_get_transition_probabilities_transition_logit_scale_softens_choice_prob
 
 def test_get_transition_probabilities_scales_pruning_window_with_transition_logit_scale():
     updater = PlanUpdater()
-    current_plans = pl.DataFrame(
+    current_plans = _make_current_plans(
         {
             "demand_group_id": [1],
             "activity_seq_id": [10],
@@ -904,32 +1088,17 @@ def test_get_transition_probabilities_scales_pruning_window_with_transition_logi
             "mode_seq_id": [1000],
             "utility": [10.0],
             "n_persons": [5.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-            "n_persons": pl.Float64,
-        },
+        }
     )
-    possible_plan_utility = pl.DataFrame(
+    possible_plan_utility = _make_possible_plan_utility(
         {
             "demand_group_id": [1, 1],
             "activity_seq_id": [10, 10],
             "dest_seq_id": [100, 101],
             "mode_seq_id": [1000, 1001],
             "utility": [10.0, 4.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-        },
-    ).lazy()
+        }
+    )
 
     possible_plan_steps = _make_possible_plan_steps(
         {
@@ -961,15 +1130,27 @@ def test_get_transition_probabilities_scales_pruning_window_with_transition_logi
 
     result_default = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_pruning_default_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_pruning_default_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
     )
     result_scaled = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_pruning_scaled_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_pruning_scaled_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
         transition_logit_scale=0.25,
@@ -981,7 +1162,14 @@ def test_get_transition_probabilities_scales_pruning_window_with_transition_logi
 
 def test_get_transition_probabilities_transition_distance_friction_penalizes_far_states():
     updater = PlanUpdater()
-    current_plans = pl.DataFrame(
+    updater.attach_transition_distances = lambda allowed_transitions, **kwargs: allowed_transitions.with_columns(
+        distance=pl.when(pl.col("dest_seq_id_trans") == pl.col("dest_seq_id"))
+        .then(0.0)
+        .when(pl.col("dest_seq_id_trans") == 101)
+        .then(0.1)
+        .otherwise(5.0)
+    )
+    current_plans = _make_current_plans(
         {
             "demand_group_id": [1],
             "activity_seq_id": [10],
@@ -989,32 +1177,17 @@ def test_get_transition_probabilities_transition_distance_friction_penalizes_far
             "mode_seq_id": [1000],
             "utility": [1.0],
             "n_persons": [5.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-            "n_persons": pl.Float64,
-        },
+        }
     )
-    possible_plan_utility = pl.DataFrame(
+    possible_plan_utility = _make_possible_plan_utility(
         {
             "demand_group_id": [1, 1, 1],
             "activity_seq_id": [10, 10, 10],
             "dest_seq_id": [100, 101, 102],
             "mode_seq_id": [1000, 1001, 1002],
             "utility": [1.0, 2.0, 2.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "utility": pl.Float64,
-        },
-    ).lazy()
+        }
+    )
 
     possible_plan_steps = _make_possible_plan_steps(
         {
@@ -1046,8 +1219,14 @@ def test_get_transition_probabilities_transition_distance_friction_penalizes_far
 
     result = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_distance_friction_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_distance_friction_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
         enable_transition_distance_model=True,

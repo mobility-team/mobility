@@ -5,9 +5,9 @@ import zipfile
 import pandas as pd
 import numpy as np
 
-from mobility.surveys import MobilitySurvey
 from mobility.runtime.io.download_file import download_file
 from mobility.surveys.mobility_survey import (
+    MobilitySurvey,
     MobilitySurveyParameters,
 )
 

@@ -1,6 +1,6 @@
-def test_list_of_assets_in_inputs_uses_each_child_cached_hash(use_real_asset_init):
-    Asset = use_real_asset_init
+from mobility.runtime.assets.asset import Asset
 
+def test_list_of_assets_in_inputs_uses_each_child_cached_hash():
     class ChildAsset(Asset):
         def __init__(self, child_hash_value: str):
             super().__init__({"kind": "child"})

@@ -29,6 +29,7 @@ def download_file(url, path, max_retries=5, timeout=(10, 120)):
     Returns:
         pathlib.Path: The path where the file was downloaded.
     """
+    chunk_size = 1024 * 1024
 
     path = clean_path(path)
     temp_path = path.parent / f"{path.name}.part"
@@ -82,7 +83,7 @@ def download_file(url, path, max_retries=5, timeout=(10, 120)):
                     with Progress() as progress:
                         task = progress.add_task("[green]Downloading...", total=total_size)
                         with open(temp_path, "wb") as file:
-                            for data in response.iter_content(chunk_size=8192):
+                            for data in response.iter_content(chunk_size=chunk_size):
                                 file.write(data)
                                 progress.update(task, advance=len(data))
 

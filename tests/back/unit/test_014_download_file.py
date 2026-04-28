@@ -30,6 +30,7 @@ class _FakeResponse:
         self._chunks = chunks or []
         self.headers = headers or {}
         self._raise_exc = raise_exc
+        self.chunk_sizes = []
 
     def __enter__(self):
         return self
@@ -42,6 +43,7 @@ class _FakeResponse:
             raise self._raise_exc
 
     def iter_content(self, chunk_size=8192):
+        self.chunk_sizes.append(chunk_size)
         yield from self._chunks
 
 
@@ -124,3 +126,21 @@ def test_download_file_deletes_preexisting_partial_file_before_retrying(monkeypa
         download_file("https://example.com/file.txt", path, max_retries=0)
 
     assert temp_path.exists() is False
+
+
+def test_download_file_uses_large_default_chunk_size(monkeypatch, tmp_path):
+    response = _FakeResponse(
+        status_code=200,
+        chunks=[b"data"],
+        headers={"content-length": "4"},
+    )
+    session = _FakeSession(response=response)
+    monkeypatch.setattr(download_file_module, "Progress", _FakeProgress)
+    monkeypatch.setattr(download_file_module.requests, "Session", lambda: session)
+
+    path = tmp_path / "file.txt"
+    result = download_file("https://example.com/file.txt", path, max_retries=0)
+
+    assert result == path
+    assert path.read_bytes() == b"data"
+    assert response.chunk_sizes == [1024 * 1024]

@@ -1,12 +1,39 @@
+from dataclasses import dataclass
+
 import pandas as pd
 import polars as pl
+from mobility.runtime.assets.asset import Asset
+from mobility.surveys import MobilitySurveyPlans, MobilitySurveyPlanSteps
 
-from mobility.surveys.mobility_survey import MobilitySurvey
+@dataclass
+class _SurveyParams:
+    survey_name: str
+    country: str
 
 
-class _StubSurvey(MobilitySurvey):
+@dataclass
+class _ActivityOrModeParams:
+    name: str | None
+    survey_ids: list[str]
+
+
+class _HashableStubAsset(Asset):
+    def __init__(self, *, name: str | None = None, survey_ids: list[str] | None = None, is_anchor: bool = False):
+        self.name = name
+        self.is_anchor = is_anchor
+        super().__init__({"parameters": _ActivityOrModeParams(name=name, survey_ids=survey_ids or [])})
+
+    def get(self):
+        return self
+
+    def get_cached_hash(self):
+        return self.inputs_hash
+
+
+class _StubSurvey(Asset):
     def __init__(self, cached):
         self._cached = cached
+        super().__init__({"parameters": _SurveyParams(survey_name="stub-survey", country="fr")})
 
     def get(self):
         return self._cached
@@ -14,24 +41,24 @@ class _StubSurvey(MobilitySurvey):
     def create_and_get_asset(self):
         return self._cached
 
+    def get_cached_hash(self):
+        return self.inputs_hash
+
+    def is_update_needed(self):
+        return False
+
 
 def _make_activity(name: str, survey_ids: list[str]):
-    return type(
-        "ActivityStub",
-        (),
-        {"name": name, "inputs": {"parameters": type("Params", (), {"survey_ids": survey_ids})()}},
-    )()
+    asset = _HashableStubAsset(name=name, survey_ids=survey_ids, is_anchor=(name == "home"))
+    asset.name = name
+    return asset
 
 
 def _make_mode(name: str, survey_ids: list[str]):
-    return type(
-        "ModeStub",
-        (),
-        {"inputs": {"parameters": type("Params", (), {"name": name, "survey_ids": survey_ids})()}},
-    )()
+    return _HashableStubAsset(name=name, survey_ids=survey_ids)
 
 
-def test_get_plans_probability_returns_weighted_step_level_plans():
+def test_survey_plan_assets_return_weighted_step_level_plans():
     survey = _StubSurvey(
         {
             "days_trip": pd.DataFrame(
@@ -68,13 +95,13 @@ def test_get_plans_probability_returns_weighted_step_level_plans():
         _make_mode("walk", ["walk"]),
     ]
 
-    plans = survey.get_plans_probability(activities, modes).sort(["survey_plan_id", "seq_step_index"])
+    plan_steps_asset = MobilitySurveyPlanSteps(survey=survey, activities=activities, modes=modes)
+    plan_steps = plan_steps_asset.get().sort(["activity_seq_id", "time_seq_id", "seq_step_index"])
+    plans = MobilitySurveyPlans(plan_steps=plan_steps_asset).get().sort(["activity_seq_id", "time_seq_id"])
 
-    assert plans["survey_plan_id"].unique().to_list() == [0, 1]
-    assert plans["activity"].to_list() == ["work", "home", "work", "home"]
-    assert plans["mode"].to_list() == ["car", "walk", "car", "walk"]
-    assert plans.filter(pl.col("survey_plan_id") == 0)["p_plan"].unique().to_list() == [0.25]
-    assert plans.filter(pl.col("survey_plan_id") == 1)["p_plan"].unique().to_list() == [0.75]
-    assert "pondki" not in plans.columns
-    assert "mode_seq" not in plans.columns
-    assert "max_seq_step_index" not in plans.columns
+    assert plans.select(["activity_seq_id", "time_seq_id"]).n_unique() == 1
+    assert plan_steps["activity"].to_list() == ["work", "home"]
+    assert plan_steps["mode"].to_list() == ["car", "walk"]
+    assert plan_steps["plan_weight_mass"].to_list() == [4.0, 4.0]
+    assert plans["p_plan"].to_list() == [1.0]
+    assert "plan_weight_mass" not in plans.columns

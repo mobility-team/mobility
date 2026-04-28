@@ -1,8 +1,7 @@
 from pathlib import Path
+from mobility.runtime.assets.asset import Asset
 
-def test_asset_in_inputs_uses_child_cached_hash(use_real_asset_init, tmp_path):
-    Asset = use_real_asset_init
-
+def test_asset_in_inputs_uses_child_cached_hash(tmp_path):
     class ChildAsset(Asset):
         def __init__(self, child_hash_value: str):
             # use real init with simple inputs so it runs compute_inputs_hash, but we override get_cached_hash

@@ -15,6 +15,8 @@ from rich.spinner import Spinner
 
 from .sequence_index import add_index
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
+from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.transport.modes.choice.compute_subtour_mode_probabilities import (
     compute_subtour_mode_probabilities_serial,
     modes_list_to_dict,
@@ -73,6 +75,10 @@ class ModeSequences(FileAsset):
 
         parent_folder_path = self.working_folder
         destination_chains = self.destination_sequences.get_cached_asset()
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{self.iteration}:destination_chains",
+            destination_chains=destination_chains,
+        )
 
         tmp_path = parent_folder_path / "tmp_results"
         shutil.rmtree(tmp_path, ignore_errors=True)
@@ -80,9 +86,13 @@ class ModeSequences(FileAsset):
 
         spatialized_chains = (
             destination_chains
-            .group_by(["demand_group_id", "activity_seq_id", "dest_seq_id"])
+            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"])
             .agg(locations=pl.col("from").sort_by("seq_step_index"))
-            .sort(["demand_group_id", "activity_seq_id", "dest_seq_id"])
+            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"])
+        )
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{self.iteration}:spatialized_chains",
+            spatialized_chains=spatialized_chains,
         )
         unique_location_chains = (
             spatialized_chains
@@ -90,8 +100,13 @@ class ModeSequences(FileAsset):
             .agg(pl.col("locations").first())
             .sort("dest_seq_id")
         )
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{self.iteration}:unique_location_chains",
+            unique_location_chains=unique_location_chains,
+        )
 
         modes = modes_list_to_dict(self.transport_costs.modes)
+        mode_values = get_mode_values(self.transport_costs.modes, "stay_home")
         mode_id = {name: index for index, name in enumerate(modes)}
         id_to_mode = {index: name for index, name in enumerate(modes)}
 
@@ -110,12 +125,20 @@ class ModeSequences(FileAsset):
             (row["from"], row["to"], row["mode_id"]): row["cost"]
             for row in costs.to_dicts()
         }
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{self.iteration}:costs_dict",
+            costs=costs,
+        )
 
         is_return_mode = {mode_id[key]: value["is_return_mode"] for key, value in modes.items()}
         leg_modes = defaultdict(list)
         for from_zone, to_zone, mode in costs.keys():
             if not is_return_mode[mode]:
                 leg_modes[(from_zone, to_zone)].append(mode)
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{self.iteration}:leg_modes",
+            leg_modes=leg_modes,
+        )
 
         if self.parameters.mode_sequence_search_parallel is False:
             logging.info("Finding probable mode sequences for the spatialized trip chains...")
@@ -138,16 +161,20 @@ class ModeSequences(FileAsset):
             )
 
         all_results = (
-            spatialized_chains.select(["demand_group_id", "activity_seq_id", "dest_seq_id"])
+            spatialized_chains.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"])
             .join(pl.read_parquet(tmp_path), on="dest_seq_id")
             .with_columns(mode=pl.col("mode_index").replace_strict(id_to_mode))
         )
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{self.iteration}:all_results",
+            all_results=all_results,
+        )
         mode_sequences = (
             all_results
-            .group_by(["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_index"])
+            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_index"])
             .agg(mode_index=pl.col("mode_index").sort_by("seq_step_index").cast(pl.Utf8()))
             .with_columns(mode_index=pl.col("mode_index").list.join("-"))
-            .sort(["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_index", "mode_index"])
+            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_index", "mode_index"])
         )
         mode_sequences = add_index(
             mode_sequences,
@@ -159,13 +186,21 @@ class ModeSequences(FileAsset):
             all_results
             .join(
                 mode_sequences.select(
-                    ["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_index", "mode_seq_id"]
+                    ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_index", "mode_seq_id"]
                 ),
-                on=["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_index"],
+                on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_index"],
             )
             .drop("mode_seq_index")
-            .select(["demand_group_id", "activity_seq_id", "dest_seq_id", "mode_seq_id", "seq_step_index", "mode"])
-            .with_columns(iteration=pl.lit(self.iteration, dtype=pl.UInt32()))
+            .select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id", "seq_step_index", "mode"])
+            .with_columns(
+                seq_step_index=pl.col("seq_step_index").cast(pl.UInt8),
+                mode=pl.col("mode").cast(pl.Enum(mode_values)),
+                iteration=pl.lit(self.iteration, dtype=pl.UInt16()),
+            )
+        )
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{self.iteration}:final_results",
+            mode_sequences=all_results,
         )
 
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)

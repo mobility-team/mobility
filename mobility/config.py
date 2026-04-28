@@ -15,10 +15,12 @@ def set_params(
     path_to_pem_file=None,
     http_proxy_url=None,
     https_proxy_url=None,
+    inject_into_ssl=False,
     r_packages=True,
     r_packages_force_reinstall=False,
     r_packages_download_method="auto",
-    debug=False
+    debug=False,
+    logging_level="INFO",
 ):
     """
     Sets up the necessary environment for the Mobility package.
@@ -32,13 +34,15 @@ def set_params(
     path_to_pem_file (str, optional): The file path to the PEM file for SSL certification.
     http_proxy_url (str, optional): The URL for the HTTP proxy.
     https_proxy_url (str, optional): The URL for the HTTPS proxy.
+    inject_into_ssl (bool, optional): Whether to inject the truststore package into Python's SSL handling.
     r_packages (boolean, optional): whether to install R packages or not by running RScriptRunner (does not work for github actions so is handled by a separate r-lib github action)
     r_packages_force_reinstall (bool, optional)
     r_packages_download_method (str, optional): set this parameter to "wininet" to be able to install packages on some proxies. See the installation.md page for details.
     debug (bool, optional): set debug to True to see the R logs, including error messages
+    logging_level (str|int, optional): root logging level, e.g. "INFO" or "DEBUG"
     """
 
-    setup_logging()
+    setup_logging(logging_level)
     
     set_env_variable("MOBILITY_ENV_PATH", str(pathlib.Path(sys.executable).parent))
     set_env_variable("MOBILITY_CERT_FILE", path_to_pem_file)
@@ -46,6 +50,7 @@ def set_params(
     set_env_variable("HTTPS_PROXY", https_proxy_url)
     
     os.environ["MOBILITY_DEBUG"] = "1" if debug else "0"
+    setup_ssl_truststore(inject_into_ssl)
 
     setup_package_data_folder_path(package_data_folder_path)
     setup_project_data_folder_path(project_data_folder_path)
@@ -65,17 +70,44 @@ def set_env_variable(key, value):
         os.environ[key] = value
 
 
-def setup_logging():
+def setup_logging(logging_level="INFO"):
     """
     Configures the logging for the Mobility package.
 
     This function sets up basic logging configuration including format, level, and date format.
     """
+    if isinstance(logging_level, str):
+        level = getattr(logging, logging_level.upper(), None)
+        if not isinstance(level, int):
+            raise ValueError(f"Unknown logging level: {logging_level}")
+    else:
+        level = int(logging_level)
+
     logging.basicConfig(
         format='%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s',
-        level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S'
+        level=level,
+        datefmt='%Y-%m-%d %H:%M:%S',
+        force=True,
     )
+
+
+def setup_ssl_truststore(inject_into_ssl=False):
+    """
+    Optionally inject truststore into Python's SSL handling.
+
+    Parameters:
+    inject_into_ssl (bool, optional): Whether to inject truststore into ssl.
+    """
+    if inject_into_ssl:
+        try:
+            import truststore
+        except ImportError as exc:
+            raise ImportError(
+                "truststore is required when inject_into_ssl=True. "
+                "Install the optional dependency with `pip install 'mobility[truststore]'`."
+            ) from exc
+
+        truststore.inject_into_ssl()
 
 
 def setup_package_data_folder_path(package_data_folder_path):

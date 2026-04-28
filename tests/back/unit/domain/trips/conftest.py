@@ -19,20 +19,6 @@ def fake_inputs_hash() -> str:
     return "deadbeefdeadbeefdeadbeefdeadbeef"
 
 
-@pytest.fixture(scope="session")
-def project_dir(tmp_path_factory, fake_inputs_hash):
-    """
-    Create a per-session project directory and set MOBILITY_PROJECT_DATA_FOLDER to it.
-
-    All cache paths will be rewritten to:
-        <project_dir>/<fake_inputs_hash>-<file_name>
-    """
-    project_directory = tmp_path_factory.mktemp("project")
-    os.environ["MOBILITY_PROJECT_DATA_FOLDER"] = str(project_directory)
-    os.environ.setdefault("MOBILITY_PACKAGE_DATA_FOLDER", str(project_directory))
-    return Path(project_directory)
-
-
 # -------------------------------------------------
 # Autouse: Patch Asset/FileAsset initializers robustly (order-agnostic)
 # -------------------------------------------------
