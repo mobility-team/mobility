@@ -42,6 +42,13 @@ def state_waterfall(
     spec = _METRIC_SPECS[quantity]
 
     transitions_df = transitions.collect(engine="streaming")
+    if transitions_df.is_empty():
+        raise ValueError(
+            "`state_waterfall` requires persisted transition events, but the "
+            "run transitions table is empty. Rerun PopulationGroupDayTrips "
+            "with Parameters(persist_iteration_artifacts=True, "
+            "save_transition_events=True)."
+        )
     _validate_transition_inputs(transitions_df)
 
     demand_group_keys = _load_demand_group_keys(demand_groups, demand_group_ids)
