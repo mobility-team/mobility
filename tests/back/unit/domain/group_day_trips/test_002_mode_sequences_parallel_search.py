@@ -233,7 +233,35 @@ def test_build_rust_mode_metadata():
     }
 
 
-def test_use_rust_mode_sequence_search_defaults_to_false():
+def test_compute_mode_sequence_search_results_uses_explicit_backend_flag(monkeypatch):
+    tmp_path = _make_temp_path()
     mode_sequences = object.__new__(ModeSequences)
+    mode_sequences.parameters = type(
+        "Params",
+        (),
+        {
+            "mode_sequence_search_parallel": True,
+            "k_mode_sequences": 7,
+            "use_rust_mode_sequence_search": True,
+        },
+    )()
 
-    assert mode_sequences._use_rust_mode_sequence_search() is False
+    called = {}
+
+    def fake_rust_search(**kwargs):
+        called["kwargs"] = kwargs
+
+    monkeypatch.setattr(mode_sequences, "_run_rust_search", fake_rust_search)
+
+    result = mode_sequences._compute_mode_sequence_search_results(
+        use_rust_search=mode_sequences.parameters.use_rust_mode_sequence_search,
+        parent_folder_path=tmp_path,
+        unique_location_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
+        leg_mode_costs=pl.DataFrame({"from": [1], "to": [2], "mode_id": [0], "cost": [1.0]}),
+        modes={"walk": {"is_return_mode": False}},
+        mode_id={"walk": 0},
+        tmp_path=tmp_path / "tmp_results",
+    )
+
+    assert "kwargs" in called
+    assert result is None

@@ -65,6 +65,7 @@ def test_group_day_trips_wrapper_forwards_new_parameters(monkeypatch):
         max_inactive_age=3,
         transition_revision_probability=0.4,
         transition_logit_scale=0.75,
+        use_rust_mode_sequence_search=True,
         enable_transition_distance_model=True,
         transition_distance_threshold=8.0,
         transition_distance_friction=1.5,
@@ -84,6 +85,7 @@ def test_group_day_trips_wrapper_forwards_new_parameters(monkeypatch):
     assert parameters.max_inactive_age == 3
     assert parameters.transition_revision_probability == 0.4
     assert parameters.transition_logit_scale == 0.75
+    assert parameters.use_rust_mode_sequence_search is True
     assert parameters.enable_transition_distance_model is True
     assert parameters.transition_distance_threshold == 8.0
     assert parameters.transition_distance_friction == 1.5

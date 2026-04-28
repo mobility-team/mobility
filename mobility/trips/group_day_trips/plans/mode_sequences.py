@@ -38,15 +38,12 @@ class ModeSequences(FileAsset):
         working_folder: pathlib.Path | None = None,
         sequence_index_folder: pathlib.Path | None = None,
         parameters: Any = None,
-        use_rust_mode_sequence_search: bool = False,
     ) -> None:
         self.destination_sequences = destination_sequences
         self.transport_costs = transport_costs
         self.working_folder = working_folder
         self.sequence_index_folder = sequence_index_folder
         self.parameters = parameters
-        self.iteration = iteration
-        self.use_rust_mode_sequence_search = use_rust_mode_sequence_search
         self.iteration = iteration
         inputs = {
             "version": 1,
@@ -83,7 +80,7 @@ class ModeSequences(FileAsset):
             f"mode_sequences:iteration:{self.iteration}:destination_chains",
             destination_chains=destination_chains,
         )
-        use_rust_search = self._use_rust_mode_sequence_search()
+        use_rust_search = getattr(self.parameters, "use_rust_mode_sequence_search", False)
 
         tmp_path = None
         if not use_rust_search:
@@ -185,10 +182,6 @@ class ModeSequences(FileAsset):
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         all_results.write_parquet(self.cache_path)
         return self.get_cached_asset()
-
-    def _use_rust_mode_sequence_search(self) -> bool:
-        """Return whether the Rust in-process mode-sequence search is enabled."""
-        return getattr(self, "use_rust_mode_sequence_search", False)
 
     def _compute_mode_sequence_search_results(
         self,

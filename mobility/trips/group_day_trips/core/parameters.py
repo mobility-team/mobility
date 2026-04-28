@@ -241,6 +241,20 @@ class Parameters(BaseModel):
         ),
     ]
 
+    use_rust_mode_sequence_search: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Use Rust mode-sequence search backend",
+            description=(
+                "Whether to use the in-process Rust backend for top-k mode "
+                "sequence search instead of the legacy Python implementation. "
+                "This requires the `mobility_mode_sequence_search` package to "
+                "be installed and importable."
+            ),
+        ),
+    ]
+
     save_transition_events: Annotated[
         bool,
         Field(
