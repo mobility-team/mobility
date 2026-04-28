@@ -375,12 +375,12 @@ def get_possible_subtours_from_locations(locations):
     
     last_seen = {}
     subtours = []
-    n_locations = len(locations)
     for end_idx, place in enumerate(locations):
         if place in last_seen:
             start_idx = last_seen[place]
-            if start_idx != 0 or end_idx != n_locations-1:
-                subtours.append(np.arange(start_idx, end_idx+1))
+            # The full home-to-home segment is a valid repeated-place subtour for
+            # multimodal outbound/return pairing, not just internal loops.
+            subtours.append(np.arange(start_idx, end_idx+1))
         last_seen[place] = end_idx
         
     return subtours

@@ -1,10 +1,15 @@
 import json
 import pathlib
 import pickle
+import tempfile
 
 import polars as pl
 
 from mobility.trips.group_day_trips.plans.mode_sequences import ModeSequences
+
+
+def _make_temp_path() -> pathlib.Path:
+    return pathlib.Path(tempfile.mkdtemp())
 
 
 class _DummyLive:
@@ -29,7 +34,8 @@ class _DummyProcess:
         return 0
 
 
-def test_run_parallel_search_serializes_inputs_and_invokes_worker(monkeypatch, tmp_path):
+def test_run_parallel_search_serializes_inputs_and_invokes_worker(monkeypatch):
+    tmp_path = _make_temp_path()
     mode_sequences = object.__new__(ModeSequences)
     mode_sequences.parameters = type("Params", (), {"k_mode_sequences": 7})()
 
@@ -120,3 +126,114 @@ def test_run_parallel_search_serializes_inputs_and_invokes_worker(monkeypatch, t
         str(tmp_results_path),
     ]
     assert created_processes[0].wait_called is True
+
+
+def test_compute_mode_sequence_search_results_dispatches_to_old_python_backend(monkeypatch):
+    tmp_path = _make_temp_path()
+    mode_sequences = object.__new__(ModeSequences)
+    mode_sequences.parameters = type(
+        "Params",
+        (),
+        {
+            "mode_sequence_search_parallel": False,
+            "k_mode_sequences": 7,
+        },
+    )()
+
+    called = {}
+
+    def fake_old_python_search(**kwargs):
+        called["kwargs"] = kwargs
+
+    monkeypatch.setattr(mode_sequences, "_run_old_python_search", fake_old_python_search)
+
+    result = mode_sequences._compute_mode_sequence_search_results(
+        use_rust_search=False,
+        parent_folder_path=tmp_path,
+        unique_location_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
+        leg_mode_costs=pl.DataFrame({"from": [1], "to": [2], "mode_id": [0], "cost": [1.0]}),
+        modes={"walk": {"is_return_mode": False}},
+        mode_id={"walk": 0},
+        tmp_path=tmp_path / "tmp_results",
+    )
+
+    assert "kwargs" in called
+    assert called["kwargs"]["parent_folder_path"] == tmp_path
+    assert result is None
+
+
+def test_compute_mode_sequence_search_results_dispatches_to_rust_backend(monkeypatch):
+    tmp_path = _make_temp_path()
+    mode_sequences = object.__new__(ModeSequences)
+    mode_sequences.parameters = type(
+        "Params",
+        (),
+        {
+            "mode_sequence_search_parallel": True,
+            "k_mode_sequences": 7,
+        },
+    )()
+
+    called = {}
+
+    def fake_rust_search(**kwargs):
+        called["kwargs"] = kwargs
+
+    monkeypatch.setattr(mode_sequences, "_run_rust_search", fake_rust_search)
+
+    result = mode_sequences._compute_mode_sequence_search_results(
+        use_rust_search=True,
+        parent_folder_path=tmp_path,
+        unique_location_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
+        leg_mode_costs=pl.DataFrame({"from": [1], "to": [2], "mode_id": [0], "cost": [1.0]}),
+        modes={"walk": {"is_return_mode": False}},
+        mode_id={"walk": 0},
+        tmp_path=tmp_path / "tmp_results",
+    )
+
+    assert "kwargs" in called
+    assert "parent_folder_path" not in called["kwargs"]
+    assert result is None
+
+
+def test_build_rust_mode_metadata():
+    mode_sequences = object.__new__(ModeSequences)
+
+    result = mode_sequences._build_rust_mode_metadata(
+        modes={
+            "walk": {
+                "vehicle": None,
+                "multimodal": False,
+                "is_return_mode": False,
+                "return_mode": None,
+            },
+            "carpool_return": {
+                "vehicle": "car",
+                "multimodal": True,
+                "is_return_mode": True,
+                "return_mode": None,
+            },
+            "carpool": {
+                "vehicle": "car",
+                "multimodal": True,
+                "is_return_mode": False,
+                "return_mode": "carpool_return",
+            },
+        },
+        mode_id={"walk": 0, "carpool": 1, "carpool_return": 2},
+    )
+
+    assert result.sort("mode_id").to_dict(as_series=False) == {
+        "mode_id": [0, 1, 2],
+        "needs_vehicle": [False, True, True],
+        "vehicle_id": [None, "car", "car"],
+        "multimodal": [False, True, True],
+        "is_return_mode": [False, False, True],
+        "return_mode_id": [None, 2, None],
+    }
+
+
+def test_use_rust_mode_sequence_search_defaults_to_false():
+    mode_sequences = object.__new__(ModeSequences)
+
+    assert mode_sequences._use_rust_mode_sequence_search() is False

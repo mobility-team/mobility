@@ -17,7 +17,6 @@ from .sequence_index import add_index
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
-from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.transport.modes.choice.compute_subtour_mode_probabilities import (
     compute_subtour_mode_probabilities_serial,
     modes_list_to_dict,
@@ -39,12 +38,15 @@ class ModeSequences(FileAsset):
         working_folder: pathlib.Path | None = None,
         sequence_index_folder: pathlib.Path | None = None,
         parameters: Any = None,
+        use_rust_mode_sequence_search: bool = False,
     ) -> None:
         self.destination_sequences = destination_sequences
         self.transport_costs = transport_costs
         self.working_folder = working_folder
         self.sequence_index_folder = sequence_index_folder
         self.parameters = parameters
+        self.iteration = iteration
+        self.use_rust_mode_sequence_search = use_rust_mode_sequence_search
         self.iteration = iteration
         inputs = {
             "version": 1,
@@ -81,10 +83,13 @@ class ModeSequences(FileAsset):
             f"mode_sequences:iteration:{self.iteration}:destination_chains",
             destination_chains=destination_chains,
         )
+        use_rust_search = self._use_rust_mode_sequence_search()
 
-        tmp_path = parent_folder_path / "tmp_results"
-        shutil.rmtree(tmp_path, ignore_errors=True)
-        os.makedirs(tmp_path)
+        tmp_path = None
+        if not use_rust_search:
+            tmp_path = parent_folder_path / "tmp_results"
+            shutil.rmtree(tmp_path, ignore_errors=True)
+            os.makedirs(tmp_path)
 
         spatialized_chains = (
             destination_chains
@@ -112,59 +117,31 @@ class ModeSequences(FileAsset):
         mode_id = {name: index for index, name in enumerate(modes)}
         id_to_mode = {index: name for index, name in enumerate(modes)}
 
-        costs = (
+        leg_mode_costs = (
             self.transport_costs.get_costs_by_od_and_mode(
                 ["cost"],
                 detail_distances=False,
             )
             .with_columns(
-                mode_id=pl.col("mode").replace_strict(mode_id, return_dtype=pl.UInt8()),
-                cost=pl.col("cost").mul(1e6).cast(pl.Int64),
+                mode_id=pl.col("mode").replace_strict(mode_id, return_dtype=pl.UInt16()),
+                cost=pl.col("cost").mul(1e6).cast(pl.Float64),
             )
             .sort(["from", "to", "mode_id"])
         )
-        costs = {
-            (row["from"], row["to"], row["mode_id"]): row["cost"]
-            for row in costs.to_dicts()
-        }
-        log_memory_checkpoint(
-            f"mode_sequences:iteration:{self.iteration}:costs_dict",
-            costs=costs,
-        )
 
-        is_return_mode = {mode_id[key]: value["is_return_mode"] for key, value in modes.items()}
-        leg_modes = defaultdict(list)
-        for from_zone, to_zone, mode in costs.keys():
-            if not is_return_mode[mode]:
-                leg_modes[(from_zone, to_zone)].append(mode)
-        log_memory_checkpoint(
-            f"mode_sequences:iteration:{self.iteration}:leg_modes",
-            leg_modes=leg_modes,
+        search_results = self._compute_mode_sequence_search_results(
+            use_rust_search=use_rust_search,
+            parent_folder_path=parent_folder_path,
+            unique_location_chains=unique_location_chains,
+            leg_mode_costs=leg_mode_costs,
+            modes=modes,
+            mode_id=mode_id,
+            tmp_path=tmp_path,
         )
-
-        if self.parameters.mode_sequence_search_parallel is False:
-            logging.info("Finding probable mode sequences for the spatialized trip chains...")
-            compute_subtour_mode_probabilities_serial(
-                self.parameters.k_mode_sequences,
-                unique_location_chains,
-                costs,
-                leg_modes,
-                modes,
-                tmp_path,
-            )
-        else:
-            self._run_parallel_search(
-                parent_folder_path=parent_folder_path,
-                unique_location_chains=unique_location_chains,
-                costs=costs,
-                leg_modes=leg_modes,
-                modes=modes,
-                tmp_path=tmp_path,
-            )
 
         all_results = (
             spatialized_chains.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"])
-            .join(pl.read_parquet(tmp_path), on="dest_seq_id")
+            .join(search_results, on="dest_seq_id")
             .with_columns(mode=pl.col("mode_index").replace_strict(id_to_mode))
         )
         log_memory_checkpoint(
@@ -209,6 +186,139 @@ class ModeSequences(FileAsset):
         all_results.write_parquet(self.cache_path)
         return self.get_cached_asset()
 
+    def _use_rust_mode_sequence_search(self) -> bool:
+        """Return whether the Rust in-process mode-sequence search is enabled."""
+        return getattr(self, "use_rust_mode_sequence_search", False)
+
+    def _compute_mode_sequence_search_results(
+        self,
+        *,
+        use_rust_search: bool,
+        parent_folder_path: pathlib.Path,
+        unique_location_chains: pl.DataFrame,
+        leg_mode_costs: pl.DataFrame,
+        modes: dict[str, Any],
+        mode_id: dict[str, int],
+        tmp_path: pathlib.Path | None,
+    ) -> pl.DataFrame:
+        """Dispatch mode-sequence search to the selected backend."""
+        if use_rust_search:
+            return self._run_rust_search(
+                unique_location_chains=unique_location_chains,
+                leg_mode_costs=leg_mode_costs,
+                modes=modes,
+                mode_id=mode_id,
+            )
+        return self._run_old_python_search(
+            parent_folder_path=parent_folder_path,
+            unique_location_chains=unique_location_chains,
+            leg_mode_costs=leg_mode_costs,
+            modes=modes,
+            tmp_path=tmp_path,
+        )
+
+    def _run_old_python_search(
+        self,
+        *,
+        parent_folder_path: pathlib.Path,
+        unique_location_chains: pl.DataFrame,
+        leg_mode_costs: pl.DataFrame,
+        modes: dict[str, Any],
+        tmp_path: pathlib.Path | None,
+    ) -> pl.DataFrame:
+        """Run the existing Python mode-sequence search backend."""
+        if tmp_path is None:
+            raise ValueError("Old Python mode-sequence search requires a tmp_path.")
+        costs = {
+            (row["from"], row["to"], row["mode_id"]): row["cost"]
+            for row in leg_mode_costs.to_dicts()
+        }
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{self.iteration}:costs_dict",
+            costs=costs,
+        )
+
+        is_return_mode = {index: value["is_return_mode"] for index, (_, value) in enumerate(modes.items())}
+        leg_modes = defaultdict(list)
+        for from_zone, to_zone, mode in costs.keys():
+            if not is_return_mode[mode]:
+                leg_modes[(from_zone, to_zone)].append(mode)
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{self.iteration}:leg_modes",
+            leg_modes=leg_modes,
+        )
+
+        if self.parameters.mode_sequence_search_parallel is False:
+            logging.info("Finding probable mode sequences for the spatialized trip chains...")
+            compute_subtour_mode_probabilities_serial(
+                self.parameters.k_mode_sequences,
+                unique_location_chains,
+                costs,
+                leg_modes,
+                modes,
+                tmp_path,
+            )
+        else:
+            self._run_parallel_search(
+                parent_folder_path=parent_folder_path,
+                unique_location_chains=unique_location_chains,
+                costs=costs,
+                leg_modes=leg_modes,
+                modes=modes,
+                tmp_path=tmp_path,
+            )
+        return pl.read_parquet(tmp_path)
+
+    def _run_rust_search(
+        self,
+        *,
+        unique_location_chains: pl.DataFrame,
+        leg_mode_costs: pl.DataFrame,
+        modes: dict[str, Any],
+        mode_id: dict[str, int],
+    ) -> pl.DataFrame:
+        """Run the in-process Rust mode-sequence search backend."""
+        try:
+            from mobility_mode_sequence_search import compute_subtour_mode_probabilities
+        except ImportError as exc:
+            raise ImportError(
+                "ModeSequences.use_rust_mode_sequence_search=True requires the "
+                "'mobility_mode_sequence_search' package to be importable."
+            ) from exc
+
+        mode_metadata = self._build_rust_mode_metadata(modes=modes, mode_id=mode_id)
+        rust_leg_mode_costs = (
+            leg_mode_costs
+            .rename({"from": "origin", "to": "destination"})
+            .select(["origin", "destination", "mode_id", "cost"])
+        )
+        return compute_subtour_mode_probabilities(
+            location_chain_steps=unique_location_chains,
+            leg_mode_costs=rust_leg_mode_costs,
+            mode_metadata=mode_metadata,
+            k_sequences=self.parameters.k_mode_sequences,
+        )
+
+    def _build_rust_mode_metadata(
+        self,
+        *,
+        modes: dict[str, Any],
+        mode_id: dict[str, int],
+    ) -> pl.DataFrame:
+        """Build the Rust mode metadata input table."""
+        rows = []
+        for name, props in modes.items():
+            rows.append(
+                {
+                    "mode_id": mode_id[name],
+                    "needs_vehicle": props["vehicle"] is not None,
+                    "vehicle_id": props["vehicle"],
+                    "multimodal": props["multimodal"],
+                    "is_return_mode": props["is_return_mode"],
+                    "return_mode_id": None if props["return_mode"] is None else mode_id[props["return_mode"]],
+                }
+            )
+        return pl.DataFrame(rows).sort("mode_id")
 
     def _run_parallel_search(
         self,
