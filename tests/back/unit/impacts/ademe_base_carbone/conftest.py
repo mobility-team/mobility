@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 import types
 from pathlib import Path
@@ -10,19 +9,6 @@ import pandas as pd
 import geopandas as gpd
 import numpy as np
 import pytest
-
-
-@pytest.fixture
-def project_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """
-    Per-test project directory. Ensures NO I/O outside tmp_path.
-    Sets MOBILITY_PROJECT_DATA_FOLDER so any code under test resolves paths here.
-    """
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
-    # Some projects read this too; set it to the same place if accessed.
-    if "MOBILITY_PACKAGE_DATA_FOLDER" not in os.environ:
-        monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
-    return tmp_path
 
 
 @pytest.fixture

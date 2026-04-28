@@ -1,6 +1,4 @@
 from types import SimpleNamespace
-from pathlib import Path
-from uuid import uuid4
 from unittest.mock import patch
 
 import polars as pl
@@ -26,17 +24,7 @@ def _make_mode(*, name: str, congestion: bool):
     )
 
 
-def _make_project_data_folder() -> Path:
-    root = Path(".pytest-local-tmp") / "project-data"
-    root.mkdir(parents=True, exist_ok=True)
-    path = root / f"mobility-tests-{uuid4().hex}"
-    path.mkdir()
-    return path
-
-
-def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled(monkeypatch):
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(_make_project_data_folder()))
-
+def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled(project_dir):
     # Use a minimal mode stub with congestion enabled so the test only exercises
     # the aggregator decision logic, not the real routing/cost stack.
     aggregator = TransportCosts(modes=[_make_mode(name="car", congestion=True)])
@@ -70,8 +58,7 @@ def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled(monkeyp
     assert result_costs == "costs"
 
 
-def test_vehicle_od_flow_snapshot_hash_differs_between_weekday_and_weekend(monkeypatch):
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(_make_project_data_folder()))
+def test_vehicle_od_flow_snapshot_hash_differs_between_weekday_and_weekend(project_dir):
     flows = pd.DataFrame({"from": [1], "to": [2], "vehicle_volume": [10.0]})
 
     weekday_asset = VehicleODFlowsAsset(
@@ -93,8 +80,7 @@ def test_vehicle_od_flow_snapshot_hash_differs_between_weekday_and_weekend(monke
     assert weekday_asset.cache_path != weekend_asset.cache_path
 
 
-def test_congestion_state_manager_overwrites_existing_vehicle_flow_snapshot(monkeypatch):
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(_make_project_data_folder()))
+def test_congestion_state_manager_overwrites_existing_vehicle_flow_snapshot(project_dir):
     manager = CongestionStateManager(SimpleNamespace())
 
     manager._create_vehicle_flow_snapshot(
