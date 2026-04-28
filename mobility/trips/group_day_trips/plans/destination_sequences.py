@@ -663,6 +663,9 @@ class DestinationSequences(FileAsset):
                     "anchor_to",
                     "from",
                     "to",
+                    "departure_time",
+                    "arrival_time",
+                    "next_departure_time",
                 ]
             )
         )
@@ -681,6 +684,9 @@ class DestinationSequences(FileAsset):
                     "anchor_to",
                     "from",
                     "to",
+                    "departure_time",
+                    "arrival_time",
+                    "next_departure_time",
                 ]
             )
         )
