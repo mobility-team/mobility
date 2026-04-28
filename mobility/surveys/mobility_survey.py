@@ -80,7 +80,7 @@ class MobilitySurvey(FileAsset):
             dict: A dictionary where keys are data identifiers and values are pandas DataFrames of the cached data.
         """
         return {k: pd.read_parquet(path) for k, path in self.cache_path.items()}
-    
+
 class MobilitySurveyParameters(BaseModel):
     """Parameters used to configure a mobility survey asset."""
 
