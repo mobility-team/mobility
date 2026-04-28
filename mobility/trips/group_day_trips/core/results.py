@@ -253,6 +253,10 @@ class RunResults:
         surveys_immobility = (
             pl.concat(surveys_immobility)
             .with_columns(p_immobility=pl.col(column_name))
+            .with_columns(
+                country=pl.col("country").cast(pl.String()),
+                csp=pl.col("csp").cast(pl.String()),
+            )
             .select(["country", "csp", "p_immobility"])
         )
 
@@ -283,7 +287,11 @@ class RunResults:
                 n_persons_imm=pl.col("n_persons").fill_null(0.0).sum(),
                 n_persons_dem_grp=pl.col("n_persons_dem_grp").sum(),
             )
-            .with_columns(p_immobility=pl.col("n_persons_imm") / pl.col("n_persons_dem_grp"))
+            .with_columns(
+                country=pl.col("country").cast(pl.String()),
+                csp=pl.col("csp").cast(pl.String()),
+                p_immobility=pl.col("n_persons_imm") / pl.col("n_persons_dem_grp"),
+            )
             .join(surveys_immobility.lazy(), on=["country", "csp"], suffix="_ref")
             .with_columns(n_persons_imm_ref=pl.col("n_persons_dem_grp") * pl.col("p_immobility_ref"))
             .collect(engine="streaming")
