@@ -3,9 +3,9 @@ import math
 from typing import Any
 
 import polars as pl
+import psutil
 
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
-from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
 from mobility.transport.modes.core.mode_values import get_mode_values
 from ..transitions.transition_events import (
     add_transition_plan_details,
@@ -20,6 +20,88 @@ from .mode_sequences import ModeSequences
 
 class PlanUpdater:
     """Updates population plan distributions over activity/destination/mode sequences."""
+
+    @staticmethod
+    def _log_memory_checkpoint(label: str, **objects: Any) -> None:
+        """Log process memory plus cheap summaries of already-available objects."""
+        memory_info = psutil.Process().memory_info()
+        parts = [
+            f"rss={memory_info.rss / (1024 ** 3):.2f}GB",
+            f"vms={memory_info.vms / (1024 ** 3):.2f}GB",
+        ]
+        private = getattr(memory_info, "private", None)
+        if private is not None:
+            parts.append(f"private={private / (1024 ** 3):.2f}GB")
+
+        for name, obj in objects.items():
+            if obj is None:
+                parts.append(f"{name}=none")
+            elif isinstance(obj, pl.DataFrame):
+                parts.append(
+                    f"{name}=rows={obj.height}, cols={obj.width}, est={obj.estimated_size('mb'):.2f}MB"
+                )
+            elif isinstance(obj, pl.LazyFrame):
+                parts.append(f"{name}=lazy cols={len(obj.collect_schema().names())}")
+            elif isinstance(obj, dict):
+                parts.append(f"{name}=entries={len(obj)}")
+            elif isinstance(obj, (list, tuple, set)):
+                parts.append(f"{name}=len={len(obj)}")
+            else:
+                parts.append(f"{name}={type(obj).__name__}")
+
+        logging.debug("Memory checkpoint %s | %s", label, " | ".join(parts))
+
+    @staticmethod
+    def _compress_step_state(
+        frame: pl.DataFrame,
+        *,
+        drop_plan_id: bool,
+    ) -> pl.DataFrame:
+        """Reduce in-memory footprint of persisted step-state tables."""
+        mode_values = []
+        if "mode" in frame.columns:
+            mode_values = frame.select(pl.col("mode").cast(pl.String).drop_nulls().unique()).to_series().to_list()
+            mode_values = sorted(mode_values)
+
+        columns: list[pl.Expr] = []
+        for name in frame.columns:
+            if drop_plan_id and name == "plan_id":
+                continue
+
+            expr = pl.col(name)
+            if name in {"from", "to"}:
+                expr = expr.cast(pl.UInt16)
+            elif name == "seq_step_index":
+                expr = expr.cast(pl.UInt8)
+            elif name in {"iteration", "first_seen_iteration", "last_active_iteration"}:
+                expr = expr.cast(pl.UInt16)
+            elif name in {"departure_time", "arrival_time", "next_departure_time", "duration_per_pers", "duration"}:
+                expr = expr.cast(pl.Float32)
+            elif name == "mode" and mode_values:
+                expr = expr.cast(pl.String).cast(pl.Enum(mode_values))
+            columns.append(expr.alias(name))
+
+        return frame.select(columns)
+
+    @staticmethod
+    def _ensure_plan_id(frame: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame | pl.LazyFrame:
+        """Add a temporary plan id from the plan keys when tests pass raw frames."""
+        schema_names = frame.collect_schema().names() if isinstance(frame, pl.LazyFrame) else frame.columns
+        if "plan_id" in schema_names:
+            return frame
+
+        return frame.with_columns(
+            plan_id=pl.concat_str(
+                [
+                    pl.col("demand_group_id").cast(pl.String),
+                    pl.col("activity_seq_id").cast(pl.String),
+                    pl.col("time_seq_id").cast(pl.String),
+                    pl.col("dest_seq_id").cast(pl.String),
+                    pl.col("mode_seq_id").cast(pl.String),
+                ],
+                separator="|",
+            )
+        )
 
     def get_new_plans(
         self,
@@ -59,7 +141,7 @@ class PlanUpdater:
             mode_sequences,
             parameters,
         )
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:possible_plan_steps_lazy",
             possible_plan_steps=possible_plan_steps,
         )
@@ -82,7 +164,11 @@ class PlanUpdater:
             CandidatePlanStepsAsset.STRUCTURAL_COLUMNS
             + CandidatePlanStepsAsset.RETENTION_COLUMNS
         ).collect(engine="streaming")
-        log_memory_checkpoint(
+        candidate_plan_steps = self._compress_step_state(
+            candidate_plan_steps,
+            drop_plan_id=False,
+        )
+        self._log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:candidate_plan_steps",
             candidate_plan_steps=candidate_plan_steps,
         )
@@ -93,7 +179,7 @@ class PlanUpdater:
         ).collect(
             engine="streaming"
         )
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:possible_plan_steps",
             possible_plan_steps=possible_plan_steps,
         )
@@ -112,7 +198,7 @@ class PlanUpdater:
             transition_distance_friction=parameters.transition_distance_friction,
             plan_embedding_dimension_weights=parameters.plan_embedding_dimension_weights,
         )
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:transition_probabilities",
             transition_prob=transition_prob,
         )
@@ -121,13 +207,13 @@ class PlanUpdater:
             transition_prob,
             iteration,
         )
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:after_apply_transitions",
             current_plans=current_plans,
             transition_events=transition_events,
         )
         current_plan_steps = self.get_current_plan_steps(current_plans, possible_plan_steps.lazy())
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:current_plan_steps",
             current_plan_steps=current_plan_steps,
         )
@@ -203,7 +289,7 @@ class PlanUpdater:
             n_warmup_iterations=parameters.n_warmup_iterations,
             max_inactive_age=parameters.max_inactive_age,
         )
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:candidate_memory",
             aggregated_candidates=aggregated_candidates,
         )
@@ -234,10 +320,6 @@ class PlanUpdater:
         cost_by_od_and_modes = transport_costs.get_costs_by_od_and_mode(
             ["cost", "distance", "time"],
             detail_distances=False,
-        ).with_columns(
-            mode=pl.col("mode").cast(
-                pl.Enum(get_mode_values(transport_costs.modes, "stay_home"))
-            )
         )
         value_of_time = (
             pl.from_dicts(
@@ -393,8 +475,8 @@ class PlanUpdater:
                 value_of_time=pl.lit(0.0),
                 k_saturation_utility=pl.lit(1.0),
                 min_activity_time=pl.lit(0.0),
-                first_seen_iteration=pl.lit(None, dtype=pl.UInt16),
-                last_active_iteration=pl.lit(None, dtype=pl.UInt16),
+                first_seen_iteration=pl.lit(None, dtype=pl.UInt32),
+                last_active_iteration=pl.lit(None, dtype=pl.UInt32),
             )
             .select(step_columns)
         )
@@ -422,6 +504,9 @@ class PlanUpdater:
     ) -> pl.DataFrame:
         """Compute transition probabilities from current to candidate plans."""
 
+        possible_plan_utility = self._ensure_plan_id(possible_plan_utility)
+        possible_plan_steps = self._ensure_plan_id(possible_plan_steps)
+
         allowed_transitions = self.build_allowed_plan_transitions(
             current_plans,
             possible_plan_utility,
@@ -429,7 +514,7 @@ class PlanUpdater:
             transition_utility_pruning_delta=transition_utility_pruning_delta,
             transition_logit_scale=transition_logit_scale,
         )
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             "plan_updater:allowed_transitions",
             allowed_transitions=allowed_transitions,
         )
@@ -660,7 +745,7 @@ class PlanUpdater:
             )
             .collect()
         )
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             "plan_updater:transition_probabilities_collected",
             transition_probabilities=transition_probabilities,
         )
@@ -780,14 +865,15 @@ class PlanUpdater:
                 on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"],
                 how="left",
             )
-            .with_columns(
-                duration=(pl.col("duration_per_pers").fill_null(24.0) * pl.col("n_persons")).cast(pl.Float32)
-            )
+            .with_columns(duration=pl.col("duration_per_pers").fill_null(24.0) * pl.col("n_persons"))
             .drop("duration_per_pers")
             .collect(engine="streaming")
         )
 
-        return current_plan_steps.drop("plan_id") if "plan_id" in current_plan_steps.columns else current_plan_steps
+        return self._compress_step_state(
+            current_plan_steps,
+            drop_plan_id=True,
+        )
 
     def get_new_costs(
         self,

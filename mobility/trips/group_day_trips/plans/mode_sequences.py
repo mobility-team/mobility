@@ -10,12 +10,12 @@ from importlib import resources
 from typing import Any
 
 import polars as pl
+import psutil
 from rich.live import Live
 from rich.spinner import Spinner
 
 from .sequence_index import add_index
 from mobility.runtime.assets.file_asset import FileAsset
-from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.transport.modes.choice.compute_subtour_mode_probabilities import (
     compute_subtour_mode_probabilities_serial,
@@ -25,6 +25,36 @@ from mobility.transport.modes.choice.compute_subtour_mode_probabilities import (
 
 class ModeSequences(FileAsset):
     """Persist mode sequences produced for one PopulationGroupDayTrips iteration."""
+
+    @staticmethod
+    def _log_memory_checkpoint(label: str, **objects: Any) -> None:
+        """Log process memory plus cheap summaries of already-available objects."""
+        memory_info = psutil.Process().memory_info()
+        parts = [
+            f"rss={memory_info.rss / (1024 ** 3):.2f}GB",
+            f"vms={memory_info.vms / (1024 ** 3):.2f}GB",
+        ]
+        private = getattr(memory_info, "private", None)
+        if private is not None:
+            parts.append(f"private={private / (1024 ** 3):.2f}GB")
+
+        for name, obj in objects.items():
+            if obj is None:
+                parts.append(f"{name}=none")
+            elif isinstance(obj, pl.DataFrame):
+                parts.append(
+                    f"{name}=rows={obj.height}, cols={obj.width}, est={obj.estimated_size('mb'):.2f}MB"
+                )
+            elif isinstance(obj, pl.LazyFrame):
+                parts.append(f"{name}=lazy cols={len(obj.collect_schema().names())}")
+            elif isinstance(obj, dict):
+                parts.append(f"{name}=entries={len(obj)}")
+            elif isinstance(obj, (list, tuple, set)):
+                parts.append(f"{name}=len={len(obj)}")
+            else:
+                parts.append(f"{name}={type(obj).__name__}")
+
+        logging.debug("Memory checkpoint %s | %s", label, " | ".join(parts))
 
     def __init__(
         self,
@@ -44,6 +74,7 @@ class ModeSequences(FileAsset):
         self.working_folder = working_folder
         self.sequence_index_folder = sequence_index_folder
         self.parameters = parameters
+        self.iteration = iteration
         inputs = {
             "version": 1,
             "run_key": run_key,
@@ -75,7 +106,7 @@ class ModeSequences(FileAsset):
 
         parent_folder_path = self.working_folder
         destination_chains = self.destination_sequences.get_cached_asset()
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:destination_chains",
             destination_chains=destination_chains,
         )
@@ -90,7 +121,7 @@ class ModeSequences(FileAsset):
             .agg(locations=pl.col("from").sort_by("seq_step_index"))
             .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"])
         )
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:spatialized_chains",
             spatialized_chains=spatialized_chains,
         )
@@ -100,7 +131,7 @@ class ModeSequences(FileAsset):
             .agg(pl.col("locations").first())
             .sort("dest_seq_id")
         )
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:unique_location_chains",
             unique_location_chains=unique_location_chains,
         )
@@ -125,7 +156,7 @@ class ModeSequences(FileAsset):
             (row["from"], row["to"], row["mode_id"]): row["cost"]
             for row in costs.to_dicts()
         }
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:costs_dict",
             costs=costs,
         )
@@ -135,7 +166,7 @@ class ModeSequences(FileAsset):
         for from_zone, to_zone, mode in costs.keys():
             if not is_return_mode[mode]:
                 leg_modes[(from_zone, to_zone)].append(mode)
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:leg_modes",
             leg_modes=leg_modes,
         )
@@ -165,7 +196,7 @@ class ModeSequences(FileAsset):
             .join(pl.read_parquet(tmp_path), on="dest_seq_id")
             .with_columns(mode=pl.col("mode_index").replace_strict(id_to_mode))
         )
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:all_results",
             all_results=all_results,
         )
@@ -198,7 +229,7 @@ class ModeSequences(FileAsset):
                 iteration=pl.lit(self.iteration, dtype=pl.UInt16()),
             )
         )
-        log_memory_checkpoint(
+        self._log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:final_results",
             mode_sequences=all_results,
         )
