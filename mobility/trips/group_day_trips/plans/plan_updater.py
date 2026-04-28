@@ -7,6 +7,7 @@ import polars as pl
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
+from mobility.transport.modes.core.mode_values import get_mode_values
 from ..transitions.transition_events import (
     add_transition_plan_details,
     build_transition_events_lazy,
@@ -20,38 +21,6 @@ from .mode_sequences import ModeSequences
 
 class PlanUpdater:
     """Updates population plan distributions over activity/destination/mode sequences."""
-
-    @staticmethod
-    def _compress_step_state(
-        frame: pl.DataFrame,
-        *,
-        drop_plan_id: bool,
-    ) -> pl.DataFrame:
-        """Reduce in-memory footprint of persisted step-state tables."""
-        mode_values = []
-        if "mode" in frame.columns:
-            mode_values = frame.select(pl.col("mode").cast(pl.String).drop_nulls().unique()).to_series().to_list()
-            mode_values = sorted(mode_values)
-
-        columns: list[pl.Expr] = []
-        for name in frame.columns:
-            if drop_plan_id and name == "plan_id":
-                continue
-
-            expr = pl.col(name)
-            if name in {"from", "to"}:
-                expr = expr.cast(pl.UInt16)
-            elif name == "seq_step_index":
-                expr = expr.cast(pl.UInt8)
-            elif name in {"iteration", "first_seen_iteration", "last_active_iteration"}:
-                expr = expr.cast(pl.UInt16)
-            elif name in {"departure_time", "arrival_time", "next_departure_time", "duration_per_pers", "duration"}:
-                expr = expr.cast(pl.Float32)
-            elif name == "mode" and mode_values:
-                expr = expr.cast(pl.String).cast(pl.Enum(mode_values))
-            columns.append(expr.alias(name))
-
-        return frame.select(columns)
 
     @staticmethod
     def _ensure_plan_id(frame: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame | pl.LazyFrame:
@@ -134,10 +103,6 @@ class PlanUpdater:
             CandidatePlanStepsAsset.STRUCTURAL_COLUMNS
             + CandidatePlanStepsAsset.RETENTION_COLUMNS
         ).collect(engine="streaming")
-        candidate_plan_steps = self._compress_step_state(
-            candidate_plan_steps,
-            drop_plan_id=False,
-        )
         log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:candidate_plan_steps",
             candidate_plan_steps=candidate_plan_steps,
@@ -290,6 +255,10 @@ class PlanUpdater:
         cost_by_od_and_modes = transport_costs.get_costs_by_od_and_mode(
             ["cost", "distance", "time"],
             detail_distances=False,
+        ).with_columns(
+            mode=pl.col("mode").cast(
+                pl.Enum(get_mode_values(transport_costs.modes, "stay_home"))
+            )
         )
         value_of_time = (
             pl.from_dicts(
@@ -445,8 +414,8 @@ class PlanUpdater:
                 value_of_time=pl.lit(0.0),
                 k_saturation_utility=pl.lit(1.0),
                 min_activity_time=pl.lit(0.0),
-                first_seen_iteration=pl.lit(None, dtype=pl.UInt32),
-                last_active_iteration=pl.lit(None, dtype=pl.UInt32),
+                first_seen_iteration=pl.lit(None, dtype=pl.UInt16),
+                last_active_iteration=pl.lit(None, dtype=pl.UInt16),
             )
             .select(step_columns)
         )
@@ -835,15 +804,14 @@ class PlanUpdater:
                 on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"],
                 how="left",
             )
-            .with_columns(duration=pl.col("duration_per_pers").fill_null(24.0) * pl.col("n_persons"))
+            .with_columns(
+                duration=(pl.col("duration_per_pers").fill_null(24.0) * pl.col("n_persons")).cast(pl.Float32)
+            )
             .drop("duration_per_pers")
             .collect(engine="streaming")
         )
 
-        return self._compress_step_state(
-            current_plan_steps,
-            drop_plan_id=True,
-        )
+        return current_plan_steps.drop("plan_id") if "plan_id" in current_plan_steps.columns else current_plan_steps
 
     def get_new_costs(
         self,

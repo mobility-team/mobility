@@ -17,6 +17,7 @@ from .sequence_index import add_index
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
+from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.transport.modes.choice.compute_subtour_mode_probabilities import (
     compute_subtour_mode_probabilities_serial,
     modes_list_to_dict,
