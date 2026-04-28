@@ -96,6 +96,14 @@ def _make_local_tmp_path(name: str) -> pathlib.Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
 
+
+def _with_plan_id(
+    frame: pl.DataFrame | pl.LazyFrame,
+    *,
+    name: str,
+) -> pl.DataFrame | pl.LazyFrame:
+    return add_plan_id(frame, index_folder=_make_local_tmp_path(name))
+
 def test_parameters_returns_default_behavior_change_scope():
     parameters = Parameters()
 
@@ -318,8 +326,14 @@ def test_get_transition_probabilities_blocks_stay_home_in_mode_replanning():
 
     result = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_mode_replanning_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_mode_replanning_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.MODE_REPLANNING,
         transport_zones=None,
     )
@@ -810,8 +824,14 @@ def test_get_transition_probabilities_limits_destination_replanning_to_same_timi
 
     result = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_destination_replanning_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_destination_replanning_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.DESTINATION_REPLANNING,
         transport_zones=None,
     )
@@ -872,8 +892,14 @@ def test_get_transition_probabilities_filters_candidates_by_distance_threshold()
 
     result = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_distance_threshold_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_distance_threshold_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
         enable_transition_distance_model=True,
@@ -941,8 +967,14 @@ def test_get_transition_probabilities_uses_revision_probability_for_redistributi
 
     result = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_revision_probability_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_revision_probability_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
         enable_transition_distance_model=True,
@@ -1013,15 +1045,27 @@ def test_get_transition_probabilities_transition_logit_scale_softens_choice_prob
 
     result_default = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_logit_scale_default_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_logit_scale_default_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
     )
     result_scaled = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_logit_scale_scaled_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_logit_scale_scaled_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
         transition_logit_scale=0.25,
@@ -1086,15 +1130,27 @@ def test_get_transition_probabilities_scales_pruning_window_with_transition_logi
 
     result_default = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_pruning_default_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_pruning_default_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
     )
     result_scaled = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_pruning_scaled_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_pruning_scaled_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
         transition_logit_scale=0.25,
@@ -1163,8 +1219,14 @@ def test_get_transition_probabilities_transition_distance_friction_penalizes_far
 
     result = updater.get_transition_probabilities(
         current_plans=current_plans,
-        possible_plan_utility=possible_plan_utility,
-        possible_plan_steps=possible_plan_steps,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            name="transition_probabilities_distance_friction_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            name="transition_probabilities_distance_friction_steps",
+        ),
         behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
         transport_zones=None,
         enable_transition_distance_model=True,
