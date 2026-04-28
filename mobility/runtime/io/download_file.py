@@ -14,7 +14,7 @@ from tenacity import (
 )
 
 
-def download_file(url, path, max_retries=5, timeout=(10, 120), raise_on_error=True):
+def download_file(url, path, max_retries=3, timeout=(10, 120), raise_on_error=True):
     """
     Downloads a file to a given path. Creates the containing parent folder, if
     it does not exist. Handles retries and timeouts to avoid common download issues.
