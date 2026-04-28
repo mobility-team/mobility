@@ -16,6 +16,7 @@ from rich.spinner import Spinner
 from .sequence_index import add_index
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
+from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.transport.modes.choice.compute_subtour_mode_probabilities import (
     compute_subtour_mode_probabilities_serial,
     modes_list_to_dict,
@@ -105,6 +106,7 @@ class ModeSequences(FileAsset):
         )
 
         modes = modes_list_to_dict(self.transport_costs.modes)
+        mode_values = get_mode_values(self.transport_costs.modes, "stay_home")
         mode_id = {name: index for index, name in enumerate(modes)}
         id_to_mode = {index: name for index, name in enumerate(modes)}
 
@@ -190,7 +192,11 @@ class ModeSequences(FileAsset):
             )
             .drop("mode_seq_index")
             .select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id", "seq_step_index", "mode"])
-            .with_columns(iteration=pl.lit(self.iteration, dtype=pl.UInt32()))
+            .with_columns(
+                seq_step_index=pl.col("seq_step_index").cast(pl.UInt8),
+                mode=pl.col("mode").cast(pl.Enum(mode_values)),
+                iteration=pl.lit(self.iteration, dtype=pl.UInt16()),
+            )
         )
         log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:final_results",

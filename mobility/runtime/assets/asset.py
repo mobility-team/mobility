@@ -62,8 +62,8 @@ class Asset(ABC):
             if isinstance(value, Asset):
                 return value.get_cached_hash()
             
-            elif isinstance(value, list) and all(isinstance(v, Asset) for v in value):
-                return {i: serialize(v) for i, v in enumerate(value)}
+            elif isinstance(value, (list, tuple)):
+                return [serialize(v) for v in value]
             
             elif is_dataclass(value):
                 return {field.name: serialize(getattr(value, field.name)) for field in fields(value)}
@@ -73,7 +73,7 @@ class Asset(ABC):
                return {k: serialize(v) for k, v in value.items()}
             
             elif isinstance(value, set):
-                return list(value)
+                return sorted(serialize(v) for v in value)
             
             elif isinstance(value, pathlib.Path):
                 return str(value)

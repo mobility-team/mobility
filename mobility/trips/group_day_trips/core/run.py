@@ -18,7 +18,7 @@ from mobility.transport.costs.transport_costs import TransportCosts
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities import Activity
 from mobility.activities.activity import resolve_activity_parameters
-from mobility.surveys import MobilitySurvey
+from mobility.surveys.mobility_survey import MobilitySurvey
 from mobility.population import Population
 from mobility.transport.modes.core.transport_mode import TransportMode
 
@@ -181,6 +181,7 @@ class Run(FileAsset):
             resolved_activity_parameters["home"],
             self.parameters.min_activity_time_constant,
             iterations.folder_paths["sequences-index"],
+            self.modes,
         )
         opportunities = self.initializer.get_opportunities(
             activity_demand_per_pers,

@@ -6,7 +6,7 @@ from mobility.transport.costs.transport_costs import TransportCosts
 from .parameters import BehaviorChangePhase, Parameters
 from .run import Run
 from mobility.activities import Activity, HomeActivity, OtherActivity
-from mobility.surveys import MobilitySurvey
+from mobility.surveys.mobility_survey import MobilitySurvey
 from mobility.population import Population
 from mobility.transport.modes.core.transport_mode import TransportMode
 

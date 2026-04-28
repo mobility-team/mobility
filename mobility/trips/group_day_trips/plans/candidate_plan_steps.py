@@ -141,7 +141,7 @@ class CandidatePlanStepsAsset(FileAsset):
                     how="inner",
                 )
                 .with_columns(
-                    last_active_iteration=pl.lit(current_iteration).cast(pl.UInt32),
+                    last_active_iteration=pl.lit(current_iteration).cast(pl.UInt16),
                 )
                 .select(cls.STRUCTURAL_COLUMNS + cls.RETENTION_COLUMNS)
             )
@@ -153,8 +153,8 @@ class CandidatePlanStepsAsset(FileAsset):
                 demand_groups=demand_groups,
             )
             .with_columns(
-                first_seen_iteration=pl.lit(current_iteration).cast(pl.UInt32),
-                last_active_iteration=pl.lit(None, dtype=pl.UInt32),
+                first_seen_iteration=pl.lit(current_iteration).cast(pl.UInt16),
+                last_active_iteration=pl.lit(None, dtype=pl.UInt16),
             )
             .select(cls.STRUCTURAL_COLUMNS + cls.RETENTION_COLUMNS)
         )
@@ -179,11 +179,10 @@ class CandidatePlanStepsAsset(FileAsset):
             )
             .rename({"from_": "from"})
         )
-
         if current_iteration <= n_warmup_iterations:
             return candidate_memory
 
         age_reference = pl.coalesce([pl.col("last_active_iteration"), pl.col("first_seen_iteration")])
         return candidate_memory.filter(
-            (pl.lit(current_iteration, dtype=pl.UInt32) - age_reference) <= max_inactive_age
+            (pl.lit(current_iteration, dtype=pl.UInt16) - age_reference) <= max_inactive_age
         )

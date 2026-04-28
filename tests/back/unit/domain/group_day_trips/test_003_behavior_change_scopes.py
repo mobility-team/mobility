@@ -96,7 +96,6 @@ def _make_local_tmp_path(name: str) -> pathlib.Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
 
-
 def test_parameters_returns_default_behavior_change_scope():
     parameters = Parameters()
 
@@ -632,6 +631,131 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
     ).collect()
 
     assert result.select("activity_seq_id").sort("activity_seq_id").to_series().to_list() == [10]
+
+
+def test_candidate_memory_is_already_compact_before_persistence():
+    class _StubAsset:
+        def __init__(self, df):
+            self._df = df
+
+        def get_cached_asset(self):
+            return self._df
+
+    destination_sequences = _StubAsset(
+        pl.DataFrame(
+            {
+                "demand_group_id": [1],
+                "activity_seq_id": [10],
+                "time_seq_id": [0],
+                "dest_seq_id": [100],
+                "seq_step_index": [1],
+                "from": [11],
+                "to": [22],
+                "departure_time": [8.0],
+                "arrival_time": [8.5],
+                "next_departure_time": [17.0],
+                "iteration": [1],
+            },
+            schema={
+                "demand_group_id": pl.UInt32,
+                "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
+                "dest_seq_id": pl.UInt32,
+                "seq_step_index": pl.UInt8,
+                "from": pl.UInt16,
+                "to": pl.UInt16,
+                "departure_time": pl.Float32,
+                "arrival_time": pl.Float32,
+                "next_departure_time": pl.Float32,
+                "iteration": pl.UInt16,
+            },
+        )
+    )
+    mode_sequences = _StubAsset(
+        pl.DataFrame(
+            {
+                "demand_group_id": [1],
+                "activity_seq_id": [10],
+                "time_seq_id": [0],
+                "dest_seq_id": [100],
+                "mode_seq_id": [1000],
+                "seq_step_index": [1],
+                "mode": ["car"],
+                "iteration": [1],
+            },
+            schema={
+                "demand_group_id": pl.UInt32,
+                "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
+                "dest_seq_id": pl.UInt32,
+                "mode_seq_id": pl.UInt32,
+                "seq_step_index": pl.UInt8,
+                "mode": pl.Enum(["car", "walk", "stay_home"]),
+                "iteration": pl.UInt16,
+            },
+        )
+    )
+    survey_plan_steps = pl.DataFrame(
+        {
+            "activity_seq_id": [10],
+            "time_seq_id": [0],
+            "seq_step_index": [1],
+            "activity": ["work"],
+            "duration_per_pers": [8.0],
+            "departure_time": [8.0],
+            "arrival_time": [8.5],
+            "next_departure_time": [17.0],
+        },
+        schema={
+            "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt8,
+            "activity": pl.Utf8,
+            "duration_per_pers": pl.Float32,
+            "departure_time": pl.Float32,
+            "arrival_time": pl.Float32,
+            "next_departure_time": pl.Float32,
+        },
+    )
+    demand_groups = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "country": ["fr"],
+            "csp": ["x"],
+        }
+    )
+
+    result = CandidatePlanStepsAsset.build_candidate_memory(
+        destination_sequences=destination_sequences,
+        mode_sequences=mode_sequences,
+        survey_plan_steps=survey_plan_steps,
+        demand_groups=demand_groups,
+        current_plans=pl.DataFrame(
+            schema={
+                "demand_group_id": pl.UInt32,
+                "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
+                "dest_seq_id": pl.UInt32,
+                "mode_seq_id": pl.UInt32,
+            }
+        ),
+        previous_candidate_plan_steps=None,
+        current_iteration=1,
+        n_warmup_iterations=1,
+        max_inactive_age=2,
+    ).collect()
+
+    assert result.schema["seq_step_index"] == pl.UInt8
+    assert result.schema["from"] == pl.UInt16
+    assert result.schema["to"] == pl.UInt16
+    assert result.schema["duration_per_pers"] == pl.Float32
+    assert result.schema["departure_time"] == pl.Float32
+    assert result.schema["arrival_time"] == pl.Float32
+    assert result.schema["next_departure_time"] == pl.Float32
+    assert result.schema["iteration"] == pl.UInt16
+    assert result.schema["first_seen_iteration"] == pl.UInt16
+    assert result.schema["last_active_iteration"] == pl.UInt16
+    assert isinstance(result.schema["mode"], pl.Enum)
 
 
 def test_get_transition_probabilities_limits_destination_replanning_to_same_timing_profile():

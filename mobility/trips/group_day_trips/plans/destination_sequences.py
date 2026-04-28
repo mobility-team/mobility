@@ -163,7 +163,15 @@ class DestinationSequences(FileAsset):
                 on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"],
             )
             .drop(["home_zone_id", "activity", "dest_draw_id"])
-            .with_columns(iteration=pl.lit(self.iteration).cast(pl.UInt32))
+            .with_columns(
+                pl.col("seq_step_index").cast(pl.UInt8),
+                pl.col("from").cast(pl.UInt16),
+                pl.col("to").cast(pl.UInt16),
+                pl.col("departure_time").cast(pl.Float32),
+                pl.col("arrival_time").cast(pl.Float32),
+                pl.col("next_departure_time").cast(pl.Float32),
+                pl.lit(self.iteration).cast(pl.UInt16).alias("iteration"),
+            )
         )
         return destination_sequences
 
@@ -238,7 +246,7 @@ class DestinationSequences(FileAsset):
                 on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"],
                 how="inner",
             )
-            .with_columns(iteration=pl.lit(self.iteration).cast(pl.UInt32()))
+            .with_columns(iteration=pl.lit(self.iteration).cast(pl.UInt16()))
             .select(
                 [
                     "demand_group_id",
@@ -286,13 +294,13 @@ class DestinationSequences(FileAsset):
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
-                "seq_step_index": pl.UInt32,
-                "from": pl.Int32,
-                "to": pl.Int32,
-                "departure_time": pl.Float64,
-                "arrival_time": pl.Float64,
-                "next_departure_time": pl.Float64,
-                "iteration": pl.UInt32,
+                "seq_step_index": pl.UInt8,
+                "from": pl.UInt16,
+                "to": pl.UInt16,
+                "departure_time": pl.Float32,
+                "arrival_time": pl.Float32,
+                "next_departure_time": pl.Float32,
+                "iteration": pl.UInt16,
             }
         )
 
@@ -586,7 +594,7 @@ class DestinationSequences(FileAsset):
                     alpha,
                     seed,
                 )
-                .with_columns(seq_step_index=pl.lit(seq_step_index).cast(pl.UInt32))
+                .with_columns(seq_step_index=pl.lit(seq_step_index).cast(pl.UInt8))
             )
             spatialized_chains.append(spatialized_step)
             seq_step_index += 1

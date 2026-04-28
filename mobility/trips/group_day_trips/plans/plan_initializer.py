@@ -3,7 +3,10 @@ import math
 import polars as pl
 
 from mobility.activities.activity import ActivityParameters
-from mobility.surveys import MobilitySurveyPlans, MobilitySurveyPlanSteps, MobilitySurveyPlanSummaries
+from mobility.surveys.survey_plan_steps import MobilitySurveyPlanSteps
+from mobility.surveys.survey_plans import MobilitySurveyPlans
+from mobility.surveys.survey_plan_summaries import MobilitySurveyPlanSummaries
+from mobility.transport.modes.core.mode_values import get_mode_values
 from .plan_ids import add_plan_id
 
 
@@ -255,28 +258,30 @@ class PlanInitializer:
         home_activity_parameters: ActivityParameters,
         min_activity_time_constant: float,
         sequence_index_folder,
+        modes,
     ):
         """Create the baseline 'stay home all day' state."""
 
         value_of_time_stay_home = home_activity_parameters.value_of_time_stay_home
+        mode_values = get_mode_values(modes, "stay_home")
 
         stay_home_state = (
             demand_groups.select(["demand_group_id", "country", "csp", "n_persons", "home_zone_id"])
             .with_columns(
-                iteration=pl.lit(0, pl.UInt32()),
+                iteration=pl.lit(0, pl.UInt16()),
                 activity_seq_id=pl.lit(0, pl.UInt32()),
                 time_seq_id=pl.lit(0, pl.UInt32()),
                 mode_seq_id=pl.lit(0, pl.UInt32()),
                 dest_seq_id=pl.lit(0, pl.UInt32()),
-                seq_step_index=pl.lit(0, pl.UInt32()),
+                seq_step_index=pl.lit(0, pl.UInt8()),
                 activity=pl.lit("home"),
-                from_=pl.col("home_zone_id"),
-                to=pl.col("home_zone_id"),
-                mode=pl.lit("stay_home"),
-                duration_per_pers=pl.lit(24.0),
-                departure_time=pl.lit(0.0),
-                arrival_time=pl.lit(0.0),
-                next_departure_time=pl.lit(24.0),
+                from_=pl.col("home_zone_id").cast(pl.UInt16),
+                to=pl.col("home_zone_id").cast(pl.UInt16),
+                mode=pl.lit("stay_home").cast(pl.Enum(mode_values)),
+                duration_per_pers=pl.lit(24.0).cast(pl.Float32),
+                departure_time=pl.lit(0.0).cast(pl.Float32),
+                arrival_time=pl.lit(0.0).cast(pl.Float32),
+                next_departure_time=pl.lit(24.0).cast(pl.Float32),
             )
             .join(home_night_dur, on=["country", "csp"])
             .with_columns(
@@ -317,7 +322,6 @@ class PlanInitializer:
                 ]
             )
         )
-
         current_states = (
             stay_home_state.select(
                 [

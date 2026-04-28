@@ -7,6 +7,7 @@ from typing import Any
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.transport.modes.core.mode_values import get_mode_values
 
 from .survey_sequence_index import add_index
 
@@ -226,6 +227,7 @@ class MobilitySurveyPlanSteps(FileAsset):
         """
         raw_steps = self._prepare_survey_plans()
         anchors = {activity.name: activity.is_anchor for activity in self.activities}
+        mode_values = get_mode_values(self.modes, "other")
         sequence_index_folder = self._get_sequence_index_folder()
 
         plan_keys = (
@@ -347,6 +349,14 @@ class MobilitySurveyPlanSteps(FileAsset):
                 how="inner",
             )
             .sort(["time_seq_id", "seq_step_index"])
+            .with_columns(
+                seq_step_index=pl.col("seq_step_index").cast(pl.UInt8),
+                mode=pl.col("mode").cast(pl.Enum(mode_values)),
+                departure_time=pl.col("departure_time").cast(pl.Float32),
+                arrival_time=pl.col("arrival_time").cast(pl.Float32),
+                next_departure_time=pl.col("next_departure_time").cast(pl.Float32),
+                duration_per_pers=pl.col("duration_per_pers").cast(pl.Float32),
+            )
         )
 
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)

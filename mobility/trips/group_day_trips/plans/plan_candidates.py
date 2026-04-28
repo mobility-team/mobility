@@ -44,10 +44,10 @@ def empty_destination_sequences() -> pl.DataFrame:
             "demand_group_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
             "dest_seq_id": pl.UInt32,
-            "seq_step_index": pl.UInt32,
-            "from": pl.Int32,
-            "to": pl.Int32,
-            "iteration": pl.UInt32,
+            "seq_step_index": pl.UInt8,
+            "from": pl.UInt16,
+            "to": pl.UInt16,
+            "iteration": pl.UInt16,
         }
     )
 
@@ -78,7 +78,7 @@ def get_active_destination_sequences(
             on=["demand_group_id", "activity_seq_id", "dest_seq_id"],
             how="inner",
         )
-        .with_columns(iteration=pl.lit(iteration).cast(pl.UInt32()))
+        .with_columns(iteration=pl.lit(iteration).cast(pl.UInt16()))
         .select(
             [
                 "demand_group_id",

@@ -7,7 +7,8 @@ from typing import Any
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
-from mobility.surveys import MobilitySurveyPlans, MobilitySurveyPlanSteps
+from mobility.surveys.survey_plan_steps import MobilitySurveyPlanSteps
+from mobility.surveys.survey_plans import MobilitySurveyPlans
 
 
 class PopulationWeightedPlanSteps(FileAsset):
