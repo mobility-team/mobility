@@ -5,12 +5,12 @@ import random
 from typing import List
 
 import polars as pl
-import psutil
 
 from ..iterations import Iteration, Iterations
 from ..evaluation.population_weighted_plan_steps import PopulationWeightedPlanSteps
 from ..plans import ActivitySequences, DestinationSequences, ModeSequences, PlanInitializer, PlanUpdater
 from ..transitions.transition_schema import TRANSITION_EVENT_SCHEMA
+from .memory_logging import log_memory_checkpoint
 from .parameters import Parameters
 from .results import RunResults
 from .run_state import RunState
@@ -70,7 +70,7 @@ class Run(FileAsset):
     def create_and_get_asset(self) -> dict[str, pl.LazyFrame]:
         """Run the simulation for this day type and materialize cached outputs."""
         self._raise_if_disabled()
-        self._log_memory_checkpoint("run:start")
+        log_memory_checkpoint("run:start")
 
         iterations, resume_from_iteration = self._prepare_iterations(self.inputs_hash)
 
@@ -78,7 +78,7 @@ class Run(FileAsset):
             iterations=iterations,
             resume_from_iteration=resume_from_iteration,
         )
-        self._log_state_memory("state:initialized", state)
+        self._log_state_memory_checkpoint("state:initialized", state)
         for iteration_index in range(state.start_iteration, self.parameters.n_iterations + 1):
             iteration = iterations.iteration(iteration_index)
             self._run_model_iteration(
@@ -86,19 +86,22 @@ class Run(FileAsset):
                 iteration=iteration,
             )
             if self.parameters.persist_iteration_artifacts:
-                self._log_state_memory(f"iteration:{iteration_index}:before_save_state", state)
+                self._log_state_memory_checkpoint(f"iteration:{iteration_index}:before_save_state", state)
                 iteration.save_state(state, self.rng.getstate())
-                self._log_memory_checkpoint(f"iteration:{iteration_index}:after_save_state")
+                log_memory_checkpoint(f"iteration:{iteration_index}:after_save_state")
 
         self._assert_current_plan_steps_are_available(state)
-        self._log_state_memory("state:before_finalization", state)
+        self._log_state_memory_checkpoint("state:before_finalization", state)
 
         final_costs = self._build_final_costs(state)
-        self._log_memory_checkpoint("finalization:after_build_final_costs", costs=final_costs)
+        log_memory_checkpoint("finalization:after_build_final_costs", costs=final_costs)
         final_plan_steps = self._build_final_plan_steps(state, final_costs)
-        self._log_memory_checkpoint("finalization:after_build_final_plan_steps", plan_steps=final_plan_steps)
+        log_memory_checkpoint(
+            "finalization:after_build_final_plan_steps",
+            plan_steps=final_plan_steps,
+        )
         transitions = self._build_transitions(iterations)
-        self._log_memory_checkpoint("finalization:after_build_transitions", transitions=transitions)
+        log_memory_checkpoint("finalization:after_build_transitions", transitions=transitions)
 
         self._write_outputs(
             plan_steps=final_plan_steps,
@@ -107,7 +110,7 @@ class Run(FileAsset):
             transitions=transitions,
             demand_groups=state.demand_groups,
         )
-        self._log_memory_checkpoint("run:after_write_outputs")
+        log_memory_checkpoint("run:after_write_outputs")
 
         return self.get_cached_asset()
 
@@ -204,7 +207,7 @@ class Run(FileAsset):
             state=state,
             resume_from_iteration=resume_from_iteration,
         )
-        self._log_state_memory("state:after_restore", state)
+        self._log_state_memory_checkpoint("state:after_restore", state)
         return state
 
 
@@ -267,29 +270,29 @@ class Run(FileAsset):
     ) -> None:
         """Execute one simulation iteration and update the mutable run state."""
         logging.info("Iteration %s", str(iteration.iteration))
-        self._log_state_memory(f"iteration:{iteration.iteration}:start", state)
+        self._log_state_memory_checkpoint(f"iteration:{iteration.iteration}:start", state)
         seed = self.rng.getrandbits(64)
 
         resolved_transport_costs = self.transport_costs.asset_for_iteration(self, iteration.iteration)
-        self._log_memory_checkpoint(f"iteration:{iteration.iteration}:after_resolve_transport_costs")
+        log_memory_checkpoint(f"iteration:{iteration.iteration}:after_resolve_transport_costs")
 
         activity_sequences = self._sample_and_write_activity_sequences(
             state,
             iteration,
             seed,
         )
-        self._log_asset_memory(
+        log_memory_checkpoint(
             f"iteration:{iteration.iteration}:activity_sequences",
-            activity_sequences.get_cached_asset(),
+            asset=activity_sequences.get_cached_asset(),
         )
         destination_sequences = self._sample_and_write_destination_sequences(
             state,
             iteration,
             activity_sequences,
         )
-        self._log_asset_memory(
+        log_memory_checkpoint(
             f"iteration:{iteration.iteration}:destination_sequences",
-            destination_sequences.get_cached_asset(),
+            asset=destination_sequences.get_cached_asset(),
         )
         mode_sequences = self._search_and_write_mode_sequences(
             state,
@@ -297,9 +300,9 @@ class Run(FileAsset):
             destination_sequences,
             resolved_transport_costs,
         )
-        self._log_asset_memory(
+        log_memory_checkpoint(
             f"iteration:{iteration.iteration}:mode_sequences",
-            mode_sequences.get_cached_asset(),
+            asset=mode_sequences.get_cached_asset(),
         )
         transition_events = self._update_iteration_state(
             state,
@@ -308,14 +311,14 @@ class Run(FileAsset):
             mode_sequences,
             resolved_transport_costs,
         )
-        self._log_memory_checkpoint(
+        log_memory_checkpoint(
             f"iteration:{iteration.iteration}:after_update_state",
             transition_events=transition_events,
         )
-        self._log_state_memory(f"iteration:{iteration.iteration}:after_update_state", state)
+        self._log_state_memory_checkpoint(f"iteration:{iteration.iteration}:after_update_state", state)
         if transition_events is not None and self.parameters.persist_iteration_artifacts:
             iteration.save_transition_events(transition_events)
-            self._log_memory_checkpoint(f"iteration:{iteration.iteration}:after_save_transition_events")
+            log_memory_checkpoint(f"iteration:{iteration.iteration}:after_save_transition_events")
 
 
     def _sample_and_write_activity_sequences(
@@ -507,9 +510,9 @@ class Run(FileAsset):
         transitions.write_parquet(self.cache_path["transitions"])
         demand_groups.write_parquet(self.cache_path["demand_groups"])
 
-    def _log_state_memory(self, label: str, state: RunState) -> None:
-        """Log process memory together with the main run-state tables."""
-        self._log_memory_checkpoint(
+    def _log_state_memory_checkpoint(self, label: str, state: RunState) -> None:
+        """Log process memory together with the main mutable state tables."""
+        log_memory_checkpoint(
             label,
             survey_plans=state.survey_plans,
             survey_plan_steps=state.survey_plan_steps,
@@ -524,61 +527,6 @@ class Run(FileAsset):
             destination_saturation=state.destination_saturation,
             costs=state.costs,
         )
-
-    def _log_asset_memory(self, label: str, frame: pl.DataFrame | pl.LazyFrame | None) -> None:
-        """Log one asset dataframe with process memory."""
-        self._log_memory_checkpoint(label, asset=frame)
-
-    def _log_memory_checkpoint(self, label: str, **frames: pl.DataFrame | pl.LazyFrame | None) -> None:
-        """Log process memory and estimated dataframe sizes at one checkpoint."""
-        process = psutil.Process(os.getpid())
-        mem = process.memory_info()
-        details = [
-            f"rss={self._format_bytes(mem.rss)}",
-            f"vms={self._format_bytes(mem.vms)}",
-        ]
-        private = getattr(mem, "private", None)
-        if private is not None:
-            details.append(f"private={self._format_bytes(private)}")
-
-        for name, frame in frames.items():
-            details.append(f"{name}={self._frame_summary(frame)}")
-
-        logging.info("Memory checkpoint %s | %s", label, " | ".join(details))
-
-    def _frame_summary(self, frame: pl.DataFrame | pl.LazyFrame | None) -> str:
-        """Return a compact rows/cols/estimated-size summary for one dataframe."""
-        if frame is None:
-            return "none"
-
-        if isinstance(frame, pl.LazyFrame):
-            try:
-                cols = len(frame.collect_schema().names())
-            except Exception:
-                cols = "unknown"
-            return f"lazy cols={cols}"
-
-        try:
-            estimated_size = frame.estimated_size()
-        except Exception:
-            estimated_size = None
-
-        size_text = self._format_bytes(estimated_size) if estimated_size is not None else "unknown"
-        return f"rows={frame.height}, cols={frame.width}, est={size_text}"
-
-    def _format_bytes(self, value: int | None) -> str:
-        """Return a human-readable byte count."""
-        if value is None:
-            return "unknown"
-
-        units = ["B", "KB", "MB", "GB", "TB"]
-        size = float(value)
-        for unit in units:
-            if size < 1024.0 or unit == units[-1]:
-                return f"{size:.2f}{unit}"
-            size /= 1024.0
-        return f"{size:.2f}TB"
-
 
     def get_cached_asset(self) -> dict[str, pl.LazyFrame]:
         """Return lazy readers for this run's cached parquet outputs."""

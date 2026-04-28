@@ -3,9 +3,9 @@ import math
 from typing import Any
 
 import polars as pl
-import psutil
 
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
+from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
 from ..transitions.transition_events import (
     add_transition_plan_details,
     build_transition_events_lazy,
@@ -19,36 +19,6 @@ from .mode_sequences import ModeSequences
 
 class PlanUpdater:
     """Updates population plan distributions over activity/destination/mode sequences."""
-
-    @staticmethod
-    def _log_memory_checkpoint(label: str, **objects: Any) -> None:
-        """Log process memory plus cheap summaries of already-available objects."""
-        memory_info = psutil.Process().memory_info()
-        parts = [
-            f"rss={memory_info.rss / (1024 ** 3):.2f}GB",
-            f"vms={memory_info.vms / (1024 ** 3):.2f}GB",
-        ]
-        private = getattr(memory_info, "private", None)
-        if private is not None:
-            parts.append(f"private={private / (1024 ** 3):.2f}GB")
-
-        for name, obj in objects.items():
-            if obj is None:
-                parts.append(f"{name}=none")
-            elif isinstance(obj, pl.DataFrame):
-                parts.append(
-                    f"{name}=rows={obj.height}, cols={obj.width}, est={obj.estimated_size('mb'):.2f}MB"
-                )
-            elif isinstance(obj, pl.LazyFrame):
-                parts.append(f"{name}=lazy cols={len(obj.collect_schema().names())}")
-            elif isinstance(obj, dict):
-                parts.append(f"{name}=entries={len(obj)}")
-            elif isinstance(obj, (list, tuple, set)):
-                parts.append(f"{name}=len={len(obj)}")
-            else:
-                parts.append(f"{name}={type(obj).__name__}")
-
-        logging.debug("Memory checkpoint %s | %s", label, " | ".join(parts))
 
     @staticmethod
     def _compress_step_state(
@@ -140,7 +110,7 @@ class PlanUpdater:
             mode_sequences,
             parameters,
         )
-        self._log_memory_checkpoint(
+        log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:possible_plan_steps_lazy",
             possible_plan_steps=possible_plan_steps,
         )
@@ -167,7 +137,7 @@ class PlanUpdater:
             candidate_plan_steps,
             drop_plan_id=False,
         )
-        self._log_memory_checkpoint(
+        log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:candidate_plan_steps",
             candidate_plan_steps=candidate_plan_steps,
         )
@@ -178,7 +148,7 @@ class PlanUpdater:
         ).collect(
             engine="streaming"
         )
-        self._log_memory_checkpoint(
+        log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:possible_plan_steps",
             possible_plan_steps=possible_plan_steps,
         )
@@ -197,7 +167,7 @@ class PlanUpdater:
             transition_distance_friction=parameters.transition_distance_friction,
             plan_embedding_dimension_weights=parameters.plan_embedding_dimension_weights,
         )
-        self._log_memory_checkpoint(
+        log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:transition_probabilities",
             transition_prob=transition_prob,
         )
@@ -206,13 +176,13 @@ class PlanUpdater:
             transition_prob,
             iteration,
         )
-        self._log_memory_checkpoint(
+        log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:after_apply_transitions",
             current_plans=current_plans,
             transition_events=transition_events,
         )
         current_plan_steps = self.get_current_plan_steps(current_plans, possible_plan_steps.lazy())
-        self._log_memory_checkpoint(
+        log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:current_plan_steps",
             current_plan_steps=current_plan_steps,
         )
@@ -288,7 +258,7 @@ class PlanUpdater:
             n_warmup_iterations=parameters.n_warmup_iterations,
             max_inactive_age=parameters.max_inactive_age,
         )
-        self._log_memory_checkpoint(
+        log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:candidate_memory",
             aggregated_candidates=aggregated_candidates,
         )
@@ -513,7 +483,7 @@ class PlanUpdater:
             transition_utility_pruning_delta=transition_utility_pruning_delta,
             transition_logit_scale=transition_logit_scale,
         )
-        self._log_memory_checkpoint(
+        log_memory_checkpoint(
             "plan_updater:allowed_transitions",
             allowed_transitions=allowed_transitions,
         )
@@ -744,7 +714,7 @@ class PlanUpdater:
             )
             .collect()
         )
-        self._log_memory_checkpoint(
+        log_memory_checkpoint(
             "plan_updater:transition_probabilities_collected",
             transition_probabilities=transition_probabilities,
         )
