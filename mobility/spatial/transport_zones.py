@@ -90,6 +90,10 @@ class TransportZones(FileAsset):
             study_area,
             object_type="a",
             key="building",
+            exclude_queries=[
+                "a/building=hut",
+                "a/tourism=alpine_hut,wilderness_hut",
+            ],
             geofabrik_extract_date="240101",
             split_local_admin_units=True
         )

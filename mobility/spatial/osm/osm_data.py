@@ -62,6 +62,7 @@ class OSMData(FileAsset):
             object_type: str,
             key: str,
             tags: List[str] = None,
+            exclude_queries: List[str] = None,
             boundary_buffer: float = 10000.0,
             split_local_admin_units: bool = False,
             geofabrik_extract_date: str = "240101",
@@ -69,12 +70,15 @@ class OSMData(FileAsset):
         ):
         if tags is None:
             tags = []
+        if exclude_queries is None:
+            exclude_queries = []
         
         inputs = {
             "study_area": study_area,
             "object_type": object_type,
             "key": key,
             "tags": tags,
+            "exclude_queries": exclude_queries,
             "boundary_buffer": boundary_buffer,
             "split_local_admin_units": split_local_admin_units,
             "geofabrik_extract_date": geofabrik_extract_date,
@@ -147,6 +151,10 @@ class OSMData(FileAsset):
             
             cropped_region_path = self.crop_region(region_path, boundary_buffered_path)
             filtered_region_path = self.filter_region(cropped_region_path, self.object_type, self.key, self.tags)
+            filtered_region_path = self.exclude_from_region(
+                filtered_region_path,
+                self.inputs["exclude_queries"],
+            )
             filtered_regions_paths.append(filtered_region_path)
             
         
@@ -260,6 +268,36 @@ class OSMData(FileAsset):
         subprocess.run(command)
         
         return filtered_region_path
+
+    def exclude_from_region(
+            self,
+            filtered_region_path: pathlib.Path,
+            exclude_queries: List[str],
+        ) -> pathlib.Path:
+        """Exclude matching OSM objects from an already-filtered extract."""
+        if len(exclude_queries) == 0:
+            return filtered_region_path
+
+        logging.info("Excluding OSM objects from subsetted extracts")
+
+        query_hash = hashlib.md5(
+            json.dumps(sorted(exclude_queries)).encode("utf-8")
+        ).hexdigest()
+        excluded_region_name = query_hash + "-excluded-" + filtered_region_path.name
+        excluded_region_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / excluded_region_name
+
+        command = [
+            "osmium", "tags-filter",
+            "--invert-match",
+            "--overwrite",
+            "-o", excluded_region_path,
+            filtered_region_path,
+            *exclude_queries,
+        ]
+
+        subprocess.run(command)
+
+        return excluded_region_path
     
     
     def merge_regions(self, filtered_regions_paths: List[pathlib.Path], result_path: pathlib.Path):
@@ -313,19 +351,17 @@ class OSMData(FileAsset):
             result_fp = lau_fp / (self.key + ".pbf")
             
             os.makedirs(lau_fp, exist_ok=True)
-            
-            if result_fp.exists() is False:
-            
-                with open(boundary_fp, "w") as f:
-                    geojson.dump(boundary, f)
-                    
-                extracts.append({
-                    "output": row.local_admin_unit_id + "/" + self.key + ".pbf",
-                    "polygon": {
-                        "file_name": str(boundary_fp),
-                        "file_type": "geojson"
-                    }
-                })
+
+            with open(boundary_fp, "w") as f:
+                geojson.dump(boundary, f)
+
+            extracts.append({
+                "output": row.local_admin_unit_id + "/" + self.key + ".pbf",
+                "polygon": {
+                    "file_name": str(boundary_fp),
+                    "file_type": "geojson"
+                }
+            })
                 
         n_extracts_max = 20
         
