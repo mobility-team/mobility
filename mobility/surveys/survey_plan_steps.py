@@ -46,7 +46,7 @@ class MobilitySurveyPlanSteps(FileAsset):
         )
         cache_path = folder_path / "group_day_trip_plan_steps.parquet"
         inputs = {
-            "version": 2,
+            "version": 3,
             "survey": survey,
             "activities": activities,
             "modes": modes,
@@ -157,9 +157,9 @@ class MobilitySurveyPlanSteps(FileAsset):
             )
             .with_columns(activity=pl.col("motive").cast(pl.Utf8).replace_strict(activity_mapping, default="other"))
             .with_columns(mode=pl.col("mode_id").cast(pl.Utf8).replace_strict(mode_mapping, default="other"))
-            .with_columns(max_seq_step_index=pl.col("seq_step_index").max().over(["individual_id", "day_id"]))
-            .filter(pl.col("max_seq_step_index") < 11)
+            .filter(pl.col("seq_step_index") < 11)
             .filter((pl.col("departure_time") < 24.0) & (pl.col("arrival_time") < 24.0))
+            .with_columns(max_seq_step_index=pl.col("seq_step_index").max().over(["individual_id", "day_id"]))
             .with_columns(
                 activity=pl.when(
                     (pl.col("seq_step_index") == pl.col("max_seq_step_index")) & (pl.col("activity") != "home")
