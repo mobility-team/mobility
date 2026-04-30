@@ -197,6 +197,7 @@ class ModeSequences(FileAsset):
         """Dispatch mode-sequence search to the selected backend."""
         if use_rust_search:
             return self._run_rust_search(
+                parent_folder_path=parent_folder_path,
                 unique_location_chains=unique_location_chains,
                 leg_mode_costs=leg_mode_costs,
                 modes=modes,
@@ -265,6 +266,7 @@ class ModeSequences(FileAsset):
     def _run_rust_search(
         self,
         *,
+        parent_folder_path: pathlib.Path,
         unique_location_chains: pl.DataFrame,
         leg_mode_costs: pl.DataFrame,
         modes: dict[str, Any],
@@ -285,12 +287,102 @@ class ModeSequences(FileAsset):
             .rename({"from": "origin", "to": "destination"})
             .select(["origin", "destination", "mode_id", "cost"])
         )
-        return compute_subtour_mode_probabilities(
+        rust_results = compute_subtour_mode_probabilities(
             location_chain_steps=unique_location_chains,
             leg_mode_costs=rust_leg_mode_costs,
             mode_metadata=mode_metadata,
             k_sequences=self.parameters.k_mode_sequences,
         )
+        self._maybe_debug_compare_backends(
+            parent_folder_path=parent_folder_path,
+            unique_location_chains=unique_location_chains,
+            leg_mode_costs=leg_mode_costs,
+            modes=modes,
+            rust_results=rust_results,
+        )
+        return rust_results
+
+    def _maybe_debug_compare_backends(
+        self,
+        *,
+        parent_folder_path: pathlib.Path,
+        unique_location_chains: pl.DataFrame,
+        leg_mode_costs: pl.DataFrame,
+        modes: dict[str, Any],
+        rust_results: pl.DataFrame,
+    ) -> None:
+        """Compare Rust and Python search backends on a fixed sampled subset."""
+        sample_size = min(200, unique_location_chains.height)
+        if sample_size == 0:
+            return
+
+        sampled_location_chains = unique_location_chains.head(sample_size)
+        sampled_dest_seq_ids = sampled_location_chains.select("dest_seq_id")
+        sampled_rust_results = rust_results.join(sampled_dest_seq_ids, on="dest_seq_id", how="inner")
+
+        debug_tmp_path = parent_folder_path / f"tmp_results_python_debug_{self.iteration}"
+        shutil.rmtree(debug_tmp_path, ignore_errors=True)
+        os.makedirs(debug_tmp_path)
+
+        python_results = self._run_old_python_search(
+            parent_folder_path=parent_folder_path,
+            unique_location_chains=sampled_location_chains,
+            leg_mode_costs=leg_mode_costs,
+            modes=modes,
+            tmp_path=debug_tmp_path,
+        )
+
+        rust_counts = (
+            sampled_rust_results
+            .group_by("dest_seq_id")
+            .agg(
+                rust_mode_sequences=pl.col("mode_seq_index").n_unique(),
+                rust_rows=pl.len(),
+            )
+        )
+        python_counts = (
+            python_results
+            .group_by("dest_seq_id")
+            .agg(
+                python_mode_sequences=pl.col("mode_seq_index").n_unique(),
+                python_rows=pl.len(),
+            )
+        )
+        comparison = (
+            sampled_dest_seq_ids
+            .join(rust_counts, on="dest_seq_id", how="left")
+            .join(python_counts, on="dest_seq_id", how="left")
+            .with_columns(
+                rust_mode_sequences=pl.col("rust_mode_sequences").fill_null(0),
+                rust_rows=pl.col("rust_rows").fill_null(0),
+                python_mode_sequences=pl.col("python_mode_sequences").fill_null(0),
+                python_rows=pl.col("python_rows").fill_null(0),
+            )
+        )
+        mismatches = comparison.filter(
+            (pl.col("rust_mode_sequences") != pl.col("python_mode_sequences"))
+            | (pl.col("rust_rows") != pl.col("python_rows"))
+        )
+
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{self.iteration}:rust_python_backend_debug",
+            sampled_location_chains=sampled_location_chains,
+            sampled_rust_results=sampled_rust_results,
+            python_results=python_results,
+            backend_comparison=comparison,
+            backend_mismatches=mismatches,
+        )
+
+        logging.info(
+            "Mode sequence backend parity debug: sampled_dest_seq_ids=%s mismatches=%s",
+            str(sampled_location_chains.height),
+            str(mismatches.height),
+        )
+        if mismatches.height > 0:
+            logging.info(
+                "Mode sequence backend parity debug mismatches (first 20): %s",
+                mismatches.head(20).to_dicts(),
+            )
 
     def _build_rust_mode_metadata(
         self,
