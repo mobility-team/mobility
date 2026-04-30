@@ -1,3 +1,5 @@
+import warnings
+
 import polars as pl
 from typing import Dict, List
 
@@ -6,6 +8,7 @@ from mobility.transport.costs.transport_costs import TransportCosts
 from .parameters import BehaviorChangePhase, Parameters
 from .run import Run
 from mobility.activities import Activity, HomeActivity, OtherActivity
+from mobility.surveys import SurveyPlanAssets
 from mobility.surveys.mobility_survey import MobilitySurvey
 from mobility.population import Population
 from mobility.transport.modes.core.transport_mode import TransportMode
@@ -156,13 +159,20 @@ class PopulationGroupDayTrips:
         )
 
         transport_costs = TransportCosts(modes)
+        selected_surveys = self._select_surveys_for_population(population, surveys)
+        survey_plan_assets = SurveyPlanAssets(
+            surveys=selected_surveys,
+            activities=activities,
+            modes=modes,
+        )
 
         weekday_run = Run(
             population=population,
             transport_costs=transport_costs,
             activities=activities,
             modes=modes,
-            surveys=surveys,
+            surveys=selected_surveys,
+            survey_plan_assets=survey_plan_assets,
             parameters=parameters,
             is_weekday=True,
             enabled=True,
@@ -173,12 +183,14 @@ class PopulationGroupDayTrips:
             transport_costs=transport_costs,
             activities=activities,
             modes=modes,
-            surveys=surveys,
+            surveys=selected_surveys,
+            survey_plan_assets=survey_plan_assets,
             parameters=parameters,
             is_weekday=False,
             enabled=parameters.simulate_weekend,
         )
 
+        self.survey_plan_assets = survey_plan_assets
         self.weekday_run = weekday_run
         self.weekend_run = weekend_run
 
@@ -294,6 +306,54 @@ class PopulationGroupDayTrips:
                     "PopulationGroupDayTrips surveys argument should be a list of `MobilitySurvey` "
                     f"instances, but received one object of class {type(survey)}."
                 )
+
+    def _get_population_countries(self, population: Population) -> list[str]:
+        """Infer population countries from the study-area admin prefixes."""
+        study_area = population.transport_zones.study_area.get()
+        if "geometry" in study_area.columns:
+            study_area = study_area.drop("geometry", axis=1)
+        return (
+            pl.from_pandas(study_area[["local_admin_unit_id"]])
+            .with_columns(country=pl.col("local_admin_unit_id").str.slice(0, 2))
+            .get_column("country")
+            .unique()
+            .sort()
+            .to_list()
+        )
+
+    def _select_surveys_for_population(
+        self,
+        population: Population,
+        surveys: list[MobilitySurvey],
+    ) -> list[MobilitySurvey]:
+        """Validate survey coverage against the population and keep relevant surveys."""
+        population_countries = set(self._get_population_countries(population))
+        surveys_by_country: dict[str, list[MobilitySurvey]] = {}
+        for survey in surveys:
+            surveys_by_country.setdefault(survey.inputs["parameters"].country, []).append(survey)
+
+        survey_countries = set(surveys_by_country)
+        missing_countries = sorted(population_countries - survey_countries)
+        if missing_countries:
+            raise ValueError(
+                "PopulationGroupDayTrips requires at least one survey for each population country. "
+                f"Missing survey coverage for: {', '.join(missing_countries)}. "
+                f"Provided survey countries: {', '.join(sorted(survey_countries))}."
+            )
+
+        unused_countries = sorted(survey_countries - population_countries)
+        if unused_countries:
+            warnings.warn(
+                "Some provided surveys will not be used because their countries are absent from the population: "
+                + ", ".join(unused_countries)
+                + ".",
+                stacklevel=2,
+            )
+
+        selected_surveys: list[MobilitySurvey] = []
+        for country in sorted(population_countries):
+            selected_surveys.extend(surveys_by_country[country])
+        return selected_surveys
 
     def _build_cache_path(self) -> Dict[str, str]:
         """Expose child run cache paths through the wrapper keys.

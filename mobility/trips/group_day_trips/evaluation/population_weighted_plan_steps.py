@@ -7,8 +7,7 @@ from typing import Any
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
-from mobility.surveys.survey_plan_steps import MobilitySurveyPlanSteps
-from mobility.surveys.survey_plans import MobilitySurveyPlans
+from mobility.surveys import SurveyPlanAssets
 
 
 class PopulationWeightedPlanSteps(FileAsset):
@@ -18,15 +17,11 @@ class PopulationWeightedPlanSteps(FileAsset):
         self,
         *,
         population: Any,
-        surveys: list[Any],
-        activities: list[Any],
-        modes: list[Any],
+        survey_plan_assets: SurveyPlanAssets,
         is_weekday: bool,
     ) -> None:
         self.population = population
-        self.surveys = surveys
-        self.activities = activities
-        self.modes = modes
+        self.survey_plan_assets = survey_plan_assets
         self.is_weekday = is_weekday
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
         cache_path = (
@@ -35,11 +30,9 @@ class PopulationWeightedPlanSteps(FileAsset):
             / f"population_weighted_plan_steps_{'weekday' if is_weekday else 'weekend'}.parquet"
         )
         inputs = {
-            "version": 3,
+            "version": 4,
             "population": population,
-            "surveys": surveys,
-            "activities": activities,
-            "modes": modes,
+            "survey_plan_assets": survey_plan_assets,
             "is_weekday": is_weekday,
         }
         super().__init__(inputs, cache_path)
@@ -58,7 +51,6 @@ class PopulationWeightedPlanSteps(FileAsset):
             ).with_columns(country=pl.col("local_admin_unit_id").str.slice(0, 2))
         )
 
-        countries = lau_to_city_cat["country"].unique().to_list()
         demand_groups = (
             pl.scan_parquet(self.population.get()["population_groups"])
             .rename(
@@ -75,24 +67,8 @@ class PopulationWeightedPlanSteps(FileAsset):
             .collect(engine="streaming")
         )
 
-        surveys = [s for s in self.surveys if s.inputs["parameters"].country in countries]
-        survey_plan_step_assets = [
-            MobilitySurveyPlanSteps(
-                survey=survey,
-                activities=self.activities,
-                modes=self.modes,
-            )
-            for survey in surveys
-        ]
-        survey_plan_assets = [
-            MobilitySurveyPlans(plan_steps=plan_steps_asset)
-            for plan_steps_asset in survey_plan_step_assets
-        ]
-
-        survey_plan_steps = pl.concat(
-            [plan_steps_asset.get() for plan_steps_asset in survey_plan_step_assets],
-            how="vertical_relaxed",
-        ).select(
+        countries = demand_groups["country"].unique().sort().to_list()
+        survey_plan_steps = self.survey_plan_assets.get_plan_steps().select(
             [
                 "activity_seq_id",
                 "time_seq_id",
@@ -103,10 +79,7 @@ class PopulationWeightedPlanSteps(FileAsset):
                 "distance",
             ]
         )
-        survey_plans = pl.concat(
-            [plan_asset.get() for plan_asset in survey_plan_assets],
-            how="vertical_relaxed",
-        ).select(
+        survey_plans = self.survey_plan_assets.get_plans().select(
             [
                 "country",
                 "activity_seq_id",

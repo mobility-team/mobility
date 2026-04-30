@@ -18,6 +18,7 @@ from mobility.transport.costs.transport_costs import TransportCosts
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities import Activity
 from mobility.activities.activity import resolve_activity_parameters
+from mobility.surveys import SurveyPlanAssets
 from mobility.surveys.mobility_survey import MobilitySurvey
 from mobility.population import Population
 from mobility.transport.modes.core.transport_mode import TransportMode
@@ -34,17 +35,19 @@ class Run(FileAsset):
         activities: List[Activity],
         modes: List[TransportMode],
         surveys: List[MobilitySurvey],
+        survey_plan_assets: SurveyPlanAssets,
         parameters: Parameters,
         is_weekday: bool,
         enabled: bool = True,
     ) -> None:
         """Initialize a single weekday or weekend PopulationGroupDayTrips run."""
         inputs = {
-            "version": 7,
+            "version": 9,
             "population": population,
             "activities": activities,
             "modes": modes,
             "surveys": surveys,
+            "survey_plan_assets": survey_plan_assets,
             "parameters": parameters,
             "is_weekday": is_weekday,
             "enabled": enabled,
@@ -161,15 +164,11 @@ class Run(FileAsset):
         """Build the initial mutable state and restore it when resuming."""
         survey_plans, survey_plan_steps, demand_groups = self.initializer.get_survey_plan_data(
             self.population,
-            self.surveys,
-            self.activities,
-            self.modes,
+            self.survey_plan_assets,
             self.is_weekday,
         )
         activity_dur, home_night_dur, activity_demand_per_pers = self.initializer.get_survey_duration_summaries(
-            self.surveys,
-            self.activities,
-            self.modes,
+            self.survey_plan_assets,
             self.is_weekday,
             demand_groups,
             survey_plan_steps,
@@ -542,9 +541,7 @@ class Run(FileAsset):
 
         population_weighted_plan_steps = PopulationWeightedPlanSteps(
             population=self.population,
-            surveys=self.surveys,
-            activities=self.activities,
-            modes=self.modes,
+            survey_plan_assets=self.survey_plan_assets,
             is_weekday=self.is_weekday,
         ).get()
 

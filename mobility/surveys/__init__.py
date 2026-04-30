@@ -1,5 +1,6 @@
 from .mobility_survey import MobilitySurvey
 from .aggregator import MobilitySurveyAggregator
+from .survey_plan_assets import SurveyPlanAssets
 from .survey_plans import MobilitySurveyPlans
 from .survey_plan_steps import MobilitySurveyPlanSteps
 from .survey_plan_summaries import MobilitySurveyPlanSummaries

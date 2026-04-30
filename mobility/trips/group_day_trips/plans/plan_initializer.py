@@ -3,9 +3,7 @@ import math
 import polars as pl
 
 from mobility.activities.activity import ActivityParameters
-from mobility.surveys.survey_plan_steps import MobilitySurveyPlanSteps
-from mobility.surveys.survey_plans import MobilitySurveyPlans
-from mobility.surveys.survey_plan_summaries import MobilitySurveyPlanSummaries
+from mobility.surveys import SurveyPlanAssets
 from mobility.transport.modes.core.mode_values import get_mode_values
 from .plan_ids import add_plan_id
 
@@ -19,7 +17,7 @@ class PlanInitializer:
     and (5) fetch current OD costs.
     """
 
-    def get_survey_plan_data(self, population, surveys, activities, modes, is_weekday):
+    def get_survey_plan_data(self, population, survey_plan_assets: SurveyPlanAssets, is_weekday):
         """Build runtime survey plan inputs from survey assets and demand groups."""
 
         lau_to_city_cat = (
@@ -29,8 +27,6 @@ class PlanInitializer:
                 .rename({"urban_unit_category": "city_category"}, axis=1)
             ).with_columns(country=pl.col("local_admin_unit_id").str.slice(0, 2))
         )
-
-        countries = lau_to_city_cat["country"].unique().to_list()
 
         demand_groups = (
             pl.scan_parquet(population.get()["population_groups"])
@@ -48,24 +44,8 @@ class PlanInitializer:
             .collect(engine="streaming")
         )
 
-        surveys = [s for s in surveys if s.inputs["parameters"].country in countries]
-
-        survey_plan_step_assets = [
-            MobilitySurveyPlanSteps(
-                survey=survey,
-                activities=activities,
-                modes=modes,
-            )
-            for survey in surveys
-        ]
-        survey_plan_assets = [
-            MobilitySurveyPlans(plan_steps=plan_steps_asset)
-            for plan_steps_asset in survey_plan_step_assets
-        ]
-        survey_plan_steps = pl.concat(
-            [plan_steps_asset.get() for plan_steps_asset in survey_plan_step_assets],
-            how="vertical_relaxed",
-        ).select(
+        countries = demand_groups["country"].unique().sort().to_list()
+        survey_plan_steps = survey_plan_assets.get_plan_steps().select(
             [
                 "activity_seq_id",
                 "time_seq_id",
@@ -78,10 +58,7 @@ class PlanInitializer:
                 "duration_per_pers",
             ]
         )
-        survey_plans = pl.concat(
-            [plan_asset.get() for plan_asset in survey_plan_assets],
-            how="vertical_relaxed",
-        ).select(
+        survey_plans = survey_plan_assets.get_plans().select(
             [
                 "country",
                 "activity_seq_id",
@@ -93,6 +70,7 @@ class PlanInitializer:
                 "p_plan",
             ]
         )
+
         def get_col_values(df1, df2, col):
             s = pl.concat([df1.select(col), df2.select(col)]).to_series()
             return s.unique().sort().to_list()
@@ -188,57 +166,27 @@ class PlanInitializer:
 
     def get_survey_duration_summaries(
         self,
-        surveys,
-        activities,
-        modes,
+        survey_plan_assets: SurveyPlanAssets,
         is_weekday,
         demand_groups: pl.DataFrame,
         survey_plan_steps: pl.DataFrame,
     ):
         """Load precomputed survey-weighted summaries for one day type."""
 
-        summary_assets = [
-            MobilitySurveyPlanSummaries(
-                plans=MobilitySurveyPlans(
-                    plan_steps=MobilitySurveyPlanSteps(
-                        survey=survey,
-                        activities=activities,
-                        modes=modes,
-                    )
-                ),
-                plan_steps=MobilitySurveyPlanSteps(
-                    survey=survey,
-                    activities=activities,
-                    modes=modes,
-                ),
-            )
-            for survey in surveys
-        ]
-        summary_tables = [summary_asset.get() for summary_asset in summary_assets]
-
         mean_activity_durations = (
-            pl.concat(
-                [tables["mean_activity_durations"] for tables in summary_tables],
-                how="vertical_relaxed",
-            )
+            survey_plan_assets.get_mean_activity_durations()
             .filter(pl.col("is_weekday") == is_weekday)
             .drop("is_weekday")
         )
 
         mean_home_night_durations = (
-            pl.concat(
-                [tables["mean_home_night_durations"] for tables in summary_tables],
-                how="vertical_relaxed",
-            )
+            survey_plan_assets.get_mean_home_night_durations()
             .filter(pl.col("is_weekday") == is_weekday)
             .drop("is_weekday")
         )
 
         activity_demand_per_pers = (
-            pl.concat(
-                [tables["activity_demand_per_pers"] for tables in summary_tables],
-                how="vertical_relaxed",
-            )
+            survey_plan_assets.get_activity_demand_per_pers()
             .filter(pl.col("is_weekday") == is_weekday)
             .drop("is_weekday")
         )
