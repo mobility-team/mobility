@@ -1,325 +1,336 @@
-"""Module providing transport zones for the desired study area in France and Switzerland."""
-from __future__ import annotations
+library(sf)
+library(nngeo)
+library(data.table)
+library(geos)
+library(wk)
+library(arrow)
+library(FNN)
+library(log4r)
 
-import os
-import logging
-import geopandas as gpd
-import pathlib
+logger <- logger(appenders = console_appender())
 
-from importlib import resources
-from typing import Annotated, Literal, List, Union
-from shapely.geometry import Point
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+args <- commandArgs(trailingOnly = TRUE)
 
-from mobility.runtime.assets.file_asset import FileAsset
-from mobility.spatial.study_area import StudyArea, StudyAreaParameters
-from mobility.spatial.osm import OSMData
-from mobility.runtime.r_integration.r_script_runner import RScriptRunner
+# args <- c(
+#   'D:\\dev\\mobility\\mobility',
+#   'd:\\data\\mobility\\projects\\dolancourt\\386d1f8bddcf868597b659355577e7e1-study_area.gpkg',
+#   'd:\\data\\mobility\\projects\\dolancourt\\building-osm_data',
+#   '1',
+#   'd:/data/mobility/projects/dolancourt/333366a23660b51fecd5075c567670a9-transport_zones.gpkg'
+# )
 
-class TransportZones(FileAsset):
-  """
-    A FileAsset class for the management of transport zones.
+package_path <- args[1]
+study_area_fp <- args[2]
+osm_buildings_fp <- args[3]
+level_of_detail <- as.integer(args[4])
+output_fp <- args[5]
 
-    This class is responsible for creating, caching, and retrieving transport
-    zones based on specified criteria such as city ID, method, and radius.
-
-    The transport zone is based on either a list of local admin units ids
-    or one local admin unit id and a radius within which all local admin unit ids should be included.
-
-    It uses the R script 'prepare_transport_zones' to do so.
-
-    Parameters
-    ----------
-    local_admin_unit_id : Union[str, List[str]]
-        The geographical code of the centre local admin unit, or of all the local admin units to include. Examples:
-            "fr-09122" (Foix)
-            "ch-6621" (Genève)
-            ["fr-09122", "fr-09121"", "fr-09130"", "fr-09273",  "fr-09329"] (set of adjacent communes)
-    level_of_detail : Literal[0, 1], default=0
-        If 0, uses the communal level.
-        If 1, creates intra-communal transport zones to enable more precision in calculations. If there are more than 20 000 m² of building
-        within the commune, one sub-zone is created for every 20 000 m². These buildings are then grouped using k-medoids to ensure consistent clusters.
-        We use Voronoi constellations around the clusters centers to finally create these sub-communal transport zones.
-            
-    radius : float, default=40.0
-        Local admin units within this radius (in km) of the center admin unit will be included.
-
-    Methods
-    -------
-    get_cached_asset()
-        Retrieve cached transport zones with the given inputs.
-    create_and_get_asset()
-        Create and retrieve transport zones with the given inputs.
-
-    """
-
-def __init__(
-  self,
-  local_admin_unit_id: Union[str, List[str]] | None = None,
-  level_of_detail: Literal[0, 1] | None = None,
-  radius: float | None = None,
-  inner_radius: float | None = None,
-  inner_local_admin_unit_id: List[str] | None = None,
-  cutout_geometries: gpd.GeoDataFrame = None,
-  parameters: "TransportZonesParameters" | None = None,
-):
-  
-  parameters = self.prepare_parameters(
-    parameters=parameters,
-    parameters_cls=TransportZonesParameters,
-    explicit_args={
-      "local_admin_unit_id": local_admin_unit_id,
-      "level_of_detail": level_of_detail,
-      "radius": radius,
-      "inner_radius": inner_radius,
-      "inner_local_admin_unit_id": inner_local_admin_unit_id,
-    },
-    required_fields=["local_admin_unit_id"],
-    owner_name="TransportZones",
+clusters_fp <- file.path(
+  dirname(output_fp),
+  paste0(
+    gsub("-transport_zones.gpkg", "", basename(output_fp)),
+    "-transport_zones_buildings.parquet"
   )
-
-study_area = StudyArea(
-  parameters=StudyAreaParameters(
-    local_admin_unit_id=parameters.local_admin_unit_id,
-    radius=parameters.radius,
-  ),
-  cutout_geometries=cutout_geometries
+)
+clusters_geoms_fp <- file.path(
+  dirname(output_fp),
+  paste0(
+    gsub("-transport_zones.gpkg", "", basename(output_fp)),
+    "-transport_zones_buildings_geoms.gpkg"
+  )
 )
 
-osm_buildings = OSMData(
-  study_area,
-  object_type="a",
-  key="building",
-  exclude_queries=[
-    "a/building=hut",
-    "a/tourism=alpine_hut,wilderness_hut",
-  ],
-  geofabrik_extract_date="240101",
-  split_local_admin_units=True
-)
+buildings_area_threshold <- 2e5
+n_buildings_sample <- 10
+min_building_area <- 20
+max_building_area <- 500e3
+rng_seed <- 0L
 
-inputs = {
-  "version": "3.2",
-  "study_area": study_area,
-  "osm_buildings": osm_buildings,
-  "parameters": parameters,
-  "cutout_geometries": cutout_geometries
+convert_sf_to_geos_dt <- function(sf_df) {
+  
+  st_geometry(sf_df) <- "geometry"
+  
+  dt <- as.data.table(sf_df)
+  
+  if (nrow(dt) == 1){
+    dt <- dt[rep(1:.N, each = 2)]
+    dt[, geometry := as_geos_geometry(geometry)]
+    dt <- dt[1, ]
+  } else{
+    dt[, geometry := as_geos_geometry(geometry)]
+  }
+  
+  return(dt)
+  
 }
 
-cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "transport_zones.gpkg"
 
-super().__init__(inputs, cache_path)
-
-def get_cached_asset(self) -> gpd.GeoDataFrame:
-  """
-        Retrieve cached transport zones with the given inputs.
-
-        Returns
-        -------
-        transport_zones : geopandas.geodataframe.GeoDataFrame
-            Transport zones for the given local admin unit(s), radius, and level of detail.
-
-        """        
-if self.value is None:
+compute_cluster_internal_distance <- function(buildings_dt) {
   
-  logging.info("Transport zones already created. Reusing the file " + str(self.cache_path))
-transport_zones = gpd.read_file(self.cache_path)
-self.value = transport_zones
-return transport_zones
-
-else:
-  
-  return self.value
-
-
-def create_and_get_asset(self) -> gpd.GeoDataFrame:
-  """
-        Create and retrieve transport zones with the given inputs.
-        
-        It uses the R script 'prepare_transport_zones' to do so.
-
-        Returns
-        -------
-        transport_zones : geopandas.geodataframe.GeoDataFrame
-            Transport zones for the given local admin unit(s), radius, and level of detail.
-
-        """
-logging.info("Creating transport zones...")
-
-study_area_fp = self.study_area.cache_path["polygons"]
-osm_buildings_fp = self.osm_buildings.get()
-
-script = RScriptRunner(resources.files('mobility.spatial').joinpath('prepare_transport_zones.R'))
-script.run(
-  args=[
-    str(study_area_fp),
-    str(osm_buildings_fp),
-    str(self.inputs["parameters"].level_of_detail),
-    str(self.cache_path)
+  # Compute the median distance between random buildings within each cluster 
+  # with a coefficient of detour based and the crow fly distance
+  from_buildings <- buildings_dt[,
+                                 .SD[sample(.N, 1000, replace = TRUE, prob = area)],
+                                 by = cluster,
+                                 .SDcols = c("X", "Y")
   ]
-)
-
-transport_zones = gpd.read_file(self.cache_path)
-
-# Remove transport zones that are not adjacent to at least another one
-# (= filter "islands" that were selected but are not connected to the 
-# study area)
-transport_zones = self.remove_isolated_zones(transport_zones)
-
-# Set inner / outer flag
-local_admin_unit_id = self.inputs["parameters"].local_admin_unit_id
-inner_radius = self.inputs["parameters"].inner_radius
-inner_local_admin_unit_id = self.inputs["parameters"].inner_local_admin_unit_id
-
-transport_zones = self.flag_inner_zones(
-  transport_zones,
-  local_admin_unit_id,
-  inner_radius,
-  inner_local_admin_unit_id
-)
-
-# Cut the transport zones 
-transport_zones = self.apply_cutout(
-  transport_zones,
-  self.inputs["cutout_geometries"]
-)
-
-transport_zones.to_file(self.cache_path)
-
-return transport_zones
-
-
-def remove_isolated_zones(self, transport_zones):
   
-  pairs = gpd.sjoin(
-    transport_zones.reset_index(names="_i"),
-    transport_zones.reset_index(names="_j"),
-    how="inner",
-    predicate="touches"
+  to_buildings <- buildings_dt[,
+                               .SD[sample(.N, 1000, replace = TRUE, prob = area)],
+                               by = cluster,
+                               .SDcols = c("X", "Y")
+  ]
+  
+  distances <- cbind(
+    from_buildings[, list(cluster, x_from = X, y_from = Y)],
+    to_buildings[, list(x_to = X, y_to = Y)]
   )
-keep_ids = pairs.groupby("_i")["_j"].nunique().index
-transport_zones = transport_zones.loc[transport_zones.index.isin(keep_ids)].copy()
-
-return transport_zones
-
-
-def flag_inner_zones(
-  self,
-  transport_zones,
-  local_admin_unit_id,
-  inner_radius,
-  inner_local_admin_unit_id
-):
   
-  if isinstance(local_admin_unit_id, str) and inner_radius is not None:
+  distances[, distance := sqrt((x_from - x_to)^2 + (y_from - y_to)^2)]
+  distances[, distance := distance*(1.1+0.3*exp(-distance/20))]
   
-  lau_xy = transport_zones.loc[
-    transport_zones["local_admin_unit_id"] == local_admin_unit_id,
-    ["x", "y"]
-  ]
-
-lau_xy = Point(lau_xy.iloc[0]["x"], lau_xy.iloc[0]["y"])
-inner_buffer = lau_xy.buffer(inner_radius*1000.0)
-
-transport_zones["is_inner_zone"] = transport_zones.intersects(inner_buffer)
-
-elif isinstance(local_admin_unit_id, list) and inner_local_admin_unit_id is not None:
+  internal_distance <- distances[, list(internal_distance = median(distance)), by = cluster]
   
-  if isinstance(inner_local_admin_unit_id, str):
-  inner_local_admin_unit_id = [inner_local_admin_unit_id]
-
-transport_zones["is_inner_zone"] = transport_zones["local_admin_unit_id"].isin(inner_local_admin_unit_id)
-
-else:    
+  return(internal_distance)
   
-  raise ValueError("Could not set the transport zones inner/outer flag from the provided inputs.")
+}
 
-
-
-return transport_zones
-
-
-def apply_cutout(self, transport_zones, cutout_geometries):
+compute_k_medoids <- function(buildings_dt) {
   
-  if cutout_geometries is not None:
-  transport_zones = gpd.overlay(transport_zones, cutout_geometries, how="difference")
-
-return transport_zones
-
-
-class TransportZonesParameters(BaseModel):
+  bdt <- copy(buildings_dt)
+  n_buildings <- nrow(bdt)
   
-  model_config = ConfigDict(extra="forbid")
+  k_medoids <- lapply(1:5, function(i) {
+    
+    # Make sure at least 10 buildings are in each subcluster
+    n <- max(1, min(i, floor(n_buildings/10)))
+    
+    kmeans_result <- kmeans_with_nearest_building_centers(
+      bdt,
+      k = n
+    )
+    
+    bdt[, subcluster := kmeans_result$cluster]
+    subcluster_area <- bdt[, list(area = sum(area)), by = subcluster]
+    subcluster_area[, weight := area/sum(area)]
+    
+    k_medoids <- copy(kmeans_result$medoids)[, list(subcluster, x, y)]
+    
+    k_medoids <- merge(k_medoids, subcluster_area, by = "subcluster")
+    
+    k_medoids[, n_clusters := i]
+    
+  })
+  k_medoids <- rbindlist(k_medoids)
+  k_medoids <- k_medoids[, list(n_clusters, x, y, weight)]
+  
+  return(k_medoids)
+  
+}
 
-local_admin_unit_id: Annotated[
-  Union[str, list[str]],
-  Field(
-    title="Study area local admin unit ID(s)",
-    description=(
-      "Center local admin unit ID, or a list of local admin unit IDs "
-      "to define the study area."
-    ),
-  ),
-]
+kmeans_with_nearest_building_centers <- function(buildings_dt, k, iter_max = 10L) {
+  
+  coords <- as.matrix(buildings_dt[, list(X, Y)])
+  n <- nrow(coords)
+  
+  n_unique <- uniqueN(buildings_dt[, list(X, Y)])
+  k <- max(1L, min(as.integer(k), n, n_unique))
+  
+  fit <- kmeans(coords, centers = k, iter.max = iter_max, nstart = 1)
+  if (!is.null(fit$ifault) && fit$ifault == 2) {
+    fit <- kmeans(coords, centers = fit$centers, iter.max = max(2L * iter_max, 20L), nstart = 1)
+  }
+  
+  cluster <- as.integer(fit$cluster)
+  centers <- as.matrix(fit$centers)
+  
+  nn <- get.knnx(data = coords, query = centers, k = 1)
+  medoid_idx <- as.integer(nn$nn.index[, 1])
+  medoid_coords <- coords[medoid_idx, , drop = FALSE]
+  
+  medoids <- data.table(
+    subcluster = seq_len(nrow(medoid_coords)),
+    x = medoid_coords[, 1],
+    y = medoid_coords[, 2]
+  )
+  
+  return(list(cluster = cluster, medoids = medoids))
+  
+}
 
-radius: Annotated[
-  float,
-  Field(
-    default=40.0,
-    ge=5.0,
-    le=100.0,
-    title="Study area radius",
-    description="Radius in km around the selected local admin unit.",
-    json_schema_extra={"unit": "km"},
-  ),
-]
 
-level_of_detail: Annotated[
-  Literal[0, 1],
-  Field(
-    default=0,
-    title="Transport zones level of detail",
-    description=(
-      "Whether local admin units will be split into subzones "
-      "(level of detail = 1), according to their building footprint density."
-    ),
-  ),
-]
+clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_area_threshold, n_buildings_sample, minimum_building_area) {
+  
+  # Get the coordinates and area of all buildings in the area
+  # Keep only buildings with footprints larger than 20 m²
+  buildings <- st_read(
+    file.path(osm_buildings_fp, lau_id, "building.pbf"),
+    query = "select osm_id from multipolygons",
+    quiet = TRUE
+  )
+  
+  buildings <- st_transform(buildings, wk_crs(lau_geom))
+  buildings$area <- as.numeric(st_area(buildings))
+  buildings <- buildings[buildings$area > min_building_area & buildings$area < max_building_area, ]
+  
+  st_agr(buildings) <- "constant"
+  buildings <- st_centroid(buildings)
+  
+  buildings_dt <- cbind(
+    as.data.table(st_drop_geometry(buildings)),
+    as.data.table(st_coordinates(buildings))
+  )
+  buildings_dt[, building_id := 1:nrow(buildings_dt)]
+  
+  n_clusters <- ceiling(sum(buildings_dt$area)/buildings_area_threshold)
+  
+  # Split the transport zone into clusters based on the area of buildings
+  if (level_of_detail == 1 & n_clusters > 1) {
+    
+    kmeans_result <- kmeans_with_nearest_building_centers(
+      buildings_dt,
+      k = n_clusters
+    )
+    
+    clusters <- copy(kmeans_result$medoids)
+    setnames(clusters, "subcluster", "cluster")
+    setnames(clusters, c("x", "y"), c("X", "Y"))
+    
+    buildings_dt[, cluster := kmeans_result$cluster]
+    
+    cluster_area <- buildings_dt[, list(area = sum(area)), by = cluster]
+    clusters <- merge(clusters, cluster_area, by = "cluster")
+    
+    transport_zones <- clusters[, list(
+      transport_zone_id = cluster,
+      weight = area/sum(area),
+      x = X,
+      y = Y
+    )]
+    
+    internal_distances <- compute_cluster_internal_distance(buildings_dt)
+    transport_zones <- merge(transport_zones, internal_distances, by.x  = "transport_zone_id", by.y = "cluster")
+    
+    # Create a voronoi tesselation around the cluster centers
+    env <- geos_create_rectangle(
+      xmin = min(buildings_dt$X),
+      ymin = min(buildings_dt$Y),
+      xmax = max(buildings_dt$X),
+      ymax = max(buildings_dt$Y),
+      crs = wk_crs(lau_geom)
+    )
+    
+    env <- geos_buffer(env, 100e3)
+    
+    clusters_geos <- geos_make_collection(geos_read_xy(clusters[, list(X, Y)]))
+    wk_crs(clusters_geos) <- wk_crs(lau_geom)
+    
+    voronoi <- geos_voronoi_polygons(clusters_geos, env)
+    voronoi <- geos_geometry_n(voronoi, seq_len(geos_num_geometries(voronoi)))
+    voronoi <- geos_intersection(voronoi, lau_geom)
+    
+    v_order <- st_intersects(
+      st_as_sf(geos_geometry_n(clusters_geos, seq_len(geos_num_geometries(clusters_geos)))),
+      st_as_sf(voronoi)
+    )
+    
+    transport_zones[, geometry := voronoi[unlist(v_order)]]
+    
+    k_medoids <- buildings_dt[, compute_k_medoids(.SD), by = list(transport_zone_id = cluster)]
+    
+    
+    
+  } else {
+    
+    
+    transport_zones <- data.table(
+      transport_zone_id = 1,
+      weight = 1.0,
+      geometry = lau_geom
+    )
+    
+    buildings_dt[, cluster := 1]
+    internal_distances <- compute_cluster_internal_distance(buildings_dt)
+    transport_zones <- merge(transport_zones, internal_distances, by.x  = "transport_zone_id", by.y = "cluster")
+    
+    k_medoids <- compute_k_medoids(buildings_dt)
+    k_medoids[, transport_zone_id := 1]
+    
+    transport_zones[, x := k_medoids[n_clusters == 1, x]]
+    transport_zones[, y := k_medoids[n_clusters == 1, y]]
+    
+  }
+  
+  transport_zones[, local_admin_unit_id := lau_id]
+  transport_zones[, geometry := geos_write_wkb(geometry)]
+  
+  k_medoids[, local_admin_unit_id := lau_id]
+  
+  return(list(transport_zones, k_medoids))
+  
+}
 
-inner_radius: Annotated[
-  float | None,
-  Field(
-    default=None,
-    title="Study area inner radius",
-    description=(
-      "Radius in km around the selected local admin unit,used to flag "
-      "as local is_inner_zone. This can be used to filter out results "
-      "from the border of the simulated study area, where the simulation "
-      "will be less reliable."
-    ),
-    json_schema_extra={"unit": "km"},
-  ),
-]
+study_area <- st_read(study_area_fp, quiet = TRUE)
+study_area_dt <- convert_sf_to_geos_dt(study_area)
+study_area_dt[, geometry_wkb := geos_write_wkb(geometry)]
 
-inner_local_admin_unit_id: Annotated[
-  list[str] | None,
-  Field(
-    default=None,
-    title="Inner local admin unit IDs",
-    description=(
-      "List of local admin unit IDs marked as inner zones. This can be "
-      "used to filter out results from the border of the simulated "
-      "study area, where the simulation will be less reliable."
-    ),
-  ),
-]
+set.seed(rng_seed)
 
-@model_validator(mode="after")
-def set_derived_defaults(self) -> "TransportZonesParameters":
-  if self.inner_radius is None:
-  self.inner_radius = self.radius
+transport_zones_buildings <- lapply(
+  
+  study_area_dt$local_admin_unit_id,
+  
+  FUN = function(lau_id) {
+    
+    info(logger, sprintf("Clustering buildings of LAU %s...", lau_id))
+    
+    lau_geom <- study_area_dt[local_admin_unit_id == lau_id, geometry_wkb]
+    lau_geom <- geos_read_wkb(lau_geom)
+    wk_crs(lau_geom) <- "EPSG:3035"
+    
+    result <- clusters_to_voronoi(
+      lau_id = lau_id,
+      lau_geom = lau_geom,
+      level_of_detail = level_of_detail,
+      buildings_area_threshold = buildings_area_threshold,
+      n_buildings_sample = n_buildings_sample,
+      minimum_building_area = min_building_area
+    )
+    
+    return(result)
+    
+  }
+)
 
-if isinstance(self.local_admin_unit_id, list) and self.inner_local_admin_unit_id is None:
-  self.inner_local_admin_unit_id = self.local_admin_unit_id
+transport_zones <- rbindlist(lapply(transport_zones_buildings, "[[", 1), use.names = TRUE)
+clusters <- rbindlist(lapply(transport_zones_buildings, "[[", 2), use.names = TRUE)
 
-return self
+# Create a unique integer id for each transport zone
+transport_zones[, new_transport_zone_id := 1:.N]
+
+clusters <- merge(
+  clusters,
+  transport_zones[, list(local_admin_unit_id, transport_zone_id, new_transport_zone_id)],
+  by = c("local_admin_unit_id", "transport_zone_id")
+)
+clusters[, transport_zone_id := NULL]
+setnames(clusters, "new_transport_zone_id", "transport_zone_id")
+
+transport_zones[, transport_zone_id := NULL]
+setnames(transport_zones, "new_transport_zone_id", "transport_zone_id")
+
+transport_zones[, geometry := geos_read_wkb(geometry)]
+wk_crs(transport_zones$geometry) <- "EPSG:3035"
+transport_zones <- st_as_sf(transport_zones)
+
+# Write the result
+st_write(transport_zones, output_fp, delete_dsn = TRUE, quiet = TRUE)
+write_parquet(clusters, clusters_fp)
+
+clusters_geoms <- st_as_sf(
+  clusters,
+  coords = c("x", "y"),
+  crs = "EPSG:3035",
+  remove = FALSE
+)
+st_write(clusters_geoms, clusters_geoms_fp, layer = "cluster_buildings", delete_dsn = TRUE, quiet = TRUE)

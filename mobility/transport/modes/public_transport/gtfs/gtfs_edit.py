@@ -1,3 +1,10 @@
+"""Small GTFS edit helpers used to patch a feed before routing.
+
+The current feature set is intentionally narrow:
+- insert a stop between two consecutive stops
+- propagate the resulting delay before, after, or symmetrically
+"""
+
 import hashlib
 import logging
 import math

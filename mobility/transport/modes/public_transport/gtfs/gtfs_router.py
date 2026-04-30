@@ -79,6 +79,8 @@ class GTFSRouter(FileAsset):
             gtfs_files.extend(self.inputs["additional_gtfs_files"])
 
         if self.inputs.get("gtfs_edits"):
+            # Apply only the lightweight GTFS edits supported by this branch:
+            # insert a stop between two consecutive stops and propagate the delay.
             edits_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "gtfs_edits"
             gtfs_files = apply_gtfs_edits(gtfs_files, self.inputs["gtfs_edits"], edits_folder)
 
@@ -139,7 +141,7 @@ class GTFSRouter(FileAsset):
             args=[
                 str(transport_zones.cache_path),
                 gtfs_files_arg,
-                str(resources.files("mobility.data").joinpath("gtfs/gtfs_route_types.csv")),
+                str(resources.files("mobility.runtime.resources").joinpath("gtfs/gtfs_route_types.csv")),
                 str(self.cache_path),
             ]
         )
