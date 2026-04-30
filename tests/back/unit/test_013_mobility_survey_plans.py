@@ -105,3 +105,52 @@ def test_survey_plan_assets_return_weighted_step_level_plans():
     assert plan_steps["plan_weight_mass"].to_list() == [4.0, 4.0]
     assert plans["p_plan"].to_list() == [1.0]
     assert "plan_weight_mass" not in plans.columns
+
+
+def test_survey_plan_steps_truncate_to_ten_trips_then_force_last_trip_home():
+    survey = _StubSurvey(
+        {
+            "days_trip": pd.DataFrame(
+                {
+                    "day_id": [10, 20],
+                    "day_of_week": [1, 2],
+                    "pondki": [1.0, 1.0],
+                    "city_category": ["urban", "urban"],
+                    "csp": ["A", "A"],
+                    "n_cars": [1, 1],
+                }
+            ),
+            "short_trips": pd.DataFrame(
+                {
+                    "day_id": [10] * 12 + [20] * 2,
+                    "individual_id": [1] * 12 + [2] * 2,
+                    "daily_trip_index": list(range(1, 13)) + [1, 2],
+                    "departure_time": [i * 3600 for i in range(12)] + [8 * 3600, 17 * 3600],
+                    "arrival_time": [(i + 0.5) * 3600 for i in range(12)] + [9 * 3600, 18 * 3600],
+                    "motive": ["1"] * 12 + ["1", "1"],
+                    "mode_id": ["car"] * 14,
+                    "distance": [10.0] * 14,
+                }
+            ),
+        }
+    )
+
+    activities = [
+        _make_activity("work", ["1"]),
+        _make_activity("home", ["2"]),
+    ]
+    modes = [_make_mode("car", ["car"])]
+
+    plan_steps_asset = MobilitySurveyPlanSteps(survey=survey, activities=activities, modes=modes)
+    plan_steps = plan_steps_asset._prepare_survey_plans()
+
+    truncated_day = plan_steps.filter(pl.col("day_id") == 10).sort("seq_step_index")
+    short_day = plan_steps.filter(pl.col("day_id") == 20).sort("seq_step_index")
+
+    assert truncated_day["seq_step_index"].to_list() == list(range(1, 11))
+    assert truncated_day["activity"].to_list() == ["work"] * 9 + ["home"]
+    assert truncated_day["max_seq_step_index"].to_list() == [10] * 10
+
+    assert short_day["seq_step_index"].to_list() == [1, 2]
+    assert short_day["activity"].to_list() == ["work", "home"]
+    assert short_day["max_seq_step_index"].to_list() == [2, 2]
