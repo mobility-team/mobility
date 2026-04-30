@@ -1,6 +1,8 @@
 import mobility
 from mobility.trips.group_day_trips import Parameters
 
+# This file is not the actual quickstart. It is used by our CI system to ensure that the quickstart always work!
+
 def run_quickstart_ci():
     # In CI/integration tests, test setup configures Mobility paths in conftest.py.
 
@@ -38,6 +40,14 @@ def run_quickstart_ci():
 
     # You can compute global metrics for this population
     global_metrics = population_trips.weekday_run.evaluate("global_metrics")
+    
+    # You can plot weekday OD flows, with labels for prominent cities
+    weekday_results = population_trips.weekday_run.results()
+    labels = weekday_results.get_prominent_cities()
+    #weekday_results.plot_od_flows(labels=labels) #Not plotting on CI to avoid crashes
+
+    # You can get a report of the parameters used in the model
+    parameters_report = population_trips.weekday_run.parameters_dataframe()
 
     return {
         "weekday_plan_steps": weekday_plan_steps,
