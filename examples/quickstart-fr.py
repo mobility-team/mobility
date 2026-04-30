@@ -3,11 +3,15 @@ import dotenv
 import mobility
 from mobility.trips.group_day_trips import Parameters
 
+# Dear Mobility users, this quickstart should always work, please open an issue if this is not the case (and sorry for that)
+
+# Note to Mobility developers : thank you for doing that! <3
+# If you bring changes to this quickstart, please also update quickstart-fr-ci (in the same folder)
+# If those changes are substantial, please consider updating test_901_quickstart_drift_guard.py in the unit folder test 
+
 dotenv.load_dotenv()
 
 mobility.set_params(
-    package_data_folder_path=os.environ["MOBILITY_PACKAGE_DATA_FOLDER"],
-    project_data_folder_path=os.environ["MOBILITY_PROJECT_DATA_FOLDER"]
 )
 
 # Using Foix (a small town) and a limited radius for quick results
@@ -51,4 +55,4 @@ labels = weekday_results.get_prominent_cities()
 weekday_results.plot_od_flows(labels=labels)
 
 # You can get a report of the parameters used in the model
-report = population_trips.parameters_dataframe()
+parameters_report = population_trips.weekday_run.parameters_dataframe()
