@@ -1,7 +1,5 @@
 import json
 import pickle
-import sys
-import types
 from types import SimpleNamespace
 
 import polars as pl
@@ -165,10 +163,9 @@ def test_run_rust_mode_sequence_search_transforms_inputs_for_package(monkeypatch
         captured.update(kwargs)
         return expected
 
-    monkeypatch.setitem(
-        sys.modules,
-        "mobility_mode_sequence_search",
-        types.SimpleNamespace(search_mode_sequences=fake_search_mode_sequences),
+    monkeypatch.setattr(
+        "mobility.trips.group_day_trips.plans.mode_sequences.search_rust.search_mode_sequences",
+        fake_search_mode_sequences,
     )
 
     result = run_rust_mode_sequence_search(
