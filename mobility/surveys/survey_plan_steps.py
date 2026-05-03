@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import os
 import pathlib
 from typing import Any
@@ -15,10 +14,25 @@ from .survey_sequence_index import add_index
 class MobilitySurveyPlanSteps(FileAsset):
     """Persist canonical step-level survey plans for one mobility survey.
 
-    This asset turns the raw survey day-trip tables into one normalized
-    step table keyed by stable sequence identifiers. The output keeps the
-    timed schedule representation needed by the grouped day-trips model
-    while removing transient preprocessing-only fields.
+    This asset converts raw survey trip diaries into the day-plan steps used by
+    the grouped day-trips model.
+
+    The business logic is:
+    - keep only day records that can be interpreted as a coherent within-day
+      trip chain
+    - drop incomplete or irregular chains, because the model needs a clear
+      ordered sequence of trips
+    - drop one-trip days, because they are often overnight boundary cases and
+      do not provide a usable same-day chain for destination and mode-sequence
+      modelling
+    - cap very long daily chains, because the downstream mode sequence model
+    struggles with long chains
+    - treat the final activity of a valid day chain as `home`, so each
+      retained sequence represents a full daily activity pattern
+    - map survey-specific motive and mode codes onto the model's common
+      activity and mode definitions, so different surveys can be used together
+    - assign stable sequence identifiers so identical daily patterns can be
+      reused consistently across the modelling pipeline
     """
 
     def __init__(
@@ -46,7 +60,7 @@ class MobilitySurveyPlanSteps(FileAsset):
         )
         cache_path = folder_path / "group_day_trip_plan_steps.parquet"
         inputs = {
-            "version": 3,
+            "version": 3.1,
             "survey": survey,
             "activities": activities,
             "modes": modes,
@@ -160,6 +174,7 @@ class MobilitySurveyPlanSteps(FileAsset):
             .filter(pl.col("seq_step_index") < 11)
             .filter((pl.col("departure_time") < 24.0) & (pl.col("arrival_time") < 24.0))
             .with_columns(max_seq_step_index=pl.col("seq_step_index").max().over(["individual_id", "day_id"]))
+            .filter(pl.col("max_seq_step_index") > 1)
             .with_columns(
                 activity=pl.when(
                     (pl.col("seq_step_index") == pl.col("max_seq_step_index")) & (pl.col("activity") != "home")
@@ -214,7 +229,6 @@ class MobilitySurveyPlanSteps(FileAsset):
             on=["is_weekday", "city_category", "csp", "n_cars", "activity_seq", "mode_seq"],
             how="anti",
         )
-
         return plans.drop("day_of_week")
 
     def create_and_get_asset(self) -> pl.DataFrame:
@@ -358,7 +372,6 @@ class MobilitySurveyPlanSteps(FileAsset):
                 duration_per_pers=pl.col("duration_per_pers").cast(pl.Float32),
             )
         )
-
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         plan_steps.write_parquet(self.cache_path)
         return self.get_cached_asset()

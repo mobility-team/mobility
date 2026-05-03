@@ -46,7 +46,7 @@ class DestinationSequences(FileAsset):
         self.parameters = parameters
         self.seed = seed
         inputs = {
-            "version": 1,
+            "version": 2,
             "run_key": run_key,
             "is_weekday": is_weekday,
             "iteration": iteration,
@@ -148,6 +148,12 @@ class DestinationSequences(FileAsset):
             .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
             .agg(to=pl.col("to").sort_by("seq_step_index").cast(pl.Utf8()))
             .with_columns(to=pl.col("to").list.join("-"))
+            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
+        )
+        destination_sequences = (
+            destination_sequences
+            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "to"])
+            .agg(dest_draw_id=pl.col("dest_draw_id").min())
             .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
         )
         destination_sequences = add_index(

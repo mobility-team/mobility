@@ -36,6 +36,7 @@ class PopulationGroupDayTrips:
         cost_uncertainty_sd: float = None,
         seed: int = None,
         mode_sequence_search_parallel: bool = None,
+        use_rust_mode_sequence_search: bool = None,
         save_transition_events: bool = None,
         persist_iteration_artifacts: bool = None,
         min_activity_time_constant: float = None,
@@ -91,6 +92,8 @@ class PopulationGroupDayTrips:
             seed: Optional override for `Parameters.seed`.
             mode_sequence_search_parallel: Optional override for
                 `Parameters.mode_sequence_search_parallel`.
+            use_rust_mode_sequence_search: Optional override for
+                `Parameters.use_rust_mode_sequence_search`.
             save_transition_events: Optional override for
                 `Parameters.save_transition_events`.
             persist_iteration_artifacts: Optional override for
@@ -142,6 +145,7 @@ class PopulationGroupDayTrips:
                 "cost_uncertainty_sd": cost_uncertainty_sd,
                 "seed": seed,
                 "mode_sequence_search_parallel": mode_sequence_search_parallel,
+                "use_rust_mode_sequence_search": use_rust_mode_sequence_search,
                 "save_transition_events": save_transition_events,
                 "persist_iteration_artifacts": persist_iteration_artifacts,
                 "min_activity_time_constant": min_activity_time_constant,

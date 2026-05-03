@@ -96,6 +96,8 @@ mdit-py-plugins==0.5.0
     # via myst-parser
 mdurl==0.1.2
     # via markdown-it-py
+mobility-mode-sequence-search==0.1.0
+    # via mobility (pyproject.toml)
 multivolumefile==0.2.3
     # via py7zr
 myst-parser==4.0.1
@@ -147,7 +149,9 @@ pluggy==1.6.0
 pockets==0.9.1
     # via sphinxcontrib-napoleon
 polars==1.39.3
-    # via mobility (pyproject.toml)
+    # via
+    #   mobility (pyproject.toml)
+    #   mobility-mode-sequence-search
 polars-runtime-32==1.39.3
     # via polars
 psutil==7.2.2

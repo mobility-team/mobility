@@ -37,6 +37,7 @@ class PublicTransportTravelCosts(TravelCostsAsset):
             first_modal_transfer: IntermodalTransfer = None,
             last_modal_transfer: IntermodalTransfer = None
     ):
+        """Build the PT travel-cost asset for one pair of access and egress legs."""
         """
         Build the PT travel-cost asset for one pair of access and egress legs.
         Retrieves public transport travel costs if they already exist for these transport zones and parameters,

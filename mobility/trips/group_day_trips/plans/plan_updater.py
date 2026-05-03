@@ -5,6 +5,7 @@ from typing import Any
 import polars as pl
 
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
+from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
 from mobility.transport.modes.core.mode_values import get_mode_values
 from ..transitions.transition_events import (
@@ -15,7 +16,7 @@ from .candidate_plan_steps import CandidatePlanStepsAsset
 from .plan_distance import PlanDistance
 from .plan_ids import PLAN_KEY_COLS, add_plan_id
 from .destination_sequences import DestinationSequences
-from .mode_sequences import ModeSequences
+from .mode_sequence_search import ModeSequences
 
 
 class PlanUpdater:
