@@ -31,6 +31,20 @@ def build_search_inputs(transport_costs: Any) -> ModeSearchInputs:
     mode_enum_values = get_mode_values(transport_costs.modes, "stay_home")
     mode_id_by_name = {name: index for index, name in enumerate(modes_by_name)}
     mode_name_by_id = {index: name for index, name in enumerate(modes_by_name)}
+    is_return_mode_by_id = {
+        mode_id_by_name[name]: props["is_return_mode"]
+        for name, props in modes_by_name.items()
+    }
+    return_mode_id_by_id = {
+        mode_id_by_name[name]: (
+            None if props["return_mode"] is None else mode_id_by_name[props["return_mode"]]
+        )
+        for name, props in modes_by_name.items()
+    }
+    needs_vehicle_by_id = {
+        mode_id_by_name[name]: props["vehicle"] is not None
+        for name, props in modes_by_name.items()
+    }
     leg_mode_costs = (
         transport_costs.get_costs_by_od_and_mode(
             ["cost"],
@@ -47,5 +61,8 @@ def build_search_inputs(transport_costs: Any) -> ModeSearchInputs:
         mode_enum_values=mode_enum_values,
         mode_id_by_name=mode_id_by_name,
         mode_name_by_id=mode_name_by_id,
+        is_return_mode_by_id=is_return_mode_by_id,
+        return_mode_id_by_id=return_mode_id_by_id,
+        needs_vehicle_by_id=needs_vehicle_by_id,
         leg_mode_costs=leg_mode_costs,
     )

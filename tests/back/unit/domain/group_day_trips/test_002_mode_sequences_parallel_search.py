@@ -3,11 +3,11 @@ import pickle
 from types import SimpleNamespace
 
 import polars as pl
-from mobility.trips.group_day_trips.plans.mode_sequences.search_python import (
+from mobility.trips.group_day_trips.plans.mode_sequence_search.search_python import (
     run_python_mode_sequence_search,
     run_python_mode_sequence_search_subprocess,
 )
-from mobility.trips.group_day_trips.plans.mode_sequences.search_rust import (
+from mobility.trips.group_day_trips.plans.mode_sequence_search.search_rust import (
     run_rust_mode_sequence_search,
 )
 
@@ -47,11 +47,11 @@ def test_run_python_mode_sequence_search_subprocess_serializes_inputs_for_worker
         return process
 
     monkeypatch.setattr(
-        "mobility.trips.group_day_trips.plans.mode_sequences.search_python.Live",
+        "mobility.trips.group_day_trips.plans.mode_sequence_search.search_python.Live",
         lambda *args, **kwargs: _DummyLive(),
     )
     monkeypatch.setattr(
-        "mobility.trips.group_day_trips.plans.mode_sequences.search_python.subprocess.Popen",
+        "mobility.trips.group_day_trips.plans.mode_sequence_search.search_python.subprocess.Popen",
         fake_popen,
     )
 
@@ -111,7 +111,7 @@ def test_run_python_mode_sequence_search_serial_backend_filters_return_modes(mon
         expected.write_parquet(tmp_folder / "part.parquet")
 
     monkeypatch.setattr(
-        "mobility.trips.group_day_trips.plans.mode_sequences.search_python.compute_subtour_mode_probabilities_serial",
+        "mobility.trips.group_day_trips.plans.mode_sequence_search.search_python.compute_subtour_mode_probabilities_serial",
         fake_serial_search,
     )
 
@@ -133,6 +133,7 @@ def test_run_python_mode_sequence_search_serial_backend_filters_return_modes(mon
             "car_return": {"is_return_mode": True},
             "bike": {"is_return_mode": False},
         },
+        is_return_mode_by_id={0: False, 1: True, 2: False},
     )
 
     assert result.equals(expected)
@@ -163,14 +164,18 @@ def test_run_rust_mode_sequence_search_transforms_inputs_for_package(monkeypatch
         captured.update(kwargs)
         return expected
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.plans.mode_sequences.search_rust.search_mode_sequences",
-        fake_search_mode_sequences,
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "mobility_mode_sequence_search",
+        SimpleNamespace(search_mode_sequences=fake_search_mode_sequences),
     )
 
     result = run_rust_mode_sequence_search(
         unique_destination_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
         leg_mode_costs=pl.DataFrame({"from": [1], "to": [2], "mode_id": [0], "cost": [1.0]}),
+        needs_vehicle_by_id={0: False, 1: True, 2: True},
+        return_mode_id_by_id={0: None, 1: 2, 2: None},
+        is_return_mode_by_id={0: False, 1: False, 2: True},
         modes_by_name={
             "walk": {
                 "vehicle": None,
@@ -191,7 +196,7 @@ def test_run_rust_mode_sequence_search_transforms_inputs_for_package(monkeypatch
                 "return_mode": None,
             },
         },
-        mode_id_by_name={"walk": 0, "carpool": 1, "carpool_return": 2},
+        mode_name_by_id={0: "walk", 1: "carpool", 2: "carpool_return"},
         k_mode_sequences=7,
     )
 
@@ -245,12 +250,16 @@ def test_python_and_rust_mode_sequence_backends_match_on_same_inputs(tmp_path):
         unique_destination_chains=unique_destination_chains,
         leg_mode_costs=leg_mode_costs,
         modes_by_name=modes_by_name,
+        is_return_mode_by_id={0: False, 1: False},
     )
     rust_rows = run_rust_mode_sequence_search(
         unique_destination_chains=unique_destination_chains,
         leg_mode_costs=leg_mode_costs,
+        needs_vehicle_by_id={0: False, 1: False},
+        return_mode_id_by_id={0: None, 1: None},
+        is_return_mode_by_id={0: False, 1: False},
         modes_by_name=modes_by_name,
-        mode_id_by_name={"walk": 0, "bike": 1},
+        mode_name_by_id={0: "walk", 1: "bike"},
         k_mode_sequences=3,
     )
 

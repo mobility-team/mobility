@@ -108,8 +108,11 @@ class ModeSequences(FileAsset):
             search_rows = run_rust_mode_sequence_search(
                 unique_destination_chains=unique_destination_chains,
                 leg_mode_costs=search_inputs.leg_mode_costs,
+                needs_vehicle_by_id=search_inputs.needs_vehicle_by_id,
+                return_mode_id_by_id=search_inputs.return_mode_id_by_id,
+                is_return_mode_by_id=search_inputs.is_return_mode_by_id,
                 modes_by_name=search_inputs.modes_by_name,
-                mode_id_by_name=search_inputs.mode_id_by_name,
+                mode_name_by_id=search_inputs.mode_name_by_id,
                 k_mode_sequences=self.parameters.k_mode_sequences,
             )
         else:
@@ -120,6 +123,7 @@ class ModeSequences(FileAsset):
                 unique_destination_chains=unique_destination_chains,
                 leg_mode_costs=search_inputs.leg_mode_costs,
                 modes_by_name=search_inputs.modes_by_name,
+                is_return_mode_by_id=search_inputs.is_return_mode_by_id,
             )
 
         search_rows = assemble_mode_sequence_rows(

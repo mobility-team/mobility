@@ -16,7 +16,7 @@ from .candidate_plan_steps import CandidatePlanStepsAsset
 from .plan_distance import PlanDistance
 from .plan_ids import PLAN_KEY_COLS, add_plan_id
 from .destination_sequences import DestinationSequences
-from .mode_sequences import ModeSequences
+from .mode_sequence_search import ModeSequences
 
 
 class PlanUpdater:

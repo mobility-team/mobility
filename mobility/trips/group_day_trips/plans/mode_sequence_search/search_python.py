@@ -27,6 +27,7 @@ def run_python_mode_sequence_search(
     unique_destination_chains: pl.DataFrame,
     leg_mode_costs: pl.DataFrame,
     modes_by_name: dict[str, Any],
+    is_return_mode_by_id: dict[int, bool],
 ) -> pl.DataFrame:
     """Run the Python mode-sequence search backend."""
     tmp_folder = working_folder / "tmp_results"
@@ -43,10 +44,6 @@ def run_python_mode_sequence_search(
         costs=cost_by_origin_destination_mode,
     )
 
-    is_return_mode_by_id = {
-        index: value["is_return_mode"]
-        for index, (_, value) in enumerate(modes_by_name.items())
-    }
     mode_ids_by_leg = defaultdict(list)
     for origin, destination, mode_id in cost_by_origin_destination_mode.keys():
         if not is_return_mode_by_id[mode_id]:

@@ -10,7 +10,7 @@ import polars as pl
 from ..core.run_state import RunState
 from ..plans.activity_sequences import ActivitySequences
 from ..plans.destination_sequences import DestinationSequences
-from ..plans.mode_sequences import ModeSequences
+from ..plans.mode_sequence_search import ModeSequences
 from .iteration_assets import (
     CandidatePlanStepsAsset,
     CurrentPlansAsset,
