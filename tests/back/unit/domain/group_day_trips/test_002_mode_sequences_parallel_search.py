@@ -1,22 +1,20 @@
 import json
-import pathlib
 import pickle
-import tempfile
+import sys
+import types
+from types import SimpleNamespace
 
 import polars as pl
-
-from mobility.trips.group_day_trips.plans.mode_sequences import ModeSequences
-
-
-def _make_temp_path() -> pathlib.Path:
-    return pathlib.Path(tempfile.mkdtemp())
+from mobility.trips.group_day_trips.plans.mode_sequences.search_python import (
+    run_python_mode_sequence_search,
+    run_python_mode_sequence_search_subprocess,
+)
+from mobility.trips.group_day_trips.plans.mode_sequences.search_rust import (
+    run_rust_mode_sequence_search,
+)
 
 
 class _DummyLive:
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
-
     def __enter__(self):
         return self
 
@@ -34,59 +32,39 @@ class _DummyProcess:
         return 0
 
 
-def test_run_parallel_search_serializes_inputs_and_invokes_worker(monkeypatch):
-    tmp_path = _make_temp_path()
-    mode_sequences = object.__new__(ModeSequences)
-    mode_sequences.parameters = type("Params", (), {"k_mode_sequences": 7})()
-
-    unique_location_chains = pl.DataFrame(
-        {
-            "dest_seq_id": [1],
-            "locations": [[101, 202, 303]],
-        }
-    )
-    costs = {
-        (101, 202, 0): 1200,
-        (202, 303, 1): 900,
-    }
-    leg_modes = {
-        (101, 202): [0, 1],
-        (202, 303): [1],
-    }
-    modes = {
-        "car": {"is_return_mode": False},
-        "walk": {"is_return_mode": False},
-    }
+def test_run_python_mode_sequence_search_subprocess_serializes_inputs_for_worker(monkeypatch, tmp_path):
+    parameters = SimpleNamespace(k_mode_sequences=7)
+    unique_destination_chains = pl.DataFrame({"dest_seq_id": [1], "locations": [[101, 202, 303]]})
+    cost_by_origin_destination_mode = {(101, 202, 0): 1200, (202, 303, 1): 900}
+    mode_ids_by_leg = {(101, 202): [0, 1], (202, 303): [1]}
+    modes_by_name = {"car": {"is_return_mode": False}, "walk": {"is_return_mode": False}}
     tmp_results_path = tmp_path / "tmp_results"
     tmp_results_path.mkdir()
 
-    popen_calls = []
     created_processes = []
 
     def fake_popen(command):
         process = _DummyProcess(command)
-        popen_calls.append(command)
         created_processes.append(process)
         return process
 
     monkeypatch.setattr(
-        "mobility.trips.group_day_trips.plans.mode_sequences.Live",
-        _DummyLive,
-        raising=True,
+        "mobility.trips.group_day_trips.plans.mode_sequences.search_python.Live",
+        lambda *args, **kwargs: _DummyLive(),
     )
     monkeypatch.setattr(
-        "mobility.trips.group_day_trips.plans.mode_sequences.subprocess.Popen",
+        "mobility.trips.group_day_trips.plans.mode_sequences.search_python.subprocess.Popen",
         fake_popen,
-        raising=True,
     )
 
-    mode_sequences._run_parallel_search(
-        parent_folder_path=tmp_path,
-        unique_location_chains=unique_location_chains,
-        costs=costs,
-        leg_modes=leg_modes,
-        modes=modes,
-        tmp_path=tmp_results_path,
+    run_python_mode_sequence_search_subprocess(
+        parameters=parameters,
+        working_folder=tmp_path,
+        unique_destination_chains=unique_destination_chains,
+        cost_by_origin_destination_mode=cost_by_origin_destination_mode,
+        mode_ids_by_leg=mode_ids_by_leg,
+        modes_by_name=modes_by_name,
+        tmp_folder=tmp_results_path,
     )
 
     costs_path = tmp_path / "tmp-costs.pkl"
@@ -94,123 +72,113 @@ def test_run_parallel_search_serializes_inputs_and_invokes_worker(monkeypatch):
     modes_path = tmp_path / "modes-props.json"
     location_chains_path = tmp_path / "tmp-location-chains.parquet"
 
-    assert costs_path.exists()
-    assert leg_modes_path.exists()
-    assert modes_path.exists()
-    assert location_chains_path.exists()
-
     with open(costs_path, "rb") as file:
-        assert pickle.load(file) == costs
+        assert pickle.load(file) == cost_by_origin_destination_mode
     with open(leg_modes_path, "rb") as file:
-        assert pickle.load(file) == leg_modes
+        assert pickle.load(file) == mode_ids_by_leg
     with open(modes_path, encoding="utf-8") as file:
-        assert json.load(file) == modes
-    assert pl.read_parquet(location_chains_path).equals(unique_location_chains)
+        assert json.load(file) == modes_by_name
+    assert pl.read_parquet(location_chains_path).equals(unique_destination_chains)
 
-    assert len(popen_calls) == 1
-    command = popen_calls[0]
-    assert command[0:2] == ["python", "-u"]
-    assert pathlib.Path(command[2]).name == "compute_subtour_mode_probabilities.py"
-    assert command[3:] == [
-        "--k_sequences",
-        "7",
-        "--location_chains_path",
-        str(location_chains_path),
-        "--costs_path",
-        str(costs_path),
-        "--leg_modes_path",
-        str(leg_modes_path),
-        "--modes_path",
-        str(modes_path),
-        "--tmp_path",
-        str(tmp_results_path),
-    ]
-    assert created_processes[0].wait_called is True
+    process = created_processes[0]
+    assert process.wait_called is True
+    assert len(created_processes) == 1
 
 
-def test_compute_mode_sequence_search_results_dispatches_to_old_python_backend(monkeypatch):
-    tmp_path = _make_temp_path()
-    mode_sequences = object.__new__(ModeSequences)
-    mode_sequences.parameters = type(
-        "Params",
-        (),
+def test_run_python_mode_sequence_search_serial_backend_filters_return_modes(monkeypatch, tmp_path):
+    captured = {}
+    expected = pl.DataFrame(
         {
-            "mode_sequence_search_parallel": False,
-            "k_mode_sequences": 7,
-        },
-    )()
-
-    called = {}
-
-    def fake_old_python_search(**kwargs):
-        called["kwargs"] = kwargs
-
-    monkeypatch.setattr(mode_sequences, "_run_old_python_search", fake_old_python_search)
-
-    result = mode_sequences._compute_mode_sequence_search_results(
-        use_rust_search=False,
-        parent_folder_path=tmp_path,
-        unique_location_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
-        leg_mode_costs=pl.DataFrame({"from": [1], "to": [2], "mode_id": [0], "cost": [1.0]}),
-        modes={"walk": {"is_return_mode": False}},
-        mode_id={"walk": 0},
-        tmp_path=tmp_path / "tmp_results",
+            "dest_seq_id": [1],
+            "mode_seq_index": [0],
+            "seq_step_index": [1],
+            "location": [2],
+            "mode_index": [0],
+        }
     )
 
-    assert "kwargs" in called
-    assert called["kwargs"]["parent_folder_path"] == tmp_path
-    assert result is None
+    def fake_serial_search(
+        k_sequences,
+        unique_destination_chains,
+        cost_by_origin_destination_mode,
+        mode_ids_by_leg,
+        modes_by_name,
+        tmp_folder,
+    ):
+        captured["k_sequences"] = k_sequences
+        captured["unique_destination_chains"] = unique_destination_chains
+        captured["cost_by_origin_destination_mode"] = cost_by_origin_destination_mode
+        captured["mode_ids_by_leg"] = dict(mode_ids_by_leg)
+        captured["modes_by_name"] = modes_by_name
+        expected.write_parquet(tmp_folder / "part.parquet")
 
-
-def test_compute_mode_sequence_search_results_dispatches_to_rust_backend(monkeypatch):
-    tmp_path = _make_temp_path()
-    mode_sequences = object.__new__(ModeSequences)
-    mode_sequences.parameters = type(
-        "Params",
-        (),
-        {
-            "mode_sequence_search_parallel": True,
-            "k_mode_sequences": 7,
-        },
-    )()
-
-    called = {}
-
-    def fake_rust_search(**kwargs):
-        called["kwargs"] = kwargs
-
-    monkeypatch.setattr(mode_sequences, "_run_rust_search", fake_rust_search)
-
-    result = mode_sequences._compute_mode_sequence_search_results(
-        use_rust_search=True,
-        parent_folder_path=tmp_path,
-        unique_location_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
-        leg_mode_costs=pl.DataFrame({"from": [1], "to": [2], "mode_id": [0], "cost": [1.0]}),
-        modes={"walk": {"is_return_mode": False}},
-        mode_id={"walk": 0},
-        tmp_path=tmp_path / "tmp_results",
+    monkeypatch.setattr(
+        "mobility.trips.group_day_trips.plans.mode_sequences.search_python.compute_subtour_mode_probabilities_serial",
+        fake_serial_search,
     )
 
-    assert "kwargs" in called
-    assert "parent_folder_path" not in called["kwargs"]
-    assert result is None
+    result = run_python_mode_sequence_search(
+        iteration=3,
+        parameters=SimpleNamespace(k_mode_sequences=4, mode_sequence_search_parallel=False),
+        working_folder=tmp_path,
+        unique_destination_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
+        leg_mode_costs=pl.DataFrame(
+            {
+                "from": [1, 1, 2],
+                "to": [2, 2, 3],
+                "mode_id": [0, 1, 2],
+                "cost": [10.0, 12.0, 8.0],
+            }
+        ),
+        modes_by_name={
+            "walk": {"is_return_mode": False},
+            "car_return": {"is_return_mode": True},
+            "bike": {"is_return_mode": False},
+        },
+    )
 
+    assert result.equals(expected)
+    assert captured["k_sequences"] == 4
+    assert captured["cost_by_origin_destination_mode"] == {
+        (1, 2, 0): 10.0,
+        (1, 2, 1): 12.0,
+        (2, 3, 2): 8.0,
+    }
+    assert captured["mode_ids_by_leg"] == {
+        (1, 2): [0],
+        (2, 3): [2],
+    }
 
-def test_build_rust_mode_metadata():
-    mode_sequences = object.__new__(ModeSequences)
+def test_run_rust_mode_sequence_search_transforms_inputs_for_package(monkeypatch):
+    captured = {}
+    expected = pl.DataFrame(
+        {
+            "dest_seq_id": [1],
+            "mode_seq_index": [0],
+            "seq_step_index": [1],
+            "location": [2],
+            "mode_index": [0],
+        }
+    )
 
-    result = mode_sequences._build_rust_mode_metadata(
-        modes={
+    def fake_search_mode_sequences(**kwargs):
+        captured.update(kwargs)
+        return expected
+
+    monkeypatch.setitem(
+        sys.modules,
+        "mobility_mode_sequence_search",
+        types.SimpleNamespace(search_mode_sequences=fake_search_mode_sequences),
+    )
+
+    result = run_rust_mode_sequence_search(
+        unique_destination_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
+        leg_mode_costs=pl.DataFrame({"from": [1], "to": [2], "mode_id": [0], "cost": [1.0]}),
+        modes_by_name={
             "walk": {
                 "vehicle": None,
                 "multimodal": False,
                 "is_return_mode": False,
-                "return_mode": None,
-            },
-            "carpool_return": {
-                "vehicle": "car",
-                "multimodal": True,
-                "is_return_mode": True,
                 "return_mode": None,
             },
             "carpool": {
@@ -219,49 +187,75 @@ def test_build_rust_mode_metadata():
                 "is_return_mode": False,
                 "return_mode": "carpool_return",
             },
+            "carpool_return": {
+                "vehicle": "car",
+                "multimodal": True,
+                "is_return_mode": True,
+                "return_mode": None,
+            },
         },
-        mode_id={"walk": 0, "carpool": 1, "carpool_return": 2},
+        mode_id_by_name={"walk": 0, "carpool": 1, "carpool_return": 2},
+        k_mode_sequences=7,
     )
 
-    assert result.sort("mode_id").to_dict(as_series=False) == {
+    assert result.equals(expected)
+    assert captured["location_chain_steps"].equals(
+        pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]})
+    )
+    assert captured["leg_mode_costs"].columns == ["origin", "destination", "mode_id", "cost"]
+    assert captured["leg_mode_costs"].row(0) == (1, 2, 0, 1.0)
+    mode_metadata = captured["mode_metadata"].sort("mode_id")
+    assert mode_metadata.select(["mode_id", "needs_vehicle", "is_return_mode", "return_mode_id"]).to_dict(
+        as_series=False
+    ) == {
         "mode_id": [0, 1, 2],
         "needs_vehicle": [False, True, True],
-        "vehicle_id": [None, "car", "car"],
-        "multimodal": [False, True, True],
         "is_return_mode": [False, False, True],
         "return_mode_id": [None, 2, None],
     }
+    assert captured["k_sequences"] == 7
 
 
-def test_compute_mode_sequence_search_results_uses_explicit_backend_flag(monkeypatch):
-    tmp_path = _make_temp_path()
-    mode_sequences = object.__new__(ModeSequences)
-    mode_sequences.parameters = type(
-        "Params",
-        (),
+def test_python_and_rust_mode_sequence_backends_match_on_same_inputs(tmp_path):
+    unique_destination_chains = pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]})
+    leg_mode_costs = pl.DataFrame(
         {
-            "mode_sequence_search_parallel": True,
-            "k_mode_sequences": 7,
-            "use_rust_mode_sequence_search": True,
+            "from": [1, 2, 1, 2],
+            "to": [2, 1, 2, 1],
+            "mode_id": [0, 0, 1, 1],
+            "cost": [10.0, 10.0, 15.0, 15.0],
+        }
+    )
+    modes_by_name = {
+        "walk": {
+            "vehicle": None,
+            "multimodal": False,
+            "is_return_mode": False,
+            "return_mode": None,
         },
-    )()
+        "bike": {
+            "vehicle": None,
+            "multimodal": False,
+            "is_return_mode": False,
+            "return_mode": None,
+        },
+    }
 
-    called = {}
-
-    def fake_rust_search(**kwargs):
-        called["kwargs"] = kwargs
-
-    monkeypatch.setattr(mode_sequences, "_run_rust_search", fake_rust_search)
-
-    result = mode_sequences._compute_mode_sequence_search_results(
-        use_rust_search=mode_sequences.parameters.use_rust_mode_sequence_search,
-        parent_folder_path=tmp_path,
-        unique_location_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
-        leg_mode_costs=pl.DataFrame({"from": [1], "to": [2], "mode_id": [0], "cost": [1.0]}),
-        modes={"walk": {"is_return_mode": False}},
-        mode_id={"walk": 0},
-        tmp_path=tmp_path / "tmp_results",
+    python_rows = run_python_mode_sequence_search(
+        iteration=1,
+        parameters=SimpleNamespace(k_mode_sequences=3, mode_sequence_search_parallel=False),
+        working_folder=tmp_path,
+        unique_destination_chains=unique_destination_chains,
+        leg_mode_costs=leg_mode_costs,
+        modes_by_name=modes_by_name,
+    )
+    rust_rows = run_rust_mode_sequence_search(
+        unique_destination_chains=unique_destination_chains,
+        leg_mode_costs=leg_mode_costs,
+        modes_by_name=modes_by_name,
+        mode_id_by_name={"walk": 0, "bike": 1},
+        k_mode_sequences=3,
     )
 
-    assert "kwargs" in called
-    assert result is None
+    sort_cols = ["dest_seq_id", "mode_seq_index", "seq_step_index", "location", "mode_index"]
+    assert python_rows.sort(sort_cols).to_dict(as_series=False) == rust_rows.sort(sort_cols).to_dict(as_series=False)
