@@ -10,6 +10,10 @@ import polars as pl
 from typing import Literal
 
 from ..evaluation.car_traffic_evaluation import CarTrafficEvaluation
+from ..evaluation.model_entropy import ModelEntropy
+from ..evaluation.model_entropy_history import ModelEntropyHistory
+from ..evaluation.model_loss import ModelLoss
+from ..evaluation.model_loss_history import ModelLossHistory
 from ..evaluation.public_transport_network_evaluation import (
     PublicTransportNetworkEvaluation,
 )
@@ -32,6 +36,12 @@ class RunResults:
         opportunities,
         costs,
         population_weighted_plan_steps,
+        expected_calibration_plan_steps,
+        observed_calibration_plan_steps,
+        model_loss_history,
+        expected_entropy_plan_steps,
+        observed_entropy_plan_steps,
+        model_entropy_history,
         transitions,
         surveys,
         modes,
@@ -46,6 +56,12 @@ class RunResults:
         self.opportunities = opportunities
         self.costs = costs
         self.population_weighted_plan_steps = population_weighted_plan_steps
+        self.expected_calibration_plan_steps = expected_calibration_plan_steps
+        self.observed_calibration_plan_steps = observed_calibration_plan_steps
+        self.model_loss_history_store = model_loss_history
+        self.expected_entropy_plan_steps = expected_entropy_plan_steps
+        self.observed_entropy_plan_steps = observed_entropy_plan_steps
+        self.model_entropy_history_store = model_entropy_history
         self.transitions = transitions
         self.surveys = surveys
         self.modes = modes
@@ -69,6 +85,8 @@ class RunResults:
             "travel_costs": self.travel_costs,
             "routing": self.routing,
             "public_transport_network": self.public_transport_network,
+            "model_loss": self.model_loss,
+            "model_entropy": self.model_entropy,
         }
 
     @property
@@ -866,3 +884,27 @@ class RunResults:
 
     def public_transport_network(self, *args, **kwargs):
         return PublicTransportNetworkEvaluation(self).get(*args, **kwargs)
+
+    def model_loss(self) -> ModelLoss:
+        """Return the calibration loss helper for this run."""
+        return ModelLoss(
+            expected_plan_steps=self.expected_calibration_plan_steps,
+            observed_plan_steps=self.observed_calibration_plan_steps,
+            history=self.model_loss_history_store,
+        )
+
+    def model_loss_history(self) -> ModelLossHistory:
+        """Return the persisted iteration loss history for this run."""
+        return self.model_loss_history_store
+
+    def model_entropy(self) -> ModelEntropy:
+        """Return the plan-signature entropy helper for this run."""
+        return ModelEntropy(
+            expected_plan_steps=self.expected_entropy_plan_steps,
+            observed_plan_steps=self.observed_entropy_plan_steps,
+            history=self.model_entropy_history_store,
+        )
+
+    def model_entropy_history(self) -> ModelEntropyHistory:
+        """Return the persisted iteration entropy history for this run."""
+        return self.model_entropy_history_store
