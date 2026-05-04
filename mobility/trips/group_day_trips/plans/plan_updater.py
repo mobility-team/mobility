@@ -15,12 +15,16 @@ from ..transitions.transition_events import (
 from .candidate_plan_steps import CandidatePlanStepsAsset
 from .plan_distance import PlanDistance
 from .plan_ids import PLAN_KEY_COLS, add_plan_id
+from .plan_schedule_updater import PlanScheduleUpdater
 from .destination_sequences import DestinationSequences
 from .mode_sequence_search import ModeSequences
 
 
 class PlanUpdater:
     """Updates population plan distributions over activity/destination/mode sequences."""
+
+    def __init__(self) -> None:
+        self.schedule_updater = PlanScheduleUpdater()
 
     def get_new_plans(
         self,
@@ -34,6 +38,7 @@ class PlanUpdater:
         activity_dur: pl.DataFrame,
         iteration: int,
         resolved_activity_parameters: dict[str, Any],
+        arrival_time_rigidity_by_activity: dict[str, float],
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
         home_night_dur: pl.DataFrame,
@@ -70,15 +75,6 @@ class PlanUpdater:
             possible_plan_steps,
             iteration,
         )
-
-        possible_plan_utility = self.get_possible_plan_utility(
-            possible_plan_steps,
-            home_night_dur,
-            resolved_activity_parameters["home"].value_of_time_stay_home,
-            stay_home_plan,
-            parameters.min_activity_time_constant,
-            sequence_index_folder=sequence_index_folder,
-        )
         candidate_plan_steps = possible_plan_steps.select(
             CandidatePlanStepsAsset.STRUCTURAL_COLUMNS
             + CandidatePlanStepsAsset.RETENTION_COLUMNS
@@ -86,6 +82,19 @@ class PlanUpdater:
         log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:candidate_plan_steps",
             candidate_plan_steps=candidate_plan_steps,
+        )
+        possible_plan_steps = self.schedule_updater.update_plan_timings(
+            possible_plan_steps,
+            arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
+            enabled=parameters.update_plan_timings_from_modeled_travel_times,
+        )
+        possible_plan_utility = self.get_possible_plan_utility(
+            possible_plan_steps,
+            home_night_dur,
+            resolved_activity_parameters["home"].value_of_time_stay_home,
+            stay_home_plan,
+            parameters.min_activity_time_constant,
+            sequence_index_folder=sequence_index_folder,
         )
         possible_plan_steps = self.add_stay_home_plan_steps(
             possible_plan_steps,

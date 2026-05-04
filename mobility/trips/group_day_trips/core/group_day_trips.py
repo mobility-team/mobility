@@ -40,6 +40,7 @@ class PopulationGroupDayTrips:
         save_transition_events: bool = None,
         persist_iteration_artifacts: bool = None,
         min_activity_time_constant: float = None,
+        update_plan_timings_from_modeled_travel_times: bool = None,
         transition_distance_threshold: float = None,
         enable_transition_distance_model: bool = None,
         transition_revision_probability: float = None,
@@ -100,6 +101,8 @@ class PopulationGroupDayTrips:
                 `Parameters.persist_iteration_artifacts`.
             min_activity_time_constant: Optional override for
                 `Parameters.min_activity_time_constant`.
+            update_plan_timings_from_modeled_travel_times: Optional override for
+                `Parameters.update_plan_timings_from_modeled_travel_times`.
             transition_distance_threshold: Optional override for
                 `Parameters.transition_distance_threshold`.
             enable_transition_distance_model: Optional override for
@@ -149,6 +152,7 @@ class PopulationGroupDayTrips:
                 "save_transition_events": save_transition_events,
                 "persist_iteration_artifacts": persist_iteration_artifacts,
                 "min_activity_time_constant": min_activity_time_constant,
+                "update_plan_timings_from_modeled_travel_times": update_plan_timings_from_modeled_travel_times,
                 "transition_distance_threshold": transition_distance_threshold,
                 "enable_transition_distance_model": enable_transition_distance_model,
                 "transition_revision_probability": transition_revision_probability,

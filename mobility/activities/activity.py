@@ -201,6 +201,19 @@ class ActivityParameters(BaseModel):
         ),
     ]
 
+    arrival_time_rigidity: Annotated[
+        UnitIntervalFloat | ScalarParameterProfile | None,
+        Field(
+            default=None,
+            title="Arrival time rigidity",
+            description=(
+                "Share of a travel-time change absorbed on the departure side "
+                "for trips ending at this activity. `0` keeps departure fixed, "
+                "`1` keeps arrival fixed, intermediate values split the shift."
+            ),
+        ),
+    ]
+
 
 def resolve_activity_parameters(
     activities: list[Activity],
@@ -212,3 +225,20 @@ def resolve_activity_parameters(
         activity.name: activity.get_parameters_for_iteration(iteration)
         for activity in activities
     }
+
+
+def resolve_activity_arrival_time_rigidity(
+    activities: list[Activity],
+    iteration: int,
+) -> dict[str, float]:
+    """Resolve per-activity arrival-time rigidity with anchor-based defaults."""
+
+    rigidity_by_activity: dict[str, float] = {}
+    for activity in activities:
+        parameters = activity.get_parameters_for_iteration(iteration)
+        rigidity = parameters.arrival_time_rigidity
+        if rigidity is None:
+            rigidity = 1.0 if activity.is_anchor else 0.0
+        rigidity_by_activity[activity.name] = float(rigidity)
+
+    return rigidity_by_activity
