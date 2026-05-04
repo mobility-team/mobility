@@ -51,7 +51,7 @@ convert_sf_to_geos_dt <- function(sf_df) {
   st_geometry(sf_df) <- "geometry"
   
   dt <- as.data.table(sf_df)
-  
+
   if (nrow(dt) == 1){
     dt <- dt[rep(1:.N, each = 2)]
     dt[, geometry := as_geos_geometry(geometry)]
@@ -70,15 +70,15 @@ compute_cluster_internal_distance <- function(buildings_dt) {
   # Compute the median distance between random buildings within each cluster 
   # with a coefficient of detour based and the crow fly distance
   from_buildings <- buildings_dt[,
-                                 .SD[sample(.N, 1000, replace = TRUE, prob = area)],
-                                 by = cluster,
-                                 .SDcols = c("X", "Y")
+    .SD[sample(.N, 1000, replace = TRUE, prob = area)],
+    by = cluster,
+    .SDcols = c("X", "Y")
   ]
   
   to_buildings <- buildings_dt[,
-                               .SD[sample(.N, 1000, replace = TRUE, prob = area)],
-                               by = cluster,
-                               .SDcols = c("X", "Y")
+     .SD[sample(.N, 1000, replace = TRUE, prob = area)],
+     by = cluster,
+     .SDcols = c("X", "Y")
   ]
   
   distances <- cbind(
@@ -104,12 +104,12 @@ compute_k_medoids <- function(buildings_dt) {
     
     # Make sure at least 10 buildings are in each subcluster
     n <- max(1, min(i, floor(n_buildings/10)))
-    
+
     kmeans_result <- kmeans_with_nearest_building_centers(
       bdt,
       k = n
     )
-    
+
     bdt[, subcluster := kmeans_result$cluster]
     subcluster_area <- bdt[, list(area = sum(area)), by = subcluster]
     subcluster_area[, weight := area/sum(area)]
@@ -129,33 +129,33 @@ compute_k_medoids <- function(buildings_dt) {
 }
 
 kmeans_with_nearest_building_centers <- function(buildings_dt, k, iter_max = 10L) {
-  
+
   coords <- as.matrix(buildings_dt[, list(X, Y)])
   n <- nrow(coords)
-  
+
   n_unique <- uniqueN(buildings_dt[, list(X, Y)])
   k <- max(1L, min(as.integer(k), n, n_unique))
-  
+
   fit <- kmeans(coords, centers = k, iter.max = iter_max, nstart = 1)
   if (!is.null(fit$ifault) && fit$ifault == 2) {
     fit <- kmeans(coords, centers = fit$centers, iter.max = max(2L * iter_max, 20L), nstart = 1)
   }
-  
+
   cluster <- as.integer(fit$cluster)
   centers <- as.matrix(fit$centers)
-  
+
   nn <- get.knnx(data = coords, query = centers, k = 1)
   medoid_idx <- as.integer(nn$nn.index[, 1])
   medoid_coords <- coords[medoid_idx, , drop = FALSE]
-  
+
   medoids <- data.table(
     subcluster = seq_len(nrow(medoid_coords)),
     x = medoid_coords[, 1],
     y = medoid_coords[, 2]
   )
-  
+
   return(list(cluster = cluster, medoids = medoids))
-  
+
 }
 
 
@@ -191,16 +191,16 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
       buildings_dt,
       k = n_clusters
     )
-    
+
     clusters <- copy(kmeans_result$medoids)
     setnames(clusters, "subcluster", "cluster")
     setnames(clusters, c("x", "y"), c("X", "Y"))
-    
+
     buildings_dt[, cluster := kmeans_result$cluster]
     
     cluster_area <- buildings_dt[, list(area = sum(area)), by = cluster]
     clusters <- merge(clusters, cluster_area, by = "cluster")
-    
+
     transport_zones <- clusters[, list(
       transport_zone_id = cluster,
       weight = area/sum(area),
@@ -233,12 +233,12 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
       st_as_sf(geos_geometry_n(clusters_geos, seq_len(geos_num_geometries(clusters_geos)))),
       st_as_sf(voronoi)
     )
-    
+
     transport_zones[, geometry := voronoi[unlist(v_order)]]
     
     k_medoids <- buildings_dt[, compute_k_medoids(.SD), by = list(transport_zone_id = cluster)]
-    
-    
+
+
     
   } else {
     
@@ -281,7 +281,7 @@ transport_zones_buildings <- lapply(
   study_area_dt$local_admin_unit_id,
   
   FUN = function(lau_id) {
-    
+  
     info(logger, sprintf("Clustering buildings of LAU %s...", lau_id))
     
     lau_geom <- study_area_dt[local_admin_unit_id == lau_id, geometry_wkb]
@@ -298,7 +298,7 @@ transport_zones_buildings <- lapply(
     )
     
     return(result)
-    
+  
   }
 )
 
