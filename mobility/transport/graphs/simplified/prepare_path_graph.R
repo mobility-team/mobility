@@ -188,21 +188,26 @@ info(logger, "Extracting edges and nodes..")
 
 # Compute road capacity
 if (mode == "car") {
-  
-  edges <- as.data.table(
-    graph[, 
-      c("edge_",
-        ".vx0", ".vx1",
-        "time_weighted", "d",
-        "highway",
-        "access",
-        "lanes", 
-        "lanes:forward", "lanes:backward",
-        "lanes:psv:forward", "lanes:psv:backward",
-        "psv:lanes:forward", "psv:lanes:backward"
-      )
-    ]
+  edge_columns <- c(
+    "edge_",
+    ".vx0", ".vx1",
+    "time_weighted", "d",
+    "highway",
+    "access",
+    "lanes",
+    "lanes:forward", "lanes:backward",
+    "lanes:psv:forward", "lanes:psv:backward",
+    "psv:lanes:forward", "psv:lanes:backward"
   )
+
+  graph_dt <- as.data.table(graph)
+
+  missing_edge_columns <- setdiff(edge_columns, colnames(graph_dt))
+  for (col in missing_edge_columns) {
+    graph_dt[, (col) := NA_character_]
+  }
+  
+  edges <- graph_dt[, ..edge_columns]
 
   # Original dodgr edges keep the edge_ identifiers from osmdata_sc.
   # Reversed duplicates created by dodgr receive new edge_ hashes, so this flag
