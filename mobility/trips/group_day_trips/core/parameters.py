@@ -296,6 +296,19 @@ class Parameters(BaseModel):
         ),
     ]
 
+    update_plan_timings_from_modeled_travel_times: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Update plan timings from modeled travel times",
+            description=(
+                "Whether to adjust candidate-plan departure, arrival, and activity "
+                "times from survey reference schedules using the modeled travel "
+                "times at each iteration before recomputing utilities."
+            ),
+        ),
+    ]
+
     transition_distance_threshold: Annotated[
         float,
         Field(

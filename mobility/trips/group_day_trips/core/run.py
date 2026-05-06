@@ -17,7 +17,10 @@ from .run_state import RunState
 from mobility.transport.costs.transport_costs import TransportCosts
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities import Activity
-from mobility.activities.activity import resolve_activity_parameters
+from mobility.activities.activity import (
+    resolve_activity_arrival_time_rigidity,
+    resolve_activity_parameters,
+)
 from mobility.surveys import SurveyPlanAssets
 from mobility.surveys.mobility_survey import MobilitySurvey
 from mobility.population import Population
@@ -128,7 +131,6 @@ class Run(FileAsset):
             f"Run for {day_type} is disabled. "
             "Enable this day type or avoid accessing its outputs."
         )
-
 
     def _prepare_iterations(
         self,
@@ -391,6 +393,10 @@ class Run(FileAsset):
     ) -> pl.LazyFrame | None:
         """Advance the simulation state by one iteration and return transition events."""
         resolved_activity_parameters = resolve_activity_parameters(self.activities, iteration.iteration)
+        arrival_time_rigidity_by_activity = resolve_activity_arrival_time_rigidity(
+            self.activities,
+            iteration.iteration,
+        )
         state.current_plans, state.current_plan_steps, state.candidate_plan_steps, transition_events = self.updater.get_new_plans(
             state.current_plans,
             state.current_plan_steps,
@@ -402,6 +408,7 @@ class Run(FileAsset):
             state.activity_dur,
             iteration.iteration,
             resolved_activity_parameters,
+            arrival_time_rigidity_by_activity,
             destination_sequences,
             mode_sequences,
             state.home_night_dur,
@@ -451,6 +458,10 @@ class Run(FileAsset):
     def _build_final_plan_steps(self, state: RunState, costs: pl.DataFrame) -> pl.DataFrame:
         """Join final per-step states with demand-group attributes and costs."""
         plan_steps = state.current_plan_steps
+        duplicate_cost_columns = {"cost", "distance", "time", "ghg_emissions_per_trip"}
+        existing_duplicate_columns = [col for col in plan_steps.columns if col in duplicate_cost_columns]
+        if existing_duplicate_columns:
+            plan_steps = plan_steps.drop(existing_duplicate_columns)
         if "mode" in plan_steps.columns:
             plan_steps = plan_steps.with_columns(mode=pl.col("mode").cast(pl.String))
 
