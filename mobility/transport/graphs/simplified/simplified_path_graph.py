@@ -28,18 +28,33 @@ class SimplifiedPathGraph(FileAsset):
                 + ", ".join(available_modes) + "."
             )
 
+        osm_object_type = "w"
+        osm_highway_tags = osm_capacity_parameters.get_highway_tags()
+
+        if mode_name == "car":
+            # dodgr's traffic-light logic needs more than just drivable road
+            # ways. It also inspects signal and crossing objects, plus
+            # highway=footway ways tagged as crossings. Keep those extra highway
+            # values in the extract and include nodes so osmdata_sc preserves
+            # the traffic-signal context before the car weighting profile drops
+            # non-drivable ways.
+            osm_object_type = "nw"
+            osm_highway_tags = sorted(
+                set(osm_highway_tags).union({"traffic_signals", "crossing", "footway"})
+            )
+
         osm = OSMData(
             transport_zones.study_area,
-            object_type="w",
+            object_type=osm_object_type,
             key="highway",
-            tags=osm_capacity_parameters.get_highway_tags(),
+            tags=osm_highway_tags,
             geofabrik_extract_date="260101",
             file_format="osm",
             boundary_buffer=10000.0
         )
         
         inputs = {
-            "version": "4.8.7",
+            "version": "4.9.2",
             "transport_zones": transport_zones,
             "osm": osm,
             "osm_capacity_parameters": osm_capacity_parameters,

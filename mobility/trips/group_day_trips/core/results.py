@@ -55,6 +55,7 @@ class RunResults:
         self.metrics_methods = {
             "global_metrics": self.global_metrics,
             "metrics_by_variable": self.metrics_by_variable,
+            "activity_time_series": self.activity_time_series,
             "opportunity_occupation": self.opportunity_occupation,
             "sink_occupation": self.opportunity_occupation,
             "state_waterfall": self.state_waterfall,
@@ -320,6 +321,150 @@ class RunResults:
             fig.show("browser")
 
         return immobility
+
+    def activity_time_series(self, interval_minutes: int = 15, plot: bool = False) -> pl.DataFrame:
+        """Aggregate average occupancy by activity and in-transit mode over time bins."""
+        time_series = self._activity_time_series_raw(interval_minutes=interval_minutes)
+        total_population = (
+            self.demand_groups
+            .select(pl.col("n_persons").sum().alias("total_population"))
+            .collect(engine="streaming")
+            .item()
+        )
+        bin_duration_hours = interval_minutes / 60.0
+        bin_starts = np.arange(0.0, 24.0, bin_duration_hours, dtype=float)
+        bins = pl.DataFrame(
+            {
+                "time_bin_start": bin_starts,
+                "time_label": [
+                    f"{int(hour):02d}:{int(round((hour * 60.0) % 60.0)):02d}"
+                    for hour in bin_starts
+                ],
+            }
+        )
+
+        residual_home = (
+            bins.lazy()
+            .join(
+                time_series.lazy()
+                .group_by(["time_bin_start", "time_label"])
+                .agg(stacked_total=pl.col("n_persons").sum()),
+                on=["time_bin_start", "time_label"],
+                how="left",
+            )
+            .with_columns(
+                stacked_total=pl.col("stacked_total").fill_null(0.0),
+                label=pl.lit("home"),
+                n_persons=pl.lit(float(total_population)) - pl.col("stacked_total"),
+            )
+            .filter(pl.col("n_persons") != 0.0)
+            .select(["time_bin_start", "time_label", "label", "n_persons"])
+            .collect(engine="streaming")
+        )
+
+        time_series = (
+            pl.concat([time_series, residual_home], how="vertical_relaxed")
+            .group_by(["time_bin_start", "time_label", "label"])
+            .agg(n_persons=pl.col("n_persons").sum())
+            .sort(["time_bin_start", "label"])
+        )
+
+        if plot:
+            self._plot_activity_time_series(time_series)
+
+        return time_series
+
+    def _activity_time_series_raw(self, interval_minutes: int = 15) -> pl.DataFrame:
+        """Aggregate only the explicit states stored in plan_steps, before residual home completion."""
+        if interval_minutes <= 0 or 1440 % interval_minutes != 0:
+            raise ValueError("interval_minutes must be a positive divisor of 1440.")
+
+        bin_duration_hours = interval_minutes / 60.0
+        bin_starts = np.arange(0.0, 24.0, bin_duration_hours, dtype=float)
+        bins = pl.DataFrame(
+            {
+                "time_bin_start": bin_starts,
+                "time_bin_end": bin_starts + bin_duration_hours,
+            }
+        )
+
+        plan_steps = (
+            self.plan_steps
+            .select(
+                [
+                    "activity",
+                    "mode",
+                    "n_persons",
+                    "departure_time",
+                    "arrival_time",
+                    "next_departure_time",
+                ]
+            )
+            .with_columns(
+                activity=pl.col("activity").cast(pl.String),
+                mode=pl.col("mode").cast(pl.String),
+            )
+        )
+
+        activity_intervals = plan_steps.select(
+            label=pl.col("activity"),
+            interval_start=pl.col("arrival_time"),
+            interval_end=pl.col("next_departure_time"),
+            n_persons=pl.col("n_persons"),
+        )
+        transit_intervals = plan_steps.select(
+            label=pl.format("in_transit:{}", pl.col("mode")),
+            interval_start=pl.col("departure_time"),
+            interval_end=pl.col("arrival_time"),
+            n_persons=pl.col("n_persons"),
+        )
+
+        intervals = pl.concat([activity_intervals, transit_intervals], how="vertical_relaxed")
+
+        return (
+            intervals.lazy()
+            .join(bins.lazy(), how="cross")
+            .with_columns(
+                overlap_start=pl.max_horizontal("interval_start", "time_bin_start"),
+                overlap_end=pl.min_horizontal("interval_end", "time_bin_end"),
+            )
+            .with_columns(
+                overlap_hours=(pl.col("overlap_end") - pl.col("overlap_start")).clip(0.0, bin_duration_hours),
+            )
+            .filter(pl.col("overlap_hours") > 0.0)
+            .with_columns(
+                n_persons=(pl.col("n_persons") * pl.col("overlap_hours") / pl.lit(bin_duration_hours)),
+                time_label=(
+                    pl.col("time_bin_start").floor().cast(pl.Int64).cast(pl.String).str.zfill(2)
+                    + ":"
+                    + ((pl.col("time_bin_start") * 60.0) % 60.0).round(0).cast(pl.Int64).cast(pl.String).str.zfill(2)
+                ),
+            )
+            .group_by(["time_bin_start", "time_label", "label"])
+            .agg(n_persons=pl.col("n_persons").sum())
+            .sort(["time_bin_start", "label"])
+            .collect(engine="streaming")
+        )
+
+    def plot_activity_time_series(self, interval_minutes: int = 15):
+        """Plot a stacked bar chart of average occupancy by activity and transit mode."""
+        time_series = self.activity_time_series(interval_minutes=interval_minutes)
+        return self._plot_activity_time_series(time_series)
+
+    def _plot_activity_time_series(self, time_series: pl.DataFrame):
+        """Render a stacked bar chart from a precomputed activity time series."""
+        fig = px.bar(
+            time_series.to_pandas(),
+            x="time_label",
+            y="n_persons",
+            color="label",
+            barmode="stack",
+            category_orders={"time_label": time_series["time_label"].to_list()},
+            title=f"Average occupancy by activity on {self.period}",
+        )
+        fig.update_layout(xaxis_title="Time of day", yaxis_title="Average persons in bin")
+        fig.show("browser")
+        return fig
 
     def opportunity_occupation(self, plot_activity: str = None, mask_outliers: bool = False):
         """Compute opportunity occupation per zone and activity for this run."""

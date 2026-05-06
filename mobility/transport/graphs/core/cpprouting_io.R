@@ -219,9 +219,9 @@ simplify_cppr_graph <- function(graph, mode = NULL, rm_loop = TRUE, iterate = TR
     }
 
     graph_simple_attrib[["n_edges"]] <- aggregate_simplified_attrib(graph, "n_edges")
-    graph_simple_attrib[["cap"]] <- aggregate_weighted_simplified_attrib(graph, "cap", "n_edges") / graph_simple_attrib[["n_edges"]]
-    graph_simple_attrib[["alpha"]] <- aggregate_weighted_simplified_attrib(graph, "alpha", "n_edges") / graph_simple_attrib[["n_edges"]]
-    graph_simple_attrib[["beta"]] <- aggregate_weighted_simplified_attrib(graph, "beta", "n_edges") / graph_simple_attrib[["n_edges"]]
+    graph_simple_attrib[["cap"]] <- aggregate_weighted_simplified_attrib(graph, "cap", "aux") / graph_simple_attrib[["aux"]]
+    graph_simple_attrib[["alpha"]] <- aggregate_weighted_simplified_attrib(graph, "alpha", "aux") / graph_simple_attrib[["aux"]]
+    graph_simple_attrib[["beta"]] <- aggregate_weighted_simplified_attrib(graph, "beta", "aux") / graph_simple_attrib[["aux"]]
 
     if (!is.null(graph[["attrib"]][["direct_access"]])) {
       graph_simple_attrib[["direct_access"]] <- ifelse(
