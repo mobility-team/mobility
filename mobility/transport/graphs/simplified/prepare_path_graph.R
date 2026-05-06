@@ -13,13 +13,13 @@ library(dplyr)
 
 args <- commandArgs(trailingOnly = TRUE)
 
-# args <- c( 
+# args <- c(
 #   'D:\\dev\\mobility\\mobility',
-#   'd:\\data\\mobility\\projects\\grand-geneve\\ea95e5a2d2f493ea6d032389e2f8fc96-transport_zones.gpkg',
-#   'd:\\data\\mobility\\projects\\grand-geneve\\603caa00c5f5d439f9cce20cd9aa639d-highway-osm_data.osm',
+#   'd:\\data\\mobility\\projects\\grand-geneve\\c342828dcd0f0af0e9f15e00009ad911-transport_zones.gpkg',
+#   'd:\\data\\mobility\\projects\\grand-geneve\\03748c70bbd44d8414efd32839aae124-highway-osm_data.osm',
 #   'car',
 #   '{"motorway": {"capacity": 2000.0, "alpha": 0.15, "beta": 4.0}, "trunk": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "unclassified": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "residential": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}, "living_street": {"capacity": 300.0, "alpha": 0.15, "beta": 4.0}, "motorway_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "trunk_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "primary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "secondary_link": {"capacity": 1000.0, "alpha": 0.15, "beta": 4.0}, "tertiary_link": {"capacity": 600.0, "alpha": 0.15, "beta": 4.0}}',
-#   'd:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\00bde099cdb7f4a1c1346d3428fd26ac-car-simplified-path-graph'
+#   'd:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\70a9e44cdf0262a6dda7c578b604b298-car-simplified-path-graph'
 # )
 
 package_path <- args[1]
@@ -117,7 +117,12 @@ write(toJSON(wt_profiles), wt_fp)
 
 
 if (mode == "car") {
-  keep_cols <- c("hgv", "hov", "access")
+  keep_cols <- c(
+    "hgv", "hov", "access",
+    "lanes:forward", "lanes:backward",
+    "lanes:psv:forward", "lanes:psv:backward",
+    "psv:lanes:forward", "psv:lanes:backward"
+  )
 } else {
   keep_cols <- NULL
 }
@@ -132,6 +137,39 @@ graph <- weight_streetnet(
 )
 
 graph <- graph[graph$component == 1, ]
+
+# Parse a lane-count tag to numeric. This keeps the first numeric value when a
+# tag contains separators such as ";" or "|" and returns NA when no number is
+# present.
+parse_lane_count <- function(x) {
+  x <- as.character(x)
+  x[is.na(x) | x == ""] <- NA_character_
+  has_number <- grepl("^[[:space:]]*[0-9]+(?:\\.[0-9]+)?", x, perl = TRUE)
+  x[has_number] <- sub(
+    "^[[:space:]]*([0-9]+(?:\\.[0-9]+)?).*$",
+    "\\1",
+    x[has_number],
+    perl = TRUE
+  )
+  x[!has_number] <- NA_character_
+  return(as.numeric(x))
+}
+
+# Some OSM exports do not provide lanes:psv:* counts, but do provide
+# psv:lanes:* strings such as "yes|yes|designated". Count the designated
+# entries so we can subtract reserved public-service-vehicle lanes from the
+# general-traffic capacity.
+count_designated_psv_lanes <- function(x) {
+  x <- as.character(x)
+  x[is.na(x) | x == ""] <- NA_character_
+  counts <- rep(NA_real_, length(x))
+  valid <- !is.na(x)
+  if (any(valid)) {
+    matches <- gregexpr("(^|\\|)[[:space:]]*designated[[:space:]]*(\\||$)", x[valid], perl = TRUE)
+    counts[valid] <- lengths(matches)
+  }
+  return(counts)
+}
 
 # Remove Heavy Goods Vehicles only and ridesharing only ways
 if (mode == "car") {
@@ -151,11 +189,123 @@ info(logger, "Extracting edges and nodes..")
 # Compute road capacity
 if (mode == "car") {
   
-  edges <- as.data.table(graph[, c(".vx0", ".vx1", "time_weighted", "d", "highway", "lanes", "access")])
+  edges <- as.data.table(
+    graph[, 
+      c("edge_",
+        ".vx0", ".vx1",
+        "time_weighted", "d",
+        "highway",
+        "access",
+        "lanes", 
+        "lanes:forward", "lanes:backward",
+        "lanes:psv:forward", "lanes:psv:backward",
+        "psv:lanes:forward", "psv:lanes:backward"
+      )
+    ]
+  )
+
+  # Original dodgr edges keep the edge_ identifiers from osmdata_sc.
+  # Reversed duplicates created by dodgr receive new edge_ hashes, so this flag
+  # tells us whether the row follows the original OSM way direction.
+  edges[, is_original_direction := edge_ %in% osm_data$object_link_edge$edge_]
+
+  # Detect whether the edge has an opposite-direction companion. When only a
+  # total `lanes` tag is available on a bidirectional road, we split that total
+  # between the two directed edges instead of giving the full total to both.
+  edges[, pair_v0 := pmin(.vx0, .vx1)]
+  edges[, pair_v1 := pmax(.vx0, .vx1)]
+  edges[, pair_n_edges := .N, by = .(pair_v0, pair_v1)]
+
+  edges[, lanes_total := parse_lane_count(lanes)]
+  edges[, lanes_forward := parse_lane_count(`lanes:forward`)]
+  edges[, lanes_backward := parse_lane_count(`lanes:backward`)]
+
+  edges[, psv_lanes_forward := parse_lane_count(`lanes:psv:forward`)]
+  edges[, psv_lanes_backward := parse_lane_count(`lanes:psv:backward`)]
+
+  missing_forward_psv <- is.na(edges$psv_lanes_forward)
+  edges[missing_forward_psv, psv_lanes_forward := count_designated_psv_lanes(`psv:lanes:forward`[missing_forward_psv])]
+
+  missing_backward_psv <- is.na(edges$psv_lanes_backward)
+  edges[missing_backward_psv, psv_lanes_backward := count_designated_psv_lanes(`psv:lanes:backward`[missing_backward_psv])]
+
+  edges[is.na(psv_lanes_forward), psv_lanes_forward := 0]
+  edges[is.na(psv_lanes_backward), psv_lanes_backward := 0]
+
+  # Infer one directional lane count from the opposite direction plus the total
+  # lane count when possible.
+  edges[
+    is.na(lanes_forward) & !is.na(lanes_total) & !is.na(lanes_backward),
+    lanes_forward := pmax(lanes_total - lanes_backward, 0)
+  ]
+  edges[
+    is.na(lanes_backward) & !is.na(lanes_total) & !is.na(lanes_forward),
+    lanes_backward := pmax(lanes_total - lanes_forward, 0)
+  ]
+
+  # When only one directional lane tag is available and the total lane count is
+  # missing, reuse the known direction as a pragmatic fallback. This avoids
+  # dropping capacity information on roads where OSM only tagged one side.
+  edges[
+    is.na(lanes_forward) & is.na(lanes_total) & !is.na(lanes_backward),
+    lanes_forward := lanes_backward
+  ]
+  edges[
+    is.na(lanes_backward) & is.na(lanes_total) & !is.na(lanes_forward),
+    lanes_backward := lanes_forward
+  ]
+
+  # When only the total lane count is known on a bidirectional road, split it
+  # between the two directed edges. On one-way roads, keep the full total on
+  # the original direction.
+  edges[
+    is.na(lanes_forward) & is.na(lanes_backward) & !is.na(lanes_total) & pair_n_edges >= 2,
+    `:=`(
+      lanes_forward = ceiling(lanes_total / 2),
+      lanes_backward = floor(lanes_total / 2)
+    )
+  ]
+  edges[
+    is.na(lanes_forward) & is.na(lanes_backward) & !is.na(lanes_total) & pair_n_edges == 1,
+    `:=`(
+      lanes_forward = lanes_total,
+      lanes_backward = 0
+    )
+  ]
+
+  edges[
+    is.na(lanes_forward) & is.na(lanes_backward),
+    `:=`(
+      lanes_forward = 1,
+      lanes_backward = 1
+    )
+  ]
+
+  edges[
+    is_original_direction == TRUE,
+    car_lanes := pmax(lanes_forward - psv_lanes_forward, 0)
+  ]
+  edges[
+    is_original_direction == FALSE,
+    car_lanes := pmax(lanes_backward - psv_lanes_backward, 0)
+  ]
+
+  # Keep at least one usable car lane as a conservative fallback when OSM tags
+  # are incomplete or inconsistent. This avoids turning a routable car edge
+  # into a zero-capacity edge solely because the directional lane tags are
+  # partial.
+  edges[is.na(car_lanes) | car_lanes <= 0, car_lanes := 1]
+
+  # Multiply capacities per lane in veh/h by the number of lane to get overall
+  # edge capacity
   edges <- merge(edges, osm_capacity_parameters, by = "highway", sort = FALSE)
-  edges[, lanes := as.numeric(lanes)]
-  edges[is.na(lanes) | lanes == 0, lanes := 1]
-  edges[, capacity := capacity*lanes]
+  edges[, capacity := capacity*car_lanes]
+
+  edges[, c(
+    "pair_v0", "pair_v1", "pair_n_edges",
+    "lanes_total", "lanes_forward", "lanes_backward",
+    "psv_lanes_forward", "psv_lanes_backward", "car_lanes"
+  ) := NULL]
   
 } else {
   
