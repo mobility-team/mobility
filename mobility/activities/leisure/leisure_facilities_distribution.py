@@ -61,7 +61,7 @@ class LeisureFacilitiesDistribution(FileAsset):
             study_area,
             object_type="nwr",
             key="leisure",
-            geofabrik_extract_date="240101",
+            geofabrik_extract_date="260101",
             split_local_admin_units=False,
         ).get()
 

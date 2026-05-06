@@ -40,7 +40,7 @@ class OSMData(FileAsset):
             See https://docs.osmcode.org/osmium/latest/osmium-tags-filter.html for the precise doc
         split_local_admin_units : bool, default=False
             To describe.
-        geofabrik_extract_date : str, default="240101"
+        geofabrik_extract_date : str, default="260101"
             Reference date of the OSM data to use (date at which it has been extracted on Geofabrik).
         file_format : str, default="pbf"
             To describe.
@@ -65,7 +65,7 @@ class OSMData(FileAsset):
             exclude_queries: List[str] = None,
             boundary_buffer: float = 10000.0,
             split_local_admin_units: bool = False,
-            geofabrik_extract_date: str = "240101",
+            geofabrik_extract_date: str = "260101",
             file_format: str = "pbf"
         ):
         if tags is None:

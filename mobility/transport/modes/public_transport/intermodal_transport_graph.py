@@ -37,7 +37,7 @@ class IntermodalTransportGraph(FileAsset):
             last_leg_mode_name: str,
             first_modal_transfer: IntermodalTransfer = None,
             last_modal_transfer: IntermodalTransfer = None,
-            parkings_geofabrik_extract_date: str = "250101"
+            parkings_geofabrik_extract_date: str = "260101"
     ):
         """Build the intermodal PT graph from leg graphs and PT routing inputs."""
         """

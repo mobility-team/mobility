@@ -108,7 +108,7 @@ def test_init_builds_inputs_and_cache_path(project_dir, dependency_fakes):
         "a/building=hut",
         "a/tourism=alpine_hut,wilderness_hut",
     ]
-    assert osm_init_record["geofabrik_extract_date"] == "240101"
+    assert osm_init_record["geofabrik_extract_date"] == "260101"
     assert osm_init_record["split_local_admin_units"] is True
 
     expected_cache_path = pathlib.Path(project_dir) / "transport_zones.gpkg"

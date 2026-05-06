@@ -1,4 +1,4 @@
-from .leisure import LeisureActivity
+from .leisure import LeisureActivity, LeisureParameters
 from .leisures_frequentation import LEISURE_FREQUENCY, LEISURE_MAPPING
 from .leisure_facilities_distribution import LeisureFacilitiesDistribution
 

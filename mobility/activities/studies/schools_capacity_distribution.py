@@ -257,7 +257,7 @@ class SchoolsCapacityDistribution(FileAsset):
         
         education_tags = ["school","kindergarten","college","university"]
         pbf_path = OSMData(study_area, object_type="nwr", key="amenity",
-                           tags=education_tags, geofabrik_extract_date="240101",
+                           tags=education_tags, geofabrik_extract_date="260101",
                            split_local_admin_units=False).get()
 
         out_seq = pbf_path.with_name("amenity_multipolygons.geojsonseq")

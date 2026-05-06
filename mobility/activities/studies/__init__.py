@@ -1,4 +1,4 @@
-from .study import StudyActivity
+from .study import StudyActivity, StudyParameters
 from .schools_capacity_distribution import SchoolsCapacityDistribution
 from .school_students_flows import SchoolStudentsFlows
 

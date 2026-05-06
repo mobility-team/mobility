@@ -65,6 +65,10 @@ class GTFSData(FileAsset):
             logging.info("Manual exception, GTFS not used from path", path)
             return False
         
+        if "f5bcfc06b3dcbecec3f57857349e1036_20-gtfs-urbain-vitre-ete-2025" in path.name:
+            logging.info("Manual exception for old Vitré GTFS, GTFS not used from path", path)
+            return False
+        
         try:
             with zipfile.ZipFile(path, 'r') as zip_ref:
                 zip_contents = zip_ref.namelist()

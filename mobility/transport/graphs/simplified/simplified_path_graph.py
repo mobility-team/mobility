@@ -33,7 +33,7 @@ class SimplifiedPathGraph(FileAsset):
             object_type="w",
             key="highway",
             tags=osm_capacity_parameters.get_highway_tags(),
-            geofabrik_extract_date="250101",
+            geofabrik_extract_date="260101",
             file_format="osm",
             boundary_buffer=10000.0
         )

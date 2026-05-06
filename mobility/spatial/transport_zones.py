@@ -94,7 +94,7 @@ class TransportZones(FileAsset):
                 "a/building=hut",
                 "a/tourism=alpine_hut,wilderness_hut",
             ],
-            geofabrik_extract_date="240101",
+            geofabrik_extract_date="260101",
             split_local_admin_units=True
         )
 

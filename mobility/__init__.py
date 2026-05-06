@@ -18,11 +18,17 @@ from .activities import (
     Activity,
     ActivityParameters,
     HomeActivity,
+    HomeParameters,
     LeisureActivity,
+    LeisureParameters,
     OtherActivity,
+    OtherParameters,
     ShopActivity,
+    ShopParameters,
     StudyActivity,
+    StudyParameters,
     WorkActivity,
+    WorkParameters
 )
 from .impacts import carbon_computation
 

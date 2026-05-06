@@ -1,10 +1,10 @@
 from .activity import Activity, ActivityParameters
-from .home import HomeActivity
-from .leisure import LeisureActivity
-from .other import OtherActivity
-from .shopping import ShopActivity
-from .studies import StudyActivity
-from .work import WorkActivity
+from .home import HomeActivity, HomeParameters
+from .leisure import LeisureActivity, LeisureParameters
+from .other import OtherActivity, OtherParameters
+from .shopping import ShopActivity, ShopParameters
+from .studies import StudyActivity, StudyParameters
+from .work import WorkActivity, WorkParameters
 
 __all__ = [
     "Activity",
