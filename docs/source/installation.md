@@ -38,7 +38,7 @@ mobility.set_params(debug=True)
 > * Dans un premier temps, utiliser la commande `install.packages('pak')`, puis `install.packages('pak', method='wininet')` si la première n'a pas marché.
 > * Utiliser la commande `q()` pour quitter le terminal R. Retenter l'utilisation de `mobility.set_params(debug=True)`.
 > * Si cela ne suffit pas, utiliser (à nouveau dans R) la commande `install.packages(c('remotes', 'dodgr', 'sf', 'geodist', 'dplyr', 'sfheaders', 'nngeo', 'data.table', 'reshape2', 'arrow', 'stringr', 'hms', 'lubridate', 'codetools', 'future', 'future.apply', 'ggplot2', 'svglite', 'cppRouting', 'duckdb', 'jsonlite', 'gtfsrouter', 'geos', 'FNN', 'cluster', 'dbscan'), method='wininet')` pour installer les packages R.
-> * Sur Windows, utiliser la commande `install.packages(file.choose(), repos=NULL)` et aller sélectionner le fichier ZIP `osmdata_0.2.5.005.zip` dans `mobility/mobility/resources/`, cela permet d'installer une version d'osmdata plus rapide (modifiée par nos soins).
+> * Sur Windows, utiliser la commande `install.packages(file.choose(), repos=NULL)` et aller sélectionner le fichier ZIP `osmdata_0.2.5.005.zip` dans `mobility/mobility/runtime/resources/`, cela permet d'installer une version d'osmdata plus rapide (modifiée par nos soins).
 > * Utiliser la commande `q()` pour quitter le terminal R.
 
 Pour faire fonctionner Mobility, vous pouvez ensuite utiliser un IDE comme Spyder ou VS Code.
@@ -62,7 +62,7 @@ ip = ip[is.na(ip$Priority),1:2,drop=FALSE]
 ip
 ```
 - Si la version d'osmdata est déjà 0.2.5.005, votre configuration est correcte et le problème est ailleurs !
-- Sinon, utiliser la commande `install.packages(file.choose(), repos=NULL)` et aller sélectionner le fichier ZIP `osmdata_0.2.5.005.zip` dans `mobility/mobility/resources/`.
+- Sinon, utiliser la commande `install.packages(file.choose(), repos=NULL)` et aller sélectionner le fichier ZIP `osmdata_0.2.5.005.zip` dans `mobility/mobility/runtime/resources/`.
 - Utiliser la commande `q()` pour quitter le terminal R.
 
 ### Autres problèmes
