@@ -97,8 +97,12 @@ class Run(FileAsset):
         iterations, resume_from_iteration = self._prepare_iterations(self.inputs_hash)
         model_loss = self._build_model_loss()
         model_entropy = self._build_model_entropy()
-        loss_history_records: list[dict[str, float]] = []
-        entropy_history_records: list[dict[str, float]] = []
+        loss_history_records, entropy_history_records = self._restore_metric_history(
+            iterations=iterations,
+            resume_from_iteration=resume_from_iteration,
+            model_loss=model_loss,
+            model_entropy=model_entropy,
+        )
 
         state = self._build_state(
             iterations=iterations,
@@ -153,6 +157,44 @@ class Run(FileAsset):
         log_memory_checkpoint("run:after_write_outputs")
 
         return self.get_cached_asset()
+
+    def _restore_metric_history(
+        self,
+        *,
+        iterations: Iterations,
+        resume_from_iteration: int | None,
+        model_loss: ModelLoss,
+        model_entropy: ModelEntropy,
+    ) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
+        """Rebuild metric histories for completed saved iterations when resuming."""
+        if resume_from_iteration is None:
+            return [], []
+
+        loss_history_records: list[dict[str, float]] = []
+        entropy_history_records: list[dict[str, float]] = []
+        for iteration_index in range(1, resume_from_iteration + 1):
+            saved_state = iterations.iteration(iteration_index).load_state()
+            calibration_plan_steps = to_calibration_plan_steps(saved_state.current_plan_steps)
+            loss_history_records.append(
+                model_loss.history_row(
+                    iteration=iteration_index,
+                    plan_steps=calibration_plan_steps,
+                )
+            )
+            entropy_history_records.append(
+                model_entropy.history_row(
+                    iteration=iteration_index,
+                    plan_steps=saved_state.current_plan_steps,
+                )
+            )
+
+        logging.info(
+            "Rebuilt metric histories from saved iterations: run_key=%s is_weekday=%s n_iterations=%s",
+            self.inputs_hash,
+            str(self.is_weekday),
+            str(resume_from_iteration),
+        )
+        return loss_history_records, entropy_history_records
 
 
     def _raise_if_disabled(self) -> None:

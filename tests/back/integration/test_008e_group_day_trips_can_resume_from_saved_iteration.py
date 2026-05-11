@@ -90,7 +90,13 @@ def test_008e_group_day_trips_can_resume_from_saved_iteration(test_data):
 
     plan_steps = result["weekday_plan_steps"].collect()
     transitions = result["weekday_transitions"].collect()
+    loss_history = result["weekday_loss_history"].collect()
+    entropy_history = result["weekday_entropy_history"].collect()
 
     assert plan_steps.height > 0
     assert transitions.height > 0
+    assert loss_history.height == 2
+    assert entropy_history.height == 2
     assert sorted(transitions["iteration"].unique().to_list()) == [1, 2]
+    assert loss_history["iteration"].to_list() == [1, 2]
+    assert entropy_history["iteration"].to_list() == [1, 2]
