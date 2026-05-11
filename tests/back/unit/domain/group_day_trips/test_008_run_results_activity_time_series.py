@@ -6,9 +6,15 @@ import polars as pl
 from mobility.trips.group_day_trips.core.results import RunResults
 
 
-def _make_results(plan_steps: pl.DataFrame, demand_groups: pl.DataFrame | None = None) -> RunResults:
+def _make_results(
+    plan_steps: pl.DataFrame,
+    demand_groups: pl.DataFrame | None = None,
+    run: SimpleNamespace | None = None,
+) -> RunResults:
     if demand_groups is None:
         demand_groups = pl.DataFrame({"n_persons": [float(plan_steps["n_persons"].sum())]})
+    if run is None:
+        run = SimpleNamespace()
     return RunResults(
         inputs_hash="run",
         is_weekday=True,
@@ -22,7 +28,7 @@ def _make_results(plan_steps: pl.DataFrame, demand_groups: pl.DataFrame | None =
         surveys=[],
         modes=[],
         parameters=SimpleNamespace(),
-        run=SimpleNamespace(),
+        run=run,
     )
 
 
@@ -121,8 +127,9 @@ def test_activity_time_series_can_trigger_plotting_from_same_entrypoint(monkeypa
 
     seen = {}
 
-    def fake_plot(df):
+    def fake_plot(df, *, survey_time_series=None):
         seen["rows"] = df.height
+        seen["survey_rows"] = None if survey_time_series is None else survey_time_series.height
         return "figure"
 
     monkeypatch.setattr(results.metrics, "_plot_activity_time_series", fake_plot)
@@ -130,3 +137,79 @@ def test_activity_time_series_can_trigger_plotting_from_same_entrypoint(monkeypa
     series = results.metrics.activity_time_series(interval_minutes=15, plot=True)
 
     assert seen["rows"] == series.height
+    assert seen["survey_rows"] is None
+
+
+def test_activity_time_series_plot_builds_survey_panel_when_survey_assets_are_available(monkeypatch):
+    """Check that plotting can attach a survey-derived comparison panel.
+
+    In plain language: when the run still knows its survey plan assets, the
+    plotting entrypoint should prepare both the modeled time series and a
+    survey-derived counterpart so the chart can place survey on the left and
+    model on the right.
+    """
+    plan_steps = pl.DataFrame(
+        {
+            "activity": ["work"],
+            "mode": ["car"],
+            "n_persons": [2.0],
+            "departure_time": [8.0],
+            "arrival_time": [8.25],
+            "next_departure_time": [9.0],
+        }
+    )
+    demand_groups = pl.DataFrame(
+        {
+            "country": ["fr"],
+            "city_category": ["urban"],
+            "csp": ["A"],
+            "n_cars": ["1"],
+            "n_persons": [2.0],
+        }
+    )
+    survey_plan_assets = SimpleNamespace(
+        get_plans=lambda: pl.DataFrame(
+            {
+                "country": ["fr"],
+                "city_category": ["urban"],
+                "csp": ["A"],
+                "n_cars": ["1"],
+                "activity_seq_id": [1],
+                "time_seq_id": [1],
+                "is_weekday": [True],
+                "p_plan": [1.0],
+            }
+        ),
+        get_plan_steps=lambda: pl.DataFrame(
+            {
+                "activity_seq_id": [1],
+                "time_seq_id": [1],
+                "seq_step_index": [0],
+                "activity": ["work"],
+                "mode": ["car"],
+                "departure_time": [8.0],
+                "arrival_time": [8.25],
+                "next_departure_time": [9.0],
+            }
+        ),
+    )
+    results = _make_results(
+        plan_steps,
+        demand_groups=demand_groups,
+        run=SimpleNamespace(inputs={"survey_plan_assets": survey_plan_assets}),
+    )
+
+    seen = {}
+
+    def fake_plot(df, *, survey_time_series=None):
+        seen["model_rows"] = df.height
+        seen["survey_rows"] = None if survey_time_series is None else survey_time_series.height
+        return "figure"
+
+    monkeypatch.setattr(results.metrics, "_plot_activity_time_series", fake_plot)
+
+    series = results.metrics.activity_time_series(interval_minutes=15, plot=True)
+
+    assert seen["model_rows"] == series.height
+    assert seen["survey_rows"] is not None
+    assert seen["survey_rows"] > 0

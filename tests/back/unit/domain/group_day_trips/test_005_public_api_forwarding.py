@@ -97,6 +97,8 @@ def test_group_day_trips_wrapper_forwards_new_parameters(monkeypatch):
     assert wrapper.survey_plan_assets is wrapper.weekday_run.survey_plan_assets
     assert wrapper.survey_plan_assets.surveys == wrapper.weekday_run.survey_plan_assets.surveys
     assert wrapper.weekend_run.enabled is False
+    assert "weekday_iteration_metrics" not in wrapper.cache_path
+    assert "weekend_iteration_metrics" not in wrapper.cache_path
 
 
 def test_group_day_trips_wrapper_raises_when_population_country_has_no_matching_survey(monkeypatch):
@@ -136,3 +138,28 @@ def test_group_day_trips_wrapper_warns_when_some_surveys_will_not_be_used(monkey
     assert len(caught) == 1
     assert "will not be used" in str(caught[0].message)
     assert [survey.inputs["parameters"].country for survey in wrapper.survey_plan_assets.surveys] == ["fr"]
+
+
+def test_group_day_trips_wrapper_exposes_iteration_metrics_when_child_runs_provide_them(monkeypatch):
+    class _FakeRunWithIterationMetrics(_FakeRun):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.cache_path["iteration_metrics"] = self.cache_path["plan_steps"].with_name("iteration_metrics.parquet")
+
+    monkeypatch.setattr(PopulationGroupDayTrips, "_validate_modes", lambda self, modes: None)
+    monkeypatch.setattr(PopulationGroupDayTrips, "_validate_activities", lambda self, activities: None)
+    monkeypatch.setattr(PopulationGroupDayTrips, "_validate_surveys", lambda self, surveys: None)
+    monkeypatch.setattr(group_day_trips_module, "Run", _FakeRunWithIterationMetrics)
+    monkeypatch.setattr(group_day_trips_module, "TransportCosts", lambda modes: SimpleNamespace(modes=modes))
+    monkeypatch.setattr(group_day_trips_module, "SurveyPlanAssets", _FakeSurveyPlanAssets)
+
+    wrapper = PopulationGroupDayTrips(
+        population=_make_population("fr"),
+        modes=[object()],
+        activities=[object()],
+        surveys=[_FakeSurvey("fr")],
+        simulate_weekend=True,
+    )
+
+    assert "weekday_iteration_metrics" in wrapper.cache_path
+    assert "weekend_iteration_metrics" in wrapper.cache_path
