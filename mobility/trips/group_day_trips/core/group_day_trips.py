@@ -377,8 +377,7 @@ class PopulationGroupDayTrips:
             "opportunities",
             "costs",
             "transitions",
-            "loss_history",
-            "entropy_history",
+            "iteration_metrics",
         )
         cache_paths = {f"weekday_{key}": weekday_paths[key] for key in keys}
         cache_paths["demand_groups"] = weekday_paths["demand_groups"]

@@ -39,7 +39,7 @@ def run_quickstart_ci():
     weekday_plan_steps = population_trips.get()["weekday_plan_steps"].collect()
 
     # You can compute global metrics for this population
-    global_metrics = population_trips.weekday_run.evaluate("global_metrics")
+    global_metrics = population_trips.weekday_run.results().metrics.aggregate()
     
     # You can plot weekday OD flows, with labels for prominent cities
     weekday_results = population_trips.weekday_run.results()

@@ -7,7 +7,7 @@ REQUIRED_SNIPPETS = [
     "mobility.Population(",
     "mobility.PopulationGroupDayTrips(",
     'population_trips.get()["weekday_plan_steps"].collect()',
-    'population_trips.weekday_run.evaluate("global_metrics")',
+    "population_trips.weekday_run.results().metrics.aggregate()",
 ]
 
 

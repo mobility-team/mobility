@@ -48,7 +48,7 @@ def test_activity_time_series_uses_average_bin_occupancy_and_splits_transit_by_m
     )
     results = _make_results(plan_steps)
 
-    series = results.activity_time_series(interval_minutes=15)
+    series = results.metrics.activity_time_series(interval_minutes=15)
 
     at_0800 = series.filter(pl.col("time_label") == "08:00").sort("label")
     assert at_0800["label"].to_list() == ["home", "in_transit:car", "work"]
@@ -91,7 +91,7 @@ def test_activity_time_series_completes_missing_home_time_so_totals_stay_constan
     results = _make_results(plan_steps, demand_groups=pl.DataFrame({"n_persons": [3.0]}))
 
     totals = (
-        results.activity_time_series(interval_minutes=15)
+        results.metrics.activity_time_series(interval_minutes=15)
         .group_by("time_label")
         .agg(total=pl.col("n_persons").sum())
     )
@@ -103,8 +103,8 @@ def test_activity_time_series_can_trigger_plotting_from_same_entrypoint(monkeypa
     """Check that callers can request the plot from the activity_time_series entrypoint.
 
     In plain language: the same method should still return the table, but when
-    `plot=True` it should also call the plotting path so `Run.evaluate(...)`
-    can be used directly for both data and charts.
+    `plot=True` it should also call the plotting path so callers can use the
+    grouped `results.metrics` API directly for both data and charts.
     """
     results = _make_results(
         pl.DataFrame(
@@ -125,8 +125,8 @@ def test_activity_time_series_can_trigger_plotting_from_same_entrypoint(monkeypa
         seen["rows"] = df.height
         return "figure"
 
-    monkeypatch.setattr(results, "_plot_activity_time_series", fake_plot)
+    monkeypatch.setattr(results.metrics, "_plot_activity_time_series", fake_plot)
 
-    series = results.activity_time_series(interval_minutes=15, plot=True)
+    series = results.metrics.activity_time_series(interval_minutes=15, plot=True)
 
     assert seen["rows"] == series.height
