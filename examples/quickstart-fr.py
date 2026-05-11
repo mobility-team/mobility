@@ -51,8 +51,8 @@ global_metrics = population_trips.weekday_run.results().metrics.aggregate()
 
 # You can plot weekday OD flows, with labels for prominent cities
 weekday_results = population_trips.weekday_run.results()
-labels = weekday_results.get_prominent_cities()
-weekday_results.plot_od_flows(labels=labels)
+labels = weekday_results.metrics.get_prominent_cities()
+weekday_results.metrics.plot_od_flows(labels=labels)
 
 # You can get a report of the parameters used in the model
 parameters_report = population_trips.weekday_run.parameters_dataframe()
