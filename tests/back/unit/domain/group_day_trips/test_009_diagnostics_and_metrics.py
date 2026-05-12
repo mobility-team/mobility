@@ -712,8 +712,6 @@ def test_mask_outliers_replaces_extreme_values_with_nan():
 
     assert pd.isna(masked.iloc[-1])
     assert masked.iloc[0] == pytest.approx(1.0)
-
-
 def test_model_loss_summary_history_and_validation():
     expected = pl.DataFrame(
         {
