@@ -409,6 +409,248 @@ def test_plot_map_builds_choropleth_without_opening_backend(monkeypatch):
     assert seen["plot_method"] == "json"
 
 
+def test_metric_per_person_compare_with_and_plot_delta(tmp_path, monkeypatch):
+    class _GeoFrame(pd.DataFrame):
+        @property
+        def _constructor(self):
+            return _GeoFrame
+
+        def to_crs(self, _epsg):
+            return self
+
+    transport_zones = SimpleNamespace(
+        get=lambda: _GeoFrame(
+            {
+                "transport_zone_id": ["z1", "z2"],
+                "local_admin_unit_id": ["fr001", "fr001"],
+                "is_inner_zone": [True, True],
+                "geometry": [None, None],
+            }
+        ),
+        study_area=SimpleNamespace(get=lambda: None),
+    )
+    results = RunResults(
+        inputs_hash="run",
+        is_weekday=True,
+        transport_zones=transport_zones,
+        demand_groups=pl.DataFrame(
+            {
+                "home_zone_id": ["z1"],
+                "csp": ["A"],
+                "n_cars": ["1"],
+                "n_persons": [4.0],
+            }
+        ).lazy(),
+        plan_steps=pl.DataFrame(
+            {
+                "activity_seq_id": [1],
+                "home_zone_id": ["z1"],
+                "csp": ["A"],
+                "n_cars": ["1"],
+                "from": ["z1"],
+                "to": ["z2"],
+                "mode": ["car"],
+                "n_persons": [2.0],
+            }
+        ).lazy(),
+        opportunities=pl.DataFrame().lazy(),
+        costs=pl.DataFrame(
+            {
+                "from": ["z1"],
+                "to": ["z2"],
+                "mode": ["car"],
+                "distance": [10.0],
+                "time": [1.5],
+                "cost": [3.0],
+                "ghg_emissions_per_trip": [5.0],
+            }
+        ).lazy(),
+        population_weighted_plan_steps=pl.DataFrame().lazy(),
+        transitions=pl.DataFrame().lazy(),
+        surveys=[],
+        modes=[],
+        parameters=SimpleNamespace(),
+        run=SimpleNamespace(),
+    )
+
+    weekday_plan_steps = tmp_path / "weekday_plan_steps.parquet"
+    weekday_costs = tmp_path / "weekday_costs.parquet"
+    pl.DataFrame(
+        {
+            "activity_seq_id": [1],
+            "home_zone_id": ["z1"],
+            "csp": ["A"],
+            "n_cars": ["1"],
+            "from": ["z1"],
+            "to": ["z2"],
+            "mode": ["car"],
+            "n_persons": [2.0],
+        }
+    ).write_parquet(weekday_plan_steps)
+    pl.DataFrame(
+        {
+            "from": ["z1"],
+            "to": ["z2"],
+            "mode": ["car"],
+            "distance": [8.0],
+            "time": [1.0],
+            "cost": [2.0],
+            "ghg_emissions_per_trip": [4.0],
+        }
+    ).write_parquet(weekday_costs)
+
+    compare_with = SimpleNamespace(
+        cache_path={
+            "weekday_plan_steps": weekday_plan_steps,
+            "weekday_costs": weekday_costs,
+        },
+        get=lambda: "loaded",
+    )
+    seen = {}
+
+    def fake_mask_outliers(series):
+        seen.setdefault("masked_values", []).append(series.to_list())
+        return series + 1.0
+
+    def fake_plot_map(tz, variable, **kwargs):
+        seen.setdefault("plot_calls", []).append((variable, tz[variable].to_list(), kwargs))
+
+    monkeypatch.setattr(results.metrics, "mask_outliers", fake_mask_outliers)
+    monkeypatch.setattr(results.metrics, "plot_map", fake_plot_map)
+
+    metric = results.metrics.metric_per_person(
+        "distance",
+        compare_with=compare_with,
+        plot=True,
+        plot_delta=True,
+        mask_outliers=True,
+    )
+
+    assert metric["distance"].to_list() == pytest.approx([20.0])
+    assert metric["distance_per_person"].to_list() == pytest.approx([5.0])
+    assert metric["distance_comp"].to_list() == pytest.approx([16.0])
+    assert metric["distance_per_person_comp"].to_list() == pytest.approx([4.0])
+    assert metric["delta"].to_list() == pytest.approx([1.0])
+    assert len(seen["plot_calls"]) == 2
+    assert seen["plot_calls"][0][0] == "distance_per_person"
+    assert seen["plot_calls"][1][0] == "delta"
+    assert sorted(seen["masked_values"][0]) == pytest.approx([0.0, 5.0])
+    assert sorted(seen["masked_values"][1]) == pytest.approx([0.0, 1.0])
+    assert seen["plot_calls"][1][2] == {
+        "color_continuous_scale": "RdBu_r",
+        "color_continuous_midpoint": 0,
+    }
+
+
+def test_plot_od_flows_returns_not_implemented_for_unhandled_options():
+    results = _make_results_for_metrics()
+
+    assert results.metrics.plot_od_flows(level_of_detail=0) is NotImplemented
+    assert results.metrics.plot_od_flows(level_of_detail=2) is NotImplemented
+    assert results.metrics.plot_od_flows(activity="work") is NotImplemented
+
+
+def test_plot_od_flows_count_mode_returns_mode_counts():
+    results = RunResults(
+        inputs_hash="run",
+        is_weekday=True,
+        transport_zones=_make_transport_zones(),
+        demand_groups=pl.DataFrame({"home_zone_id": ["z1"], "n_persons": [3.0]}).lazy(),
+        plan_steps=pl.DataFrame(
+            {
+                "activity_seq_id": [1, 2, 3],
+                "from": ["z1", "z1", "z1"],
+                "to": ["z2", "z2", "z2"],
+                "mode": ["car", None, "walk"],
+                "n_persons": [2.0, 1.0, 1.0],
+            }
+        ).lazy(),
+        opportunities=pl.DataFrame().lazy(),
+        costs=pl.DataFrame().lazy(),
+        population_weighted_plan_steps=pl.DataFrame().lazy(),
+        transitions=pl.DataFrame().lazy(),
+        surveys=[],
+        modes=[],
+        parameters=SimpleNamespace(),
+        run=SimpleNamespace(),
+    )
+
+    count_modes = results.metrics.plot_od_flows(mode="count")
+
+    assert set(count_modes.index.to_list()) == {"car", "unknown_mode", "walk"}
+
+
+def test_plot_modal_share_public_transport_filters_modes_and_returns_share(monkeypatch):
+    class _FakeAxes:
+        def set_axis_off(self):
+            return None
+
+    class _FakeGeoDataFrame:
+        def __init__(self, frame):
+            self.frame = frame
+
+        def fillna(self, _value):
+            return self
+
+        def plot(self, *_args, **_kwargs):
+            return _FakeAxes()
+
+    results = RunResults(
+        inputs_hash="run",
+        is_weekday=True,
+        transport_zones=SimpleNamespace(
+            get=lambda: pd.DataFrame(
+                {
+                    "transport_zone_id": ["z1", "z2"],
+                    "geometry": [None, None],
+                }
+            ),
+            study_area=SimpleNamespace(get=lambda: None),
+        ),
+        demand_groups=pl.DataFrame({"home_zone_id": ["z1"], "n_persons": [3.0]}).lazy(),
+        plan_steps=pl.DataFrame(
+            {
+                "from": ["z1", "z1", "z2"],
+                "to": ["z2", "z2", "z1"],
+                "mode": [
+                    "walk/public_transport/walk",
+                    "car",
+                    "walk/public_transport/walk",
+                ],
+                "n_persons": [2.0, 1.0, 3.0],
+            }
+        ).lazy(),
+        opportunities=pl.DataFrame().lazy(),
+        costs=pl.DataFrame().lazy(),
+        population_weighted_plan_steps=pl.DataFrame().lazy(),
+        transitions=pl.DataFrame().lazy(),
+        surveys=[],
+        modes=[],
+        parameters=SimpleNamespace(),
+        run=SimpleNamespace(),
+    )
+    seen = {}
+    monkeypatch.setattr("mobility.trips.group_day_trips.core.metrics.gpd.GeoDataFrame", _FakeGeoDataFrame)
+    monkeypatch.setattr("mobility.trips.group_day_trips.core.metrics.plt.show", lambda: seen.setdefault("show_called", True))
+    monkeypatch.setattr("mobility.trips.group_day_trips.core.metrics.plt.title", lambda value: seen.setdefault("title", value))
+
+    mode_share = results.metrics.plot_modal_share(zone="origin", mode="public_transport")
+
+    assert seen["show_called"] is True
+    assert "Public transport share per origin transport zone" in seen["title"]
+    assert set(mode_share["mode"].unique().tolist()) == {"public_transport"}
+
+
+def test_mask_outliers_replaces_extreme_values_with_nan():
+    results = _make_results_for_metrics()
+    series = pd.Series([1.0, 1.1, 0.9, 100.0])
+
+    masked = results.metrics.mask_outliers(series)
+
+    assert pd.isna(masked.iloc[-1])
+    assert masked.iloc[0] == pytest.approx(1.0)
+
+
 def test_model_loss_summary_history_and_validation():
     expected = pl.DataFrame(
         {

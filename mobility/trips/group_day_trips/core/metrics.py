@@ -645,8 +645,12 @@ class RunMetrics:
         population_df = self.results.plan_steps.collect().to_pandas()
 
         left_column = "from" if zone == "origin" else "to"
-        mode_share = population_df.groupby([left_column, "mode"]).sum("n_persons")
-        mode_share = mode_share.reset_index().set_index([left_column])
+        mode_share = (
+            population_df
+            .groupby([left_column, "mode"], as_index=False)["n_persons"]
+            .sum()
+            .set_index([left_column])
+        )
         mode_share["total"] = mode_share.groupby([left_column])["n_persons"].sum()
         mode_share["modal_share"] = mode_share["n_persons"] / mode_share["total"]
 
@@ -711,7 +715,11 @@ class RunMetrics:
             else:
                 population_df = population_df[population_df["mode"] == mode]
 
-        biggest_flows = population_df.groupby(["from", "to"]).sum("n_persons").reset_index()
+        biggest_flows = (
+            population_df
+            .groupby(["from", "to"], as_index=False)["n_persons"]
+            .sum()
+        )
         biggest_flows = biggest_flows.where(biggest_flows["from"] != biggest_flows["to"]).nlargest(n_largest, "n_persons")
         transport_zones_df = self.results.transport_zones.get()
         biggest_flows = biggest_flows.merge(
