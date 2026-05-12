@@ -8,7 +8,9 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 import polars as pl
+from plotly.subplots import make_subplots
 
 from ..evaluation.car_traffic_evaluation import CarTrafficEvaluation
 from ..evaluation.public_transport_network_evaluation import (
@@ -273,74 +275,124 @@ class RunMetrics:
 
         return immobility
 
-    def activity_time_series(self, interval_minutes: int = 15, plot: bool = False) -> pl.DataFrame:
+    def activity_time_series(
+        self,
+        interval_minutes: int = 15,
+        plot: bool = False,
+        inner_zone_residents_only: bool = False,
+    ) -> pl.DataFrame:
         """Aggregate average occupancy by activity and in-transit mode over time bins."""
-        time_series = self._activity_time_series_raw(interval_minutes=interval_minutes)
-        total_population = (
-            self.results.demand_groups
-            .select(pl.col("n_persons").sum().alias("total_population"))
-            .collect(engine="streaming")
-            .item()
+        observed_time_series = self._add_residual_home_time(
+            self._activity_time_series_raw(
+                interval_minutes=interval_minutes,
+                inner_zone_residents_only=inner_zone_residents_only,
+            ),
+            bins=self._time_bins(interval_minutes=interval_minutes),
+            total_population=self._modeled_total_population(inner_zone_residents_only=inner_zone_residents_only),
+        ).with_columns(source=pl.lit("observed"))
+        survey_time_series = self._survey_activity_time_series(
+            interval_minutes=interval_minutes,
+            inner_zone_residents_only=inner_zone_residents_only,
         )
-        bin_duration_hours = interval_minutes / 60.0
-        bin_starts = np.arange(0.0, 24.0, bin_duration_hours, dtype=float)
-        bins = pl.DataFrame(
-            {
-                "time_bin_start": bin_starts,
-                "time_label": [
-                    f"{int(hour):02d}:{int(round((hour * 60.0) % 60.0)):02d}"
-                    for hour in bin_starts
-                ],
-            }
+        time_series = pl.concat(
+            [
+                observed_time_series,
+                survey_time_series.with_columns(source=pl.lit("survey")),
+            ],
+            how="vertical_relaxed",
+        ).select(
+            ["source", "time_bin_start", "time_label", "label", "n_persons"]
         )
-
-        residual_home = (
-            bins.lazy()
-            .join(
-                time_series.lazy()
-                .group_by(["time_bin_start", "time_label"])
-                .agg(stacked_total=pl.col("n_persons").sum()),
-                on=["time_bin_start", "time_label"],
-                how="left",
-            )
-            .with_columns(
-                stacked_total=pl.col("stacked_total").fill_null(0.0),
-                label=pl.lit("home"),
-                n_persons=pl.lit(float(total_population)) - pl.col("stacked_total"),
-            )
-            .filter(pl.col("n_persons") != 0.0)
-            .select(["time_bin_start", "time_label", "label", "n_persons"])
-            .collect(engine="streaming")
-        )
-
-        time_series = (
-            pl.concat([time_series, residual_home], how="vertical_relaxed")
-            .group_by(["time_bin_start", "time_label", "label"])
-            .agg(n_persons=pl.col("n_persons").sum())
-            .sort(["time_bin_start", "label"])
-        )
-
         if plot:
             self._plot_activity_time_series(time_series)
 
         return time_series
 
-    def _activity_time_series_raw(self, interval_minutes: int = 15) -> pl.DataFrame:
-        """Aggregate only the explicit states stored in plan_steps, before residual home completion."""
+    def _activity_time_series_raw(
+        self,
+        interval_minutes: int = 15,
+        inner_zone_residents_only: bool = False,
+    ) -> pl.DataFrame:
+        """Aggregate average occupancy by activity and in-transit mode over time bins."""
+        plan_steps = self.results.plan_steps
+        if inner_zone_residents_only:
+            plan_steps = self._filter_plan_steps_to_inner_zone_residents(plan_steps)
+        return self._time_series_from_plan_steps(plan_steps, interval_minutes=interval_minutes)
+
+    def _survey_activity_time_series(
+        self,
+        interval_minutes: int = 15,
+        inner_zone_residents_only: bool = False,
+    ) -> pl.DataFrame:
+        """Build the same occupancy time series from the canonical survey reference asset."""
+        weighted_survey_plan_steps = self.results.population_weighted_plan_steps
+        if inner_zone_residents_only:
+            weighted_survey_plan_steps = self._filter_plan_steps_to_inner_zone_residents(weighted_survey_plan_steps)
+
+        total_population = self._modeled_total_population(inner_zone_residents_only=inner_zone_residents_only)
+        explicit_time_series = self._time_series_from_plan_steps(
+            weighted_survey_plan_steps,
+            interval_minutes=interval_minutes,
+        )
+        return self._add_residual_home_time(
+            explicit_time_series,
+            bins=self._time_bins(interval_minutes=interval_minutes),
+            total_population=total_population,
+        )
+
+    def _modeled_total_population(self, inner_zone_residents_only: bool = False) -> float:
+        """Return the total modeled population represented in the demand groups."""
+        demand_groups = self.results.demand_groups
+        if inner_zone_residents_only:
+            demand_groups = self._filter_demand_groups_to_inner_zone_residents(demand_groups)
+        total_population = demand_groups.select(pl.col("n_persons").sum().alias("total_population")).collect(engine="streaming").item()
+        return float(total_population)
+
+    def _inner_zone_transport_zone_ids(self) -> pl.DataFrame:
+        """Return the transport-zone ids marked as inner zones."""
+        return (
+            pl.DataFrame(self.results.transport_zones.get().drop("geometry", axis=1, errors="ignore"))
+            .filter(pl.col("is_inner_zone"))
+            .select(pl.col("transport_zone_id").cast(pl.Int32))
+            .unique()
+        )
+
+    def _filter_demand_groups_to_inner_zone_residents(self, demand_groups: pl.LazyFrame) -> pl.LazyFrame:
+        """Keep only demand groups whose home zone is an inner zone."""
+        inner_zone_ids = self._inner_zone_transport_zone_ids()
+        return demand_groups.join(
+            inner_zone_ids.lazy(),
+            left_on=pl.col("home_zone_id").cast(pl.Int32),
+            right_on="transport_zone_id",
+            how="inner",
+        ).drop("transport_zone_id")
+
+    def _filter_plan_steps_to_inner_zone_residents(self, plan_steps: pl.LazyFrame) -> pl.LazyFrame:
+        """Keep only plan steps belonging to residents of inner zones."""
+        inner_zone_ids = self._inner_zone_transport_zone_ids()
+        return plan_steps.join(
+            inner_zone_ids.lazy(),
+            left_on=pl.col("home_zone_id").cast(pl.Int32),
+            right_on="transport_zone_id",
+            how="inner",
+        ).drop("transport_zone_id")
+
+    def _time_series_from_plan_steps(
+        self,
+        plan_steps: pl.LazyFrame,
+        *,
+        interval_minutes: int = 15,
+    ) -> pl.DataFrame:
+        """Aggregate only the explicit states stored in plan steps over time bins."""
         if interval_minutes <= 0 or 1440 % interval_minutes != 0:
             raise ValueError("interval_minutes must be a positive divisor of 1440.")
 
+        bins = self._time_bins(interval_minutes=interval_minutes)
         bin_duration_hours = interval_minutes / 60.0
-        bin_starts = np.arange(0.0, 24.0, bin_duration_hours, dtype=float)
-        bins = pl.DataFrame(
-            {
-                "time_bin_start": bin_starts,
-                "time_bin_end": bin_starts + bin_duration_hours,
-            }
-        )
+        n_bins = bins.height
 
         plan_steps = (
-            self.results.plan_steps
+            plan_steps
             .select(
                 [
                     "activity",
@@ -374,7 +426,35 @@ class RunMetrics:
 
         return (
             intervals.lazy()
-            .join(bins.lazy(), how="cross")
+            .filter(pl.col("interval_end") > pl.col("interval_start"))
+            .with_columns(
+                start_bin_index=(
+                    (pl.col("interval_start") / pl.lit(bin_duration_hours))
+                    .floor()
+                    .clip(0, n_bins - 1)
+                    .cast(pl.UInt32)
+                ),
+                end_bin_index=(
+                    (pl.col("interval_end") / pl.lit(bin_duration_hours))
+                    .ceil()
+                    .clip(0, n_bins)
+                    .cast(pl.UInt32)
+                ),
+            )
+            .with_columns(
+                bin_index=pl.int_ranges(
+                    "start_bin_index",
+                    "end_bin_index",
+                    step=1,
+                    dtype=pl.UInt32,
+                )
+            )
+            .explode("bin_index")
+            .join(
+                bins.with_row_index("bin_index").lazy(),
+                on="bin_index",
+                how="inner",
+            )
             .with_columns(
                 overlap_start=pl.max_horizontal("interval_start", "time_bin_start"),
                 overlap_end=pl.min_horizontal("interval_end", "time_bin_end"),
@@ -385,11 +465,6 @@ class RunMetrics:
             .filter(pl.col("overlap_hours") > 0.0)
             .with_columns(
                 n_persons=(pl.col("n_persons") * pl.col("overlap_hours") / pl.lit(bin_duration_hours)),
-                time_label=(
-                    pl.col("time_bin_start").floor().cast(pl.Int64).cast(pl.String).str.zfill(2)
-                    + ":"
-                    + ((pl.col("time_bin_start") * 60.0) % 60.0).round(0).cast(pl.Int64).cast(pl.String).str.zfill(2)
-                ),
             )
             .group_by(["time_bin_start", "time_label", "label"])
             .agg(n_persons=pl.col("n_persons").sum())
@@ -397,57 +472,234 @@ class RunMetrics:
             .collect(engine="streaming")
         )
 
-    def plot_activity_time_series(self, interval_minutes: int = 15):
+    def _time_bins(self, *, interval_minutes: int) -> pl.DataFrame:
+        """Return one full-day time-bin table shared by modeled and survey series."""
+        bin_duration_hours = interval_minutes / 60.0
+        bin_starts = np.arange(0.0, 24.0, bin_duration_hours, dtype=float)
+        return pl.DataFrame(
+            {
+                "time_bin_start": bin_starts,
+                "time_bin_end": bin_starts + bin_duration_hours,
+                "time_label": [
+                    f"{int(hour):02d}:{int(round((hour * 60.0) % 60.0)):02d}"
+                    for hour in bin_starts
+                ],
+            }
+        )
+
+    def plot_activity_time_series(
+        self,
+        interval_minutes: int = 15,
+        inner_zone_residents_only: bool = False,
+    ):
         """Plot a stacked bar chart of average occupancy by activity and transit mode."""
-        time_series = self.activity_time_series(interval_minutes=interval_minutes)
+        time_series = self.activity_time_series(
+            interval_minutes=interval_minutes,
+            inner_zone_residents_only=inner_zone_residents_only,
+        )
         return self._plot_activity_time_series(time_series)
 
-    def _plot_activity_time_series(self, time_series: pl.DataFrame):
-        """Render a stacked bar chart from a precomputed activity time series."""
-        fig = px.bar(
-            time_series.to_pandas(),
-            x="time_label",
-            y="n_persons",
-            color="label",
-            barmode="stack",
-            category_orders={"time_label": time_series["time_label"].to_list()},
-            title=f"Average occupancy by activity on {self.results.period}",
+    def _add_residual_home_time(
+        self,
+        time_series: pl.DataFrame,
+        *,
+        bins: pl.DataFrame,
+        total_population: float,
+    ) -> pl.DataFrame:
+        """Fill missing occupancy in each bin as home time so totals stay constant."""
+        residual_home = (
+            bins.lazy()
+            .join(
+                time_series.lazy()
+                .group_by(["time_bin_start", "time_label"])
+                .agg(stacked_total=pl.col("n_persons").sum()),
+                on=["time_bin_start", "time_label"],
+                how="left",
+            )
+            .with_columns(
+                stacked_total=pl.col("stacked_total").fill_null(0.0),
+                label=pl.lit("home"),
+                n_persons=pl.lit(total_population) - pl.col("stacked_total"),
+            )
+            .filter(pl.col("n_persons") != 0.0)
+            .select(["time_bin_start", "time_label", "label", "n_persons"])
+            .collect(engine="streaming")
         )
-        fig.update_layout(xaxis_title="Time of day", yaxis_title="Average persons in bin")
+
+        return (
+            pl.concat([time_series, residual_home], how="vertical_relaxed")
+            .group_by(["time_bin_start", "time_label", "label"])
+            .agg(n_persons=pl.col("n_persons").sum())
+            .sort(["time_bin_start", "label"])
+        )
+
+    def _plot_activity_time_series(
+        self,
+        time_series: pl.DataFrame,
+    ):
+        """Render stacked occupancy charts, with survey on the left when available."""
+        source_titles = {"survey": "Survey", "observed": "Model"}
+        available_sources = [source for source in ["survey", "observed"] if source in time_series["source"].unique().to_list()]
+        panel_series = [
+            (source_titles[source], time_series.filter(pl.col("source") == source).drop("source"))
+            for source in available_sources
+        ]
+        category_orders = {
+            "time_label": (
+                time_series
+                .select(["time_bin_start", "time_label"])
+                .unique()
+                .sort("time_bin_start")
+                .get_column("time_label")
+                .to_list()
+            )
+        }
+        labels = sorted({label for _, series in panel_series for label in series["label"].to_list()})
+        color_map = self._activity_time_series_color_map(labels)
+
+        fig = make_subplots(
+            rows=1,
+            cols=len(panel_series),
+            subplot_titles=[title for title, _ in panel_series],
+            shared_yaxes=True,
+        )
+
+        for col_index, (_, series) in enumerate(panel_series, start=1):
+            pivoted = (
+                series
+                .pivot(index="time_label", on="label", values="n_persons", aggregate_function="sum")
+                .sort("time_label")
+                .fill_null(0.0)
+            )
+            time_labels = pivoted["time_label"].to_list()
+            for label in labels:
+                values = pivoted.get_column(label).to_list() if label in pivoted.columns else [0.0] * len(time_labels)
+                fig.add_trace(
+                    go.Bar(
+                        x=time_labels,
+                        y=values,
+                        name=label,
+                        marker_color=color_map[label],
+                        showlegend=(col_index == 1),
+                    ),
+                    row=1,
+                    col=col_index,
+                )
+
+        fig.update_layout(
+            barmode="stack",
+            title=f"Average occupancy by activity on {self.results.period}",
+            xaxis_title="Time of day",
+            yaxis_title="Average persons in bin",
+        )
+        for axis_name in [f"xaxis{suffix}" for suffix in ([""] + [str(index) for index in range(2, len(panel_series) + 1)])]:
+            fig.layout[axis_name].update(categoryorder="array", categoryarray=category_orders["time_label"])
         fig.show("browser")
         return fig
 
-    def opportunity_occupation(self, plot_activity: str = None, mask_outliers: bool = False):
-        """Compute opportunity occupation per zone and activity for this run."""
-        transport_zones_df = (
-            pl.DataFrame(self.results.transport_zones.get().drop("geometry", axis=1))
-            .filter(pl.col("is_inner_zone"))
+    @staticmethod
+    def _activity_time_series_color_map(labels: list[str]) -> dict[str, str]:
+        """Return stable, distinct colors for activity time-series labels."""
+        fixed_colors = {
+            "home": "#7f8c8d",
+            "work": "#355CDE",
+            "studies": "#FFBE3D",
+            "shopping": "#E88AF2",
+            "other": "#B8E986",
+            "leisure": "#FF5C8A",
+            "in_transit:car": "#00C389",
+            "in_transit:walk": "#FFA15A",
+            "in_transit:bicycle": "#EF553B",
+            "in_transit:other": "#AB63FA",
+            "in_transit:walk/public_transport/walk": "#19D3F3",
+        }
+        fallback_palette = (
+            px.colors.qualitative.Safe
+            + px.colors.qualitative.Bold
+            + px.colors.qualitative.Set3
+        )
+
+        color_map: dict[str, str] = {}
+        fallback_index = 0
+        for label in labels:
+            if label in fixed_colors:
+                color_map[label] = fixed_colors[label]
+                continue
+
+            while fallback_index < len(fallback_palette) and fallback_palette[fallback_index] in color_map.values():
+                fallback_index += 1
+            if fallback_index >= len(fallback_palette):
+                fallback_index = 0
+            color_map[label] = fallback_palette[fallback_index]
+            fallback_index += 1
+
+        return color_map
+
+    def opportunity_occupation(
+        self,
+        plot_activity: str = None,
+        mask_outliers: bool = False,
+        inner_zone_residents_only: bool = True,
+    ):
+        """Compute opportunity occupation per destination and activity for this run.
+
+        The returned table always includes the full modeled opportunity stock.
+        Destinations with capacity but no realized occupation are kept with
+        ``duration = 0`` and ``opportunity_occupation = 0``.
+        """
+        transport_zones_df = pl.DataFrame(
+            self.results.transport_zones.get().drop("geometry", axis=1, errors="ignore")
+        )
+        resident_zone_scope = (
+            transport_zones_df.filter(pl.col("is_inner_zone")).lazy()
+            if inner_zone_residents_only
+            else transport_zones_df.lazy()
+        )
+        destination_zone_flags = (
+            transport_zones_df
+            .select(
+                pl.col("transport_zone_id").alias("to"),
+                pl.col("is_inner_zone").alias("destination_is_inner_zone"),
+            )
             .lazy()
         )
 
         opportunity_occupation = (
-            self.results.plan_steps.filter(pl.col("activity_seq_id") != 0)
-            .rename({"home_zone_id": "transport_zone_id"})
-            .join(transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]), on=["transport_zone_id"])
+            self.results.opportunities
+            .select(["to", "activity", "opportunity_capacity"])
             .with_columns(pl.col("activity").cast(pl.String()))
-            .group_by(["to", "activity"])
-            .agg(pl.col("duration").sum())
+            .join(destination_zone_flags, on="to", how="left")
             .join(
-                self.results.opportunities.select(["to", "activity", "opportunity_capacity"]).with_columns(
-                    pl.col("activity").cast(pl.String())
-                ),
+                self.results.plan_steps.filter(pl.col("activity_seq_id") != 0)
+                .rename({"home_zone_id": "transport_zone_id"})
+                .join(
+                    resident_zone_scope.select("transport_zone_id"),
+                    on=["transport_zone_id"],
+                    how="inner",
+                )
+                .with_columns(pl.col("activity").cast(pl.String()))
+                .group_by(["to", "activity"])
+                .agg(pl.col("duration").sum()),
                 on=["to", "activity"],
+                how="left",
             )
-            .with_columns(opportunity_occupation=pl.col("duration") / pl.col("opportunity_capacity"))
+            .with_columns(
+                duration=pl.col("duration").fill_null(0.0),
+                opportunity_occupation=(
+                    pl.col("duration").fill_null(0.0) / pl.col("opportunity_capacity")
+                ),
+            )
             .rename({"to": "transport_zone_id"})
             .collect(engine="streaming")
         )
 
         if plot_activity:
             tz = self.results.transport_zones.get().to_crs(4326)
-            tz = tz.merge(transport_zones_df.collect().to_pandas(), on="transport_zone_id")
+            tz = tz.merge(transport_zones_df.to_pandas(), on="transport_zone_id")
             tz = tz.merge(
-                opportunity_occupation.filter(pl.col("activity") == plot_activity).to_pandas(),
+                opportunity_occupation
+                .filter(pl.col("activity") == plot_activity)
+                .to_pandas(),
                 on="transport_zone_id",
                 how="left",
             )

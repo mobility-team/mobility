@@ -30,7 +30,7 @@ class PopulationWeightedPlanSteps(FileAsset):
             / f"population_weighted_plan_steps_{'weekday' if is_weekday else 'weekend'}.parquet"
         )
         inputs = {
-            "version": 6,
+            "version": 7,
             "population": population,
             "survey_plan_assets": survey_plan_assets,
             "is_weekday": is_weekday,
@@ -72,9 +72,18 @@ class PopulationWeightedPlanSteps(FileAsset):
             [
                 "activity_seq_id",
                 "time_seq_id",
+                "is_weekday",
+                "city_category",
+                "csp",
+                "n_cars",
                 "seq_step_index",
                 "activity",
                 "mode",
+                "is_anchor",
+                "departure_time",
+                "arrival_time",
+                "next_departure_time",
+                "duration_per_pers",
                 "travel_time",
                 "distance",
             ]
@@ -115,28 +124,17 @@ class PopulationWeightedPlanSteps(FileAsset):
             n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values)),
         )
         survey_plan_steps = survey_plan_steps.with_columns(
+            city_category=pl.col("city_category").cast(pl.Enum(city_category_values)),
+            csp=pl.col("csp").cast(pl.Enum(csp_values)),
+            n_cars=pl.col("n_cars").cast(pl.Enum(n_cars_values)),
             activity=pl.col("activity").cast(pl.Enum(activity_values)),
             mode=pl.col("mode").cast(pl.Enum(mode_values)),
         )
-        survey_plan_steps = survey_plan_steps.unique(
-            subset=["activity_seq_id", "time_seq_id", "seq_step_index"],
-            keep="first",
-        )
+        survey_plan_steps = survey_plan_steps.filter(pl.col("is_weekday") == self.is_weekday).drop("is_weekday")
         survey_plans = (
             survey_plans
             .filter(pl.col("is_weekday") == self.is_weekday)
             .drop("is_weekday")
-            .group_by(
-                [
-                    "country",
-                    "city_category",
-                    "csp",
-                    "n_cars",
-                    "activity_seq_id",
-                    "time_seq_id",
-                ]
-            )
-            .agg(p_plan=pl.col("p_plan").sum())
         )
 
         population_weighted_plan_steps = (
@@ -144,19 +142,26 @@ class PopulationWeightedPlanSteps(FileAsset):
             .with_columns(n_persons=pl.col("n_persons") * pl.col("p_plan"))
             .join(
                 survey_plan_steps,
-                on=["activity_seq_id", "time_seq_id"],
+                on=["activity_seq_id", "time_seq_id", "city_category", "csp", "n_cars"],
                 how="inner",
             )
             .select(
                 [
                     "country",
                     "home_zone_id",
+                    "city_category",
                     "csp",
+                    "n_cars",
                     "activity_seq_id",
                     "time_seq_id",
                     "seq_step_index",
                     "activity",
                     "mode",
+                    "is_anchor",
+                    "departure_time",
+                    "arrival_time",
+                    "next_departure_time",
+                    "duration_per_pers",
                     "travel_time",
                     "distance",
                     "n_persons",

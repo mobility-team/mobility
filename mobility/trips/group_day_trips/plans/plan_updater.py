@@ -58,6 +58,7 @@ class PlanUpdater:
             transport_costs,
             destination_saturation,
             activity_dur,
+            transport_zones,
             iteration,
             resolved_activity_parameters,
             parameters.min_activity_time_constant,
@@ -194,6 +195,7 @@ class PlanUpdater:
         transport_costs,
         destination_saturation,
         activity_dur,
+        transport_zones,
         iteration: int,
         resolved_activity_parameters: dict[str, Any],
         min_activity_time_constant,
@@ -223,6 +225,7 @@ class PlanUpdater:
             transport_costs=transport_costs,
             destination_saturation=destination_saturation,
             activity_dur=activity_dur,
+            transport_zones=transport_zones,
             resolved_activity_parameters=resolved_activity_parameters,
             min_activity_time_constant=min_activity_time_constant,
             allow_missing_costs_for_current_plans=(candidate_plan_steps is not None),
@@ -235,6 +238,7 @@ class PlanUpdater:
         transport_costs,
         destination_saturation: pl.DataFrame,
         activity_dur: pl.DataFrame,
+        transport_zones,
         resolved_activity_parameters: dict[str, Any],
         min_activity_time_constant,
         allow_missing_costs_for_current_plans: bool,
@@ -258,6 +262,30 @@ class PlanUpdater:
             ).with_columns(
                 activity=pl.col("activity").cast(pl.Enum(activity_dur["activity"].dtype.categories))
             )
+        )
+        destination_country = pl.from_pandas(
+            transport_zones.get().drop("geometry", axis=1, errors="ignore")[["transport_zone_id", "local_admin_unit_id"]]
+        ).with_columns(
+            to=pl.col("transport_zone_id").cast(pl.Int32),
+            destination_country=pl.col("local_admin_unit_id").str.slice(0, 2),
+        ).select(["to", "destination_country"])
+        country_value_coefficients = pl.from_dicts(
+            [
+                {
+                    "activity": activity_name,
+                    "destination_country": destination_country,
+                    "country_value_coefficient": coefficient,
+                }
+                for activity_name, activity_parameters in resolved_activity_parameters.items()
+                for destination_country, coefficient in (activity_parameters.country_value_coefficients or {}).items()
+            ],
+            schema={
+                "activity": pl.Utf8,
+                "destination_country": pl.Utf8,
+                "country_value_coefficient": pl.Float64,
+            },
+        ).with_columns(
+            activity=pl.col("activity").cast(pl.Enum(activity_dur["activity"].dtype.categories))
         )
         possible_plan_step_columns = [
             "demand_group_id",
@@ -306,22 +334,31 @@ class PlanUpdater:
                 on=["to", "activity"],
                 how="left",
             )
+            .join(destination_country.lazy(), on="to", how="left")
+            .join(
+                country_value_coefficients.lazy(),
+                on=["activity", "destination_country"],
+                how="left",
+            )
             .with_columns(
                 cost=pl.col("cost").fill_null(1e9) if allow_missing_costs_for_current_plans else pl.col("cost"),
                 distance=pl.col("distance").fill_null(0.0),
                 time=pl.col("time").fill_null(0.0),
                 k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0),
+                country_value_coefficient=pl.col("country_value_coefficient").fill_null(1.0),
                 min_activity_time=pl.col("mean_duration_per_pers") * math.exp(-min_activity_time_constant),
             )
             .with_columns(
                 utility=(
-                    pl.col("k_saturation_utility")
+                    pl.col("country_value_coefficient")
+                    * pl.col("k_saturation_utility")
                     * pl.col("value_of_time")
                     * pl.col("mean_duration_per_pers")
                     * (pl.col("duration_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
                     - pl.col("cost")
                 )
             )
+            .drop(["destination_country", "country_value_coefficient"])
             .select(possible_plan_step_columns)
         )
 

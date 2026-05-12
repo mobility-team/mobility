@@ -29,7 +29,7 @@ class Activity(InMemoryAsset):
             is_anchor: bool = False,
             opportunities: pd.DataFrame = None,
             utilities: pd.DataFrame = None,
-            country_utilities: Dict = None,
+            country_value_coefficients: Dict = None,
             sink_saturation_coeff: float = None,
             extra_inputs: dict | None = None,
             parameters: "ActivityParameters" | None = None,
@@ -45,7 +45,7 @@ class Activity(InMemoryAsset):
                 "value_of_time_v2": value_of_time_v2,
                 "survey_ids": survey_ids,
                 "radiation_lambda": radiation_lambda,
-                "country_utilities": country_utilities,
+                "country_value_coefficients": country_value_coefficients,
                 "sink_saturation_coeff": sink_saturation_coeff,
             },
             required_fields=["value_of_time", "saturation_fun_ref_level", "saturation_fun_beta"],
@@ -79,33 +79,6 @@ class Activity(InMemoryAsset):
                 resolved to scalar values for ``iteration``.
         """
         return resolve_model_for_iteration(self.inputs["parameters"], iteration)
-
-
-    def get_utilities(self, transport_zones, parameters: "ActivityParameters" | None = None):
-
-        parameters = parameters or self.inputs["parameters"]
-
-        if self.utilities is not None:
-
-            utilities = self.utilities
-
-        elif parameters.country_utilities is not None:
-            
-            transport_zones = transport_zones.get().drop("geometry", axis=1)
-            transport_zones["country"] = transport_zones["local_admin_unit_id"].str[0:2]
-            transport_zones["utility"] = transport_zones["country"].map(parameters.country_utilities)
-
-            utilities = pl.from_pandas( 
-                transport_zones[["transport_zone_id", "utility"]]
-                .rename({"transport_zone_id": "to"}, axis=1)
-            )
-
-        else:
-
-            utilities = None
-
-        return utilities
-
 
     def enforce_opportunities_schema(self, opportunities):
         
@@ -183,12 +156,16 @@ class ActivityParameters(BaseModel):
         ),
     ]
 
-    country_utilities: Annotated[
+    country_value_coefficients: Annotated[
         dict[str, float] | None,
         Field(
             default=None,
-            title="Country utility offsets",
-            description="Optional country-level utility offsets used for this activity.",
+            title="Country value coefficients",
+            description=(
+                "Optional destination-country coefficients applied to the "
+                "positive activity-value term for this activity. Coefficients "
+                "default to `1.0` when a country is not listed."
+            ),
         ),
     ]
 

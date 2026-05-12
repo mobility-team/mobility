@@ -24,7 +24,7 @@ class WorkActivity(Activity):
         radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
         utilities: pd.DataFrame = None,
-        country_utilities: Dict = None,
+        country_value_coefficients: Dict = None,
         parameters: "WorkParameters" | None = None
     ):
 
@@ -37,7 +37,7 @@ class WorkActivity(Activity):
                 "saturation_fun_beta": saturation_fun_beta,
                 "survey_ids": survey_ids,
                 "radiation_lambda": radiation_lambda,
-                "country_utilities": country_utilities,
+                "country_value_coefficients": country_value_coefficients,
             },
             owner_name="WorkActivity",
         )
@@ -113,7 +113,7 @@ class WorkParameters(ActivityParameters):
         Field(default=0.99986),
     ]
 
-    country_utilities: Annotated[
+    country_value_coefficients: Annotated[
         dict[str, float],
-        Field(default_factory=lambda: {"fr": 0.0, "ch": 5.0}),
+        Field(default_factory=lambda: {"fr": 1.0, "ch": 1.0}),
     ]

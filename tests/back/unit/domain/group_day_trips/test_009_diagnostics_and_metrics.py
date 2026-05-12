@@ -108,6 +108,68 @@ def test_metrics_aggregate_and_travel_indicators_by_match_reference_when_inputs_
     assert by_time_bin["delta"].to_list() == pytest.approx([0.0] * by_time_bin.height)
 
 
+def test_opportunity_occupation_includes_full_capacity_stock_once_per_destination_activity():
+    """Check that diagnostics include the full opportunity stock once.
+
+    In plain language: if one destination/activity pair receives duration from
+    several resident-scope segments, aggregated opportunity capacity should
+    still match the underlying unique destination supply. Unused destinations
+    should remain visible with zero duration so summed capacity reflects the
+    full stock, not only occupied sinks.
+    """
+    transport_zones = SimpleNamespace(
+        get=lambda: pd.DataFrame(
+            {
+                "transport_zone_id": [1, 2, 10, 11],
+                "is_inner_zone": [True, False, True, False],
+                "geometry": [None, None, None, None],
+            }
+        ),
+        study_area=SimpleNamespace(get=lambda: None),
+    )
+    results = RunResults(
+        inputs_hash="run",
+        is_weekday=True,
+        transport_zones=transport_zones,
+        demand_groups=pl.DataFrame({"n_persons": [5.0]}).lazy(),
+        plan_steps=pl.DataFrame(
+            {
+                "activity_seq_id": [1, 1],
+                "home_zone_id": [1, 2],
+                "activity": ["work", "work"],
+                "to": [10, 10],
+                "duration": [2.0, 3.0],
+            }
+        ).lazy(),
+        opportunities=pl.DataFrame(
+            {
+                "to": [10, 11],
+                "activity": ["work", "work"],
+                "opportunity_capacity": [100.0, 50.0],
+            }
+        ).lazy(),
+        costs=pl.DataFrame().lazy(),
+        population_weighted_plan_steps=pl.DataFrame().lazy(),
+        transitions=pl.DataFrame().lazy(),
+        surveys=[],
+        modes=[],
+        parameters=SimpleNamespace(),
+        run=SimpleNamespace(),
+    )
+
+    occupation = results.metrics.opportunity_occupation(inner_zone_residents_only=False)
+    unused_destination = occupation.filter(pl.col("transport_zone_id") == 11)
+    totals = occupation.group_by("activity").agg(
+        duration=pl.col("duration").sum(),
+        opportunity_capacity=pl.col("opportunity_capacity").sum(),
+    )
+
+    assert unused_destination["duration"].to_list() == pytest.approx([0.0])
+    assert unused_destination["opportunity_occupation"].to_list() == pytest.approx([0.0])
+    assert totals["duration"].to_list() == pytest.approx([5.0])
+    assert totals["opportunity_capacity"].to_list() == pytest.approx([150.0])
+
+
 def test_opportunity_occupation_plot_path_masks_outliers_and_plots(monkeypatch):
     class _GeoFrame(pd.DataFrame):
         @property
@@ -174,6 +236,7 @@ def test_opportunity_occupation_plot_path_masks_outliers_and_plots(monkeypatch):
     occupation = results.metrics.opportunity_occupation(
         plot_activity="work",
         mask_outliers=True,
+        inner_zone_residents_only=True,
     )
 
     assert occupation["opportunity_occupation"].to_list() == pytest.approx([0.02])
