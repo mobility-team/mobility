@@ -101,16 +101,13 @@ class DestinationSequences(FileAsset):
         seed: int,
     ) -> pl.DataFrame:
         """Compute destination sequences for one iteration."""
-        utilities = self._get_utilities(
-            activities,
-            self.resolved_activity_parameters,
-            transport_zones,
+        utility_inputs = self._get_destination_probability_inputs(
             destination_saturation,
             costs,
             parameters.cost_uncertainty_sd,
         )
         destination_probability = self._get_destination_probability(
-            utilities,
+            utility_inputs,
             activities,
             self.resolved_activity_parameters,
             parameters.dest_prob_cutoff,
@@ -310,37 +307,13 @@ class DestinationSequences(FileAsset):
             }
         )
 
-    def _get_utilities(
+    def _get_destination_probability_inputs(
         self,
-        activities: list[Any],
-        resolved_activity_parameters: dict[str, Any] | None,
-        transport_zones: Any,
         opportunities: pl.DataFrame,
         costs: pl.DataFrame,
         cost_uncertainty_sd: float,
     ) -> tuple[pl.LazyFrame, pl.LazyFrame]:
-        """Assemble destination utilities with cost uncertainty."""
-        if resolved_activity_parameters is None:
-            raise ValueError("Cannot build destination utilities without resolved activity parameters.")
-        utilities = [
-            (
-                activity.name,
-                activity.get_utilities(
-                    transport_zones,
-                    parameters=resolved_activity_parameters[activity.name],
-                ),
-            )
-            for activity in activities
-        ]
-        utilities = [utility for utility in utilities if utility[1] is not None]
-        utilities = [utility[1].with_columns(activity=pl.lit(utility[0])) for utility in utilities]
-
-        activity_values = opportunities.schema["activity"].categories
-        utilities = (
-            pl.concat(utilities)
-            .with_columns(activity=pl.col("activity").cast(pl.Enum(activity_values)))
-        )
-
+        """Assemble radiation-model inputs from travel costs and destination sinks."""
         x = [-2.0, -1.0, 0.0, 1.0, 2.0]
         probabilities = norm.pdf(x, loc=0.0, scale=cost_uncertainty_sd)
         probabilities /= probabilities.sum()
@@ -361,9 +334,7 @@ class DestinationSequences(FileAsset):
             .with_columns(cost=pl.col("cost") + pl.col("cost_delta"))
             .drop("cost_delta")
             .join(opportunities.lazy(), on="to")
-            .join(utilities.lazy(), on=["activity", "to"], how="left")
             .with_columns(
-                utility=pl.col("utility").fill_null(0.0),
                 effective_sink=(
                     pl.col("opportunity_capacity")
                     * pl.col("k_saturation_utility").fill_null(1.0)
@@ -372,7 +343,7 @@ class DestinationSequences(FileAsset):
             )
             .drop("prob")
             .filter(pl.col("effective_sink") > 0.0)
-            .with_columns(cost_bin=(pl.col("cost") - pl.col("utility")).floor())
+            .with_columns(cost_bin=pl.col("cost").floor())
         )
         cost_bin_to_destination = (
             costs
@@ -392,7 +363,7 @@ class DestinationSequences(FileAsset):
 
     def _get_destination_probability(
         self,
-        utilities: tuple[pl.LazyFrame, pl.LazyFrame],
+        destination_probability_inputs: tuple[pl.LazyFrame, pl.LazyFrame],
         activities: list[Any],
         resolved_activity_parameters: dict[str, Any] | None,
         destination_probability_cutoff: float,
@@ -401,8 +372,8 @@ class DestinationSequences(FileAsset):
         logging.info(
             "Computing the probability of choosing a destination based on current location, potential destinations, and activity (with radiation models)..."
         )
-        costs_by_bin = utilities[0]
-        cost_bin_to_destination = utilities[1]
+        costs_by_bin = destination_probability_inputs[0]
+        cost_bin_to_destination = destination_probability_inputs[1]
         if resolved_activity_parameters is None:
             raise ValueError("Cannot compute destination probabilities without resolved activity parameters.")
         activities_lambda = {

@@ -66,7 +66,7 @@ class Run(FileAsset):
     ) -> None:
         """Initialize a single weekday or weekend PopulationGroupDayTrips run."""
         inputs = {
-            "version": 9,
+            "version": 10,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -239,11 +239,10 @@ class Run(FileAsset):
             self.survey_plan_assets,
             self.is_weekday,
         )
+        expected_inputs = self._get_expected_diagnostics_inputs()
         activity_dur, home_night_dur, activity_demand_per_pers = self.initializer.get_survey_duration_summaries(
-            self.survey_plan_assets,
-            self.is_weekday,
+            expected_inputs.population_weighted_plan_steps.get(),
             demand_groups,
-            survey_plan_steps,
         )
         resolved_activity_parameters = resolve_activity_parameters(self.activities, 1)
         stay_home_plan, current_plans = self.initializer.get_stay_home_state(

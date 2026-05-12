@@ -1,7 +1,9 @@
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import polars as pl
+import pytest
 
 from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, Parameters
 from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
@@ -205,6 +207,58 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
     destination_sequences._sample_active_destination_sequences()
 
     assert seen["chains"].select("activity_seq_id").to_series().to_list() == [10]
+
+
+def test_destination_probability_inputs_use_cost_and_sink_even_without_destination_utilities(tmp_path):
+    destination_sequences = DestinationSequences(
+        run_key="run",
+        is_weekday=True,
+        iteration=1,
+        base_folder=_make_local_tmp_path(tmp_path, "destination_utilities_default_zero"),
+        activities=[],
+        transport_zones=None,
+        destination_saturation=pl.DataFrame(),
+        demand_groups=pl.DataFrame(),
+        costs=pl.DataFrame(),
+        parameters=Parameters(),
+        seed=123,
+        resolved_activity_parameters={},
+        current_plans=pl.DataFrame(),
+    )
+
+    class _TransportCosts:
+        def __init__(self):
+            self.modes = [SimpleNamespace(inputs={"parameters": SimpleNamespace(name="car")})]
+
+        def get_costs_by_od_and_mode(self, columns, detail_distances=False):
+            return pl.DataFrame(
+                {
+                    "from": [1],
+                    "to": [10],
+                    "mode": ["car"],
+                    "cost": [3.0],
+                    "distance": [10.0],
+                    "time": [1.0],
+                }
+            )
+
+    opportunities = pl.DataFrame(
+        {
+            "to": [10],
+            "activity": ["work"],
+            "opportunity_capacity": [100.0],
+            "k_saturation_utility": [1.0],
+        }
+    ).with_columns(activity=pl.col("activity").cast(pl.Enum(["work"])))
+
+    costs_by_bin, cost_bin_to_destination = destination_sequences._get_destination_probability_inputs(
+        opportunities=opportunities,
+        costs=_TransportCosts().get_costs_by_od_and_mode(["cost", "distance", "time"]),
+        cost_uncertainty_sd=1.0,
+    )
+
+    assert costs_by_bin.collect().height > 0
+    assert cost_bin_to_destination.collect().height > 0
 
 
 def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path):

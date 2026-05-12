@@ -140,13 +140,12 @@ class PlanInitializer:
         mean_home_night_durations: pl.DataFrame,
         activity_demand_per_pers: pl.DataFrame,
         demand_groups: pl.DataFrame,
-        survey_plan_steps: pl.DataFrame,
+        activity_dtype,
     ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
         """Align summary-key enums with the runtime demand and activity domains."""
 
         country_dtype = demand_groups.schema["country"]
         csp_dtype = demand_groups.schema["csp"]
-        activity_dtype = survey_plan_steps.schema["activity"]
 
         return (
             mean_activity_durations.with_columns(
@@ -166,29 +165,93 @@ class PlanInitializer:
 
     def get_survey_duration_summaries(
         self,
-        survey_plan_assets: SurveyPlanAssets,
-        is_weekday,
+        population_weighted_plan_steps: pl.LazyFrame,
         demand_groups: pl.DataFrame,
-        survey_plan_steps: pl.DataFrame,
     ):
-        """Load precomputed survey-weighted summaries for one day type."""
+        """Build survey-derived summaries from the canonical weighted step asset.
+
+        The grouped day-trips model uses three different survey summaries:
+
+        - ``mean_activity_durations`` for step-level activity utility
+        - ``mean_home_night_durations`` for the stay-home utility term
+        - ``activity_demand_per_pers`` for destination opportunity capacity
+
+        They now all come from the same population-weighted survey reference
+        table so diagnostics and runtime opportunity totals use one source of
+        truth. The aggregations intentionally differ:
+
+        - mean activity duration is weighted per activity occurrence
+        - activity demand per person is weighted by total represented persons
+        """
+        two_minutes = 120.0 / 3600.0
+        plan_segment_keys = [
+            "country",
+            "home_zone_id",
+            "city_category",
+            "csp",
+            "n_cars",
+            "activity_seq_id",
+            "time_seq_id",
+        ]
+        plan_keys_without_home_zone = [key for key in plan_segment_keys if key != "home_zone_id"]
+
+        weighted_plan_steps = population_weighted_plan_steps.with_columns(
+            country=pl.col("country").cast(pl.String()),
+            csp=pl.col("csp").cast(pl.String()),
+            activity=pl.col("activity").cast(pl.String()),
+        )
+        weighted_plan_step_schema = population_weighted_plan_steps.collect_schema()
 
         mean_activity_durations = (
-            survey_plan_assets.get_mean_activity_durations()
-            .filter(pl.col("is_weekday") == is_weekday)
-            .drop("is_weekday")
+            weighted_plan_steps
+            .filter(pl.col("seq_step_index") != pl.col("seq_step_index").max().over(plan_keys_without_home_zone))
+            .group_by(["country", "csp", "activity"])
+            .agg(
+                mean_duration_per_pers=pl.max_horizontal(
+                    [
+                        (pl.col("duration_per_pers") * pl.col("n_persons")).sum()
+                        / pl.col("n_persons").sum().clip(1e-18),
+                        pl.lit(two_minutes),
+                    ]
+                )
+            )
+            .collect(engine="streaming")
         )
 
         mean_home_night_durations = (
-            survey_plan_assets.get_mean_home_night_durations()
-            .filter(pl.col("is_weekday") == is_weekday)
-            .drop("is_weekday")
+            weighted_plan_steps
+            .group_by(plan_segment_keys)
+            .agg(
+                n_persons=pl.col("n_persons").first(),
+                home_night_per_pers=24.0 - pl.col("duration_per_pers").sum(),
+            )
+            .group_by(["country", "csp"])
+            .agg(
+                mean_home_night_per_pers=pl.max_horizontal(
+                    [
+                        (pl.col("home_night_per_pers") * pl.col("n_persons")).sum()
+                        / pl.col("n_persons").sum().clip(1e-18),
+                        pl.lit(two_minutes),
+                    ]
+                )
+            )
+            .collect(engine="streaming")
         )
 
+        country_population = (
+            demand_groups
+            .with_columns(country=pl.col("country").cast(pl.String()))
+            .group_by("country")
+            .agg(pl.col("n_persons").sum().alias("country_n_persons"))
+        )
         activity_demand_per_pers = (
-            survey_plan_assets.get_activity_demand_per_pers()
-            .filter(pl.col("is_weekday") == is_weekday)
-            .drop("is_weekday")
+            weighted_plan_steps
+            .group_by(["country", "activity"])
+            .agg(total_duration=(pl.col("duration_per_pers") * pl.col("n_persons")).sum())
+            .join(country_population.lazy(), on="country", how="inner")
+            .with_columns(duration_per_pers=pl.col("total_duration") / pl.col("country_n_persons").clip(1e-18))
+            .select(["country", "activity", "duration_per_pers"])
+            .collect(engine="streaming")
         )
 
         return self._cast_summary_domains(
@@ -196,7 +259,7 @@ class PlanInitializer:
             mean_home_night_durations,
             activity_demand_per_pers,
             demand_groups,
-            survey_plan_steps,
+            weighted_plan_step_schema["activity"],
         )
 
     def get_stay_home_state(
