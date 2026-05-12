@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from plotly.basedatatypes import BaseFigure
 import pytest
 import polars as pl
 
@@ -138,5 +139,100 @@ def test_activity_time_series_can_trigger_plotting_from_same_entrypoint(monkeypa
 
     assert seen["rows"] == series.height
     assert seen["survey_rows"] is None
+
+
+def test_activity_time_series_rejects_intervals_that_do_not_divide_the_day():
+    results = _make_results(
+        pl.DataFrame(
+            {
+                "activity": ["home"],
+                "mode": ["stay_home"],
+                "n_persons": [1.0],
+                "departure_time": [0.0],
+                "arrival_time": [0.0],
+                "next_departure_time": [24.0],
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="interval_minutes must be a positive divisor of 1440"):
+        results.metrics.activity_time_series(interval_minutes=7)
+
+
+def test_plot_activity_time_series_wrapper_returns_plot_result(monkeypatch):
+    results = _make_results(
+        pl.DataFrame(
+            {
+                "activity": ["home"],
+                "mode": ["stay_home"],
+                "n_persons": [1.0],
+                "departure_time": [0.0],
+                "arrival_time": [0.0],
+                "next_departure_time": [24.0],
+            }
+        )
+    )
+
+    seen = {}
+    expected_series = pl.DataFrame(
+        {
+            "time_bin_start": [0.0],
+            "time_label": ["00:00"],
+            "label": ["home"],
+            "n_persons": [1.0],
+        }
+    )
+
+    def fake_activity_time_series(*, interval_minutes):
+        seen["interval_minutes"] = interval_minutes
+        return expected_series
+
+    def fake_plot(df):
+        seen["plotted_series"] = df
+        return "figure"
+
+    monkeypatch.setattr(results.metrics, "activity_time_series", fake_activity_time_series)
+    monkeypatch.setattr(results.metrics, "_plot_activity_time_series", fake_plot)
+
+    figure = results.metrics.plot_activity_time_series(interval_minutes=30)
+
+    assert figure == "figure"
+    assert seen["interval_minutes"] == 30
+    assert seen["plotted_series"].equals(expected_series)
+
+
+def test_plot_activity_time_series_builds_stacked_figure_without_opening_browser(monkeypatch):
+    results = _make_results(
+        pl.DataFrame(
+            {
+                "activity": ["home"],
+                "mode": ["stay_home"],
+                "n_persons": [1.0],
+                "departure_time": [0.0],
+                "arrival_time": [0.0],
+                "next_departure_time": [24.0],
+            }
+        )
+    )
+    time_series = pl.DataFrame(
+        {
+            "time_bin_start": [8.0, 8.0, 8.25, 8.25],
+            "time_label": ["08:00", "08:00", "08:15", "08:15"],
+            "label": ["work", "home", "work", "custom"],
+            "n_persons": [1.0, 2.0, 2.0, 0.5],
+        }
+    )
+    seen = {}
+
+    def fake_show(self, *_args, **_kwargs):
+        seen["show_called"] = True
+
+    monkeypatch.setattr(BaseFigure, "show", fake_show, raising=False)
+
+    fig = results.metrics._plot_activity_time_series(time_series)
+
+    assert seen["show_called"] is True
+    assert fig.layout.barmode == "stack"
+    assert list(dict.fromkeys(fig.layout.xaxis.categoryarray)) == ["08:00", "08:15"]
 
 

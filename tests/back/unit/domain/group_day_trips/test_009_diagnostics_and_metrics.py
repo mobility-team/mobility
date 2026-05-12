@@ -108,6 +108,81 @@ def test_metrics_aggregate_and_travel_indicators_by_match_reference_when_inputs_
     assert by_time_bin["delta"].to_list() == pytest.approx([0.0] * by_time_bin.height)
 
 
+def test_opportunity_occupation_plot_path_masks_outliers_and_plots(monkeypatch):
+    class _GeoFrame(pd.DataFrame):
+        @property
+        def _constructor(self):
+            return _GeoFrame
+
+        def to_crs(self, _epsg):
+            return self
+
+    transport_zones = SimpleNamespace(
+        get=lambda: _GeoFrame(
+            {
+                "transport_zone_id": [1, 10],
+                "local_admin_unit_id": ["fr001", "fr001"],
+                "is_inner_zone": [True, True],
+                "geometry": [None, None],
+            }
+        ),
+        study_area=SimpleNamespace(get=lambda: None),
+    )
+    results = RunResults(
+        inputs_hash="run",
+        is_weekday=True,
+        transport_zones=transport_zones,
+        demand_groups=pl.DataFrame({"home_zone_id": [1], "n_persons": [2.0]}).lazy(),
+        plan_steps=pl.DataFrame(
+            {
+                "activity_seq_id": [1],
+                "home_zone_id": [1],
+                "activity": ["work"],
+                "to": [10],
+                "duration": [2.0],
+            }
+        ).lazy(),
+        opportunities=pl.DataFrame(
+            {
+                "to": [10],
+                "activity": ["work"],
+                "opportunity_capacity": [100.0],
+            }
+        ).lazy(),
+        costs=pl.DataFrame().lazy(),
+        population_weighted_plan_steps=pl.DataFrame().lazy(),
+        transitions=pl.DataFrame().lazy(),
+        surveys=[],
+        modes=[],
+        parameters=SimpleNamespace(),
+        run=SimpleNamespace(),
+    )
+    seen = {}
+
+    def fake_mask_outliers(series):
+        seen["masked_values"] = series.to_list()
+        return series + 1.0
+
+    def fake_plot_map(tz, variable, plot_activity):
+        seen["plot_variable"] = variable
+        seen["plot_activity"] = plot_activity
+        seen["plotted_values"] = tz[variable].to_list()
+
+    monkeypatch.setattr(results.metrics, "mask_outliers", fake_mask_outliers)
+    monkeypatch.setattr(results.metrics, "plot_map", fake_plot_map)
+
+    occupation = results.metrics.opportunity_occupation(
+        plot_activity="work",
+        mask_outliers=True,
+    )
+
+    assert occupation["opportunity_occupation"].to_list() == pytest.approx([0.02])
+    assert seen["plot_variable"] == "opportunity_occupation"
+    assert seen["plot_activity"] == "work"
+    assert sorted(seen["masked_values"]) == pytest.approx([0.0, 0.02])
+    assert sorted(seen["plotted_values"]) == pytest.approx([1.0, 1.02])
+
+
 def test_model_loss_summary_history_and_validation():
     expected = pl.DataFrame(
         {
