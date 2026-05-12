@@ -372,10 +372,32 @@ class PopulationGroupDayTrips:
             the weekend run is enabled.
         """
         weekday_paths = self.weekday_run.cache_path
-        keys = ("plan_steps", "opportunities", "costs", "transitions")
-        cache_paths = {f"weekday_{key}": weekday_paths[key] for key in keys}
+        required_keys = (
+            "plan_steps",
+            "opportunities",
+            "costs",
+            "transitions",
+        )
+        optional_keys = (
+            "iteration_metrics",
+        )
+        cache_paths = {f"weekday_{key}": weekday_paths[key] for key in required_keys}
+        cache_paths.update(
+            {
+                f"weekday_{key}": weekday_paths[key]
+                for key in optional_keys
+                if key in weekday_paths
+            }
+        )
         cache_paths["demand_groups"] = weekday_paths["demand_groups"]
         if self.weekend_run.enabled:
             weekend_paths = self.weekend_run.cache_path
-            cache_paths.update({f"weekend_{key}": weekend_paths[key] for key in keys})
+            cache_paths.update({f"weekend_{key}": weekend_paths[key] for key in required_keys})
+            cache_paths.update(
+                {
+                    f"weekend_{key}": weekend_paths[key]
+                    for key in optional_keys
+                    if key in weekend_paths
+                }
+            )
         return cache_paths

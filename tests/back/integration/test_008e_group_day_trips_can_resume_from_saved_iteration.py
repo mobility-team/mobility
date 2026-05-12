@@ -90,7 +90,25 @@ def test_008e_group_day_trips_can_resume_from_saved_iteration(test_data):
 
     plan_steps = result["weekday_plan_steps"].collect()
     transitions = result["weekday_transitions"].collect()
+    iteration_metrics = result["weekday_iteration_metrics"].collect()
 
     assert plan_steps.height > 0
     assert transitions.height > 0
+    assert iteration_metrics.height == 2
     assert sorted(transitions["iteration"].unique().to_list()) == [1, 2]
+    assert iteration_metrics["iteration"].to_list() == [1, 2]
+    assert {
+        "total_loss",
+        "distance_loss",
+        "n_trips_loss",
+        "time_loss",
+        "observed_entropy",
+        "mean_utility",
+        "mean_trip_count",
+        "mean_travel_time",
+        "mean_travel_distance",
+    }.issubset(set(iteration_metrics.columns))
+    assert iteration_metrics["mean_utility"].null_count() == 0
+    assert iteration_metrics["mean_trip_count"].null_count() == 0
+    assert iteration_metrics["mean_travel_time"].null_count() == 0
+    assert iteration_metrics["mean_travel_distance"].null_count() == 0

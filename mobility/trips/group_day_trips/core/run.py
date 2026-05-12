@@ -2,12 +2,24 @@ import logging
 import os
 import pathlib
 import random
+from dataclasses import dataclass
 from typing import List
 
 import polars as pl
 
 from ..iterations import Iteration, Iterations
 from ..evaluation.population_weighted_plan_steps import PopulationWeightedPlanSteps
+from ..evaluation.calibration_plan_steps import (
+    ObservedCalibrationPlanSteps,
+    PopulationWeightedCalibrationPlanSteps,
+)
+from ..evaluation.iteration_metrics import IterationMetricsBuilder, IterationMetricsHistory
+from ..evaluation.model_entropy import ModelEntropy
+from ..evaluation.model_loss import ModelLoss
+from ..evaluation.trip_pattern_distribution import (
+    ObservedTripPatternDistribution,
+    PopulationWeightedTripPatternDistribution,
+)
 from ..plans import ActivitySequences, DestinationSequences, ModeSequences, PlanInitializer, PlanUpdater
 from ..transitions.transition_schema import TRANSITION_EVENT_SCHEMA
 from .memory_logging import log_memory_checkpoint
@@ -25,6 +37,15 @@ from mobility.surveys import SurveyPlanAssets
 from mobility.surveys.mobility_survey import MobilitySurvey
 from mobility.population import Population
 from mobility.transport.modes.core.transport_mode import TransportMode
+
+
+@dataclass(frozen=True)
+class ExpectedDiagnosticsInputs:
+    """Shared survey-derived reference inputs used by run diagnostics."""
+
+    population_weighted_plan_steps: PopulationWeightedPlanSteps
+    calibration_plan_steps: PopulationWeightedCalibrationPlanSteps
+    trip_pattern_distribution: PopulationWeightedTripPatternDistribution
 
 
 class Run(FileAsset):
@@ -60,6 +81,7 @@ class Run(FileAsset):
         self.rng = random.Random(parameters.seed) if parameters.seed is not None else random.Random()
         self.initializer = PlanInitializer()
         self.updater = PlanUpdater()
+        self._expected_diagnostics_inputs: ExpectedDiagnosticsInputs | None = None
 
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
 
@@ -69,6 +91,7 @@ class Run(FileAsset):
             "costs": project_folder / "group_day_trips" / "costs.parquet",
             "transitions": project_folder / "group_day_trips" / "transitions.parquet",
             "demand_groups": project_folder / "group_day_trips" / "demand_groups.parquet",
+            "iteration_metrics": project_folder / "group_day_trips" / "iteration_metrics.parquet",
         }
         super().__init__(inputs, cache_path)
 
@@ -79,6 +102,11 @@ class Run(FileAsset):
         log_memory_checkpoint("run:start")
 
         iterations, resume_from_iteration = self._prepare_iterations(self.inputs_hash)
+        iteration_metrics_builder = self._build_iteration_metrics_builder()
+        iteration_metrics_records = iteration_metrics_builder.rebuild_history(
+            iterations=iterations,
+            resume_from_iteration=resume_from_iteration,
+        )
 
         state = self._build_state(
             iterations=iterations,
@@ -90,6 +118,13 @@ class Run(FileAsset):
             self._run_model_iteration(
                 state=state,
                 iteration=iteration,
+            )
+            iteration_metrics_records.append(
+                iteration_metrics_builder.history_row(
+                    iteration=iteration.iteration,
+                    current_plans=state.current_plans,
+                    current_plan_steps=state.current_plan_steps,
+                )
             )
             if self.parameters.persist_iteration_artifacts:
                 self._log_state_memory_checkpoint(f"iteration:{iteration_index}:before_save_state", state)
@@ -115,11 +150,11 @@ class Run(FileAsset):
             costs=final_costs,
             transitions=transitions,
             demand_groups=state.demand_groups,
+            iteration_metrics=IterationMetricsHistory.from_records(iteration_metrics_records),
         )
         log_memory_checkpoint("run:after_write_outputs")
 
         return self.get_cached_asset()
-
 
     def _raise_if_disabled(self) -> None:
         """Fail fast when callers try to access a disabled run."""
@@ -131,6 +166,41 @@ class Run(FileAsset):
             f"Run for {day_type} is disabled. "
             "Enable this day type or avoid accessing its outputs."
         )
+
+    def _get_expected_diagnostics_inputs(self) -> ExpectedDiagnosticsInputs:
+        """Return cached survey-derived reference inputs shared by run diagnostics."""
+        if self._expected_diagnostics_inputs is not None:
+            return self._expected_diagnostics_inputs
+
+        population_weighted_plan_steps = PopulationWeightedPlanSteps(
+            population=self.population,
+            survey_plan_assets=self.survey_plan_assets,
+            is_weekday=self.is_weekday,
+        )
+        expected_calibration_plan_steps = PopulationWeightedCalibrationPlanSteps(
+            population_weighted_plan_steps=population_weighted_plan_steps,
+            is_weekday=self.is_weekday,
+        )
+        expected_trip_pattern_distribution = PopulationWeightedTripPatternDistribution(
+            population_weighted_plan_steps=population_weighted_plan_steps,
+            surveys=self.surveys,
+            is_weekday=self.is_weekday,
+        )
+        self._expected_diagnostics_inputs = ExpectedDiagnosticsInputs(
+            population_weighted_plan_steps=population_weighted_plan_steps,
+            calibration_plan_steps=expected_calibration_plan_steps,
+            trip_pattern_distribution=expected_trip_pattern_distribution,
+        )
+        return self._expected_diagnostics_inputs
+
+    def _build_iteration_metrics_builder(self) -> IterationMetricsBuilder:
+        """Build the helper that computes one compact diagnostics row per iteration."""
+        expected_inputs = self._get_expected_diagnostics_inputs()
+        return IterationMetricsBuilder(
+            model_loss=ModelLoss(expected_plan_steps=expected_inputs.calibration_plan_steps),
+            model_entropy=ModelEntropy(expected_plan_steps=expected_inputs.trip_pattern_distribution),
+        )
+
 
     def _prepare_iterations(
         self,
@@ -513,6 +583,7 @@ class Run(FileAsset):
         costs: pl.DataFrame,
         transitions: pl.DataFrame,
         demand_groups: pl.DataFrame,
+        iteration_metrics: pl.DataFrame,
     ) -> None:
         """Write the final run artifacts to their parquet cache paths."""
         plan_steps.write_parquet(self.cache_path["plan_steps"])
@@ -520,6 +591,7 @@ class Run(FileAsset):
         costs.write_parquet(self.cache_path["costs"])
         transitions.write_parquet(self.cache_path["transitions"])
         demand_groups.write_parquet(self.cache_path["demand_groups"])
+        iteration_metrics.write_parquet(self.cache_path["iteration_metrics"])
 
     def _log_state_memory_checkpoint(self, label: str, state: RunState) -> None:
         """Log process memory together with the main mutable state tables."""
@@ -550,11 +622,16 @@ class Run(FileAsset):
         self.get()
         cached = self.get_cached_asset()
 
-        population_weighted_plan_steps = PopulationWeightedPlanSteps(
-            population=self.population,
-            survey_plan_assets=self.survey_plan_assets,
+        expected_inputs = self._get_expected_diagnostics_inputs()
+        observed_calibration_plan_steps = ObservedCalibrationPlanSteps(
+            run=self,
             is_weekday=self.is_weekday,
-        ).get()
+        )
+        iteration_metrics = IterationMetricsHistory(cached["iteration_metrics"])
+        observed_trip_pattern_distribution = ObservedTripPatternDistribution(
+            run=self,
+            is_weekday=self.is_weekday,
+        )
 
         return RunResults(
             inputs_hash=self.inputs_hash,
@@ -564,25 +641,18 @@ class Run(FileAsset):
             plan_steps=cached["plan_steps"],
             opportunities=cached["opportunities"],
             costs=cached["costs"],
-            population_weighted_plan_steps=population_weighted_plan_steps,
+            population_weighted_plan_steps=expected_inputs.population_weighted_plan_steps.get(),
+            expected_calibration_plan_steps=expected_inputs.calibration_plan_steps,
+            observed_calibration_plan_steps=observed_calibration_plan_steps,
+            iteration_metrics=iteration_metrics,
+            expected_entropy_plan_steps=expected_inputs.trip_pattern_distribution,
+            observed_entropy_plan_steps=observed_trip_pattern_distribution,
             transitions=cached["transitions"],
             surveys=self.surveys,
             modes=self.modes,
             parameters=self.parameters,
             run=self,
         )
-
-
-    def evaluate(self, metric, **kwargs) -> object:
-        """Evaluate this run using a named run-level metric."""
-        results = self.results()
-
-        if metric not in results.metrics_methods:
-            available = ", ".join(results.metrics_methods.keys())
-            raise ValueError(f"Unknown evaluation metric: {metric}. Available metrics are: {available}")
-
-        return results.metrics_methods[metric](**kwargs)
-
 
     def remove(self) -> None:
         """Remove cached outputs and saved iteration artifacts for this run."""

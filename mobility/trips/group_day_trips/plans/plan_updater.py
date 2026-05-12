@@ -781,6 +781,8 @@ class PlanUpdater:
                         "from",
                         "to",
                         "mode",
+                        "distance",
+                        "time",
                         "duration_per_pers",
                         "departure_time",
                         "arrival_time",

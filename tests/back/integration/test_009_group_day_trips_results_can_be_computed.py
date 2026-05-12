@@ -44,43 +44,41 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
     )
 
     # Evaluate various metrics
-    global_metrics = pop_trips.weekday_run.evaluate("global_metrics")
-    weekday_metrics_by_mode = pop_trips.weekday_run.evaluate(
-        "metrics_by_variable",
+    results = pop_trips.weekday_run.results()
+    global_metrics = results.metrics.aggregate()
+    weekday_metrics_by_mode = results.metrics.travel_indicators_by(
         variable="mode",
         normalize=True,
         plot=False,
     )
-    weekday_metrics_by_activity = pop_trips.weekday_run.evaluate(
-        "metrics_by_variable",
+    weekday_metrics_by_activity = results.metrics.travel_indicators_by(
         variable="activity",
         normalize=False,
         plot=False,
     )
-    weekday_metrics_by_time_bin = pop_trips.weekday_run.evaluate(
-        "metrics_by_variable",
+    weekday_metrics_by_time_bin = results.metrics.travel_indicators_by(
         variable="time_bin",
         plot=False,
     )
-    weekday_metrics_by_distance_bin = pop_trips.weekday_run.evaluate(
-        "metrics_by_variable",
+    weekday_metrics_by_distance_bin = results.metrics.travel_indicators_by(
         variable="distance_bin",
         plot=False,
     )
-    weekday_immobility = pop_trips.weekday_run.evaluate("immobility", plot=False)
-    weekday_opportunity_occupation = pop_trips.weekday_run.evaluate("opportunity_occupation")
-    weekday_state_waterfall, weekday_state_waterfall_summary = pop_trips.weekday_run.evaluate(
-        "state_waterfall",
+    weekday_immobility = results.metrics.immobility(plot=False)
+    weekday_opportunity_occupation = results.metrics.opportunity_occupation()
+    weekday_state_waterfall, weekday_state_waterfall_summary = results.transitions.state_waterfall(
         quantity="distance",
         plot=False,
         top_n=3,
     )
-    weekday_trip_count_by_demand_group = pop_trips.weekday_run.evaluate("trip_count_by_demand_group")
-    weekday_distance_per_person = pop_trips.weekday_run.evaluate("distance_per_person")
-    weekday_ghg_per_person = pop_trips.weekday_run.evaluate("ghg_per_person")
-    weekday_time_per_person = pop_trips.weekday_run.evaluate("time_per_person")
-    weekday_cost_per_person = pop_trips.weekday_run.evaluate("cost_per_person")
-    weekday_distance_compare = pop_trips.weekday_run.results().distance_per_person(compare_with=pop_trips)
+    weekday_trip_count_by_demand_group = results.metrics.trip_count_by_demand_group()
+    weekday_distance_per_person = results.metrics.distance_per_person()
+    weekday_ghg_per_person = results.metrics.ghg_per_person()
+    weekday_time_per_person = results.metrics.time_per_person()
+    weekday_cost_per_person = results.metrics.cost_per_person()
+    grouped_global_metrics = results.metrics.aggregate()
+    iteration_metrics = results.diagnostics.iteration_metrics()
+    weekday_distance_compare = results.metrics.distance_per_person(compare_with=pop_trips)
 
     assert global_metrics.height > 0
     assert weekday_metrics_by_mode.height > 0
@@ -96,6 +94,8 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
     assert weekday_ghg_per_person.height > 0
     assert weekday_time_per_person.height > 0
     assert weekday_cost_per_person.height > 0
+    assert grouped_global_metrics.height > 0
+    assert iteration_metrics.height > 0
     assert weekday_distance_compare.height > 0
 
     assert {"variable", "mode", "value", "value_ref", "delta", "delta_relative"}.issubset(set(weekday_metrics_by_mode.columns))
@@ -103,4 +103,5 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
     assert {"variable", "time_bin", "value", "value_ref", "delta", "delta_relative"}.issubset(set(weekday_metrics_by_time_bin.columns))
     assert {"variable", "distance_bin", "value", "value_ref", "delta", "delta_relative"}.issubset(set(weekday_metrics_by_distance_bin.columns))
     assert {"country", "csp", "p_immobility", "p_immobility_ref"}.issubset(set(weekday_immobility.columns))
+    assert {"iteration", "total_loss", "observed_entropy", "mean_utility"}.issubset(set(iteration_metrics.columns))
     assert "delta" in weekday_distance_compare.columns

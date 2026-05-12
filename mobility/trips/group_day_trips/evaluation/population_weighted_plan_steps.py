@@ -30,7 +30,7 @@ class PopulationWeightedPlanSteps(FileAsset):
             / f"population_weighted_plan_steps_{'weekday' if is_weekday else 'weekend'}.parquet"
         )
         inputs = {
-            "version": 4,
+            "version": 6,
             "population": population,
             "survey_plan_assets": survey_plan_assets,
             "is_weekday": is_weekday,
@@ -151,8 +151,10 @@ class PopulationWeightedPlanSteps(FileAsset):
                 [
                     "country",
                     "home_zone_id",
+                    "csp",
                     "activity_seq_id",
                     "time_seq_id",
+                    "seq_step_index",
                     "activity",
                     "mode",
                     "travel_time",
