@@ -42,9 +42,15 @@ cppr_graph <- cpp_contract(cppr_graph)
 info(logger, "Saving contracted graph...")
 hash <- strsplit(basename(output_fp), "-")[[1]][1]
 save_cppr_contracted_graph(cppr_graph, dirname(output_fp), hash)
+
+info(logger, "Saving contracted graph vertices...")
 write_parquet(vertices, file.path(dirname(dirname(output_fp)), paste0(hash, "-vertices.parquet")))
+
 if (!is.null(od_vertex_map)) {
+  info(logger, "Saving contracted graph OD vertex map...")
   write_parquet(od_vertex_map, file.path(dirname(dirname(output_fp)), paste0(hash, "-od-vertex-map.parquet")))
 }
 
+info(logger, "Creating contracted graph marker file...")
 file.create(output_fp)
+info(logger, "Finished saving contracted graph.")
