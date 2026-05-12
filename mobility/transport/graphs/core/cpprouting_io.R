@@ -4,7 +4,14 @@ library(jsonlite)
 library(arrow)
 library(data.table)
 
+log_parquet_save_step <- function(path, save_expr) {
+  message(sprintf("Starting parquet save step: %s", path))
+  force(save_expr)
+  message(sprintf("Finished parquet save step: %s", path))
+}
+
 duckdb_df_to_parquet <- function(df, con, path) {
+  message(sprintf("Saving parquet with DuckDB: %s", path))
   
   duckdb_register(con, "df", df)
   
@@ -17,10 +24,12 @@ duckdb_df_to_parquet <- function(df, con, path) {
   )
   
   duckdb_unregister(con, "df")
+  message(sprintf("Saved parquet with DuckDB: %s", path))
   
 }
 
 duckdb_vector_to_parquet <- function(v, con, path) {
+  message(sprintf("Saving parquet with DuckDB: %s", path))
   
   df <- as.data.frame(v)
   
@@ -35,6 +44,7 @@ duckdb_vector_to_parquet <- function(v, con, path) {
   )
   
   duckdb_unregister(con, "df")
+  message(sprintf("Saved parquet with DuckDB: %s", path))
   
 }
 
@@ -246,14 +256,23 @@ save_cppr_contracted_graph <- function(graph, path, hash) {
 
   con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
 
-  duckdb_df_to_parquet(graph$data, con, file.path(path, paste0(hash, "data.parquet")))
-  duckdb_vector_to_parquet(graph$rank, con, file.path(path, paste0(hash, "rank.parquet")))
-  duckdb_df_to_parquet(graph$shortcuts, con, file.path(path, paste0(hash, "shortcuts.parquet")))
-  duckdb_df_to_parquet(graph$dict, con, file.path(path, paste0(hash, "dict.parquet")))
-  duckdb_df_to_parquet(graph$original$data, con, file.path(path, paste0(hash, "original_data.parquet")))
-  duckdb_vector_to_parquet(graph$original$attrib$aux, con, file.path(path, paste0(hash, "original_data_attrib_aux.parquet")))
+  data_fp <- file.path(path, paste0(hash, "data.parquet"))
+  rank_fp <- file.path(path, paste0(hash, "rank.parquet"))
+  shortcuts_fp <- file.path(path, paste0(hash, "shortcuts.parquet"))
+  dict_fp <- file.path(path, paste0(hash, "dict.parquet"))
+  original_data_fp <- file.path(path, paste0(hash, "original_data.parquet"))
+  original_aux_fp <- file.path(path, paste0(hash, "original_data_attrib_aux.parquet"))
 
+  log_parquet_save_step(data_fp, duckdb_df_to_parquet(graph$data, con, data_fp))
+  log_parquet_save_step(rank_fp, duckdb_vector_to_parquet(graph$rank, con, rank_fp))
+  log_parquet_save_step(shortcuts_fp, duckdb_df_to_parquet(graph$shortcuts, con, shortcuts_fp))
+  log_parquet_save_step(dict_fp, duckdb_df_to_parquet(graph$dict, con, dict_fp))
+  log_parquet_save_step(original_data_fp, duckdb_df_to_parquet(graph$original$data, con, original_data_fp))
+  log_parquet_save_step(original_aux_fp, duckdb_vector_to_parquet(graph$original$attrib$aux, con, original_aux_fp))
+
+  message("Disconnecting DuckDB after contracted graph save...")
   dbDisconnect(con, shutdown = TRUE)
+  message("Disconnected DuckDB after contracted graph save.")
 
 }
 

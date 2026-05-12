@@ -21,6 +21,10 @@ def set_params(
     r_packages_download_method="auto",
     debug=False,
     logging_level="INFO",
+    r_timeout_seconds=None,
+    r_max_retries=0,
+    r_retry_delay_seconds=5,
+    r_heartbeat_interval_seconds=30,
 ):
     """
     Sets up the necessary environment for the Mobility package.
@@ -40,6 +44,10 @@ def set_params(
     r_packages_download_method (str, optional): set this parameter to "wininet" to be able to install packages on some proxies. See the installation.md page for details.
     debug (bool, optional): set debug to True to see the R logs, including error messages
     logging_level (str|int, optional): root logging level, e.g. "INFO" or "DEBUG"
+    r_timeout_seconds (int, optional): timeout applied to each R script run. Leave as None to disable the timeout.
+    r_max_retries (int, optional): number of times to retry a failed or timed out R script run.
+    r_retry_delay_seconds (int, optional): waiting time between two R script attempts.
+    r_heartbeat_interval_seconds (int, optional): frequency of the R runner heartbeat logs.
     """
 
     setup_logging(logging_level)
@@ -48,6 +56,10 @@ def set_params(
     set_env_variable("MOBILITY_CERT_FILE", path_to_pem_file)
     set_env_variable("HTTP_PROXY", http_proxy_url)
     set_env_variable("HTTPS_PROXY", https_proxy_url)
+    set_env_variable("MOBILITY_R_TIMEOUT_SECONDS", r_timeout_seconds)
+    set_env_variable("MOBILITY_R_MAX_RETRIES", r_max_retries)
+    set_env_variable("MOBILITY_R_RETRY_DELAY_SECONDS", r_retry_delay_seconds)
+    set_env_variable("MOBILITY_R_HEARTBEAT_INTERVAL_SECONDS", r_heartbeat_interval_seconds)
     
     os.environ["MOBILITY_DEBUG"] = "1" if debug else "0"
     setup_ssl_truststore(inject_into_ssl)
@@ -67,7 +79,7 @@ def set_env_variable(key, value):
     value (str): The value to be set for the environment variable.
     """
     if value is not None:
-        os.environ[key] = value
+        os.environ[key] = str(value)
 
 
 def setup_logging(logging_level="INFO"):
