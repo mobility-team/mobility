@@ -81,13 +81,13 @@ class Parameters(BaseModel):
     alpha: Annotated[
         float,
         Field(
-            default=0.01,
+            default=0.5,
             ge=0.0,
-            title="Next anchor cost weighting",
+            title="Chain cost weighting",
             description=(
-                "Weight of the cost to get to the next anchor destination in the "
-                "chain when considering destination options (shopping place when "
-                "the next anchor is work, for example) and computing probabilities."
+                "Weight of the chain cost used to penalize intermediate "
+                "destination options before the next anchor destination in the "
+                "trip chain (shopping place before work, for example)."
             ),
         ),
     ]

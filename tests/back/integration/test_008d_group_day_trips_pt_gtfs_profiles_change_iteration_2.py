@@ -161,7 +161,6 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_profil
     common_parameters = Parameters(
         n_iterations=2,
         n_iter_per_cost_update=0,
-        alpha=0.01,
         dest_prob_cutoff=0.9,
         k_mode_sequences=6,
         cost_uncertainty_sd=1.0,

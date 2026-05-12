@@ -35,7 +35,6 @@ def _build_group_day_trips(test_data):
         parameters=Parameters(
             n_iterations=2,
             n_iter_per_cost_update=0,
-            alpha=0.01,
             dest_prob_cutoff=0.9,
             k_mode_sequences=6,
             cost_uncertainty_sd=1.0,

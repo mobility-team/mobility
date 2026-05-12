@@ -603,13 +603,69 @@ class DestinationSequences(FileAsset):
         destination_probability_lf = destination_probability.lazy()
         costs_lf = costs.lazy()
 
-        steps = (
+        # Start from the base destination probabilities for non-anchor activities.
+        # These probabilities come from the radiation model and only depend on the
+        # current origin, the activity, and destination opportunities.
+        non_anchor_candidates = (
             chains_step_lf
             .filter(pl.col("is_anchor").not_())
             .join(destination_probability_lf, on=["from", "activity"])
-            .join(costs_lf, left_on=["to", "anchor_to"], right_on=["from", "to"])
+        )
+
+        # Attach the two legs that define the chain cost of visiting a candidate
+        # destination before continuing to the next anchor destination.
+        candidates_with_costs = (
+            non_anchor_candidates
+            .join(
+                costs_lf
+                .select(
+                    [
+                        pl.col("from").alias("candidate_from"),
+                        pl.col("to").alias("candidate_to"),
+                        pl.col("cost").alias("cost_to_candidate"),
+                    ]
+                ),
+                left_on=["from", "to"],
+                right_on=["candidate_from", "candidate_to"],
+            )
+            .join(
+                costs_lf
+                .select(
+                    [
+                        pl.col("from").alias("anchor_from"),
+                        pl.col("to").alias("anchor_to_cost"),
+                        pl.col("cost").alias("cost_to_anchor"),
+                    ]
+                ),
+                left_on=["to", "anchor_to"],
+                right_on=["anchor_from", "anchor_to_cost"],
+            )
+        )
+
+        # Apply an additional chain-aware correction on top of the base radiation
+        # probability. This is an empirical adjustment intended to reduce
+        # unrealistic intermediate stops that would create costly onward travel to
+        # the next anchor.
+        weighted_candidates = (
+            candidates_with_costs
             .with_columns(
-                p_ij=((pl.col("p_ij").clip(1e-18).log() - alpha * pl.col("cost")).exp()),
+                chain_cost_via_candidate=pl.col("cost_to_candidate") + pl.col("cost_to_anchor"),
+            )
+            .with_columns(
+                p_ij=(
+                    (
+                        pl.col("p_ij").clip(1e-18).log()
+                        - alpha * pl.col("chain_cost_via_candidate")
+                    ).exp()
+                ),
+            )
+        )
+
+        # Draw one destination per sequence and destination draw using the seeded
+        # exponential race sampling already used elsewhere in this asset.
+        sampled_non_anchor_steps = (
+            weighted_candidates
+            .with_columns(
                 noise=(
                     pl.struct(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"])
                     .hash(seed=seed)
@@ -646,6 +702,7 @@ class DestinationSequences(FileAsset):
                 ]
             )
         )
+        steps = sampled_non_anchor_steps
         steps_anchor = (
             chains_step_lf
             .filter(pl.col("is_anchor"))
