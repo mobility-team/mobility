@@ -32,7 +32,6 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
         parameters=Parameters(
             n_iterations=1,
             n_iter_per_cost_update=0,
-            alpha=0.01,
             dest_prob_cutoff=0.9,
             k_mode_sequences=3,
             cost_uncertainty_sd=1.0,
