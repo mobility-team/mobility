@@ -56,7 +56,7 @@ def download_file(url, path, max_retries=3, timeout=(10, 120), raise_on_error=Tr
         stop=stop_after_attempt(max_retries + 1),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type(requests.exceptions.RequestException),
-        before_sleep=before_sleep_log(logging.getLogger(__name__), logging.WARNING),
+        before_sleep=before_sleep_log(logging.root, logging.WARNING),
         reraise=True,
     )
 

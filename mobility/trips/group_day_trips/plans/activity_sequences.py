@@ -17,6 +17,7 @@ class ActivitySequences(FileAsset):
         "activity",
         "is_anchor",
         "seq_step_index",
+        "step_count",
         "departure_time",
         "arrival_time",
         "next_departure_time",
@@ -43,7 +44,7 @@ class ActivitySequences(FileAsset):
         self.parameters = parameters
         self.seed = seed
         inputs = {
-            "version": 2,
+            "version": 3,
             "run_key": run_key,
             "is_weekday": is_weekday,
             "iteration": iteration,
@@ -161,6 +162,7 @@ class ActivitySequences(FileAsset):
                 "activity": self.survey_plan_steps.schema["activity"],
                 "is_anchor": self.survey_plan_steps.schema["is_anchor"],
                 "seq_step_index": self.survey_plan_steps.schema["seq_step_index"],
+                "step_count": self.survey_plan_steps.schema["step_count"],
                 "departure_time": self.survey_plan_steps.schema["departure_time"],
                 "arrival_time": self.survey_plan_steps.schema["arrival_time"],
                 "next_departure_time": self.survey_plan_steps.schema["next_departure_time"],
