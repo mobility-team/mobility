@@ -1,4 +1,8 @@
-from .config import set_params
+from .config import apply_import_time_memory_reclaim_policy, set_params
+
+# Apply startup memory policy before importing submodules that import Polars.
+# This has to stay at the very top of the package import chain to be useful.
+apply_import_time_memory_reclaim_policy()
 
 from .spatial.study_area import StudyArea
 from .spatial.transport_zones import TransportZones
