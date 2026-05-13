@@ -20,6 +20,8 @@ def clean_env(monkeypatch):
         "MOBILITY_DEBUG",
         "MOBILITY_PACKAGE_DATA_FOLDER",
         "MOBILITY_PROJECT_DATA_FOLDER",
+        "MIMALLOC_PURGE_DELAY",
+        "_RJEM_MALLOC_CONF",
     ]:
         monkeypatch.delenv(key, raising=False)
 
