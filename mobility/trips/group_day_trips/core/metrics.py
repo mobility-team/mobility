@@ -1056,13 +1056,13 @@ class RunMetrics:
         return s.mask((s < lower) | (s > upper), np.nan)
 
     def car_traffic(self, *args, **kwargs):
-        return CarTrafficEvaluation(self).get(*args, **kwargs)
+        return CarTrafficEvaluation(self.results).get(*args, **kwargs)
 
     def travel_costs(self, *args, **kwargs):
-        return TravelCostsEvaluation(self).get(*args, **kwargs)
+        return TravelCostsEvaluation(self.results).get(*args, **kwargs)
 
     def routing(self, *args, **kwargs):
-        return RoutingEvaluation(self).get(*args, **kwargs)
+        return RoutingEvaluation(self.results).get(*args, **kwargs)
 
     def public_transport_network(self, *args, **kwargs):
-        return PublicTransportNetworkEvaluation(self).get(*args, **kwargs)
+        return PublicTransportNetworkEvaluation(self.results).get(*args, **kwargs)

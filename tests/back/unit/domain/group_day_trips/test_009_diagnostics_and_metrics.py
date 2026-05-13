@@ -12,6 +12,16 @@ from mobility.trips.group_day_trips.evaluation.iteration_metrics import (
 )
 from mobility.trips.group_day_trips.evaluation.model_entropy import ModelEntropy
 from mobility.trips.group_day_trips.evaluation.model_loss import ModelLoss
+from mobility.trips.group_day_trips.evaluation.public_transport_network_evaluation import (
+    PublicTransportNetworkEvaluation,
+)
+from mobility.trips.group_day_trips.evaluation.routing_evaluation import RoutingEvaluation
+from mobility.trips.group_day_trips.evaluation.travel_costs_evaluation import (
+    TravelCostsEvaluation,
+)
+from mobility.trips.group_day_trips.evaluation.car_traffic_evaluation import (
+    CarTrafficEvaluation,
+)
 from mobility.trips.group_day_trips.evaluation.trip_pattern_distribution import (
     build_trip_pattern_distribution,
 )
@@ -106,6 +116,38 @@ def test_metrics_aggregate_and_travel_indicators_by_match_reference_when_inputs_
     assert aggregate["delta"].to_list() == pytest.approx([0.0, 0.0, 0.0])
     assert by_mode["delta"].to_list() == pytest.approx([0.0] * by_mode.height)
     assert by_time_bin["delta"].to_list() == pytest.approx([0.0] * by_time_bin.height)
+
+
+def test_metrics_evaluation_wrappers_pass_run_results(monkeypatch):
+    results = _make_results_for_metrics()
+    seen = {}
+
+    def _capture(label):
+        def fake_get(self, *args, **kwargs):
+            seen[label] = self.results
+            return label
+
+        return fake_get
+
+    monkeypatch.setattr(CarTrafficEvaluation, "get", _capture("car_traffic"))
+    monkeypatch.setattr(TravelCostsEvaluation, "get", _capture("travel_costs"))
+    monkeypatch.setattr(RoutingEvaluation, "get", _capture("routing"))
+    monkeypatch.setattr(
+        PublicTransportNetworkEvaluation,
+        "get",
+        _capture("public_transport_network"),
+    )
+
+    assert results.metrics.car_traffic() == "car_traffic"
+    assert results.metrics.travel_costs([]) == "travel_costs"
+    assert results.metrics.routing(pl.DataFrame()) == "routing"
+    assert results.metrics.public_transport_network() == "public_transport_network"
+    assert seen == {
+        "car_traffic": results,
+        "travel_costs": results,
+        "routing": results,
+        "public_transport_network": results,
+    }
 
 
 def test_opportunity_occupation_includes_full_capacity_stock_once_per_destination_activity():
