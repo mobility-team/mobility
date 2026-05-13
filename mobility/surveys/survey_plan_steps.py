@@ -60,7 +60,7 @@ class MobilitySurveyPlanSteps(FileAsset):
         )
         cache_path = folder_path / "group_day_trip_plan_steps.parquet"
         inputs = {
-            "version": 3.1,
+            "version": 3.2,
             "survey": survey,
             "activities": activities,
             "modes": modes,
@@ -173,11 +173,11 @@ class MobilitySurveyPlanSteps(FileAsset):
             .with_columns(mode=pl.col("mode_id").cast(pl.Utf8).replace_strict(mode_mapping, default="other"))
             .filter(pl.col("seq_step_index") < 11)
             .filter((pl.col("departure_time") < 24.0) & (pl.col("arrival_time") < 24.0))
-            .with_columns(max_seq_step_index=pl.col("seq_step_index").max().over(["individual_id", "day_id"]))
-            .filter(pl.col("max_seq_step_index") > 1)
+            .with_columns(step_count=pl.len().over(["individual_id", "day_id"]).cast(pl.UInt8))
+            .filter(pl.col("step_count") > 1)
             .with_columns(
                 activity=pl.when(
-                    (pl.col("seq_step_index") == pl.col("max_seq_step_index")) & (pl.col("activity") != "home")
+                    (pl.col("seq_step_index") == pl.col("step_count")) & (pl.col("activity") != "home")
                 )
                 .then(pl.lit("home"))
                 .otherwise(pl.col("activity"))
@@ -212,7 +212,7 @@ class MobilitySurveyPlanSteps(FileAsset):
                     "pondki",
                     "activity_seq",
                     "mode_seq",
-                    "max_seq_step_index",
+                    "step_count",
                 ]
             )
         )
@@ -327,6 +327,7 @@ class MobilitySurveyPlanSteps(FileAsset):
                     "csp",
                     "n_cars",
                     "seq_step_index",
+                    "step_count",
                     "activity",
                     "mode",
                     "is_anchor",
@@ -365,6 +366,7 @@ class MobilitySurveyPlanSteps(FileAsset):
             .sort(["time_seq_id", "seq_step_index"])
             .with_columns(
                 seq_step_index=pl.col("seq_step_index").cast(pl.UInt8),
+                step_count=pl.col("step_count").cast(pl.UInt8),
                 mode=pl.col("mode").cast(pl.Enum(mode_values)),
                 departure_time=pl.col("departure_time").cast(pl.Float32),
                 arrival_time=pl.col("arrival_time").cast(pl.Float32),
