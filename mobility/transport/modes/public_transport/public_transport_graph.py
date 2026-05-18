@@ -5,7 +5,7 @@ import json
 import pandas as pd
 import geopandas as gpd
 import numpy as np
-from typing import Annotated
+from typing import Annotated, Any
 
 from importlib import resources
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -46,9 +46,10 @@ class PublicTransportGraph(FileAsset):
             parameters = PublicTransportRoutingParameters()
         
         gtfs_router = GTFSRouter(
-            transport_zones,
-            parameters.additional_gtfs_files,
-            parameters.expected_agencies
+            transport_zones=transport_zones,
+            additional_gtfs_files=parameters.additional_gtfs_files,
+            gtfs_edits=parameters.gtfs_edits,
+            expected_agencies=parameters.expected_agencies,
         )
 
         inputs = {
@@ -121,6 +122,7 @@ class PublicTransportRoutingParameters(BaseModel):
     These parameters combine:
     - a coarse outer OD envelope through `max_beeline_distance`, in km
     - time-window and generalized-time constraints for the public transport leg
+    - optional GTFS source selection and edit rules
 
     `max_beeline_distance` is only used to prune obviously too-distant OD pairs
     before detailed multimodal routing. It does not replace the detailed public
@@ -143,6 +145,7 @@ class PublicTransportRoutingParameters(BaseModel):
         Field(default=DEFAULT_LONG_RANGE_MOTORIZED_MAX_BEELINE_DISTANCE_KM, gt=0.0),
     ]
     additional_gtfs_files: Annotated[ListParameterProfile | list[str] | None, Field(default=None)]
+    gtfs_edits: Annotated[ListParameterProfile | list[dict[str, Any]] | None, Field(default=None)]
     expected_agencies: Annotated[list[str] | None, Field(default=None)]
 
     @model_validator(mode="after")
