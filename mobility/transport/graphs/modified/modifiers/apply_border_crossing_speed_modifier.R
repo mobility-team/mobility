@@ -44,9 +44,18 @@ apply_border_crossing_speed_modifier <- function(
     st_crs(edges_sf) <- 3035
     
     # Find the ones intersecting a border
-    borders <- lapply(borders, st_read, quiet = TRUE)
-    borders <- lapply(borders, "[", "admin_level")
-    borders <- st_as_sf(rbindlist(borders))
+    borders <- lapply(borders, function(border_file_path) {
+      border <- st_read(border_file_path, quiet = TRUE)
+      if (nrow(border) == 0) {
+        return(NULL)
+      }
+      st_geometry(border)
+    })
+    borders <- Filter(Negate(is.null), borders)
+    if (length(borders) == 0) {
+      return(cppr_graph)
+    }
+    borders <- st_sf(geometry = do.call(c, borders))
     borders <- st_transform(borders, 3035)
     
     index <- st_intersects(edges_sf, borders)

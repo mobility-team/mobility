@@ -117,8 +117,56 @@ def test_init_builds_inputs_and_cache_path(project_dir, dependency_fakes):
 
     # Inputs surfaced as attributes (via patched Asset.__init__)
     assert transport_zones.inputs["parameters"].level_of_detail == level_of_detail
+    assert transport_zones.inputs["parameters"].backend == "r"
     assert getattr(transport_zones, "study_area") is not None
     assert getattr(transport_zones, "osm_buildings") is not None
 
     # New instance has no value cached in memory yet
     assert transport_zones.value is None
+
+
+def test_python_backend_dispatches_to_python_preparation(project_dir, dependency_fakes, monkeypatch, tmp_path):
+    calls = []
+
+    def _prepare_transport_zones_spy(study_area_fp, osm_buildings_fp, level_of_detail, output_fp, max_workers):
+        calls.append(
+            {
+                "study_area_fp": pathlib.Path(study_area_fp),
+                "osm_buildings_fp": pathlib.Path(osm_buildings_fp),
+                "level_of_detail": level_of_detail,
+                "output_fp": pathlib.Path(output_fp),
+                "max_workers": max_workers,
+            }
+        )
+
+    import mobility.spatial.transport_zones as tz_module
+
+    monkeypatch.setattr(
+        tz_module,
+        "prepare_transport_zones",
+        _prepare_transport_zones_spy,
+        raising=True,
+    )
+
+    transport_zones = TransportZones(
+        local_admin_unit_id="fr-09122",
+        level_of_detail=1,
+        radius=30,
+        backend="python",
+        backend_workers=8,
+    )
+
+    transport_zones.create_transport_zones_with_python(
+        study_area_fp=tmp_path / "study_area_polygons.gpkg",
+        osm_buildings_fp=tmp_path / "osm_buildings",
+    )
+
+    assert calls == [
+        {
+            "study_area_fp": tmp_path / "study_area_polygons.gpkg",
+            "osm_buildings_fp": tmp_path / "osm_buildings",
+            "level_of_detail": 1,
+            "output_fp": transport_zones.cache_path,
+            "max_workers": 8,
+        }
+    ]

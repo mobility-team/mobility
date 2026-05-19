@@ -371,9 +371,12 @@ class PlanInitializer:
             pl.concat(
                 [
                     activity.get_opportunities(transport_zones).with_columns(
-                        activity=pl.lit(activity.name),
-                        sink_saturation_coeff=pl.lit(activity.inputs["parameters"].sink_saturation_coeff),
-                    )
+                    activity=pl.lit(activity.name),
+                    sink_saturation_coeff=pl.lit(activity.inputs["parameters"].sink_saturation_coeff),
+                    destination_soft_capacity_factor=pl.lit(
+                        activity.inputs["parameters"].destination_soft_capacity_factor
+                    ),
+                )
                     for activity in activities
                     if activity.has_opportunities is True
                 ]
@@ -390,9 +393,23 @@ class PlanInitializer:
                     * pl.col("duration")
                     * pl.col("sink_saturation_coeff")
                 ),
+                opportunity_occupation=pl.lit(0.0, dtype=pl.Float64()),
+                capacity_ratio=pl.lit(0.0, dtype=pl.Float64()),
                 k_saturation_utility=pl.lit(1.0, dtype=pl.Float64()),
+                destination_shadow_price=pl.lit(0.0, dtype=pl.Float64()),
+                shadow_attraction_factor=pl.lit(1.0, dtype=pl.Float64()),
             )
-            .select(["to", "activity", "opportunity_capacity", "k_saturation_utility"])
+            .select([
+                "to",
+                "activity",
+                "opportunity_capacity",
+                "opportunity_occupation",
+                "capacity_ratio",
+                "destination_soft_capacity_factor",
+                "k_saturation_utility",
+                "destination_shadow_price",
+                "shadow_attraction_factor",
+            ])
         )
 
         return opportunities

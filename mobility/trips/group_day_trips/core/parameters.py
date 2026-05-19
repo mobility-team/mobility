@@ -165,6 +165,21 @@ class Parameters(BaseModel):
         ),
     ]
 
+    refresh_active_mode_alternatives: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Refresh active mode alternatives",
+            description=(
+                "Whether to append currently active destination chains to the "
+                "iteration destination candidates before the top-k mode search. "
+                "This keeps mode alternatives for occupied plans up to date "
+                "with current travel costs, while behavior-change phases still "
+                "control which transitions are allowed."
+            ),
+        ),
+    ]
+
     dest_prob_cutoff: Annotated[
         float,
         Field(
@@ -309,6 +324,19 @@ class Parameters(BaseModel):
         ),
     ]
 
+    use_destination_shadow_prices: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Use destination shadow prices",
+            description=(
+                "Whether to use additive destination shadow prices for "
+                "opportunity-capacity feedback. When disabled, the legacy "
+                "multiplicative sink saturation utility is used."
+            ),
+        ),
+    ]
+
     transition_distance_threshold: Annotated[
         float,
         Field(
@@ -378,6 +406,49 @@ class Parameters(BaseModel):
                 "delta of the best candidate utility for a given current plan "
                 "state before computing transition probabilities. Lower values "
                 "shrink the transition choice set and speed up the simulation."
+            ),
+        ),
+    ]
+
+    min_transition_utility_gain: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            title="Minimum transition utility gain",
+            description=(
+                "Minimum current-utility gain needed before a non-self plan "
+                "transition is allowed. The current plan itself is always "
+                "kept. This avoids churn between equal or almost equal plans."
+            ),
+        ),
+    ]
+
+    plan_probability_pruning_retained_share: Annotated[
+        float,
+        Field(
+            default=1.0,
+            gt=0.0,
+            le=1.0,
+            title="Current-plan retained probability share",
+            description=(
+                "Share of each demand group's current plan distribution kept "
+                "after applying transitions. Lower-mass target plans are merged "
+                "into the largest retained target plan in the same demand group. "
+                "Set to 1.0 to keep all current plans."
+            ),
+        ),
+    ]
+
+    plan_probability_pruning_min_iteration: Annotated[
+        int,
+        Field(
+            default=2,
+            ge=1,
+            title="Current-plan probability pruning start iteration",
+            description=(
+                "First iteration where current-plan probability pruning may be "
+                "applied when the retained share is below 1.0."
             ),
         ),
     ]

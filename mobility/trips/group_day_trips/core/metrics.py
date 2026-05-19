@@ -579,6 +579,7 @@ class RunMetrics:
                         x=time_labels,
                         y=values,
                         name=label,
+                        legendgroup=label,
                         marker_color=color_map[label],
                         showlegend=(col_index == 1),
                     ),

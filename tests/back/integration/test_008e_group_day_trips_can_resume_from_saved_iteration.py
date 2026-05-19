@@ -81,7 +81,12 @@ def test_008e_group_day_trips_can_resume_from_saved_iteration(test_data):
         "activity",
         "to",
         "opportunity_capacity",
+        "opportunity_occupation",
+        "capacity_ratio",
+        "destination_soft_capacity_factor",
         "k_saturation_utility",
+        "destination_shadow_price",
+        "shadow_attraction_factor",
     ]
 
     resumed_pop_trips = _build_group_day_trips(test_data)
@@ -98,16 +103,19 @@ def test_008e_group_day_trips_can_resume_from_saved_iteration(test_data):
     assert iteration_metrics["iteration"].to_list() == [1, 2]
     assert {
         "total_loss",
-        "distance_loss",
-        "n_trips_loss",
-        "time_loss",
+        "activity_loss",
+        "distance_bin_loss",
+        "time_bin_loss",
+        "mode_loss",
         "observed_entropy",
         "mean_utility",
         "mean_trip_count",
         "mean_travel_time",
         "mean_travel_distance",
+        "excess_occupation_share",
     }.issubset(set(iteration_metrics.columns))
     assert iteration_metrics["mean_utility"].null_count() == 0
     assert iteration_metrics["mean_trip_count"].null_count() == 0
     assert iteration_metrics["mean_travel_time"].null_count() == 0
     assert iteration_metrics["mean_travel_distance"].null_count() == 0
+    assert iteration_metrics["excess_occupation_share"].null_count() == 0

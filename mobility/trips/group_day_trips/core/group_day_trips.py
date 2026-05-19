@@ -31,6 +31,7 @@ class PopulationGroupDayTrips:
         k_mode_sequences: int = None,
         n_warmup_iterations: int = None,
         max_inactive_age: int = None,
+        refresh_active_mode_alternatives: bool = None,
         dest_prob_cutoff: float = None,
         n_iter_per_cost_update: int = None,
         cost_uncertainty_sd: float = None,
@@ -41,11 +42,15 @@ class PopulationGroupDayTrips:
         persist_iteration_artifacts: bool = None,
         min_activity_time_constant: float = None,
         update_plan_timings_from_modeled_travel_times: bool = None,
+        use_destination_shadow_prices: bool = None,
         transition_distance_threshold: float = None,
         enable_transition_distance_model: bool = None,
         transition_revision_probability: float = None,
         transition_logit_scale: float = None,
         transition_utility_pruning_delta: float = None,
+        min_transition_utility_gain: float = None,
+        plan_probability_pruning_retained_share: float = None,
+        plan_probability_pruning_min_iteration: int = None,
         transition_distance_friction: float = None,
         plan_embedding_dimension_weights: list[float] | None = None,
         behavior_change_phases: list[BehaviorChangePhase] | None = None,
@@ -84,6 +89,8 @@ class PopulationGroupDayTrips:
                 `Parameters.n_warmup_iterations`.
             max_inactive_age: Optional override for
                 `Parameters.max_inactive_age`.
+            refresh_active_mode_alternatives: Optional override for
+                `Parameters.refresh_active_mode_alternatives`.
             dest_prob_cutoff: Optional override for
                 `Parameters.dest_prob_cutoff`.
             n_iter_per_cost_update: Optional override for
@@ -103,6 +110,8 @@ class PopulationGroupDayTrips:
                 `Parameters.min_activity_time_constant`.
             update_plan_timings_from_modeled_travel_times: Optional override for
                 `Parameters.update_plan_timings_from_modeled_travel_times`.
+            use_destination_shadow_prices: Optional override for
+                `Parameters.use_destination_shadow_prices`.
             transition_distance_threshold: Optional override for
                 `Parameters.transition_distance_threshold`.
             enable_transition_distance_model: Optional override for
@@ -113,6 +122,12 @@ class PopulationGroupDayTrips:
                 `Parameters.transition_logit_scale`.
             transition_utility_pruning_delta: Optional override for
                 `Parameters.transition_utility_pruning_delta`.
+            min_transition_utility_gain: Optional override for
+                `Parameters.min_transition_utility_gain`.
+            plan_probability_pruning_retained_share: Optional override for
+                `Parameters.plan_probability_pruning_retained_share`.
+            plan_probability_pruning_min_iteration: Optional override for
+                `Parameters.plan_probability_pruning_min_iteration`.
             transition_distance_friction: Optional override for
                 `Parameters.transition_distance_friction`.
             plan_embedding_dimension_weights: Optional override for
@@ -143,6 +158,7 @@ class PopulationGroupDayTrips:
                 "k_mode_sequences": k_mode_sequences,
                 "n_warmup_iterations": n_warmup_iterations,
                 "max_inactive_age": max_inactive_age,
+                "refresh_active_mode_alternatives": refresh_active_mode_alternatives,
                 "dest_prob_cutoff": dest_prob_cutoff,
                 "n_iter_per_cost_update": n_iter_per_cost_update,
                 "cost_uncertainty_sd": cost_uncertainty_sd,
@@ -153,11 +169,15 @@ class PopulationGroupDayTrips:
                 "persist_iteration_artifacts": persist_iteration_artifacts,
                 "min_activity_time_constant": min_activity_time_constant,
                 "update_plan_timings_from_modeled_travel_times": update_plan_timings_from_modeled_travel_times,
+                "use_destination_shadow_prices": use_destination_shadow_prices,
                 "transition_distance_threshold": transition_distance_threshold,
                 "enable_transition_distance_model": enable_transition_distance_model,
                 "transition_revision_probability": transition_revision_probability,
                 "transition_logit_scale": transition_logit_scale,
                 "transition_utility_pruning_delta": transition_utility_pruning_delta,
+                "min_transition_utility_gain": min_transition_utility_gain,
+                "plan_probability_pruning_retained_share": plan_probability_pruning_retained_share,
+                "plan_probability_pruning_min_iteration": plan_probability_pruning_min_iteration,
                 "transition_distance_friction": transition_distance_friction,
                 "plan_embedding_dimension_weights": plan_embedding_dimension_weights,
                 "behavior_change_phases": behavior_change_phases,

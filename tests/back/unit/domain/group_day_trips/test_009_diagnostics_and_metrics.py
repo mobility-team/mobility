@@ -10,8 +10,13 @@ from mobility.trips.group_day_trips.evaluation.iteration_metrics import (
     IterationMetricsBuilder,
     IterationMetricsHistory,
 )
+from mobility.trips.group_day_trips.evaluation.calibration_plan_steps import to_calibration_plan_steps
 from mobility.trips.group_day_trips.evaluation.model_entropy import ModelEntropy
 from mobility.trips.group_day_trips.evaluation.model_loss import ModelLoss
+from mobility.trips.group_day_trips.evaluation.model_trip_count_loss import (
+    ModelTripCountLoss,
+    build_trip_count_distribution,
+)
 from mobility.trips.group_day_trips.evaluation.public_transport_network_evaluation import (
     PublicTransportNetworkEvaluation,
 )
@@ -754,11 +759,42 @@ def test_mask_outliers_replaces_extreme_values_with_nan():
 
     assert pd.isna(masked.iloc[-1])
     assert masked.iloc[0] == pytest.approx(1.0)
+
+
+def test_calibration_plan_steps_keep_stay_home_as_a_distribution_state():
+    raw_plan_steps = pl.DataFrame(
+        {
+            "activity_seq_id": [1, 0],
+            "activity": ["work", "home"],
+            "mode": ["car", "stay_home"],
+            "distance": [10.0, 0.0],
+            "time": [0.5, 0.0],
+            "n_persons": [2.0, 3.0],
+        }
+    ).with_columns(
+        activity=pl.col("activity").cast(pl.Enum(["home", "work"])),
+        mode=pl.col("mode").cast(pl.Enum(["car", "stay_home"])),
+    )
+
+    calibration_steps = to_calibration_plan_steps(raw_plan_steps).collect()
+
+    assert calibration_steps.sort("mode").to_dict(as_series=False) == {
+        "activity": ["work", "stay_home"],
+        "distance_bin": ["[10, 20)", "stay_home"],
+        "time_bin": ["[30, 45)", "stay_home"],
+        "mode": ["car", "stay_home"],
+        "distance": [10.0, 0.0],
+        "time": [0.5, 0.0],
+        "n_persons": [2.0, 3.0],
+    }
+
+
 def test_model_loss_summary_history_and_validation():
     expected = pl.DataFrame(
         {
             "activity": ["work", "shop"],
             "distance_bin": ["(1, 5]", "(0, 1]"],
+            "time_bin": ["[60, 1000000000)", "[60, 1000000000)"],
             "mode": ["car", "walk"],
             "distance": [10.0, 1.0],
             "time": [2.0, 1.0],
@@ -769,6 +805,7 @@ def test_model_loss_summary_history_and_validation():
         {
             "activity": ["work", "shop"],
             "distance_bin": ["(1, 5]", "(0, 1]"],
+            "time_bin": ["[60, 1000000000)", "[60, 1000000000)"],
             "mode": ["car", "walk"],
             "distance": [8.0, 1.0],
             "time": [1.5, 2.0],
@@ -780,9 +817,11 @@ def test_model_loss_summary_history_and_validation():
             {
                 "iteration": [1],
                 "total_loss": [0.3],
-                "distance_loss": [0.1],
-                "n_trips_loss": [0.05],
-                "time_loss": [0.15],
+                "trip_count_loss": [0.08],
+                "activity_loss": [0.04],
+                "distance_bin_loss": [0.05],
+                "time_bin_loss": [0.06],
+                "mode_loss": [0.07],
                 "observed_entropy": [0.7],
                 "mean_utility": [1.0],
                 "mean_trip_count": [2.0],
@@ -801,11 +840,22 @@ def test_model_loss_summary_history_and_validation():
     history = loss.history()
     history_row = loss.history_row(iteration=2, plan_steps=observed)
 
-    assert summary.height == 3
+    assert summary.height == 1
     assert summary["total_loss"].unique().item() > 0.0
-    assert history.columns == ["iteration", "total_loss", "distance_loss", "n_trips_loss", "time_loss"]
+    assert history.columns == [
+        "iteration",
+        "total_loss",
+        "trip_count_loss",
+        "activity_loss",
+        "distance_bin_loss",
+        "time_bin_loss",
+        "mode_loss",
+    ]
     assert history_row["total_loss"] > 0.0
-    assert history_row["distance_loss"] >= 0.0
+    assert history_row["activity_loss"] >= 0.0
+    assert history_row["distance_bin_loss"] >= 0.0
+    assert history_row["time_bin_loss"] >= 0.0
+    assert history_row["mode_loss"] >= 0.0
 
     with pytest.raises(ValueError, match="ModelLoss expects canonical calibration plan steps"):
         loss.comparison(
@@ -818,6 +868,131 @@ def test_model_loss_summary_history_and_validation():
                 }
             )
         )
+
+
+def test_model_loss_is_based_on_distribution_shares_not_global_scale():
+    expected = pl.DataFrame(
+        {
+            "activity": ["work", "shop", "stay_home"],
+            "distance_bin": ["(1, 5]", "(0, 1]", "stay_home"],
+            "time_bin": ["[60, 1000000000)", "[60, 1000000000)", "stay_home"],
+            "mode": ["car", "walk", "stay_home"],
+            "distance": [10.0, 1.0, 0.0],
+            "time": [2.0, 1.0, 0.0],
+            "n_persons": [2.0, 1.0, 1.0],
+        }
+    )
+    observed = pl.DataFrame(
+        {
+            "activity": ["work", "shop", "stay_home"],
+            "distance_bin": ["(1, 5]", "(0, 1]", "stay_home"],
+            "time_bin": ["[60, 1000000000)", "[60, 1000000000)", "stay_home"],
+            "mode": ["car", "walk", "stay_home"],
+            "distance": [10.0, 1.0, 0.0],
+            "time": [2.0, 1.0, 0.0],
+            "n_persons": [1.0, 2.0, 1.0],
+        }
+    )
+
+    scaled_expected = expected.with_columns(n_persons=pl.col("n_persons") * 10.0)
+    scaled_observed = observed.with_columns(n_persons=pl.col("n_persons") * 10.0)
+
+    loss = ModelLoss(expected_plan_steps=_FrameAsset(expected, lazy=False))
+    scaled_loss = ModelLoss(expected_plan_steps=_FrameAsset(scaled_expected, lazy=False))
+
+    assert loss.total_loss(plan_steps=observed) == pytest.approx(
+        scaled_loss.total_loss(plan_steps=scaled_observed)
+    )
+
+
+def test_model_loss_ignores_stay_home_when_comparing_trip_distributions():
+    """Stay-home is a person state, not a trip class in the trip-count loss."""
+    expected = pl.DataFrame(
+        {
+            "activity": ["work"],
+            "distance_bin": ["(1, 5]"],
+            "time_bin": ["[60, 1000000000)"],
+            "mode": ["car"],
+            "distance": [10.0],
+            "time": [2.0],
+            "n_persons": [2.0],
+        }
+    )
+    observed = pl.DataFrame(
+        {
+            "activity": ["work", "stay_home"],
+            "distance_bin": ["(1, 5]", "stay_home"],
+            "time_bin": ["[60, 1000000000)", "stay_home"],
+            "mode": ["car", "stay_home"],
+            "distance": [10.0, 0.0],
+            "time": [2.0, 0.0],
+            "n_persons": [2.0, 3.0],
+        }
+    )
+
+    comparison = ModelLoss(expected_plan_steps=_FrameAsset(expected, lazy=False)).comparison(plan_steps=observed)
+
+    assert comparison["activity"].to_list() == ["work"]
+    assert comparison["observed_total"].to_list() == pytest.approx([2.0])
+    assert comparison["expected_total"].to_list() == pytest.approx([2.0])
+
+
+def test_model_trip_count_loss_uses_cleaned_survey_steps_and_immobility():
+    """The zero-trip mass comes from survey immobility, not calibration step rows."""
+    expected_mobile_steps = pl.DataFrame(
+        {
+            "country": ["fr", "fr", "fr", "fr", "fr", "fr"],
+            "home_zone_id": ["z1", "z1", "z2", "z2", "z2", "z2"],
+            "city_category": ["dense", "dense", "dense", "dense", "dense", "dense"],
+            "csp": ["A", "A", "A", "A", "A", "A"],
+            "n_cars": [1, 1, 1, 1, 1, 1],
+            "activity_seq_id": [1, 1, 2, 2, 2, 2],
+            "time_seq_id": [10, 10, 20, 20, 20, 20],
+            "seq_step_index": [1, 2, 1, 2, 3, 4],
+            "n_persons": [10.0, 10.0, 5.0, 5.0, 5.0, 5.0],
+        }
+    )
+    survey = SimpleNamespace(
+        inputs={"parameters": SimpleNamespace(country="fr")},
+        get=lambda: {
+            "p_immobility": pd.DataFrame(
+                {"immobility_weekday": [0.2], "immobility_weekend": [0.3]},
+                index=pd.Index(["A"], name="csp"),
+            )
+        },
+    )
+    observed_steps = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1, 2],
+            "activity_seq_id": [1, 1, 0],
+            "time_seq_id": [10, 10, 0],
+            "dest_seq_id": [10, 10, 0],
+            "mode_seq_id": [10, 10, 0],
+            "seq_step_index": [1, 2, 0],
+            "n_persons": [2.0, 2.0, 3.0],
+        }
+    )
+
+    distribution = build_trip_count_distribution(
+        expected_mobile_steps,
+        immobility_probabilities=pl.DataFrame({"country": ["fr"], "csp": ["A"], "p_immobility": [0.2]}),
+    )
+    loss = ModelTripCountLoss(
+        expected_plan_steps=_FrameAsset(expected_mobile_steps),
+        surveys=[survey],
+        is_weekday=True,
+        observed_plan_steps=_FrameAsset(observed_steps),
+    )
+
+    expected_by_bin = dict(zip(distribution["trip_count_bin"], distribution["n_persons"]))
+    comparison = loss.comparison()
+
+    assert expected_by_bin["0"] == pytest.approx(3.0)
+    assert expected_by_bin["2"] == pytest.approx(8.0)
+    assert expected_by_bin["4"] == pytest.approx(4.0)
+    assert comparison["expected_total"].max() == pytest.approx(15.0)
+    assert comparison["observed_total"].max() == pytest.approx(5.0)
+    assert loss.total_loss() >= 0.0
 
 
 def test_model_entropy_and_trip_pattern_distribution_cover_mobile_and_stay_home_patterns():
@@ -853,9 +1028,11 @@ def test_model_entropy_and_trip_pattern_distribution_cover_mobile_and_stay_home_
             {
                 "iteration": [1],
                 "total_loss": [0.3],
-                "distance_loss": [0.1],
-                "n_trips_loss": [0.05],
-                "time_loss": [0.15],
+                "trip_count_loss": [0.08],
+                "activity_loss": [0.04],
+                "distance_bin_loss": [0.05],
+                "time_bin_loss": [0.06],
+                "mode_loss": [0.07],
                 "observed_entropy": [0.7],
                 "mean_utility": [1.0],
                 "mean_trip_count": [2.0],
@@ -890,9 +1067,17 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
             return {
                 "iteration": iteration,
                 "total_loss": float(iteration),
-                "distance_loss": 0.1,
-                "n_trips_loss": 0.2,
-                "time_loss": 0.3,
+                "activity_loss": 0.1,
+                "distance_bin_loss": 0.2,
+                "time_bin_loss": 0.3,
+                "mode_loss": 0.4,
+            }
+
+    class FakeTripCountLoss:
+        def history_row(self, *, iteration, plan_steps):
+            return {
+                "iteration": iteration,
+                "trip_count_loss": 0.5,
             }
 
     class FakeEntropy:
@@ -913,12 +1098,23 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
             "mode": ["car", "stay_home"],
         }
     )
-    builder = IterationMetricsBuilder(model_loss=FakeLoss(), model_entropy=FakeEntropy())
+    builder = IterationMetricsBuilder(
+        model_loss=FakeLoss(),
+        model_trip_count_loss=FakeTripCountLoss(),
+        model_entropy=FakeEntropy(),
+    )
 
     row = builder.history_row(
         iteration=2,
         current_plans=current_plans,
         current_plan_steps=current_plan_steps,
+        destination_saturation=pl.DataFrame(
+            {
+                "opportunity_occupation": [100.0, 80.0],
+                "opportunity_capacity": [50.0, 100.0],
+                "destination_soft_capacity_factor": [1.25, 1.25],
+            }
+        ),
     )
 
     class FakeIteration:
@@ -928,7 +1124,11 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
         def load_state(self):
             return self._state
 
-    fake_state = SimpleNamespace(current_plans=current_plans, current_plan_steps=current_plan_steps)
+    fake_state = SimpleNamespace(
+        current_plans=current_plans,
+        current_plan_steps=current_plan_steps,
+        destination_saturation=pl.DataFrame(),
+    )
     fake_iterations = SimpleNamespace(iteration=lambda _: FakeIteration(fake_state))
     rebuilt = builder.rebuild_history(iterations=fake_iterations, resume_from_iteration=2)
     history_store = IterationMetricsHistory(IterationMetricsHistory.from_records([row]).lazy())
@@ -938,15 +1138,31 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
             observed_calibration_plan_steps=object(),
             expected_entropy_plan_steps=object(),
             observed_entropy_plan_steps=object(),
+            population_weighted_plan_steps=object(),
+            surveys=[],
+            is_weekday=True,
+            plan_steps=object(),
             iteration_metrics_store=history_store,
         )
     )
 
+    assert row["total_loss"] == pytest.approx(2.5)
+    assert row["trip_count_loss"] == pytest.approx(0.5)
     assert row["mean_utility"] == pytest.approx(2.5)
     assert row["mean_trip_count"] == pytest.approx(0.5)
     assert row["mean_travel_time"] == pytest.approx(0.5)
     assert row["mean_travel_distance"] == pytest.approx(5.0)
+    assert row["excess_occupation_share"] == pytest.approx((100.0 - 62.5) / 180.0)
     assert [record["iteration"] for record in rebuilt] == [1, 2]
     assert diagnostics.iteration_metrics()["iteration"].to_list() == [2]
-    assert diagnostics.loss().history().columns == ["iteration", "total_loss", "distance_loss", "n_trips_loss", "time_loss"]
+    assert diagnostics.loss().history().columns == [
+        "iteration",
+        "total_loss",
+        "trip_count_loss",
+        "activity_loss",
+        "distance_bin_loss",
+        "time_bin_loss",
+        "mode_loss",
+    ]
+    assert diagnostics.trip_count_loss().history().columns == ["iteration", "trip_count_loss"]
     assert diagnostics.entropy().history().columns == ["iteration", "observed_entropy"]

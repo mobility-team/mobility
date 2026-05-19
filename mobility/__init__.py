@@ -7,6 +7,7 @@ apply_import_time_memory_reclaim_policy()
 from .spatial.study_area import StudyArea
 from .spatial.transport_zones import TransportZones
 from .spatial.local_admin_units import LocalAdminUnits
+from . import reports
 
 from .transport.costs.path import PathTravelCosts
 from .transport.graphs.core import PathGraph

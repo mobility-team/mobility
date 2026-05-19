@@ -3,11 +3,10 @@ from __future__ import annotations
 import pandas as pd
 import polars as pl
 import geopandas as gpd
-from typing import List
 import numpy as np
 import os
 
-from typing import Annotated, List
+from typing import Annotated, Dict, List
 
 from pydantic import Field
 from mobility.activities.activity import Activity, ActivityParameters
@@ -23,9 +22,13 @@ class LeisureActivity(Activity):
         value_of_time: float = None,
         saturation_fun_ref_level: float = None,
         saturation_fun_beta: float = None,
+        destination_soft_capacity_factor: float = None,
+        destination_shadow_price_sensitivity: float = None,
+        destination_shadow_price_min: float = None,
         survey_ids: List[str] = None,
         radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
+        country_value_coefficients: Dict = None,
         parameters: "LeisureParameters" | None = None
     ):
         
@@ -36,8 +39,12 @@ class LeisureActivity(Activity):
                 "value_of_time": value_of_time,
                 "saturation_fun_ref_level": saturation_fun_ref_level,
                 "saturation_fun_beta": saturation_fun_beta,
+                "destination_soft_capacity_factor": destination_soft_capacity_factor,
+                "destination_shadow_price_sensitivity": destination_shadow_price_sensitivity,
+                "destination_shadow_price_min": destination_shadow_price_min,
                 "survey_ids": survey_ids,
                 "radiation_lambda": radiation_lambda,
+                "country_value_coefficients": country_value_coefficients,
             },
             owner_name="LeisureActivity",
         )
@@ -165,3 +172,7 @@ class LeisureParameters(ActivityParameters):
         Field(default_factory=lambda: ["7.71", "7.72", "7.73", "7.74", "7.75", "7.76", "7.77", "7.78"]),
     ]
     radiation_lambda: Annotated[UnitIntervalFloat, Field(default=0.99986)]
+    country_value_coefficients: Annotated[
+        dict[str, float],
+        Field(default_factory=lambda: {"fr": 1.0, "ch": 1.0}),
+    ]

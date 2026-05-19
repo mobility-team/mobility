@@ -340,6 +340,8 @@ def test_plot_activity_time_series_builds_one_panel_per_available_source(monkeyp
 
     assert seen["show_called"] is True
     assert len(fig.data) == 4
+    assert [trace.legendgroup for trace in fig.data] == ["mystery", "work", "mystery", "work"]
+    assert [trace.showlegend for trace in fig.data] == [True, True, False, False]
     assert fig.layout.barmode == "stack"
     assert list(fig.layout.xaxis.categoryarray) == ["08:00", "08:15"]
     assert list(fig.layout.xaxis2.categoryarray) == ["08:00", "08:15"]

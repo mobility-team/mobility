@@ -31,6 +31,9 @@ class Activity(InMemoryAsset):
             utilities: pd.DataFrame = None,
             country_value_coefficients: Dict = None,
             sink_saturation_coeff: float = None,
+            destination_soft_capacity_factor: float = None,
+            destination_shadow_price_sensitivity: float = None,
+            destination_shadow_price_min: float = None,
             extra_inputs: dict | None = None,
             parameters: "ActivityParameters" | None = None,
         ):
@@ -47,6 +50,9 @@ class Activity(InMemoryAsset):
                 "radiation_lambda": radiation_lambda,
                 "country_value_coefficients": country_value_coefficients,
                 "sink_saturation_coeff": sink_saturation_coeff,
+                "destination_soft_capacity_factor": destination_soft_capacity_factor,
+                "destination_shadow_price_sensitivity": destination_shadow_price_sensitivity,
+                "destination_shadow_price_min": destination_shadow_price_min,
             },
             required_fields=["value_of_time", "saturation_fun_ref_level", "saturation_fun_beta"],
             owner_name=f"Activity({name})",
@@ -175,6 +181,45 @@ class ActivityParameters(BaseModel):
             default=1.0,
             title="Sink saturation coefficient",
             description="Coefficient scaling sink saturation in activity utility.",
+        ),
+    ]
+
+    destination_soft_capacity_factor: Annotated[
+        NonNegativeFloat,
+        Field(
+            default=1.25,
+            title="Destination soft capacity factor",
+            description=(
+                "Multiplier applied to opportunity capacity before a destination "
+                "shadow price is charged. A value of 1.25 allows occupation up "
+                "to 125 percent of capacity before applying a penalty."
+            ),
+        ),
+    ]
+
+    destination_shadow_price_sensitivity: Annotated[
+        NonNegativeFloat,
+        Field(
+            default=4.0,
+            title="Destination shadow price sensitivity",
+            description=(
+                "Strength of the negative destination shadow price when "
+                "occupation exceeds soft capacity."
+            ),
+        ),
+    ]
+
+    destination_shadow_price_min: Annotated[
+        float,
+        Field(
+            default=-12.0,
+            le=0.0,
+            title="Minimum destination shadow price",
+            description=(
+                "Lower bound for the destination shadow price. This keeps very "
+                "overloaded destinations unattractive without making them "
+                "impossible to sample."
+            ),
         ),
     ]
 

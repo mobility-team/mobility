@@ -18,6 +18,9 @@ class CongestedPathGraph(FileAsset):
             handles_congestion: bool = False,
             congestion_flows_scaling_factor: float = 1.0,
             target_max_vehicles_per_od_endpoint: float = 1000.0,
+            congestion_assignment_max_iterations: int = 10,
+            congestion_assignment_max_gap: float = 0.05,
+            congestion_assignment_retained_volume_share: float = 0.95,
             vehicle_flows: VehicleODFlowsAsset | None = None,
         ):
         
@@ -30,6 +33,9 @@ class CongestedPathGraph(FileAsset):
             "handles_congestion": handles_congestion,
             "congestion_flows_scaling_factor": congestion_flows_scaling_factor,
             "target_max_vehicles_per_od_endpoint": target_max_vehicles_per_od_endpoint,
+            "congestion_assignment_max_iterations": congestion_assignment_max_iterations,
+            "congestion_assignment_max_gap": congestion_assignment_max_gap,
+            "congestion_assignment_retained_volume_share": congestion_assignment_retained_volume_share,
         }
         
         mode_name = modified_graph.mode_name
@@ -66,6 +72,9 @@ class CongestedPathGraph(FileAsset):
             flows_file_path,
             self.inputs["congestion_flows_scaling_factor"],
             self.inputs["target_max_vehicles_per_od_endpoint"],
+            self.inputs["congestion_assignment_max_iterations"],
+            self.inputs["congestion_assignment_max_gap"],
+            self.inputs["congestion_assignment_retained_volume_share"],
         )
 
         return self.cache_path
@@ -78,6 +87,9 @@ class CongestedPathGraph(FileAsset):
             flows_file_path: pathlib.Path,
             congestion_flows_scaling_factor: float,
             target_max_vehicles_per_od_endpoint: float,
+            congestion_assignment_max_iterations: int,
+            congestion_assignment_max_gap: float,
+            congestion_assignment_retained_volume_share: float,
         ) -> None:
          
         script = RScriptRunner(resources.files('mobility.transport.graphs.congested').joinpath('load_path_graph.R'))
@@ -90,6 +102,9 @@ class CongestedPathGraph(FileAsset):
                 str(flows_file_path),
                 str(congestion_flows_scaling_factor),
                 str(target_max_vehicles_per_od_endpoint),
+                str(congestion_assignment_max_iterations),
+                str(congestion_assignment_max_gap),
+                str(congestion_assignment_retained_volume_share),
                 str(self.cache_path)
             ]
         )
@@ -116,6 +131,9 @@ class CongestedPathGraph(FileAsset):
             handles_congestion=self.inputs["handles_congestion"],
             congestion_flows_scaling_factor=self.inputs["congestion_flows_scaling_factor"],
             target_max_vehicles_per_od_endpoint=self.inputs["target_max_vehicles_per_od_endpoint"],
+            congestion_assignment_max_iterations=self.inputs["congestion_assignment_max_iterations"],
+            congestion_assignment_max_gap=self.inputs["congestion_assignment_max_gap"],
+            congestion_assignment_retained_volume_share=self.inputs["congestion_assignment_retained_volume_share"],
         )
 
     def get_for_iteration(self, run, iteration: int):

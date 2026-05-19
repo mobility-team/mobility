@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import polars as pl
 
-from typing import Annotated, List
+from typing import Annotated, Dict, List
 
 from pydantic import Field
 
@@ -20,9 +20,13 @@ class ShopActivity(Activity):
         value_of_time: float = None,
         saturation_fun_ref_level: float = None,
         saturation_fun_beta: float = None,
+        destination_soft_capacity_factor: float = None,
+        destination_shadow_price_sensitivity: float = None,
+        destination_shadow_price_min: float = None,
         survey_ids: List[str] = None,
         radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
+        country_value_coefficients: Dict = None,
         parameters: "ShopParameters" | None = None
     ):
 
@@ -33,8 +37,12 @@ class ShopActivity(Activity):
                 "value_of_time": value_of_time,
                 "saturation_fun_ref_level": saturation_fun_ref_level,
                 "saturation_fun_beta": saturation_fun_beta,
+                "destination_soft_capacity_factor": destination_soft_capacity_factor,
+                "destination_shadow_price_sensitivity": destination_shadow_price_sensitivity,
+                "destination_shadow_price_min": destination_shadow_price_min,
                 "survey_ids": survey_ids,
                 "radiation_lambda": radiation_lambda,
+                "country_value_coefficients": country_value_coefficients,
             },
             owner_name="ShopActivity",
         )
@@ -87,3 +95,7 @@ class ShopParameters(ActivityParameters):
     saturation_fun_beta: Annotated[float, Field(default=4.0, ge=0.0)]
     survey_ids: Annotated[list[str], Field(default_factory=lambda: ["2.20", "2.21"])]
     radiation_lambda: Annotated[UnitIntervalFloat, Field(default=0.99986)]
+    country_value_coefficients: Annotated[
+        dict[str, float],
+        Field(default_factory=lambda: {"fr": 1.0, "ch": 0.9}),
+    ]

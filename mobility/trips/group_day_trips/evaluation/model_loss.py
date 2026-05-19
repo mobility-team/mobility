@@ -4,13 +4,21 @@ import polars as pl
 
 from .calibration_plan_steps import CALIBRATION_PLAN_STEP_COLUMNS
 
+LOSS_GROUP_COLUMNS = ["activity", "distance_bin", "time_bin", "mode"]
+MARGINAL_LOSS_GROUPS = {
+    "activity_loss": ["activity"],
+    "distance_bin_loss": ["distance_bin"],
+    "time_bin_loss": ["time_bin"],
+    "mode_loss": ["mode"],
+}
+
 
 class ModelLoss:
-    """Compare observed and expected calibration marginals for one run.
+    """Compare observed and expected calibration distributions for one run.
 
-    The loss is built from aggregated trip-count, distance, and travel-time
-    marginals over canonical calibration plan steps. It can be used either on
-    the final observed run outputs or on any intermediate plan-step table.
+    The loss is built from the trip-count shares of each canonical calibration
+    step group. Distance and time enter the comparison through their bins, so
+    the loss stays a single, plain distribution over modelled trip states.
     """
 
     def __init__(
@@ -40,14 +48,17 @@ class ModelLoss:
             raise ValueError("No observed calibration plan steps are attached to this ModelLoss instance.")
         return self._aggregate(self.observed_plan_steps.get())
 
-    def comparison(self, plan_steps=None) -> pl.DataFrame:
-        """Return observed-versus-expected marginal comparisons for one plan-step table."""
+    def comparison(self, plan_steps=None, group_columns: list[str] | None = None) -> pl.DataFrame:
+        """Return observed-versus-expected distribution comparisons for one plan-step table."""
         observed = self._aggregate(plan_steps) if plan_steps is not None else self.observed_marginals()
         expected = self.expected_marginals()
+        group_columns = group_columns or LOSS_GROUP_COLUMNS
+        observed = self._collapse_to_group(observed, group_columns)
+        expected = self._collapse_to_group(expected, group_columns)
         return (
             observed.join(
                 expected,
-                on=["activity", "distance_bin", "mode", "metric"],
+                on=[*group_columns, "metric"],
                 how="full",
                 coalesce=True,
                 suffix="_expected",
@@ -57,13 +68,18 @@ class ModelLoss:
                 value_expected=pl.col("value_expected").fill_null(0.0),
             )
             .with_columns(
+                observed_total=pl.col("value").sum().over("metric"),
+                expected_total=pl.col("value_expected").sum().over("metric"),
                 delta=pl.col("value") - pl.col("value_expected"),
                 relative_error=(pl.col("value") - pl.col("value_expected")) / pl.col("value_expected").clip(self.epsilon),
-                squared_error=(pl.col("value") - pl.col("value_expected")).pow(2),
-                metric_scale=pl.col("value_expected").sum().over("metric").clip(self.epsilon),
             )
             .with_columns(
-                normalized_squared_error=pl.col("squared_error") / pl.col("metric_scale").pow(2)
+                observed_share=pl.col("value") / pl.col("observed_total").clip(self.epsilon),
+                expected_share=pl.col("value_expected") / pl.col("expected_total").clip(self.epsilon),
+            )
+            .with_columns(
+                share_delta=pl.col("observed_share") - pl.col("expected_share"),
+                normalized_squared_error=(pl.col("observed_share") - pl.col("expected_share")).pow(2),
             )
             .rename(
                 {
@@ -71,18 +87,18 @@ class ModelLoss:
                     "value_expected": "expected_value",
                 }
             )
-            .sort(["metric", "activity", "distance_bin", "mode"])
+            .sort(["metric", *group_columns])
         )
 
-    def metric_losses(self, plan_steps=None) -> pl.DataFrame:
-        """Summarize normalized loss separately for trip count, distance, and time."""
+    def metric_losses(self, plan_steps=None, group_columns: list[str] | None = None) -> pl.DataFrame:
+        """Summarize the trip-state distribution loss."""
         return (
-            self.comparison(plan_steps=plan_steps)
+            self.comparison(plan_steps=plan_steps, group_columns=group_columns)
             .group_by("metric")
             .agg(
                 loss=pl.col("normalized_squared_error").sum(),
-                observed_total=pl.col("observed_value").sum(),
-                expected_total=pl.col("expected_value").sum(),
+                observed_total=pl.col("observed_total").first(),
+                expected_total=pl.col("expected_total").first(),
             )
             .sort("metric")
         )
@@ -90,6 +106,20 @@ class ModelLoss:
     def total_loss(self, plan_steps=None) -> float:
         """Return the total calibration loss across all component metrics."""
         metric_losses = self.metric_losses(plan_steps=plan_steps)
+        if metric_losses.height == 0:
+            return 0.0
+        return float(metric_losses["loss"].sum())
+
+    def marginal_losses(self, plan_steps=None) -> dict[str, float]:
+        """Return one distribution loss per calibration dimension."""
+        return {
+            loss_name: self.total_loss_for_group(plan_steps=plan_steps, group_columns=group_columns)
+            for loss_name, group_columns in MARGINAL_LOSS_GROUPS.items()
+        }
+
+    def total_loss_for_group(self, *, plan_steps=None, group_columns: list[str]) -> float:
+        """Return the distribution loss after collapsing to one set of columns."""
+        metric_losses = self.metric_losses(plan_steps=plan_steps, group_columns=group_columns)
         if metric_losses.height == 0:
             return 0.0
         return float(metric_losses["loss"].sum())
@@ -104,24 +134,29 @@ class ModelLoss:
         """Return the persisted loss history extracted from iteration diagnostics."""
         if self.history_store is None:
             raise ValueError("No model loss history is attached to this ModelLoss instance.")
-        return self.history_store.get().select(
-            ["iteration", "total_loss", "distance_loss", "n_trips_loss", "time_loss"]
-        )
+        history = self.history_store.get()
+        columns = ["iteration", "total_loss", "activity_loss", "distance_bin_loss", "time_bin_loss", "mode_loss"]
+        if "trip_count_loss" in history.columns:
+            columns.insert(2, "trip_count_loss")
+        return history.select(columns)
 
     def history_row(self, *, iteration: int, plan_steps) -> dict[str, float]:
         """Build one persisted loss-history row for a given iteration state."""
         metric_losses = self.metric_losses(plan_steps=plan_steps)
-        metric_loss_map = {
-            row["metric"]: row["loss"]
-            for row in metric_losses.select(["metric", "loss"]).to_dicts()
-        }
         return {
             "iteration": iteration,
             "total_loss": float(metric_losses["loss"].sum()) if metric_losses.height > 0 else 0.0,
-            "distance_loss": float(metric_loss_map.get("distance", 0.0)),
-            "n_trips_loss": float(metric_loss_map.get("n_trips", 0.0)),
-            "time_loss": float(metric_loss_map.get("time", 0.0)),
+            **self.marginal_losses(plan_steps=plan_steps),
         }
+
+    @staticmethod
+    def _collapse_to_group(marginals: pl.DataFrame, group_columns: list[str]) -> pl.DataFrame:
+        """Collapse full trip-state marginals to one diagnostic grouping."""
+        return (
+            marginals
+            .group_by([*group_columns, "metric"])
+            .agg(value=pl.col("value").sum())
+        )
 
     def _aggregate(self, plan_steps: pl.LazyFrame | pl.DataFrame) -> pl.DataFrame:
         """Aggregate canonical calibration plan steps into loss marginals."""
@@ -136,15 +171,14 @@ class ModelLoss:
             )
         aggregated = (
             plan_steps
-            .group_by(["activity", "distance_bin", "mode"])
+            .filter(pl.col("mode") != "stay_home")
+            .group_by(["activity", "distance_bin", "time_bin", "mode"])
             .agg(
                 n_trips=pl.col("n_persons").sum(),
-                distance=(pl.col("distance") * pl.col("n_persons")).sum(),
-                time=(pl.col("time") * pl.col("n_persons")).sum(),
             )
             .unpivot(
-                index=["activity", "distance_bin", "mode"],
-                on=["n_trips", "distance", "time"],
+                index=["activity", "distance_bin", "time_bin", "mode"],
+                on=["n_trips"],
                 variable_name="metric",
                 value_name="value",
             )
