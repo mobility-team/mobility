@@ -68,10 +68,12 @@ def _make_results_for_metrics() -> RunResults:
         {
             "activity_seq_id": [1, 1],
             "home_zone_id": ["z1", "z1"],
+            "seq_step_index": [1, 2],
             "activity": ["work", "shop"],
             "mode": ["car", "walk"],
             "time": [0.5, 0.25],
             "distance": [5.0, 1.0],
+            "duration": [1.0, 0.25],
             "n_persons": [2.0, 1.0],
         }
     )
@@ -82,8 +84,10 @@ def _make_results_for_metrics() -> RunResults:
             "country": ["fr", "fr"],
             "activity": ["work", "shop"],
             "mode": ["car", "walk"],
+            "seq_step_index": [1, 2],
             "travel_time": [0.5, 0.25],
             "distance": [5.0, 1.0],
+            "duration_per_pers": [0.5, 0.25],
             "n_persons": [2.0, 1.0],
         }
     )
@@ -121,6 +125,80 @@ def test_metrics_aggregate_and_travel_indicators_by_match_reference_when_inputs_
     assert aggregate["delta"].to_list() == pytest.approx([0.0, 0.0, 0.0])
     assert by_mode["delta"].to_list() == pytest.approx([0.0] * by_mode.height)
     assert by_time_bin["delta"].to_list() == pytest.approx([0.0] * by_time_bin.height)
+
+
+def test_activity_duration_distribution_weights_model_and_survey_durations():
+    plan_steps = pl.DataFrame(
+        {
+            "activity_seq_id": [1, 1, 1, 1, 1, 0],
+            "time_seq_id": [10, 10, 10, 10, 10, 0],
+            "home_zone_id": ["z1", "z1", "z1", "z1", "z1", "z1"],
+            "seq_step_index": [1, 1, 2, 3, 4, 0],
+            "activity": ["work", "work", "home", "shop", "home", "home"],
+            "mode": ["car", "car", "walk", "walk", "car", "car"],
+            "duration": [4.0, 4.0, 2.0, 1.0, 20.0, 120.0],
+            "n_persons": [2.0, 1.0, 2.0, 1.0, 2.0, 5.0],
+        }
+    )
+    survey_plan_steps = pl.DataFrame(
+        {
+            "activity_seq_id": [1, 1, 1, 1, 1, 0],
+            "time_seq_id": [10, 10, 10, 10, 10, 0],
+            "home_zone_id": ["z1", "z1", "z1", "z1", "z1", "z1"],
+            "seq_step_index": [1, 1, 2, 3, 4, 0],
+            "activity": ["work", "work", "home", "shop", "home", "home"],
+            "mode": ["car", "car", "walk", "walk", "car", "car"],
+            "duration_per_pers": [2.0, 3.0, 1.0, 1.0, 10.0, 24.0],
+            "n_persons": [1.0, 2.0, 2.0, 3.0, 2.0, 5.0],
+        }
+    )
+    results = _make_results_for_metrics()
+    results.plan_steps = plan_steps.lazy()
+    results.population_weighted_plan_steps = survey_plan_steps.lazy()
+
+    distribution = results.metrics.activity_duration_distribution(bin_width_minutes=60, plot=False)
+
+    work_model = distribution.filter((pl.col("source") == "model") & (pl.col("activity") == "work"))
+    assert work_model["duration_bin_start"].to_list() == pytest.approx([2.0, 4.0])
+    assert work_model["weighted_visits"].to_list() == pytest.approx([2.0, 1.0])
+    assert work_model["probability"].to_list() == pytest.approx([2.0 / 3.0, 1.0 / 3.0])
+
+    probability_sums = distribution.group_by(["source", "activity"]).agg(pl.col("probability").sum())
+    assert probability_sums["probability"].to_list() == pytest.approx([1.0] * probability_sums.height)
+
+    home_model = distribution.filter((pl.col("source") == "model") & (pl.col("activity") == "home"))
+    assert home_model["duration_bin_start"].to_list() == pytest.approx([1.0])
+
+
+def test_activity_duration_distribution_plot_path_uses_activity_facets(monkeypatch):
+    results = _make_results_for_metrics()
+    seen = {}
+
+    class FakeFigure:
+        def update_yaxes(self, **kwargs):
+            seen["yaxes"] = kwargs
+            return self
+
+        def update_xaxes(self, **kwargs):
+            seen["xaxes"] = kwargs
+            return self
+
+        def show(self, renderer):
+            seen["renderer"] = renderer
+
+    def fake_line(data_frame, **kwargs):
+        seen["data_frame"] = data_frame
+        seen["kwargs"] = kwargs
+        return FakeFigure()
+
+    monkeypatch.setattr("mobility.trips.group_day_trips.core.metrics.px.line", fake_line)
+
+    distribution = results.metrics.activity_duration_distribution(plot=True)
+
+    assert not distribution.is_empty()
+    assert seen["kwargs"]["facet_col"] == "activity"
+    assert seen["kwargs"]["color"] == "source"
+    assert seen["renderer"] == "browser"
 
 
 def test_metrics_evaluation_wrappers_pass_run_results(monkeypatch):

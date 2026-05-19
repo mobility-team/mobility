@@ -159,12 +159,12 @@ class TransportZones(FileAsset):
         study_area_fp = self.study_area.cache_path["polygons"]
         osm_buildings_fp = self.osm_buildings.get()
 
-        if self.inputs["parameters"].backend == "r":
-            self.create_transport_zones_with_r(study_area_fp, osm_buildings_fp)
-        elif self.inputs["parameters"].backend == "python":
-            self.create_transport_zones_with_python(study_area_fp, osm_buildings_fp)
-        else:
-            raise ValueError(f"Unknown transport zones backend: {self.inputs['parameters'].backend}")
+        # if self.inputs["parameters"].backend == "r":
+        self.create_transport_zones_with_r(study_area_fp, osm_buildings_fp)
+        # elif self.inputs["parameters"].backend == "python":
+        #     self.create_transport_zones_with_python(study_area_fp, osm_buildings_fp)
+        # else:
+        #     raise ValueError(f"Unknown transport zones backend: {self.inputs['parameters'].backend}")
 
         transport_zones = gpd.read_file(self.cache_path)
 

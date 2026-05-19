@@ -195,6 +195,170 @@ class RunMetrics:
 
         return comparison
 
+    def activity_duration_distribution(
+        self,
+        bin_width_minutes: int = 15,
+        plot: bool = True,
+        inner_zone_residents_only: bool = False,
+    ) -> pl.DataFrame:
+        """Compare weighted activity-duration distributions between model and survey."""
+        if bin_width_minutes <= 0:
+            raise ValueError("bin_width_minutes must be positive.")
+
+        model_plan_steps = self.results.plan_steps
+        survey_plan_steps = self.results.population_weighted_plan_steps
+        if inner_zone_residents_only:
+            model_plan_steps = self._filter_plan_steps_to_inner_zone_residents(model_plan_steps)
+            survey_plan_steps = self._filter_plan_steps_to_inner_zone_residents(survey_plan_steps)
+
+        durations = pl.concat(
+            [
+                self._activity_duration_samples(model_plan_steps, source="model"),
+                self._activity_duration_samples(survey_plan_steps, source="survey"),
+            ],
+            how="vertical_relaxed",
+        )
+        bin_width_hours = bin_width_minutes / 60.0
+
+        distribution = (
+            durations.lazy()
+            .with_columns(
+                duration_bin_start=(pl.col("duration") / bin_width_hours).floor() * bin_width_hours,
+            )
+            .with_columns(
+                duration_bin_end=pl.col("duration_bin_start") + bin_width_hours,
+                duration_bin_mid=pl.col("duration_bin_start") + bin_width_hours / 2.0,
+                duration_label=pl.format(
+                    "{}-{} h",
+                    pl.col("duration_bin_start").round(2),
+                    (pl.col("duration_bin_start") + bin_width_hours).round(2),
+                ),
+            )
+            .group_by(
+                [
+                    "source",
+                    "activity",
+                    "duration_bin_start",
+                    "duration_bin_end",
+                    "duration_bin_mid",
+                    "duration_label",
+                ]
+            )
+            .agg(
+                weighted_visits=pl.col("weight").sum(),
+                person_hours=(pl.col("duration") * pl.col("weight")).sum(),
+            )
+            .with_columns(
+                probability=pl.col("weighted_visits") / pl.col("weighted_visits").sum().over(["source", "activity"])
+            )
+            .sort(["activity", "source", "duration_bin_start"])
+            .collect(engine="streaming")
+        )
+
+        if plot:
+            self._plot_activity_duration_distribution(distribution)
+
+        return distribution
+
+    @staticmethod
+    def _activity_duration_samples(
+        plan_steps: pl.LazyFrame | pl.DataFrame,
+        source: str,
+    ) -> pl.DataFrame:
+        """Extract one weighted activity-duration sample table from plan steps."""
+        if isinstance(plan_steps, pl.DataFrame):
+            plan_steps = plan_steps.lazy()
+
+        column_names = set(plan_steps.collect_schema().names())
+        required_columns = {"activity", "n_persons"}
+        missing_columns = required_columns - column_names
+        if missing_columns:
+            missing = ", ".join(sorted(missing_columns))
+            raise ValueError(f"Plan steps are missing required duration-distribution columns: {missing}.")
+
+        if "duration_per_pers" in column_names:
+            duration_expr = pl.col("duration_per_pers").cast(pl.Float64)
+        elif {"duration", "n_persons"} <= column_names:
+            duration_expr = pl.col("duration").cast(pl.Float64) / pl.col("n_persons").cast(pl.Float64)
+        else:
+            raise ValueError("Plan steps need either duration_per_pers or duration and n_persons.")
+
+        samples = plan_steps.with_columns(
+            source=pl.lit(source),
+            activity=pl.col("activity").cast(pl.String),
+            duration=duration_expr,
+            weight=pl.col("n_persons").cast(pl.Float64),
+        )
+        samples = RunMetrics._filter_terminal_home_steps(samples, column_names)
+
+        return (
+            samples.filter(
+                pl.col("duration").is_not_null()
+                & pl.col("duration").is_finite()
+                & (pl.col("duration") >= 0.0)
+                & pl.col("weight").is_not_null()
+                & pl.col("weight").is_finite()
+                & (pl.col("weight") > 0.0)
+            )
+            .select(["source", "activity", "duration", "weight"])
+            .collect(engine="streaming")
+        )
+
+    @staticmethod
+    def _filter_terminal_home_steps(plan_steps: pl.LazyFrame, column_names: set[str]) -> pl.LazyFrame:
+        """Remove the final home stay and keep home stops reached during the day."""
+        if "seq_step_index" in column_names:
+            plan_key_candidates = [
+                "country",
+                "home_zone_id",
+                "city_category",
+                "csp",
+                "n_cars",
+                "activity_seq_id",
+                "time_seq_id",
+                "dest_seq_id",
+                "mode_seq_id",
+            ]
+            plan_keys = [column for column in plan_key_candidates if column in column_names]
+            if plan_keys:
+                return (
+                    plan_steps.with_columns(
+                        is_terminal_step=pl.col("seq_step_index") == pl.col("seq_step_index").max().over(plan_keys)
+                    )
+                    .filter(~((pl.col("activity") == "home") & pl.col("is_terminal_step")))
+                    .drop("is_terminal_step")
+                )
+
+        if "next_departure_time" in column_names:
+            return plan_steps.filter(~((pl.col("activity") == "home") & (pl.col("next_departure_time") >= 24.0)))
+
+        return plan_steps
+
+    @staticmethod
+    def _plot_activity_duration_distribution(distribution: pl.DataFrame) -> None:
+        """Plot the weighted duration distributions with one panel per activity."""
+        if distribution.is_empty():
+            return
+
+        fig = px.line(
+            distribution.to_pandas(),
+            x="duration_bin_mid",
+            y="probability",
+            color="source",
+            facet_col="activity",
+            facet_col_wrap=3,
+            markers=True,
+            labels={
+                "duration_bin_mid": "activity duration (h)",
+                "probability": "share of weighted visits",
+                "source": "source",
+                "activity": "activity",
+            },
+        )
+        fig.update_yaxes(matches=None, showticklabels=True)
+        fig.update_xaxes(matches=None, showticklabels=True)
+        fig.show("browser")
+
     def immobility(self, plot: bool = True):
         """Compute immobility by country and socio-professional category."""
         surveys_immobility = [
@@ -280,6 +444,7 @@ class RunMetrics:
         interval_minutes: int = 15,
         plot: bool = False,
         inner_zone_residents_only: bool = False,
+        plot_mode: Literal["stacked", "activity_panels"] = "stacked",
     ) -> pl.DataFrame:
         """Aggregate average occupancy by activity and in-transit mode over time bins."""
         observed_time_series = self._add_residual_home_time(
@@ -304,7 +469,10 @@ class RunMetrics:
             ["source", "time_bin_start", "time_label", "label", "n_persons"]
         )
         if plot:
-            self._plot_activity_time_series(time_series)
+            if plot_mode == "stacked":
+                self._plot_activity_time_series(time_series)
+            else:
+                self._plot_activity_time_series(time_series, mode=plot_mode)
 
         return time_series
 
@@ -491,13 +659,16 @@ class RunMetrics:
         self,
         interval_minutes: int = 15,
         inner_zone_residents_only: bool = False,
+        plot_mode: Literal["stacked", "activity_panels"] = "stacked",
     ):
-        """Plot a stacked bar chart of average occupancy by activity and transit mode."""
+        """Plot average occupancy by time of day."""
         time_series = self.activity_time_series(
             interval_minutes=interval_minutes,
             inner_zone_residents_only=inner_zone_residents_only,
         )
-        return self._plot_activity_time_series(time_series)
+        if plot_mode == "stacked":
+            return self._plot_activity_time_series(time_series)
+        return self._plot_activity_time_series(time_series, mode=plot_mode)
 
     def _add_residual_home_time(
         self,
@@ -536,8 +707,14 @@ class RunMetrics:
     def _plot_activity_time_series(
         self,
         time_series: pl.DataFrame,
+        mode: Literal["stacked", "activity_panels"] = "stacked",
     ):
         """Render stacked occupancy charts, with survey on the left when available."""
+        if mode == "activity_panels":
+            return self._plot_activity_time_series_activity_panels(time_series)
+        if mode != "stacked":
+            raise ValueError("mode must be 'stacked' or 'activity_panels'.")
+
         source_titles = {"survey": "Survey", "observed": "Model"}
         available_sources = [source for source in ["survey", "observed"] if source in time_series["source"].unique().to_list()]
         panel_series = [
@@ -595,6 +772,59 @@ class RunMetrics:
         )
         for axis_name in [f"xaxis{suffix}" for suffix in ([""] + [str(index) for index in range(2, len(panel_series) + 1)])]:
             fig.layout[axis_name].update(categoryorder="array", categoryarray=category_orders["time_label"])
+        fig.show("browser")
+        return fig
+
+    def _plot_activity_time_series_activity_panels(self, time_series: pl.DataFrame):
+        """Render one panel per activity, comparing survey and model occupancy."""
+        activity_series = (
+            time_series
+            .filter(~pl.col("label").str.starts_with("in_transit:"))
+            .with_columns(
+                source=(
+                    pl.when(pl.col("source") == "observed")
+                    .then(pl.lit("Model"))
+                    .when(pl.col("source") == "survey")
+                    .then(pl.lit("Survey"))
+                    .otherwise(pl.col("source"))
+                ),
+                label=pl.col("label").cast(pl.String),
+            )
+            .sort(["label", "source", "time_bin_start"])
+        )
+        if activity_series.is_empty():
+            return None
+
+        time_labels = (
+            time_series
+            .select(["time_bin_start", "time_label"])
+            .unique()
+            .sort("time_bin_start")
+            .get_column("time_label")
+            .to_list()
+        )
+
+        fig = px.line(
+            activity_series.to_pandas(),
+            x="time_label",
+            y="n_persons",
+            color="source",
+            facet_col="label",
+            facet_col_wrap=3,
+            facet_col_spacing=0.06,
+            facet_row_spacing=0.12,
+            markers=True,
+            category_orders={"time_label": time_labels, "source": ["Survey", "Model"]},
+            labels={
+                "time_label": "Time of day",
+                "n_persons": "Average persons in bin",
+                "source": "source",
+                "label": "activity",
+            },
+            title=f"Average occupancy by activity on {self.results.period}",
+        )
+        fig.update_yaxes(matches=None, showticklabels=True)
+        fig.update_xaxes(matches=None, showticklabels=True, categoryorder="array", categoryarray=time_labels)
         fig.show("browser")
         return fig
 
