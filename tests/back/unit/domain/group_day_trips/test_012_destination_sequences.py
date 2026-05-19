@@ -313,7 +313,7 @@ def test_destination_probability_inputs_use_shadow_attraction_when_enabled(tmp_p
             "activity": ["work", "work"],
             "opportunity_capacity": [100.0, 100.0],
             "k_saturation_utility": [1.0, 1.0],
-            "shadow_attraction_factor": [1.0, 0.5],
+            "destination_sampling_attraction_factor": [1.0, 0.5],
         }
     ).with_columns(activity=pl.col("activity").cast(pl.Enum(["work"])))
     costs = pl.DataFrame(

@@ -389,8 +389,11 @@ class DestinationSequences(FileAsset):
             getattr(self.parameters, "use_destination_shadow_prices", False)
         )
         opportunities_columns = set(opportunities.columns)
-        if use_shadow_prices and "shadow_attraction_factor" in opportunities_columns:
-            sink_factor = pl.col("shadow_attraction_factor").fill_null(1.0)
+        if (
+            use_shadow_prices
+            and "destination_sampling_attraction_factor" in opportunities_columns
+        ):
+            sink_factor = pl.col("destination_sampling_attraction_factor").fill_null(1.0)
         elif "k_saturation_utility" in opportunities_columns:
             sink_factor = pl.col("k_saturation_utility").fill_null(1.0)
         else:

@@ -32,8 +32,10 @@ class Activity(InMemoryAsset):
             country_value_coefficients: Dict = None,
             sink_saturation_coeff: float = None,
             destination_soft_capacity_factor: float = None,
-            destination_shadow_price_sensitivity: float = None,
-            destination_shadow_price_min: float = None,
+            destination_shadow_price_sensitivity_coefficient: float = None,
+            destination_shadow_price_min_coefficient: float = None,
+            destination_sampling_overload_gamma: float = None,
+            destination_sampling_min_attraction_factor: float = None,
             extra_inputs: dict | None = None,
             parameters: "ActivityParameters" | None = None,
         ):
@@ -51,8 +53,18 @@ class Activity(InMemoryAsset):
                 "country_value_coefficients": country_value_coefficients,
                 "sink_saturation_coeff": sink_saturation_coeff,
                 "destination_soft_capacity_factor": destination_soft_capacity_factor,
-                "destination_shadow_price_sensitivity": destination_shadow_price_sensitivity,
-                "destination_shadow_price_min": destination_shadow_price_min,
+                "destination_shadow_price_sensitivity_coefficient": (
+                    destination_shadow_price_sensitivity_coefficient
+                ),
+                "destination_shadow_price_min_coefficient": (
+                    destination_shadow_price_min_coefficient
+                ),
+                "destination_sampling_overload_gamma": (
+                    destination_sampling_overload_gamma
+                ),
+                "destination_sampling_min_attraction_factor": (
+                    destination_sampling_min_attraction_factor
+                ),
             },
             required_fields=["value_of_time", "saturation_fun_ref_level", "saturation_fun_beta"],
             owner_name=f"Activity({name})",
@@ -187,7 +199,7 @@ class ActivityParameters(BaseModel):
     destination_soft_capacity_factor: Annotated[
         NonNegativeFloat,
         Field(
-            default=1.25,
+            default=1.0,
             title="Destination soft capacity factor",
             description=(
                 "Multiplier applied to opportunity capacity before a destination "
@@ -197,28 +209,51 @@ class ActivityParameters(BaseModel):
         ),
     ]
 
-    destination_shadow_price_sensitivity: Annotated[
+    destination_shadow_price_sensitivity_coefficient: Annotated[
         NonNegativeFloat,
         Field(
-            default=4.0,
-            title="Destination shadow price sensitivity",
+            default=1.0,
+            title="Destination shadow price sensitivity coefficient",
             description=(
-                "Strength of the negative destination shadow price when "
-                "occupation exceeds soft capacity."
+                "Coefficient applied to the activity value of time to compute "
+                "the default destination shadow price sensitivity."
             ),
         ),
     ]
 
-    destination_shadow_price_min: Annotated[
+    destination_shadow_price_min_coefficient: Annotated[
         float,
         Field(
-            default=-12.0,
+            default=-2.0,
             le=0.0,
-            title="Minimum destination shadow price",
+            title="Destination shadow price floor coefficient",
             description=(
-                "Lower bound for the destination shadow price. This keeps very "
-                "overloaded destinations unattractive without making them "
-                "impossible to sample."
+                "Coefficient applied to the activity value of time to compute "
+                "the default lower bound for the destination shadow price."
+            ),
+        ),
+    ]
+
+    destination_sampling_overload_gamma: Annotated[
+        NonNegativeFloat,
+        Field(
+            default=1.5,
+            title="Destination sampling overload gamma",
+            description=(
+                "Shape of the overload penalty applied to destination "
+                "opportunities during destination sampling."
+            ),
+        ),
+    ]
+
+    destination_sampling_min_attraction_factor: Annotated[
+        UnitIntervalFloat,
+        Field(
+            default=0.05,
+            title="Destination sampling minimum attraction factor",
+            description=(
+                "Lower bound for the destination sampling attraction factor "
+                "when a destination is overloaded."
             ),
         ),
     ]

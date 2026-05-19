@@ -376,6 +376,12 @@ class PlanInitializer:
                     destination_soft_capacity_factor=pl.lit(
                         activity.inputs["parameters"].destination_soft_capacity_factor
                     ),
+                    destination_sampling_overload_gamma=pl.lit(
+                        activity.inputs["parameters"].destination_sampling_overload_gamma
+                    ),
+                    destination_sampling_min_attraction_factor=pl.lit(
+                        activity.inputs["parameters"].destination_sampling_min_attraction_factor
+                    ),
                 )
                     for activity in activities
                     if activity.has_opportunities is True
@@ -397,7 +403,7 @@ class PlanInitializer:
                 capacity_ratio=pl.lit(0.0, dtype=pl.Float64()),
                 k_saturation_utility=pl.lit(1.0, dtype=pl.Float64()),
                 destination_shadow_price=pl.lit(0.0, dtype=pl.Float64()),
-                shadow_attraction_factor=pl.lit(1.0, dtype=pl.Float64()),
+                destination_sampling_attraction_factor=pl.lit(1.0, dtype=pl.Float64()),
             )
             .select([
                 "to",
@@ -406,9 +412,11 @@ class PlanInitializer:
                 "opportunity_occupation",
                 "capacity_ratio",
                 "destination_soft_capacity_factor",
+                "destination_sampling_overload_gamma",
+                "destination_sampling_min_attraction_factor",
                 "k_saturation_utility",
                 "destination_shadow_price",
-                "shadow_attraction_factor",
+                "destination_sampling_attraction_factor",
             ])
         )
 

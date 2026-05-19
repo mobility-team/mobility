@@ -86,7 +86,9 @@ def test_008e_group_day_trips_can_resume_from_saved_iteration(test_data):
         "destination_soft_capacity_factor",
         "k_saturation_utility",
         "destination_shadow_price",
-        "shadow_attraction_factor",
+        "destination_sampling_overload_gamma",
+        "destination_sampling_min_attraction_factor",
+        "destination_sampling_attraction_factor",
     ]
 
     resumed_pop_trips = _build_group_day_trips(test_data)

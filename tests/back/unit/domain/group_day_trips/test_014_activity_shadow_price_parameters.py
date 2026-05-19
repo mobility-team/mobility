@@ -25,12 +25,16 @@ def test_non_home_activities_expose_destination_shadow_price_parameters(activity
     activity = activity_cls(
         opportunities=opportunities,
         destination_soft_capacity_factor=1.5,
-        destination_shadow_price_sensitivity=2.0,
-        destination_shadow_price_min=-8.0,
+        destination_shadow_price_sensitivity_coefficient=0.7,
+        destination_shadow_price_min_coefficient=-1.2,
+        destination_sampling_overload_gamma=1.8,
+        destination_sampling_min_attraction_factor=0.03,
     )
 
     parameters = activity.inputs["parameters"]
 
     assert parameters.destination_soft_capacity_factor == 1.5
-    assert parameters.destination_shadow_price_sensitivity == 2.0
-    assert parameters.destination_shadow_price_min == -8.0
+    assert parameters.destination_shadow_price_sensitivity_coefficient == 0.7
+    assert parameters.destination_shadow_price_min_coefficient == -1.2
+    assert parameters.destination_sampling_overload_gamma == 1.8
+    assert parameters.destination_sampling_min_attraction_factor == 0.03

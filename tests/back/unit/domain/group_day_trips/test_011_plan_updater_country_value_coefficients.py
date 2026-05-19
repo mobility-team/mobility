@@ -204,11 +204,14 @@ def test_destination_saturation_computes_shadow_price_above_soft_capacity():
     ).with_columns(activity=pl.col("activity").cast(pl.Enum(["work"])))
     resolved_activity_parameters = {
         "work": SimpleNamespace(
+            value_of_time=10.0,
             saturation_fun_beta=4.0,
             saturation_fun_ref_level=1.5,
             destination_soft_capacity_factor=1.25,
-            destination_shadow_price_sensitivity=1.0,
-            destination_shadow_price_min=-5.0,
+            destination_shadow_price_sensitivity_coefficient=0.1,
+            destination_shadow_price_min_coefficient=-0.5,
+            destination_sampling_overload_gamma=1.0,
+            destination_sampling_min_attraction_factor=0.05,
         )
     }
 
@@ -223,9 +226,9 @@ def test_destination_saturation_computes_shadow_price_above_soft_capacity():
 
     assert overloaded["capacity_ratio"] == pytest.approx(2.5)
     assert overloaded["destination_shadow_price"] == pytest.approx(-math.log(2.0))
-    assert overloaded["shadow_attraction_factor"] == pytest.approx(0.5)
+    assert overloaded["destination_sampling_attraction_factor"] == pytest.approx(0.5)
     assert below_soft_capacity["destination_shadow_price"] == pytest.approx(0.0)
-    assert below_soft_capacity["shadow_attraction_factor"] == pytest.approx(1.0)
+    assert below_soft_capacity["destination_sampling_attraction_factor"] == pytest.approx(1.0)
 
 
 def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):

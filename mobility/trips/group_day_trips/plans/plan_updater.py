@@ -1142,10 +1142,18 @@ class PlanUpdater:
                             activity_parameters.destination_soft_capacity_factor
                         ),
                         "destination_shadow_price_sensitivity": (
-                            activity_parameters.destination_shadow_price_sensitivity
+                            activity_parameters.destination_shadow_price_sensitivity_coefficient
+                            * activity_parameters.value_of_time
                         ),
                         "destination_shadow_price_min": (
-                            activity_parameters.destination_shadow_price_min
+                            activity_parameters.destination_shadow_price_min_coefficient
+                            * activity_parameters.value_of_time
+                        ),
+                        "destination_sampling_overload_gamma": (
+                            activity_parameters.destination_sampling_overload_gamma
+                        ),
+                        "destination_sampling_min_attraction_factor": (
+                            activity_parameters.destination_sampling_min_attraction_factor
                         ),
                     }
                     for activity_name, activity_parameters in resolved_activity_parameters.items()
@@ -1191,7 +1199,16 @@ class PlanUpdater:
                 )
             )
             .with_columns(
-                shadow_attraction_factor=pl.col("destination_shadow_price").exp()
+                destination_sampling_attraction_factor=(
+                    pl.when(pl.col("overload") <= 1.0)
+                    .then(1.0)
+                    .otherwise(
+                        pl.col("overload").pow(
+                            -pl.col("destination_sampling_overload_gamma")
+                        )
+                    )
+                    .clip(pl.col("destination_sampling_min_attraction_factor"), 1.0)
+                )
             )
             .select([
                 "activity",
@@ -1202,7 +1219,9 @@ class PlanUpdater:
                 "destination_soft_capacity_factor",
                 "k_saturation_utility",
                 "destination_shadow_price",
-                "shadow_attraction_factor",
+                "destination_sampling_overload_gamma",
+                "destination_sampling_min_attraction_factor",
+                "destination_sampling_attraction_factor",
             ])
         )
 
@@ -1217,8 +1236,22 @@ class PlanUpdater:
             expressions.append(pl.lit(1.0, dtype=pl.Float64).alias("k_saturation_utility"))
         if "destination_shadow_price" not in columns:
             expressions.append(pl.lit(0.0, dtype=pl.Float64).alias("destination_shadow_price"))
-        if "shadow_attraction_factor" not in columns:
-            expressions.append(pl.lit(1.0, dtype=pl.Float64).alias("shadow_attraction_factor"))
+        if "destination_sampling_overload_gamma" not in columns:
+            expressions.append(
+                pl.lit(1.5, dtype=pl.Float64).alias("destination_sampling_overload_gamma")
+            )
+        if "destination_sampling_min_attraction_factor" not in columns:
+            expressions.append(
+                pl.lit(0.05, dtype=pl.Float64).alias(
+                    "destination_sampling_min_attraction_factor"
+                )
+            )
+        if "destination_sampling_attraction_factor" not in columns:
+            expressions.append(
+                pl.lit(1.0, dtype=pl.Float64).alias(
+                    "destination_sampling_attraction_factor"
+                )
+            )
         if "opportunity_occupation" not in columns:
             expressions.append(pl.lit(0.0, dtype=pl.Float64).alias("opportunity_occupation"))
         if "capacity_ratio" not in columns:
