@@ -33,6 +33,9 @@ class CarMode(TransportMode):
         congestion: bool | None = None,
         congestion_flows_scaling_factor: float = 0.1,
         target_max_vehicles_per_od_endpoint: float | None = None,
+        congestion_assignment_max_iterations: int | None = None,
+        congestion_assignment_max_gap: float | None = None,
+        congestion_assignment_retained_volume_share: float | None = None,
         speed_modifiers: List[SpeedModifier] = [],
         survey_ids: List[str] | None = None,
         ghg_intensity: float | None = None,
@@ -52,6 +55,9 @@ class CarMode(TransportMode):
                 "return_mode": None,
                 "survey_ids": survey_ids,
                 "target_max_vehicles_per_od_endpoint": target_max_vehicles_per_od_endpoint,
+                "congestion_assignment_max_iterations": congestion_assignment_max_iterations,
+                "congestion_assignment_max_gap": congestion_assignment_max_gap,
+                "congestion_assignment_retained_volume_share": congestion_assignment_retained_volume_share,
             },
             owner_name="CarMode",
         )
@@ -82,6 +88,9 @@ class CarMode(TransportMode):
             congestion=mode_congestion,
             congestion_flows_scaling_factor=congestion_flows_scaling_factor,
             target_max_vehicles_per_od_endpoint=mode_target_max_vehicles_per_od_endpoint,
+            congestion_assignment_max_iterations=mode_parameters.congestion_assignment_max_iterations,
+            congestion_assignment_max_gap=mode_parameters.congestion_assignment_max_gap,
+            congestion_assignment_retained_volume_share=mode_parameters.congestion_assignment_retained_volume_share,
             speed_modifiers=speed_modifiers,
         )
         
@@ -132,6 +141,35 @@ class CarParameters(TransportModeParameters):
             "representative origin/destination points before congestion assignment."
         ),
         json_schema_extra={"unit": "veh"},
+    )
+    congestion_assignment_max_iterations: int = Field(
+        default=10,
+        ge=1,
+        title="Traffic assignment maximum iterations",
+        description=(
+            "Maximum number of route-assignment iterations used when loading "
+            "car traffic on the road graph."
+        ),
+    )
+    congestion_assignment_max_gap: float = Field(
+        default=0.05,
+        gt=0.0,
+        title="Traffic assignment maximum gap",
+        description=(
+            "Convergence gap used to stop traffic assignment early. Higher "
+            "values are faster and rougher."
+        ),
+    )
+    congestion_assignment_retained_volume_share: float = Field(
+        default=0.95,
+        gt=0.0,
+        le=1.0,
+        title="Traffic assignment retained volume share",
+        description=(
+            "Share of the largest disaggregated vertex-pair vehicle flows kept "
+            "before traffic assignment. Dropped demand is redistributed by "
+            "rescaling the retained flows."
+        ),
     )
     vehicle: Literal["car"] = "car"
     multimodal: bool = False
