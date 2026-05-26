@@ -50,6 +50,9 @@ class PathTravelCosts(TravelCostsAsset):
             congestion: bool = False,
             congestion_flows_scaling_factor: float = 1.0,
             target_max_vehicles_per_od_endpoint: float = 1000.0,
+            congestion_assignment_max_iterations: int = 10,
+            congestion_assignment_max_gap: float = 0.05,
+            congestion_assignment_retained_volume_share: float = 0.95,
             speed_modifiers: List[SpeedModifier] = [],
             contracted_graph: ContractedPathGraph | None = None,
         ):
@@ -69,6 +72,9 @@ class PathTravelCosts(TravelCostsAsset):
                 congestion,
                 congestion_flows_scaling_factor,
                 target_max_vehicles_per_od_endpoint,
+                congestion_assignment_max_iterations,
+                congestion_assignment_max_gap,
+                congestion_assignment_retained_volume_share,
                 speed_modifiers
             )
             simplified_path_graph = path_graph.simplified
@@ -92,6 +98,9 @@ class PathTravelCosts(TravelCostsAsset):
             "routing_parameters": routing_parameters,
             "osm_capacity_parameters": osm_capacity_parameters,
             "target_max_vehicles_per_od_endpoint": target_max_vehicles_per_od_endpoint,
+            "congestion_assignment_max_iterations": congestion_assignment_max_iterations,
+            "congestion_assignment_max_gap": congestion_assignment_max_gap,
+            "congestion_assignment_retained_volume_share": congestion_assignment_retained_volume_share,
         }
 
         cache_path = {
@@ -242,6 +251,9 @@ class PathTravelCosts(TravelCostsAsset):
             handles_congestion=self.inputs["congested_path_graph"].handles_congestion,
             congestion_flows_scaling_factor=self.inputs["congested_path_graph"].congestion_flows_scaling_factor,
             target_max_vehicles_per_od_endpoint=self.inputs["congested_path_graph"].target_max_vehicles_per_od_endpoint,
+            congestion_assignment_max_iterations=self.inputs["congested_path_graph"].congestion_assignment_max_iterations,
+            congestion_assignment_max_gap=self.inputs["congested_path_graph"].congestion_assignment_max_gap,
+            congestion_assignment_retained_volume_share=self.inputs["congested_path_graph"].congestion_assignment_retained_volume_share,
             vehicle_flows=flow_asset,
         )
         contracted_graph = ContractedPathGraph(congested_graph)
@@ -252,6 +264,9 @@ class PathTravelCosts(TravelCostsAsset):
             routing_parameters=self.inputs["routing_parameters"],
             osm_capacity_parameters=self.inputs["osm_capacity_parameters"],
             target_max_vehicles_per_od_endpoint=self.inputs["target_max_vehicles_per_od_endpoint"],
+            congestion_assignment_max_iterations=self.inputs["congestion_assignment_max_iterations"],
+            congestion_assignment_max_gap=self.inputs["congestion_assignment_max_gap"],
+            congestion_assignment_retained_volume_share=self.inputs["congestion_assignment_retained_volume_share"],
             contracted_graph=contracted_graph,
         )
         return variant

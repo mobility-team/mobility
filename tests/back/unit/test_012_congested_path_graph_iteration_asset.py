@@ -46,6 +46,9 @@ def test_congested_graph_iteration_asset_resolves_latest_active_refresh(monkeypa
         handles_congestion=True,
         congestion_flows_scaling_factor=0.5,
         target_max_vehicles_per_od_endpoint=1234.0,
+        congestion_assignment_max_iterations=3,
+        congestion_assignment_max_gap=0.2,
+        congestion_assignment_retained_volume_share=0.9,
     )
     run = SimpleNamespace(
         inputs_hash="run-key",
@@ -64,3 +67,6 @@ def test_congested_graph_iteration_asset_resolves_latest_active_refresh(monkeypa
     assert iter_graph.inputs["vehicle_flows"] is not None
     assert iter_graph.inputs["vehicle_flows"].cache_path == flow_asset.cache_path
     assert iter_graph.inputs["target_max_vehicles_per_od_endpoint"] == 1234.0
+    assert iter_graph.inputs["congestion_assignment_max_iterations"] == 3
+    assert iter_graph.inputs["congestion_assignment_max_gap"] == 0.2
+    assert iter_graph.inputs["congestion_assignment_retained_volume_share"] == 0.9

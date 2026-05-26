@@ -21,6 +21,9 @@ class PathGraph:
         congestion: bool = False,
         congestion_flows_scaling_factor: float = 1.0,
         target_max_vehicles_per_od_endpoint: float = 1000.0,
+        congestion_assignment_max_iterations: int = 10,
+        congestion_assignment_max_gap: float = 0.05,
+        congestion_assignment_retained_volume_share: float = 0.95,
         speed_modifiers: List[SpeedModifier] = []
     ):
         
@@ -40,7 +43,10 @@ class PathGraph:
             transport_zones,
             congestion,
             congestion_flows_scaling_factor,
-            target_max_vehicles_per_od_endpoint
+            target_max_vehicles_per_od_endpoint,
+            congestion_assignment_max_iterations,
+            congestion_assignment_max_gap,
+            congestion_assignment_retained_volume_share
         )
         
         self.contracted = ContractedPathGraph(

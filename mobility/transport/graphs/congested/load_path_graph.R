@@ -17,6 +17,9 @@ args <- commandArgs(trailingOnly = TRUE)
 #   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\simplified\\flows.parquet',
 #   '0.1',
 #   '1000.0',
+#   '10',
+#   '0.05',
+#   '0.95',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_car\\congested\\7e5144cf3db620565c9a9797be8a6df0-car-congested-path-graph'
 # )
 
@@ -27,7 +30,10 @@ congestion <- args[4]
 flows_fp <- args[5]
 congestion_flows_scaling_factor <- args[6]
 target_max_vehicles_per_od_endpoint <- args[7]
-output_fp <- args[8]
+congestion_assignment_max_iterations <- args[8]
+congestion_assignment_max_gap <- args[9]
+congestion_assignment_retained_volume_share <- args[10]
+output_fp <- args[11]
 
 
 source(file.path(package_fp, "transport", "graphs", "core", "cpprouting_io.R"))
@@ -38,6 +44,23 @@ logger <- logger(appenders = console_appender())
 congestion <- as.logical(congestion)
 congestion_flows_scaling_factor <- as.numeric(congestion_flows_scaling_factor)
 target_max_vehicles_per_od_endpoint <- as.numeric(target_max_vehicles_per_od_endpoint)
+congestion_assignment_max_iterations <- as.integer(congestion_assignment_max_iterations)
+congestion_assignment_max_gap <- as.numeric(congestion_assignment_max_gap)
+congestion_assignment_retained_volume_share <- as.numeric(congestion_assignment_retained_volume_share)
+
+if (is.na(congestion_assignment_max_iterations) || congestion_assignment_max_iterations < 1) {
+  stop("congestion_assignment_max_iterations must be an integer greater than or equal to 1.")
+}
+if (is.na(congestion_assignment_max_gap) || congestion_assignment_max_gap <= 0) {
+  stop("congestion_assignment_max_gap must be greater than 0.")
+}
+if (
+  is.na(congestion_assignment_retained_volume_share) ||
+  congestion_assignment_retained_volume_share <= 0 ||
+  congestion_assignment_retained_volume_share > 1
+) {
+  stop("congestion_assignment_retained_volume_share must be greater than 0 and less than or equal to 1.")
+}
 
 # Load the cpprouting graph
 info(logger, "Loading simplified/modified graph...")
@@ -107,17 +130,19 @@ if (congestion == TRUE & file.exists(flows_fp)) {
   od_flows[, vehicle_volume := vehicle_volume*weight]
   info(logger, paste0("Expanded OD flows to ", format(nrow(od_flows), big.mark = ","), " weighted vertex-flow rows."))
   
-  # Retain only the largest flows accounting for 95 % of the total volume
+  # Retain only the largest flows accounting for the requested total-volume share
   # and upscale them to match the total volume
   info(logger, "Sorting vertex-flow rows by decreasing vehicle volume...")
   od_flows <- od_flows[order(-vehicle_volume)]
   info(logger, "Computing cumulative vehicle volume shares...")
   od_flows[, cum_share := cumsum(vehicle_volume)/sum(vehicle_volume)]
-  info(logger, "Filtering vertex-flow rows to retain the top 95% of total volume...")
-  od_flows <- od_flows[cum_share < 0.95]
-  info(logger, "Rescaling retained vehicle volumes after 95% filtering...")
-  od_flows[, vehicle_volume := vehicle_volume/0.95*congestion_flows_scaling_factor]
-  info(logger, paste0("Retained ", format(nrow(od_flows), big.mark = ","), " vertex-flow rows after 95% volume filtering."))
+  info(logger, paste0("Filtering vertex-flow rows to retain the top ", congestion_assignment_retained_volume_share * 100, "% of total volume..."))
+  od_flows[, flow_rank := .I]
+  od_flows <- od_flows[cum_share <= congestion_assignment_retained_volume_share | flow_rank == 1]
+  info(logger, "Rescaling retained vehicle volumes after volume-share filtering...")
+  od_flows[, vehicle_volume := vehicle_volume/congestion_assignment_retained_volume_share*congestion_flows_scaling_factor]
+  od_flows[, flow_rank := NULL]
+  info(logger, paste0("Retained ", format(nrow(od_flows), big.mark = ","), " vertex-flow rows after volume-share filtering."))
   
   # Assign traffic 
   info(logger, "Assigning traffic...")
@@ -129,8 +154,8 @@ if (congestion == TRUE & file.exists(flows_fp)) {
     demand = od_flows$vehicle_volume,
     algorithm = "cfw",
     aon_method = "cbi",
-    max_gap = 0.05,
-    max_it = 10,
+    max_gap = congestion_assignment_max_gap,
+    max_it = congestion_assignment_max_iterations,
     verbose = TRUE
   )
   
