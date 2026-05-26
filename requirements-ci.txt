@@ -79,6 +79,8 @@ logistro==2.0.1
     # via
     #   choreographer
     #   kaleido
+mapclassify==2.10.0
+    # via mobility (pyproject.toml)
 markdown-it-py==3.0.0
     # via
     #   mdit-py-plugins
@@ -105,13 +107,16 @@ myst-parser==4.0.1
 narwhals==2.18.0
     # via plotly
 networkx==3.6.1
-    # via mobility (pyproject.toml)
+    # via
+    #   mobility (pyproject.toml)
+    #   mapclassify
 numpy==2.4.3
     # via
     #   mobility (pyproject.toml)
     #   contourpy
     #   folium
     #   geopandas
+    #   mapclassify
     #   matplotlib
     #   pandas
     #   pyogrio
@@ -137,6 +142,7 @@ pandas==3.0.1
     #   mobility (pyproject.toml)
     #   geopandas
     #   gtfs-kit
+    #   mapclassify
     #   seaborn
 pillow==12.1.1
     # via matplotlib
@@ -224,10 +230,13 @@ roman-numerals-py==4.1.0
 rtree==1.4.1
     # via gtfs-kit
 scikit-learn==1.8.0
-    # via mobility (pyproject.toml)
+    # via
+    #   mobility (pyproject.toml)
+    #   mapclassify
 scipy==1.17.1
     # via
     #   mobility (pyproject.toml)
+    #   mapclassify
     #   scikit-learn
 seaborn==0.13.2
     # via mobility (pyproject.toml)
