@@ -15,6 +15,7 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.spatial.study_area import StudyArea, StudyAreaParameters
 from mobility.spatial.osm import OSMData
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
+from mobility.spatial.prepare_transport_zones import prepare_transport_zones
 
 class TransportZones(FileAsset):
     """
@@ -26,7 +27,8 @@ class TransportZones(FileAsset):
     The transport zone is based on either a list of local admin units ids
     or one local admin unit id and a radius within which all local admin unit ids should be included.
 
-    It uses the R script 'prepare_transport_zones' to do so.
+    It uses either the reference R backend or the experimental Python backend
+    to create the transport zones.
 
     Parameters
     ----------
@@ -43,6 +45,10 @@ class TransportZones(FileAsset):
             
     radius : float, default=40.0
         Local admin units within this radius (in km) of the center admin unit will be included.
+    backend : {"r", "python"}, default="r"
+        Backend used to create transport zones. The Python backend follows the
+        same building clustering and Voronoi method, but its results are not
+        exactly identical to the R backend.
 
     Methods
     -------
@@ -60,6 +66,8 @@ class TransportZones(FileAsset):
             radius: float | None = None,
             inner_radius: float | None = None,
             inner_local_admin_unit_id: List[str] | None = None,
+            backend: Literal["r", "python"] | None = None,
+            backend_workers: int | None = None,
             cutout_geometries: gpd.GeoDataFrame = None,
             parameters: "TransportZonesParameters" | None = None,
         ):
@@ -73,6 +81,8 @@ class TransportZones(FileAsset):
                 "radius": radius,
                 "inner_radius": inner_radius,
                 "inner_local_admin_unit_id": inner_local_admin_unit_id,
+                "backend": backend,
+                "backend_workers": backend_workers,
             },
             required_fields=["local_admin_unit_id"],
             owner_name="TransportZones",
@@ -136,7 +146,7 @@ class TransportZones(FileAsset):
         """
         Create and retrieve transport zones with the given inputs.
         
-        It uses the R script 'prepare_transport_zones' to do so.
+        It uses the selected transport zone backend to do so.
 
         Returns
         -------
@@ -148,7 +158,45 @@ class TransportZones(FileAsset):
         
         study_area_fp = self.study_area.cache_path["polygons"]
         osm_buildings_fp = self.osm_buildings.get()
-        
+
+        if self.inputs["parameters"].backend == "r":
+            self.create_transport_zones_with_r(study_area_fp, osm_buildings_fp)
+        elif self.inputs["parameters"].backend == "python":
+            self.create_transport_zones_with_python(study_area_fp, osm_buildings_fp)
+        else:
+            raise ValueError(f"Unknown transport zones backend: {self.inputs['parameters'].backend}")
+
+        transport_zones = gpd.read_file(self.cache_path)
+
+        # Remove transport zones that are not adjacent to at least another one
+        # (= filter "islands" that were selected but are not connected to the
+        # study area)
+        transport_zones = self.remove_isolated_zones(transport_zones)
+
+        # Set inner / outer flag
+        local_admin_unit_id = self.inputs["parameters"].local_admin_unit_id
+        inner_radius = self.inputs["parameters"].inner_radius
+        inner_local_admin_unit_id = self.inputs["parameters"].inner_local_admin_unit_id
+
+        transport_zones = self.flag_inner_zones(
+            transport_zones,
+            local_admin_unit_id,
+            inner_radius,
+            inner_local_admin_unit_id
+        )
+
+        # Cut the transport zones
+        transport_zones = self.apply_cutout(
+            transport_zones,
+            self.inputs["cutout_geometries"]
+        )
+
+        transport_zones.to_file(self.cache_path)
+
+        return transport_zones
+
+    def create_transport_zones_with_r(self, study_area_fp, osm_buildings_fp):
+        """Create raw transport zones with the reference R backend."""
         script = RScriptRunner(resources.files('mobility.spatial').joinpath('prepare_transport_zones.R'))
         script.run(
             args=[
@@ -158,35 +206,16 @@ class TransportZones(FileAsset):
                 str(self.cache_path)
             ]
         )
-        
-        transport_zones = gpd.read_file(self.cache_path)
-        
-        # Remove transport zones that are not adjacent to at least another one
-        # (= filter "islands" that were selected but are not connected to the 
-        # study area)
-        transport_zones = self.remove_isolated_zones(transport_zones)
-        
-        # Set inner / outer flag
-        local_admin_unit_id = self.inputs["parameters"].local_admin_unit_id
-        inner_radius = self.inputs["parameters"].inner_radius
-        inner_local_admin_unit_id = self.inputs["parameters"].inner_local_admin_unit_id
-        
-        transport_zones = self.flag_inner_zones(
-            transport_zones,
-            local_admin_unit_id,
-            inner_radius,
-            inner_local_admin_unit_id
+
+    def create_transport_zones_with_python(self, study_area_fp, osm_buildings_fp):
+        """Create raw transport zones with the experimental Python backend."""
+        prepare_transport_zones(
+            study_area_fp=study_area_fp,
+            osm_buildings_fp=osm_buildings_fp,
+            level_of_detail=self.inputs["parameters"].level_of_detail,
+            output_fp=self.cache_path,
+            max_workers=self.inputs["parameters"].backend_workers,
         )
-        
-        # Cut the transport zones 
-        transport_zones = self.apply_cutout(
-            transport_zones,
-            self.inputs["cutout_geometries"]
-        )
-        
-        transport_zones.to_file(self.cache_path)
-        
-        return transport_zones
     
     
     def remove_isolated_zones(self, transport_zones):
@@ -282,6 +311,33 @@ class TransportZonesParameters(BaseModel):
             description=(
                 "Whether local admin units will be split into subzones "
                 "(level of detail = 1), according to their building footprint density."
+            ),
+        ),
+    ]
+
+    backend: Annotated[
+        Literal["r", "python"],
+        Field(
+            default="r",
+            title="Transport zones backend",
+            description=(
+                "Backend used to create transport zones. The R backend is the "
+                "reference. The Python backend is experimental and follows the "
+                "same building-clustering and Voronoi method."
+            ),
+        ),
+    ]
+
+    backend_workers: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            title="Transport zones backend workers",
+            description=(
+                "Number of workers used by the Python backend. If omitted, "
+                "the Python backend chooses a conservative default. This "
+                "setting is ignored by the R backend."
             ),
         ),
     ]
