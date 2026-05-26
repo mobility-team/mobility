@@ -4,6 +4,7 @@ from plotly.basedatatypes import BaseFigure
 import pytest
 import polars as pl
 
+from mobility.reports.theme import MOBILITY_COLORS
 from mobility.trips.group_day_trips.core.results import RunResults
 
 
@@ -171,7 +172,7 @@ def test_activity_time_series_plot_builds_survey_panel_when_survey_assets_are_av
 
     seen = {}
 
-    def fake_plot(df):
+    def fake_plot(df, **_kwargs):
         seen["rows"] = df.height
         seen["sources"] = sorted(df["source"].unique().to_list())
         return "figure"
@@ -289,8 +290,9 @@ def test_plot_activity_time_series_wrapper_passes_scope_and_returns_plot_result(
         seen["inner_zone_residents_only"] = inner_zone_residents_only
         return expected_series
 
-    def fake_plot(df):
+    def fake_plot(df, **kwargs):
         seen["plotted_series"] = df
+        seen["save_to_file"] = kwargs["save_to_file"]
         return "figure"
 
     monkeypatch.setattr(results.metrics, "activity_time_series", fake_activity_time_series)
@@ -305,6 +307,7 @@ def test_plot_activity_time_series_wrapper_passes_scope_and_returns_plot_result(
     assert seen["interval_minutes"] == 30
     assert seen["inner_zone_residents_only"] is True
     assert seen["plotted_series"].equals(expected_series)
+    assert seen["save_to_file"] is False
 
 
 def test_plot_activity_time_series_builds_one_panel_per_available_source(monkeypatch):
@@ -340,9 +343,120 @@ def test_plot_activity_time_series_builds_one_panel_per_available_source(monkeyp
 
     assert seen["show_called"] is True
     assert len(fig.data) == 4
+    assert [trace.legendgroup for trace in fig.data] == ["mystery", "work", "mystery", "work"]
+    assert [trace.showlegend for trace in fig.data] == [True, True, False, False]
     assert fig.layout.barmode == "stack"
+    assert fig.layout.paper_bgcolor == MOBILITY_COLORS["background"]
+    assert fig.layout.plot_bgcolor == MOBILITY_COLORS["background"]
+    assert fig.layout.title.text is None
+    assert fig.layout.xaxis.showgrid is False
     assert list(fig.layout.xaxis.categoryarray) == ["08:00", "08:15"]
     assert list(fig.layout.xaxis2.categoryarray) == ["08:00", "08:15"]
+
+
+def test_plot_activity_time_series_activity_panels_compare_sources(monkeypatch):
+    results = _make_results(
+        pl.DataFrame(
+            {
+                "activity": ["home"],
+                "mode": ["stay_home"],
+                "n_persons": [1.0],
+                "departure_time": [0.0],
+                "arrival_time": [0.0],
+                "next_departure_time": [24.0],
+            }
+        )
+    )
+    time_series = pl.DataFrame(
+        {
+            "source": ["survey", "observed", "survey", "observed", "survey"],
+            "time_bin_start": [8.0, 8.0, 8.25, 8.25, 8.0],
+            "time_label": ["08:00", "08:00", "08:15", "08:15", "08:00"],
+            "label": ["work", "work", "studies", "studies", "in_transit:car"],
+            "n_persons": [1.0, 2.0, 0.5, 0.75, 0.2],
+        }
+    )
+    seen = {}
+
+    class FakeFigure:
+        def update_layout(self, **kwargs):
+            seen.setdefault("layout_updates", []).append(kwargs)
+            return self
+
+        def update_yaxes(self, **kwargs):
+            seen["yaxes"] = kwargs
+            return self
+
+        def update_xaxes(self, **kwargs):
+            seen["xaxes"] = kwargs
+            return self
+
+        def for_each_annotation(self, callback):
+            seen["annotation_callback"] = callback
+            return self
+
+        def show(self, renderer):
+            seen["renderer"] = renderer
+
+    def fake_line(data_frame, **kwargs):
+        seen["data_frame"] = data_frame
+        seen["kwargs"] = kwargs
+        return FakeFigure()
+
+    monkeypatch.setattr("mobility.trips.group_day_trips.core.metrics.px.line", fake_line)
+
+    fig = results.metrics._plot_activity_time_series(time_series, mode="activity_panels")
+
+    assert isinstance(fig, FakeFigure)
+    assert seen["kwargs"]["facet_col"] == "label"
+    assert seen["kwargs"]["facet_col_wrap"] == 2
+    assert seen["kwargs"]["color"] == "source"
+    assert seen["kwargs"]["category_orders"]["source"] == ["Survey", "Model"]
+    assert seen["kwargs"]["color_discrete_map"] == {
+        "Survey": MOBILITY_COLORS["survey"],
+        "Model": MOBILITY_COLORS["model"],
+    }
+    assert sorted(seen["data_frame"]["label"].unique().tolist()) == ["studies", "work"]
+    assert sorted(seen["data_frame"]["source"].unique().tolist()) == ["Model", "Survey"]
+    assert any(update.get("title_text") is None for update in seen["layout_updates"])
+    assert seen["xaxes"]["showgrid"] is False
+    assert any(
+        update.get("paper_bgcolor") == MOBILITY_COLORS["background"]
+        and update.get("plot_bgcolor") == MOBILITY_COLORS["background"]
+        for update in seen["layout_updates"]
+    )
+    assert seen["renderer"] == "browser"
+
+
+def test_plot_activity_time_series_can_save_stacked_svg(monkeypatch, tmp_path):
+    results = _make_results(
+        pl.DataFrame(
+            {
+                "activity": ["home"],
+                "mode": ["stay_home"],
+                "n_persons": [1.0],
+                "departure_time": [0.0],
+                "arrival_time": [0.0],
+                "next_departure_time": [24.0],
+            }
+        )
+    )
+    time_series = pl.DataFrame(
+        {
+            "source": ["survey", "observed"],
+            "time_bin_start": [8.0, 8.0],
+            "time_label": ["08:00", "08:00"],
+            "label": ["work", "work"],
+            "n_persons": [1.0, 2.0],
+        }
+    )
+
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setattr(BaseFigure, "show", lambda *_args, **_kwargs: None, raising=False)
+
+    results.metrics._plot_activity_time_series(time_series, save_to_file=True)
+
+    assert (tmp_path / "run-activity-time-series.svg").exists()
 
 
 def test_activity_time_series_color_map_uses_fixed_and_fallback_colors():

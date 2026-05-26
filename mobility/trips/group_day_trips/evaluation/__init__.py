@@ -5,6 +5,7 @@ from .calibration_plan_steps import (
 )
 from .iteration_metrics import IterationMetricsBuilder, IterationMetricsHistory
 from .model_loss import ModelLoss
+from .model_trip_count_loss import ModelTripCountLoss
 from .model_entropy import ModelEntropy
 from .observed_plan_steps import ObservedPlanSteps
 from .public_transport_network_evaluation import PublicTransportNetworkEvaluation
@@ -22,6 +23,7 @@ __all__ = [
     "IterationMetricsHistory",
     "ModelEntropy",
     "ModelLoss",
+    "ModelTripCountLoss",
     "ObservedPlanSteps",
     "ObservedTripPatternDistribution",
     "ObservedCalibrationPlanSteps",

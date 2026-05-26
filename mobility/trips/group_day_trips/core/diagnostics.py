@@ -6,6 +6,7 @@ import polars as pl
 
 from ..evaluation.model_entropy import ModelEntropy
 from ..evaluation.model_loss import ModelLoss
+from ..evaluation.model_trip_count_loss import ModelTripCountLoss
 
 if TYPE_CHECKING:
     from .results import RunResults
@@ -36,6 +37,16 @@ class RunDiagnostics:
         return ModelEntropy(
             expected_plan_steps=self.results.expected_entropy_plan_steps,
             observed_plan_steps=self.results.observed_entropy_plan_steps,
+            history=self.results.iteration_metrics_store,
+        )
+
+    def trip_count_loss(self) -> ModelTripCountLoss:
+        """Return the trip-count distribution loss helper for this run."""
+        return ModelTripCountLoss(
+            expected_plan_steps=self.results.population_weighted_plan_steps,
+            surveys=self.results.surveys,
+            is_weekday=self.results.is_weekday,
+            observed_plan_steps=self.results.plan_steps,
             history=self.results.iteration_metrics_store,
         )
 
