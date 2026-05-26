@@ -89,6 +89,17 @@ class PlanUpdater:
             arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
             enabled=parameters.update_plan_timings_from_modeled_travel_times,
         )
+        possible_plan_steps = (
+            possible_plan_steps
+            .with_columns(
+                utility=(
+                    pl.col("activity_utility_scale")
+                    * (pl.col("duration_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
+                    - pl.col("cost")
+                )
+            )
+            .drop("activity_utility_scale", "destination_shadow_price")
+        )
         possible_plan_utility = self.get_possible_plan_utility(
             possible_plan_steps,
             home_night_dur,
@@ -325,7 +336,7 @@ class PlanUpdater:
             "k_saturation_utility",
             "destination_shadow_price",
             "min_activity_time",
-            "utility",
+            "activity_utility_scale",
         ]
 
         scored_candidates = (
@@ -368,7 +379,7 @@ class PlanUpdater:
                 min_activity_time=pl.col("mean_duration_per_pers") * math.exp(-min_activity_time_constant),
             )
             .with_columns(
-                utility=(
+                activity_utility_scale=(
                     (
                         pl.col("country_value_coefficient") * pl.col("value_of_time")
                         + pl.col("destination_shadow_price")
@@ -380,8 +391,6 @@ class PlanUpdater:
                         )
                     )
                     * pl.col("mean_duration_per_pers")
-                    * (pl.col("duration_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
-                    - pl.col("cost")
                 )
             )
             .drop(["destination_country", "country_value_coefficient"])
@@ -408,7 +417,9 @@ class PlanUpdater:
             )
             .agg(
                 utility=pl.col("utility").sum(),
-                home_night_per_pers=24.0 - pl.col("duration_per_pers").sum(),
+                home_night_per_pers=(
+                    24.0 - pl.col("duration_per_pers").sum() - pl.col("time").fill_null(0.0).sum()
+                ).clip(0.0),
             )
             .join(home_night_dur.lazy(), on=["country", "csp"])
             .with_columns(
@@ -1253,7 +1264,7 @@ class PlanUpdater:
         if "capacity_ratio" not in columns:
             expressions.append(pl.lit(0.0, dtype=pl.Float64).alias("capacity_ratio"))
         if "destination_soft_capacity_factor" not in columns:
-            expressions.append(pl.lit(1.0, dtype=pl.Float64).alias("destination_soft_capacity_factor"))
+            expressions.append(pl.lit(1.25, dtype=pl.Float64).alias("destination_soft_capacity_factor"))
         if not expressions:
             return destination_saturation
         return destination_saturation.with_columns(expressions)

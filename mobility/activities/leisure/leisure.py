@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import polars as pl
 import geopandas as gpd
-from typing import List
 import numpy as np
 import os
 
@@ -31,6 +30,7 @@ class LeisureActivity(Activity):
         survey_ids: List[str] = None,
         radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
+        country_value_coefficients: dict[str, float] | None = None,
         parameters: "LeisureParameters" | None = None
     ):
         
@@ -54,6 +54,7 @@ class LeisureActivity(Activity):
                 ),
                 "survey_ids": survey_ids,
                 "radiation_lambda": radiation_lambda,
+                "country_value_coefficients": country_value_coefficients,
             },
             owner_name="LeisureActivity",
         )
@@ -181,3 +182,7 @@ class LeisureParameters(ActivityParameters):
         Field(default_factory=lambda: ["7.71", "7.72", "7.73", "7.74", "7.75", "7.76", "7.77", "7.78"]),
     ]
     radiation_lambda: Annotated[UnitIntervalFloat, Field(default=0.99986)]
+    country_value_coefficients: Annotated[
+        dict[str, float],
+        Field(default_factory=lambda: {"fr": 1.0, "ch": 1.0}),
+    ]
