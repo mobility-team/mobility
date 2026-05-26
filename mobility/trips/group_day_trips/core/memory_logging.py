@@ -45,6 +45,9 @@ def log_memory_checkpoint(
     **objects: Any,
 ) -> None:
     """Log process memory plus cheap summaries of already-available objects."""
+    if not logging.root.isEnabledFor(logging.DEBUG):
+        return
+
     memory_info = psutil.Process().memory_info()
     parts = [
         f"rss={format_bytes(memory_info.rss)}",

@@ -221,6 +221,8 @@ def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candi
             "dest_draw_id": [1],
             "activity": ["shop"],
             "is_anchor": [False],
+            "seq_step_index": [1],
+            "step_count": [1],
             "anchor_to": [anchor_destination],
             "from": [1],
             "departure_time": [8.0],
@@ -233,11 +235,13 @@ def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candi
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
             "dest_draw_id": pl.UInt32,
-            "activity": pl.Utf8,
-            "is_anchor": pl.Boolean,
-            "anchor_to": pl.UInt16,
-            "from": pl.UInt16,
-            "departure_time": pl.Float64,
+                "activity": pl.Utf8,
+                "is_anchor": pl.Boolean,
+                "seq_step_index": pl.UInt8,
+                "step_count": pl.UInt8,
+                "anchor_to": pl.UInt16,
+                "from": pl.UInt16,
+                "departure_time": pl.Float64,
             "arrival_time": pl.Float64,
             "next_departure_time": pl.Float64,
         },
@@ -292,6 +296,58 @@ def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candi
     assert result_without_chain_penalty["to"].to_list() == [lowest_noise_candidate]
     assert result_with_chain_penalty["to"].to_list() == [highest_noise_candidate]
     assert result_with_chain_penalty["to"].to_list() != result_without_chain_penalty["to"].to_list()
+
+
+def test_drop_incomplete_destination_draws_removes_partial_draws():
+    activity_sequences = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1, 2, 2],
+            "home_zone_id": [100, 100, 200, 200],
+            "activity_seq_id": [10, 10, 20, 20],
+            "time_seq_id": [1, 1, 2, 2],
+            "dest_draw_id": [1, 1, 1, 1],
+            "activity": ["shop", "study", "work", "home"],
+            "anchor_to": [100, 100, 200, 200],
+            "from": [100, 110, 200, 210],
+            "to": [110, 120, 210, 200],
+            "departure_time": [8.0, 9.0, 8.5, 17.0],
+            "arrival_time": [8.5, 9.5, 9.0, 17.5],
+            "next_departure_time": [9.0, 10.0, 17.0, 17.5],
+            "seq_step_index": [1, 2, 1, 2],
+            "step_count": [3, 3, 2, 2],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "home_zone_id": pl.UInt16,
+            "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
+            "dest_draw_id": pl.UInt32,
+            "activity": pl.Utf8,
+            "anchor_to": pl.UInt16,
+            "from": pl.UInt16,
+            "to": pl.UInt16,
+            "departure_time": pl.Float64,
+            "arrival_time": pl.Float64,
+            "next_departure_time": pl.Float64,
+            "seq_step_index": pl.UInt8,
+            "step_count": pl.UInt8,
+        },
+    )
+
+    result = DestinationSequences._drop_incomplete_destination_draws(
+        activity_sequences=activity_sequences,
+        iteration=4,
+    )
+
+    assert result.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]).unique().to_dicts() == [
+        {
+            "demand_group_id": 2,
+            "activity_seq_id": 20,
+            "time_seq_id": 2,
+            "dest_draw_id": 1,
+        }
+    ]
+    assert result["seq_step_index"].to_list() == [1, 2]
 
 
 def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path):

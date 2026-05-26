@@ -12,6 +12,7 @@ from .assemble import (
     build_mode_sequence_keys,
     finalize_mode_sequence_rows,
 )
+from .debug_logs import log_location_chain_diagnostics
 from .prepare import build_location_chains, build_search_inputs
 from .search_python import run_python_mode_sequence_search
 from .search_rust import run_rust_mode_sequence_search
@@ -100,6 +101,12 @@ class ModeSequences(FileAsset):
         log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:unique_location_chains",
             unique_location_chains=unique_destination_chains,
+        )
+        log_location_chain_diagnostics(
+            iteration=self.iteration,
+            destination_steps=destination_steps,
+            trip_chains=trip_chains,
+            unique_destination_chains=unique_destination_chains,
         )
 
         search_inputs = build_search_inputs(self.transport_costs)

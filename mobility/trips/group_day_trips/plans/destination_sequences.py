@@ -6,9 +6,12 @@ import polars as pl
 from scipy.stats import norm
 
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
+from .debug_logs import (
+    log_destination_sequence_diagnostics,
+    log_step_dropout_diagnostics,
+)
 from .sequence_index import add_index
 from mobility.runtime.assets.file_asset import FileAsset
-
 
 class DestinationSequences(FileAsset):
     """Persist destination sequences produced for one PopulationGroupDayTrips iteration."""
@@ -46,7 +49,7 @@ class DestinationSequences(FileAsset):
         self.parameters = parameters
         self.seed = seed
         inputs = {
-            "version": 2,
+            "version": 3,
             "run_key": run_key,
             "is_weekday": is_weekday,
             "iteration": iteration,
@@ -88,95 +91,6 @@ class DestinationSequences(FileAsset):
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         destination_sequences.write_parquet(self.cache_path)
         return self.get_cached_asset()
-
-    def run(
-        self,
-        activities: list[Any],
-        transport_zones: Any,
-        destination_saturation: pl.DataFrame,
-        activity_sequences: pl.DataFrame,
-        demand_groups: pl.DataFrame,
-        costs: pl.DataFrame,
-        parameters: Any,
-        seed: int,
-    ) -> pl.DataFrame:
-        """Compute destination sequences for one iteration."""
-        utility_inputs = self._get_destination_probability_inputs(
-            destination_saturation,
-            costs,
-            parameters.cost_uncertainty_sd,
-        )
-        destination_probability = self._get_destination_probability(
-            utility_inputs,
-            activities,
-            self.resolved_activity_parameters,
-            parameters.dest_prob_cutoff,
-        )
-        activity_sequences = (
-            activity_sequences
-            .filter(pl.col("activity_seq_id") != 0)
-            .join(demand_groups.select(["demand_group_id", "home_zone_id"]), on="demand_group_id")
-            .select(
-                [
-                    "demand_group_id",
-                    "home_zone_id",
-                    "activity_seq_id",
-                    "time_seq_id",
-                    "activity",
-                    "is_anchor",
-                    "seq_step_index",
-                    "departure_time",
-                    "arrival_time",
-                    "next_departure_time",
-                ]
-            )
-        )
-        activity_sequences = self._spatialize_anchor_activities(activity_sequences, destination_probability, seed)
-        activity_sequences = self._spatialize_other_activities(
-            activity_sequences,
-            destination_probability,
-            costs,
-            parameters.alpha,
-            seed,
-        )
-
-        destination_sequences = (
-            activity_sequences
-            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
-            .agg(to=pl.col("to").sort_by("seq_step_index").cast(pl.Utf8()))
-            .with_columns(to=pl.col("to").list.join("-"))
-            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
-        )
-        destination_sequences = (
-            destination_sequences
-            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "to"])
-            .agg(dest_draw_id=pl.col("dest_draw_id").min())
-            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
-        )
-        destination_sequences = add_index(
-            destination_sequences,
-            col="to",
-            index_col_name="dest_seq_id",
-            index_folder=self.sequence_index_folder,
-        )
-        destination_sequences = (
-            activity_sequences
-            .join(
-                destination_sequences.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "dest_seq_id"]),
-                on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"],
-            )
-            .drop(["home_zone_id", "activity", "dest_draw_id"])
-            .with_columns(
-                pl.col("seq_step_index").cast(pl.UInt8),
-                pl.col("from").cast(pl.UInt16),
-                pl.col("to").cast(pl.UInt16),
-                pl.col("departure_time").cast(pl.Float32),
-                pl.col("arrival_time").cast(pl.Float32),
-                pl.col("next_departure_time").cast(pl.Float32),
-                pl.lit(self.iteration).cast(pl.UInt16).alias("iteration"),
-            )
-        )
-        return destination_sequences
 
     def _build_destination_sequences_for_scope(self) -> pl.DataFrame:
         """Return the destination sequences to use for this iteration."""
@@ -306,6 +220,110 @@ class DestinationSequences(FileAsset):
                 "iteration": pl.UInt16,
             }
         )
+
+    def run(
+        self,
+        activities: list[Any],
+        transport_zones: Any,
+        destination_saturation: pl.DataFrame,
+        activity_sequences: pl.DataFrame,
+        demand_groups: pl.DataFrame,
+        costs: pl.DataFrame,
+        parameters: Any,
+        seed: int,
+    ) -> pl.DataFrame:
+        """Compute destination sequences for one iteration."""
+        utility_inputs = self._get_destination_probability_inputs(
+            destination_saturation,
+            costs,
+            parameters.cost_uncertainty_sd,
+        )
+        destination_probability = self._get_destination_probability(
+            utility_inputs,
+            activities,
+            self.resolved_activity_parameters,
+            parameters.dest_prob_cutoff,
+        )
+        activity_sequences = (
+            activity_sequences
+            .filter(pl.col("activity_seq_id") != 0)
+            .join(demand_groups.select(["demand_group_id", "home_zone_id"]), on="demand_group_id")
+            .select(
+                [
+                    "demand_group_id",
+                    "home_zone_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "activity",
+                    "is_anchor",
+                    "seq_step_index",
+                    "step_count",
+                    "departure_time",
+                    "arrival_time",
+                    "next_departure_time",
+                ]
+            )
+        )
+        source_activity_sequences = activity_sequences
+        anchor_spatialized_sequences = self._spatialize_anchor_activities(
+            source_activity_sequences,
+            destination_probability,
+            seed,
+        )
+        spatialized_activity_sequences = self._spatialize_other_activities(
+            anchor_spatialized_sequences,
+            destination_probability,
+            costs,
+            parameters.alpha,
+            seed,
+        )
+        complete_activity_sequences = self._drop_incomplete_destination_draws(
+            activity_sequences=spatialized_activity_sequences,
+            iteration=self.iteration,
+        )
+
+        destination_sequences = (
+            complete_activity_sequences
+            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
+            .agg(to=pl.col("to").sort_by("seq_step_index").cast(pl.Utf8()))
+            .with_columns(to=pl.col("to").list.join("-"))
+            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
+        )
+        destination_sequences = (
+            destination_sequences
+            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "to"])
+            .agg(dest_draw_id=pl.col("dest_draw_id").min())
+            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
+        )
+        destination_sequences = add_index(
+            destination_sequences,
+            col="to",
+            index_col_name="dest_seq_id",
+            index_folder=self.sequence_index_folder,
+        )
+        destination_sequences = (
+            complete_activity_sequences
+            .join(
+                destination_sequences.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "dest_seq_id"]),
+                on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"],
+            )
+            .drop(["home_zone_id", "activity", "dest_draw_id"])
+            .with_columns(
+                pl.col("seq_step_index").cast(pl.UInt8),
+                pl.col("from").cast(pl.UInt16),
+                pl.col("to").cast(pl.UInt16),
+                pl.col("departure_time").cast(pl.Float32),
+                pl.col("arrival_time").cast(pl.Float32),
+                pl.col("next_departure_time").cast(pl.Float32),
+                pl.lit(self.iteration).cast(pl.UInt16).alias("iteration"),
+            )
+        )
+        log_destination_sequence_diagnostics(
+            iteration=self.iteration,
+            source_activity_sequences=source_activity_sequences,
+            destination_sequences=destination_sequences,
+        )
+        return destination_sequences
 
     def _get_destination_probability_inputs(
         self,
@@ -561,6 +579,16 @@ class DestinationSequences(FileAsset):
         seq_step_index = 1
         spatialized_chains: list[pl.DataFrame] = []
         while chains_step.height > 0:
+            logging.debug(
+                "Destination spatialization step %s input rows=%s non_anchor=%s anchor=%s unique_draws=%s",
+                seq_step_index,
+                chains_step.height,
+                chains_step.filter(pl.col("is_anchor").not_()).height,
+                chains_step.filter(pl.col("is_anchor")).height,
+                chains_step.select(
+                    ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+                ).unique().height,
+            )
             logging.info("Spatializing step %s...", str(seq_step_index))
             spatialized_step = (
                 self._spatialize_trip_chain_step(
@@ -602,6 +630,13 @@ class DestinationSequences(FileAsset):
         chains_step_lf = chains_step.lazy()
         destination_probability_lf = destination_probability.lazy()
         costs_lf = costs.lazy()
+        chain_key_cols = [
+            "demand_group_id",
+            "home_zone_id",
+            "activity_seq_id",
+            "time_seq_id",
+            "dest_draw_id",
+        ]
 
         # Start from the base destination probabilities for non-anchor activities.
         # These probabilities come from the radiation model and only depend on the
@@ -614,7 +649,7 @@ class DestinationSequences(FileAsset):
 
         # Attach the two legs that define the chain cost of visiting a candidate
         # destination before continuing to the next anchor destination.
-        candidates_with_costs = (
+        candidates_with_origin_costs = (
             non_anchor_candidates
             .join(
                 costs_lf
@@ -628,6 +663,9 @@ class DestinationSequences(FileAsset):
                 left_on=["from", "to"],
                 right_on=["candidate_from", "candidate_to"],
             )
+        )
+        candidates_with_costs = (
+            candidates_with_origin_costs
             .join(
                 costs_lf
                 .select(
@@ -699,6 +737,7 @@ class DestinationSequences(FileAsset):
                     "departure_time",
                     "arrival_time",
                     "next_departure_time",
+                    "step_count",
                 ]
             )
         )
@@ -721,7 +760,61 @@ class DestinationSequences(FileAsset):
                     "departure_time",
                     "arrival_time",
                     "next_departure_time",
+                    "step_count",
                 ]
             )
         )
+        log_step_dropout_diagnostics(
+            seq_step_index=seq_step_index,
+            chains_step=chains_step,
+            costs=costs,
+            non_anchor_candidates=non_anchor_candidates,
+            candidates_with_origin_costs=candidates_with_origin_costs,
+            candidates_with_costs=candidates_with_costs,
+            sampled_non_anchor_steps=sampled_non_anchor_steps,
+            chain_key_cols=chain_key_cols,
+            transport_zones=self.transport_zones,
+        )
         return pl.concat([steps, steps_anchor]).collect(engine="streaming")
+
+    @staticmethod
+    def _drop_incomplete_destination_draws(
+        *,
+        activity_sequences: pl.DataFrame,
+        iteration: int,
+    ) -> pl.DataFrame:
+        """Drop destination draws that lost one or more steps during spatialization.
+
+        A non-anchor step can disappear when there is no valid travel-cost path from
+        the sampled destination to the next anchor destination. If we keep the
+        remaining earlier steps, we create a truncated destination chain that later
+        becomes invalid input for mode-sequence search.
+        """
+        chain_key_cols = ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+        activity_sequences_with_counts = (
+            activity_sequences
+            .with_columns(
+                step_count_after_spatialization=pl.len().over(chain_key_cols).cast(pl.UInt8),
+            )
+        )
+        incomplete_draws = (
+            activity_sequences_with_counts
+            .filter(pl.col("step_count_after_spatialization") != pl.col("step_count"))
+            .select(chain_key_cols + ["step_count", "step_count_after_spatialization"])
+            .unique()
+            .sort(chain_key_cols)
+        )
+        if incomplete_draws.height > 0:
+            logging.warning(
+                "Dropping %s incomplete destination draws at iteration %s because one or more steps disappeared during spatialization. "
+                "Sample draws: %s",
+                incomplete_draws.height,
+                iteration,
+                incomplete_draws.head(20).to_dicts(),
+            )
+        return (
+            activity_sequences_with_counts
+            .filter(pl.col("step_count_after_spatialization") == pl.col("step_count"))
+            .drop(["step_count", "step_count_after_spatialization"])
+            .sort(chain_key_cols + ["seq_step_index"])
+        )

@@ -55,6 +55,7 @@ class PlanInitializer:
                 "departure_time",
                 "arrival_time",
                 "next_departure_time",
+                "step_count",
                 "duration_per_pers",
             ]
         )
