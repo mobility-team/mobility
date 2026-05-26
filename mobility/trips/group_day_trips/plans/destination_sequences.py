@@ -16,6 +16,20 @@ from mobility.runtime.assets.file_asset import FileAsset
 class DestinationSequences(FileAsset):
     """Persist destination sequences produced for one PopulationGroupDayTrips iteration."""
 
+    OUTPUT_COLUMNS = [
+        "demand_group_id",
+        "activity_seq_id",
+        "time_seq_id",
+        "dest_seq_id",
+        "seq_step_index",
+        "from",
+        "to",
+        "departure_time",
+        "arrival_time",
+        "next_departure_time",
+        "iteration",
+    ]
+
     def __init__(
         self,
         *,
@@ -97,10 +111,14 @@ class DestinationSequences(FileAsset):
         scope = self.parameters.get_behavior_change_scope(self.iteration)
 
         if scope == BehaviorChangeScope.FULL_REPLANNING:
-            return self._sample_all_destination_sequences()
+            return self._with_refreshed_active_destination_sequences(
+                self._sample_all_destination_sequences()
+            )
 
         if scope == BehaviorChangeScope.DESTINATION_REPLANNING:
-            return self._sample_active_destination_sequences()
+            return self._with_refreshed_active_destination_sequences(
+                self._sample_active_destination_sequences()
+            )
 
         if scope == BehaviorChangeScope.MODE_REPLANNING:
             return self._reuse_current_destination_sequences()
@@ -193,6 +211,38 @@ class DestinationSequences(FileAsset):
             )
 
         return reused
+
+    def _with_refreshed_active_destination_sequences(self, sampled_sequences: pl.DataFrame) -> pl.DataFrame:
+        """Append active destination chains when active-mode refresh is enabled."""
+        if not self.parameters.refresh_active_mode_alternatives:
+            return sampled_sequences
+
+        active_sequences = self._reuse_current_destination_sequences()
+        if active_sequences.height == 0:
+            return sampled_sequences.select(self.OUTPUT_COLUMNS)
+        if sampled_sequences.height == 0:
+            return active_sequences.select(self.OUTPUT_COLUMNS)
+
+        return (
+            pl.concat(
+                [
+                    active_sequences.select(self.OUTPUT_COLUMNS),
+                    sampled_sequences.select(self.OUTPUT_COLUMNS),
+                ],
+                how="vertical_relaxed",
+            )
+            .unique(
+                subset=[
+                    "demand_group_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "dest_seq_id",
+                    "seq_step_index",
+                ],
+                keep="first",
+                maintain_order=True,
+            )
+        )
 
     def _get_active_non_stay_home_plans(self) -> pl.DataFrame:
         """Return the distinct currently active non-stay-home plans."""
@@ -323,7 +373,7 @@ class DestinationSequences(FileAsset):
             source_activity_sequences=source_activity_sequences,
             destination_sequences=destination_sequences,
         )
-        return destination_sequences
+        return destination_sequences.select(self.OUTPUT_COLUMNS)
 
     def _get_destination_probability_inputs(
         self,

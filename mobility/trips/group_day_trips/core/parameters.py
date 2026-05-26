@@ -158,9 +158,24 @@ class Parameters(BaseModel):
             title="Maximum inactive candidate-plan age",
             description=(
                 "Maximum number of iterations an inactive candidate plan is "
-                "kept in memory after it was last active. Plans that were "
-                "never active use their first-seen iteration as the age "
-                "reference."
+                "kept in memory after it was last active or last regenerated. "
+                "Plans that were never active use their last-seen iteration as "
+                "the age reference."
+            ),
+        ),
+    ]
+
+    refresh_active_mode_alternatives: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Refresh active mode alternatives",
+            description=(
+                "Whether to append currently active destination chains to the "
+                "iteration destination candidates before the top-k mode search. "
+                "This refreshes mode alternatives for occupied plans with "
+                "current travel costs, while behavior-change phases still "
+                "control which transitions are allowed."
             ),
         ),
     ]
