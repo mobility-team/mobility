@@ -63,8 +63,13 @@ def test_group_day_trips_wrapper_forwards_new_parameters(monkeypatch):
         k_destination_sequences=6,
         n_warmup_iterations=2,
         max_inactive_age=3,
+        refresh_active_mode_alternatives=True,
         transition_revision_probability=0.4,
         transition_logit_scale=0.75,
+        use_destination_shadow_prices=True,
+        min_transition_utility_gain=0.1,
+        plan_probability_pruning_retained_share=0.995,
+        plan_probability_pruning_min_iteration=3,
         use_rust_mode_sequence_search=True,
         enable_transition_distance_model=True,
         transition_distance_threshold=8.0,
@@ -83,8 +88,13 @@ def test_group_day_trips_wrapper_forwards_new_parameters(monkeypatch):
     assert parameters.k_destination_sequences == 6
     assert parameters.n_warmup_iterations == 2
     assert parameters.max_inactive_age == 3
+    assert parameters.refresh_active_mode_alternatives is True
     assert parameters.transition_revision_probability == 0.4
     assert parameters.transition_logit_scale == 0.75
+    assert parameters.use_destination_shadow_prices is True
+    assert parameters.min_transition_utility_gain == 0.1
+    assert parameters.plan_probability_pruning_retained_share == 0.995
+    assert parameters.plan_probability_pruning_min_iteration == 3
     assert parameters.use_rust_mode_sequence_search is True
     assert parameters.enable_transition_distance_model is True
     assert parameters.transition_distance_threshold == 8.0
