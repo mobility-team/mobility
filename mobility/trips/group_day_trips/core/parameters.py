@@ -395,6 +395,49 @@ class Parameters(BaseModel):
         ),
     ]
 
+    min_transition_utility_gain: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            title="Minimum transition utility gain",
+            description=(
+                "Minimum utility gain needed before a person can switch from "
+                "one plan to another. The current plan is always kept. Set this "
+                "above zero to avoid switching between almost equal plans."
+            ),
+        ),
+    ]
+
+    plan_probability_pruning_retained_share: Annotated[
+        float,
+        Field(
+            default=1.0,
+            gt=0.0,
+            le=1.0,
+            title="Current-plan retained probability share",
+            description=(
+                "Share of transition mass kept as separate target plans for "
+                "each demand group. Lower-mass target plans are merged into "
+                "the largest retained target plan of the same stay-home or "
+                "mobile type. Set to 1.0 to keep all target plans."
+            ),
+        ),
+    ]
+
+    plan_probability_pruning_min_iteration: Annotated[
+        int,
+        Field(
+            default=2,
+            ge=1,
+            title="Current-plan probability pruning start iteration",
+            description=(
+                "First iteration where low-probability target plans may be "
+                "merged when plan_probability_pruning_retained_share is below 1.0."
+            ),
+        ),
+    ]
+
     transition_distance_friction: Annotated[
         float,
         Field(

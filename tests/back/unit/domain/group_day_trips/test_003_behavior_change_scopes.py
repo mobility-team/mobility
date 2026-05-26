@@ -555,6 +555,7 @@ def test_get_transition_probabilities_limits_destination_replanning_to_same_timi
     )
 
     assert result.select("time_seq_id_trans").unique().to_series().to_list() == [0]
+    assert result.select("activity_seq_id_trans").unique().to_series().to_list() == [10]
 
 
 def test_get_transition_probabilities_filters_candidates_by_distance_threshold(tmp_path):
@@ -723,45 +724,45 @@ def test_get_transition_probabilities_scales_pruning_window_with_transition_logi
             "activity_seq_id": [10],
             "dest_seq_id": [100],
             "mode_seq_id": [1000],
-            "utility": [10.0],
+            "utility": [4.0],
             "n_persons": [5.0],
         }
     )
     possible_plan_utility = _make_possible_plan_utility(
         {
-            "demand_group_id": [1, 1],
-            "activity_seq_id": [10, 10],
-            "dest_seq_id": [100, 101],
-            "mode_seq_id": [1000, 1001],
-            "utility": [10.0, 4.0],
+            "demand_group_id": [1, 1, 1],
+            "activity_seq_id": [10, 10, 10],
+            "dest_seq_id": [100, 101, 102],
+            "mode_seq_id": [1000, 1001, 1002],
+            "utility": [4.0, 4.0, 10.0],
         }
     )
 
     possible_plan_steps = _make_possible_plan_steps(
         {
-            "demand_group_id": [1, 1],
-            "activity_seq_id": [10, 10],
-            "dest_seq_id": [100, 101],
-            "mode_seq_id": [1000, 1001],
-            "seq_step_index": [0, 0],
-            "activity": ["work", "work"],
-            "from": [1, 1],
-            "to": [2, 3],
-            "mode": ["car", "bike"],
-            "duration_per_pers": [8.0, 8.0],
-            "departure_time": [8.0, 8.0],
-            "arrival_time": [9.0, 9.0],
-            "next_departure_time": [17.0, 17.0],
-            "iteration": [1, 1],
-            "csp": ["x", "x"],
-            "cost": [1.0, 1.0],
-            "distance": [10.0, 12.0],
-            "time": [1.0, 1.0],
-            "mean_duration_per_pers": [8.0, 8.0],
-            "value_of_time": [1.0, 1.0],
-            "k_saturation_utility": [1.0, 1.0],
-            "min_activity_time": [1.0, 1.0],
-            "utility": [10.0, 4.0],
+            "demand_group_id": [1, 1, 1],
+            "activity_seq_id": [10, 10, 10],
+            "dest_seq_id": [100, 101, 102],
+            "mode_seq_id": [1000, 1001, 1002],
+            "seq_step_index": [0, 0, 0],
+            "activity": ["work", "work", "work"],
+            "from": [1, 1, 1],
+            "to": [2, 3, 4],
+            "mode": ["car", "bike", "walk"],
+            "duration_per_pers": [8.0, 8.0, 8.0],
+            "departure_time": [8.0, 8.0, 8.0],
+            "arrival_time": [9.0, 9.0, 9.0],
+            "next_departure_time": [17.0, 17.0, 17.0],
+            "iteration": [1, 1, 1],
+            "csp": ["x", "x", "x"],
+            "cost": [1.0, 1.0, 1.0],
+            "distance": [10.0, 12.0, 8.0],
+            "time": [1.0, 1.0, 1.0],
+            "mean_duration_per_pers": [8.0, 8.0, 8.0],
+            "value_of_time": [1.0, 1.0, 1.0],
+            "k_saturation_utility": [1.0, 1.0, 1.0],
+            "min_activity_time": [1.0, 1.0, 1.0],
+            "utility": [4.0, 4.0, 10.0],
         }
     )
 
@@ -797,8 +798,94 @@ def test_get_transition_probabilities_scales_pruning_window_with_transition_logi
         transition_logit_scale=0.25,
     )
 
-    assert result_default["mode_seq_id_trans"].to_list() == [1000]
-    assert result_scaled["mode_seq_id_trans"].sort().to_list() == [1000, 1001]
+    assert result_default["mode_seq_id_trans"].sort().to_list() == [1000, 1002]
+    assert result_scaled["mode_seq_id_trans"].sort().to_list() == [1000, 1001, 1002]
+
+
+def test_get_transition_probabilities_filters_non_self_by_minimum_utility_gain(tmp_path):
+    updater = PlanUpdater()
+    current_plans = _make_current_plans(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [10],
+            "dest_seq_id": [100],
+            "mode_seq_id": [1000],
+            "utility": [10.0],
+            "n_persons": [5.0],
+        }
+    )
+    possible_plan_utility = _make_possible_plan_utility(
+        {
+            "demand_group_id": [1, 1, 1, 1, 1],
+            "activity_seq_id": [10, 10, 10, 10, 10],
+            "dest_seq_id": [100, 101, 102, 103, 104],
+            "mode_seq_id": [1000, 1001, 1002, 1003, 1004],
+            "utility": [10.0, 9.9, 10.0, 10.05, 10.2],
+        }
+    )
+    possible_plan_steps = _make_possible_plan_steps(
+        {
+            "demand_group_id": [1, 1, 1, 1, 1],
+            "activity_seq_id": [10, 10, 10, 10, 10],
+            "dest_seq_id": [100, 101, 102, 103, 104],
+            "mode_seq_id": [1000, 1001, 1002, 1003, 1004],
+            "seq_step_index": [0, 0, 0, 0, 0],
+            "activity": ["work", "work", "work", "work", "work"],
+            "from": [1, 1, 1, 1, 1],
+            "to": [2, 3, 4, 5, 6],
+            "mode": ["car", "bike", "walk", "car", "bike"],
+            "duration_per_pers": [8.0, 8.0, 8.0, 8.0, 8.0],
+            "departure_time": [8.0, 8.0, 8.0, 8.0, 8.0],
+            "arrival_time": [9.0, 9.0, 9.0, 9.0, 9.0],
+            "next_departure_time": [17.0, 17.0, 17.0, 17.0, 17.0],
+            "iteration": [1, 1, 1, 1, 1],
+            "csp": ["x", "x", "x", "x", "x"],
+            "cost": [1.0, 1.0, 1.0, 1.0, 1.0],
+            "distance": [10.0, 12.0, 8.0, 11.0, 9.0],
+            "time": [1.0, 1.0, 1.0, 1.0, 1.0],
+            "mean_duration_per_pers": [8.0, 8.0, 8.0, 8.0, 8.0],
+            "value_of_time": [1.0, 1.0, 1.0, 1.0, 1.0],
+            "k_saturation_utility": [1.0, 1.0, 1.0, 1.0, 1.0],
+            "min_activity_time": [1.0, 1.0, 1.0, 1.0, 1.0],
+            "utility": [10.0, 9.9, 10.0, 10.05, 10.2],
+        }
+    )
+
+    result_default = updater.get_transition_probabilities(
+        current_plans=current_plans,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            tmp_path=tmp_path,
+            name="transition_probabilities_min_gain_default_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            tmp_path=tmp_path,
+            name="transition_probabilities_min_gain_default_steps",
+        ),
+        behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
+        transport_zones=None,
+    )
+    result_with_gain = updater.get_transition_probabilities(
+        current_plans=current_plans,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            tmp_path=tmp_path,
+            name="transition_probabilities_min_gain_threshold_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            tmp_path=tmp_path,
+            name="transition_probabilities_min_gain_threshold_steps",
+        ),
+        behavior_change_scope=BehaviorChangeScope.FULL_REPLANNING,
+        transport_zones=None,
+        min_transition_utility_gain=0.1,
+    )
+
+    assert result_default["mode_seq_id_trans"].sort().to_list() == [1000, 1002, 1003, 1004]
+    assert result_with_gain["mode_seq_id_trans"].sort().to_list() == [1000, 1004]
+    assert abs(float(result_with_gain["p_transition"].sum()) - 1.0) < 1e-9
 
 
 def test_get_transition_probabilities_transition_distance_friction_penalizes_far_states(tmp_path):
@@ -883,3 +970,215 @@ def test_get_transition_probabilities_transition_distance_friction_penalizes_far
 
     assert float(q_near) > float(q_far)
     assert float(tau_far) > 0.0
+
+
+def test_apply_transitions_prunes_low_probability_targets_consistently(tmp_path):
+    updater = PlanUpdater()
+    plan_keys = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1, 1, 1],
+            "activity_seq_id": [10, 11, 12, 13],
+            "time_seq_id": [100, 101, 102, 103],
+            "dest_seq_id": [1000, 1001, 1002, 1003],
+            "mode_seq_id": [10000, 10001, 10002, 10003],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
+    )
+    plan_keys = _with_plan_id(
+        plan_keys,
+        tmp_path=tmp_path,
+        name="apply_transitions_probability_pruning_plan_ids",
+    )
+    current_plans = plan_keys.head(1).with_columns(
+        utility=pl.lit(1.0),
+        n_persons=pl.lit(100.0),
+    )
+    from_state = current_plans.row(0, named=True)
+    targets = plan_keys.with_columns(
+        utility_trans=pl.Series([1.0, 2.0, 3.0, 4.0]),
+        p_transition=pl.Series([0.90, 0.09, 0.009, 0.001]),
+    )
+    transition_probabilities = targets.select(
+        [
+            pl.col("plan_id").alias("plan_id_trans"),
+            pl.lit(from_state["demand_group_id"], dtype=pl.UInt32).alias("demand_group_id"),
+            pl.lit(from_state["activity_seq_id"], dtype=pl.UInt32).alias("activity_seq_id"),
+            pl.lit(from_state["time_seq_id"], dtype=pl.UInt32).alias("time_seq_id"),
+            pl.lit(from_state["dest_seq_id"], dtype=pl.UInt32).alias("dest_seq_id"),
+            pl.lit(from_state["mode_seq_id"], dtype=pl.UInt32).alias("mode_seq_id"),
+            pl.col("activity_seq_id").alias("activity_seq_id_trans"),
+            pl.col("time_seq_id").alias("time_seq_id_trans"),
+            pl.col("dest_seq_id").alias("dest_seq_id_trans"),
+            pl.col("mode_seq_id").alias("mode_seq_id_trans"),
+            pl.lit(1.0).alias("utility_prev_from"),
+            pl.lit(1.0).alias("utility_from_updated"),
+            "utility_trans",
+            pl.lit(0.0).alias("tau_transition"),
+            pl.col("p_transition").alias("q_transition"),
+            pl.lit(1.0).alias("adjustment_factor"),
+            "p_transition",
+        ]
+    )
+
+    current_plans_after, transition_events = updater.apply_transitions(
+        current_plans,
+        transition_probabilities,
+        iteration=2,
+        plan_probability_pruning_retained_share=0.99,
+        plan_probability_pruning_min_iteration=2,
+    )
+    transition_events = transition_events.collect()
+
+    assert current_plans_after.select(pl.col("n_persons").sum()).item() == pytest.approx(100.0)
+    assert current_plans_after.height == 2
+    assert current_plans_after["n_persons"].sort(descending=True).to_list() == pytest.approx([91.0, 9.0])
+    assert set(current_plans_after["activity_seq_id"].to_list()) == {10, 11}
+
+    event_targets = (
+        transition_events
+        .group_by(["activity_seq_id_trans", "time_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"])
+        .agg(n_persons=pl.col("n_persons_moved").sum())
+        .sort("n_persons", descending=True)
+    )
+    assert event_targets["n_persons"].to_list() == pytest.approx([91.0, 9.0])
+    assert set(event_targets["activity_seq_id_trans"].to_list()) == {10, 11}
+
+
+def test_apply_transitions_probability_pruning_does_not_merge_mobile_targets_into_stay_home(tmp_path):
+    updater = PlanUpdater()
+    plan_keys = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1, 1, 1],
+            "activity_seq_id": [0, 10, 11, 12],
+            "time_seq_id": [0, 100, 101, 102],
+            "dest_seq_id": [0, 1000, 1001, 1002],
+            "mode_seq_id": [0, 10000, 10001, 10002],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
+    )
+    plan_keys = _with_plan_id(
+        plan_keys,
+        tmp_path=tmp_path,
+        name="apply_transitions_probability_pruning_stay_home_plan_ids",
+    )
+    current_plans = plan_keys.head(2).with_columns(
+        utility=pl.Series([0.0, 10.0]),
+        n_persons=pl.Series([70.0, 30.0]),
+    )
+    mobile_from_state = current_plans.filter(pl.col("mode_seq_id") != 0).row(0, named=True)
+    mobile_targets = plan_keys.filter(pl.col("mode_seq_id") != 0).with_columns(
+        utility_trans=pl.Series([10.0, 11.0, 12.0]),
+        p_transition=pl.Series([20.0 / 30.0, 9.0 / 30.0, 1.0 / 30.0]),
+    )
+    transition_probabilities = mobile_targets.select(
+        [
+            pl.col("plan_id").alias("plan_id_trans"),
+            pl.lit(mobile_from_state["demand_group_id"], dtype=pl.UInt32).alias("demand_group_id"),
+            pl.lit(mobile_from_state["activity_seq_id"], dtype=pl.UInt32).alias("activity_seq_id"),
+            pl.lit(mobile_from_state["time_seq_id"], dtype=pl.UInt32).alias("time_seq_id"),
+            pl.lit(mobile_from_state["dest_seq_id"], dtype=pl.UInt32).alias("dest_seq_id"),
+            pl.lit(mobile_from_state["mode_seq_id"], dtype=pl.UInt32).alias("mode_seq_id"),
+            pl.col("activity_seq_id").alias("activity_seq_id_trans"),
+            pl.col("time_seq_id").alias("time_seq_id_trans"),
+            pl.col("dest_seq_id").alias("dest_seq_id_trans"),
+            pl.col("mode_seq_id").alias("mode_seq_id_trans"),
+            pl.lit(10.0).alias("utility_prev_from"),
+            pl.lit(10.0).alias("utility_from_updated"),
+            "utility_trans",
+            pl.lit(0.0).alias("tau_transition"),
+            pl.col("p_transition").alias("q_transition"),
+            pl.lit(1.0).alias("adjustment_factor"),
+            "p_transition",
+        ]
+    )
+
+    current_plans_after, transition_events = updater.apply_transitions(
+        current_plans,
+        transition_probabilities,
+        iteration=2,
+        plan_probability_pruning_retained_share=0.95,
+        plan_probability_pruning_min_iteration=2,
+    )
+    transition_events = transition_events.collect()
+
+    stay_home_persons = current_plans_after.filter(pl.col("mode_seq_id") == 0)["n_persons"].sum()
+    mobile_to_stay_home = transition_events.filter(
+        (pl.col("mode_seq_id") != 0) & (pl.col("mode_seq_id_trans") == 0)
+    )
+
+    assert stay_home_persons == pytest.approx(70.0)
+    assert mobile_to_stay_home.is_empty()
+    assert current_plans_after["n_persons"].sort(descending=True).to_list() == pytest.approx([70.0, 21.0, 9.0])
+
+
+def test_apply_transitions_probability_pruning_keeps_default_behavior(tmp_path):
+    updater = PlanUpdater()
+    plan_keys = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1],
+            "activity_seq_id": [10, 11],
+            "time_seq_id": [100, 101],
+            "dest_seq_id": [1000, 1001],
+            "mode_seq_id": [10000, 10001],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+        },
+    )
+    plan_keys = _with_plan_id(
+        plan_keys,
+        tmp_path=tmp_path,
+        name="apply_transitions_probability_pruning_default_plan_ids",
+    )
+    current_plans = plan_keys.head(1).with_columns(utility=pl.lit(1.0), n_persons=pl.lit(10.0))
+    from_state = current_plans.row(0, named=True)
+    transition_probabilities = plan_keys.with_columns(
+        utility_trans=pl.Series([1.0, 2.0]),
+        p_transition=pl.Series([0.8, 0.2]),
+    ).select(
+        [
+            pl.col("plan_id").alias("plan_id_trans"),
+            pl.lit(from_state["demand_group_id"], dtype=pl.UInt32).alias("demand_group_id"),
+            pl.lit(from_state["activity_seq_id"], dtype=pl.UInt32).alias("activity_seq_id"),
+            pl.lit(from_state["time_seq_id"], dtype=pl.UInt32).alias("time_seq_id"),
+            pl.lit(from_state["dest_seq_id"], dtype=pl.UInt32).alias("dest_seq_id"),
+            pl.lit(from_state["mode_seq_id"], dtype=pl.UInt32).alias("mode_seq_id"),
+            pl.col("activity_seq_id").alias("activity_seq_id_trans"),
+            pl.col("time_seq_id").alias("time_seq_id_trans"),
+            pl.col("dest_seq_id").alias("dest_seq_id_trans"),
+            pl.col("mode_seq_id").alias("mode_seq_id_trans"),
+            pl.lit(1.0).alias("utility_prev_from"),
+            pl.lit(1.0).alias("utility_from_updated"),
+            "utility_trans",
+            pl.lit(0.0).alias("tau_transition"),
+            pl.col("p_transition").alias("q_transition"),
+            pl.lit(1.0).alias("adjustment_factor"),
+            "p_transition",
+        ]
+    )
+
+    current_plans_after, transition_events = updater.apply_transitions(
+        current_plans,
+        transition_probabilities,
+        iteration=2,
+    )
+
+    assert current_plans_after.height == 2
+    assert current_plans_after["n_persons"].sort(descending=True).to_list() == pytest.approx([8.0, 2.0])
+    assert transition_events.collect()["n_persons_moved"].sum() == pytest.approx(10.0)
