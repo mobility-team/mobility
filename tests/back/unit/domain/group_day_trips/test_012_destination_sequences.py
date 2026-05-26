@@ -158,6 +158,55 @@ def test_destination_probability_inputs_use_cost_and_sink_even_without_destinati
     assert cost_bin_to_destination.collect().height > 0
 
 
+def test_destination_probability_inputs_use_shadow_attraction_when_enabled(tmp_path):
+    destination_sequences = DestinationSequences(
+        run_key="run",
+        is_weekday=True,
+        iteration=1,
+        base_folder=_make_local_tmp_path(tmp_path, "destination_shadow_inputs"),
+        activities=[],
+        transport_zones=None,
+        destination_saturation=pl.DataFrame(),
+        demand_groups=pl.DataFrame(),
+        costs=pl.DataFrame(),
+        parameters=Parameters(use_destination_shadow_prices=True),
+        seed=123,
+        resolved_activity_parameters={},
+        current_plans=pl.DataFrame(),
+    )
+    opportunities = pl.DataFrame(
+        {
+            "to": [10, 20],
+            "activity": ["work", "work"],
+            "opportunity_capacity": [100.0, 100.0],
+            "k_saturation_utility": [1.0, 1.0],
+            "destination_sampling_attraction_factor": [1.0, 0.5],
+        }
+    ).with_columns(activity=pl.col("activity").cast(pl.Enum(["work"])))
+    costs = pl.DataFrame(
+        {
+            "from": [1, 1],
+            "to": [10, 20],
+            "cost": [3.0, 3.0],
+        }
+    )
+
+    _, cost_bin_to_destination = destination_sequences._get_destination_probability_inputs(
+        opportunities=opportunities,
+        costs=costs,
+        cost_uncertainty_sd=1.0,
+    )
+
+    probabilities = (
+        cost_bin_to_destination
+        .group_by("to")
+        .agg(p_to=pl.col("p_to").mean())
+        .sort("to")
+    ).collect()
+
+    assert probabilities["p_to"].to_list() == [2.0 / 3.0, 1.0 / 3.0]
+
+
 def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candidates(tmp_path):
     destination_sequences = DestinationSequences(
         run_key="run",

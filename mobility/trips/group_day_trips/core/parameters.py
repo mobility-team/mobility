@@ -282,6 +282,19 @@ class Parameters(BaseModel):
         ),
     ]
 
+    use_destination_shadow_prices: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Use destination shadow prices",
+            description=(
+                "Whether to use additive destination shadow prices for "
+                "opportunity-capacity feedback. When disabled, the legacy "
+                "multiplicative sink saturation utility is used."
+            ),
+        ),
+    ]
+
     min_activity_time_constant: Annotated[
         float,
         Field(

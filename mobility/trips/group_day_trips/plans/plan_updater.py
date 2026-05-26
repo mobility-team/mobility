@@ -229,6 +229,7 @@ class PlanUpdater:
             resolved_activity_parameters=resolved_activity_parameters,
             min_activity_time_constant=min_activity_time_constant,
             allow_missing_costs_for_current_plans=(candidate_plan_steps is not None),
+            use_destination_shadow_prices=parameters.use_destination_shadow_prices,
         )
 
     def compute_plan_steps_candidates_utility(
@@ -242,6 +243,7 @@ class PlanUpdater:
         resolved_activity_parameters: dict[str, Any],
         min_activity_time_constant,
         allow_missing_costs_for_current_plans: bool,
+        use_destination_shadow_prices: bool = False,
     ) -> pl.LazyFrame:
         """Score plan-step candidates under current costs and destination saturation."""
 
@@ -287,6 +289,9 @@ class PlanUpdater:
         ).with_columns(
             activity=pl.col("activity").cast(pl.Enum(activity_dur["activity"].dtype.categories))
         )
+        destination_saturation = self._ensure_destination_saturation_columns(
+            destination_saturation
+        )
         possible_plan_step_columns = [
             "demand_group_id",
             "country",
@@ -313,6 +318,7 @@ class PlanUpdater:
             "mean_duration_per_pers",
             "value_of_time",
             "k_saturation_utility",
+            "destination_shadow_price",
             "min_activity_time",
             "utility",
         ]
@@ -330,7 +336,14 @@ class PlanUpdater:
             .join(activity_dur.lazy(), on=["country", "csp", "activity"])
             .join(value_of_time.lazy(), on="activity")
             .join(
-                destination_saturation.select(["to", "activity", "k_saturation_utility"]).lazy(),
+                destination_saturation.select(
+                    [
+                        "to",
+                        "activity",
+                        "k_saturation_utility",
+                        "destination_shadow_price",
+                    ]
+                ).lazy(),
                 on=["to", "activity"],
                 how="left",
             )
@@ -345,14 +358,22 @@ class PlanUpdater:
                 distance=pl.col("distance").fill_null(0.0),
                 time=pl.col("time").fill_null(0.0),
                 k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0),
+                destination_shadow_price=pl.col("destination_shadow_price").fill_null(0.0),
                 country_value_coefficient=pl.col("country_value_coefficient").fill_null(1.0),
                 min_activity_time=pl.col("mean_duration_per_pers") * math.exp(-min_activity_time_constant),
             )
             .with_columns(
                 utility=(
-                    pl.col("country_value_coefficient")
-                    * pl.col("k_saturation_utility")
-                    * pl.col("value_of_time")
+                    (
+                        pl.col("country_value_coefficient") * pl.col("value_of_time")
+                        + pl.col("destination_shadow_price")
+                        if use_destination_shadow_prices
+                        else (
+                            pl.col("country_value_coefficient")
+                            * pl.col("k_saturation_utility")
+                            * pl.col("value_of_time")
+                        )
+                    )
                     * pl.col("mean_duration_per_pers")
                     * (pl.col("duration_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
                     - pl.col("cost")
@@ -439,6 +460,7 @@ class PlanUpdater:
                 mean_duration_per_pers=pl.col("duration_per_pers"),
                 value_of_time=pl.lit(0.0),
                 k_saturation_utility=pl.lit(1.0),
+                destination_shadow_price=pl.lit(0.0),
                 min_activity_time=pl.lit(0.0),
                 first_seen_iteration=pl.lit(None, dtype=pl.UInt16),
                 last_active_iteration=pl.lit(None, dtype=pl.UInt16),
@@ -890,6 +912,23 @@ class PlanUpdater:
                         "activity": activity_name,
                         "beta": activity_parameters.saturation_fun_beta,
                         "ref_level": activity_parameters.saturation_fun_ref_level,
+                        "param_destination_soft_capacity_factor": (
+                            activity_parameters.destination_soft_capacity_factor
+                        ),
+                        "destination_shadow_price_sensitivity": (
+                            activity_parameters.destination_shadow_price_sensitivity_coefficient
+                            * activity_parameters.value_of_time
+                        ),
+                        "destination_shadow_price_min": (
+                            activity_parameters.destination_shadow_price_min_coefficient
+                            * activity_parameters.value_of_time
+                        ),
+                        "destination_sampling_overload_gamma": (
+                            activity_parameters.destination_sampling_overload_gamma
+                        ),
+                        "destination_sampling_min_attraction_factor": (
+                            activity_parameters.destination_sampling_min_attraction_factor
+                        ),
                     }
                     for activity_name, activity_parameters in resolved_activity_parameters.items()
                 ]
@@ -903,14 +942,96 @@ class PlanUpdater:
             .agg(opportunity_occupation=pl.col("duration").sum())
             .join(opportunities, on=["to", "activity"], how="full", coalesce=True)
             .join(saturation_fun_parameters, on="activity")
+            .with_columns(
+                destination_soft_capacity_factor=pl.col("param_destination_soft_capacity_factor")
+            )
             .with_columns(opportunity_occupation=pl.col("opportunity_occupation").fill_null(0.0))
-            .with_columns(k=pl.col("opportunity_occupation") / pl.col("opportunity_capacity"))
+            .with_columns(
+                capacity_ratio=pl.col("opportunity_occupation") / pl.col("opportunity_capacity").clip(1e-12),
+                soft_capacity=(
+                    pl.col("destination_soft_capacity_factor")
+                    * pl.col("opportunity_capacity")
+                ),
+            )
             .with_columns(
                 k_saturation_utility=(
-                    1.0 - pl.col("k").pow(pl.col("beta")) / (pl.col("ref_level").pow(pl.col("beta")))
+                    1.0 - pl.col("capacity_ratio").pow(pl.col("beta")) / (pl.col("ref_level").pow(pl.col("beta")))
                 ).clip(0.0)
             )
-            .select(["activity", "to", "opportunity_capacity", "k_saturation_utility"])
+            .with_columns(
+                overload=pl.col("opportunity_occupation") / pl.col("soft_capacity").clip(1e-12),
+            )
+            .with_columns(
+                destination_shadow_price=(
+                    pl.when(pl.col("overload") <= 1.0)
+                    .then(0.0)
+                    .otherwise(
+                        -pl.col("destination_shadow_price_sensitivity")
+                        * pl.col("overload").log()
+                    )
+                    .clip(pl.col("destination_shadow_price_min"), 0.0)
+                )
+            )
+            .with_columns(
+                destination_sampling_attraction_factor=(
+                    pl.when(pl.col("overload") <= 1.0)
+                    .then(1.0)
+                    .otherwise(
+                        pl.col("overload").pow(
+                            -pl.col("destination_sampling_overload_gamma")
+                        )
+                    )
+                    .clip(pl.col("destination_sampling_min_attraction_factor"), 1.0)
+                )
+            )
+            .select([
+                "activity",
+                "to",
+                "opportunity_capacity",
+                "opportunity_occupation",
+                "capacity_ratio",
+                "destination_soft_capacity_factor",
+                "k_saturation_utility",
+                "destination_shadow_price",
+                "destination_sampling_overload_gamma",
+                "destination_sampling_min_attraction_factor",
+                "destination_sampling_attraction_factor",
+            ])
         )
 
         return destination_saturation
+
+    @staticmethod
+    def _ensure_destination_saturation_columns(destination_saturation: pl.DataFrame) -> pl.DataFrame:
+        """Add shadow-price columns when an older saturation table is provided."""
+        columns = set(destination_saturation.columns)
+        expressions = []
+        if "k_saturation_utility" not in columns:
+            expressions.append(pl.lit(1.0, dtype=pl.Float64).alias("k_saturation_utility"))
+        if "destination_shadow_price" not in columns:
+            expressions.append(pl.lit(0.0, dtype=pl.Float64).alias("destination_shadow_price"))
+        if "destination_sampling_overload_gamma" not in columns:
+            expressions.append(
+                pl.lit(1.5, dtype=pl.Float64).alias("destination_sampling_overload_gamma")
+            )
+        if "destination_sampling_min_attraction_factor" not in columns:
+            expressions.append(
+                pl.lit(0.05, dtype=pl.Float64).alias(
+                    "destination_sampling_min_attraction_factor"
+                )
+            )
+        if "destination_sampling_attraction_factor" not in columns:
+            expressions.append(
+                pl.lit(1.0, dtype=pl.Float64).alias(
+                    "destination_sampling_attraction_factor"
+                )
+            )
+        if "opportunity_occupation" not in columns:
+            expressions.append(pl.lit(0.0, dtype=pl.Float64).alias("opportunity_occupation"))
+        if "capacity_ratio" not in columns:
+            expressions.append(pl.lit(0.0, dtype=pl.Float64).alias("capacity_ratio"))
+        if "destination_soft_capacity_factor" not in columns:
+            expressions.append(pl.lit(1.0, dtype=pl.Float64).alias("destination_soft_capacity_factor"))
+        if not expressions:
+            return destination_saturation
+        return destination_saturation.with_columns(expressions)
