@@ -31,6 +31,11 @@ class Activity(InMemoryAsset):
             utilities: pd.DataFrame = None,
             country_value_coefficients: Dict = None,
             sink_saturation_coeff: float = None,
+            destination_soft_capacity_factor: float = None,
+            destination_shadow_price_sensitivity_coefficient: float = None,
+            destination_shadow_price_min_coefficient: float = None,
+            destination_sampling_overload_gamma: float = None,
+            destination_sampling_min_attraction_factor: float = None,
             extra_inputs: dict | None = None,
             parameters: "ActivityParameters" | None = None,
         ):
@@ -47,6 +52,19 @@ class Activity(InMemoryAsset):
                 "radiation_lambda": radiation_lambda,
                 "country_value_coefficients": country_value_coefficients,
                 "sink_saturation_coeff": sink_saturation_coeff,
+                "destination_soft_capacity_factor": destination_soft_capacity_factor,
+                "destination_shadow_price_sensitivity_coefficient": (
+                    destination_shadow_price_sensitivity_coefficient
+                ),
+                "destination_shadow_price_min_coefficient": (
+                    destination_shadow_price_min_coefficient
+                ),
+                "destination_sampling_overload_gamma": (
+                    destination_sampling_overload_gamma
+                ),
+                "destination_sampling_min_attraction_factor": (
+                    destination_sampling_min_attraction_factor
+                ),
             },
             required_fields=["value_of_time", "saturation_fun_ref_level", "saturation_fun_beta"],
             owner_name=f"Activity({name})",
@@ -175,6 +193,68 @@ class ActivityParameters(BaseModel):
             default=1.0,
             title="Sink saturation coefficient",
             description="Coefficient scaling sink saturation in activity utility.",
+        ),
+    ]
+
+    destination_soft_capacity_factor: Annotated[
+        NonNegativeFloat,
+        Field(
+            default=1.0,
+            title="Destination soft capacity factor",
+            description=(
+                "Multiplier applied to opportunity capacity before a destination "
+                "shadow price is charged. A value of 1.25 allows occupation up "
+                "to 125 percent of capacity before applying a penalty."
+            ),
+        ),
+    ]
+
+    destination_shadow_price_sensitivity_coefficient: Annotated[
+        NonNegativeFloat,
+        Field(
+            default=1.0,
+            title="Destination shadow price sensitivity coefficient",
+            description=(
+                "Coefficient applied to the activity value of time to compute "
+                "the default destination shadow price sensitivity."
+            ),
+        ),
+    ]
+
+    destination_shadow_price_min_coefficient: Annotated[
+        float,
+        Field(
+            default=-2.0,
+            le=0.0,
+            title="Destination shadow price floor coefficient",
+            description=(
+                "Coefficient applied to the activity value of time to compute "
+                "the default lower bound for the destination shadow price."
+            ),
+        ),
+    ]
+
+    destination_sampling_overload_gamma: Annotated[
+        NonNegativeFloat,
+        Field(
+            default=1.5,
+            title="Destination sampling overload gamma",
+            description=(
+                "Shape of the overload penalty applied to destination "
+                "opportunities during destination sampling."
+            ),
+        ),
+    ]
+
+    destination_sampling_min_attraction_factor: Annotated[
+        UnitIntervalFloat,
+        Field(
+            default=0.05,
+            title="Destination sampling minimum attraction factor",
+            description=(
+                "Lower bound for the destination sampling attraction factor "
+                "when a destination is overloaded."
+            ),
         ),
     ]
 

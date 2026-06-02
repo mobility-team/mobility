@@ -335,6 +335,19 @@ class DestinationSequences(FileAsset):
         x = [-2.0, -1.0, 0.0, 1.0, 2.0]
         probabilities = norm.pdf(x, loc=0.0, scale=cost_uncertainty_sd)
         probabilities /= probabilities.sum()
+        use_shadow_prices = bool(
+            getattr(self.parameters, "use_destination_shadow_prices", False)
+        )
+        opportunities_columns = set(opportunities.columns)
+        if (
+            use_shadow_prices
+            and "destination_sampling_attraction_factor" in opportunities_columns
+        ):
+            sink_factor = pl.col("destination_sampling_attraction_factor").fill_null(1.0)
+        elif "k_saturation_utility" in opportunities_columns:
+            sink_factor = pl.col("k_saturation_utility").fill_null(1.0)
+        else:
+            sink_factor = pl.lit(1.0)
 
         uncertainty_offsets = pl.DataFrame(
             {
@@ -355,7 +368,7 @@ class DestinationSequences(FileAsset):
             .with_columns(
                 effective_sink=(
                     pl.col("opportunity_capacity")
-                    * pl.col("k_saturation_utility").fill_null(1.0)
+                    * sink_factor
                     * pl.col("prob")
                 ).clip(0.0),
             )

@@ -22,6 +22,11 @@ class StudyActivity(Activity):
         value_of_time: float = None,
         saturation_fun_ref_level: float = None,
         saturation_fun_beta: float = None,
+        destination_soft_capacity_factor: float = None,
+        destination_shadow_price_sensitivity_coefficient: float = None,
+        destination_shadow_price_min_coefficient: float = None,
+        destination_sampling_overload_gamma: float = None,
+        destination_sampling_min_attraction_factor: float = None,
         survey_ids: List[str] = None, 
         radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
@@ -35,6 +40,17 @@ class StudyActivity(Activity):
                 "value_of_time": value_of_time,
                 "saturation_fun_ref_level": saturation_fun_ref_level,
                 "saturation_fun_beta": saturation_fun_beta,
+                "destination_soft_capacity_factor": destination_soft_capacity_factor,
+                "destination_shadow_price_sensitivity_coefficient": (
+                    destination_shadow_price_sensitivity_coefficient
+                ),
+                "destination_shadow_price_min_coefficient": (
+                    destination_shadow_price_min_coefficient
+                ),
+                "destination_sampling_overload_gamma": destination_sampling_overload_gamma,
+                "destination_sampling_min_attraction_factor": (
+                    destination_sampling_min_attraction_factor
+                ),
                 "survey_ids": survey_ids,
                 "radiation_lambda": radiation_lambda,
             },
