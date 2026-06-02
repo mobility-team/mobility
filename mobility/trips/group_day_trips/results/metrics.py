@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 import polars as pl
@@ -36,6 +37,7 @@ from .plots import (
 ZoneDimension = Literal["home_zone", "origin_zone", "destination_zone"]
 ZoneDimensions = ZoneDimension | list[ZoneDimension] | tuple[ZoneDimension, ...]
 VariableDimension = Literal["mode", "activity", "distance_bin", "time_bin", "csp"]
+MetricName = Literal["trip_count", "travel_distance", "travel_time", "cost", "ghg_emissions"]
 MetricOutput = Literal["table", "plot"]
 NormalizeBy = Literal["person_count", "metric_total"]
 NormalizeScope = Literal["zone", "study_area"]
@@ -44,6 +46,44 @@ MetricReference = Literal["external"] | tuple[Literal["scenario"], str] | None
 ReferenceView = Literal["gap", "values"]
 
 REFERENCE_DIMENSIONS = {"mode", "activity", "distance_bin", "time_bin"}
+
+
+@dataclass(frozen=True)
+class MetricSpec:
+    """Definition of one simple trip metric exposed by the public API."""
+
+    quantity: str
+    quantity_column: str | None
+    indicator: str | None
+
+
+METRIC_SPECS: dict[MetricName, MetricSpec] = {
+    "trip_count": MetricSpec(
+        quantity="trip_count",
+        quantity_column=None,
+        indicator="trip_count",
+    ),
+    "travel_distance": MetricSpec(
+        quantity="travel_distance",
+        quantity_column="distance",
+        indicator="travel_distance",
+    ),
+    "travel_time": MetricSpec(
+        quantity="travel_time",
+        quantity_column="time",
+        indicator="travel_time",
+    ),
+    "cost": MetricSpec(
+        quantity="cost",
+        quantity_column="cost",
+        indicator=None,
+    ),
+    "ghg_emissions": MetricSpec(
+        quantity="ghg_emissions",
+        quantity_column="ghg_emissions_per_trip",
+        indicator=None,
+    ),
+}
 
 
 class GroupDayTripsResultMetrics:
@@ -61,8 +101,9 @@ class GroupDayTripsResultMetrics:
             iterations=iterations,
         )
 
-    def trip_count(
+    def metric(
         self,
+        name: MetricName,
         *,
         by_zone: ZoneDimensions | None = None,
         by_variable: VariableDimension | None = None,
@@ -83,218 +124,57 @@ class GroupDayTripsResultMetrics:
         max_line_width: float = 8.0,
         min_line_width: float = 0.1,
     ) -> pl.DataFrame:
+        """Return one simple trip metric, optionally split and normalized."""
+        if name not in METRIC_SPECS:
+            raise ValueError(
+                "Unknown metric name. Expected one of: "
+                + ", ".join(sorted(METRIC_SPECS))
+                + "."
+            )
+        spec = METRIC_SPECS[name]
+        return self._metric(
+            quantity=spec.quantity,
+            quantity_column=spec.quantity_column,
+            indicator=spec.indicator,
+            by_zone=by_zone,
+            by_variable=by_variable,
+            normalize_by=normalize_by,
+            normalize_scope=normalize_scope,
+            reference=reference,
+            reference_view=reference_view,
+            inner_zone_residents_only=inner_zone_residents_only,
+            iterations=iterations,
+            output=output,
+            scenarios=scenarios,
+            width=width,
+            height=height,
+            labels=labels,
+            n_largest=n_largest,
+            min_value=min_value,
+            min_share=min_share,
+            max_line_width=max_line_width,
+            min_line_width=min_line_width,
+        )
+
+    def trip_count(self, **kwargs) -> pl.DataFrame:
         """Return trip counts, optionally split and normalized."""
-        return self._metric(
-            quantity="trip_count",
-            quantity_column=None,
-            indicator="trip_count",
-            by_zone=by_zone,
-            by_variable=by_variable,
-            normalize_by=normalize_by,
-            normalize_scope=normalize_scope,
-            reference=reference,
-            reference_view=reference_view,
-            inner_zone_residents_only=inner_zone_residents_only,
-            iterations=iterations,
-            output=output,
-            scenarios=scenarios,
-            width=width,
-            height=height,
-            labels=labels,
-            n_largest=n_largest,
-            min_value=min_value,
-            min_share=min_share,
-            max_line_width=max_line_width,
-            min_line_width=min_line_width,
-        )
+        return self.metric("trip_count", **kwargs)
 
-    def travel_distance(
-        self,
-        *,
-        by_zone: ZoneDimensions | None = None,
-        by_variable: VariableDimension | None = None,
-        normalize_by: NormalizeBy | None = None,
-        normalize_scope: NormalizeScope | None = None,
-        reference: MetricReference = None,
-        reference_view: ReferenceView = "gap",
-        inner_zone_residents_only: bool = False,
-        iterations: IterationSelector = "last",
-        output: MetricOutput = "table",
-        scenarios: str | list[str] | tuple[str, ...] | None = None,
-        width: int = 760,
-        height: int = 460,
-        labels: bool = True,
-        n_largest: int | None = None,
-        min_value: float | None = None,
-        min_share: float | None = None,
-        max_line_width: float = 8.0,
-        min_line_width: float = 0.1,
-    ) -> pl.DataFrame:
+    def travel_distance(self, **kwargs) -> pl.DataFrame:
         """Return travelled distance, optionally split and normalized."""
-        return self._metric(
-            quantity="travel_distance",
-            quantity_column="distance",
-            indicator="travel_distance",
-            by_zone=by_zone,
-            by_variable=by_variable,
-            normalize_by=normalize_by,
-            normalize_scope=normalize_scope,
-            reference=reference,
-            reference_view=reference_view,
-            inner_zone_residents_only=inner_zone_residents_only,
-            iterations=iterations,
-            output=output,
-            scenarios=scenarios,
-            width=width,
-            height=height,
-            labels=labels,
-            n_largest=n_largest,
-            min_value=min_value,
-            min_share=min_share,
-            max_line_width=max_line_width,
-            min_line_width=min_line_width,
-        )
+        return self.metric("travel_distance", **kwargs)
 
-    def travel_time(
-        self,
-        *,
-        by_zone: ZoneDimensions | None = None,
-        by_variable: VariableDimension | None = None,
-        normalize_by: NormalizeBy | None = None,
-        normalize_scope: NormalizeScope | None = None,
-        reference: MetricReference = None,
-        reference_view: ReferenceView = "gap",
-        inner_zone_residents_only: bool = False,
-        iterations: IterationSelector = "last",
-        output: MetricOutput = "table",
-        scenarios: str | list[str] | tuple[str, ...] | None = None,
-        width: int = 760,
-        height: int = 460,
-        labels: bool = True,
-        n_largest: int | None = None,
-        min_value: float | None = None,
-        min_share: float | None = None,
-        max_line_width: float = 8.0,
-        min_line_width: float = 0.1,
-    ) -> pl.DataFrame:
+    def travel_time(self, **kwargs) -> pl.DataFrame:
         """Return travelled time, optionally split and normalized."""
-        return self._metric(
-            quantity="travel_time",
-            quantity_column="time",
-            indicator="travel_time",
-            by_zone=by_zone,
-            by_variable=by_variable,
-            normalize_by=normalize_by,
-            normalize_scope=normalize_scope,
-            reference=reference,
-            reference_view=reference_view,
-            inner_zone_residents_only=inner_zone_residents_only,
-            iterations=iterations,
-            output=output,
-            scenarios=scenarios,
-            width=width,
-            height=height,
-            labels=labels,
-            n_largest=n_largest,
-            min_value=min_value,
-            min_share=min_share,
-            max_line_width=max_line_width,
-            min_line_width=min_line_width,
-        )
+        return self.metric("travel_time", **kwargs)
 
-    def cost(
-        self,
-        *,
-        by_zone: ZoneDimensions | None = None,
-        by_variable: VariableDimension | None = None,
-        normalize_by: NormalizeBy | None = None,
-        normalize_scope: NormalizeScope | None = None,
-        reference: MetricReference = None,
-        reference_view: ReferenceView = "gap",
-        inner_zone_residents_only: bool = False,
-        iterations: IterationSelector = "last",
-        output: MetricOutput = "table",
-        scenarios: str | list[str] | tuple[str, ...] | None = None,
-        width: int = 760,
-        height: int = 460,
-        labels: bool = True,
-        n_largest: int | None = None,
-        min_value: float | None = None,
-        min_share: float | None = None,
-        max_line_width: float = 8.0,
-        min_line_width: float = 0.1,
-    ) -> pl.DataFrame:
+    def cost(self, **kwargs) -> pl.DataFrame:
         """Return travelled cost, optionally split and normalized."""
-        return self._metric(
-            quantity="cost",
-            quantity_column="cost",
-            indicator=None,
-            by_zone=by_zone,
-            by_variable=by_variable,
-            normalize_by=normalize_by,
-            normalize_scope=normalize_scope,
-            reference=reference,
-            reference_view=reference_view,
-            inner_zone_residents_only=inner_zone_residents_only,
-            iterations=iterations,
-            output=output,
-            scenarios=scenarios,
-            width=width,
-            height=height,
-            labels=labels,
-            n_largest=n_largest,
-            min_value=min_value,
-            min_share=min_share,
-            max_line_width=max_line_width,
-            min_line_width=min_line_width,
-        )
+        return self.metric("cost", **kwargs)
 
-    def ghg_emissions(
-        self,
-        *,
-        by_zone: ZoneDimensions | None = None,
-        by_variable: VariableDimension | None = None,
-        normalize_by: NormalizeBy | None = None,
-        normalize_scope: NormalizeScope | None = None,
-        reference: MetricReference = None,
-        reference_view: ReferenceView = "gap",
-        inner_zone_residents_only: bool = False,
-        iterations: IterationSelector = "last",
-        output: MetricOutput = "table",
-        scenarios: str | list[str] | tuple[str, ...] | None = None,
-        width: int = 760,
-        height: int = 460,
-        labels: bool = True,
-        n_largest: int | None = None,
-        min_value: float | None = None,
-        min_share: float | None = None,
-        max_line_width: float = 8.0,
-        min_line_width: float = 0.1,
-    ) -> pl.DataFrame:
+    def ghg_emissions(self, **kwargs) -> pl.DataFrame:
         """Return greenhouse gas emissions, optionally split and normalized."""
-        return self._metric(
-            quantity="ghg_emissions",
-            quantity_column="ghg_emissions_per_trip",
-            indicator=None,
-            by_zone=by_zone,
-            by_variable=by_variable,
-            normalize_by=normalize_by,
-            normalize_scope=normalize_scope,
-            reference=reference,
-            reference_view=reference_view,
-            inner_zone_residents_only=inner_zone_residents_only,
-            iterations=iterations,
-            output=output,
-            scenarios=scenarios,
-            width=width,
-            height=height,
-            labels=labels,
-            n_largest=n_largest,
-            min_value=min_value,
-            min_share=min_share,
-            max_line_width=max_line_width,
-            min_line_width=min_line_width,
-        )
+        return self.metric("ghg_emissions", **kwargs)
 
     def immobility(
         self,

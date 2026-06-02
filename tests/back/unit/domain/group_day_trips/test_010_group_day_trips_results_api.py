@@ -665,6 +665,12 @@ def test_compact_travel_distance_api_uses_public_travel_distance_name(tmp_path, 
     results = _results(tmp_path)
 
     by_mode = results.metrics.travel_distance(by_variable="mode", normalize_by="person_count", normalize_scope="study_area").sort("mode")
+    by_mode_from_generic_metric = results.metrics.metric(
+        "travel_distance",
+        by_variable="mode",
+        normalize_by="person_count",
+        normalize_scope="study_area",
+    ).sort("mode")
     by_csp = results.metrics.travel_distance(
         by_variable="csp",
         normalize_by="person_count",
@@ -674,6 +680,7 @@ def test_compact_travel_distance_api_uses_public_travel_distance_name(tmp_path, 
 
     assert "travel_distance_per_person" in by_mode.columns
     assert by_mode["travel_distance_per_person"].to_list() == pytest.approx([10.0, 2.0])
+    assert by_mode_from_generic_metric.equals(by_mode)
     assert by_csp["travel_distance_per_person"].to_list() == pytest.approx([2.0, 10.0])
     assert total["travel_distance"].to_list() == pytest.approx([36.0])
 
