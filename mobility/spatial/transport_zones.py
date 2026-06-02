@@ -279,6 +279,22 @@ class TransportZones(FileAsset):
             
         return transport_zones
 
+    def get_study_area_countries(self) -> list[str]:
+        """Return the country codes present in the study area."""
+        study_area = self.study_area.get()
+
+        if "country" in study_area.columns:
+            countries = study_area["country"]
+        elif "local_admin_unit_id" in study_area.columns:
+            countries = study_area["local_admin_unit_id"].dropna().astype(str).str.slice(0, 2)
+        else:
+            raise ValueError(
+                "TransportZones study area should contain a `country` or "
+                "`local_admin_unit_id` column."
+            )
+
+        return sorted(countries.dropna().astype(str).unique().tolist())
+
 
 class TransportZonesParameters(BaseModel):
 
