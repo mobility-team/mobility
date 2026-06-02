@@ -100,9 +100,11 @@ class GroupDayTripsResults:
     def last_iteration(self) -> int:
         """Return the configured last model iteration."""
         try:
-            return int(self.first_run.n_iterations)
+            return int(self.first_run.parameters.run.n_iterations)
         except AttributeError as exc:
-            raise TypeError("Iteration-scoped results need runs with n_iterations.") from exc
+            raise TypeError(
+                "Iteration-scoped results need runs with parameters.run.n_iterations."
+            ) from exc
 
     def has_multiple_iterations(self, iterations: IterationSelector = "last") -> bool:
         """Return whether one result query contains several iterations."""

@@ -147,9 +147,10 @@ class DetailedCarpoolTravelCosts(TravelCostsAsset):
     def asset_for_iteration(self, run, iteration: int):
         if iteration < 1:
             raise ValueError("Iteration should be >= 1.")
-        if iteration > int(run.n_iterations):
+        n_iterations = int(run.parameters.run.n_iterations)
+        if iteration > n_iterations:
             raise ValueError(
-                f"Iteration should be <= {int(run.n_iterations)} for this run."
+                f"Iteration should be <= {n_iterations} for this run."
             )
 
         flow_asset = self.inputs["car_travel_costs"].inputs["congested_path_graph"].get_flow_asset_for_iteration(

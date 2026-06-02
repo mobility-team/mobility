@@ -91,8 +91,12 @@ def test_iter_run_congestion_artifacts_returns_nothing_when_disabled(
 ):
     aggregator = TransportCosts(modes=modes)
     run = SimpleNamespace(
-        n_iter_per_cost_update=update_interval,
-        n_iterations=2,
+        parameters=SimpleNamespace(
+            run=SimpleNamespace(
+                n_iter_per_cost_update=update_interval,
+                n_iterations=2,
+            ),
+        ),
         inputs_hash="run-key",
         is_weekday=True,
     )
@@ -134,8 +138,12 @@ def test_iter_run_congestion_artifacts_yields_existing_flow_assets_on_refresh_it
     )
 
     run = SimpleNamespace(
-        n_iter_per_cost_update=2,
-        n_iterations=3,
+        parameters=SimpleNamespace(
+            run=SimpleNamespace(
+                n_iter_per_cost_update=2,
+                n_iterations=3,
+            ),
+        ),
         inputs_hash="run-key",
         is_weekday=False,
     )

@@ -51,7 +51,6 @@ class _FakeRun(FileAsset):
         self.parameters = SimpleNamespace(
             run=SimpleNamespace(n_iterations=max(self._iteration_plan_steps, default=1))
         )
-        self.n_iterations = self.parameters.run.n_iterations
         self.population = SimpleNamespace(transport_zones=transport_zones)
         self.surveys = surveys or []
         cache_path = {
