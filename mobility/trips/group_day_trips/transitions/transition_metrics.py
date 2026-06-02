@@ -297,9 +297,11 @@ def _enrich_transitions(
         .join(demand_group_keys, on="demand_group_id", how="left")
         .with_columns(
             activity_seq_id=pl.col("activity_seq_id").cast(pl.UInt32),
+            time_seq_id=pl.col("time_seq_id").cast(pl.UInt32),
             dest_seq_id=pl.col("dest_seq_id").cast(pl.UInt32),
             mode_seq_id=pl.col("mode_seq_id").cast(pl.UInt32),
             activity_seq_id_trans=pl.col("activity_seq_id_trans").cast(pl.UInt32),
+            time_seq_id_trans=pl.col("time_seq_id_trans").cast(pl.UInt32),
             dest_seq_id_trans=pl.col("dest_seq_id_trans").cast(pl.UInt32),
             mode_seq_id_trans=pl.col("mode_seq_id_trans").cast(pl.UInt32),
             home_zone_id_str=pl.col("home_zone_id").cast(pl.String),
@@ -321,16 +323,18 @@ def _enrich_transitions(
         .join(home_zone_labels, on="home_zone_id_str", how="left")
         .with_columns(
             state_from=pl.format(
-                "dg{}-m{}-d{}-mo{}",
+                "dg{}-a{}-t{}-d{}-mo{}",
                 pl.col("demand_group_id"),
                 pl.col("activity_seq_id"),
+                pl.col("time_seq_id"),
                 pl.col("dest_seq_id"),
                 pl.col("mode_seq_id"),
             ),
             state_to=pl.format(
-                "dg{}-m{}-d{}-mo{}",
+                "dg{}-a{}-t{}-d{}-mo{}",
                 pl.col("demand_group_id"),
                 pl.col("activity_seq_id_trans"),
+                pl.col("time_seq_id_trans"),
                 pl.col("dest_seq_id_trans"),
                 pl.col("mode_seq_id_trans"),
             ),

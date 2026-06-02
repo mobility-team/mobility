@@ -16,6 +16,7 @@ from ..evaluation.calibration_plan_steps import (
 from ..evaluation.iteration_metrics import IterationMetricsBuilder, IterationMetricsHistory
 from ..evaluation.model_entropy import ModelEntropy
 from ..evaluation.model_loss import ModelLoss
+from ..evaluation.model_trip_count_loss import ModelTripCountLoss
 from ..evaluation.trip_pattern_distribution import (
     ObservedTripPatternDistribution,
     PopulationWeightedTripPatternDistribution,
@@ -66,7 +67,7 @@ class Run(FileAsset):
     ) -> None:
         """Initialize a single weekday or weekend PopulationGroupDayTrips run."""
         inputs = {
-            "version": 10,
+            "version": 17,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -124,6 +125,7 @@ class Run(FileAsset):
                     iteration=iteration.iteration,
                     current_plans=state.current_plans,
                     current_plan_steps=state.current_plan_steps,
+                    destination_saturation=state.destination_saturation,
                 )
             )
             if self.parameters.persist_iteration_artifacts:
@@ -198,6 +200,11 @@ class Run(FileAsset):
         expected_inputs = self._get_expected_diagnostics_inputs()
         return IterationMetricsBuilder(
             model_loss=ModelLoss(expected_plan_steps=expected_inputs.calibration_plan_steps),
+            model_trip_count_loss=ModelTripCountLoss(
+                expected_plan_steps=expected_inputs.population_weighted_plan_steps,
+                surveys=self.surveys,
+                is_weekday=self.is_weekday,
+            ),
             model_entropy=ModelEntropy(expected_plan_steps=expected_inputs.trip_pattern_distribution),
         )
 

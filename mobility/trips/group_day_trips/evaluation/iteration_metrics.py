@@ -23,14 +23,17 @@ class IterationMetricsHistory:
         return {
             "iteration": pl.UInt16,
             "total_loss": pl.Float64,
-            "distance_loss": pl.Float64,
-            "n_trips_loss": pl.Float64,
-            "time_loss": pl.Float64,
+            "trip_count_loss": pl.Float64,
+            "activity_loss": pl.Float64,
+            "distance_bin_loss": pl.Float64,
+            "time_bin_loss": pl.Float64,
+            "mode_loss": pl.Float64,
             "observed_entropy": pl.Float64,
             "mean_utility": pl.Float64,
             "mean_trip_count": pl.Float64,
             "mean_travel_time": pl.Float64,
             "mean_travel_distance": pl.Float64,
+            "excess_occupation_share": pl.Float64,
         }
 
     @staticmethod
@@ -44,18 +47,25 @@ class IterationMetricsHistory:
         if not records:
             return IterationMetricsHistory.empty()
 
-        return pl.DataFrame(records).select(
+        frame = pl.DataFrame(records)
+        if "excess_occupation_share" not in frame.columns:
+            frame = frame.with_columns(excess_occupation_share=pl.lit(0.0))
+
+        return frame.select(
             [
                 pl.col("iteration").cast(pl.UInt16),
                 pl.col("total_loss").cast(pl.Float64),
-                pl.col("distance_loss").cast(pl.Float64),
-                pl.col("n_trips_loss").cast(pl.Float64),
-                pl.col("time_loss").cast(pl.Float64),
+                pl.col("trip_count_loss").cast(pl.Float64),
+                pl.col("activity_loss").cast(pl.Float64),
+                pl.col("distance_bin_loss").cast(pl.Float64),
+                pl.col("time_bin_loss").cast(pl.Float64),
+                pl.col("mode_loss").cast(pl.Float64),
                 pl.col("observed_entropy").cast(pl.Float64),
                 pl.col("mean_utility").cast(pl.Float64),
                 pl.col("mean_trip_count").cast(pl.Float64),
                 pl.col("mean_travel_time").cast(pl.Float64),
                 pl.col("mean_travel_distance").cast(pl.Float64),
+                pl.col("excess_occupation_share").cast(pl.Float64),
             ]
         )
 
@@ -72,9 +82,10 @@ class IterationMetricsBuilder:
     time, and travel distance.
     """
 
-    def __init__(self, *, model_loss, model_entropy) -> None:
+    def __init__(self, *, model_loss, model_trip_count_loss, model_entropy) -> None:
         """Attach the detailed diagnostic helpers used to score each iteration."""
         self.model_loss = model_loss
+        self.model_trip_count_loss = model_trip_count_loss
         self.model_entropy = model_entropy
 
     def history_row(
@@ -83,23 +94,32 @@ class IterationMetricsBuilder:
         iteration: int,
         current_plans: pl.DataFrame,
         current_plan_steps: pl.DataFrame,
+        destination_saturation: pl.DataFrame | None = None,
     ) -> dict[str, float]:
         """Compute one persisted diagnostics row for a single model iteration."""
         loss_row = self.model_loss.history_row(
             iteration=iteration,
             plan_steps=to_calibration_plan_steps(current_plan_steps),
         )
+        trip_count_loss_row = self.model_trip_count_loss.history_row(
+            iteration=iteration,
+            plan_steps=current_plan_steps,
+        )
         entropy_row = self.model_entropy.history_row(
             iteration=iteration,
             plan_steps=current_plan_steps,
         )
+        total_loss = float(loss_row["total_loss"]) + float(trip_count_loss_row["trip_count_loss"])
         return {
             **loss_row,
+            "total_loss": total_loss,
+            "trip_count_loss": float(trip_count_loss_row["trip_count_loss"]),
             "observed_entropy": float(entropy_row["observed_entropy"]),
             "mean_utility": self._mean_plan_utility(current_plans),
             "mean_trip_count": self._mean_trip_count(current_plans, current_plan_steps),
             "mean_travel_time": self._mean_travel_metric(current_plans, current_plan_steps, "time"),
             "mean_travel_distance": self._mean_travel_metric(current_plans, current_plan_steps, "distance"),
+            "excess_occupation_share": self._excess_occupation_share(destination_saturation),
         }
 
     def rebuild_history(
@@ -120,6 +140,7 @@ class IterationMetricsBuilder:
                     iteration=iteration_index,
                     current_plans=saved_state.current_plans,
                     current_plan_steps=saved_state.current_plan_steps,
+                    destination_saturation=saved_state.destination_saturation,
                 )
             )
 
@@ -136,6 +157,36 @@ class IterationMetricsBuilder:
                 (pl.col("utility") * pl.col("n_persons")).sum()
                 / pl.col("n_persons").sum().clip(1e-12)
             ).alias("mean_utility")
+        ).item()
+        return float(value or 0.0)
+
+    @staticmethod
+    def _excess_occupation_share(destination_saturation: pl.DataFrame | None) -> float:
+        """Return the share of occupied activity duration above soft capacity."""
+        if destination_saturation is None or destination_saturation.height == 0:
+            return 0.0
+        required = {
+            "opportunity_occupation",
+            "opportunity_capacity",
+        }
+        if required.issubset(set(destination_saturation.columns)) is False:
+            return 0.0
+
+        soft_capacity_factor = (
+            pl.col("destination_soft_capacity_factor")
+            if "destination_soft_capacity_factor" in destination_saturation.columns
+            else pl.lit(1.25)
+        )
+        value = destination_saturation.select(
+            (
+                (
+                    pl.col("opportunity_occupation")
+                    - soft_capacity_factor * pl.col("opportunity_capacity")
+                )
+                .clip(0.0)
+                .sum()
+                / pl.col("opportunity_occupation").sum().clip(1e-12)
+            ).alias("excess_occupation_share")
         ).item()
         return float(value or 0.0)
 
