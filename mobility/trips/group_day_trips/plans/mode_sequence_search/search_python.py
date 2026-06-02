@@ -54,10 +54,10 @@ def run_python_mode_sequence_search(
         leg_modes=mode_ids_by_leg,
     )
 
-    if parameters.mode_sequence_search_parallel is False:
+    if parameters.mode_sequences.mode_sequence_search_parallel is False:
         logging.info("Finding probable mode sequences for the spatialized trip chains...")
         compute_subtour_mode_probabilities_serial(
-            parameters.k_mode_sequences,
+            parameters.mode_sequences.k_mode_sequences,
             unique_destination_chains,
             cost_by_origin_destination_mode,
             mode_ids_by_leg,
@@ -115,7 +115,7 @@ def run_python_mode_sequence_search_subprocess(
                     / "compute_subtour_mode_probabilities.py"
                 ),
                 "--k_sequences",
-                str(parameters.k_mode_sequences),
+                str(parameters.mode_sequences.k_mode_sequences),
                 "--location_chains_path",
                 str(location_chains_path),
                 "--costs_path",

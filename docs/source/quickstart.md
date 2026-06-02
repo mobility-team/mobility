@@ -40,7 +40,6 @@ It then computes weekday trip plans, global metrics, and a first origin-destinat
 import os
 import dotenv
 import mobility
-from mobility.trips.group_day_trips import Parameters
 
 dotenv.load_dotenv()
 
@@ -72,25 +71,28 @@ population_trips = mobility.PopulationGroupDayTrips(
         mobility.OtherActivity(population=population),
     ],
     surveys=[survey],
-    parameters=Parameters(
-        n_iterations=1,
-        mode_sequence_search_parallel=False,
+    parameters=mobility.GroupDayTripsParameters(
+        run=mobility.GroupDayTripsRunParameters(n_iterations=1),
+        mode_sequences=mobility.GroupDayTripsModeSequenceParameters(
+            mode_sequence_search_parallel=False,
+        ),
     ),
 )
 
 # You can get weekday plan steps to inspect them
-weekday_plan_steps = population_trips.get()["weekday_plan_steps"].collect()
+weekday_run = population_trips.run("weekday")
+weekday_plan_steps = weekday_run.get()["plan_steps"].collect()
 
 # You can compute global metrics for weekday trips
-global_metrics = population_trips.weekday_run.evaluate("global_metrics")
+global_metrics = weekday_run.results().metrics.aggregate()
 
 # You can plot weekday OD flows, with labels for prominent cities
-weekday_results = population_trips.weekday_run.results()
-labels = weekday_results.get_prominent_cities()
-weekday_results.plot_od_flows(labels=labels)
+weekday_results = weekday_run.results()
+labels = weekday_results.metrics.get_prominent_cities()
+weekday_results.metrics.plot_od_flows(labels=labels)
 
 # You can get a report of the parameters used in the model
-report = population_trips.parameters_dataframe()
+report = weekday_run.parameters_dataframe()
 ```
 
 ## Reading the example
@@ -134,9 +136,11 @@ population_trips = mobility.PopulationGroupDayTrips(
         mobility.OtherActivity(population=population),
     ],
     surveys=[survey],
-    parameters=Parameters(
-        n_iterations=1,
-        mode_sequence_search_parallel=False,
+    parameters=mobility.GroupDayTripsParameters(
+        run=mobility.GroupDayTripsRunParameters(n_iterations=1),
+        mode_sequences=mobility.GroupDayTripsModeSequenceParameters(
+            mode_sequence_search_parallel=False,
+        ),
     ),
 )
 ```
@@ -152,10 +156,11 @@ population_trips = mobility.PopulationGroupDayTrips(
 ### 5. Inspect the outputs
 
 ```python
-weekday_plan_steps = population_trips.get()["weekday_plan_steps"].collect()
-global_metrics = population_trips.weekday_run.evaluate("global_metrics")
-weekday_results = population_trips.weekday_run.results()
-report = population_trips.parameters_dataframe()
+weekday_run = population_trips.run("weekday")
+weekday_plan_steps = weekday_run.get()["plan_steps"].collect()
+global_metrics = weekday_run.results().metrics.aggregate()
+weekday_results = weekday_run.results()
+report = weekday_run.parameters_dataframe()
 ```
 
 These outputs are useful for a first check:

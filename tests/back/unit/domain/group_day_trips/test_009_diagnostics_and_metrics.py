@@ -9,7 +9,8 @@ from mobility.trips.group_day_trips.core.diagnostics import RunDiagnostics
 from mobility.trips.group_day_trips.core.parameters import (
     BehaviorChangePhase,
     BehaviorChangeScope,
-    Parameters,
+    GroupDayTripsBehaviorChangeParameters,
+    GroupDayTripsParameters,
 )
 from mobility.trips.group_day_trips.core.metrics import RunMetrics
 from mobility.trips.group_day_trips.core.results import RunResults
@@ -303,7 +304,7 @@ def test_travel_costs_plot_uses_report_style_and_mode_colors(monkeypatch, tmp_pa
         return FakeFigure()
 
     results = SimpleNamespace(
-        parameters=SimpleNamespace(n_iterations=3),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=3)),
         run=SimpleNamespace(transport_costs=FakeTransportCosts()),
         transport_zones=SimpleNamespace(get=lambda: pd.DataFrame()),
     )
@@ -708,7 +709,7 @@ def test_modal_share_evolution_by_iteration_returns_share_table(monkeypatch, tmp
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(n_iterations=2),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=2)),
         run=SimpleNamespace(
             inputs_hash="runhash",
             is_weekday=True,
@@ -767,7 +768,7 @@ def test_modal_share_evolution_by_iteration_groups_public_transport(monkeypatch,
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(n_iterations=1),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=1)),
         run=SimpleNamespace(
             inputs_hash="runhash",
             is_weekday=True,
@@ -832,7 +833,7 @@ def test_modal_share_evolution_by_iteration_can_use_inner_zones_only(monkeypatch
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(n_iterations=1),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=1)),
         run=SimpleNamespace(
             inputs_hash="runhash",
             is_weekday=True,
@@ -892,7 +893,7 @@ def test_modal_share_evolution_by_iteration_can_plot_and_save_svg(monkeypatch, t
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(n_iterations=1),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=1)),
         run=SimpleNamespace(
             inputs_hash="runhash",
             is_weekday=True,
@@ -996,7 +997,7 @@ def test_modal_share_delta_evolution_by_iteration_compares_two_scenarios(monkeyp
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(n_iterations=2),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=2)),
         run=current_run,
     )
 
@@ -1075,7 +1076,7 @@ def test_modal_share_delta_evolution_by_iteration_can_plot_and_save_svg(monkeypa
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(n_iterations=1),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=1)),
         run=current_run,
     )
     seen = {}
@@ -1291,13 +1292,15 @@ def test_modal_share_by_iteration_plots_one_scenario(monkeypatch, tmp_path):
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=Parameters(
-            behavior_change_phases=[
-                BehaviorChangePhase(
-                    start_iteration=2,
-                    scope=BehaviorChangeScope.MODE_REPLANNING,
-                )
-            ]
+        parameters=GroupDayTripsParameters(
+            behavior_change=GroupDayTripsBehaviorChangeParameters(
+                phases=[
+                    BehaviorChangePhase(
+                        start_iteration=2,
+                        scope=BehaviorChangeScope.MODE_REPLANNING,
+                    )
+                ]
+            )
         ),
         run=run,
     )
@@ -2516,13 +2519,15 @@ def test_modal_share_delta_gif_frame_adds_iteration_counter(monkeypatch, tmp_pat
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=Parameters(
-            behavior_change_phases=[
-                BehaviorChangePhase(
-                    start_iteration=5,
-                    scope=BehaviorChangeScope.MODE_REPLANNING,
-                )
-            ]
+        parameters=GroupDayTripsParameters(
+            behavior_change=GroupDayTripsBehaviorChangeParameters(
+                phases=[
+                    BehaviorChangePhase(
+                        start_iteration=5,
+                        scope=BehaviorChangeScope.MODE_REPLANNING,
+                    )
+                ]
+            )
         ),
         run=SimpleNamespace(population=None),
     )
@@ -2579,7 +2584,7 @@ def test_modal_share_delta_frame_can_plot_trip_count_delta(monkeypatch, tmp_path
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=Parameters(),
+        parameters=GroupDayTripsParameters(),
         run=SimpleNamespace(population=None),
     )
     seen = {}
@@ -2736,8 +2741,17 @@ def test_metric_per_person_compare_with_and_plot_delta(tmp_path, monkeypatch):
         run=SimpleNamespace(),
     )
 
+    demand_groups_path = tmp_path / "demand_groups.parquet"
     weekday_plan_steps = tmp_path / "weekday_plan_steps.parquet"
     weekday_costs = tmp_path / "weekday_costs.parquet"
+    pl.DataFrame(
+        {
+            "home_zone_id": ["z1"],
+            "csp": ["A"],
+            "n_cars": ["1"],
+            "n_persons": [4.0],
+        }
+    ).write_parquet(demand_groups_path)
     pl.DataFrame(
         {
             "activity_seq_id": [1],
@@ -2764,6 +2778,8 @@ def test_metric_per_person_compare_with_and_plot_delta(tmp_path, monkeypatch):
 
     compare_with = SimpleNamespace(
         cache_path={
+            "demand_groups": demand_groups_path,
+            "plan_steps": weekday_plan_steps,
             "weekday_plan_steps": weekday_plan_steps,
             "weekday_costs": weekday_costs,
         },

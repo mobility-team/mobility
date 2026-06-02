@@ -53,7 +53,8 @@ def test_congested_graph_iteration_asset_resolves_latest_active_refresh(monkeypa
     run = SimpleNamespace(
         inputs_hash="run-key",
         is_weekday=True,
-        parameters=SimpleNamespace(n_iter_per_cost_update=2, n_iterations=3),
+        n_iter_per_cost_update=2,
+        n_iterations=3,
     )
 
     assert graph.get_flow_asset_for_iteration(run, 1) is None

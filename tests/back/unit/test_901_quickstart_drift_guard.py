@@ -6,8 +6,9 @@ REQUIRED_SNIPPETS = [
     "mobility.EMPMobilitySurvey()",
     "mobility.Population(",
     "mobility.PopulationGroupDayTrips(",
-    'population_trips.get()["weekday_plan_steps"].collect()',
-    "population_trips.weekday_run.results().metrics.aggregate()",
+    'weekday_run = population_trips.run("weekday")',
+    'weekday_run.get()["plan_steps"].collect()',
+    "weekday_run.results().metrics.aggregate()",
 ]
 
 

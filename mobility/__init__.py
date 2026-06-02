@@ -40,6 +40,15 @@ from .trips.individual_year_trips import IndividualYearTrips
 from .trips.group_day_trips import (
     BehaviorChangePhase,
     BehaviorChangeScope,
+    GroupDayTripsActivitySequenceParameters,
+    GroupDayTripsBehaviorChangeParameters,
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsModeSequenceParameters,
+    GroupDayTripsOutputParameters,
+    GroupDayTripsParameters,
+    GroupDayTripsPeriodParameters,
+    GroupDayTripsPlanUpdateParameters,
+    GroupDayTripsRunParameters,
     PopulationGroupDayTrips,
 )
 

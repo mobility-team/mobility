@@ -78,7 +78,7 @@ class ActivitySequences(FileAsset):
 
     def _build_activity_sequences_for_scope(self) -> pl.DataFrame:
         """Return admitted timed activity-sequence rows for this iteration."""
-        scope = self.parameters.get_behavior_change_scope(self.iteration)
+        scope = self.parameters.behavior_change.scope_at(self.iteration)
 
         if scope == BehaviorChangeScope.FULL_REPLANNING:
             return self._sample_all_activity_sequences()
@@ -96,7 +96,7 @@ class ActivitySequences(FileAsset):
             .filter(pl.col("time_seq_id") != 0)
         )
 
-        k_activity_sequences = self.parameters.k_activity_sequences
+        k_activity_sequences = self.parameters.activity_sequences.k_activity_sequences
         if k_activity_sequences is None:
             selected = weighted_survey_plans.select(["demand_group_id", "activity_seq_id", "time_seq_id"]).unique()
             return selected.join(

@@ -108,7 +108,7 @@ class DestinationSequences(FileAsset):
 
     def _build_destination_sequences_for_scope(self) -> pl.DataFrame:
         """Return the destination sequences to use for this iteration."""
-        scope = self.parameters.get_behavior_change_scope(self.iteration)
+        scope = self.parameters.behavior_change.scope_at(self.iteration)
 
         if scope == BehaviorChangeScope.FULL_REPLANNING:
             return self._with_refreshed_active_destination_sequences(
@@ -214,7 +214,7 @@ class DestinationSequences(FileAsset):
 
     def _with_refreshed_active_destination_sequences(self, sampled_sequences: pl.DataFrame) -> pl.DataFrame:
         """Append active destination chains when active-mode refresh is enabled."""
-        if not self.parameters.refresh_active_mode_alternatives:
+        if not self.parameters.destination_sequences.refresh_active_mode_alternatives:
             return sampled_sequences
 
         active_sequences = self._reuse_current_destination_sequences()
@@ -286,13 +286,13 @@ class DestinationSequences(FileAsset):
         utility_inputs = self._get_destination_probability_inputs(
             destination_saturation,
             costs,
-            parameters.cost_uncertainty_sd,
+            parameters.destination_sequences.cost_uncertainty_sd,
         )
         destination_probability = self._get_destination_probability(
             utility_inputs,
             activities,
             self.resolved_activity_parameters,
-            parameters.dest_prob_cutoff,
+            parameters.destination_sequences.dest_prob_cutoff,
         )
         activity_sequences = (
             activity_sequences
@@ -324,7 +324,7 @@ class DestinationSequences(FileAsset):
             anchor_spatialized_sequences,
             destination_probability,
             costs,
-            parameters.alpha,
+            parameters.destination_sequences.alpha,
             seed,
         )
         complete_activity_sequences = self._drop_incomplete_destination_draws(
@@ -385,8 +385,9 @@ class DestinationSequences(FileAsset):
         x = [-2.0, -1.0, 0.0, 1.0, 2.0]
         probabilities = norm.pdf(x, loc=0.0, scale=cost_uncertainty_sd)
         probabilities /= probabilities.sum()
+        plan_update_parameters = getattr(self.parameters, "plan_update", None)
         use_shadow_prices = bool(
-            getattr(self.parameters, "use_destination_shadow_prices", False)
+            getattr(plan_update_parameters, "use_destination_shadow_prices", False)
         )
         opportunities_columns = set(opportunities.columns)
         if (
@@ -557,7 +558,7 @@ class DestinationSequences(FileAsset):
                 )
                 .cast(pl.UInt32)
             )
-            .filter(pl.col("dest_draw_id") <= self.parameters.k_destination_sequences)
+            .filter(pl.col("dest_draw_id") <= self.parameters.destination_sequences.k_destination_sequences)
             .select(["demand_group_id", "activity_seq_id", "time_seq_id", "activity", "dest_draw_id", "to"])
         )
 
@@ -576,7 +577,7 @@ class DestinationSequences(FileAsset):
             .unique()
         )
         destination_draw_ids = pl.DataFrame(
-            {"dest_draw_id": list(range(1, int(self.parameters.k_destination_sequences) + 1))},
+            {"dest_draw_id": list(range(1, int(self.parameters.destination_sequences.k_destination_sequences) + 1))},
             schema={"dest_draw_id": pl.UInt32},
         ).lazy()
         sequences_without_non_home_anchor = (

@@ -61,7 +61,7 @@ class PlanUpdater:
             transport_zones,
             iteration,
             resolved_activity_parameters,
-            parameters.min_activity_time_constant,
+            parameters.plan_update.min_activity_time_constant,
             destination_sequences,
             mode_sequences,
             parameters,
@@ -87,7 +87,7 @@ class PlanUpdater:
         possible_plan_steps = self.schedule_updater.update_plan_timings(
             possible_plan_steps,
             arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
-            enabled=parameters.update_plan_timings_from_modeled_travel_times,
+            enabled=parameters.plan_update.update_plan_timings_from_modeled_travel_times,
         )
         possible_plan_steps = (
             possible_plan_steps
@@ -105,7 +105,7 @@ class PlanUpdater:
             home_night_dur,
             resolved_activity_parameters["home"].value_of_time_stay_home,
             stay_home_plan,
-            parameters.min_activity_time_constant,
+            parameters.plan_update.min_activity_time_constant,
             sequence_index_folder=sequence_index_folder,
         )
         possible_plan_steps = self.add_stay_home_plan_steps(
@@ -124,16 +124,16 @@ class PlanUpdater:
             current_plans,
             possible_plan_utility,
             possible_plan_steps,
-            parameters.get_behavior_change_scope(iteration),
+            parameters.behavior_change.scope_at(iteration),
             transport_zones=transport_zones,
-            transition_distance_threshold=parameters.transition_distance_threshold,
-            enable_transition_distance_model=parameters.enable_transition_distance_model,
-            transition_revision_probability=parameters.transition_revision_probability,
-            transition_logit_scale=parameters.transition_logit_scale,
-            transition_utility_pruning_delta=parameters.transition_utility_pruning_delta,
-            min_transition_utility_gain=parameters.min_transition_utility_gain,
-            transition_distance_friction=parameters.transition_distance_friction,
-            plan_embedding_dimension_weights=parameters.plan_embedding_dimension_weights,
+            transition_distance_threshold=parameters.plan_update.transition_distance_threshold,
+            enable_transition_distance_model=parameters.plan_update.enable_transition_distance_model,
+            transition_revision_probability=parameters.plan_update.transition_revision_probability,
+            transition_logit_scale=parameters.plan_update.transition_logit_scale,
+            transition_utility_pruning_delta=parameters.plan_update.transition_utility_pruning_delta,
+            min_transition_utility_gain=parameters.plan_update.min_transition_utility_gain,
+            transition_distance_friction=parameters.plan_update.transition_distance_friction,
+            plan_embedding_dimension_weights=parameters.plan_update.plan_embedding_dimension_weights,
         )
         log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:transition_probabilities",
@@ -143,8 +143,8 @@ class PlanUpdater:
             current_plans,
             transition_prob,
             iteration,
-            plan_probability_pruning_retained_share=parameters.plan_probability_pruning_retained_share,
-            plan_probability_pruning_min_iteration=parameters.plan_probability_pruning_min_iteration,
+            plan_probability_pruning_retained_share=parameters.plan_update.plan_probability_pruning_retained_share,
+            plan_probability_pruning_min_iteration=parameters.plan_update.plan_probability_pruning_min_iteration,
         )
         log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:after_apply_transitions",
@@ -156,7 +156,7 @@ class PlanUpdater:
             f"plan_updater:iteration:{iteration}:current_plan_steps",
             current_plan_steps=current_plan_steps,
         )
-        if parameters.save_transition_events:
+        if parameters.outputs.save_transition_events:
             transition_events = add_transition_plan_details(
                 transition_events,
                 possible_plan_steps.lazy(),
@@ -226,8 +226,8 @@ class PlanUpdater:
             current_plans=current_plans,
             previous_candidate_plan_steps=candidate_plan_steps,
             current_iteration=iteration,
-            n_warmup_iterations=parameters.n_warmup_iterations,
-            max_inactive_age=parameters.max_inactive_age,
+            n_warmup_iterations=parameters.plan_update.n_warmup_iterations,
+            max_inactive_age=parameters.plan_update.max_inactive_age,
         )
         log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:candidate_memory",
@@ -243,7 +243,7 @@ class PlanUpdater:
             resolved_activity_parameters=resolved_activity_parameters,
             min_activity_time_constant=min_activity_time_constant,
             allow_missing_costs_for_current_plans=(candidate_plan_steps is not None),
-            use_destination_shadow_prices=parameters.use_destination_shadow_prices,
+            use_destination_shadow_prices=parameters.plan_update.use_destination_shadow_prices,
         )
 
     def compute_plan_steps_candidates_utility(

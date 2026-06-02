@@ -1,68 +1,50 @@
-import warnings
+from enum import StrEnum
 
-import polars as pl
-from typing import Dict, List
-
-from mobility.runtime.assets.asset import Asset
+from mobility.runtime.parameter_values import DEFAULT_SCENARIO
+from mobility.runtime.scenarios import Scenarios
 from mobility.transport.costs.transport_costs import TransportCosts
-from .parameters import BehaviorChangePhase, Parameters
+from .parameters import GroupDayTripsParameters
 from .run import Run
 from mobility.activities import Activity, HomeActivity, OtherActivity
-from mobility.surveys import SurveyPlanAssets
+from mobility.surveys import SurveyPlanAssets, select_surveys_for_population
 from mobility.surveys.mobility_survey import MobilitySurvey
 from mobility.population import Population
 from mobility.transport.modes.core.transport_mode import TransportMode
 
 
+class DayType(StrEnum):
+    """Day type supported by grouped day-trip runs."""
+
+    WEEKDAY = "weekday"
+    WEEKEND = "weekend"
+
+
 class PopulationGroupDayTrips:
-    """Top-level asset exposing weekday and weekend grouped day trips."""
+    """Top-level setup for grouped day-trip simulations.
+
+    This object stores the population, transport modes, activities, surveys,
+    and grouped day-trip parameters. It creates concrete weekday and weekend
+    runs on demand when a day type, scenario, and stochastic replication are
+    selected. Model execution happens through the returned run, for example
+    with `population_trips.run("weekday").get()`. If no scenario is given, the
+    setup uses the package default scenario named `"default"`.
+    """
 
     def __init__(
         self,
         population: Population,
-        modes: List[TransportMode] = None,
-        activities: List[Activity] = None,
-        surveys: List[MobilitySurvey] = None,
-        parameters: Parameters = None,
-        n_iterations: int = None,
-        alpha: float = None,
-        k_activity_sequences: int | None = None,
-        k_destination_sequences: int = None,
-        k_mode_sequences: int = None,
-        n_warmup_iterations: int = None,
-        max_inactive_age: int = None,
-        refresh_active_mode_alternatives: bool = None,
-        dest_prob_cutoff: float = None,
-        n_iter_per_cost_update: int = None,
-        cost_uncertainty_sd: float = None,
-        seed: int = None,
-        mode_sequence_search_parallel: bool = None,
-        use_rust_mode_sequence_search: bool = None,
-        save_transition_events: bool = None,
-        persist_iteration_artifacts: bool = None,
-        min_activity_time_constant: float = None,
-        update_plan_timings_from_modeled_travel_times: bool = None,
-        use_destination_shadow_prices: bool = None,
-        transition_distance_threshold: float = None,
-        enable_transition_distance_model: bool = None,
-        transition_revision_probability: float = None,
-        transition_logit_scale: float = None,
-        transition_utility_pruning_delta: float = None,
-        min_transition_utility_gain: float = None,
-        plan_probability_pruning_retained_share: float = None,
-        plan_probability_pruning_min_iteration: int = None,
-        transition_distance_friction: float = None,
-        plan_embedding_dimension_weights: list[float] | None = None,
-        behavior_change_phases: list[BehaviorChangePhase] | None = None,
-        simulate_weekend: bool = None,
+        modes: list[TransportMode] | None = None,
+        activities: list[Activity] | None = None,
+        surveys: list[MobilitySurvey] | None = None,
+        parameters: GroupDayTripsParameters | None = None,
+        scenarios: Scenarios | None = None,
     ):
-        """Initialize the grouped day-trips asset.
+        """Create a grouped day-trips simulation setup.
 
-        The wrapper validates its high-level inputs, normalizes constructor
-        parameters into a `Parameters` instance, builds a shared
-        `TransportCosts`, and creates one underlying `Run`
-        asset for weekdays plus one for weekends. The weekend run is enabled or
-        disabled according to `simulate_weekend`.
+        The setup checks that the required model inputs are present and keeps
+        them together until a concrete run is requested. This keeps scenario
+        values and replication seeds unresolved until `run(...)` selects the
+        context to use. Omitting `scenario` selects the default scenario.
 
         Args:
             population: Population object containing demand groups and transport
@@ -74,68 +56,11 @@ class PopulationGroupDayTrips:
                 and `OtherActivity`.
             surveys: Mobility surveys providing empirical activity programs. Must
                 contain at least one `MobilitySurvey`.
-            parameters: Parameter container. When provided, explicit keyword
-                arguments are merged into this model and revalidated.
-            n_iterations: Optional override for
-                `Parameters.n_iterations`.
-            alpha: Optional override for `Parameters.alpha`.
-            k_activity_sequences: Optional override for
-                `Parameters.k_activity_sequences`.
-            k_destination_sequences: Optional override for
-                `Parameters.k_destination_sequences`.
-            k_mode_sequences: Optional override for
-                `Parameters.k_mode_sequences`.
-            n_warmup_iterations: Optional override for
-                `Parameters.n_warmup_iterations`.
-            max_inactive_age: Optional override for
-                `Parameters.max_inactive_age`.
-            refresh_active_mode_alternatives: Optional override for
-                `Parameters.refresh_active_mode_alternatives`.
-            dest_prob_cutoff: Optional override for
-                `Parameters.dest_prob_cutoff`.
-            n_iter_per_cost_update: Optional override for
-                `Parameters.n_iter_per_cost_update`.
-            cost_uncertainty_sd: Optional override for
-                `Parameters.cost_uncertainty_sd`.
-            seed: Optional override for `Parameters.seed`.
-            mode_sequence_search_parallel: Optional override for
-                `Parameters.mode_sequence_search_parallel`.
-            use_rust_mode_sequence_search: Optional override for
-                `Parameters.use_rust_mode_sequence_search`.
-            save_transition_events: Optional override for
-                `Parameters.save_transition_events`.
-            persist_iteration_artifacts: Optional override for
-                `Parameters.persist_iteration_artifacts`.
-            min_activity_time_constant: Optional override for
-                `Parameters.min_activity_time_constant`.
-            update_plan_timings_from_modeled_travel_times: Optional override for
-                `Parameters.update_plan_timings_from_modeled_travel_times`.
-            use_destination_shadow_prices: Optional override for
-                `Parameters.use_destination_shadow_prices`.
-            transition_distance_threshold: Optional override for
-                `Parameters.transition_distance_threshold`.
-            enable_transition_distance_model: Optional override for
-                `Parameters.enable_transition_distance_model`.
-            transition_revision_probability: Optional override for
-                `Parameters.transition_revision_probability`.
-            transition_logit_scale: Optional override for
-                `Parameters.transition_logit_scale`.
-            transition_utility_pruning_delta: Optional override for
-                `Parameters.transition_utility_pruning_delta`.
-            min_transition_utility_gain: Optional override for
-                `Parameters.min_transition_utility_gain`.
-            plan_probability_pruning_retained_share: Optional override for
-                `Parameters.plan_probability_pruning_retained_share`.
-            plan_probability_pruning_min_iteration: Optional override for
-                `Parameters.plan_probability_pruning_min_iteration`.
-            transition_distance_friction: Optional override for
-                `Parameters.transition_distance_friction`.
-            plan_embedding_dimension_weights: Optional override for
-                `Parameters.plan_embedding_dimension_weights`.
-            behavior_change_phases: Optional override for
-                `Parameters.behavior_change_phases`.
-            simulate_weekend: Optional override for
-                `Parameters.simulate_weekend`.
+            parameters: Grouped day-trip settings. If omitted, default settings
+                are used.
+            scenarios: Optional scenario manifest used to document scenario names
+                and validate scenario-varying parameter values. It is required
+                when any `ParameterValue` uses a non-default scenario.
 
         Raises:
             ValueError: If modes, activities, or surveys are empty, or if required
@@ -147,138 +72,106 @@ class PopulationGroupDayTrips:
         self._validate_activities(activities)
         self._validate_surveys(surveys)
 
-        parameters = Asset.prepare_parameters(
-            parameters=parameters,
-            parameters_cls=Parameters,
-            explicit_args={
-                "n_iterations": n_iterations,
-                "alpha": alpha,
-                "k_activity_sequences": k_activity_sequences,
-                "k_destination_sequences": k_destination_sequences,
-                "k_mode_sequences": k_mode_sequences,
-                "n_warmup_iterations": n_warmup_iterations,
-                "max_inactive_age": max_inactive_age,
-                "refresh_active_mode_alternatives": refresh_active_mode_alternatives,
-                "dest_prob_cutoff": dest_prob_cutoff,
-                "n_iter_per_cost_update": n_iter_per_cost_update,
-                "cost_uncertainty_sd": cost_uncertainty_sd,
-                "seed": seed,
-                "mode_sequence_search_parallel": mode_sequence_search_parallel,
-                "use_rust_mode_sequence_search": use_rust_mode_sequence_search,
-                "save_transition_events": save_transition_events,
-                "persist_iteration_artifacts": persist_iteration_artifacts,
-                "min_activity_time_constant": min_activity_time_constant,
-                "update_plan_timings_from_modeled_travel_times": update_plan_timings_from_modeled_travel_times,
-                "use_destination_shadow_prices": use_destination_shadow_prices,
-                "transition_distance_threshold": transition_distance_threshold,
-                "enable_transition_distance_model": enable_transition_distance_model,
-                "transition_revision_probability": transition_revision_probability,
-                "transition_logit_scale": transition_logit_scale,
-                "transition_utility_pruning_delta": transition_utility_pruning_delta,
-                "min_transition_utility_gain": min_transition_utility_gain,
-                "plan_probability_pruning_retained_share": plan_probability_pruning_retained_share,
-                "plan_probability_pruning_min_iteration": plan_probability_pruning_min_iteration,
-                "transition_distance_friction": transition_distance_friction,
-                "plan_embedding_dimension_weights": plan_embedding_dimension_weights,
-                "behavior_change_phases": behavior_change_phases,
-                "simulate_weekend": simulate_weekend,
-            },
-            owner_name="PopulationGroupDayTrips",
+        if parameters is None:
+            parameters = GroupDayTripsParameters()
+
+        self.population = population
+        self.modes = modes
+        self.activities = activities
+        self.surveys = select_surveys_for_population(population, surveys)
+        self.parameters = parameters
+        self.scenarios = Scenarios.for_setup(
+            scenarios,
+            modes=self.modes,
+            activities=self.activities,
+            parameters=self.parameters,
         )
+        self._runs: dict[tuple[str, int, DayType], Run] = {}
 
-        transport_costs = TransportCosts(modes)
-        selected_surveys = self._select_surveys_for_population(population, surveys)
-        survey_plan_assets = SurveyPlanAssets(
-            surveys=selected_surveys,
-            activities=activities,
-            modes=modes,
-        )
+    def run(
+        self,
+        day_type: str | DayType,
+        *,
+        scenario: str | None = None,
+        replication: int = 0,
+    ) -> Run:
+        """Return one weekday or weekend run.
 
-        weekday_run = Run(
-            population=population,
-            transport_costs=transport_costs,
-            activities=activities,
-            modes=modes,
-            surveys=selected_surveys,
-            survey_plan_assets=survey_plan_assets,
-            parameters=parameters,
-            is_weekday=True,
-            enabled=True,
-        )
-
-        weekend_run = Run(
-            population=population,
-            transport_costs=transport_costs,
-            activities=activities,
-            modes=modes,
-            surveys=selected_surveys,
-            survey_plan_assets=survey_plan_assets,
-            parameters=parameters,
-            is_weekday=False,
-            enabled=parameters.simulate_weekend,
-        )
-
-        self.survey_plan_assets = survey_plan_assets
-        self.weekday_run = weekday_run
-        self.weekend_run = weekend_run
-
-        self.cache_path = self._build_cache_path()
-
-    
-    def get(self) -> Dict[str, pl.LazyFrame]:
-        """Return the combined weekday/weekend outputs for this wrapper.
-
-        This method delegates execution to the underlying
-        `Run` assets. Weekend outputs are included
-        only when the weekend run is enabled.
-
-        Returns:
-            dict[str, pl.LazyFrame]: Lazy readers for weekday outputs, shared
-            `demand_groups`, and weekend outputs when weekend simulation is
-            enabled.
-        """
-        self.weekday_run.get()
-        if self.weekend_run.enabled:
-            self.weekend_run.get()
-        return self.get_cached_asset()
-
-    
-    def create_and_get_asset(self) -> Dict[str, pl.LazyFrame]:
-        """Return the combined outputs through the legacy asset-style API.
-
-        Returns:
-            dict[str, pl.LazyFrame]: Mapping of cache names to parquet scans.
-        """
-        return self.get()
-    
-
-    def get_cached_asset(self) -> Dict[str, pl.LazyFrame]:
-        """Compatibility alias returning lazy readers for cached outputs.
-
-        Returns:
-            dict[str, pl.LazyFrame]: Mapping of cache names to parquet scans.
-        """
-        return {key: pl.scan_parquet(path) for key, path in self.cache_path.items()}
-
-
-    def remove(self):
-        """Remove cached outputs and saved iteration artifacts for both run assets."""
-        self.weekday_run.remove()
-        self.weekend_run.remove()
-
-
-    def _validate_activities(self, activities: List[Activity]) -> None:
-        """Validate the activities passed to the wrapper constructor.
+        The run is built on first access, then reused if the same `day_type`,
+        `scenario`, and `replication` are requested again. Omitting `scenario`
+        selects the default scenario named `"default"`. Plain parameter values
+        are shared by all scenarios. Scenario-varying `ParameterValue` objects
+        must define the requested scenario.
 
         Args:
-            activities: Activity objects that define the activity types available to
-                the simulation.
+            day_type: `"weekday"` or `"weekend"`.
+            scenario: Scenario name to resolve scenario-varying values. If
+                omitted, `"default"` is used.
+            replication: Stochastic replication index. Replication seeds are
+                taken from `parameters.run`.
 
-        Raises:
-            ValueError: If no activities are provided, or if `HomeActivity` or
-                `OtherActivity` is missing.
-            TypeError: If any element is not an `Activity` instance.
+        Returns:
+            Run: Concrete run for the selected day type and context.
         """
+        day_type = DayType(day_type)
+        scenario = DEFAULT_SCENARIO if scenario is None else scenario
+        self.scenarios.validate_requested([scenario])
+        key = (scenario, replication, day_type)
+        if key not in self._runs:
+            parameters = self.parameters.with_replication(replication)
+            survey_plan_assets = SurveyPlanAssets(
+                surveys=self.surveys,
+                activities=self.activities,
+                modes=self.modes,
+            )
+            transport_costs = TransportCosts(self.modes)
+            is_weekday = day_type is DayType.WEEKDAY
+            self._runs[key] = Run(
+                population=self.population,
+                transport_costs=transport_costs,
+                activities=self.activities,
+                modes=self.modes,
+                surveys=self.surveys,
+                survey_plan_assets=survey_plan_assets,
+                parameters=parameters,
+                is_weekday=is_weekday,
+                enabled=is_weekday or parameters.periods.simulate_weekend,
+                scenario=scenario,
+            )
+        return self._runs[key]
+
+    def remove(self):
+        """Remove cached run outputs for this setup.
+
+        This removes all runs that can be inferred from the setup: the default
+        scenario, scenarios found in parameter values, configured replications,
+        enabled day types, and any runs already built in this Python session.
+        """
+        scenarios = {DEFAULT_SCENARIO}
+        scenarios.update(self.scenarios.names)
+        scenarios.update(scenario for scenario, _, _ in self._runs)
+
+        replications = set(range(self.parameters.run.n_replications))
+        replications.update(replication for _, replication, _ in self._runs)
+
+        day_types = {DayType.WEEKDAY}
+        if self.parameters.periods.simulate_weekend:
+            day_types.add(DayType.WEEKEND)
+        day_types.update(day_type for _, _, day_type in self._runs)
+
+        for scenario in scenarios:
+            for replication in replications:
+                for day_type in day_types:
+                    self.run(
+                        day_type,
+                        scenario=scenario,
+                        replication=replication,
+                    ).remove()
+
+        self._runs = {}
+
+    def _validate_activities(self, activities: list[Activity] | None) -> None:
+        """Check that activity inputs are present and usable."""
         if not activities:
             raise ValueError("PopulationGroupDayTrips needs at least one activity in `activities`.")
 
@@ -295,16 +188,8 @@ class PopulationGroupDayTrips:
         if not any(isinstance(a, HomeActivity) for a in activities):
             raise ValueError("PopulationGroupDayTrips `activities` argument should contain a `HomeActivity`.")
 
-    def _validate_modes(self, modes: List[TransportMode]) -> None:
-        """Validate the transport modes passed to the wrapper constructor.
-
-        Args:
-            modes: Transport modes available to the simulation.
-
-        Raises:
-            ValueError: If no modes are provided.
-            TypeError: If any element is not a `TransportMode` instance.
-        """
+    def _validate_modes(self, modes: list[TransportMode] | None) -> None:
+        """Check that transport mode inputs are present and usable."""
         if not modes:
             raise ValueError("PopulationGroupDayTrips needs at least one mode in `modes`.")
 
@@ -315,16 +200,8 @@ class PopulationGroupDayTrips:
                     f"instances, but received one object of class {type(mode)}."
                 )
 
-    def _validate_surveys(self, surveys: List[MobilitySurvey]) -> None:
-        """Validate the mobility surveys passed to the wrapper constructor.
-
-        Args:
-            surveys: Survey assets used to derive survey-based schedules.
-
-        Raises:
-            ValueError: If no surveys are provided.
-            TypeError: If any element is not a `MobilitySurvey` instance.
-        """
+    def _validate_surveys(self, surveys: list[MobilitySurvey] | None) -> None:
+        """Check that survey inputs are present and usable."""
         if not surveys:
             raise ValueError("PopulationGroupDayTrips needs at least one survey in `surveys`.")
 
@@ -334,90 +211,3 @@ class PopulationGroupDayTrips:
                     "PopulationGroupDayTrips surveys argument should be a list of `MobilitySurvey` "
                     f"instances, but received one object of class {type(survey)}."
                 )
-
-    def _get_population_countries(self, population: Population) -> list[str]:
-        """Infer population countries from the study-area admin prefixes."""
-        study_area = population.transport_zones.study_area.get()
-        if "geometry" in study_area.columns:
-            study_area = study_area.drop("geometry", axis=1)
-        return (
-            pl.from_pandas(study_area[["local_admin_unit_id"]])
-            .with_columns(country=pl.col("local_admin_unit_id").str.slice(0, 2))
-            .get_column("country")
-            .unique()
-            .sort()
-            .to_list()
-        )
-
-    def _select_surveys_for_population(
-        self,
-        population: Population,
-        surveys: list[MobilitySurvey],
-    ) -> list[MobilitySurvey]:
-        """Validate survey coverage against the population and keep relevant surveys."""
-        population_countries = set(self._get_population_countries(population))
-        surveys_by_country: dict[str, list[MobilitySurvey]] = {}
-        for survey in surveys:
-            surveys_by_country.setdefault(survey.inputs["parameters"].country, []).append(survey)
-
-        survey_countries = set(surveys_by_country)
-        missing_countries = sorted(population_countries - survey_countries)
-        if missing_countries:
-            raise ValueError(
-                "PopulationGroupDayTrips requires at least one survey for each population country. "
-                f"Missing survey coverage for: {', '.join(missing_countries)}. "
-                f"Provided survey countries: {', '.join(sorted(survey_countries))}."
-            )
-
-        unused_countries = sorted(survey_countries - population_countries)
-        if unused_countries:
-            warnings.warn(
-                "Some provided surveys will not be used because their countries are absent from the population: "
-                + ", ".join(unused_countries)
-                + ".",
-                stacklevel=2,
-            )
-
-        selected_surveys: list[MobilitySurvey] = []
-        for country in sorted(population_countries):
-            selected_surveys.extend(surveys_by_country[country])
-        return selected_surveys
-
-    def _build_cache_path(self) -> Dict[str, str]:
-        """Expose child run cache paths through the wrapper keys.
-
-        Returns:
-            dict[str, pathlib.Path]: Mapping from wrapper output names to the
-            underlying run asset files. Weekend keys are included only when
-            the weekend run is enabled.
-        """
-        weekday_paths = self.weekday_run.cache_path
-        required_keys = (
-            "plan_steps",
-            "opportunities",
-            "costs",
-            "transitions",
-        )
-        optional_keys = (
-            "iteration_metrics",
-        )
-        cache_paths = {f"weekday_{key}": weekday_paths[key] for key in required_keys}
-        cache_paths.update(
-            {
-                f"weekday_{key}": weekday_paths[key]
-                for key in optional_keys
-                if key in weekday_paths
-            }
-        )
-        cache_paths["demand_groups"] = weekday_paths["demand_groups"]
-        if self.weekend_run.enabled:
-            weekend_paths = self.weekend_run.cache_path
-            cache_paths.update({f"weekend_{key}": weekend_paths[key] for key in required_keys})
-            cache_paths.update(
-                {
-                    f"weekend_{key}": weekend_paths[key]
-                    for key in optional_keys
-                    if key in weekend_paths
-                }
-            )
-        return cache_paths

@@ -3,7 +3,15 @@ import pytest
 import mobility
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
 from mobility.surveys.france import EMPMobilitySurvey
-from mobility.trips.group_day_trips import PopulationGroupDayTrips, Parameters
+from mobility.trips.group_day_trips import (
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsModeSequenceParameters,
+    GroupDayTripsOutputParameters,
+    GroupDayTripsParameters,
+    GroupDayTripsPeriodParameters,
+    GroupDayTripsRunParameters,
+    PopulationGroupDayTrips,
+)
 
 
 def _build_group_day_trips(test_data):
@@ -32,17 +40,25 @@ def _build_group_day_trips(test_data):
         modes=[car_mode, walk_mode, bicycle_mode, public_transport_mode],
         activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
-        parameters=Parameters(
-            n_iterations=2,
-            n_iter_per_cost_update=0,
-            dest_prob_cutoff=0.9,
-            k_mode_sequences=6,
-            cost_uncertainty_sd=1.0,
-            mode_sequence_search_parallel=False,
-            persist_iteration_artifacts=True,
-            save_transition_events=True,
-            simulate_weekend=False,
-            seed=108,
+        parameters=GroupDayTripsParameters(
+            run=GroupDayTripsRunParameters(
+                n_iterations=2,
+                n_iter_per_cost_update=0,
+                seed=108,
+            ),
+            periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
+            outputs=GroupDayTripsOutputParameters(
+                persist_iteration_artifacts=True,
+                save_transition_events=True,
+            ),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                dest_prob_cutoff=0.9,
+                cost_uncertainty_sd=1.0,
+            ),
+            mode_sequences=GroupDayTripsModeSequenceParameters(
+                k_mode_sequences=6,
+                mode_sequence_search_parallel=False,
+            ),
         ),
     )
 
@@ -55,9 +71,10 @@ def _build_group_day_trips(test_data):
 )
 def test_008e_group_day_trips_can_resume_from_saved_iteration(test_data):
     pop_trips = _build_group_day_trips(test_data)
+    pop_trips.run("weekday")
     pop_trips.remove()
 
-    run = pop_trips.weekday_run
+    run = pop_trips.run("weekday")
     iterations, resume_from_iteration = run._prepare_iterations(run.inputs_hash)
 
     assert resume_from_iteration is None
@@ -92,11 +109,11 @@ def test_008e_group_day_trips_can_resume_from_saved_iteration(test_data):
     ]
 
     resumed_pop_trips = _build_group_day_trips(test_data)
-    result = resumed_pop_trips.get()
+    result = resumed_pop_trips.run("weekday").get()
 
-    plan_steps = result["weekday_plan_steps"].collect()
-    transitions = result["weekday_transitions"].collect()
-    iteration_metrics = result["weekday_iteration_metrics"].collect()
+    plan_steps = result["plan_steps"].collect()
+    transitions = result["transitions"].collect()
+    iteration_metrics = result["iteration_metrics"].collect()
 
     assert plan_steps.height > 0
     assert transitions.height > 0

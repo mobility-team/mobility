@@ -1506,10 +1506,20 @@ class RunMetrics:
         )
 
         if compare_with is not None:
-            compare_with.get()
-            prefix = "weekday" if self.results.is_weekday else "weekend"
-            plan_steps_comp = pl.scan_parquet(compare_with.cache_path[f"{prefix}_plan_steps"])
-            costs_comp = pl.scan_parquet(compare_with.cache_path[f"{prefix}_costs"])
+            comparison = self._resolve_run_context(compare_with, include_costs=True)
+            reference_run = comparison["run"]
+            plan_steps_path = reference_run.cache_path.get("plan_steps")
+            if plan_steps_path is None:
+                raise TypeError("compare_with run needs `cache_path['plan_steps']`.")
+            if Path(plan_steps_path).exists() is False and callable(getattr(reference_run, "get", None)):
+                reference_run.get()
+            plan_steps_comp = pl.scan_parquet(plan_steps_path)
+            costs_comp = comparison["costs"]
+            demand_groups_comp = comparison["demand_groups"]
+            if isinstance(costs_comp, pl.DataFrame):
+                costs_comp = costs_comp.lazy()
+            if isinstance(demand_groups_comp, pl.DataFrame):
+                demand_groups_comp = demand_groups_comp.lazy()
 
             metric_comp = metric + "_comp"
             metric_per_person_comp = metric + "_per_person_comp"
@@ -1520,7 +1530,10 @@ class RunMetrics:
                 .group_by(["transport_zone_id", "csp", "n_cars"])
                 .agg(metric=(pl.col(metric) * pl.col("n_persons")).sum())
                 .join(transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]), on=["transport_zone_id"])
-                .join(self.results.demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
+                .join(
+                    demand_groups_comp.rename({"home_zone_id": "transport_zone_id"}),
+                    on=["transport_zone_id", "csp", "n_cars"],
+                )
                 .with_columns(metric_per_person=pl.col("metric") / pl.col("n_persons"))
                 .rename({"metric": metric_comp, "metric_per_person": metric_per_person_comp})
                 .collect(engine="streaming")
@@ -1779,10 +1792,11 @@ class RunMetrics:
     ) -> list[int]:
         """Return the iterations used by modal-share evolution plots."""
         if iterations is None:
-            n_iterations = getattr(self.results.parameters, "n_iterations", None)
+            run_parameters = getattr(self.results.parameters, "run", None)
+            n_iterations = getattr(run_parameters, "n_iterations", None)
             if n_iterations is None:
                 raise ValueError(
-                    "iterations should be provided when results.parameters has no n_iterations."
+                    "iterations should be provided when results.parameters.run has no n_iterations."
                 )
             iterations = range(1, int(n_iterations) + 1)
 
@@ -3716,9 +3730,10 @@ class RunMetrics:
 
     def _behavior_change_scope_label(self, iteration: int) -> str:
         """Return the behavior-change scope label shown on GIF frames."""
-        if not callable(getattr(self.results.parameters, "get_behavior_change_scope", None)):
+        behavior_change = getattr(self.results.parameters, "behavior_change", None)
+        if not callable(getattr(behavior_change, "scope_at", None)):
             return "Full replanning"
-        scope = self.results.parameters.get_behavior_change_scope(iteration)
+        scope = behavior_change.scope_at(iteration)
         scope_value = getattr(scope, "value", str(scope))
         return scope_value.replace("_", " ").capitalize()
 
@@ -4356,17 +4371,18 @@ class RunMetrics:
 
     def _resolve_comparison_run(self, compare_with: Any) -> Any:
         """Return the day-type run used as the reference scenario."""
-        if hasattr(compare_with, "weekday_run") and hasattr(compare_with, "weekend_run"):
-            reference_run = compare_with.weekday_run if self.results.is_weekday else compare_with.weekend_run
-        elif hasattr(compare_with, "run") and hasattr(compare_with.run, "cache_path"):
+        if hasattr(compare_with, "run") and hasattr(compare_with.run, "cache_path"):
             reference_run = compare_with.run
+        elif callable(getattr(compare_with, "run", None)):
+            day_type = "weekday" if self.results.is_weekday else "weekend"
+            reference_run = compare_with.run(day_type)
         else:
             reference_run = compare_with
 
         if not hasattr(reference_run, "cache_path"):
             raise TypeError(
                 "compare_with should be a group-day-trips run, results object, "
-                "or PopulationGroupDayTrips object."
+                "or PopulationGroupDayTrips setup."
             )
         if getattr(reference_run, "is_weekday", self.results.is_weekday) != self.results.is_weekday:
             raise ValueError("compare_with should use the same day type as these results.")
