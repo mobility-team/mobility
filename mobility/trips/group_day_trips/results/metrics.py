@@ -1469,14 +1469,16 @@ class GroupDayTripsResultMetrics:
             if zone_column is None:
                 raise ValueError('normalize_scope="zone" needs `by_zone`.')
             values = values.with_columns(pl.col(zone_column).cast(pl.String))
-            population = self._zone_population_by_replication(
+            population = self._population(
                 zone_column=zone_column,
+                by_replication=True,
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
             )
             join_columns = SCOPE_COLUMNS + [zone_column]
         else:
-            population = self._total_population_by_replication(
+            population = self._population(
+                by_replication=True,
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
             )
@@ -1528,14 +1530,14 @@ class GroupDayTripsResultMetrics:
             if zone_column is None:
                 raise ValueError('normalize_scope="zone" needs `by_zone`.')
             values = values.with_columns(pl.col(zone_column).cast(pl.String))
-            population = self._zone_population(
+            population = self._population(
                 zone_column=zone_column,
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
             )
             join_columns = RESULT_COLUMNS + [zone_column]
         else:
-            population = self._total_population(
+            population = self._population(
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
             )
@@ -1660,91 +1662,40 @@ class GroupDayTripsResultMetrics:
             .collect(engine="streaming")
         )
 
-    def _total_population(
+    def _population(
         self,
         *,
+        zone_column: str | None = None,
+        by_replication: bool = False,
         inner_zone_residents_only: bool = False,
         iterations: IterationSelector,
     ) -> pl.DataFrame:
-        """Return total population by scenario and day type."""
+        """Return resident population for the requested result scope."""
         demand_groups = self._table("demand_groups", iterations=iterations).get()
         if inner_zone_residents_only:
             demand_groups = filter_demand_groups_to_inner_zone_residents(
                 demand_groups,
                 self.results.transport_zones,
             )
-        return (
+        extra_columns = []
+        if zone_column is not None:
+            extra_columns.append(zone_column)
+            demand_groups = demand_groups.with_columns(
+                pl.col("home_zone_id").cast(pl.String).alias(zone_column)
+            )
+
+        per_replication = (
             demand_groups
-            .group_by(SCOPE_COLUMNS)
+            .group_by(SCOPE_COLUMNS + extra_columns)
             .agg(n_persons=pl.col("n_persons").cast(pl.Float64).sum())
-            .group_by(RESULT_COLUMNS)
+        )
+        if by_replication:
+            return per_replication.collect(engine="streaming")
+
+        return (
+            per_replication
+            .group_by(RESULT_COLUMNS + extra_columns)
             .agg(n_persons=pl.col("n_persons").mean())
-            .collect(engine="streaming")
-        )
-
-    def _total_population_by_replication(
-        self,
-        *,
-        inner_zone_residents_only: bool = False,
-        iterations: IterationSelector,
-    ) -> pl.DataFrame:
-        """Return total population by scenario, day type, iteration, and replication."""
-        demand_groups = self._table("demand_groups", iterations=iterations).get()
-        if inner_zone_residents_only:
-            demand_groups = filter_demand_groups_to_inner_zone_residents(
-                demand_groups,
-                self.results.transport_zones,
-            )
-        return (
-            demand_groups
-            .group_by(SCOPE_COLUMNS)
-            .agg(n_persons=pl.col("n_persons").cast(pl.Float64).sum())
-            .collect(engine="streaming")
-        )
-
-    def _zone_population(
-        self,
-        *,
-        zone_column: str,
-        inner_zone_residents_only: bool = False,
-        iterations: IterationSelector,
-    ) -> pl.DataFrame:
-        """Return resident population by transport zone."""
-        demand_groups = self._table("demand_groups", iterations=iterations).get()
-        if inner_zone_residents_only:
-            demand_groups = filter_demand_groups_to_inner_zone_residents(
-                demand_groups,
-                self.results.transport_zones,
-            )
-        return (
-            demand_groups
-            .with_columns(pl.col("home_zone_id").cast(pl.String).alias(zone_column))
-            .group_by(SCOPE_COLUMNS + [zone_column])
-            .agg(n_persons=pl.col("n_persons").cast(pl.Float64).sum())
-            .group_by(RESULT_COLUMNS + [zone_column])
-            .agg(n_persons=pl.col("n_persons").mean())
-            .collect(engine="streaming")
-        )
-
-    def _zone_population_by_replication(
-        self,
-        *,
-        zone_column: str,
-        inner_zone_residents_only: bool = False,
-        iterations: IterationSelector,
-    ) -> pl.DataFrame:
-        """Return resident population by transport zone and replication."""
-        demand_groups = self._table("demand_groups", iterations=iterations).get()
-        if inner_zone_residents_only:
-            demand_groups = filter_demand_groups_to_inner_zone_residents(
-                demand_groups,
-                self.results.transport_zones,
-            )
-        return (
-            demand_groups
-            .with_columns(pl.col("home_zone_id").cast(pl.String).alias(zone_column))
-            .group_by(SCOPE_COLUMNS + [zone_column])
-            .agg(n_persons=pl.col("n_persons").cast(pl.Float64).sum())
             .collect(engine="streaming")
         )
 

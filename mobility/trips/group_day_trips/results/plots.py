@@ -328,19 +328,12 @@ def plot_metric_by_zone(
     if not scenarios:
         raise ValueError("No rows are available to plot.")
 
-    map_values = (
-        values
-        .rename({zone_column: "transport_zone_id"})
-        .with_columns(pl.col("transport_zone_id").cast(pl.String))
+    map_values, facet_column = _zone_metric_values(
+        values,
+        zone_column=zone_column,
+        scenario_titles=scenario_titles,
     )
-    facet_column = "scenario"
-    if scenario_titles:
-        facet_column = "scenario_label"
-        map_values = _with_scenario_label_column(map_values, scenario_titles)
-    hover_columns = []
-    std_column = f"{metric}_std"
-    if std_column in map_values.columns:
-        hover_columns.append(std_column)
+    hover_columns = _metric_hover_columns(map_values, metric)
     range_color = _symmetric_range(map_values, metric, diverging_center)
     return maps.metric_facets(
         map_values,
@@ -384,19 +377,12 @@ def plot_metric_grid_by_zone(
     if values.is_empty():
         raise ValueError("No rows are available to plot.")
 
-    map_values = (
-        values
-        .rename({zone_column: "transport_zone_id"})
-        .with_columns(pl.col("transport_zone_id").cast(pl.String))
+    map_values, scenario_column = _zone_metric_values(
+        values,
+        zone_column=zone_column,
+        scenario_titles=scenario_titles,
     )
-    scenario_column = "scenario"
-    if scenario_titles:
-        scenario_column = "scenario_label"
-        map_values = _with_scenario_label_column(map_values, scenario_titles)
-    hover_columns = []
-    std_column = f"{metric}_std"
-    if std_column in map_values.columns:
-        hover_columns.append(std_column)
+    hover_columns = _metric_hover_columns(map_values, metric)
     range_color = _symmetric_range(map_values, metric, diverging_center)
     return maps.metric_grid(
         map_values,
@@ -451,14 +437,8 @@ def plot_metric_flows_by_zone(
         pl.col(origin_column).cast(pl.String),
         pl.col(destination_column).cast(pl.String),
     )
-    facet_column = "scenario"
-    if scenario_titles:
-        facet_column = "scenario_label"
-        map_values = _with_scenario_label_column(map_values, scenario_titles)
-    hover_columns = []
-    std_column = f"{metric}_std"
-    if std_column in map_values.columns:
-        hover_columns.append(std_column)
+    map_values, facet_column = _with_scenario_column(map_values, scenario_titles)
+    hover_columns = _metric_hover_columns(map_values, metric)
     return maps.metric_flows(
         map_values,
         value_column=metric,
@@ -689,6 +669,37 @@ def select_scenarios(
         )
 
     return selected_scenarios
+
+
+def _zone_metric_values(
+    values: pl.DataFrame,
+    *,
+    zone_column: str,
+    scenario_titles: dict[str, str] | None,
+) -> tuple[pl.DataFrame, str]:
+    """Return map-ready zone values and the scenario facet column."""
+    map_values = (
+        values
+        .rename({zone_column: "transport_zone_id"})
+        .with_columns(pl.col("transport_zone_id").cast(pl.String))
+    )
+    return _with_scenario_column(map_values, scenario_titles)
+
+
+def _with_scenario_column(
+    values: pl.DataFrame,
+    scenario_titles: dict[str, str] | None,
+) -> tuple[pl.DataFrame, str]:
+    """Return values and the scenario column to use for plots."""
+    if not scenario_titles:
+        return values, "scenario"
+    return _with_scenario_label_column(values, scenario_titles), "scenario_label"
+
+
+def _metric_hover_columns(values: pl.DataFrame, metric: str) -> list[str]:
+    """Return optional metric detail columns for map hover labels."""
+    std_column = f"{metric}_std"
+    return [std_column] if std_column in values.columns else []
 
 
 def _selected_scenarios_from_values(
