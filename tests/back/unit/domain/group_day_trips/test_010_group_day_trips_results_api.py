@@ -280,9 +280,26 @@ def _titled_results(tmp_path: Path):
     )
 
 
+@pytest.fixture(autouse=True)
+def _project_data_folder(tmp_path, monkeypatch):
+    """Point result assets at each test's temporary folder."""
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+
+
+def _record_metric_plot(monkeypatch, name: str) -> list[dict]:
+    """Patch one metric plot helper and record all calls."""
+    calls = []
+
+    def fake_plot(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return go.Figure()
+
+    monkeypatch.setattr(f"mobility.trips.group_day_trips.results.metrics.{name}", fake_plot)
+    return calls
+
+
 def test_population_group_day_trips_results_selects_all_replications(tmp_path, monkeypatch):
     """Check that the top-level results method selects every configured seed."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     wrapper = PopulationGroupDayTrips.__new__(PopulationGroupDayTrips)
     wrapper.parameters = SimpleNamespace(run=SimpleNamespace(n_replications=2))
     wrapper.scenarios = Scenarios()
@@ -298,7 +315,6 @@ def test_population_group_day_trips_results_selects_all_replications(tmp_path, m
 
 def test_results_rejects_empty_and_duplicate_scenarios(tmp_path, monkeypatch):
     """Check that scenario selection fails before any run is built."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
 
     with pytest.raises(ValueError, match="at least one scenario"):
         GroupDayTripsResults(
@@ -319,7 +335,6 @@ def test_results_rejects_empty_and_duplicate_scenarios(tmp_path, monkeypatch):
 
 def test_results_rejects_scenarios_missing_from_manifest(tmp_path, monkeypatch):
     """Check that direct result objects still use the scenario manifest."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
 
     with pytest.raises(ValueError, match="Missing scenarios"):
         GroupDayTripsResults(
@@ -333,7 +348,6 @@ def test_results_rejects_scenarios_missing_from_manifest(tmp_path, monkeypatch):
 
 def test_results_object_no_longer_accepts_iterations(tmp_path, monkeypatch):
     """Check iteration selection belongs to tables and metrics."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
 
     with pytest.raises(TypeError, match="unexpected keyword"):
         GroupDayTripsResults(
@@ -347,7 +361,6 @@ def test_results_object_no_longer_accepts_iterations(tmp_path, monkeypatch):
 
 def test_result_tables_add_scope_columns(tmp_path, monkeypatch):
     """Check that raw tables keep run identity columns after concatenation."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     plan_steps = results.tables.plan_steps().sort("replication").collect()
@@ -363,7 +376,6 @@ def test_result_tables_add_scope_columns(tmp_path, monkeypatch):
 
 def test_result_tables_can_include_multiple_scenarios(tmp_path, monkeypatch):
     """Check that one result set can concatenate several scenarios."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, scenarios=["default", "test"])
 
     plan_steps = results.tables.plan_steps().collect()
@@ -383,7 +395,6 @@ def test_result_tables_can_include_multiple_scenarios(tmp_path, monkeypatch):
 
 def test_result_tables_can_select_saved_iterations(tmp_path, monkeypatch):
     """Check that raw plan steps can be read from saved iteration artifacts."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, replication=0)
 
     plan_steps = (
@@ -398,7 +409,6 @@ def test_result_tables_can_select_saved_iterations(tmp_path, monkeypatch):
 
 def test_trip_count_metrics_keep_selected_iterations(tmp_path, monkeypatch):
     """Check that metric tables keep iteration when several iterations are selected."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, replication=0)
 
     trip_count = results.metrics.trip_count(
@@ -412,7 +422,6 @@ def test_trip_count_metrics_keep_selected_iterations(tmp_path, monkeypatch):
 
 def test_iteration_trip_count_can_group_by_home_zone_from_demand_groups(tmp_path, monkeypatch):
     """Check saved iteration plan steps can use resident zone columns from demand groups."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, replication=0)
 
     trip_count = results.metrics.trip_count(
@@ -428,7 +437,6 @@ def test_iteration_trip_count_can_group_by_home_zone_from_demand_groups(tmp_path
 
 def test_iteration_travel_metrics_can_group_by_demand_group_columns(tmp_path, monkeypatch):
     """Check saved iteration travel metrics can use columns stored on demand groups."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, replication=0)
 
     distance = results.metrics.travel_distance(
@@ -448,7 +456,6 @@ def test_iteration_travel_metrics_can_group_by_demand_group_columns(tmp_path, mo
 
 def test_iteration_final_state_metrics_use_demand_group_columns(tmp_path, monkeypatch):
     """Check saved iteration final-state metrics can join demand-group dimensions."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, replication=0)
 
     immobility = results.metrics.immobility(
@@ -470,7 +477,6 @@ def test_iteration_final_state_metrics_use_demand_group_columns(tmp_path, monkey
 
 def test_compact_trip_count_api_handles_absolute_per_person_and_share(tmp_path, monkeypatch):
     """Check trip count normalization is controlled by normalize_by."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     absolute = results.metrics.trip_count(by_variable="mode").sort("mode")
@@ -484,7 +490,6 @@ def test_compact_trip_count_api_handles_absolute_per_person_and_share(tmp_path, 
 
 def test_metrics_can_group_by_origin_and_destination_zone(tmp_path, monkeypatch):
     """Check explicit zone dimensions select the matching plan-step zone id."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     by_origin = results.metrics.trip_count(by_zone="origin_zone").sort("origin_zone_id")
@@ -498,7 +503,6 @@ def test_metrics_can_group_by_origin_and_destination_zone(tmp_path, monkeypatch)
 
 def test_metrics_can_group_by_origin_destination_pairs(tmp_path, monkeypatch):
     """Check multiple zone dimensions return OD contribution tables."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     od_trips = results.metrics.trip_count(
@@ -516,7 +520,6 @@ def test_metrics_can_group_by_origin_destination_pairs(tmp_path, monkeypatch):
 
 def test_multi_zone_grouping_rejects_normalization(tmp_path, monkeypatch):
     """Check OD contributions stay absolute until normalization semantics are explicit."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     with pytest.raises(ValueError, match="Normalization is not supported"):
@@ -532,7 +535,6 @@ def test_multi_zone_grouping_rejects_normalization(tmp_path, monkeypatch):
 
 def test_zone_person_count_normalization_aligns_zone_id_types(tmp_path, monkeypatch):
     """Check zone normalization works when run tables store zone ids differently."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
 
     def run(day_type: str, *, scenario: str | None = None, replication: int = 0):
         demand_groups = pl.DataFrame(
@@ -584,7 +586,6 @@ def test_zone_person_count_normalization_aligns_zone_id_types(tmp_path, monkeypa
 
 def test_metrics_can_filter_to_inner_zone_residents(tmp_path, monkeypatch):
     """Check metrics can ignore residents whose home zone is outside the inner area."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
 
     class TransportZonesWithOuterZone(_FakeTransportZones):
         """Fake zones where one resident home zone is outside the inner area."""
@@ -661,7 +662,6 @@ def test_metrics_can_filter_to_inner_zone_residents(tmp_path, monkeypatch):
 
 def test_compact_travel_distance_api_uses_public_travel_distance_name(tmp_path, monkeypatch):
     """Check travel distance replaces the old distance public name."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     by_mode = results.metrics.travel_distance(by_variable="mode", normalize_by="person_count", normalize_scope="study_area").sort("mode")
@@ -687,7 +687,6 @@ def test_compact_travel_distance_api_uses_public_travel_distance_name(tmp_path, 
 
 def test_compact_time_cost_and_emissions_metrics(tmp_path, monkeypatch):
     """Check non-trip quantities use the same compact metric API."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     travel_time = results.metrics.travel_time(normalize_by="person_count", normalize_scope="study_area")
@@ -701,7 +700,6 @@ def test_compact_time_cost_and_emissions_metrics(tmp_path, monkeypatch):
 
 def test_metrics_can_include_survey_reference(tmp_path, monkeypatch):
     """Check supported quantities can opt into external references."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     distance = results.metrics.travel_distance(
@@ -772,7 +770,6 @@ def test_metrics_can_include_survey_reference(tmp_path, monkeypatch):
 
 def test_external_reference_person_count_uses_reference_population(tmp_path, monkeypatch):
     """Check external per-person metrics use the population represented by the reference."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
 
     class TransportZonesWithOuterZone(_FakeTransportZones):
         """Fake zones where one model home zone is outside the reference area."""
@@ -853,7 +850,6 @@ def test_external_reference_person_count_uses_reference_population(tmp_path, mon
 
 def test_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
     """Check metric tables can compare scenarios without keeping reference rows."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, scenarios=["default", "test"])
 
     distance = results.metrics.travel_distance(
@@ -889,7 +885,6 @@ def test_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
 
 def test_iteration_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
     """Check scenario references match rows by iteration."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, scenarios=["default", "test"], replication=0)
 
     distance = results.metrics.travel_distance(
@@ -918,7 +913,6 @@ def test_iteration_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
 
 def test_activity_and_bin_dimensions_are_available(tmp_path, monkeypatch):
     """Check activity, distance bins, and time bins are analysis dimensions."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     by_activity = results.metrics.travel_distance(
@@ -941,7 +935,6 @@ def test_activity_and_bin_dimensions_are_available(tmp_path, monkeypatch):
 
 def test_immobility_and_demand_group_metrics_remain_special_methods(tmp_path, monkeypatch):
     """Check special result products keep their explicit names."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     immobility = results.metrics.immobility(reference="external").sort("csp")
@@ -953,7 +946,6 @@ def test_immobility_and_demand_group_metrics_remain_special_methods(tmp_path, mo
 
 def test_sparse_dimension_groups_count_missing_seed_as_zero(tmp_path, monkeypatch):
     """Check that a group missing in one seed still contributes a zero."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
 
     def run(day_type: str, *, scenario: str | None = None, replication: int = 0):
         demand_groups = pl.DataFrame(
@@ -1001,7 +993,6 @@ def test_sparse_dimension_groups_count_missing_seed_as_zero(tmp_path, monkeypatc
 
 def test_activity_duration_distribution_and_time_series_are_model_only_by_default(tmp_path, monkeypatch):
     """Check time-distribution products can opt into survey rows."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     duration = results.metrics.activity_duration_distribution(bin_width_minutes=60)
@@ -1023,7 +1014,6 @@ def test_activity_duration_distribution_and_time_series_are_model_only_by_defaul
 
 def test_activity_duration_distribution_and_time_series_can_plot(tmp_path, monkeypatch):
     """Check time-distribution products can return figures."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     duration_fig = results.metrics.activity_duration_distribution(
@@ -1049,7 +1039,6 @@ def test_activity_duration_distribution_and_time_series_can_plot(tmp_path, monke
 
 def test_opportunity_occupation_returns_table(tmp_path, monkeypatch):
     """Check opportunity occupation keeps capacities with modeled duration."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     occupation = results.metrics.opportunity_occupation().sort("activity")
@@ -1063,53 +1052,22 @@ def test_opportunity_occupation_returns_table(tmp_path, monkeypatch):
 
 def test_opportunity_occupation_plot_uses_zone_helpers(tmp_path, monkeypatch):
     """Check opportunity occupation can be mapped by activity or as one activity."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
-    seen = {}
-
-    def fake_zone_map(maps, values, *, metric, zone_column, title, width, height, **plot_kwargs):
-        seen["zone"] = {
-            "metric": metric,
-            "zone_column": zone_column,
-            "title": title,
-            "values": values,
-            "plot_kwargs": plot_kwargs,
-        }
-        return go.Figure()
-
-    def fake_grid_map(maps, values, *, metric, zone_column, variable_column, title, width, height, **plot_kwargs):
-        seen["grid"] = {
-            "metric": metric,
-            "zone_column": zone_column,
-            "variable_column": variable_column,
-            "title": title,
-            "values": values,
-            "plot_kwargs": plot_kwargs,
-        }
-        return go.Figure()
-
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.results.metrics.plot_metric_by_zone",
-        fake_zone_map,
-    )
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.results.metrics.plot_metric_grid_by_zone",
-        fake_grid_map,
-    )
+    zone_calls = _record_metric_plot(monkeypatch, "plot_metric_by_zone")
+    grid_calls = _record_metric_plot(monkeypatch, "plot_metric_grid_by_zone")
 
     grid_fig = results.metrics.opportunity_occupation(output="plot")
     zone_fig = results.metrics.opportunity_occupation(activity="work", output="plot")
 
     assert isinstance(grid_fig, BaseFigure)
     assert isinstance(zone_fig, BaseFigure)
-    assert seen["grid"]["metric"] == "opportunity_occupation"
-    assert seen["grid"]["variable_column"] == "activity"
-    assert seen["zone"]["values"]["activity"].unique().to_list() == ["work"]
+    assert grid_calls[0]["kwargs"]["metric"] == "opportunity_occupation"
+    assert grid_calls[0]["kwargs"]["variable_column"] == "activity"
+    assert zone_calls[0]["args"][1]["activity"].unique().to_list() == ["work"]
 
 
 def test_metric_output_plot_returns_report_figure(tmp_path, monkeypatch):
     """Check compact metric methods can return Plotly figures."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     fig = results.metrics.travel_distance(
@@ -1133,7 +1091,6 @@ def test_metric_output_plot_returns_report_figure(tmp_path, monkeypatch):
 
 def test_metric_plots_include_all_scenarios_by_default(tmp_path, monkeypatch):
     """Check that plots use every scenario in the result set by default."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, scenarios=["default", "test"])
 
     fig = results.metrics.travel_distance(by_variable="mode", normalize_by="person_count", normalize_scope="study_area", output="plot")
@@ -1146,7 +1103,6 @@ def test_metric_plots_include_all_scenarios_by_default(tmp_path, monkeypatch):
 
 def test_metric_plot_uses_line_chart_for_multiple_iterations(tmp_path, monkeypatch):
     """Check metric plots use iteration lines when several iterations are selected."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     fig = results.metrics.travel_distance(
@@ -1175,7 +1131,6 @@ def test_metric_plot_uses_line_chart_for_multiple_iterations(tmp_path, monkeypat
 
 def test_metric_plot_uses_gap_for_scenario_reference(tmp_path, monkeypatch):
     """Check scenario-reference plots show the gap to the reference scenario."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, scenarios=["default", "test"])
 
     fig = results.metrics.travel_distance(
@@ -1194,7 +1149,6 @@ def test_metric_plot_uses_gap_for_scenario_reference(tmp_path, monkeypatch):
 
 def test_metric_plots_use_scenario_titles_when_available(tmp_path, monkeypatch):
     """Check plot legends show scenario titles while tables keep scenario names."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _titled_results(tmp_path)
 
     table = results.metrics.travel_distance(by_variable="mode")
@@ -1206,7 +1160,6 @@ def test_metric_plots_use_scenario_titles_when_available(tmp_path, monkeypatch):
 
 def test_metric_plots_can_filter_scenarios(tmp_path, monkeypatch):
     """Check that plot methods can select one scenario from the result set."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, scenarios=["default", "test"])
 
     fig = results.metrics.trip_count(
@@ -1221,30 +1174,8 @@ def test_metric_plots_can_filter_scenarios(tmp_path, monkeypatch):
 
 def test_home_zone_metric_plot_uses_map_helper(tmp_path, monkeypatch):
     """Check home-zone metric plots are maps over loaded scenarios."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, scenarios=["default", "test"])
-    seen = {}
-
-    def fake_home_zone_map(maps, values, *, metric, zone_column, title, width, height, **plot_kwargs):
-        """Record the map inputs without needing test geometries."""
-        seen.setdefault("calls", []).append(
-            {
-                "maps": maps,
-                "values": values,
-                "metric": metric,
-                "zone_column": zone_column,
-                "title": title,
-                "width": width,
-                "height": height,
-                "plot_kwargs": plot_kwargs,
-            }
-        )
-        return go.Figure()
-
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.results.metrics.plot_metric_by_zone",
-        fake_home_zone_map,
-    )
+    calls = _record_metric_plot(monkeypatch, "plot_metric_by_zone")
 
     fig = results.metrics.travel_distance(
         by_zone="home_zone",
@@ -1260,42 +1191,21 @@ def test_home_zone_metric_plot_uses_map_helper(tmp_path, monkeypatch):
     )
 
     assert isinstance(fig, BaseFigure)
-    assert len(seen["calls"]) == 2
-    assert seen["calls"][0]["maps"] is seen["calls"][1]["maps"]
-    assert seen["calls"][0]["metric"] == "travel_distance_per_person"
-    assert seen["calls"][0]["zone_column"] == "home_zone_id"
-    assert seen["calls"][0]["title"] == "Travel distance per person by home zone"
-    assert seen["calls"][0]["width"] == 640
-    assert seen["calls"][0]["height"] == 360
-    assert seen["calls"][0]["values"]["scenario"].unique(maintain_order=True).to_list() == ["default", "test"]
-    assert "home_zone_id" in seen["calls"][0]["values"].columns
+    assert len(calls) == 2
+    assert calls[0]["args"][0] is calls[1]["args"][0]
+    assert calls[0]["kwargs"]["metric"] == "travel_distance_per_person"
+    assert calls[0]["kwargs"]["zone_column"] == "home_zone_id"
+    assert calls[0]["kwargs"]["title"] == "Travel distance per person by home zone"
+    assert calls[0]["kwargs"]["width"] == 640
+    assert calls[0]["kwargs"]["height"] == 360
+    assert calls[0]["args"][1]["scenario"].unique(maintain_order=True).to_list() == ["default", "test"]
+    assert "home_zone_id" in calls[0]["args"][1].columns
 
 
 def test_zone_variable_metric_plot_uses_grid_map_helper(tmp_path, monkeypatch):
     """Check zone-variable metric plots are scenario x variable map grids."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, scenarios=["default", "test"])
-    seen = {}
-
-    def fake_grid_map(maps, values, *, metric, zone_column, variable_column, title, width, height, **plot_kwargs):
-        """Record grid map inputs without needing test geometries."""
-        seen["call"] = {
-            "maps": maps,
-            "values": values,
-            "metric": metric,
-            "zone_column": zone_column,
-            "variable_column": variable_column,
-            "title": title,
-            "width": width,
-            "height": height,
-            "plot_kwargs": plot_kwargs,
-        }
-        return go.Figure()
-
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.results.metrics.plot_metric_grid_by_zone",
-        fake_grid_map,
-    )
+    calls = _record_metric_plot(monkeypatch, "plot_metric_grid_by_zone")
 
     fig = results.metrics.trip_count(
         by_zone="home_zone",
@@ -1308,36 +1218,18 @@ def test_zone_variable_metric_plot_uses_grid_map_helper(tmp_path, monkeypatch):
     )
 
     assert isinstance(fig, BaseFigure)
-    assert seen["call"]["metric"] == "trip_count_share"
-    assert seen["call"]["zone_column"] == "home_zone_id"
-    assert seen["call"]["variable_column"] == "mode"
-    assert seen["call"]["title"] == "Trip count share by home zone and mode"
-    assert seen["call"]["width"] == 640
-    assert seen["call"]["height"] == 360
+    assert calls[0]["kwargs"]["metric"] == "trip_count_share"
+    assert calls[0]["kwargs"]["zone_column"] == "home_zone_id"
+    assert calls[0]["kwargs"]["variable_column"] == "mode"
+    assert calls[0]["kwargs"]["title"] == "Trip count share by home zone and mode"
+    assert calls[0]["kwargs"]["width"] == 640
+    assert calls[0]["kwargs"]["height"] == 360
 
 
 def test_reference_gap_map_uses_diverging_colors(tmp_path, monkeypatch):
     """Check map plots of reference gaps use a zero-centered diverging scale."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, scenarios=["default", "test"])
-    seen = {}
-
-    def fake_grid_map(maps, values, *, metric, zone_column, variable_column, title, width, height, **plot_kwargs):
-        """Record grid map inputs without needing test geometries."""
-        seen["call"] = {
-            "values": values,
-            "metric": metric,
-            "zone_column": zone_column,
-            "variable_column": variable_column,
-            "title": title,
-            "plot_kwargs": plot_kwargs,
-        }
-        return go.Figure()
-
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.results.metrics.plot_metric_grid_by_zone",
-        fake_grid_map,
-    )
+    calls = _record_metric_plot(monkeypatch, "plot_metric_grid_by_zone")
 
     fig = results.metrics.trip_count(
         by_variable="mode",
@@ -1351,60 +1243,16 @@ def test_reference_gap_map_uses_diverging_colors(tmp_path, monkeypatch):
     )
 
     assert isinstance(fig, BaseFigure)
-    assert seen["call"]["metric"] == "gap"
-    assert seen["call"]["title"] == "Gap to reference: Trip count share by home zone and mode"
-    assert seen["call"]["plot_kwargs"]["diverging_center"] == 0.0
-    assert seen["call"]["values"]["scenario"].unique(maintain_order=True).to_list() == ["test"]
+    assert calls[0]["kwargs"]["metric"] == "gap"
+    assert calls[0]["kwargs"]["title"] == "Gap to reference: Trip count share by home zone and mode"
+    assert calls[0]["kwargs"]["diverging_center"] == 0.0
+    assert calls[0]["args"][1]["scenario"].unique(maintain_order=True).to_list() == ["test"]
 
 
 def test_origin_destination_metric_plot_uses_flow_map_helper(tmp_path, monkeypatch):
     """Check OD metric plots use the flow-map helper with default top-N filtering."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, scenarios=["default", "test"])
-    seen = {}
-
-    def fake_flow_map(
-        maps,
-        values,
-        *,
-        metric,
-        origin_column,
-        destination_column,
-        title,
-        width,
-        height,
-        scenario_titles,
-        labels,
-        n_largest,
-        min_value,
-        min_share,
-        max_line_width,
-        min_line_width,
-    ):
-        """Record flow-map inputs without needing test geometries."""
-        seen["call"] = {
-            "maps": maps,
-            "values": values,
-            "metric": metric,
-            "origin_column": origin_column,
-            "destination_column": destination_column,
-            "title": title,
-            "width": width,
-            "height": height,
-            "scenario_titles": scenario_titles,
-            "labels": labels,
-            "n_largest": n_largest,
-            "min_value": min_value,
-            "min_share": min_share,
-            "max_line_width": max_line_width,
-            "min_line_width": min_line_width,
-        }
-        return go.Figure()
-
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.results.metrics.plot_metric_flows_by_zone",
-        fake_flow_map,
-    )
+    calls = _record_metric_plot(monkeypatch, "plot_metric_flows_by_zone")
 
     fig = results.metrics.ghg_emissions(
         by_zone=["origin_zone", "destination_zone"],
@@ -1416,18 +1264,18 @@ def test_origin_destination_metric_plot_uses_flow_map_helper(tmp_path, monkeypat
     )
 
     assert isinstance(fig, BaseFigure)
-    assert seen["call"]["metric"] == "ghg_emissions"
-    assert seen["call"]["origin_column"] == "origin_zone_id"
-    assert seen["call"]["destination_column"] == "destination_zone_id"
-    assert seen["call"]["title"] == "Ghg emissions by origin zone and destination zone"
-    assert seen["call"]["width"] == 640
-    assert seen["call"]["height"] == 360
-    assert seen["call"]["scenario_titles"] == {}
-    assert seen["call"]["n_largest"] == 50
-    assert seen["call"]["min_value"] == 1.0
-    assert seen["call"]["min_share"] is None
-    assert seen["call"]["max_line_width"] == 8.0
-    assert seen["call"]["min_line_width"] == 0.1
+    assert calls[0]["kwargs"]["metric"] == "ghg_emissions"
+    assert calls[0]["kwargs"]["origin_column"] == "origin_zone_id"
+    assert calls[0]["kwargs"]["destination_column"] == "destination_zone_id"
+    assert calls[0]["kwargs"]["title"] == "Ghg emissions by origin zone and destination zone"
+    assert calls[0]["kwargs"]["width"] == 640
+    assert calls[0]["kwargs"]["height"] == 360
+    assert calls[0]["kwargs"]["scenario_titles"] == {}
+    assert calls[0]["kwargs"]["n_largest"] == 50
+    assert calls[0]["kwargs"]["min_value"] == 1.0
+    assert calls[0]["kwargs"]["min_share"] is None
+    assert calls[0]["kwargs"]["max_line_width"] == 8.0
+    assert calls[0]["kwargs"]["min_line_width"] == 0.1
 
 
 def test_home_zone_metric_map_facets_scenarios():
@@ -1560,7 +1408,6 @@ def test_reference_gap_metric_map_uses_zero_centered_diverging_scale():
 
 def test_results_do_not_expose_parallel_analysis_namespaces(tmp_path, monkeypatch):
     """Check figures and references are requested from metric methods."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     assert not hasattr(results, "plots")
@@ -1569,7 +1416,6 @@ def test_results_do_not_expose_parallel_analysis_namespaces(tmp_path, monkeypatc
 
 def test_metric_arguments_are_validated(tmp_path, monkeypatch):
     """Check bad query arguments fail with clear errors."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path)
 
     with pytest.raises(ValueError, match="table"):
@@ -1602,7 +1448,6 @@ def test_metric_arguments_are_validated(tmp_path, monkeypatch):
 
 def test_single_replication_keeps_multi_seed_schema(tmp_path, monkeypatch):
     """Check that one seed still returns the multi-seed schema."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     results = _results(tmp_path, replication=0)
 
     metric = results.metrics.travel_distance(normalize_by="person_count", normalize_scope="study_area")
@@ -1614,7 +1459,6 @@ def test_single_replication_keeps_multi_seed_schema(tmp_path, monkeypatch):
 
 def test_results_rejects_invalid_replication(tmp_path, monkeypatch):
     """Check that invalid seed indices fail before any run is built."""
-    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
 
     with pytest.raises(ValueError, match="n_replications=2"):
         GroupDayTripsResults(

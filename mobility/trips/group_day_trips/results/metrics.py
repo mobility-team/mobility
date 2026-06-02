@@ -1255,29 +1255,12 @@ class GroupDayTripsResultMetrics:
         iterations: IterationSelector,
     ) -> pl.DataFrame:
         """Return an absolute weighted quantity averaged over replications."""
-        plan_steps = self._plan_steps_with_quantity(
-            quantity_column,
+        plan_steps = self._metric_plan_steps(
+            quantity_column=quantity_column,
+            group_columns=group_columns,
+            inner_zone_residents_only=inner_zone_residents_only,
             iterations=iterations,
         )
-        needed_demand_columns = [
-            column
-            for column in group_columns
-            if column in DEMAND_GROUP_COLUMNS
-        ]
-        if inner_zone_residents_only and "home_zone_id" not in needed_demand_columns:
-            needed_demand_columns.append("home_zone_id")
-        if needed_demand_columns:
-            plan_steps = add_demand_group_columns(
-                plan_steps,
-                self._table("demand_groups", iterations=iterations).get(),
-                needed_demand_columns,
-            )
-        if inner_zone_residents_only:
-            plan_steps = filter_plan_steps_to_inner_zone_residents(
-                plan_steps,
-                self.results.transport_zones,
-            )
-        plan_steps = with_analysis_dimensions(plan_steps, group_columns)
         required_columns = set(SCOPE_COLUMNS + group_columns + ["activity_seq_id", quantity_column, "n_persons"])
         missing_columns = required_columns.difference(plan_steps.collect_schema().names())
         if missing_columns:
@@ -1375,24 +1358,11 @@ class GroupDayTripsResultMetrics:
         value_column: str,
     ) -> pl.DataFrame:
         """Return weighted trip counts by replication."""
-        needed_demand_columns = [
-            column
-            for column in group_columns
-            if column in DEMAND_GROUP_COLUMNS
-        ]
-        if inner_zone_residents_only and "home_zone_id" not in needed_demand_columns:
-            needed_demand_columns.append("home_zone_id")
-        plan_steps = add_demand_group_columns(
-            self._table("plan_steps", iterations=iterations).get(),
-            self._table("demand_groups", iterations=iterations).get(),
-            needed_demand_columns,
+        plan_steps = self._metric_plan_steps(
+            group_columns=group_columns,
+            inner_zone_residents_only=inner_zone_residents_only,
+            iterations=iterations,
         )
-        if inner_zone_residents_only:
-            plan_steps = filter_plan_steps_to_inner_zone_residents(
-                plan_steps,
-                self.results.transport_zones,
-            )
-        plan_steps = with_analysis_dimensions(plan_steps, group_columns)
         return (
             plan_steps
             .filter(pl.col("activity_seq_id") != 0)
@@ -1416,10 +1386,41 @@ class GroupDayTripsResultMetrics:
         iterations: IterationSelector,
     ) -> pl.DataFrame:
         """Return one weighted quantity by replication."""
-        plan_steps = self._plan_steps_with_quantity(
-            quantity_column,
+        plan_steps = self._metric_plan_steps(
+            quantity_column=quantity_column,
+            group_columns=group_columns,
+            inner_zone_residents_only=inner_zone_residents_only,
             iterations=iterations,
         )
+        return (
+            plan_steps
+            .filter(pl.col("activity_seq_id") != 0)
+            .group_by(SCOPE_COLUMNS + list(group_columns))
+            .agg(
+                (
+                    pl.col(quantity_column).cast(pl.Float64)
+                    * pl.col("n_persons").cast(pl.Float64)
+                ).sum().alias(output_column)
+            )
+            .collect(engine="streaming")
+        )
+
+    def _metric_plan_steps(
+        self,
+        *,
+        quantity_column: str | None = None,
+        group_columns: list[str],
+        inner_zone_residents_only: bool,
+        iterations: IterationSelector,
+    ) -> pl.LazyFrame:
+        """Return plan steps with the columns needed by metric queries."""
+        if quantity_column is None:
+            plan_steps = self._table("plan_steps", iterations=iterations).get()
+        else:
+            plan_steps = self._plan_steps_with_quantity(
+                quantity_column,
+                iterations=iterations,
+            )
         needed_demand_columns = [
             column
             for column in group_columns
@@ -1438,19 +1439,7 @@ class GroupDayTripsResultMetrics:
                 plan_steps,
                 self.results.transport_zones,
             )
-        plan_steps = with_analysis_dimensions(plan_steps, group_columns)
-        return (
-            plan_steps
-            .filter(pl.col("activity_seq_id") != 0)
-            .group_by(SCOPE_COLUMNS + list(group_columns))
-            .agg(
-                (
-                    pl.col(quantity_column).cast(pl.Float64)
-                    * pl.col("n_persons").cast(pl.Float64)
-                ).sum().alias(output_column)
-            )
-            .collect(engine="streaming")
-        )
+        return with_analysis_dimensions(plan_steps, group_columns)
 
     def _with_person_count_normalization_by_replication(
         self,
