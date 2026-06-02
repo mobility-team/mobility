@@ -33,6 +33,10 @@ def set_params(
     r_max_retries=0,
     r_retry_delay_seconds=5,
     r_heartbeat_interval_seconds=30,
+    r_idle_timeout_seconds=None,
+    r_idle_cpu_percent=1.0,
+    r_idle_memory_change_mb=1.0,
+    r_cpu_check_interval_seconds=5,
 ):
     """
     Sets up the necessary environment for the Mobility package.
@@ -56,6 +60,10 @@ def set_params(
     r_max_retries (int, optional): number of times to retry a failed or timed out R script run.
     r_retry_delay_seconds (int, optional): waiting time between two R script attempts.
     r_heartbeat_interval_seconds (int, optional): frequency of the R runner heartbeat logs.
+    r_idle_timeout_seconds (int, optional): stop an R attempt after this many idle seconds. Leave as None or set to 0 to disable.
+    r_idle_cpu_percent (float, optional): CPU threshold used by the R idle monitor.
+    r_idle_memory_change_mb (float, optional): RAM-change threshold used by the R idle monitor.
+    r_cpu_check_interval_seconds (int, optional): frequency of the R idle monitor checks.
     """
 
     setup_logging(logging_level)
@@ -68,6 +76,10 @@ def set_params(
     set_env_variable("MOBILITY_R_MAX_RETRIES", r_max_retries)
     set_env_variable("MOBILITY_R_RETRY_DELAY_SECONDS", r_retry_delay_seconds)
     set_env_variable("MOBILITY_R_HEARTBEAT_INTERVAL_SECONDS", r_heartbeat_interval_seconds)
+    set_env_variable("MOBILITY_R_IDLE_TIMEOUT_SECONDS", r_idle_timeout_seconds)
+    set_env_variable("MOBILITY_R_IDLE_CPU_PERCENT", r_idle_cpu_percent)
+    set_env_variable("MOBILITY_R_IDLE_MEMORY_CHANGE_MB", r_idle_memory_change_mb)
+    set_env_variable("MOBILITY_R_CPU_CHECK_INTERVAL_SECONDS", r_cpu_check_interval_seconds)
 
     os.environ["MOBILITY_DEBUG"] = "1" if debug else "0"
     setup_ssl_truststore(inject_into_ssl)
