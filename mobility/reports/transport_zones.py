@@ -28,6 +28,15 @@ from .theme import MOBILITY_COLORS, apply_report_layout
 _LABEL_LON_OFFSET_RATIO = 0.003
 _LABEL_LAT_OFFSET_RATIO = 0.004
 _SVG_LABEL_OFFSET_POINTS = 2
+_INTERNAL_CRS = "EPSG:3035"
+_PLOTLY_CRS = "EPSG:4326"
+_FACET_MIN_WIDTH = 620
+_FACET_MIN_HEIGHT = 620
+_EUROPE_EQUAL_AREA_GEO = {
+    "projection_type": "azimuthal equal area",
+    "projection_rotation_lon": 10,
+    "projection_rotation_lat": 52,
+}
 
 
 class TransportZoneMaps:
@@ -188,6 +197,7 @@ class TransportZoneMaps:
             id_column=id_column,
             value_column=value_column,
         )
+        value_frame = _align_metric_zone_ids(value_frame, zones)
         zones = zones.merge(value_frame, on="transport_zone_id", how="left")
         if inner_zones_only:
             zones = zones[zones["is_inner_zone"]].copy()
@@ -211,6 +221,439 @@ class TransportZoneMaps:
             colorbar_tickformat=colorbar_tickformat,
             output_path=Path(output_path) if output_path is not None else None,
         )
+
+    def metric_facets(
+        self,
+        values: Any,
+        value_column: str,
+        facet_column: str,
+        save_name: str,
+        id_column: str = "transport_zone_id",
+        labels: bool = True,
+        width: int = 1200,
+        height: int = 850,
+        hover_columns: list[str] | None = None,
+        legend_label: str | None = None,
+        frame_title: str | None = None,
+        classify: bool = False,
+        color_continuous_scale: Any | None = None,
+        color_continuous_midpoint: float | None = None,
+        range_color: tuple[float, float] | None = None,
+        colorbar_tickformat: str | None = None,
+    ) -> go.Figure:
+        """Create report maps for one metric, split by a facet column."""
+        value_frame = _metric_values_frame(
+            values=values,
+            id_column=id_column,
+            value_column=value_column,
+        )
+        value_frame = _align_metric_zone_ids(value_frame, self._map_data.zones)
+        if facet_column not in value_frame.columns:
+            raise ValueError(f"Metric map values need a `{facet_column}` column.")
+
+        facet_values = value_frame[facet_column].drop_duplicates().to_list()
+        if not facet_values:
+            raise ValueError("Metric map values need at least one facet value.")
+
+        map_zones = _faceted_metric_zones(
+            map_data=self._map_data,
+            value_frame=value_frame,
+            facet_column=facet_column,
+        )
+
+        plot_color_column = value_column
+        plot_discrete_colors = None
+        if classify:
+            map_zones, plot_color_column, plot_discrete_colors = _add_head_tail_classes(
+                map_zones,
+                value_column,
+            )
+
+        hover_data = {"transport_zone_id": True, value_column: True}
+        hover_data[facet_column] = False
+        for column in hover_columns or []:
+            hover_data[column] = True
+
+        hover_name = None
+        if "local_admin_unit_name" in map_zones.columns:
+            hover_name = "local_admin_unit_name"
+            hover_data["local_admin_unit_name"] = False
+        elif "local_admin_unit_id" in map_zones.columns:
+            hover_data["local_admin_unit_id"] = True
+
+        facet_argument = facet_column if len(facet_values) > 1 else None
+        figure_kwargs = {
+            "data_frame": map_zones.drop(columns="geometry"),
+            "geojson": self._map_data.plotly_zones.__geo_interface__,
+            "locations": "transport_zone_id",
+            "featureidkey": "properties.transport_zone_id",
+            "color": plot_color_column,
+            "facet_col": facet_argument,
+            "facet_col_wrap": 2 if len(facet_values) > 2 else 0,
+            "hover_name": hover_name,
+            "hover_data": hover_data,
+            "labels": {
+                value_column: legend_label or value_column,
+                plot_color_column: legend_label or value_column,
+            },
+        }
+        if plot_discrete_colors is not None:
+            figure_kwargs["color_discrete_map"] = plot_discrete_colors
+            figure_kwargs["category_orders"] = {plot_color_column: list(plot_discrete_colors)}
+        else:
+            if color_continuous_scale is not None:
+                figure_kwargs["color_continuous_scale"] = color_continuous_scale
+            if color_continuous_midpoint is not None:
+                figure_kwargs["color_continuous_midpoint"] = color_continuous_midpoint
+            if range_color is not None:
+                figure_kwargs["range_color"] = range_color
+
+        fig = px.choropleth(**figure_kwargs)
+        if plot_discrete_colors is None and colorbar_tickformat is not None:
+            fig.update_coloraxes(colorbar_tickformat=colorbar_tickformat)
+        fig.update_traces(
+            marker_line_color=MOBILITY_COLORS["zone_border"],
+            marker_line_width=0.5,
+        )
+        _apply_plotly_geo_layout(fig)
+        fig.update_layout(
+            width=max(width, _FACET_MIN_WIDTH * min(len(facet_values), 2)),
+            height=max(height, _FACET_MIN_HEIGHT * math.ceil(len(facet_values) / 2)),
+        )
+        apply_report_layout(fig, title=frame_title)
+        fig.for_each_annotation(
+            lambda annotation: annotation.update(
+                text=annotation.text.replace(f"{facet_column}=", "")
+            )
+        )
+
+        if labels:
+            label_zones = _metric_value_zones(
+                self._map_data.plotly_zones,
+                value_frame=value_frame,
+                value_column=value_column,
+            )
+            label_df = _filter_labels_to_zones(self._map_data.labels, label_zones)
+            geo_ids = [
+                geo_id
+                for geo_id in dict.fromkeys(getattr(trace, "geo", "geo") for trace in fig.data)
+                if geo_id is not None
+            ]
+            for geo_id in geo_ids:
+                _add_label_traces(fig, label_df, map_zones.total_bounds, geo=geo_id)
+
+        return fig
+
+    def metric_grid(
+        self,
+        values: Any,
+        value_column: str,
+        row_column: str,
+        column_column: str,
+        save_name: str,
+        id_column: str = "transport_zone_id",
+        labels: bool = False,
+        width: int = 1200,
+        height: int = 850,
+        hover_columns: list[str] | None = None,
+        legend_label: str | None = None,
+        frame_title: str | None = None,
+        classify: bool = False,
+        color_continuous_scale: Any | None = None,
+        color_continuous_midpoint: float | None = None,
+        range_color: tuple[float, float] | None = None,
+        colorbar_tickformat: str | None = None,
+    ) -> go.Figure:
+        """Create report maps for one metric, split by row and column facets."""
+        value_frame = _metric_values_frame(
+            values=values,
+            id_column=id_column,
+            value_column=value_column,
+        )
+        value_frame = _align_metric_zone_ids(value_frame, self._map_data.zones)
+        missing_columns = [
+            column
+            for column in [row_column, column_column]
+            if column not in value_frame.columns
+        ]
+        if missing_columns:
+            raise ValueError(
+                "Metric grid values need these missing column(s): "
+                + ", ".join(missing_columns)
+                + "."
+            )
+
+        row_values = value_frame[row_column].drop_duplicates().to_list()
+        column_values = value_frame[column_column].drop_duplicates().to_list()
+        if not row_values or not column_values:
+            raise ValueError("Metric grid values need at least one row and one column value.")
+
+        grid_column = "__metric_grid_facet__"
+        value_frame = value_frame.copy()
+        value_frame[grid_column] = value_frame[column_column]
+        map_zones = _faceted_metric_zones(
+            map_data=self._map_data,
+            value_frame=value_frame,
+            facet_column=grid_column,
+        )
+        map_zones[row_column] = map_zones[row_column].astype(str)
+        map_zones[grid_column] = map_zones[grid_column].astype(str)
+
+        plot_color_column = value_column
+        plot_discrete_colors = None
+        if classify:
+            map_zones, plot_color_column, plot_discrete_colors = _add_head_tail_classes(
+                map_zones,
+                value_column,
+            )
+
+        hover_data = {"transport_zone_id": True, value_column: True}
+        hover_data[row_column] = False
+        hover_data[grid_column] = False
+        for column in hover_columns or []:
+            hover_data[column] = True
+
+        hover_name = None
+        if "local_admin_unit_name" in map_zones.columns:
+            hover_name = "local_admin_unit_name"
+            hover_data["local_admin_unit_name"] = False
+        elif "local_admin_unit_id" in map_zones.columns:
+            hover_data["local_admin_unit_id"] = True
+
+        figure_kwargs = {
+            "data_frame": map_zones.drop(columns="geometry"),
+            "geojson": self._map_data.plotly_zones.__geo_interface__,
+            "locations": "transport_zone_id",
+            "featureidkey": "properties.transport_zone_id",
+            "color": plot_color_column,
+            "facet_row": row_column,
+            "facet_col": grid_column,
+            "hover_name": hover_name,
+            "hover_data": hover_data,
+            "labels": {
+                value_column: legend_label or value_column,
+                plot_color_column: legend_label or value_column,
+            },
+            "category_orders": {
+                row_column: [str(value) for value in row_values],
+                grid_column: [str(value) for value in column_values],
+            },
+        }
+        if plot_discrete_colors is not None:
+            figure_kwargs["color_discrete_map"] = plot_discrete_colors
+            figure_kwargs["category_orders"][plot_color_column] = list(plot_discrete_colors)
+        else:
+            if color_continuous_scale is not None:
+                figure_kwargs["color_continuous_scale"] = color_continuous_scale
+            if color_continuous_midpoint is not None:
+                figure_kwargs["color_continuous_midpoint"] = color_continuous_midpoint
+            if range_color is not None:
+                figure_kwargs["range_color"] = range_color
+
+        fig = px.choropleth(**figure_kwargs)
+        if plot_discrete_colors is None and colorbar_tickformat is not None:
+            fig.update_coloraxes(colorbar_tickformat=colorbar_tickformat)
+        fig.update_traces(
+            marker_line_color=MOBILITY_COLORS["zone_border"],
+            marker_line_width=0.5,
+        )
+        _apply_plotly_geo_layout(fig)
+        fig.update_layout(
+            width=max(width, _FACET_MIN_WIDTH * len(column_values)),
+            height=max(height, _FACET_MIN_HEIGHT * len(row_values)),
+        )
+        apply_report_layout(fig, title=frame_title)
+        fig.for_each_annotation(
+            lambda annotation: annotation.update(
+                text=annotation.text.replace(f"{row_column}=", "").replace(f"{grid_column}=", "")
+            )
+        )
+
+        if labels:
+            label_zones = _metric_value_zones(
+                self._map_data.plotly_zones,
+                value_frame=value_frame,
+                value_column=value_column,
+            )
+            label_df = _filter_labels_to_zones(self._map_data.labels, label_zones)
+            geo_ids = [
+                geo_id
+                for geo_id in dict.fromkeys(getattr(trace, "geo", "geo") for trace in fig.data)
+                if geo_id is not None
+            ]
+            for geo_id in geo_ids:
+                _add_label_traces(fig, label_df, map_zones.total_bounds, geo=geo_id)
+
+        return fig
+
+    def metric_flows(
+        self,
+        values: Any,
+        value_column: str,
+        origin_column: str,
+        destination_column: str,
+        save_name: str,
+        facet_column: str = "scenario",
+        labels: bool = False,
+        width: int = 1200,
+        height: int = 850,
+        hover_columns: list[str] | None = None,
+        legend_label: str | None = None,
+        frame_title: str | None = None,
+        n_largest: int | None = 100,
+        min_value: float | None = None,
+        min_share: float | None = None,
+        max_line_width: float = 8.0,
+        min_line_width: float = 0.1,
+    ) -> go.Figure:
+        """Create report maps for OD-like flows with proportional line widths."""
+        flow_frame = _metric_flow_values_frame(
+            values=values,
+            origin_column=origin_column,
+            destination_column=destination_column,
+            value_column=value_column,
+        )
+        flow_frame = _align_flow_zone_ids(
+            flow_frame,
+            self._map_data.zones,
+            origin_column=origin_column,
+            destination_column=destination_column,
+        )
+        if facet_column not in flow_frame.columns:
+            raise ValueError(f"Metric flow values need a `{facet_column}` column.")
+
+        facet_values = flow_frame[facet_column].drop_duplicates().to_list()
+        if not facet_values:
+            raise ValueError("Metric flow values need at least one facet value.")
+
+        plot_flows = _prepare_metric_flow_lines(
+            flow_frame,
+            map_data=self._map_data,
+            value_column=value_column,
+            origin_column=origin_column,
+            destination_column=destination_column,
+            facet_column=facet_column,
+            n_largest=n_largest,
+            min_value=min_value,
+            min_share=min_share,
+            max_line_width=max_line_width,
+            min_line_width=min_line_width,
+        )
+        if plot_flows.empty:
+            raise ValueError("No positive metric flows are available to plot after filtering.")
+
+        base_rows = self._map_data.plotly_zones[["transport_zone_id"]].merge(
+            pd.DataFrame({facet_column: facet_values}),
+            how="cross",
+        )
+        base_rows["__flow_base__"] = "zone"
+        fig = px.choropleth(
+            base_rows,
+            geojson=self._map_data.plotly_zones.__geo_interface__,
+            locations="transport_zone_id",
+            featureidkey="properties.transport_zone_id",
+            color="__flow_base__",
+            facet_col=facet_column if len(facet_values) > 1 else None,
+            facet_col_wrap=2 if len(facet_values) > 2 else 0,
+            color_discrete_map={"zone": MOBILITY_COLORS["outer_zone"]},
+            hover_data={"transport_zone_id": True, "__flow_base__": False},
+            category_orders={facet_column: [str(value) for value in facet_values]},
+        )
+        fig.update_traces(
+            marker_line_color=MOBILITY_COLORS["zone_border"],
+            marker_line_width=0.5,
+            showscale=False,
+            showlegend=False,
+        )
+
+        geo_by_facet = _facet_geo_ids(fig, facet_values)
+        flow_color = MOBILITY_COLORS.get("model", "#355CDE")
+        for _, flow in plot_flows.iterrows():
+            is_intrazonal = flow[origin_column] == flow[destination_column]
+            hover_lines = [
+                f"{origin_column}: {flow[origin_column]}",
+                f"{destination_column}: {flow[destination_column]}",
+                f"{legend_label or value_column}: {flow[value_column]:,.3g}",
+            ]
+            for column in hover_columns or []:
+                if column in flow.index and pd.notna(flow[column]):
+                    hover_lines.append(f"{column}: {flow[column]:,.3g}")
+            if is_intrazonal:
+                fig.add_trace(
+                    go.Scattergeo(
+                        lon=[flow["_origin_lon"]],
+                        lat=[flow["_origin_lat"]],
+                        mode="markers",
+                        marker={
+                            "size": float(flow["_line_width"]),
+                            "color": flow_color,
+                            "opacity": 0.35,
+                        },
+                        hoverinfo="text",
+                        text="<br>".join(hover_lines),
+                        showlegend=False,
+                        geo=geo_by_facet[str(flow[facet_column])],
+                    )
+                )
+                continue
+            fig.add_trace(
+                go.Scattergeo(
+                    lon=[flow["_origin_lon"], flow["_destination_lon"]],
+                    lat=[flow["_origin_lat"], flow["_destination_lat"]],
+                    mode="lines",
+                    line={"width": float(flow["_line_width"]), "color": flow_color},
+                    opacity=0.35,
+                    hoverinfo="text",
+                    text="<br>".join(hover_lines),
+                    showlegend=False,
+                    geo=geo_by_facet[str(flow[facet_column])],
+                )
+            )
+        _add_flow_width_legend(
+            fig,
+            plot_flows,
+            value_column=value_column,
+            legend_label=legend_label or value_column,
+            max_line_width=max_line_width,
+            flow_color=flow_color,
+            geo=next(iter(geo_by_facet.values())),
+        )
+
+        _apply_plotly_geo_layout(fig)
+        fig.update_layout(
+            width=max(width, _FACET_MIN_WIDTH * min(len(facet_values), 2)),
+            height=max(height, _FACET_MIN_HEIGHT * math.ceil(len(facet_values) / 2)),
+        )
+        apply_report_layout(fig, title=frame_title)
+        fig.for_each_annotation(
+            lambda annotation: annotation.update(
+                text=annotation.text.replace(f"{facet_column}=", "")
+            )
+        )
+        fig.update_layout(
+            showlegend=True,
+            legend={
+                "title": {"text": legend_label or value_column},
+                "orientation": "v",
+                "x": 1.01,
+                "y": 0.5,
+                "xanchor": "left",
+                "yanchor": "middle",
+                "bgcolor": "rgba(255,255,255,0.85)",
+            },
+        )
+
+        if labels:
+            label_df = _filter_labels_to_zones(self._map_data.labels, self._map_data.plotly_zones)
+            geo_ids = [
+                geo_id
+                for geo_id in dict.fromkeys(getattr(trace, "geo", "geo") for trace in fig.data)
+                if geo_id is not None
+            ]
+            for geo_id in geo_ids:
+                _add_label_traces(fig, label_df, self._map_data.plotly_zones.total_bounds, geo=geo_id)
+
+        return fig
 
 
 def transport_zones_map(
@@ -353,8 +796,7 @@ class _ZoneMapData:
                 zones.crs is None or zones.crs.is_projected
             ):
                 zones["geometry"] = zones.geometry.simplify(self.simplify_tolerance)
-            if zones.crs is not None:
-                zones = zones.to_crs("EPSG:4326")
+            zones = zones.to_crs(_PLOTLY_CRS)
             self._plotly_zones = zones.copy()
         return self._plotly_zones
 
@@ -398,6 +840,10 @@ def _get_zones(transport_zones: Any) -> gpd.GeoDataFrame:
             + ", ".join(missing_columns)
             + "."
         )
+    if zones.crs is None:
+        zones = zones.set_crs(_INTERNAL_CRS)
+    elif zones.crs.to_epsg() != 3035:
+        zones = zones.to_crs(_INTERNAL_CRS)
     return zones
 
 
@@ -502,7 +948,7 @@ def _zone_choropleth_map(
         marker_line_color=MOBILITY_COLORS["zone_border"],
         marker_line_width=0.5,
     )
-    fig.update_geos(fitbounds="locations", visible=False)
+    _apply_plotly_geo_layout(fig)
     fig.update_layout(width=width, height=height)
     apply_report_layout(fig, title=frame_title)
 
@@ -573,6 +1019,284 @@ def _metric_values_frame(values: Any, id_column: str, value_column: str) -> pd.D
     return value_frame
 
 
+def _metric_value_zones(
+    zones: gpd.GeoDataFrame,
+    *,
+    value_frame: pd.DataFrame,
+    value_column: str,
+) -> gpd.GeoDataFrame:
+    """Return zones joined with metric rows that have a value."""
+    if value_column not in value_frame.columns:
+        return zones
+    valued_rows = value_frame[value_frame[value_column].notna()]
+    return zones.merge(
+        valued_rows[["transport_zone_id"]].drop_duplicates(),
+        on="transport_zone_id",
+        how="inner",
+    )
+
+
+def _metric_flow_values_frame(
+    values: Any,
+    origin_column: str,
+    destination_column: str,
+    value_column: str,
+) -> pd.DataFrame:
+    """Return a pandas metric table keyed by origin and destination zone ids."""
+    if isinstance(values, pl.DataFrame):
+        flow_frame = values.to_pandas()
+    elif isinstance(values, pd.DataFrame):
+        flow_frame = values.copy()
+    else:
+        raise TypeError("Metric flow values should be a pandas or polars DataFrame.")
+
+    missing_columns = [
+        column
+        for column in [origin_column, destination_column, value_column]
+        if column not in flow_frame.columns
+    ]
+    if missing_columns:
+        raise ValueError(
+            "Metric flow values need these missing column(s): "
+            + ", ".join(missing_columns)
+            + "."
+        )
+
+    keep_columns = [origin_column, destination_column, value_column]
+    for column in flow_frame.columns:
+        if column not in keep_columns:
+            keep_columns.append(column)
+    return flow_frame[keep_columns]
+
+
+def _align_metric_zone_ids(
+    value_frame: pd.DataFrame,
+    zone_frame: pd.DataFrame,
+) -> pd.DataFrame:
+    """Return metric values with ids matching the map zone id dtype."""
+    zone_ids = zone_frame["transport_zone_id"]
+    value_ids = value_frame["transport_zone_id"]
+    if value_ids.dtype == zone_ids.dtype:
+        return value_frame
+
+    aligned_frame = value_frame.copy()
+    if pd.api.types.is_integer_dtype(zone_ids.dtype):
+        aligned_frame["transport_zone_id"] = pd.to_numeric(
+            aligned_frame["transport_zone_id"],
+            errors="raise",
+        ).astype(zone_ids.dtype)
+        return aligned_frame
+
+    inferred_zone_type = pd.api.types.infer_dtype(zone_ids.dropna(), skipna=True)
+    if inferred_zone_type in {"string", "unicode"}:
+        aligned_frame["transport_zone_id"] = aligned_frame["transport_zone_id"].astype(str)
+        return aligned_frame
+
+    aligned_frame["transport_zone_id"] = aligned_frame["transport_zone_id"].astype(
+        zone_ids.dtype
+    )
+    return aligned_frame
+
+
+def _align_flow_zone_ids(
+    flow_frame: pd.DataFrame,
+    zone_frame: pd.DataFrame,
+    *,
+    origin_column: str,
+    destination_column: str,
+) -> pd.DataFrame:
+    """Return flow values with ids matching the map zone id dtype."""
+    aligned_frame = flow_frame.copy()
+    for column in [origin_column, destination_column]:
+        if column in aligned_frame.columns:
+            temp = aligned_frame.rename(columns={column: "transport_zone_id"})
+            temp = _align_metric_zone_ids(temp, zone_frame)
+            aligned_frame[column] = temp["transport_zone_id"]
+    return aligned_frame
+
+
+def _facet_geo_ids(fig: go.Figure, facet_values: list[Any]) -> dict[str, str]:
+    """Return the Plotly geo subplot id used by each facet value."""
+    geo_ids = [
+        geo_id
+        for geo_id in dict.fromkeys(getattr(trace, "geo", "geo") for trace in fig.data)
+        if geo_id is not None
+    ]
+    return {
+        str(facet_value): geo_ids[min(index, len(geo_ids) - 1)]
+        for index, facet_value in enumerate(facet_values)
+    }
+
+
+def _apply_plotly_geo_layout(fig: go.Figure) -> None:
+    """Use a Europe equal-area projection and fit each geo subplot to data."""
+    fig.update_geos(
+        fitbounds="locations",
+        visible=False,
+        **_EUROPE_EQUAL_AREA_GEO,
+    )
+
+
+def _prepare_metric_flow_lines(
+    flow_frame: pd.DataFrame,
+    *,
+    map_data: _ZoneMapData,
+    value_column: str,
+    origin_column: str,
+    destination_column: str,
+    facet_column: str,
+    n_largest: int | None,
+    min_value: float | None,
+    min_share: float | None,
+    max_line_width: float,
+    min_line_width: float,
+) -> pd.DataFrame:
+    """Filter flow values and attach centroid coordinates plus line widths."""
+    if max_line_width <= 0.0:
+        raise ValueError("max_line_width should be positive.")
+    if min_line_width < 0.0:
+        raise ValueError("min_line_width should be non-negative.")
+    if n_largest is not None and n_largest <= 0:
+        raise ValueError("n_largest should be positive when provided.")
+    if min_share is not None and not 0.0 <= min_share <= 1.0:
+        raise ValueError("min_share should be between 0 and 1 when provided.")
+
+    flows = flow_frame.copy()
+    flows[value_column] = pd.to_numeric(flows[value_column], errors="coerce")
+    flows = flows[flows[value_column].notna()]
+    flows = flows[flows[value_column].map(math.isfinite)]
+    flows = flows[flows[value_column] > 0.0]
+    if min_value is not None:
+        flows = flows[flows[value_column] >= float(min_value)]
+    if min_share is not None:
+        totals = flows.groupby(facet_column)[value_column].transform("sum")
+        flows = flows[(flows[value_column] / totals.where(totals != 0.0)) >= float(min_share)]
+    if n_largest is not None:
+        flows = (
+            flows
+            .sort_values([facet_column, value_column], ascending=[True, False])
+            .groupby(facet_column, group_keys=False)
+            .head(n_largest)
+        )
+    if flows.empty:
+        return flows
+
+    max_value = float(flows[value_column].max())
+    if not math.isfinite(max_value) or max_value <= 0.0:
+        return flows.iloc[0:0]
+    flows["_line_width"] = max_line_width * flows[value_column] / max_value
+    flows = flows[flows["_line_width"] >= min_line_width]
+    if flows.empty:
+        return flows
+
+    centroids = map_data.zones[["transport_zone_id", "geometry"]].copy()
+    centroids["geometry"] = centroids.geometry.centroid
+    centroids = centroids.to_crs(_PLOTLY_CRS)
+    centroid_frame = pd.DataFrame(
+        {
+            "transport_zone_id": centroids["transport_zone_id"],
+            "_lon": centroids.geometry.x,
+            "_lat": centroids.geometry.y,
+        }
+    )
+    flows = flows.merge(
+        centroid_frame.rename(
+            columns={
+                "transport_zone_id": origin_column,
+                "_lon": "_origin_lon",
+                "_lat": "_origin_lat",
+            }
+        ),
+        on=origin_column,
+        how="inner",
+    )
+    flows = flows.merge(
+        centroid_frame.rename(
+            columns={
+                "transport_zone_id": destination_column,
+                "_lon": "_destination_lon",
+                "_lat": "_destination_lat",
+            }
+        ),
+        on=destination_column,
+        how="inner",
+    )
+    return flows
+
+
+def _add_flow_width_legend(
+    fig: go.Figure,
+    flows: pd.DataFrame,
+    *,
+    value_column: str,
+    legend_label: str,
+    max_line_width: float,
+    flow_color: str,
+    geo: str,
+) -> None:
+    """Add legend-only traces that explain proportional flow width."""
+    max_value = float(flows[value_column].max())
+    if not math.isfinite(max_value) or max_value <= 0.0:
+        return
+
+    legend_values = []
+    for fraction in [0.25, 0.5, 1.0]:
+        value = max_value * fraction
+        if value not in legend_values:
+            legend_values.append(value)
+
+    for value in legend_values:
+        size = max_line_width * value / max_value
+        fig.add_trace(
+            go.Scattergeo(
+                lon=[None, None],
+                lat=[None, None],
+                mode="lines+markers",
+                line={"width": size, "color": flow_color},
+                marker={"size": size, "color": flow_color, "opacity": 0.35},
+                opacity=0.35,
+                name=_format_significant(value),
+                legendgroup="flow_width",
+                showlegend=True,
+                visible="legendonly",
+                hoverinfo="skip",
+                geo=geo,
+            )
+        )
+
+
+def _faceted_metric_zones(
+    map_data: _ZoneMapData,
+    value_frame: pd.DataFrame,
+    facet_column: str,
+) -> gpd.GeoDataFrame:
+    """Return one map row per zone and facet value."""
+    zone_columns = [
+        column
+        for column in map_data.plotly_zones.columns
+        if column != "geometry"
+    ]
+    zone_frame = map_data.plotly_zones[zone_columns].copy()
+    facets = pd.DataFrame(
+        {facet_column: value_frame[facet_column].drop_duplicates().to_list()}
+    )
+    map_rows = zone_frame.merge(facets, how="cross")
+    map_rows = map_rows.merge(
+        value_frame,
+        on=["transport_zone_id", facet_column],
+        how="left",
+    )
+    return gpd.GeoDataFrame(
+        map_data.plotly_zones[["transport_zone_id", "geometry"]].merge(
+            map_rows,
+            on="transport_zone_id",
+            how="inner",
+        ),
+        geometry="geometry",
+        crs=map_data.plotly_zones.crs,
+    )
+
+
 def _add_head_tail_classes(
     zones: gpd.GeoDataFrame,
     color_column: str,
@@ -636,6 +1360,7 @@ def _add_label_traces(
     fig: go.Figure,
     label_df: pd.DataFrame | None,
     bounds: tuple[float, float, float, float],
+    geo: str | None = None,
 ) -> None:
     if label_df is None or label_df.empty:
         return
@@ -656,6 +1381,7 @@ def _add_label_traces(
                 "color": MOBILITY_COLORS["label"],
                 "opacity": 0.75,
             },
+            geo=geo,
             hoverinfo="skip",
             showlegend=False,
         )
@@ -672,6 +1398,7 @@ def _add_label_traces(
                     "size": label_df["font_size"].to_list(),
                     "color": color,
                 },
+                geo=geo,
                 hoverinfo="skip",
                 showlegend=False,
             )
@@ -682,18 +1409,18 @@ def _filter_labels_to_zones(
     label_df: pd.DataFrame,
     zones: gpd.GeoDataFrame,
 ) -> pd.DataFrame:
-    """Keep only labels whose point is inside the plotted zones."""
+    """Keep labels whose area identifier is present in the plotted zones."""
     if label_df.empty or zones.empty:
         return label_df
 
-    label_points = gpd.GeoDataFrame(
-        label_df.copy(),
-        geometry=gpd.points_from_xy(label_df["lon"], label_df["lat"], crs="EPSG:4326"),
-    )
-    if zones.crs is not None:
-        label_points = label_points.to_crs(zones.crs)
-    zone_union = zones.geometry.union_all() if hasattr(zones.geometry, "union_all") else zones.geometry.unary_union
-    return label_df.loc[label_points.geometry.apply(zone_union.covers).to_numpy()].reset_index(drop=True)
+    for id_column in ["local_admin_unit_id", "transport_zone_id"]:
+        if id_column in label_df.columns and id_column in zones.columns:
+            plotted_ids = set(zones[id_column].dropna().astype(str))
+            return label_df.loc[
+                label_df[id_column].astype(str).isin(plotted_ids)
+            ].reset_index(drop=True)
+
+    return label_df
 
 
 def _save_zone_choropleth_svg(
@@ -927,7 +1654,9 @@ def _select_city_labels(
     max_labels: int,
 ) -> pd.DataFrame:
     if max_labels <= 0 or "local_admin_unit_id" not in zones.columns:
-        return pd.DataFrame(columns=["label", "lon", "lat", "font_size"])
+        return pd.DataFrame(
+            columns=["local_admin_unit_id", "label", "lon", "lat", "font_size"]
+        )
 
     label_name_column = (
         "local_admin_unit_name"
@@ -991,7 +1720,9 @@ def _select_city_labels(
         selected_points.append(point)
 
     if not selected_rows:
-        return pd.DataFrame(columns=["label", "lon", "lat", "font_size"])
+        return pd.DataFrame(
+            columns=["local_admin_unit_id", "label", "lon", "lat", "font_size"]
+        )
 
     selected = gpd.GeoDataFrame(selected_rows, geometry="geometry", crs=zones.crs)
     selected_points = selected.geometry.representative_point()
@@ -1006,6 +1737,7 @@ def _select_city_labels(
 
     result = pd.DataFrame(
         {
+            "local_admin_unit_id": selected_wgs84["local_admin_unit_id"].to_list(),
             "label": selected_wgs84["_label"].to_list(),
             "lon": coords["x"].to_list(),
             "lat": coords["y"].to_list(),
