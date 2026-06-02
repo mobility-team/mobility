@@ -53,3 +53,28 @@ def test_public_transport_routing_parameters_resolve_list_profiles_by_iteration(
 
     assert step_1.additional_gtfs_files == ["base.zip"]
     assert step_2.additional_gtfs_files == ["base.zip", "event.zip"]
+
+
+def test_public_transport_routing_parameters_accept_gtfs_edits():
+    params = PublicTransportRoutingParameters(
+        gtfs_edits=[{"mode": "all", "ops": []}],
+    )
+
+    assert params.gtfs_edits == [{"mode": "all", "ops": []}]
+
+
+def test_public_transport_routing_parameters_resolve_gtfs_edits_profiles_by_iteration():
+    params = PublicTransportRoutingParameters(
+        gtfs_edits=ListParameterProfile(
+            points={
+                1: [{"mode": "all", "ops": []}],
+                2: [{"mode": "all", "ops": [{"action": "add_stop"}]}],
+            }
+        )
+    )
+
+    step_1 = resolve_model_for_iteration(params, 1)
+    step_2 = resolve_model_for_iteration(params, 2)
+
+    assert step_1.gtfs_edits == [{"mode": "all", "ops": []}]
+    assert step_2.gtfs_edits == [{"mode": "all", "ops": [{"action": "add_stop"}]}]

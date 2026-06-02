@@ -51,9 +51,9 @@ class ScalarParameterProfile(ParameterProfile):
 class ListParameterProfile(ParameterProfile):
     """List-valued parameter profile supporting step-wise changes only."""
 
-    points: dict[int, list[str]]
+    points: dict[int, list[Any]]
 
-    def at(self, iteration: int) -> list[str]:
+    def at(self, iteration: int) -> list[Any]:
         sorted_points = sorted(self.points.items())
         iterations = [iteration for iteration, _ in sorted_points]
         idx = np.searchsorted(iterations, iteration, side="right") - 1
