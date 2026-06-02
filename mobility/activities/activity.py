@@ -6,11 +6,8 @@ import polars as pl
 from typing import Annotated, List, Dict
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.parameter_values import ParameterValue, resolve_parameter_values
 from pydantic import BaseModel, ConfigDict, Field
-from mobility.runtime.parameter_profiles import (
-    ScalarParameterProfile,
-    resolve_model_for_iteration,
-)
 from mobility.runtime.validation_types import NonNegativeFloat, UnitIntervalFloat
 
 
@@ -85,18 +82,26 @@ class Activity(InMemoryAsset):
         super().__init__(inputs)
 
 
-    def get_parameters_for_iteration(self, iteration: int) -> "ActivityParameters":
+    def get_parameters_for_iteration(
+        self,
+        iteration: int,
+        scenario: str | None = None,
+    ) -> "ActivityParameters":
         """Returns the activity parameters in effect at one simulation iteration.
 
         Args:
             iteration: Simulation iteration used to evaluate iteration-varying parameter
-                profiles.
+                values.
 
         Returns:
             ActivityParameters: Parameter model with all iteration-varying fields
                 resolved to scalar values for ``iteration``.
         """
-        return resolve_model_for_iteration(self.inputs["parameters"], iteration)
+        return resolve_parameter_values(
+            self.inputs["parameters"],
+            scenario=scenario,
+            iteration=iteration,
+        )
 
     def enforce_opportunities_schema(self, opportunities):
         
@@ -121,7 +126,7 @@ class ActivityParameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     value_of_time: Annotated[
-        NonNegativeFloat | ScalarParameterProfile,
+        NonNegativeFloat | ParameterValue,
         Field(
             default=10.0,
             title="Value of time",
@@ -148,7 +153,7 @@ class ActivityParameters(BaseModel):
     ]
 
     value_of_time_v2: Annotated[
-        NonNegativeFloat | ScalarParameterProfile | None,
+        NonNegativeFloat | ParameterValue | None,
         Field(
             default=None,
             title="Alternative value of time",
@@ -259,7 +264,7 @@ class ActivityParameters(BaseModel):
     ]
 
     arrival_time_rigidity: Annotated[
-        UnitIntervalFloat | ScalarParameterProfile | None,
+        UnitIntervalFloat | ParameterValue | None,
         Field(
             default=None,
             title="Arrival time rigidity",
@@ -275,11 +280,15 @@ class ActivityParameters(BaseModel):
 def resolve_activity_parameters(
     activities: list[Activity],
     iteration: int,
+    scenario: str | None = None,
 ) -> dict[str, ActivityParameters]:
     """Resolve all activity parameter models for one simulation iteration."""
 
     return {
-        activity.name: activity.get_parameters_for_iteration(iteration)
+        activity.name: activity.get_parameters_for_iteration(
+            iteration,
+            scenario=scenario,
+        )
         for activity in activities
     }
 
@@ -287,12 +296,16 @@ def resolve_activity_parameters(
 def resolve_activity_arrival_time_rigidity(
     activities: list[Activity],
     iteration: int,
+    scenario: str | None = None,
 ) -> dict[str, float]:
     """Resolve per-activity arrival-time rigidity with anchor-based defaults."""
 
     rigidity_by_activity: dict[str, float] = {}
     for activity in activities:
-        parameters = activity.get_parameters_for_iteration(iteration)
+        parameters = activity.get_parameters_for_iteration(
+            iteration,
+            scenario=scenario,
+        )
         rigidity = parameters.arrival_time_rigidity
         if rigidity is None:
             rigidity = 1.0 if activity.is_anchor else 0.0

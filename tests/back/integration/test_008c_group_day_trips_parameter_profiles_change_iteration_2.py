@@ -13,7 +13,7 @@ from mobility.surveys.france import EMPMobilitySurvey
     ],
     scope="session",
 )
-def test_008c_group_day_trips_parameter_profiles_change_iteration_2(test_data):
+def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data):
     transport_zones = mobility.TransportZones(
         local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
         radius=test_data["transport_zones_radius"],
@@ -65,9 +65,12 @@ def test_008c_group_day_trips_parameter_profiles_change_iteration_2(test_data):
         activities=[
             HomeActivity(),
             WorkActivity(
-                value_of_time=mobility.ScalarParameterProfile(
+                value_of_time=mobility.ParameterValue.by_iteration(
+                    {
+                        1: 5.0,
+                        2: 50.0,
+                    },
                     mode="step",
-                    points={1: 5.0, 2: 50.0},
                 )
             ),
             OtherActivity(population=pop),

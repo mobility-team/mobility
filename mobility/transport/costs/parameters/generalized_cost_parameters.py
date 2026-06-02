@@ -2,6 +2,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from mobility.runtime.parameter_values import ParameterValue
 from mobility.transport.costs.parameters.cost_of_time_parameters import CostOfTimeParameters
 
 
@@ -10,6 +11,6 @@ class GeneralizedCostParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    cost_constant: Annotated[float, Field(default=0.0)]
+    cost_constant: Annotated[float | ParameterValue, Field(default=0.0)]
     cost_of_time: Annotated[CostOfTimeParameters, Field(default_factory=CostOfTimeParameters)]
-    cost_of_distance: Annotated[float, Field(default=0.0)]
+    cost_of_distance: Annotated[float | ParameterValue, Field(default=0.0)]
