@@ -131,5 +131,5 @@ class WorkParameters(ActivityParameters):
 
     country_value_coefficients: Annotated[
         dict[str, float],
-        Field(default_factory=lambda: {"fr": 1.0, "ch": 1.0}),
+        Field(default_factory=lambda: {"fr": 1.0, "ch": 1.1}),
     ]

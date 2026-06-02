@@ -5,10 +5,11 @@ import pandas as pd
 import polars as pl
 import pytest
 
+from mobility.trips.group_day_trips.plans.plan_ids import add_plan_id
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 
 
-def test_plan_updater_applies_destination_country_value_coefficient():
+def test_plan_updater_prepares_destination_country_value_coefficient():
     updater = PlanUpdater()
     candidates = pl.DataFrame(
         {
@@ -30,6 +31,7 @@ def test_plan_updater_applies_destination_country_value_coefficient():
             "iteration": [1, 1],
             "csp": ["x", "x"],
             "first_seen_iteration": [None, None],
+            "last_seen_iteration": [None, None],
             "last_active_iteration": [None, None],
         }
     ).with_columns(mode=pl.col("mode").cast(pl.Enum(["car", "stay_home"]))).lazy()
@@ -88,9 +90,12 @@ def test_plan_updater_applies_destination_country_value_coefficient():
         allow_missing_costs_for_current_plans=False,
     ).collect()
 
-    utilities_by_destination = dict(zip(result["to"].to_list(), result["utility"].to_list(), strict=True))
-    assert utilities_by_destination[10] == pytest.approx(7.0)
-    assert utilities_by_destination[20] == pytest.approx(15.0)
+    coefficients_by_destination = dict(
+        zip(result["to"].to_list(), result["activity_utility_scale"].to_list(), strict=True)
+    )
+    assert coefficients_by_destination[10] == pytest.approx(8.0)
+    assert coefficients_by_destination[20] == pytest.approx(16.0)
+    assert "last_seen_iteration" in result.columns
 
 
 def test_plan_updater_integrates_shadow_price_in_activity_value_when_enabled():
@@ -115,6 +120,7 @@ def test_plan_updater_integrates_shadow_price_in_activity_value_when_enabled():
             "iteration": [1],
             "csp": ["x"],
             "first_seen_iteration": [None],
+            "last_seen_iteration": [None],
             "last_active_iteration": [None],
         }
     ).with_columns(mode=pl.col("mode").cast(pl.Enum(["car", "stay_home"]))).lazy()
@@ -175,8 +181,7 @@ def test_plan_updater_integrates_shadow_price_in_activity_value_when_enabled():
         use_destination_shadow_prices=True,
     ).collect()
 
-    expected_utility = -8.0 * math.log(math.e) - 1.0
-    assert result["utility"].item() == pytest.approx(expected_utility)
+    assert result["activity_utility_scale"].item() == pytest.approx(-8.0)
     assert result["destination_shadow_price"].item() == pytest.approx(-2.0)
 
 
@@ -226,41 +231,98 @@ def test_destination_saturation_computes_shadow_price_above_soft_capacity():
     assert below_soft_capacity["destination_sampling_attraction_factor"] == pytest.approx(1.0)
 
 
-def test_add_stay_home_plan_steps_adds_neutral_shadow_price(tmp_path):
+def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
+    """Check that plan utility does not count travel time as home/night time."""
     updater = PlanUpdater()
     index_folder = tmp_path / "plan_index"
     index_folder.mkdir()
-    possible_plan_steps = pl.DataFrame(
+    possible_plan_steps = add_plan_id(
+        pl.DataFrame(
+            {
+                "demand_group_id": [1],
+                "country": ["fr"],
+                "activity_seq_id": [10],
+                "time_seq_id": [100],
+                "dest_seq_id": [1000],
+                "mode_seq_id": [10000],
+                "csp": ["worker"],
+                "duration_per_pers": [8.0],
+                "time": [2.0],
+                "utility": [5.0],
+            }
+        ),
+        index_folder=index_folder,
+    ).lazy()
+    home_night_dur = pl.DataFrame(
         {
-            "demand_group_id": [1],
             "country": ["fr"],
             "csp": ["worker"],
-            "activity_seq_id": [10],
-            "time_seq_id": [100],
-            "dest_seq_id": [1000],
-            "mode_seq_id": [10000],
-            "seq_step_index": [1],
-            "activity": ["work"],
-            "from": [1],
-            "to": [2],
-            "mode": ["car"],
-            "duration_per_pers": [8.0],
-            "departure_time": [8.0],
-            "arrival_time": [9.0],
-            "next_departure_time": [17.0],
-            "iteration": [2],
-            "cost": [1.0],
-            "distance": [10.0],
-            "time": [1.0],
-            "mean_duration_per_pers": [8.0],
-            "value_of_time": [1.0],
-            "k_saturation_utility": [1.0],
-            "destination_shadow_price": [-0.5],
-            "min_activity_time": [1.0],
-            "first_seen_iteration": [2],
-            "last_active_iteration": [None],
-            "utility": [5.0],
+            "mean_home_night_per_pers": [10.0],
         }
+    )
+    stay_home_plan = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "activity_seq_id": [0],
+            "time_seq_id": [0],
+            "mode_seq_id": [0],
+            "dest_seq_id": [0],
+            "mean_home_night_per_pers": [10.0],
+        }
+    )
+
+    result = updater.get_possible_plan_utility(
+        possible_plan_steps,
+        home_night_dur,
+        value_of_time_stay_home=1.0,
+        stay_home_plan=stay_home_plan,
+        min_activity_time_constant=1.0,
+        sequence_index_folder=index_folder,
+    ).collect()
+
+    mobile_utility = result.filter(pl.col("mode_seq_id") != 0)["utility"].item()
+    expected_home_night_utility = 10.0 * math.log(14.0 / (10.0 * math.exp(-1.0)))
+    assert mobile_utility == pytest.approx(5.0 + expected_home_night_utility)
+
+
+def test_add_stay_home_plan_steps_preserves_candidate_retention_columns(tmp_path):
+    updater = PlanUpdater()
+    index_folder = tmp_path / "stay_home_plan_index"
+    index_folder.mkdir()
+    possible_plan_steps = add_plan_id(
+        pl.DataFrame(
+            {
+                "demand_group_id": [1],
+                "country": ["fr"],
+                "csp": ["worker"],
+                "activity_seq_id": [10],
+                "time_seq_id": [100],
+                "dest_seq_id": [1000],
+                "mode_seq_id": [10000],
+                "seq_step_index": [1],
+                "activity": ["work"],
+                "from": [1],
+                "to": [2],
+                "mode": ["car"],
+                "duration_per_pers": [8.0],
+                "departure_time": [8.0],
+                "arrival_time": [9.0],
+                "next_departure_time": [17.0],
+                "iteration": [2],
+                "cost": [1.0],
+                "distance": [10.0],
+                "time": [1.0],
+                "mean_duration_per_pers": [8.0],
+                "value_of_time": [1.0],
+                "k_saturation_utility": [1.0],
+                "min_activity_time": [1.0],
+                "first_seen_iteration": [2],
+                "last_seen_iteration": [2],
+                "last_active_iteration": [None],
+                "utility": [5.0],
+            }
+        ),
+        index_folder=index_folder,
     ).lazy()
     stay_home_plan = pl.DataFrame(
         {
@@ -293,11 +355,5 @@ def test_add_stay_home_plan_steps_adds_neutral_shadow_price(tmp_path):
         sequence_index_folder=index_folder,
     ).collect()
 
-    assert "destination_shadow_price" in result.columns
-    stay_home_shadow_price = (
-        result
-        .filter(pl.col("mode_seq_id") == 0)
-        .select("destination_shadow_price")
-        .item()
-    )
-    assert stay_home_shadow_price == 0.0
+    assert "last_seen_iteration" in result.columns
+    assert result.filter(pl.col("mode_seq_id") == 0).select("last_seen_iteration").item() is None

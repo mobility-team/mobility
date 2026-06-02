@@ -28,6 +28,7 @@ class ShopActivity(Activity):
         survey_ids: List[str] = None,
         radiation_lambda: float = None,
         opportunities: pd.DataFrame = None,
+        country_value_coefficients: dict[str, float] | None = None,
         parameters: "ShopParameters" | None = None
     ):
 
@@ -51,6 +52,7 @@ class ShopActivity(Activity):
                 ),
                 "survey_ids": survey_ids,
                 "radiation_lambda": radiation_lambda,
+                "country_value_coefficients": country_value_coefficients,
             },
             owner_name="ShopActivity",
         )
@@ -103,3 +105,7 @@ class ShopParameters(ActivityParameters):
     saturation_fun_beta: Annotated[float, Field(default=4.0, ge=0.0)]
     survey_ids: Annotated[list[str], Field(default_factory=lambda: ["2.20", "2.21"])]
     radiation_lambda: Annotated[UnitIntervalFloat, Field(default=0.99986)]
+    country_value_coefficients: Annotated[
+        dict[str, float],
+        Field(default_factory=lambda: {"fr": 1.0, "ch": 0.9}),
+    ]

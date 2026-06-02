@@ -59,6 +59,7 @@ class StudyActivity(Activity):
 
         super().__init__(
             name="studies",
+            is_anchor=True,
             opportunities=opportunities,
             parameters=parameters
         )
