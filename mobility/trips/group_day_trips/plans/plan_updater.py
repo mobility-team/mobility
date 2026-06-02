@@ -250,6 +250,7 @@ class PlanUpdater:
     ) -> pl.LazyFrame:
         """Score plan-step candidates under current costs and destination saturation."""
 
+        candidates = CandidatePlanStepsAsset._with_retention_columns(candidates)
         cost_by_od_and_modes = transport_costs.get_costs_by_od_and_mode(
             ["cost", "distance", "time"],
             detail_distances=False,
@@ -314,6 +315,7 @@ class PlanUpdater:
             "iteration",
             "csp",
             "first_seen_iteration",
+            "last_seen_iteration",
             "last_active_iteration",
             "cost",
             "distance",
@@ -466,6 +468,7 @@ class PlanUpdater:
                 destination_shadow_price=pl.lit(0.0),
                 min_activity_time=pl.lit(0.0),
                 first_seen_iteration=pl.lit(None, dtype=pl.UInt16),
+                last_seen_iteration=pl.lit(None, dtype=pl.UInt16),
                 last_active_iteration=pl.lit(None, dtype=pl.UInt16),
             )
             .select(step_columns)

@@ -30,6 +30,7 @@ class CandidatePlanStepsAsset(FileAsset):
 
     RETENTION_COLUMNS = [
         "first_seen_iteration",
+        "last_seen_iteration",
         "last_active_iteration",
     ]
 
@@ -109,6 +110,17 @@ class CandidatePlanStepsAsset(FileAsset):
         )
 
     @classmethod
+    def _with_retention_columns(cls, frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
+        """Add missing candidate-memory columns for older cached files."""
+        candidate_rows = frame.lazy() if isinstance(frame, pl.DataFrame) else frame
+        schema = frame.schema if isinstance(frame, pl.DataFrame) else frame.collect_schema()
+        if "last_seen_iteration" not in schema:
+            candidate_rows = candidate_rows.with_columns(
+                last_seen_iteration=pl.col("first_seen_iteration")
+            )
+        return candidate_rows
+
+    @classmethod
     def build_candidate_memory(
         cls,
         *,
@@ -126,14 +138,15 @@ class CandidatePlanStepsAsset(FileAsset):
 
         candidate_sets = []
         if previous_candidate_plan_steps is not None:
+            previous_candidates = cls._with_retention_columns(previous_candidate_plan_steps)
             candidate_sets.append(
-                previous_candidate_plan_steps.lazy()
+                previous_candidates
                 .filter(pl.col("mode_seq_id") != 0)
                 .select(cls.STRUCTURAL_COLUMNS + cls.RETENTION_COLUMNS)
             )
         if previous_candidate_plan_steps is not None:
             candidate_sets.append(
-                previous_candidate_plan_steps.lazy()
+                previous_candidates
                 .filter(pl.col("mode_seq_id") != 0)
                 .join(
                     current_plans.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]).lazy(),
@@ -154,6 +167,7 @@ class CandidatePlanStepsAsset(FileAsset):
             )
             .with_columns(
                 first_seen_iteration=pl.lit(current_iteration).cast(pl.UInt16),
+                last_seen_iteration=pl.lit(current_iteration).cast(pl.UInt16),
                 last_active_iteration=pl.lit(None, dtype=pl.UInt16),
             )
             .select(cls.STRUCTURAL_COLUMNS + cls.RETENTION_COLUMNS)
@@ -163,18 +177,19 @@ class CandidatePlanStepsAsset(FileAsset):
             pl.concat(candidate_sets, how="vertical_relaxed")
             .group_by(cls.DEDUPE_COLUMNS)
             .agg(
-                activity=pl.col("activity").first(),
-                from_=pl.col("from").first(),
-                to=pl.col("to").first(),
-                mode=pl.col("mode").first(),
-                duration_per_pers=pl.col("duration_per_pers").first(),
-                departure_time=pl.col("departure_time").first(),
-                arrival_time=pl.col("arrival_time").first(),
-                next_departure_time=pl.col("next_departure_time").first(),
-                iteration=pl.col("iteration").min(),
-                country=pl.col("country").first(),
-                csp=pl.col("csp").first(),
+                activity=pl.col("activity").sort_by("last_seen_iteration").last(),
+                from_=pl.col("from").sort_by("last_seen_iteration").last(),
+                to=pl.col("to").sort_by("last_seen_iteration").last(),
+                mode=pl.col("mode").sort_by("last_seen_iteration").last(),
+                duration_per_pers=pl.col("duration_per_pers").sort_by("last_seen_iteration").last(),
+                departure_time=pl.col("departure_time").sort_by("last_seen_iteration").last(),
+                arrival_time=pl.col("arrival_time").sort_by("last_seen_iteration").last(),
+                next_departure_time=pl.col("next_departure_time").sort_by("last_seen_iteration").last(),
+                iteration=pl.col("iteration").sort_by("last_seen_iteration").last(),
+                country=pl.col("country").sort_by("last_seen_iteration").last(),
+                csp=pl.col("csp").sort_by("last_seen_iteration").last(),
                 first_seen_iteration=pl.col("first_seen_iteration").min(),
+                last_seen_iteration=pl.col("last_seen_iteration").max(),
                 last_active_iteration=pl.col("last_active_iteration").max(),
             )
             .rename({"from_": "from"})
@@ -182,7 +197,11 @@ class CandidatePlanStepsAsset(FileAsset):
         if current_iteration <= n_warmup_iterations:
             return candidate_memory
 
-        age_reference = pl.coalesce([pl.col("last_active_iteration"), pl.col("first_seen_iteration")])
+        age_reference = pl.max_horizontal(
+            pl.col("first_seen_iteration"),
+            pl.col("last_seen_iteration"),
+            pl.col("last_active_iteration").fill_null(0),
+        )
         return candidate_memory.filter(
             (pl.lit(current_iteration, dtype=pl.UInt16) - age_reference) <= max_inactive_age
         )
