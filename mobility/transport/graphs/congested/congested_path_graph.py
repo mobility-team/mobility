@@ -115,9 +115,9 @@ class CongestedPathGraph(FileAsset):
         """Return the graph instance corresponding to the congestion active at one iteration."""
         if iteration < 1:
             raise ValueError("Iteration should be >= 1.")
-        if iteration > int(run.parameters.n_iterations):
+        if iteration > int(run.n_iterations):
             raise ValueError(
-                f"Iteration should be <= {int(run.parameters.n_iterations)} for this run."
+                f"Iteration should be <= {int(run.n_iterations)} for this run."
             )
 
         flow_asset = self.get_flow_asset_for_iteration(run, iteration)
@@ -145,7 +145,7 @@ class CongestedPathGraph(FileAsset):
         if self.inputs["handles_congestion"] is False:
             return None
 
-        cost_update_interval = int(run.parameters.n_iter_per_cost_update)
+        cost_update_interval = int(run.n_iter_per_cost_update)
         if cost_update_interval <= 0 or iteration <= 1:
             return None
 

@@ -1,5 +1,4 @@
 import mobility
-from mobility.trips.group_day_trips import Parameters
 
 # This file is not the actual quickstart. It is used by our CI system to ensure that the quickstart always work!
 
@@ -29,25 +28,28 @@ def run_quickstart_ci():
             mobility.OtherActivity(population=population),
         ],
         surveys=[survey],
-        parameters=Parameters(
-            n_iterations=1,
-            mode_sequence_search_parallel=False,
+        parameters=mobility.GroupDayTripsParameters(
+            run=mobility.GroupDayTripsRunParameters(n_iterations=1),
+            mode_sequences=mobility.GroupDayTripsModeSequenceParameters(
+                mode_sequence_search_parallel=False,
+            ),
         ),
     )
 
     # You can get weekday plan steps to inspect them
-    weekday_plan_steps = population_trips.get()["weekday_plan_steps"].collect()
+    weekday_run = population_trips.run("weekday")
+    weekday_plan_steps = weekday_run.get()["plan_steps"].collect()
 
     # You can compute global metrics for this population
-    global_metrics = population_trips.weekday_run.results().metrics.aggregate()
+    global_metrics = weekday_run.results().metrics.aggregate()
     
     # You can plot weekday OD flows, with labels for prominent cities
-    weekday_results = population_trips.weekday_run.results()
+    weekday_results = weekday_run.results()
     labels = weekday_results.metrics.get_prominent_cities()
     #weekday_results.metrics.plot_od_flows(labels=labels) #Not plotting on CI to avoid crashes
 
     # You can get a report of the parameters used in the model
-    parameters_report = population_trips.weekday_run.parameters_dataframe()
+    parameters_report = weekday_run.parameters_dataframe()
 
     return {
         "weekday_plan_steps": weekday_plan_steps,

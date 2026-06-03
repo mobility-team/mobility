@@ -4,7 +4,11 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, Parameters
+from mobility.trips.group_day_trips import (
+    BehaviorChangePhase,
+    BehaviorChangeScope,
+    GroupDayTripsBehaviorChangeParameters,
+)
 from mobility.trips.group_day_trips.plans.candidate_plan_steps import CandidatePlanStepsAsset
 from mobility.trips.group_day_trips.plans.plan_ids import add_plan_id
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
@@ -104,16 +108,16 @@ def _with_plan_id(
 ) -> pl.DataFrame | pl.LazyFrame:
     return add_plan_id(frame, index_folder=_make_local_tmp_path(tmp_path, name))
 def test_parameters_resolve_behavior_change_scope_from_active_phases():
-    parameters = Parameters(
-        behavior_change_phases=[
+    parameters = GroupDayTripsBehaviorChangeParameters(
+        phases=[
             BehaviorChangePhase(start_iteration=3, scope=BehaviorChangeScope.MODE_REPLANNING),
             BehaviorChangePhase(start_iteration=5, scope=BehaviorChangeScope.DESTINATION_REPLANNING),
         ]
     )
 
-    assert Parameters().get_behavior_change_scope(1) == BehaviorChangeScope.FULL_REPLANNING
-    assert parameters.get_behavior_change_scope(3) == BehaviorChangeScope.MODE_REPLANNING
-    assert parameters.get_behavior_change_scope(6) == BehaviorChangeScope.DESTINATION_REPLANNING
+    assert GroupDayTripsBehaviorChangeParameters().scope_at(1) == BehaviorChangeScope.FULL_REPLANNING
+    assert parameters.scope_at(3) == BehaviorChangeScope.MODE_REPLANNING
+    assert parameters.scope_at(6) == BehaviorChangeScope.DESTINATION_REPLANNING
 
 
 def test_get_transition_probabilities_blocks_stay_home_in_mode_replanning(tmp_path):

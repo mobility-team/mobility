@@ -1,11 +1,29 @@
-from .core.parameters import BehaviorChangePhase, BehaviorChangeScope, Parameters
+from .core.parameters import (
+    BehaviorChangePhase,
+    BehaviorChangeScope,
+    GroupDayTripsActivitySequenceParameters,
+    GroupDayTripsBehaviorChangeParameters,
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsModeSequenceParameters,
+    GroupDayTripsOutputParameters,
+    GroupDayTripsParameters,
+    GroupDayTripsPeriodParameters,
+    GroupDayTripsPlanUpdateParameters,
+    GroupDayTripsRunParameters,
+)
 from .core.group_day_trips import PopulationGroupDayTrips
-from .core.results import RunResults
 
 __all__ = [
     "BehaviorChangePhase",
     "BehaviorChangeScope",
+    "GroupDayTripsActivitySequenceParameters",
+    "GroupDayTripsBehaviorChangeParameters",
+    "GroupDayTripsDestinationSequenceParameters",
+    "GroupDayTripsModeSequenceParameters",
+    "GroupDayTripsOutputParameters",
+    "GroupDayTripsParameters",
+    "GroupDayTripsPeriodParameters",
+    "GroupDayTripsPlanUpdateParameters",
+    "GroupDayTripsRunParameters",
     "PopulationGroupDayTrips",
-    "Parameters",
-    "RunResults",
 ]

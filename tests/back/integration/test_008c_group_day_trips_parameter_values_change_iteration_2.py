@@ -3,7 +3,15 @@ import polars as pl
 
 import mobility
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
-from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
+from mobility.trips.group_day_trips import (
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsModeSequenceParameters,
+    GroupDayTripsOutputParameters,
+    GroupDayTripsParameters,
+    GroupDayTripsPeriodParameters,
+    GroupDayTripsRunParameters,
+    PopulationGroupDayTrips,
+)
 from mobility.surveys.france import EMPMobilitySurvey
 
 
@@ -45,17 +53,25 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data):
             OtherActivity(population=pop),
         ],
         surveys=[emp],
-        parameters=Parameters(
-            n_iterations=2,
-            n_iter_per_cost_update=0,
-            dest_prob_cutoff=0.9,
-            k_mode_sequences=6,
-            cost_uncertainty_sd=1.0,
-            mode_sequence_search_parallel=False,
-            persist_iteration_artifacts=True,
-            save_transition_events=True,
-            simulate_weekend=False,
-            seed=0,
+        parameters=GroupDayTripsParameters(
+            run=GroupDayTripsRunParameters(
+                n_iterations=2,
+                n_iter_per_cost_update=0,
+                seed=0,
+            ),
+            periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
+            outputs=GroupDayTripsOutputParameters(
+                persist_iteration_artifacts=True,
+                save_transition_events=True,
+            ),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                dest_prob_cutoff=0.9,
+                cost_uncertainty_sd=1.0,
+            ),
+            mode_sequences=GroupDayTripsModeSequenceParameters(
+                k_mode_sequences=6,
+                mode_sequence_search_parallel=False,
+            ),
         ),
     )
 
@@ -66,34 +82,41 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data):
             HomeActivity(),
             WorkActivity(
                 value_of_time=mobility.ParameterValue.by_iteration(
-                    {
-                        1: 5.0,
-                        2: 50.0,
-                    },
-                    mode="step",
-                )
+                    {1: 5.0, 2: 50.0},
+                ),
             ),
             OtherActivity(population=pop),
         ],
         surveys=[emp],
-        parameters=Parameters(
-            n_iterations=2,
-            n_iter_per_cost_update=0,
-            dest_prob_cutoff=0.9,
-            k_mode_sequences=6,
-            cost_uncertainty_sd=1.0,
-            mode_sequence_search_parallel=False,
-            persist_iteration_artifacts=True,
-            save_transition_events=True,
-            simulate_weekend=False,
-            seed=0,
+        parameters=GroupDayTripsParameters(
+            run=GroupDayTripsRunParameters(
+                n_iterations=2,
+                n_iter_per_cost_update=0,
+                seed=0,
+            ),
+            periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
+            outputs=GroupDayTripsOutputParameters(
+                persist_iteration_artifacts=True,
+                save_transition_events=True,
+            ),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                dest_prob_cutoff=0.9,
+                cost_uncertainty_sd=1.0,
+            ),
+            mode_sequences=GroupDayTripsModeSequenceParameters(
+                k_mode_sequences=6,
+                mode_sequence_search_parallel=False,
+            ),
         ),
     )
 
-    static_plan_steps = static.weekday_run.get()["plan_steps"].collect()
-    dynamic_plan_steps = dynamic.weekday_run.get()["plan_steps"].collect()
-    static_transitions = static.weekday_run.get()["transitions"].collect()
-    dynamic_transitions = dynamic.weekday_run.get()["transitions"].collect()
+    static_run = static.run("weekday")
+    dynamic_run = dynamic.run("weekday")
+
+    static_plan_steps = static_run.get()["plan_steps"].collect()
+    dynamic_plan_steps = dynamic_run.get()["plan_steps"].collect()
+    static_transitions = static_run.get()["transitions"].collect()
+    dynamic_transitions = dynamic_run.get()["transitions"].collect()
 
     assert static_plan_steps.height > 0
     assert dynamic_plan_steps.height > 0

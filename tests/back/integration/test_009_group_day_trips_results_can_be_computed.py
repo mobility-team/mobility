@@ -2,7 +2,14 @@ import pytest
 
 import mobility
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
-from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
+from mobility.trips.group_day_trips import (
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsModeSequenceParameters,
+    GroupDayTripsOutputParameters,
+    GroupDayTripsParameters,
+    GroupDayTripsRunParameters,
+    PopulationGroupDayTrips,
+)
 from mobility.surveys.france import EMPMobilitySurvey
 
 
@@ -29,21 +36,29 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
         modes=[mobility.CarMode(transport_zones)],
         activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
-        parameters=Parameters(
-            n_iterations=1,
-            n_iter_per_cost_update=0,
-            dest_prob_cutoff=0.9,
-            k_mode_sequences=3,
-            cost_uncertainty_sd=1.0,
-            mode_sequence_search_parallel=False,
-            seed=0,
-            persist_iteration_artifacts=True,
-            save_transition_events=True,
+        parameters=GroupDayTripsParameters(
+            run=GroupDayTripsRunParameters(
+                n_iterations=1,
+                n_iter_per_cost_update=0,
+                seed=0,
+            ),
+            outputs=GroupDayTripsOutputParameters(
+                persist_iteration_artifacts=True,
+                save_transition_events=True,
+            ),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                dest_prob_cutoff=0.9,
+                cost_uncertainty_sd=1.0,
+            ),
+            mode_sequences=GroupDayTripsModeSequenceParameters(
+                k_mode_sequences=3,
+                mode_sequence_search_parallel=False,
+            ),
         ),
     )
 
     # Evaluate various metrics
-    results = pop_trips.weekday_run.results()
+    results = pop_trips.run("weekday").results()
     global_metrics = results.metrics.aggregate()
     weekday_metrics_by_mode = results.metrics.travel_indicators_by(
         variable="mode",
@@ -77,7 +92,7 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
     weekday_cost_per_person = results.metrics.cost_per_person()
     grouped_global_metrics = results.metrics.aggregate()
     iteration_metrics = results.diagnostics.iteration_metrics()
-    weekday_distance_compare = results.metrics.distance_per_person(compare_with=pop_trips)
+    weekday_distance_compare = results.metrics.distance_per_person(compare_with=results)
 
     assert global_metrics.height > 0
     assert weekday_metrics_by_mode.height > 0

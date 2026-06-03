@@ -30,8 +30,21 @@ class _DummyProcess:
         return 0
 
 
+def _mode_sequence_parameters(
+    *,
+    k_mode_sequences,
+    mode_sequence_search_parallel=True,
+):
+    return SimpleNamespace(
+        mode_sequences=SimpleNamespace(
+            k_mode_sequences=k_mode_sequences,
+            mode_sequence_search_parallel=mode_sequence_search_parallel,
+        )
+    )
+
+
 def test_run_python_mode_sequence_search_subprocess_serializes_inputs_for_worker(monkeypatch, tmp_path):
-    parameters = SimpleNamespace(k_mode_sequences=7)
+    parameters = _mode_sequence_parameters(k_mode_sequences=7)
     unique_destination_chains = pl.DataFrame({"dest_seq_id": [1], "locations": [[101, 202, 303]]})
     cost_by_origin_destination_mode = {(101, 202, 0): 1200, (202, 303, 1): 900}
     mode_ids_by_leg = {(101, 202): [0, 1], (202, 303): [1]}
@@ -117,7 +130,10 @@ def test_run_python_mode_sequence_search_serial_backend_filters_return_modes(mon
 
     result = run_python_mode_sequence_search(
         iteration=3,
-        parameters=SimpleNamespace(k_mode_sequences=4, mode_sequence_search_parallel=False),
+        parameters=_mode_sequence_parameters(
+            k_mode_sequences=4,
+            mode_sequence_search_parallel=False,
+        ),
         working_folder=tmp_path,
         unique_destination_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
         leg_mode_costs=pl.DataFrame(
@@ -245,7 +261,10 @@ def test_python_and_rust_mode_sequence_backends_match_on_same_inputs(tmp_path):
 
     python_rows = run_python_mode_sequence_search(
         iteration=1,
-        parameters=SimpleNamespace(k_mode_sequences=3, mode_sequence_search_parallel=False),
+        parameters=_mode_sequence_parameters(
+            k_mode_sequences=3,
+            mode_sequence_search_parallel=False,
+        ),
         working_folder=tmp_path,
         unique_destination_chains=unique_destination_chains,
         leg_mode_costs=leg_mode_costs,

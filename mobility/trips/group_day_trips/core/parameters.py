@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from enum import Enum
 from typing import Annotated
 
@@ -5,18 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BehaviorChangeScope(str, Enum):
-    """Highest adaptation layer allowed during one behavior-change phase.
-
-    Attributes:
-        FULL_REPLANNING: Resample motive sequences, then dependent destination
-            and mode sequences. Stay-home transitions remain available.
-        DESTINATION_REPLANNING: Keep each currently occupied non-stay-home
-            motive sequence fixed and resample destination sequences plus
-            dependent mode sequences. Stay-home is frozen.
-        MODE_REPLANNING: Keep each currently occupied non-stay-home motive and
-            destination sequence fixed and resample mode sequences only.
-            Stay-home is frozen.
-    """
+    """Highest adaptation layer allowed during one behavior-change phase."""
 
     FULL_REPLANNING = "full_replanning"
     DESTINATION_REPLANNING = "destination_replanning"
@@ -24,12 +15,7 @@ class BehaviorChangeScope(str, Enum):
 
 
 class BehaviorChangePhase(BaseModel):
-    """Behavior-change phase applied from ``start_iteration`` onward.
-
-    Attributes:
-        start_iteration: First simulation iteration where this phase applies.
-        scope: Highest adaptation layer allowed during the phase.
-    """
+    """Behavior-change phase applied from ``start_iteration`` onward."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -41,7 +27,6 @@ class BehaviorChangePhase(BaseModel):
             description="First simulation iteration where this behavior-change phase applies.",
         ),
     ]
-
     scope: Annotated[
         BehaviorChangeScope,
         Field(
@@ -53,14 +38,15 @@ class BehaviorChangePhase(BaseModel):
                 "occupied non-stay-home motive sequence fixed and resamples "
                 "destination plus mode sequences. `mode_replanning` keeps each "
                 "currently occupied non-stay-home motive and destination "
-                "sequence fixed and resamples mode sequences only. "
-                "Stay-home is frozen in restricted phases."
+                "sequence fixed and resamples mode sequences only. Stay-home is "
+                "frozen in restricted phases."
             ),
         ),
     ]
 
 
-class Parameters(BaseModel):
+class GroupDayTripsRunParameters(BaseModel):
+    """Run length, cost refresh, and stochastic replication settings."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -72,25 +58,223 @@ class Parameters(BaseModel):
             title="Number of iterations",
             description=(
                 "Number of simulation iterations used to compute the population "
-                "trips. Increase this to get more diverse programmes and to allow "
-                "congestion feedbacks to propagate."
+                "trips."
+            ),
+        ),
+    ]
+    n_iter_per_cost_update: Annotated[
+        int,
+        Field(
+            default=3,
+            ge=0,
+            title="Travel costs update period",
+            description=(
+                "The simulation updates travel costs every n_iter_per_cost_update "
+                "iterations. Set it to zero to ignore congestion feedback."
+            ),
+        ),
+    ]
+    seed: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            title="Simulation seed",
+            description="Seed used to get reproducible stochastic simulation steps.",
+        ),
+    ]
+    n_replications: Annotated[
+        int,
+        Field(
+            default=1,
+            ge=1,
+            title="Number of stochastic replications",
+            description="Number of repeated model runs for the same scenario.",
+        ),
+    ]
+    seeds: Annotated[
+        list[int] | None,
+        Field(
+            default=None,
+            title="Replication seeds",
+            description="Optional list of seeds, one per stochastic replication.",
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def validate_replication_seeds(self) -> "GroupDayTripsRunParameters":
+        """Validate single-run and multi-run seed settings."""
+        if self.seeds is not None:
+            if len(self.seeds) != self.n_replications:
+                raise ValueError(
+                    "GroupDayTripsRunParameters.seeds should contain one seed per replication."
+                )
+            if any(seed < 0 for seed in self.seeds):
+                raise ValueError(
+                    "GroupDayTripsRunParameters.seeds values should be greater than or equal to 0."
+                )
+
+        if self.seed != 0 and self.n_replications != 1:
+            raise ValueError(
+                "GroupDayTripsRunParameters.seed is the single-replication seed. "
+                "Use GroupDayTripsRunParameters.seeds when n_replications is greater than 1."
+            )
+
+        return self
+
+    def seed_for_replication(self, replication: int) -> int:
+        """Return the seed used by one stochastic replication."""
+        if replication < 0 or replication >= self.n_replications:
+            raise ValueError("replication should be between 0 and n_replications - 1.")
+        if self.seeds is not None:
+            return self.seeds[replication]
+        if self.n_replications == 1:
+            return self.seed
+        return replication
+
+    def with_replication(self, replication: int) -> "GroupDayTripsRunParameters":
+        """Return single-replication run parameters for one replication."""
+        data = self.model_dump(mode="python")
+        data.update(
+            seed=self.seed_for_replication(replication),
+            n_replications=1,
+            seeds=None,
+        )
+        return self.__class__.model_validate(data)
+
+
+class GroupDayTripsPeriodParameters(BaseModel):
+    """Day-type and reporting-period settings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    simulate_weekend: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Weekday and weekend simulation",
+            description="Whether to simulate a weekend day in addition to the weekday.",
+        ),
+    ]
+    weekday_weight: Annotated[
+        float,
+        Field(
+            default=5.0 / 7.0,
+            gt=0.0,
+            title="Weekday result weight",
+            description="Weight used when weekday and weekend results are combined.",
+        ),
+    ]
+    weekend_weight: Annotated[
+        float,
+        Field(
+            default=2.0 / 7.0,
+            gt=0.0,
+            title="Weekend result weight",
+            description="Weight used when weekday and weekend results are combined.",
+        ),
+    ]
+    annual_weight: Annotated[
+        float,
+        Field(
+            default=365.0,
+            gt=0.0,
+            title="Annual result weight",
+            description="Number of days used to scale typical-day results to a year.",
+        ),
+    ]
+
+
+class GroupDayTripsOutputParameters(BaseModel):
+    """Settings for saved outputs and resumable iteration artifacts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    save_transition_events: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Save transition events",
+            description="Whether to persist per-iteration transition-event logs.",
+        ),
+    ]
+    persist_iteration_artifacts: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Persist iteration artifacts",
+            description=(
+                "Whether to persist resumable per-iteration state artifacts. "
+                "Disable this to keep only the final outputs."
             ),
         ),
     ]
 
-    alpha: Annotated[
-        float,
+    @model_validator(mode="after")
+    def validate_transition_events(self) -> "GroupDayTripsOutputParameters":
+        """Transition events are only available with iteration artifacts."""
+        if self.persist_iteration_artifacts is False and self.save_transition_events:
+            raise ValueError(
+                "GroupDayTripsOutputParameters.save_transition_events cannot be True "
+                "when persist_iteration_artifacts is False."
+            )
+        return self
+
+
+class GroupDayTripsBehaviorChangeParameters(BaseModel):
+    """Per-iteration behavior-change policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    phases: Annotated[
+        list[BehaviorChangePhase] | None,
         Field(
-            default=0.5,
-            ge=0.0,
-            title="Chain cost weighting",
+            default=None,
+            title="Behavior change phases",
             description=(
-                "Weight of the chain cost used to penalize intermediate "
-                "destination options before the next anchor destination in the "
-                "trip chain (shopping place before work, for example)."
+                "Optional per-iteration adaptation policy. If omitted, all "
+                "iterations use full replanning."
             ),
         ),
     ]
+
+    @model_validator(mode="after")
+    def validate_phases(self) -> "GroupDayTripsBehaviorChangeParameters":
+        """Ensure phase definitions are sorted and non-overlapping."""
+        if self.phases is None:
+            return self
+
+        start_iterations = [phase.start_iteration for phase in self.phases]
+        if start_iterations != sorted(start_iterations):
+            raise ValueError(
+                "GroupDayTripsBehaviorChangeParameters.phases must be sorted by start_iteration."
+            )
+        if len(start_iterations) != len(set(start_iterations)):
+            raise ValueError(
+                "GroupDayTripsBehaviorChangeParameters.phases cannot define the same start_iteration twice."
+            )
+        return self
+
+    def scope_at(self, iteration: int) -> BehaviorChangeScope:
+        """Return the active behavior-change scope for one iteration."""
+        if self.phases is None:
+            return BehaviorChangeScope.FULL_REPLANNING
+
+        active_phase = None
+        for phase in self.phases:
+            if phase.start_iteration > iteration:
+                break
+            active_phase = phase
+
+        if active_phase is None:
+            return BehaviorChangeScope.FULL_REPLANNING
+        return active_phase.scope
+
+
+class GroupDayTripsActivitySequenceParameters(BaseModel):
+    """Settings used when sampling activity sequences."""
+
+    model_config = ConfigDict(extra="forbid")
 
     k_activity_sequences: Annotated[
         int | None,
@@ -100,86 +284,43 @@ class Parameters(BaseModel):
             title="Number of activity-sequence seeds",
             description=(
                 "Maximum number of timed survey activity-sequence seeds sampled "
-                "without replacement per demand group during full replanning. "
-                "If omitted, all available seeds are admitted."
+                "without replacement per demand group during full replanning."
             ),
         ),
     ]
 
+
+class GroupDayTripsDestinationSequenceParameters(BaseModel):
+    """Settings used when sampling destination sequences."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    alpha: Annotated[
+        float,
+        Field(
+            default=0.5,
+            ge=0.0,
+            title="Chain cost weighting",
+            description="Weight of the chain cost used to penalize intermediate destination options.",
+        ),
+    ]
     k_destination_sequences: Annotated[
         int,
         Field(
             default=3,
             ge=1,
             title="Number of destination sequences",
-            description=(
-                "Number of destination-chain sequences generated per admitted "
-                "activity sequence. Sequences branch at the anchor-destination "
-                "sampling stage and then complete the remaining destinations "
-                "conditionally."
-            ),
+            description="Number of destination-chain sequences generated per admitted activity sequence.",
         ),
     ]
-    
-    k_mode_sequences: Annotated[
-        int,
-        Field(
-            default=3,
-            ge=1,
-            title="Number of mode combinations",
-            description=(
-                "Number of mode combinations considered in the simulation, for "
-                "a given destination sequence. Only the top k combinations are "
-                "considered."
-            ),
-        ),
-    ]
-
-    n_warmup_iterations: Annotated[
-        int,
-        Field(
-            default=1,
-            ge=0,
-            title="Candidate memory warm-up iterations",
-            description=(
-                "Number of initial iterations during which no candidate-plan "
-                "memory is forgotten. This gives newly generated plans at "
-                "least one iteration to become active before age-based pruning "
-                "starts."
-            ),
-        ),
-    ]
-
-    max_inactive_age: Annotated[
-        int,
-        Field(
-            default=2,
-            ge=0,
-            title="Maximum inactive candidate-plan age",
-            description=(
-                "Maximum number of iterations an inactive candidate plan is "
-                "kept in memory after it was last active or last regenerated. "
-                "Plans that were never active use their last-seen iteration as "
-                "the age reference."
-            ),
-        ),
-    ]
-
     refresh_active_mode_alternatives: Annotated[
         bool,
         Field(
             default=False,
             title="Refresh active mode alternatives",
-            description=(
-                "Whether to append currently active destination chains to the "
-                "iteration destination candidates before the top-k mode search. "
-                "This refreshes mode alternatives for occupied plans with "
-                "current travel costs, while behavior-change phases still "
-                "control which transitions are allowed."
-            ),
+            description="Whether to append active destination chains to the iteration candidates.",
         ),
     ]
-
     dest_prob_cutoff: Annotated[
         float,
         Field(
@@ -187,184 +328,117 @@ class Parameters(BaseModel):
             gt=0.0,
             le=1.0,
             title="Destination probability distribution cutoff",
-            description=(
-                "Cutoff used to prune the less probable destinations for a given "
-                "origin. Only the first dest_prob_cutoff % of the cumulative "
-                "distribution is considered."
-            ),
+            description="Cutoff used to prune less probable destinations.",
         ),
     ]
-
-    n_iter_per_cost_update: Annotated[
-        int,
-        Field(
-            default=3,
-            ge=0,
-            title="Travel costs update period",
-            description=(
-                "The simulation will update the travel costs every n_iter_per_cost_update. ",
-                "Set n_iter_per_cost_update to zero to ignore congestion in the "
-                "simulation, set to 1 to update congestion at each iteration, " 
-                "set to a higher level to speed up the simulation."
-            ),
-        ),
-    ]
-
     cost_uncertainty_sd: Annotated[
         float,
         Field(
             default=1.0,
             gt=0.0,
-            title="Standard deviation of travel costs estimates",
-            description=( 
-                "Travel costs are estimated between specific representative points " 
-                "located in transport zones, but the actual travel costs between "
-                "all origins and all destinations in the transport zones will be "
-                "slightly different than these point estimates. "
-                "cost_uncertainty_sd controls how uncertain are these estimates, "
-                "and spreads the opportunities in the destination transport zone "
-                "based on a normal distribution centered on the point estimates "
-                "and a standard deviation of cost_uncertainty_sd."
-            ),
+            title="Standard deviation of travel cost estimates",
+            description="Standard deviation used to spread destination opportunities around OD point costs.",
         ),
     ]
 
-    seed: Annotated[
+
+class GroupDayTripsModeSequenceParameters(BaseModel):
+    """Settings used when searching mode sequences."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    k_mode_sequences: Annotated[
         int,
         Field(
-            default=0,
-            ge=0,
-            title="Simulation seed",
-            description=(
-                "Seed used to get reproducible results for stochastic simulation "
-                "steps (like destination sampling when building destination chains). "
-                "Change this value to get new programmes and results for a given " 
-                "set of inputs."
-            ),
+            default=3,
+            ge=1,
+            title="Number of mode combinations",
+            description="Number of mode combinations considered for one destination sequence.",
         ),
     ]
-
     mode_sequence_search_parallel: Annotated[
         bool,
         Field(
             default=True,
-            title="Parallel mode for the top k mode sequence search",
-            description=(
-                "Set to False to debug or for small simulations, otherwise set " 
-                "to True to speed up the simulation."
-            ),
+            title="Parallel mode-sequence search",
+            description="Set to False to debug or for small simulations.",
         ),
     ]
-
     use_rust_mode_sequence_search: Annotated[
         bool,
         Field(
             default=False,
             title="Use Rust mode-sequence search backend",
-            description=(
-                "Whether to use the in-process Rust backend for top-k mode "
-                "sequence search instead of the legacy Python implementation. "
-                "This requires the `mobility_mode_sequence_search` package to "
-                "be installed and importable."
-            ),
+            description="Whether to use the in-process Rust backend for top-k mode sequence search.",
         ),
     ]
 
-    save_transition_events: Annotated[
-        bool,
+
+class GroupDayTripsPlanUpdateParameters(BaseModel):
+    """Settings used when updating day-to-day plans."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    n_warmup_iterations: Annotated[
+        int,
         Field(
-            default=False,
-            title="Save transition events",
-            description=(
-                "Whether to persist per-iteration transition-event logs. "
-                "These logs are useful for post-run analysis but are not "
-                "required to advance the simulation state."
-            ),
+            default=1,
+            ge=0,
+            title="Candidate memory warm-up iterations",
+            description="Number of first iterations where inactive candidate plans are not removed.",
         ),
     ]
-
-    persist_iteration_artifacts: Annotated[
-        bool,
+    max_inactive_age: Annotated[
+        int,
         Field(
-            default=False,
-            title="Persist iteration artifacts",
-            description=(
-                "Whether to persist resumable per-iteration run-state artifacts "
-                "such as current plans, current plan steps, candidate plan steps, "
-                "destination saturation, RNG state, and completion markers. "
-                "Disable this to keep only the final outputs."
-            ),
+            default=2,
+            ge=0,
+            title="Maximum inactive candidate-plan age",
+            description="Number of iterations an inactive candidate plan can stay in memory.",
         ),
     ]
-
-    use_destination_shadow_prices: Annotated[
-        bool,
-        Field(
-            default=False,
-            title="Use destination shadow prices",
-            description=(
-                "Whether to use additive destination shadow prices for "
-                "opportunity-capacity feedback. When disabled, the legacy "
-                "multiplicative sink saturation utility is used."
-            ),
-        ),
-    ]
-
     min_activity_time_constant: Annotated[
         float,
         Field(
             default=1.0,
             ge=0.0,
             title="Minimum activity time coefficient",
-            description=(
-                "Coefficient controlling the minimum activity time necessary to "
-                "get a positive utility from the activity. This minimum time is "
-                "equal to average_activity_time x exp(-min_activity_time_constant)."
-            ),
+            description="Coefficient used to compute the minimum useful duration of an activity.",
         ),
     ]
-
     update_plan_timings_from_modeled_travel_times: Annotated[
         bool,
         Field(
             default=False,
             title="Update plan timings from modeled travel times",
-            description=(
-                "Whether to adjust candidate-plan departure, arrival, and activity "
-                "times from survey reference schedules using the modeled travel "
-                "times at each iteration before recomputing utilities."
-            ),
+            description="Whether to adjust plan timings with modeled travel times at each iteration.",
         ),
     ]
-
+    use_destination_shadow_prices: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Use destination shadow prices",
+            description="Whether to use destination shadow prices for opportunity-capacity feedback.",
+        ),
+    ]
     transition_distance_threshold: Annotated[
         float,
         Field(
             default=float("inf"),
             ge=0.0,
             title="Transition distance threshold",
-            description=(
-                "Maximum embedding distance allowed between a current plan state "
-                "and a candidate plan state. Candidates beyond this threshold are "
-                "excluded from the transition choice set."
-            ),
+            description="Maximum plan-distance allowed when a person changes plan.",
         ),
     ]
-
     enable_transition_distance_model: Annotated[
         bool,
         Field(
             default=False,
             title="Enable transition distance model",
-            description=(
-                "Whether to compute plan-embedding distances during transition "
-                "probability calculation. When disabled, the distance threshold "
-                "and distance friction are ignored to avoid the costly distance "
-                "join and pairwise distance calculation."
-            ),
+            description="Whether plan distance affects day-to-day plan changes.",
         ),
     ]
-
     transition_revision_probability: Annotated[
         float,
         Field(
@@ -372,58 +446,53 @@ class Parameters(BaseModel):
             ge=0.0,
             le=1.0,
             title="Transition revision probability",
-            description=(
-                "Share of persons in a current plan state who reconsider their "
-                "plan at each iteration. Revising persons are redistributed over "
-                "the filtered candidate states according to MNL probabilities."
-            ),
+            description="Share of persons who reconsider their plan at each iteration.",
         ),
     ]
-
     transition_logit_scale: Annotated[
         float,
         Field(
             default=1.0,
             ge=0.0,
             title="Transition logit scale",
-            description=(
-                "Scale applied to plan utilities in the day-to-day plan "
-                "revision multinomial logit. Lower values flatten "
-                "revision probabilities without changing the underlying "
-                "plan utility formulation."
-            ),
+            description="Scale applied to plan utilities when choosing a new plan.",
         ),
     ]
-
     transition_utility_pruning_delta: Annotated[
         float,
         Field(
             default=3.0,
             ge=0.0,
             title="Transition utility pruning delta",
-            description=(
-                "Keep only candidate plans whose scaled utility is within this "
-                "delta of the best candidate utility for a given current plan "
-                "state before computing transition probabilities. Lower values "
-                "shrink the transition choice set and speed up the simulation."
-            ),
+            description="Maximum utility gap used to keep candidate plans in the transition choice set.",
         ),
     ]
-
     min_transition_utility_gain: Annotated[
         float,
         Field(
             default=0.0,
             ge=0.0,
             title="Minimum transition utility gain",
-            description=(
-                "Minimum utility gain needed before a person can switch from "
-                "one plan to another. The current plan is always kept. Set this "
-                "above zero to avoid switching between almost equal plans."
-            ),
+            description="Minimum utility improvement needed before a person can change plan.",
         ),
     ]
-
+    transition_distance_friction: Annotated[
+        float,
+        Field(
+            default=0.5,
+            ge=0.0,
+            title="Transition distance friction",
+            description="Penalty applied to larger plan changes when the distance model is enabled.",
+        ),
+    ]
+    plan_embedding_dimension_weights: Annotated[
+        list[float] | None,
+        Field(
+            default=None,
+            title="Plan embedding dimension weights",
+            description="Optional weights used when computing distances between plans.",
+        ),
+    ]
     plan_probability_pruning_retained_share: Annotated[
         float,
         Field(
@@ -431,131 +500,60 @@ class Parameters(BaseModel):
             gt=0.0,
             le=1.0,
             title="Current-plan retained probability share",
-            description=(
-                "Share of transition mass kept as separate target plans for "
-                "each demand group. Lower-mass target plans are merged into "
-                "the largest retained target plan of the same stay-home or "
-                "mobile type. Set to 1.0 to keep all target plans."
-            ),
+            description="Share of transition probability kept as separate target plans.",
         ),
     ]
-
     plan_probability_pruning_min_iteration: Annotated[
         int,
         Field(
             default=2,
             ge=1,
             title="Current-plan probability pruning start iteration",
-            description=(
-                "First iteration where low-probability target plans may be "
-                "merged when plan_probability_pruning_retained_share is below 1.0."
-            ),
+            description="First iteration where low-probability target plans may be merged.",
         ),
     ]
 
-    transition_distance_friction: Annotated[
-        float,
-        Field(
-            default=0.5,
-            ge=0.0,
-            title="Transition distance friction",
-            description=(
-                "Penalty applied per unit of plan-embedding distance in the "
-                "day-to-day plan revision model. Higher values reduce the "
-                "probability of large jumps between daily programmes."
-            ),
-        ),
+
+class GroupDayTripsParameters(BaseModel):
+    """Root settings for the grouped day-trips model."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run: Annotated[
+        GroupDayTripsRunParameters,
+        Field(default_factory=GroupDayTripsRunParameters),
+    ]
+    periods: Annotated[
+        GroupDayTripsPeriodParameters,
+        Field(default_factory=GroupDayTripsPeriodParameters),
+    ]
+    outputs: Annotated[
+        GroupDayTripsOutputParameters,
+        Field(default_factory=GroupDayTripsOutputParameters),
+    ]
+    behavior_change: Annotated[
+        GroupDayTripsBehaviorChangeParameters,
+        Field(default_factory=GroupDayTripsBehaviorChangeParameters),
+    ]
+    activity_sequences: Annotated[
+        GroupDayTripsActivitySequenceParameters,
+        Field(default_factory=GroupDayTripsActivitySequenceParameters),
+    ]
+    destination_sequences: Annotated[
+        GroupDayTripsDestinationSequenceParameters,
+        Field(default_factory=GroupDayTripsDestinationSequenceParameters),
+    ]
+    mode_sequences: Annotated[
+        GroupDayTripsModeSequenceParameters,
+        Field(default_factory=GroupDayTripsModeSequenceParameters),
+    ]
+    plan_update: Annotated[
+        GroupDayTripsPlanUpdateParameters,
+        Field(default_factory=GroupDayTripsPlanUpdateParameters),
     ]
 
-    plan_embedding_dimension_weights: Annotated[
-        list[float] | None,
-        Field(
-            default=None,
-            title="Plan embedding dimension weights",
-            description=(
-                "Optional per-dimension weights used when computing weighted "
-                "Euclidean distances between plan embeddings. If omitted, "
-                "state dimensions use a weight of 1.0 and spatial dimensions "
-                "use the default PlanDistance spatial scaling."
-            ),
-        ),
-    ]
-
-    simulate_weekend: Annotated[
-        bool,
-        Field(
-            default=False,
-            title="Week day only or week day + weekend day mode",
-            description="Wether to simulate a weekend day or only a week day.",
-        ),
-    ]
-
-    behavior_change_phases: Annotated[
-        list[BehaviorChangePhase] | None,
-        Field(
-            default=None,
-            title="Behavior change phases",
-            description=(
-                "Optional per-iteration adaptation policy. Each phase starts at a "
-                "given iteration and selects the highest state layer that may "
-                "adapt: `mode_replanning`, `destination_replanning`, or "
-                "`full_replanning`. Restricted phases apply to currently "
-                "occupied non-stay-home states and freeze stay-home. If omitted, "
-                "all iterations use `full_replanning`."
-            ),
-        ),
-    ]
-
-    @model_validator(mode="after")
-    def validate_behavior_change_phases(self) -> "Parameters":
-        """Ensure phase definitions are sorted and non-overlapping.
-
-        Returns:
-            The validated parameter object.
-
-        Raises:
-            ValueError: If behavior-change phases are not sorted by
-                ``start_iteration`` or if two phases start on the same
-                iteration.
-        """
-        if self.persist_iteration_artifacts is False and self.save_transition_events:
-            raise ValueError(
-                "Parameters.save_transition_events cannot be True when "
-                "Parameters.persist_iteration_artifacts is False."
-            )
-
-        if self.behavior_change_phases is None:
-            return self
-
-        start_iterations = [phase.start_iteration for phase in self.behavior_change_phases]
-        if start_iterations != sorted(start_iterations):
-            raise ValueError("Parameters.behavior_change_phases must be sorted by start_iteration.")
-
-        if len(start_iterations) != len(set(start_iterations)):
-            raise ValueError("Parameters.behavior_change_phases cannot define the same start_iteration twice.")
-
-        return self
-
-    def get_behavior_change_scope(self, iteration: int) -> BehaviorChangeScope:
-        """Return the active behavior-change scope for a given iteration.
-
-        Args:
-            iteration: Current simulation iteration (1-based).
-
-        Returns:
-            The active behavior-change scope. If no phase applies yet, returns
-            ``BehaviorChangeScope.FULL_REPLANNING``.
-        """
-        if self.behavior_change_phases is None:
-            return BehaviorChangeScope.FULL_REPLANNING
-
-        active_phase = None
-        for phase in self.behavior_change_phases:
-            if phase.start_iteration > iteration:
-                break
-            active_phase = phase
-
-        if active_phase is None:
-            return BehaviorChangeScope.FULL_REPLANNING
-
-        return active_phase.scope
+    def with_replication(self, replication: int) -> "GroupDayTripsParameters":
+        """Return validated single-replication parameters for one replication."""
+        data = self.model_dump(mode="python")
+        data["run"] = self.run.with_replication(replication)
+        return self.__class__.model_validate(data)

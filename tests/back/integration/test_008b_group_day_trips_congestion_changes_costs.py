@@ -3,7 +3,14 @@ import polars as pl
 
 import mobility
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
-from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
+from mobility.trips.group_day_trips import (
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsModeSequenceParameters,
+    GroupDayTripsParameters,
+    GroupDayTripsPeriodParameters,
+    GroupDayTripsRunParameters,
+    PopulationGroupDayTrips,
+)
 from mobility.surveys.france import EMPMobilitySurvey
 
 
@@ -46,14 +53,20 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
         ],
         activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
-        parameters=Parameters(
-            n_iterations=1,
-            n_iter_per_cost_update=0,
-            dest_prob_cutoff=0.9,
-            k_mode_sequences=6,
-            cost_uncertainty_sd=1.0,
-            mode_sequence_search_parallel=False,
-            simulate_weekend=False,
+        parameters=GroupDayTripsParameters(
+            run=GroupDayTripsRunParameters(
+                n_iterations=1,
+                n_iter_per_cost_update=0,
+            ),
+            periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                dest_prob_cutoff=0.9,
+                cost_uncertainty_sd=1.0,
+            ),
+            mode_sequences=GroupDayTripsModeSequenceParameters(
+                k_mode_sequences=6,
+                mode_sequence_search_parallel=False,
+            ),
         ),
     )
 
@@ -82,25 +95,31 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
         ],
         activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
-        parameters=Parameters(
-            n_iterations=2,
-            n_iter_per_cost_update=1,
-            dest_prob_cutoff=0.9,
-            k_mode_sequences=6,
-            cost_uncertainty_sd=1.0,
-            mode_sequence_search_parallel=False,
-            simulate_weekend=False,
-            seed=0,
+        parameters=GroupDayTripsParameters(
+            run=GroupDayTripsRunParameters(
+                n_iterations=2,
+                n_iter_per_cost_update=1,
+                seed=0,
+            ),
+            periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                dest_prob_cutoff=0.9,
+                cost_uncertainty_sd=1.0,
+            ),
+            mode_sequences=GroupDayTripsModeSequenceParameters(
+                k_mode_sequences=6,
+                mode_sequence_search_parallel=False,
+            ),
         ),
     )
 
-    baseline_result = baseline.get()
-    congested_result = congested.get()
+    baseline_result = baseline.run("weekday").get()
+    congested_result = congested.run("weekday").get()
 
-    baseline_plan_steps = baseline_result["weekday_plan_steps"].collect()
-    congested_plan_steps = congested_result["weekday_plan_steps"].collect()
-    baseline_costs = baseline_result["weekday_costs"].collect()
-    congested_costs = congested_result["weekday_costs"].collect()
+    baseline_plan_steps = baseline_result["plan_steps"].collect()
+    congested_plan_steps = congested_result["plan_steps"].collect()
+    baseline_costs = baseline_result["costs"].collect()
+    congested_costs = congested_result["costs"].collect()
 
     assert baseline_plan_steps.height > 0
     assert congested_plan_steps.height > 0

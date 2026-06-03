@@ -7,7 +7,15 @@ import pytest
 import mobility
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
-from mobility.trips.group_day_trips import PopulationGroupDayTrips, Parameters
+from mobility.trips.group_day_trips import (
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsModeSequenceParameters,
+    GroupDayTripsOutputParameters,
+    GroupDayTripsParameters,
+    GroupDayTripsPeriodParameters,
+    GroupDayTripsRunParameters,
+    PopulationGroupDayTrips,
+)
 from mobility.surveys.france import EMPMobilitySurvey
 from mobility.transport.modes.public_transport.gtfs.gtfs_router import GTFSRouter
 
@@ -130,7 +138,7 @@ def _read_cppr_graph_edges(graph_path: str | pathlib.Path, output_path: pathlib.
     ],
     scope="session",
 )
-def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_profiles(
+def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_parameter_values(
     test_data,
     monkeypatch,
     tmp_path,
@@ -158,17 +166,25 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_profil
         sample_size=test_data["population_sample_size"],
     )
 
-    common_parameters = Parameters(
-        n_iterations=2,
-        n_iter_per_cost_update=0,
-        dest_prob_cutoff=0.9,
-        k_mode_sequences=6,
-        cost_uncertainty_sd=1.0,
-        mode_sequence_search_parallel=False,
-        persist_iteration_artifacts=True,
-        save_transition_events=True,
-        simulate_weekend=False,
-        seed=0,
+    common_parameters = GroupDayTripsParameters(
+        run=GroupDayTripsRunParameters(
+            n_iterations=2,
+            n_iter_per_cost_update=0,
+            seed=0,
+        ),
+        periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
+        outputs=GroupDayTripsOutputParameters(
+            persist_iteration_artifacts=True,
+            save_transition_events=True,
+        ),
+        destination_sequences=GroupDayTripsDestinationSequenceParameters(
+            dest_prob_cutoff=0.9,
+            cost_uncertainty_sd=1.0,
+        ),
+        mode_sequences=GroupDayTripsModeSequenceParameters(
+            k_mode_sequences=6,
+            mode_sequence_search_parallel=False,
+        ),
     )
 
     static = PopulationGroupDayTrips(
@@ -211,20 +227,22 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_profil
         parameters=common_parameters,
     )
 
-    static_result = static.get()
-    dynamic_result = dynamic.get()
+    static_run = static.run("weekday")
+    dynamic_run = dynamic.run("weekday")
+    static_result = static_run.get()
+    dynamic_result = dynamic_run.get()
 
-    static_costs = static_result["weekday_costs"].collect()
-    dynamic_costs = dynamic_result["weekday_costs"].collect()
-    dynamic_transitions = dynamic_result["weekday_transitions"].collect()
+    static_costs = static_result["costs"].collect()
+    dynamic_costs = dynamic_result["costs"].collect()
+    dynamic_transitions = dynamic_result["transitions"].collect()
 
     pt_mode_name = "walk/public_transport/walk"
     static_pt_mode = next(
-        mode for mode in static.weekday_run.transport_costs.modes
+        mode for mode in static_run.transport_costs.modes
         if mode.inputs["parameters"].name == pt_mode_name
     ).for_iteration(2)
     dynamic_pt_mode = next(
-        mode for mode in dynamic.weekday_run.transport_costs.modes
+        mode for mode in dynamic_run.transport_costs.modes
         if mode.inputs["parameters"].name == pt_mode_name
     ).for_iteration(2)
 

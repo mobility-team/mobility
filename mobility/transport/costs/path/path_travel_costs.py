@@ -224,9 +224,9 @@ class PathTravelCosts(TravelCostsAsset):
         """Return the travel-cost asset instance corresponding to one simulation iteration."""
         if iteration < 1:
             raise ValueError("Iteration should be >= 1.")
-        if iteration > int(run.parameters.n_iterations):
+        if iteration > int(run.n_iterations):
             raise ValueError(
-                f"Iteration should be <= {int(run.parameters.n_iterations)} for this run."
+                f"Iteration should be <= {int(run.n_iterations)} for this run."
             )
 
         flow_asset = self.inputs["congested_path_graph"].get_flow_asset_for_iteration(run, iteration)

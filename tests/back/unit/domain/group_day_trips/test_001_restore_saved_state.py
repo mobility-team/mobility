@@ -4,7 +4,10 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
-from mobility.trips.group_day_trips.core.parameters import Parameters
+from mobility.trips.group_day_trips.core.parameters import (
+    GroupDayTripsParameters,
+    GroupDayTripsRunParameters,
+)
 from mobility.trips.group_day_trips.core.run import Run, RunState
 
 
@@ -46,7 +49,9 @@ def make_run():
     run = object.__new__(Run)
     run.inputs_hash = "run-hash"
     run.is_weekday = True
-    run.parameters = Parameters(n_iter_per_cost_update=3)
+    run.parameters = GroupDayTripsParameters(
+        run=GroupDayTripsRunParameters(n_iter_per_cost_update=3),
+    )
     run.transport_costs = FakeCostsAggregator()
     run.rng = random.Random(123)
     return run

@@ -4,7 +4,17 @@ import pytest
 import mobility
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
 from mobility.surveys.france import EMPMobilitySurvey
-from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, PopulationGroupDayTrips, Parameters
+from mobility.trips.group_day_trips import (
+    BehaviorChangePhase,
+    BehaviorChangeScope,
+    GroupDayTripsBehaviorChangeParameters,
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsModeSequenceParameters,
+    GroupDayTripsOutputParameters,
+    GroupDayTripsParameters,
+    GroupDayTripsRunParameters,
+    PopulationGroupDayTrips,
+)
 
 
 @pytest.mark.dependency(
@@ -33,29 +43,40 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
         modes=[car_mode, walk_mode],
         activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
-        parameters=Parameters(
-            n_iterations=3,
-            n_iter_per_cost_update=0,
-            dest_prob_cutoff=0.9,
-            k_mode_sequences=3,
-            cost_uncertainty_sd=1.0,
-            mode_sequence_search_parallel=False,
-            persist_iteration_artifacts=True,
-            save_transition_events=True,
-            seed=0,
-            behavior_change_phases=[
-                BehaviorChangePhase(start_iteration=1, scope=BehaviorChangeScope.FULL_REPLANNING),
-                BehaviorChangePhase(start_iteration=2, scope=BehaviorChangeScope.MODE_REPLANNING),
-                BehaviorChangePhase(start_iteration=3, scope=BehaviorChangeScope.DESTINATION_REPLANNING),
-            ],
+        parameters=GroupDayTripsParameters(
+            run=GroupDayTripsRunParameters(
+                n_iterations=3,
+                n_iter_per_cost_update=0,
+                seed=0,
+            ),
+            outputs=GroupDayTripsOutputParameters(
+                persist_iteration_artifacts=True,
+                save_transition_events=True,
+            ),
+            behavior_change=GroupDayTripsBehaviorChangeParameters(
+                phases=[
+                    BehaviorChangePhase(start_iteration=1, scope=BehaviorChangeScope.FULL_REPLANNING),
+                    BehaviorChangePhase(start_iteration=2, scope=BehaviorChangeScope.MODE_REPLANNING),
+                    BehaviorChangePhase(start_iteration=3, scope=BehaviorChangeScope.DESTINATION_REPLANNING),
+                ],
+            ),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                dest_prob_cutoff=0.9,
+                cost_uncertainty_sd=1.0,
+            ),
+            mode_sequences=GroupDayTripsModeSequenceParameters(
+                k_mode_sequences=3,
+                mode_sequence_search_parallel=False,
+            ),
         ),
     )
 
-    result = pop_trips.get()
-    weekday_plan_steps = result["weekday_plan_steps"].collect()
-    weekday_transitions = result["weekday_transitions"].collect()
-    cache_parent = pop_trips.weekday_run.cache_path["plan_steps"].parent
-    inputs_hash = pop_trips.weekday_run.inputs_hash
+    weekday_run = pop_trips.run("weekday")
+    result = weekday_run.get()
+    weekday_plan_steps = result["plan_steps"].collect()
+    weekday_transitions = result["transitions"].collect()
+    cache_parent = weekday_run.cache_path["plan_steps"].parent
+    inputs_hash = weekday_run.inputs_hash
     destination_sequences_dir = cache_parent / f"{inputs_hash}-destination-sequences"
     destination_sequences_1 = pl.read_parquet(next(destination_sequences_dir.glob("*destination_sequences_1.parquet")))
     destination_sequences_2 = pl.read_parquet(next(destination_sequences_dir.glob("*destination_sequences_2.parquet")))

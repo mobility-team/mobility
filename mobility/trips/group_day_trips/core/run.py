@@ -24,7 +24,7 @@ from ..evaluation.trip_pattern_distribution import (
 from ..plans import ActivitySequences, DestinationSequences, ModeSequences, PlanInitializer, PlanUpdater
 from ..transitions.transition_schema import TRANSITION_EVENT_SCHEMA
 from .memory_logging import log_memory_checkpoint
-from .parameters import Parameters
+from .parameters import GroupDayTripsParameters
 from .results import RunResults
 from .run_state import RunState
 from mobility.transport.costs.transport_costs import TransportCosts
@@ -61,9 +61,10 @@ class Run(FileAsset):
         modes: List[TransportMode],
         surveys: List[MobilitySurvey],
         survey_plan_assets: SurveyPlanAssets,
-        parameters: Parameters,
+        parameters: GroupDayTripsParameters,
         is_weekday: bool,
         enabled: bool = True,
+        scenario: str,
     ) -> None:
         """Initialize a single weekday or weekend PopulationGroupDayTrips run."""
         inputs = {
@@ -76,10 +77,11 @@ class Run(FileAsset):
             "parameters": parameters,
             "is_weekday": is_weekday,
             "enabled": enabled,
+            "scenario": scenario,
         }
         
         self.transport_costs = transport_costs
-        self.rng = random.Random(parameters.seed) if parameters.seed is not None else random.Random()
+        self.rng = random.Random(parameters.run.seed) if parameters.run.seed is not None else random.Random()
         self.initializer = PlanInitializer()
         self.updater = PlanUpdater()
         self._expected_diagnostics_inputs: ExpectedDiagnosticsInputs | None = None
@@ -96,6 +98,15 @@ class Run(FileAsset):
         }
         super().__init__(inputs, cache_path)
 
+    @property
+    def n_iterations(self) -> int:
+        """Return the number of simulation iterations for this run."""
+        return self.parameters.run.n_iterations
+
+    @property
+    def n_iter_per_cost_update(self) -> int:
+        """Return how often this run refreshes travel costs."""
+        return self.parameters.run.n_iter_per_cost_update
 
     def create_and_get_asset(self) -> dict[str, pl.LazyFrame]:
         """Run the simulation for this day type and materialize cached outputs."""
@@ -114,7 +125,7 @@ class Run(FileAsset):
             resume_from_iteration=resume_from_iteration,
         )
         self._log_state_memory_checkpoint("state:initialized", state)
-        for iteration_index in range(state.start_iteration, self.parameters.n_iterations + 1):
+        for iteration_index in range(state.start_iteration, self.n_iterations + 1):
             iteration = iterations.iteration(iteration_index)
             self._run_model_iteration(
                 state=state,
@@ -128,7 +139,7 @@ class Run(FileAsset):
                     destination_saturation=state.destination_saturation,
                 )
             )
-            if self.parameters.persist_iteration_artifacts:
+            if self.parameters.outputs.persist_iteration_artifacts:
                 self._log_state_memory_checkpoint(f"iteration:{iteration_index}:before_save_state", state)
                 iteration.save_state(state, self.rng.getstate())
                 log_memory_checkpoint(f"iteration:{iteration_index}:after_save_state")
@@ -219,8 +230,8 @@ class Run(FileAsset):
             is_weekday=self.is_weekday,
             base_folder=self.cache_path["plan_steps"].parent,
         )
-        if self.parameters.persist_iteration_artifacts:
-            resume_from_iteration = iterations.get_resume_iteration(self.parameters.n_iterations)
+        if self.parameters.outputs.persist_iteration_artifacts:
+            resume_from_iteration = iterations.get_resume_iteration(self.n_iterations)
             iterations.prepare(resume=(resume_from_iteration is not None))
         else:
             resume_from_iteration = None
@@ -251,12 +262,16 @@ class Run(FileAsset):
             expected_inputs.population_weighted_plan_steps.get(),
             demand_groups,
         )
-        resolved_activity_parameters = resolve_activity_parameters(self.activities, 1)
+        resolved_activity_parameters = resolve_activity_parameters(
+            self.activities,
+            1,
+            scenario=self.scenario,
+        )
         stay_home_plan, current_plans = self.initializer.get_stay_home_state(
             demand_groups,
             home_night_dur,
             resolved_activity_parameters["home"],
-            self.parameters.min_activity_time_constant,
+            self.parameters.plan_update.min_activity_time_constant,
             iterations.folder_paths["sequences-index"],
             self.modes,
         )
@@ -394,7 +409,7 @@ class Run(FileAsset):
             transition_events=transition_events,
         )
         self._log_state_memory_checkpoint(f"iteration:{iteration.iteration}:after_update_state", state)
-        if transition_events is not None and self.parameters.persist_iteration_artifacts:
+        if transition_events is not None and self.parameters.outputs.persist_iteration_artifacts:
             iteration.save_transition_events(transition_events)
             log_memory_checkpoint(f"iteration:{iteration.iteration}:after_save_transition_events")
 
@@ -424,7 +439,11 @@ class Run(FileAsset):
         activity_sequences: ActivitySequences,
     ) -> DestinationSequences:
         """Run destination sampling and persist destination sequences for one iteration."""
-        resolved_activity_parameters = resolve_activity_parameters(self.activities, iteration.iteration)
+        resolved_activity_parameters = resolve_activity_parameters(
+            self.activities,
+            iteration.iteration,
+            scenario=self.scenario,
+        )
         destination_sequences = iteration.destination_sequences(
             activity_sequences=activity_sequences,
             activities=self.activities,
@@ -468,10 +487,15 @@ class Run(FileAsset):
         resolved_transport_costs: TransportCosts,
     ) -> pl.LazyFrame | None:
         """Advance the simulation state by one iteration and return transition events."""
-        resolved_activity_parameters = resolve_activity_parameters(self.activities, iteration.iteration)
+        resolved_activity_parameters = resolve_activity_parameters(
+            self.activities,
+            iteration.iteration,
+            scenario=self.scenario,
+        )
         arrival_time_rigidity_by_activity = resolve_activity_arrival_time_rigidity(
             self.activities,
             iteration.iteration,
+            scenario=self.scenario,
         )
         state.current_plans, state.current_plan_steps, state.candidate_plan_steps, transition_events = self.updater.get_new_plans(
             state.current_plans,
@@ -496,7 +520,7 @@ class Run(FileAsset):
         state.costs = self.updater.get_new_costs(
             state.costs,
             iteration.iteration,
-            self.parameters.n_iter_per_cost_update,
+            self.n_iter_per_cost_update,
             state.current_plan_steps,
             self.transport_costs.for_iteration(iteration.iteration + 1),
             run=self,
@@ -525,7 +549,7 @@ class Run(FileAsset):
         """Compute the final OD costs to attach to the written outputs."""
         return self.transport_costs.asset_for_iteration(
             self,
-            self.parameters.n_iterations,
+            self.n_iterations,
         ).get_costs_by_od_and_mode(
             ["cost", "distance", "time", "ghg_emissions_per_trip"]
         )
@@ -568,7 +592,10 @@ class Run(FileAsset):
 
     def _build_transitions(self, iterations: Iterations) -> pl.DataFrame | pl.LazyFrame:
         """Combine persisted per-iteration transition events into the final table."""
-        if self.parameters.persist_iteration_artifacts is False or self.parameters.save_transition_events is False:
+        if (
+            self.parameters.outputs.persist_iteration_artifacts is False
+            or self.parameters.outputs.save_transition_events is False
+        ):
             return pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA)
 
         transition_paths = iterations.list_transition_event_paths()

@@ -2,7 +2,14 @@ import pytest
 
 import mobility
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
-from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
+from mobility.trips.group_day_trips import (
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsModeSequenceParameters,
+    GroupDayTripsParameters,
+    GroupDayTripsPeriodParameters,
+    GroupDayTripsRunParameters,
+    PopulationGroupDayTrips,
+)
 from mobility.surveys.france import EMPMobilitySurvey
 
 
@@ -41,17 +48,23 @@ def test_008_group_day_trips_can_be_computed(test_data):
         modes=[car_mode, walk_mode, bicycle_mode, public_transport_mode],
         activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
-        parameters=Parameters(
-            n_iterations=1,
-            n_iter_per_cost_update=0,
-            dest_prob_cutoff=0.9,
-            k_mode_sequences=6,
-            cost_uncertainty_sd=1.0,
-            mode_sequence_search_parallel=False,
-            simulate_weekend=False
+        parameters=GroupDayTripsParameters(
+            run=GroupDayTripsRunParameters(
+                n_iterations=1,
+                n_iter_per_cost_update=0,
+            ),
+            periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                dest_prob_cutoff=0.9,
+                cost_uncertainty_sd=1.0,
+            ),
+            mode_sequences=GroupDayTripsModeSequenceParameters(
+                k_mode_sequences=6,
+                mode_sequence_search_parallel=False,
+            ),
         ),
     )
 
-    plan_steps = group_day_trips.weekday_run.get()["plan_steps"].collect()
+    plan_steps = group_day_trips.run("weekday").get()["plan_steps"].collect()
 
     assert plan_steps.height > 0

@@ -117,7 +117,9 @@ def test_remove_run_iteration_congestion_artifacts_clears_mode_variant_graph_cha
     run = object.__new__(Run)
     run.inputs_hash = "run-key"
     run.is_weekday = True
-    run.parameters = SimpleNamespace(n_iter_per_cost_update=1, n_iterations=1)
+    run.parameters = SimpleNamespace(
+        run=SimpleNamespace(n_iter_per_cost_update=1, n_iterations=1),
+    )
     run.transport_costs = _TransportCostsWithCongestionVariants(next_transport_costs)
 
     monkeypatch.setattr(
@@ -174,7 +176,9 @@ def test_remove_run_iteration_congestion_artifacts_keeps_non_variant_mode_cleanu
     run = object.__new__(Run)
     run.inputs_hash = "run-key"
     run.is_weekday = True
-    run.parameters = SimpleNamespace(n_iter_per_cost_update=1, n_iterations=1)
+    run.parameters = SimpleNamespace(
+        run=SimpleNamespace(n_iter_per_cost_update=1, n_iterations=1),
+    )
     run.transport_costs = _TransportCostsWithCongestionVariants(next_transport_costs)
 
     monkeypatch.setattr(

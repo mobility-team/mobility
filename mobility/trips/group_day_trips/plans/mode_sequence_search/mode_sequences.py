@@ -90,7 +90,7 @@ class ModeSequences(FileAsset):
             destination_chains=destination_steps,
         )
 
-        use_rust_search = self.parameters.use_rust_mode_sequence_search
+        use_rust_search = self.parameters.mode_sequences.use_rust_mode_sequence_search
 
         trip_chains, unique_destination_chains = build_location_chains(destination_steps)
 
@@ -120,7 +120,7 @@ class ModeSequences(FileAsset):
                 is_return_mode_by_id=search_inputs.is_return_mode_by_id,
                 modes_by_name=search_inputs.modes_by_name,
                 mode_name_by_id=search_inputs.mode_name_by_id,
-                k_mode_sequences=self.parameters.k_mode_sequences,
+                k_mode_sequences=self.parameters.mode_sequences.k_mode_sequences,
             )
         else:
             search_rows = run_python_mode_sequence_search(

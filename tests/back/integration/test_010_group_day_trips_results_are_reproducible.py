@@ -3,7 +3,13 @@ import polars as pl
 
 import mobility
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
-from mobility.trips.group_day_trips import Parameters, PopulationGroupDayTrips
+from mobility.trips.group_day_trips import (
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsModeSequenceParameters,
+    GroupDayTripsParameters,
+    GroupDayTripsRunParameters,
+    PopulationGroupDayTrips,
+)
 from mobility.surveys.france import EMPMobilitySurvey
 
 @pytest.mark.dependency(
@@ -30,18 +36,24 @@ def test_010_group_day_trips_results_are_reproducible(test_data):
         modes=[mobility.CarMode(transport_zones)],
         activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
-        parameters=Parameters(
-            n_iterations=1,
-            n_iter_per_cost_update=0,
-            dest_prob_cutoff=0.9,
-            k_mode_sequences=3,
-            cost_uncertainty_sd=1.0,
-            mode_sequence_search_parallel=False,
-            seed=0
+        parameters=GroupDayTripsParameters(
+            run=GroupDayTripsRunParameters(
+                n_iterations=1,
+                n_iter_per_cost_update=0,
+                seed=0,
+            ),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                dest_prob_cutoff=0.9,
+                cost_uncertainty_sd=1.0,
+            ),
+            mode_sequences=GroupDayTripsModeSequenceParameters(
+                k_mode_sequences=3,
+                mode_sequence_search_parallel=False,
+            ),
         )
     )
 
-    metrics_run_1 = pop_trips.weekday_run.results().metrics.aggregate()
+    metrics_run_1 = pop_trips.run("weekday").results().metrics.aggregate()
     
     # Remove the results then re run the model with the same inputs
     pop_trips.remove()
@@ -51,18 +63,24 @@ def test_010_group_day_trips_results_are_reproducible(test_data):
         modes=[mobility.CarMode(transport_zones)],
         activities=[HomeActivity(), WorkActivity(), OtherActivity(population=pop)],
         surveys=[emp],
-        parameters=Parameters(
-            n_iterations=1,
-            n_iter_per_cost_update=0,
-            dest_prob_cutoff=0.9,
-            k_mode_sequences=3,
-            cost_uncertainty_sd=1.0,
-            mode_sequence_search_parallel=False,
-            seed=0
+        parameters=GroupDayTripsParameters(
+            run=GroupDayTripsRunParameters(
+                n_iterations=1,
+                n_iter_per_cost_update=0,
+                seed=0,
+            ),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                dest_prob_cutoff=0.9,
+                cost_uncertainty_sd=1.0,
+            ),
+            mode_sequences=GroupDayTripsModeSequenceParameters(
+                k_mode_sequences=3,
+                mode_sequence_search_parallel=False,
+            ),
         )
     )
 
-    metrics_run_2 = pop_trips.weekday_run.results().metrics.aggregate()
+    metrics_run_2 = pop_trips.run("weekday").results().metrics.aggregate()
     
     # Compare results between runs
     comparison = (

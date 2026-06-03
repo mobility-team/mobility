@@ -3,7 +3,11 @@ from types import SimpleNamespace
 
 import polars as pl
 
-from mobility.trips.group_day_trips import Parameters
+from mobility.trips.group_day_trips import (
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsParameters,
+    GroupDayTripsPlanUpdateParameters,
+)
 from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
 
 
@@ -65,7 +69,7 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
         destination_saturation=pl.DataFrame(),
         demand_groups=pl.DataFrame(),
         costs=pl.DataFrame(),
-        parameters=Parameters(),
+        parameters=GroupDayTripsParameters(),
         seed=123,
     )
 
@@ -159,7 +163,11 @@ def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_
         destination_saturation=pl.DataFrame(),
         demand_groups=pl.DataFrame(),
         costs=pl.DataFrame(),
-        parameters=Parameters(refresh_active_mode_alternatives=True),
+        parameters=GroupDayTripsParameters(
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                refresh_active_mode_alternatives=True,
+            ),
+        ),
         seed=123,
         resolved_activity_parameters={},
     )
@@ -214,7 +222,7 @@ def test_refresh_active_mode_alternatives_default_keeps_sampled_destinations_onl
         destination_saturation=pl.DataFrame(),
         demand_groups=pl.DataFrame(),
         costs=pl.DataFrame(),
-        parameters=Parameters(),
+        parameters=GroupDayTripsParameters(),
         seed=123,
         resolved_activity_parameters={},
     )
@@ -250,7 +258,7 @@ def test_destination_probability_inputs_use_cost_and_sink_even_without_destinati
         destination_saturation=pl.DataFrame(),
         demand_groups=pl.DataFrame(),
         costs=pl.DataFrame(),
-        parameters=Parameters(),
+        parameters=GroupDayTripsParameters(),
         seed=123,
         resolved_activity_parameters={},
         current_plans=pl.DataFrame(),
@@ -302,7 +310,9 @@ def test_destination_probability_inputs_use_shadow_attraction_when_enabled(tmp_p
         destination_saturation=pl.DataFrame(),
         demand_groups=pl.DataFrame(),
         costs=pl.DataFrame(),
-        parameters=Parameters(use_destination_shadow_prices=True),
+        parameters=GroupDayTripsParameters(
+            plan_update=GroupDayTripsPlanUpdateParameters(use_destination_shadow_prices=True),
+        ),
         seed=123,
         resolved_activity_parameters={},
         current_plans=pl.DataFrame(),
@@ -351,7 +361,7 @@ def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candi
         destination_saturation=pl.DataFrame(),
         demand_groups=pl.DataFrame(),
         costs=pl.DataFrame(),
-        parameters=Parameters(),
+        parameters=GroupDayTripsParameters(),
         seed=123,
         resolved_activity_parameters={},
         current_plans=pl.DataFrame(),
