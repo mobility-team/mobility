@@ -318,6 +318,43 @@ def test_create_and_get_asset_dispatches_to_selected_python_backend(
     assert result["is_inner_zone"].to_list() == [True]
 
 
+def test_get_study_area_countries_uses_explicit_country_column(dependency_fakes, monkeypatch):
+    transport_zones = TransportZones(local_admin_unit_id="fr-09122")
+    monkeypatch.setattr(
+        transport_zones.study_area,
+        "get",
+        lambda: pd.DataFrame({"country": ["ch", "fr", "fr", None]}),
+        raising=False,
+    )
+
+    assert transport_zones.get_study_area_countries() == ["ch", "fr"]
+
+
+def test_get_study_area_countries_can_infer_from_local_admin_units(dependency_fakes, monkeypatch):
+    transport_zones = TransportZones(local_admin_unit_id="fr-09122")
+    monkeypatch.setattr(
+        transport_zones.study_area,
+        "get",
+        lambda: pd.DataFrame({"local_admin_unit_id": ["fr-09122", "ch-6621", None]}),
+        raising=False,
+    )
+
+    assert transport_zones.get_study_area_countries() == ["ch", "fr"]
+
+
+def test_get_study_area_countries_requires_country_information(dependency_fakes, monkeypatch):
+    transport_zones = TransportZones(local_admin_unit_id="fr-09122")
+    monkeypatch.setattr(
+        transport_zones.study_area,
+        "get",
+        lambda: pd.DataFrame({"name": ["Foix"]}),
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="country"):
+        transport_zones.get_study_area_countries()
+
+
 def test_sidecar_paths_use_transport_zone_output_stem(tmp_path):
     clusters_path, cluster_geometries_path = _get_sidecar_paths(
         tmp_path / "transport_zones.gpkg"
