@@ -12,6 +12,7 @@ from .core.parameters import (
     GroupDayTripsRunParameters,
 )
 from .core.group_day_trips import PopulationGroupDayTrips
+from .results import GroupDayTripsResults
 
 __all__ = [
     "BehaviorChangePhase",
@@ -25,5 +26,6 @@ __all__ = [
     "GroupDayTripsPeriodParameters",
     "GroupDayTripsPlanUpdateParameters",
     "GroupDayTripsRunParameters",
+    "GroupDayTripsResults",
     "PopulationGroupDayTrips",
 ]

@@ -3,6 +3,7 @@ from enum import StrEnum
 from mobility.runtime.parameter_values import DEFAULT_SCENARIO
 from mobility.runtime.scenarios import Scenarios
 from mobility.transport.costs.transport_costs import TransportCosts
+from ..results import GroupDayTripsResults
 from .parameters import GroupDayTripsParameters
 from .run import Run
 from mobility.activities import Activity, HomeActivity, OtherActivity
@@ -139,6 +140,32 @@ class PopulationGroupDayTrips:
                 scenario=scenario,
             )
         return self._runs[key]
+
+    def results(
+        self,
+        day_type: str | DayType = DayType.WEEKDAY,
+        *,
+        scenarios: str | list[str] | tuple[str, ...] | None = None,
+        replication: int | None = None,
+        replications: list[int] | range | None = None,
+    ) -> GroupDayTripsResults:
+        """Return result helpers for one day type, scenario set, and replication set.
+
+        Omitting `scenarios` selects the default scenario named `"default"`.
+        Omitting `replication` and `replications` selects all stochastic
+        replications declared in `parameters.run`.
+        """
+        day_type = DayType(day_type)
+        self.scenarios.validate_requested(Scenarios.selected_names(scenarios))
+        return GroupDayTripsResults(
+            run=self.run,
+            day_type=day_type.value,
+            scenarios=scenarios,
+            scenario_manifest=self.scenarios,
+            n_replications=self.parameters.run.n_replications,
+            replication=replication,
+            replications=replications,
+        )
 
     def remove(self):
         """Remove cached run outputs for this setup.

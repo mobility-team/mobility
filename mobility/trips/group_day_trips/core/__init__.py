@@ -1,4 +1,5 @@
 from .diagnostics import RunDiagnostics
+from ..results import GroupDayTripsResults
 from .parameters import (
     BehaviorChangePhase,
     BehaviorChangeScope,
@@ -31,6 +32,7 @@ __all__ = [
     "GroupDayTripsPeriodParameters",
     "GroupDayTripsPlanUpdateParameters",
     "GroupDayTripsRunParameters",
+    "GroupDayTripsResults",
     "PopulationGroupDayTrips",
     "RunDiagnostics",
     "RunMetrics",
