@@ -4,6 +4,9 @@ import pytest
 
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
 from mobility.transport.costs.travel_costs_asset import TravelCostsAsset
+from mobility.transport.modes.carpool.detailed.detailed_carpool_travel_costs import (
+    DetailedCarpoolTravelCosts,
+)
 from mobility.transport.modes.public_transport.public_transport_travel_costs import (
     PublicTransportTravelCosts,
 )
@@ -147,4 +150,76 @@ def test_path_remove_congestion_artifacts_removes_owned_graph_chain():
     assert variant.remove_calls == 1
     assert contracted_graph.remove_calls == 1
     assert congested_graph.remove_calls == 1
+
+
+class _FlowByIteration:
+    def __init__(self, flow_asset=None):
+        self.flow_asset = flow_asset
+        self.calls = []
+
+    def get_flow_asset_for_iteration(self, run, iteration: int):
+        self.calls.append((run, iteration))
+        return self.flow_asset
+
+
+def _run_parameters(*, n_iterations: int):
+    return SimpleNamespace(
+        parameters=SimpleNamespace(
+            run=SimpleNamespace(n_iterations=n_iterations)
+        )
+    )
+
+
+def test_path_asset_for_iteration_uses_run_parameters_for_bounds():
+    """Check path costs validate iterations from parameters.run."""
+    asset = _make_path_travel_costs()
+    asset.inputs["congested_path_graph"] = _FlowByIteration()
+
+    with pytest.raises(ValueError, match="<= 2"):
+        asset.asset_for_iteration(_run_parameters(n_iterations=2), 3)
+
+
+def test_path_asset_for_iteration_returns_flow_variant():
+    """Check path costs ask the congested graph for the active flow."""
+    flow_asset = object()
+    variant = object()
+    graph = _FlowByIteration(flow_asset)
+    asset = _make_path_travel_costs()
+    asset.inputs["congested_path_graph"] = graph
+    asset.asset_for_flow_asset = lambda flow: variant
+    run = _run_parameters(n_iterations=3)
+
+    assert asset.asset_for_iteration(run, 2) is variant
+    assert graph.calls == [(run, 2)]
+
+
+def test_carpool_asset_for_iteration_uses_run_parameters_for_bounds():
+    """Check carpool costs validate iterations from parameters.run."""
+    asset = object.__new__(DetailedCarpoolTravelCosts)
+    asset.inputs = {
+        "car_travel_costs": SimpleNamespace(
+            inputs={"congested_path_graph": _FlowByIteration()}
+        )
+    }
+
+    with pytest.raises(ValueError, match="<= 1"):
+        asset.asset_for_iteration(_run_parameters(n_iterations=1), 2)
+
+
+def test_carpool_asset_for_iteration_returns_flow_variant():
+    """Check carpool costs reuse the car congestion flow for one iteration."""
+    flow_asset = object()
+    variant = object()
+    graph = _FlowByIteration(flow_asset)
+    asset = object.__new__(DetailedCarpoolTravelCosts)
+    asset.inputs = {
+        "car_travel_costs": SimpleNamespace(
+            inputs={"congested_path_graph": graph}
+        )
+    }
+    asset.asset_for_flow_asset = lambda flow: variant
+    run = _run_parameters(n_iterations=3)
+
+    assert asset.asset_for_iteration(run, 2) is variant
+    assert graph.calls == [(run, 2)]
 

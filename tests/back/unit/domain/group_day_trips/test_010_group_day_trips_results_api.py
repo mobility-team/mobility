@@ -406,6 +406,13 @@ def test_result_tables_can_select_saved_iterations(tmp_path, monkeypatch):
     assert plan_steps["distance"].to_list() == pytest.approx([5.0, 2.5, 10.0, 5.0])
 
 
+def test_results_last_iteration_uses_run_parameters(tmp_path, monkeypatch):
+    """Check the last iteration comes from parameters.run."""
+    results = _results(tmp_path, replication=0)
+
+    assert results.last_iteration == 2
+
+
 def test_trip_count_metrics_keep_selected_iterations(tmp_path, monkeypatch):
     """Check that metric tables keep iteration when several iterations are selected."""
     results = _results(tmp_path, replication=0)

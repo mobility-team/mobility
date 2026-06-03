@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
@@ -75,3 +76,29 @@ def test_congested_graph_iteration_asset_resolves_latest_active_refresh(monkeypa
     assert iter_graph.inputs["congestion_assignment_max_iterations"] == 3
     assert iter_graph.inputs["congestion_assignment_max_gap"] == 0.2
     assert iter_graph.inputs["congestion_assignment_retained_volume_share"] == 0.9
+
+
+def test_congested_graph_iteration_asset_rejects_iteration_after_run_end(
+    monkeypatch,
+    tmp_path,
+):
+    """Check the upper iteration bound comes from parameters.run."""
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    graph = CongestedPathGraph(
+        modified_graph=FakeUpstreamAsset(name="modified", mode_name="car"),
+        transport_zones=FakeUpstreamAsset(name="zones"),
+        handles_congestion=True,
+    )
+    run = SimpleNamespace(
+        inputs_hash="run-key",
+        is_weekday=True,
+        parameters=SimpleNamespace(
+            run=SimpleNamespace(
+                n_iter_per_cost_update=1,
+                n_iterations=2,
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="<= 2"):
+        graph.asset_for_iteration(run, 3)

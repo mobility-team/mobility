@@ -41,6 +41,34 @@ class _RemovableVariant:
         self.remove_calls += 1
 
 
+class _IterationTransportCosts:
+    def __init__(self):
+        self.load_calls = []
+        self.congestion_states = []
+
+    def load_congestion_state(
+        self,
+        *,
+        run_key,
+        is_weekday,
+        last_completed_iteration,
+        cost_update_interval,
+    ):
+        self.load_calls.append(
+            {
+                "run_key": run_key,
+                "is_weekday": is_weekday,
+                "last_completed_iteration": last_completed_iteration,
+                "cost_update_interval": cost_update_interval,
+            }
+        )
+        return SimpleNamespace(iteration=last_completed_iteration)
+
+    def asset_for_congestion_state(self, congestion_state):
+        self.congestion_states.append(congestion_state)
+        return self
+
+
 def _make_mode(*, name: str, congestion: bool, travel_costs=None):
     return SimpleNamespace(
         inputs={
@@ -160,4 +188,59 @@ def test_iter_run_congestion_artifacts_yields_existing_flow_assets_on_refresh_it
     assert congestion_state.run_key == "run-key"
     assert congestion_state.is_weekday is False
     assert flow_assets_by_mode["car"].cache_path == existing_path
+
+
+def test_asset_for_iteration_uses_run_parameters(project_dir, monkeypatch):
+    """Check one run iteration reads its bounds and cost interval from parameters.run."""
+    aggregator = TransportCosts(modes=[_make_mode(name="car", congestion=True)])
+    iteration_asset = _IterationTransportCosts()
+    requested_iterations = []
+
+    def fake_for_iteration(iteration: int, *, scenario=None):
+        requested_iterations.append((iteration, scenario))
+        return iteration_asset
+
+    monkeypatch.setattr(aggregator, "for_iteration", fake_for_iteration)
+    run = SimpleNamespace(
+        parameters=SimpleNamespace(
+            run=SimpleNamespace(
+                n_iter_per_cost_update=2,
+                n_iterations=3,
+            ),
+        ),
+        inputs_hash="run-key",
+        is_weekday=True,
+        scenario="baseline",
+    )
+
+    assert aggregator.asset_for_iteration(run, 3) is iteration_asset
+    assert requested_iterations == [(3, "baseline")]
+    assert iteration_asset.load_calls == [
+        {
+            "run_key": "run-key",
+            "is_weekday": True,
+            "last_completed_iteration": 2,
+            "cost_update_interval": 2,
+        }
+    ]
+    assert len(iteration_asset.congestion_states) == 1
+    assert iteration_asset.congestion_states[0].iteration == 2
+
+
+def test_asset_for_iteration_rejects_iteration_after_run_end(project_dir):
+    """Check the upper iteration bound comes from parameters.run."""
+    aggregator = TransportCosts(modes=[_make_mode(name="car", congestion=True)])
+    run = SimpleNamespace(
+        parameters=SimpleNamespace(
+            run=SimpleNamespace(
+                n_iter_per_cost_update=1,
+                n_iterations=2,
+            ),
+        ),
+        inputs_hash="run-key",
+        is_weekday=True,
+    )
+
+    with pytest.raises(ValueError, match="<= 2"):
+        aggregator.asset_for_iteration(run, 3)
 
