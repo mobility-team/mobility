@@ -51,7 +51,6 @@ class _FakeRun(FileAsset):
         self.parameters = SimpleNamespace(
             run=SimpleNamespace(n_iterations=max(self._iteration_plan_steps, default=1))
         )
-        self.n_iterations = self.parameters.run.n_iterations
         self.population = SimpleNamespace(transport_zones=transport_zones)
         self.surveys = surveys or []
         cache_path = {
@@ -405,6 +404,13 @@ def test_result_tables_can_select_saved_iterations(tmp_path, monkeypatch):
 
     assert plan_steps["iteration"].to_list() == [1, 1, 2, 2]
     assert plan_steps["distance"].to_list() == pytest.approx([5.0, 2.5, 10.0, 5.0])
+
+
+def test_results_last_iteration_uses_run_parameters(tmp_path, monkeypatch):
+    """Check the last iteration comes from parameters.run."""
+    results = _results(tmp_path, replication=0)
+
+    assert results.last_iteration == 2
 
 
 def test_trip_count_metrics_keep_selected_iterations(tmp_path, monkeypatch):

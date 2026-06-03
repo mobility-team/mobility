@@ -176,9 +176,10 @@ class TransportCosts(FileAsset):
         """
         if iteration < 1:
             raise ValueError("Iteration should be >= 1.")
-        if iteration > int(run.n_iterations):
+        n_iterations = int(run.parameters.run.n_iterations)
+        if iteration > n_iterations:
             raise ValueError(
-                f"Iteration should be <= {int(run.n_iterations)} for this run."
+                f"Iteration should be <= {n_iterations} for this run."
             )
 
         asset = self.for_iteration(
@@ -190,7 +191,7 @@ class TransportCosts(FileAsset):
             run_key=run.inputs_hash,
             is_weekday=run.is_weekday,
             last_completed_iteration=iteration - 1,
-            cost_update_interval=run.n_iter_per_cost_update,
+            cost_update_interval=run.parameters.run.n_iter_per_cost_update,
         )
         logging.info(
             "TransportCosts asset_for_iteration: run_key=%s is_weekday=%s iteration=%s "
@@ -478,11 +479,11 @@ class TransportCosts(FileAsset):
         if self.has_enabled_congestion() is False:
             return
 
-        update_interval = run.n_iter_per_cost_update
+        update_interval = run.parameters.run.n_iter_per_cost_update
         if update_interval == 0:
             return
 
-        for completed_iteration in range(1, int(run.n_iterations) + 1):
+        for completed_iteration in range(1, int(run.parameters.run.n_iterations) + 1):
             if self.should_recompute_congested_costs(completed_iteration, update_interval) is False:
                 continue
 

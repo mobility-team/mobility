@@ -98,16 +98,6 @@ class Run(FileAsset):
         }
         super().__init__(inputs, cache_path)
 
-    @property
-    def n_iterations(self) -> int:
-        """Return the number of simulation iterations for this run."""
-        return self.parameters.run.n_iterations
-
-    @property
-    def n_iter_per_cost_update(self) -> int:
-        """Return how often this run refreshes travel costs."""
-        return self.parameters.run.n_iter_per_cost_update
-
     def create_and_get_asset(self) -> dict[str, pl.LazyFrame]:
         """Run the simulation for this day type and materialize cached outputs."""
         self._raise_if_disabled()
@@ -125,7 +115,7 @@ class Run(FileAsset):
             resume_from_iteration=resume_from_iteration,
         )
         self._log_state_memory_checkpoint("state:initialized", state)
-        for iteration_index in range(state.start_iteration, self.n_iterations + 1):
+        for iteration_index in range(state.start_iteration, self.parameters.run.n_iterations + 1):
             iteration = iterations.iteration(iteration_index)
             self._run_model_iteration(
                 state=state,
@@ -231,7 +221,7 @@ class Run(FileAsset):
             base_folder=self.cache_path["plan_steps"].parent,
         )
         if self.parameters.outputs.persist_iteration_artifacts:
-            resume_from_iteration = iterations.get_resume_iteration(self.n_iterations)
+            resume_from_iteration = iterations.get_resume_iteration(self.parameters.run.n_iterations)
             iterations.prepare(resume=(resume_from_iteration is not None))
         else:
             resume_from_iteration = None
@@ -520,7 +510,7 @@ class Run(FileAsset):
         state.costs = self.updater.get_new_costs(
             state.costs,
             iteration.iteration,
-            self.n_iter_per_cost_update,
+            self.parameters.run.n_iter_per_cost_update,
             state.current_plan_steps,
             self.transport_costs.for_iteration(iteration.iteration + 1),
             run=self,
@@ -549,7 +539,7 @@ class Run(FileAsset):
         """Compute the final OD costs to attach to the written outputs."""
         return self.transport_costs.asset_for_iteration(
             self,
-            self.n_iterations,
+            self.parameters.run.n_iterations,
         ).get_costs_by_od_and_mode(
             ["cost", "distance", "time", "ghg_emissions_per_trip"]
         )
