@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import pathlib
@@ -7,6 +8,8 @@ from collections.abc import Iterator
 
 import polars as pl
 
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.parameter_values import resolve_parameter_values
 from mobility.transport.costs.congestion_state_manager import CongestionStateManager
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.transport.costs.congestion_state import CongestionState
@@ -48,11 +51,17 @@ class TransportCosts(FileAsset):
         )
         super().__init__(inputs, cache_path)
 
-    def for_iteration(self, iteration: int) -> "TransportCosts":
+    def for_iteration(
+        self,
+        iteration: int,
+        scenario: str | None = None,
+    ) -> "TransportCosts":
         """Return the static transport-cost variant for one iteration.
 
         Args:
             iteration: One-based simulation iteration.
+            scenario: Optional scenario name used to resolve scenario-varying
+                parameter values.
 
         Returns:
             A transport-cost asset whose modes have been resolved for the given
@@ -60,7 +69,11 @@ class TransportCosts(FileAsset):
         """
 
         resolved_modes = [
-            mode.for_iteration(iteration) if hasattr(mode, "for_iteration") else mode
+            self._resolve_mode_for_iteration(
+                mode,
+                iteration=iteration,
+                scenario=scenario,
+            )
             for mode in self.modes
         ]
         return TransportCosts(
@@ -68,6 +81,52 @@ class TransportCosts(FileAsset):
             congestion=self.inputs["congestion"],
             congestion_state=self.inputs["congestion_state"],
         )
+
+    def _resolve_mode_for_iteration(
+        self,
+        mode,
+        *,
+        iteration: int,
+        scenario: str | None,
+    ):
+        """Return one mode with iteration and scenario values resolved."""
+        for_iteration = getattr(mode, "for_iteration", None)
+        if callable(for_iteration):
+            parameters = inspect.signature(for_iteration).parameters
+            if "scenario" in parameters:
+                return for_iteration(iteration, scenario=scenario)
+            return for_iteration(iteration)
+
+        generalized_cost = mode.inputs.get("generalized_cost")
+        if not isinstance(generalized_cost, InMemoryAsset):
+            return mode
+
+        resolved_gc_inputs = resolve_parameter_values(
+            generalized_cost.inputs,
+            scenario=scenario,
+            iteration=iteration,
+        )
+        if resolved_gc_inputs == generalized_cost.inputs:
+            return mode
+
+        resolved_generalized_cost = self._copy_in_memory_asset(
+            generalized_cost,
+            resolved_gc_inputs,
+        )
+        resolved_mode_inputs = dict(mode.inputs)
+        resolved_mode_inputs["generalized_cost"] = resolved_generalized_cost
+        return self._copy_in_memory_asset(mode, resolved_mode_inputs)
+
+    @staticmethod
+    def _copy_in_memory_asset(asset: InMemoryAsset, inputs: dict):
+        """Copy an in-memory asset with new inputs and a matching input hash."""
+        clone = asset.__class__.__new__(asset.__class__)
+        clone.__dict__ = dict(asset.__dict__)
+        clone.inputs = inputs
+        clone.inputs_hash = clone.compute_inputs_hash()
+        for name, value in inputs.items():
+            setattr(clone, name, value)
+        return clone
 
     def asset_for_congestion(self, congestion: bool) -> "TransportCosts":
         """Return the transport-cost variant for a congestion flag.
@@ -122,7 +181,10 @@ class TransportCosts(FileAsset):
                 f"Iteration should be <= {int(run.parameters.n_iterations)} for this run."
             )
 
-        asset = self.for_iteration(int(iteration))
+        asset = self.for_iteration(
+            int(iteration),
+            scenario=getattr(run, "scenario", None),
+        )
 
         congestion_state = asset.load_congestion_state(
             run_key=run.inputs_hash,

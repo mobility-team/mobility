@@ -8,7 +8,7 @@ from pydantic import Field
 
 from mobility.activities.activity import Activity, ActivityParameters
 from mobility.population import Population
-from mobility.runtime.parameter_profiles import ScalarParameterProfile
+from mobility.runtime.parameter_values import ParameterValue
 from mobility.runtime.validation_types import NonNegativeFloat, UnitIntervalFloat
 
 
@@ -97,7 +97,7 @@ class OtherParameters(ActivityParameters):
     """Parameters specific to the other activity."""
 
     value_of_time: Annotated[
-        float | ScalarParameterProfile,
+        float | ParameterValue,
         Field(default=10.0),
     ]
 

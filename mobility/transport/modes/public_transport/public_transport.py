@@ -2,7 +2,7 @@ import logging
 
 from typing import List
 
-from mobility.runtime.parameter_profiles import resolve_model_for_iteration
+from mobility.runtime.parameter_values import resolve_parameter_values
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.modes.core.transport_mode import TransportMode, TransportModeParameters
 from mobility.transport.modes.core.mode_registry import ModeRegistry
@@ -157,17 +157,33 @@ class PublicTransportMode(TransportMode):
         travel_costs = self.inputs["travel_costs"].audit_gtfs()
         return travel_costs
 
-    def for_iteration(self, iteration: int) -> "PublicTransportMode":
+    def for_iteration(
+        self,
+        iteration: int,
+        scenario: str | None = None,
+    ) -> "PublicTransportMode":
         """Return a PT mode with routing parameters resolved for one iteration."""
         
         routing_parameters = self.inputs["travel_costs"].inputs["parameters"]
-        resolved_routing_parameters = resolve_model_for_iteration(routing_parameters, iteration)
+        resolved_routing_parameters = resolve_parameter_values(
+            routing_parameters,
+            scenario=scenario,
+            iteration=iteration,
+        )
+        generalized_cost = self.inputs["generalized_cost"]
+        resolved_mid_parameters = resolve_parameter_values(
+            generalized_cost.inputs["mid_parameters"],
+            scenario=scenario,
+            iteration=iteration,
+        )
 
-        if resolved_routing_parameters == routing_parameters:
+        if (
+            resolved_routing_parameters == routing_parameters
+            and resolved_mid_parameters == generalized_cost.inputs["mid_parameters"]
+        ):
             return self
 
         travel_costs = self.inputs["travel_costs"]
-        generalized_cost = self.inputs["generalized_cost"]
 
         return PublicTransportMode(
             transport_zones=travel_costs.inputs["transport_zones"],
@@ -176,7 +192,7 @@ class PublicTransportMode(TransportMode):
             first_intermodal_transfer=travel_costs.inputs["first_modal_transfer"],
             last_intermodal_transfer=travel_costs.inputs["last_modal_transfer"],
             routing_parameters=resolved_routing_parameters,
-            generalized_cost_parameters=generalized_cost.inputs["mid_parameters"],
+            generalized_cost_parameters=resolved_mid_parameters,
             parameters=self.inputs["parameters"],
         )
 

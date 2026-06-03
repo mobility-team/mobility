@@ -3,6 +3,8 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from mobility.runtime.parameter_values import ParameterValue
+
 
 class PathRoutingParameters(BaseModel):
     """Coarse OD prefilter parameters for path-based modes.
@@ -17,7 +19,7 @@ class PathRoutingParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_beeline_distance: Annotated[float | None, Field(default=None, gt=0.0)]  # km
+    max_beeline_distance: Annotated[float | ParameterValue | None, Field(default=None)]  # km
     filter_max_speed: Annotated[float | None, Field(default=None, gt=0.0)]  # km/h
     filter_max_time: Annotated[float | None, Field(default=None, gt=0.0)]  # h
 
@@ -53,3 +55,12 @@ class PathRoutingParameters(BaseModel):
             "PathRoutingParameters requires `max_beeline_distance` or both "
             "`filter_max_speed` and `filter_max_time`."
         )
+
+    @model_validator(mode="after")
+    def validate_max_beeline_distance(self) -> "PathRoutingParameters":
+        """Validate plain distance values while allowing unresolved scenario values."""
+        if isinstance(self.max_beeline_distance, ParameterValue):
+            return self
+        if self.max_beeline_distance is None or self.max_beeline_distance <= 0.0:
+            raise ValueError("max_beeline_distance should be greater than 0.")
+        return self

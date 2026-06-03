@@ -175,11 +175,11 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_profil
         population=pop,
         modes=_build_modes(
             transport_zones,
-            additional_gtfs_files=mobility.ListParameterProfile(
-                points={
+            additional_gtfs_files=mobility.ParameterValue.by_iteration(
+                {
                     1: [slow_gtfs_zip],
                     2: [slow_gtfs_zip],
-                }
+                },
             ),
         ),
         activities=[
@@ -195,11 +195,11 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_profil
         population=pop,
         modes=_build_modes(
             transport_zones,
-            additional_gtfs_files=mobility.ListParameterProfile(
-                points={
+            additional_gtfs_files=mobility.ParameterValue.by_iteration(
+                {
                     1: [slow_gtfs_zip],
                     2: [fast_gtfs_zip],
-                }
+                },
             ),
         ),
         activities=[
