@@ -35,6 +35,8 @@ def prepare_transport_zones(
     osm_buildings_fp: str | pathlib.Path,
     level_of_detail: int,
     output_fp: str | pathlib.Path,
+    *,
+    min_buildings_per_zone: int,
     max_workers: int | None = None,
 ) -> None:
     """Create transport zones and building cluster files.
@@ -43,6 +45,10 @@ def prepare_transport_zones(
     clusters building centroids, snaps cluster centers to real buildings, builds
     Voronoi polygons, and clips them to each local admin unit.
     """
+    min_buildings_per_zone = int(min_buildings_per_zone)
+    if min_buildings_per_zone < 1:
+        raise ValueError("min_buildings_per_zone should be a positive integer.")
+
     output_fp = pathlib.Path(output_fp)
     clusters_fp, clusters_geoms_fp = _get_sidecar_paths(output_fp)
 
@@ -57,6 +63,7 @@ def prepare_transport_zones(
             study_area_row.geometry,
             pathlib.Path(osm_buildings_fp),
             level_of_detail,
+            min_buildings_per_zone,
         )
         for lau_position, study_area_row in enumerate(study_area.itertuples(index=False))
     ]
@@ -133,7 +140,14 @@ def _resolve_max_workers(task_count: int, max_workers: int | None) -> int:
 
 
 def _create_lau_transport_zones_worker(task: tuple) -> dict:
-    lau_position, lau_id, lau_geom, osm_buildings_fp, level_of_detail = task
+    (
+        lau_position,
+        lau_id,
+        lau_geom,
+        osm_buildings_fp,
+        level_of_detail,
+        min_buildings_per_zone,
+    ) = task
 
     rng = np.random.default_rng(_seed_for_lau(lau_id, lau_position))
     transport_zones, clusters = _create_lau_transport_zones(
@@ -141,6 +155,7 @@ def _create_lau_transport_zones_worker(task: tuple) -> dict:
         lau_geom=lau_geom,
         osm_buildings_fp=osm_buildings_fp,
         level_of_detail=level_of_detail,
+        min_buildings_per_zone=min_buildings_per_zone,
         rng=rng,
     )
     return {
@@ -184,6 +199,7 @@ def _create_lau_transport_zones(
     osm_buildings_fp: pathlib.Path,
     level_of_detail: int,
     rng: np.random.Generator,
+    min_buildings_per_zone: int,
 ) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
     buildings = _read_lau_buildings(osm_buildings_fp, lau_id)
     buildings = _prepare_building_centroids(buildings, lau_geom)
@@ -202,35 +218,30 @@ def _create_lau_transport_zones(
         buildings = buildings.copy()
         buildings["cluster"] = labels
 
-        cluster_area = buildings.groupby("cluster", as_index=False)["area"].sum()
-        medoids = medoids.merge(cluster_area, on="cluster", how="left")
-
-        transport_zones = medoids.rename(
-            columns={"cluster": "transport_zone_id", "X": "x", "Y": "y"}
+        transport_zones = medoids[["cluster"]].rename(
+            columns={"cluster": "transport_zone_id"}
         )
-        transport_zones["weight"] = transport_zones["area"] / transport_zones["area"].sum()
-        transport_zones = transport_zones.drop(columns=["area"])
-
-        internal_distances = _compute_cluster_internal_distance(buildings, rng)
-        transport_zones = transport_zones.merge(
-            internal_distances,
-            left_on="transport_zone_id",
-            right_on="cluster",
-            how="left",
-        ).drop(columns=["cluster"])
-
         transport_zones["geometry"] = _create_voronoi_geometries(
             medoids[["cluster", "X", "Y"]],
             lau_geom,
             buildings,
         )
-
-        k_medoids = buildings.groupby("cluster", group_keys=True).apply(
-            lambda group: _compute_k_medoids(group, _rng_integer(rng)),
-            include_groups=False,
+        transport_zones = gpd.GeoDataFrame(
+            transport_zones,
+            geometry="geometry",
+            crs=TARGET_CRS,
         )
-        k_medoids = k_medoids.reset_index(level=0).rename(
-            columns={"cluster": "transport_zone_id"}
+
+        transport_zones, buildings = _merge_sparse_lau_zones(
+            transport_zones=transport_zones,
+            buildings=buildings,
+            min_buildings_per_zone=min_buildings_per_zone,
+        )
+
+        transport_zones, k_medoids = _finalize_clustered_transport_zones(
+            transport_zones=transport_zones,
+            buildings=buildings,
+            rng=rng,
         )
     else:
         buildings = buildings.copy()
@@ -266,6 +277,175 @@ def _create_lau_transport_zones(
     ]
 
     return transport_zones, k_medoids
+
+
+def _finalize_clustered_transport_zones(
+    transport_zones: gpd.GeoDataFrame,
+    buildings: pd.DataFrame,
+    rng: np.random.Generator,
+) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
+    """Recompute zone weights, medoids, and internal distances after merging."""
+    transport_zones = transport_zones[["transport_zone_id", "geometry"]].copy()
+
+    rows = []
+    for cluster, group in buildings.groupby("cluster", sort=True):
+        medoid_idx = _nearest_to_weighted_center(group)
+        medoid = group.iloc[medoid_idx]
+        rows.append(
+            {
+                "transport_zone_id": cluster,
+                "x": float(medoid["X"]),
+                "y": float(medoid["Y"]),
+                "area": float(group["area"].sum()),
+            }
+        )
+    medoids = pd.DataFrame(rows)
+    medoids["weight"] = medoids["area"] / medoids["area"].sum()
+    medoids = medoids.drop(columns=["area"])
+
+    internal_distances = _compute_cluster_internal_distance(buildings, rng).rename(
+        columns={"cluster": "transport_zone_id"}
+    )
+    transport_zones = transport_zones.merge(
+        medoids,
+        on="transport_zone_id",
+        how="left",
+        validate="one_to_one",
+    ).merge(
+        internal_distances,
+        on="transport_zone_id",
+        how="left",
+        validate="one_to_one",
+    )
+    transport_zones = transport_zones[
+        ["transport_zone_id", "weight", "internal_distance", "x", "y", "geometry"]
+    ]
+
+    k_medoids = buildings.groupby("cluster", group_keys=True).apply(
+        lambda group: _compute_k_medoids(group, _rng_integer(rng)),
+        include_groups=False,
+    )
+    k_medoids = k_medoids.reset_index(level=0).rename(
+        columns={"cluster": "transport_zone_id"}
+    )
+    return transport_zones, k_medoids
+
+
+def _merge_sparse_lau_zones(
+    transport_zones: gpd.GeoDataFrame,
+    buildings: pd.DataFrame,
+    min_buildings_per_zone: int,
+) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
+    """Merge sparse zones inside one local admin unit.
+
+    The input already belongs to one LAU, so this helper cannot merge across
+    LAU boundaries. Sparse zones are merged into the neighboring zone with the
+    longest shared border.
+    """
+    min_buildings_per_zone = int(min_buildings_per_zone)
+    if min_buildings_per_zone <= 1 or len(transport_zones) <= 1:
+        return transport_zones, buildings
+
+    buildings = buildings.copy()
+    zones = transport_zones[["transport_zone_id", "geometry"]].copy()
+    zones["building_count"] = zones["transport_zone_id"].map(
+        buildings.groupby("cluster").size()
+    ).fillna(0).astype(int)
+
+    if len(buildings) < min_buildings_per_zone:
+        buildings["cluster"] = 1
+        merged_geometry = shapely.union_all(zones.geometry.to_numpy())
+        merged_zones = gpd.GeoDataFrame(
+            {"transport_zone_id": [1], "geometry": [merged_geometry]},
+            geometry="geometry",
+            crs=transport_zones.crs,
+        )
+        return merged_zones, buildings
+
+    zones = zones.sort_values("transport_zone_id").reset_index(drop=True)
+    while len(zones) > 1:
+        sparse_zones = zones.loc[zones["building_count"] < min_buildings_per_zone]
+        if sparse_zones.empty:
+            break
+
+        sparse_zone = sparse_zones.sort_values(
+            ["building_count", "transport_zone_id"]
+        ).iloc[0]
+        target_id = _find_merge_target_zone_id(sparse_zone, zones)
+        if target_id is None:
+            break
+
+        sparse_id = int(sparse_zone["transport_zone_id"])
+        buildings.loc[buildings["cluster"] == sparse_id, "cluster"] = target_id
+
+        sparse_mask = zones["transport_zone_id"] == sparse_id
+        target_mask = zones["transport_zone_id"] == target_id
+        merged_geometry = shapely.union_all(
+            zones.loc[sparse_mask | target_mask, "geometry"].to_numpy()
+        )
+        merged_count = int(zones.loc[sparse_mask | target_mask, "building_count"].sum())
+
+        zones.loc[target_mask, "geometry"] = [merged_geometry]
+        zones.loc[target_mask, "building_count"] = merged_count
+        zones = zones.loc[~sparse_mask].sort_values("transport_zone_id").reset_index(
+            drop=True
+        )
+
+    zone_id_map = {
+        old_id: new_id
+        for new_id, old_id in enumerate(zones["transport_zone_id"].to_list(), start=1)
+    }
+    buildings["cluster"] = buildings["cluster"].map(zone_id_map).astype(int)
+    zones["transport_zone_id"] = zones["transport_zone_id"].map(zone_id_map).astype(int)
+    zones = zones.drop(columns=["building_count"])
+
+    return gpd.GeoDataFrame(zones, geometry="geometry", crs=transport_zones.crs), buildings
+
+
+def _find_merge_target_zone_id(
+    sparse_zone: pd.Series,
+    zones: gpd.GeoDataFrame,
+) -> int | None:
+    """Return the best same-LAU merge target for one sparse zone."""
+    sparse_id = int(sparse_zone["transport_zone_id"])
+    sparse_geometry = sparse_zone["geometry"]
+
+    rows = []
+    for candidate in zones.itertuples(index=False):
+        candidate_id = int(candidate.transport_zone_id)
+        if candidate_id == sparse_id:
+            continue
+
+        shared_border = float(
+            sparse_geometry.boundary.intersection(candidate.geometry.boundary).length
+        )
+        distance = float(sparse_geometry.distance(candidate.geometry))
+        rows.append(
+            {
+                "transport_zone_id": candidate_id,
+                "building_count": int(candidate.building_count),
+                "shared_border": shared_border,
+                "distance": distance,
+            }
+        )
+
+    if not rows:
+        return None
+
+    candidates = pd.DataFrame(rows)
+    touching = candidates.loc[candidates["shared_border"] > 0]
+    if not touching.empty:
+        best = touching.sort_values(
+            ["shared_border", "building_count", "transport_zone_id"],
+            ascending=[False, False, True],
+        ).iloc[0]
+        return int(best["transport_zone_id"])
+
+    best = candidates.sort_values(
+        ["distance", "building_count", "transport_zone_id"],
+        ascending=[True, False, True],
+    ).iloc[0]
+    return int(best["transport_zone_id"])
 
 
 def _read_lau_buildings(osm_buildings_fp: pathlib.Path, lau_id: str) -> gpd.GeoDataFrame:

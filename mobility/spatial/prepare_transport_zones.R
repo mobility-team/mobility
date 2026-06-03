@@ -24,6 +24,11 @@ study_area_fp <- args[2]
 osm_buildings_fp <- args[3]
 level_of_detail <- as.integer(args[4])
 output_fp <- args[5]
+min_buildings_per_zone <- as.integer(args[6])
+
+if (is.na(min_buildings_per_zone) || min_buildings_per_zone < 1L) {
+  stop("min_buildings_per_zone should be a positive integer.")
+}
 
 clusters_fp <- file.path(
   dirname(output_fp),
@@ -159,7 +164,186 @@ kmeans_with_nearest_building_centers <- function(buildings_dt, k, iter_max = 10L
 }
 
 
-clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_area_threshold, n_buildings_sample, minimum_building_area) {
+union_geometries <- function(geometries) {
+
+  if (length(geometries) == 1) {
+    return(geometries)
+  }
+
+  return(geos_unary_union(geos_make_collection(geometries)))
+
+}
+
+
+find_merge_target_zone_id <- function(sparse_zone, zones) {
+
+  sparse_id <- sparse_zone$transport_zone_id
+  sparse_geometry <- sparse_zone$geometry
+  candidates <- zones[transport_zone_id != sparse_id]
+
+  if (nrow(candidates) == 0) {
+    return(NA_integer_)
+  }
+
+  shared_borders <- vapply(
+    seq_len(nrow(candidates)),
+    FUN = function(i) {
+      shared_border <- geos_intersection(
+        geos_boundary(sparse_geometry),
+        geos_boundary(candidates$geometry[i])
+      )
+      return(as.numeric(geos_length(shared_border)))
+    },
+    FUN.VALUE = numeric(1)
+  )
+
+  candidates <- copy(candidates[, list(transport_zone_id, building_count, geometry)])
+  candidates[, shared_border := shared_borders]
+  candidates[, distance := as.numeric(geos_distance(sparse_geometry, geometry))]
+
+  touching_candidates <- candidates[shared_border > 0]
+  if (nrow(touching_candidates) > 0) {
+    setorder(touching_candidates, -shared_border, -building_count, transport_zone_id)
+    return(touching_candidates$transport_zone_id[1])
+  }
+
+  setorder(candidates, distance, -building_count, transport_zone_id)
+  return(candidates$transport_zone_id[1])
+
+}
+
+
+merge_sparse_lau_zones <- function(transport_zones, buildings_dt, min_buildings_per_zone) {
+
+  min_buildings_per_zone <- as.integer(min_buildings_per_zone)
+  if (min_buildings_per_zone <= 1L || nrow(transport_zones) <= 1L) {
+    return(list(transport_zones = transport_zones, buildings_dt = buildings_dt))
+  }
+
+  buildings_dt <- copy(buildings_dt)
+  zones <- copy(transport_zones[, list(transport_zone_id, geometry)])
+
+  building_counts <- buildings_dt[, list(building_count = .N), by = cluster]
+  setnames(building_counts, "cluster", "transport_zone_id")
+  zones <- merge(zones, building_counts, by = "transport_zone_id", all.x = TRUE)
+  zones[is.na(building_count), building_count := 0L]
+
+  if (nrow(buildings_dt) < min_buildings_per_zone) {
+    buildings_dt[, cluster := 1L]
+    zones <- data.table(
+      transport_zone_id = 1L,
+      geometry = union_geometries(zones$geometry)
+    )
+    return(list(transport_zones = zones, buildings_dt = buildings_dt))
+  }
+
+  setorder(zones, transport_zone_id)
+  while (nrow(zones) > 1L) {
+    sparse_zones <- zones[building_count < min_buildings_per_zone]
+    if (nrow(sparse_zones) == 0L) {
+      break
+    }
+
+    setorder(sparse_zones, building_count, transport_zone_id)
+    sparse_zone <- sparse_zones[1]
+    sparse_id <- sparse_zone$transport_zone_id
+    target_id <- find_merge_target_zone_id(sparse_zone, zones)
+
+    if (is.na(target_id)) {
+      break
+    }
+
+    buildings_dt[cluster == sparse_id, cluster := target_id]
+
+    merge_ids <- c(sparse_id, target_id)
+    merged_geometry <- union_geometries(zones[transport_zone_id %in% merge_ids, geometry])
+    merged_count <- zones[transport_zone_id %in% merge_ids, sum(building_count)]
+
+    zones[transport_zone_id == target_id, geometry := merged_geometry]
+    zones[transport_zone_id == target_id, building_count := merged_count]
+    zones <- zones[transport_zone_id != sparse_id]
+    setorder(zones, transport_zone_id)
+  }
+
+  zone_id_map <- zones[, list(
+    transport_zone_id,
+    new_transport_zone_id = seq_len(.N)
+  )]
+
+  buildings_dt <- merge(
+    buildings_dt,
+    zone_id_map,
+    by.x = "cluster",
+    by.y = "transport_zone_id"
+  )
+  buildings_dt[, cluster := new_transport_zone_id]
+  buildings_dt[, new_transport_zone_id := NULL]
+
+  zones <- merge(zones, zone_id_map, by = "transport_zone_id")
+  zones[, transport_zone_id := new_transport_zone_id]
+  zones[, new_transport_zone_id := NULL]
+  zones[, building_count := NULL]
+  setorder(zones, transport_zone_id)
+
+  return(list(transport_zones = zones, buildings_dt = buildings_dt))
+
+}
+
+
+compute_cluster_center_attributes <- function(buildings_dt) {
+
+  centers <- buildings_dt[, {
+    coords <- as.matrix(.SD[, list(X, Y)])
+    weights <- area / sum(area)
+    center <- matrix(c(sum(X * weights), sum(Y * weights)), nrow = 1)
+    nearest <- get.knnx(data = coords, query = center, k = 1)$nn.index[1, 1]
+    list(
+      area = sum(area),
+      x = coords[nearest, 1],
+      y = coords[nearest, 2]
+    )
+  }, by = cluster]
+
+  centers[, weight := area / sum(area)]
+  setnames(centers, "cluster", "transport_zone_id")
+
+  return(centers[, list(transport_zone_id, weight, x, y)])
+
+}
+
+
+finalize_clustered_transport_zones <- function(transport_zones, buildings_dt) {
+
+  zone_attributes <- compute_cluster_center_attributes(buildings_dt)
+  internal_distances <- compute_cluster_internal_distance(buildings_dt)
+  setnames(internal_distances, "cluster", "transport_zone_id")
+
+  transport_zones <- merge(
+    transport_zones,
+    zone_attributes,
+    by = "transport_zone_id"
+  )
+  transport_zones <- merge(
+    transport_zones,
+    internal_distances,
+    by = "transport_zone_id"
+  )
+  transport_zones <- transport_zones[,
+    list(transport_zone_id, weight, internal_distance, x, y, geometry)
+  ]
+
+  k_medoids <- buildings_dt[
+    ,
+    compute_k_medoids(.SD),
+    by = list(transport_zone_id = cluster)
+  ]
+
+  return(list(transport_zones = transport_zones, k_medoids = k_medoids))
+
+}
+
+
+clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_area_threshold, n_buildings_sample, minimum_building_area, min_buildings_per_zone) {
   
   # Get the coordinates and area of all buildings in the area
   # Keep only buildings with footprints larger than 20 m²
@@ -198,18 +382,9 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
 
     buildings_dt[, cluster := kmeans_result$cluster]
     
-    cluster_area <- buildings_dt[, list(area = sum(area)), by = cluster]
-    clusters <- merge(clusters, cluster_area, by = "cluster")
-
     transport_zones <- clusters[, list(
-      transport_zone_id = cluster,
-      weight = area/sum(area),
-      x = X,
-      y = Y
+      transport_zone_id = cluster
     )]
-    
-    internal_distances <- compute_cluster_internal_distance(buildings_dt)
-    transport_zones <- merge(transport_zones, internal_distances, by.x  = "transport_zone_id", by.y = "cluster")
     
     # Create a voronoi tesselation around the cluster centers
     env <- geos_create_rectangle(
@@ -235,11 +410,24 @@ clusters_to_voronoi <- function(lau_id, lau_geom, level_of_detail, buildings_are
     )
 
     transport_zones[, geometry := voronoi[unlist(v_order)]]
-    
-    k_medoids <- buildings_dt[, compute_k_medoids(.SD), by = list(transport_zone_id = cluster)]
+
+    merge_result <- merge_sparse_lau_zones(
+      transport_zones = transport_zones,
+      buildings_dt = buildings_dt,
+      min_buildings_per_zone = min_buildings_per_zone
+    )
+    transport_zones <- merge_result$transport_zones
+    buildings_dt <- merge_result$buildings_dt
+
+    finalized <- finalize_clustered_transport_zones(
+      transport_zones = transport_zones,
+      buildings_dt = buildings_dt
+    )
+    transport_zones <- finalized$transport_zones
+    k_medoids <- finalized$k_medoids
 
 
-    
+
   } else {
     
     
@@ -294,7 +482,8 @@ transport_zones_buildings <- lapply(
       level_of_detail = level_of_detail,
       buildings_area_threshold = buildings_area_threshold,
       n_buildings_sample = n_buildings_sample,
-      minimum_building_area = min_building_area
+      minimum_building_area = min_building_area,
+      min_buildings_per_zone = min_buildings_per_zone
     )
     
     return(result)

@@ -10,6 +10,7 @@ from shapely.geometry import box
 from mobility.spatial.prepare_transport_zones import (
     _create_lau_transport_zones,
     _get_sidecar_paths,
+    _merge_sparse_lau_zones,
     _resolve_max_workers,
     prepare_transport_zones,
 )
@@ -138,13 +139,21 @@ def test_init_builds_inputs_and_cache_path(project_dir, dependency_fakes):
 def test_python_backend_dispatches_to_python_preparation(dependency_fakes, monkeypatch, tmp_path):
     calls = []
 
-    def _prepare_transport_zones_spy(study_area_fp, osm_buildings_fp, level_of_detail, output_fp, max_workers):
+    def _prepare_transport_zones_spy(
+        study_area_fp,
+        osm_buildings_fp,
+        level_of_detail,
+        output_fp,
+        min_buildings_per_zone,
+        max_workers,
+    ):
         calls.append(
             {
                 "study_area_fp": pathlib.Path(study_area_fp),
                 "osm_buildings_fp": pathlib.Path(osm_buildings_fp),
                 "level_of_detail": level_of_detail,
                 "output_fp": pathlib.Path(output_fp),
+                "min_buildings_per_zone": min_buildings_per_zone,
                 "max_workers": max_workers,
             }
         )
@@ -164,6 +173,7 @@ def test_python_backend_dispatches_to_python_preparation(dependency_fakes, monke
         radius=30,
         backend="python",
         backend_workers=8,
+        min_buildings_per_zone=12,
     )
 
     transport_zones.create_transport_zones_with_python(
@@ -177,8 +187,55 @@ def test_python_backend_dispatches_to_python_preparation(dependency_fakes, monke
             "osm_buildings_fp": tmp_path / "osm_buildings",
             "level_of_detail": 1,
             "output_fp": transport_zones.cache_path,
+            "min_buildings_per_zone": 12,
             "max_workers": 8,
         }
+    ]
+
+
+def test_r_backend_passes_min_buildings_per_zone_to_script(
+    dependency_fakes,
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+
+    class _FakeRScriptRunner:
+        def __init__(self, script_path):
+            self.script_path = script_path
+
+        def run(self, args):
+            calls.append(
+                {
+                    "script_path": self.script_path,
+                    "args": list(args),
+                }
+            )
+
+    import mobility.spatial.transport_zones as tz_module
+
+    monkeypatch.setattr(tz_module, "RScriptRunner", _FakeRScriptRunner, raising=True)
+
+    transport_zones = TransportZones(
+        local_admin_unit_id="fr-09122",
+        level_of_detail=1,
+        radius=30,
+        backend="r",
+        min_buildings_per_zone=12,
+    )
+
+    transport_zones.create_transport_zones_with_r(
+        study_area_fp=tmp_path / "study_area_polygons.gpkg",
+        osm_buildings_fp=tmp_path / "osm_buildings",
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["args"] == [
+        str(tmp_path / "study_area_polygons.gpkg"),
+        str(tmp_path / "osm_buildings"),
+        "1",
+        str(transport_zones.cache_path),
+        "12",
     ]
 
 
@@ -276,6 +333,78 @@ def test_resolve_max_workers_uses_task_count_as_upper_bound():
     assert _resolve_max_workers(task_count=3, max_workers=None) == 3
 
 
+def test_python_backend_rejects_invalid_min_buildings_per_zone(tmp_path):
+    with pytest.raises(ValueError, match="positive integer"):
+        prepare_transport_zones(
+            study_area_fp=tmp_path / "study_area.gpkg",
+            osm_buildings_fp=tmp_path / "osm_buildings",
+            level_of_detail=1,
+            output_fp=tmp_path / "transport_zones.gpkg",
+            min_buildings_per_zone=0,
+            max_workers=1,
+        )
+
+
+def test_python_backend_merges_sparse_zone_to_longest_shared_border():
+    zones = gpd.GeoDataFrame(
+        {"transport_zone_id": [1, 2, 3]},
+        geometry=[
+            box(0, 0, 1, 1),
+            box(1, 0, 2, 1),
+            box(0, 1, 0.5, 2),
+        ],
+        crs="EPSG:3035",
+    )
+    buildings = pd.DataFrame(
+        {
+            "cluster": [1] * 5 + [2] * 30 + [3] * 30,
+            "area": [100.0] * 65,
+            "X": np.arange(65, dtype=float),
+            "Y": np.zeros(65),
+            "building_id": np.arange(1, 66),
+        }
+    )
+
+    merged_zones, merged_buildings = _merge_sparse_lau_zones(
+        zones,
+        buildings,
+        min_buildings_per_zone=20,
+    )
+
+    building_counts = merged_buildings.groupby("cluster").size().sort_values().to_list()
+
+    assert len(merged_zones) == 2
+    assert merged_zones.crs == "EPSG:3035"
+    assert building_counts == [30, 35]
+    assert merged_zones.area.sort_values().to_list() == [0.5, 2.0]
+
+
+def test_python_backend_merges_whole_sparse_lau_to_one_zone():
+    zones = gpd.GeoDataFrame(
+        {"transport_zone_id": [1, 2]},
+        geometry=[box(0, 0, 1, 1), box(1, 0, 2, 1)],
+        crs="EPSG:3035",
+    )
+    buildings = pd.DataFrame(
+        {
+            "cluster": [1] * 5 + [2] * 6,
+            "area": [100.0] * 11,
+            "X": np.arange(11, dtype=float),
+            "Y": np.zeros(11),
+            "building_id": np.arange(1, 12),
+        }
+    )
+
+    merged_zones, merged_buildings = _merge_sparse_lau_zones(
+        zones,
+        buildings,
+        min_buildings_per_zone=20,
+    )
+
+    assert merged_zones["transport_zone_id"].to_list() == [1]
+    assert merged_buildings["cluster"].unique().tolist() == [1]
+
+
 def test_python_backend_builds_one_zone_when_lau_has_no_buildings(monkeypatch):
     monkeypatch.setattr(
         "mobility.spatial.prepare_transport_zones._read_lau_buildings",
@@ -288,6 +417,7 @@ def test_python_backend_builds_one_zone_when_lau_has_no_buildings(monkeypatch):
         osm_buildings_fp=pathlib.Path("unused"),
         level_of_detail=1,
         rng=np.random.default_rng(0),
+        min_buildings_per_zone=20,
     )
 
     assert zones["transport_zone_id"].to_list() == [1]
@@ -330,6 +460,7 @@ def test_python_backend_writes_transport_zones_and_building_sidecars(
         osm_buildings_fp=tmp_path / "osm_buildings",
         level_of_detail=1,
         output_fp=output_fp,
+        min_buildings_per_zone=1,
         max_workers=1,
     )
 

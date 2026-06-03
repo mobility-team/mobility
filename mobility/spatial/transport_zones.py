@@ -68,6 +68,7 @@ class TransportZones(FileAsset):
             inner_local_admin_unit_id: List[str] | None = None,
             backend: Literal["r", "python"] | None = None,
             backend_workers: int | None = None,
+            min_buildings_per_zone: int | None = None,
             cutout_geometries: gpd.GeoDataFrame = None,
             parameters: "TransportZonesParameters" | None = None,
         ):
@@ -83,6 +84,7 @@ class TransportZones(FileAsset):
                 "inner_local_admin_unit_id": inner_local_admin_unit_id,
                 "backend": backend,
                 "backend_workers": backend_workers,
+                "min_buildings_per_zone": min_buildings_per_zone,
             },
             required_fields=["local_admin_unit_id"],
             owner_name="TransportZones",
@@ -203,7 +205,8 @@ class TransportZones(FileAsset):
                 str(study_area_fp),
                 str(osm_buildings_fp),
                 str(self.inputs["parameters"].level_of_detail),
-                str(self.cache_path)
+                str(self.cache_path),
+                str(self.inputs["parameters"].min_buildings_per_zone),
             ]
         )
 
@@ -214,6 +217,7 @@ class TransportZones(FileAsset):
             osm_buildings_fp=osm_buildings_fp,
             level_of_detail=self.inputs["parameters"].level_of_detail,
             output_fp=self.cache_path,
+            min_buildings_per_zone=self.inputs["parameters"].min_buildings_per_zone,
             max_workers=self.inputs["parameters"].backend_workers,
         )
     
@@ -338,6 +342,20 @@ class TransportZonesParameters(BaseModel):
                 "Number of workers used by the Python backend. If omitted, "
                 "the Python backend chooses a conservative default. This "
                 "setting is ignored by the R backend."
+            ),
+        ),
+    ]
+
+    min_buildings_per_zone: Annotated[
+        int,
+        Field(
+            default=20,
+            ge=1,
+            title="Minimum buildings per transport zone",
+            description=(
+                "Minimum number of valid buildings kept in each "
+                "transport zone. Sparse zones are merged inside their local "
+                "admin unit before final zone IDs are written."
             ),
         ),
     ]
