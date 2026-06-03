@@ -7,6 +7,7 @@ from mobility.runtime.parameter_values import DEFAULT_SCENARIO
 from mobility.runtime.scenarios import Scenarios
 
 from .diagnostics import GroupDayTripsResultDiagnostics
+from .metrics import GroupDayTripsResultMetrics
 from .tables import GroupDayTripsResultTables
 
 IterationSelector = str | int | list[int] | range
@@ -54,6 +55,7 @@ class GroupDayTripsResults:
         self._run_contexts: list[ResultRun] | None = None
 
         self.tables = GroupDayTripsResultTables(self)
+        self.metrics = GroupDayTripsResultMetrics(self)
         self.diagnostics = GroupDayTripsResultDiagnostics(self)
 
     @property
@@ -105,6 +107,42 @@ class GroupDayTripsResults:
     def has_multiple_iterations(self, iterations: IterationSelector = "last") -> bool:
         """Return whether one result query contains several iterations."""
         return len(self.selected_iterations(iterations)) > 1
+
+    @property
+    def scenario_titles(self) -> dict[str, str]:
+        """Return display titles for selected scenarios."""
+        if self.scenario_manifest is None:
+            return {}
+        return {
+            scenario: self.scenario_manifest.get(scenario).display_title
+            for scenario in self.scenarios
+        }
+
+    @property
+    def survey_reference_plan_steps(self):
+        """Return the survey-weighted plan-step asset for this result scope."""
+        try:
+            return self.first_run._get_expected_diagnostics_inputs().population_weighted_plan_steps
+        except AttributeError as exc:
+            raise TypeError(
+                "Survey diagnostics need runs that expose population-weighted survey plan steps."
+            ) from exc
+
+    @property
+    def transport_zones(self):
+        """Return the transport-zone asset used by this result scope."""
+        try:
+            return self.first_run.population.transport_zones
+        except AttributeError as exc:
+            raise TypeError("Survey diagnostics need runs with a population transport-zone asset.") from exc
+
+    @property
+    def surveys(self):
+        """Return the surveys used by this result scope."""
+        try:
+            return self.first_run.surveys
+        except AttributeError as exc:
+            raise TypeError("Survey-based metrics need runs that expose their surveys.") from exc
 
     @property
     def is_weekday(self) -> bool:
