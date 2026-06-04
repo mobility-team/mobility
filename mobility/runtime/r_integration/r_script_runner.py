@@ -210,10 +210,10 @@ class RScriptRunner:
         self._reset_output_tracking()
 
         if os.environ.get("MOBILITY_DEBUG") == "1":
-            logging.info("Running R script " + self.script_path + " with the following arguments :")
-            logging.info(args)
+            logging.debug("Running R script " + self.script_path + " with the following arguments :")
+            logging.debug(args)
 
-        logging.info(
+        logging.debug(
             (
                 "Starting R script attempt %s/%s: script=%s timeout=%s retries=%s heartbeat=%ss "
                 "idle_timeout=%s idle_cpu=%.2f%% idle_memory_change=%.2fMiB cpu_check=%ss"
@@ -229,12 +229,12 @@ class RScriptRunner:
             self.idle_memory_change_bytes / 1024 / 1024,
             self.cpu_check_interval_seconds,
         )
-        logging.info("Rscript executable: %s", self.rscript_executable)
+        logging.debug("Rscript executable: %s", self.rscript_executable)
         logging.debug("Rscript command: %s", cmd)
         logging.debug("Rscript working directory: %s", os.getcwd())
 
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logging.info("Started Rscript PID %s for %s", process.pid, self.script_path)
+        logging.debug("Started Rscript PID %s for %s", process.pid, self.script_path)
 
         stdout_thread = threading.Thread(target=self.log_process_output, args=(process.stdout,))
         stderr_thread = threading.Thread(target=self.log_process_output, args=(process.stderr, True))
@@ -267,7 +267,7 @@ class RScriptRunner:
             idle_thread.join()
 
         elapsed_seconds = int(time.monotonic() - start_time)
-        logging.info(
+        logging.debug(
             "Rscript PID %s finished after %ss with return code %s",
             process.pid,
             elapsed_seconds,
@@ -316,7 +316,7 @@ class RScriptRunner:
             logging.warning("Rscript PID %s did not terminate after %s, killing it.", process.pid, reason)
             process.kill()
             process.wait(timeout=10)
-            logging.info("Rscript PID %s was killed after %s.", process.pid, reason)
+            logging.debug("Rscript PID %s was killed after %s.", process.pid, reason)
 
         self._kill_surviving_child_processes(child_processes, reason)
 
@@ -424,7 +424,7 @@ class RScriptRunner:
                 previous_cpu_seconds = current_cpu_seconds
             previous_sample_time = now
 
-            logging.info(
+            logging.debug(
                 "R is still running (PID %s, %ss): CPU %s, RAM %s.",
                 process.pid,
                 elapsed_seconds,
@@ -596,7 +596,7 @@ class RScriptRunner:
                 if "INFO" in msg:
                     msg = msg.split("]")[1]
                     msg = msg.strip()
-                    logging.info(msg)
+                    logging.debug(msg)
                 elif (is_error and "Error" in msg) or "Erreur" in msg:
                     logging.error("R script execution failed, with the following message : " + msg)
 

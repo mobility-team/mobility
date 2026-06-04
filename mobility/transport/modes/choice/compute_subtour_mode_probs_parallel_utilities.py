@@ -41,7 +41,7 @@ def chunked(seq, batch_size):
         
 def worker_init(k_sequences_, costs_path, leg_modes_path, modes_path, tmp_path_):
     
-    logging.info("Initializing worker...")
+    logging.debug("Initializing worker...")
     
     global k_sequences
     global costs, leg_modes, n_vehicles, leg_modes, needs_vehicle, vehicle_for_mode

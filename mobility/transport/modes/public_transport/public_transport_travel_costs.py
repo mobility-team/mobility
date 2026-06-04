@@ -99,7 +99,7 @@ class PublicTransportTravelCosts(TravelCostsAsset):
     def get_cached_asset(self, congestion: bool = False) -> pd.DataFrame:
         """Load the persisted PT OD costs."""
         
-        logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
+        logging.debug("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
         costs = pd.read_parquet(self.cache_path)
 
         return costs

@@ -566,7 +566,7 @@ class PlanUpdater:
     ) -> pl.LazyFrame:
         """Build allowed from-to plan pairs under the active behavior scope."""
 
-        logging.info(
+        logging.debug(
             "Building PopulationGroupDayTrips allowed plan transitions: scope=%s",
             str(behavior_change_scope),
         )
@@ -649,7 +649,7 @@ class PlanUpdater:
     ) -> pl.LazyFrame:
         """Attach embedding distances to allowed plan transitions."""
 
-        logging.info("Computing PopulationGroupDayTrips transition distances")
+        logging.debug("Computing PopulationGroupDayTrips transition distances")
 
         is_self_transition = pl.col("plan_id_from") == pl.col("plan_id_trans")
         self_distances = (
@@ -690,7 +690,7 @@ class PlanUpdater:
     ) -> pl.DataFrame:
         """Compute one-step transition probabilities with distance-threshold filtering and revision."""
 
-        logging.info("Collecting PopulationGroupDayTrips transition probabilities")
+        logging.debug("Collecting PopulationGroupDayTrips transition probabilities")
 
         plan_cols = PLAN_KEY_COLS
         if "distance" not in allowed_transitions.collect_schema().names():
@@ -763,7 +763,7 @@ class PlanUpdater:
             transition_probabilities=transition_probabilities,
         )
     
-        logging.info(
+        logging.debug(
             "Finished collecting PopulationGroupDayTrips transition probabilities."
         )
 
@@ -856,7 +856,7 @@ class PlanUpdater:
         raw_plan_count = int(target_map["raw_plan_count"][0])
         retained_plan_count = int(target_map["retained_plan_count"][0])
         dropped_person_share = float(target_map["dropped_person_share"][0])
-        logging.info(
+        logging.debug(
             "Low-probability current-plan pruning check: iteration=%s retained_share=%s target_plans=%s retained_plans=%s dropped_person_share=%s",
             str(iteration),
             str(retained_share),
@@ -1136,7 +1136,7 @@ class PlanUpdater:
         at each destination. It is not a literal remaining-capacity stock.
         """
 
-        logging.info("Computing destination saturation at destinations...")
+        logging.debug("Computing destination saturation at destinations...")
 
         saturation_fun_parameters = (
             pl.from_dicts(

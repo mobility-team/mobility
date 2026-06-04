@@ -140,7 +140,7 @@ class PathTravelCosts(TravelCostsAsset):
         else:
             path = self.cache_path["congested"]
 
-        logging.info("Travel costs already prepared. Reusing the file : " + str(path))
+        logging.debug("Travel costs already prepared. Reusing the file : " + str(path))
         costs = pd.read_parquet(path)
 
         return costs

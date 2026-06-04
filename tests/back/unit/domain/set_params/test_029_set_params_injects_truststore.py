@@ -2,6 +2,8 @@ import os
 import sys
 import types
 
+import pytest
+
 from mobility.config import set_params
 
 
@@ -40,3 +42,83 @@ def test_set_params_sets_r_runner_idle_monitor_settings(tmp_path):
     assert os.environ["MOBILITY_R_IDLE_CPU_PERCENT"] == "0.25"
     assert os.environ["MOBILITY_R_IDLE_MEMORY_CHANGE_MB"] == "4.5"
     assert os.environ["MOBILITY_R_CPU_CHECK_INTERVAL_SECONDS"] == "7"
+
+
+def test_set_params_sets_feedback_progress_by_default(tmp_path):
+    set_params(
+        package_data_folder_path=str(tmp_path / "pkg"),
+        project_data_folder_path=str(tmp_path / "project"),
+        r_packages=False,
+    )
+
+    assert os.environ["MOBILITY_FEEDBACK"] == "progress"
+    assert os.environ["MOBILITY_PROGRESS"] == "rich"
+    assert os.environ["MOBILITY_DEBUG"] == "0"
+
+
+def test_set_params_sets_feedback_logs_mode(tmp_path):
+    set_params(
+        package_data_folder_path=str(tmp_path / "pkg"),
+        project_data_folder_path=str(tmp_path / "project"),
+        r_packages=False,
+        feedback="logs",
+    )
+
+    assert os.environ["MOBILITY_FEEDBACK"] == "logs"
+    assert os.environ["MOBILITY_PROGRESS"] == "log"
+
+
+def test_set_params_maps_old_progress_mode_to_feedback(tmp_path):
+    set_params(
+        package_data_folder_path=str(tmp_path / "pkg"),
+        project_data_folder_path=str(tmp_path / "project"),
+        r_packages=False,
+        progress="log",
+    )
+
+    assert os.environ["MOBILITY_FEEDBACK"] == "logs"
+    assert os.environ["MOBILITY_PROGRESS"] == "log"
+
+
+def test_set_params_maps_old_debug_args_to_feedback_debug(tmp_path):
+    set_params(
+        package_data_folder_path=str(tmp_path / "pkg"),
+        project_data_folder_path=str(tmp_path / "project"),
+        r_packages=False,
+        debug=True,
+    )
+
+    assert os.environ["MOBILITY_FEEDBACK"] == "debug"
+    assert os.environ["MOBILITY_DEBUG"] == "1"
+
+
+def test_set_params_maps_old_debug_logging_level_to_feedback_debug(tmp_path):
+    set_params(
+        package_data_folder_path=str(tmp_path / "pkg"),
+        project_data_folder_path=str(tmp_path / "project"),
+        r_packages=False,
+        logging_level="DEBUG",
+    )
+
+    assert os.environ["MOBILITY_FEEDBACK"] == "debug"
+    assert os.environ["MOBILITY_DEBUG"] == "1"
+
+
+def test_set_params_rejects_unknown_feedback_mode(tmp_path):
+    with pytest.raises(ValueError, match="Unknown feedback setting"):
+        set_params(
+            package_data_folder_path=str(tmp_path / "pkg"),
+            project_data_folder_path=str(tmp_path / "project"),
+            r_packages=False,
+            feedback="verbose",
+        )
+
+
+def test_set_params_rejects_unknown_progress_mode(tmp_path):
+    with pytest.raises(ValueError, match="Unknown progress setting"):
+        set_params(
+            package_data_folder_path=str(tmp_path / "pkg"),
+            project_data_folder_path=str(tmp_path / "project"),
+            r_packages=False,
+            progress="verbose",
+        )

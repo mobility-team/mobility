@@ -31,14 +31,14 @@ class PlanDistance:
             ],
             how="vertical_relaxed",
         ).unique()
-        logging.info(
+        logging.debug(
             "PlanDistance: start pair_count=%s requested_plan_count=%s",
             pair_index.height,
             requested_plan_ids.height,
         )
 
         requested_steps = plan_steps.join(requested_plan_ids, on=plan_id_col, how="inner")
-        logging.info(
+        logging.debug(
             "PlanDistance: requested step rows=%s collected in %.3fs",
             requested_steps.height,
             perf_counter() - t0,
@@ -49,7 +49,7 @@ class PlanDistance:
             plan_id_col=plan_id_col,
             transport_zones=transport_zones,
         )
-        logging.info(
+        logging.debug(
             "PlanDistance: plan features built plans=%s dims=%s in %.3fs",
             plan_features.height,
             max(plan_features.width - 1, 0),
@@ -111,7 +111,7 @@ class PlanDistance:
             pl.col("distance").mean().alias("mean_distance"),
             pl.col("distance").max().alias("max_distance"),
         ).row(0, named=True)
-        logging.info(
+        logging.debug(
             "PlanDistance: distance join+compute done in %.3fs; min=%.6f mean=%.6f max=%.6f total=%.3fs",
             perf_counter() - t2,
             float(stats["min_distance"] or 0.0),
@@ -132,7 +132,7 @@ class PlanDistance:
         t0 = perf_counter()
         has_spatial_info = transport_zones is not None and {"from", "to"}.issubset(plan_steps.columns)
         state_values = self._get_state_values(plan_steps)
-        logging.info(
+        logging.debug(
             "PlanDistance: build features start plans=%s step_rows=%s states=%s spatial=%s",
             plan_steps.select(plan_id_col).n_unique(),
             plan_steps.height,
@@ -159,7 +159,7 @@ class PlanDistance:
                     how="left",
                 )
             )
-        logging.info("PlanDistance: zone join done in %.3fs", perf_counter() - t0)
+        logging.debug("PlanDistance: zone join done in %.3fs", perf_counter() - t0)
 
         t1 = perf_counter()
         boundary_aggs = [
@@ -270,7 +270,7 @@ class PlanDistance:
             start_time=pl.col("start_time").clip(0.0, 24.0),
             end_time=pl.col("end_time").clip(0.0, 24.0),
         ).filter(pl.col("end_time") > pl.col("start_time"))
-        logging.info(
+        logging.debug(
             "PlanDistance: segments built rows=%s in %.3fs",
             segments.height,
             perf_counter() - t1,
@@ -292,7 +292,7 @@ class PlanDistance:
             .with_columns(overlap_hours=(pl.col("overlap_end") - pl.col("overlap_start")).clip(0.0))
             .filter(pl.col("overlap_hours") > 0.0)
         )
-        logging.info(
+        logging.debug(
             "PlanDistance: segment-hour overlaps rows=%s in %.3fs",
             segment_hours.height,
             perf_counter() - t2,
@@ -328,7 +328,7 @@ class PlanDistance:
                 how="left",
             )
         )
-        logging.info(
+        logging.debug(
             "PlanDistance: state features built rows=%s cols=%s in %.3fs",
             hourly_state_progress.height,
             hourly_state_progress.width,
@@ -395,7 +395,7 @@ class PlanDistance:
                 values="value",
                 aggregate_function="first",
             )
-            logging.info(
+            logging.debug(
                 "PlanDistance: spatial features built rows=%s cols=%s in %.3fs",
                 hourly_xy_progress.height,
                 hourly_xy_progress.width,
@@ -436,7 +436,7 @@ class PlanDistance:
             if feature_cols
             else 0.0
         )
-        logging.info(
+        logging.debug(
             "PlanDistance: final feature table rows=%s dims=%s max_abs=%.6f total=%.3fs",
             result.height,
             len(feature_cols),

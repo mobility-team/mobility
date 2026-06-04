@@ -4,6 +4,7 @@ from typing import Any
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 
 
@@ -72,6 +73,7 @@ class ActivitySequences(FileAsset):
 
     def create_and_get_asset(self) -> pl.DataFrame:
         """Compute and persist admitted activity-sequence rows for one iteration."""
+        get_group_day_trips_progress().iteration_step(self.iteration, "activity sequences")
         self._load_missing_runtime_inputs_from_previous_state()
         if self.seed is None and self.seed_asset is not None:
             self.seed = self.seed_asset.get()["activity_sequences"]

@@ -317,7 +317,7 @@ def test_handle_timeout_kills_process_if_terminate_does_not_finish(monkeypatch, 
     process = _KillAfterTerminateProcess()
     monkeypatch.setattr(runner, "_get_last_output_summary", lambda _now: "last stdout 5s ago: still working")
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         runner._handle_timeout(process, start_time=0.0)
 
     assert process.terminate_calls == 1
@@ -351,7 +351,7 @@ def test_stop_process_stops_child_processes_before_retrying(monkeypatch, tmp_pat
     assert wait_calls == [([child_process], 10), ([child_process], 10)]
 
 
-def test_log_process_output_logs_info_and_errors_without_debug(monkeypatch, tmp_path, caplog):
+def test_log_process_output_keeps_info_quiet_without_debug(monkeypatch, tmp_path, caplog):
     script_path = _make_script(tmp_path)
     runner = RScriptRunner(script_path)
     monkeypatch.delenv("MOBILITY_DEBUG", raising=False)
@@ -362,7 +362,7 @@ def test_log_process_output_logs_info_and_errors_without_debug(monkeypatch, tmp_
         runner.log_process_output(info_stream)
         runner.log_process_output(error_stream, is_error=True)
 
-    assert "message from R" in caplog.text
+    assert "message from R" not in caplog.text
     assert "R script execution failed" in caplog.text
     assert runner._last_output_line == "Error: crash happened\\n".strip()
     assert runner._last_output_stream == "stderr"
@@ -380,7 +380,7 @@ def test_log_heartbeat_reports_cpu_and_memory(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(runner, "_get_process_tree_cpu_seconds", lambda _pid: next(cpu_seconds_values))
     monkeypatch.setattr(runner, "_get_process_tree_memory_bytes", lambda _pid: 2 * 1024 * 1024)
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         runner.log_heartbeat(process, stop_event, start_time=90.0)
 
     assert "R is still running (PID 999, 10s): CPU 15.0%, RAM 2MiB." in caplog.text
