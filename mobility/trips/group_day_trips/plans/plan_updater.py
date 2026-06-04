@@ -44,9 +44,9 @@ class PlanUpdater:
         home_night_dur: pl.DataFrame,
         stay_home_plan: pl.DataFrame,
         transport_zones: Any,
-        sequence_index_folder,
+        previous_plan_id_index: pl.DataFrame,
         parameters: Any,
-    ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.LazyFrame | None]:
+    ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.LazyFrame | None, pl.DataFrame]:
         """Advance one iteration of plan updates."""
 
         possible_plan_steps = self.get_possible_plan_steps(
@@ -70,7 +70,10 @@ class PlanUpdater:
             f"plan_updater:iteration:{iteration}:possible_plan_steps_lazy",
             possible_plan_steps=possible_plan_steps,
         )
-        possible_plan_steps = add_plan_id(possible_plan_steps, index_folder=sequence_index_folder)
+        possible_plan_steps, plan_id_index = add_plan_id(
+            possible_plan_steps,
+            previous_index=previous_plan_id_index,
+        )
         self._assert_current_plans_covered_by_possible_plan_steps(
             current_plans,
             possible_plan_steps,
@@ -100,19 +103,20 @@ class PlanUpdater:
             )
             .drop("activity_utility_scale", "destination_shadow_price")
         )
-        possible_plan_utility = self.get_possible_plan_utility(
+        possible_plan_utility, plan_id_index = self.get_possible_plan_utility(
             possible_plan_steps,
             home_night_dur,
             resolved_activity_parameters["home"].value_of_time_stay_home,
             stay_home_plan,
             parameters.plan_update.min_activity_time_constant,
-            sequence_index_folder=sequence_index_folder,
+            plan_id_index=plan_id_index,
         )
-        possible_plan_steps = self.add_stay_home_plan_steps(
+        possible_plan_steps, plan_id_index = self.add_stay_home_plan_steps(
             possible_plan_steps,
             stay_home_plan,
-            sequence_index_folder=sequence_index_folder,
-        ).collect(
+            plan_id_index=plan_id_index,
+        )
+        possible_plan_steps = possible_plan_steps.collect(
             engine="streaming"
         )
         log_memory_checkpoint(
@@ -167,7 +171,7 @@ class PlanUpdater:
         if current_plans["n_persons"].is_null().any() or current_plans["n_persons"].is_nan().any():
             raise ValueError("Null or NaN values in the n_persons column, something went wrong.")
 
-        return current_plans, current_plan_steps, candidate_plan_steps, transition_events
+        return current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index
 
     def _assert_current_plans_covered_by_possible_plan_steps(
         self,
@@ -407,7 +411,7 @@ class PlanUpdater:
         stay_home_plan,
         min_activity_time_constant,
         *,
-        sequence_index_folder,
+        plan_id_index: pl.DataFrame,
     ):
         """Aggregate per-step utilities to plan-level utilities."""
 
@@ -454,15 +458,15 @@ class PlanUpdater:
             ]
         )
 
-        return add_plan_id(possible_plan_utility, index_folder=sequence_index_folder)
+        return add_plan_id(possible_plan_utility, previous_index=plan_id_index)
 
     def add_stay_home_plan_steps(
         self,
         possible_plan_steps: pl.LazyFrame,
         stay_home_plan: pl.DataFrame,
         *,
-        sequence_index_folder,
-    ) -> pl.LazyFrame:
+        plan_id_index: pl.DataFrame,
+    ) -> tuple[pl.LazyFrame, pl.DataFrame]:
         """Append one synthetic timed step for the stay-home state so it can be embedded like other plans."""
         step_columns = [col for col in possible_plan_steps.collect_schema().names() if col != "plan_id"]
         possible_plan_steps_no_id = possible_plan_steps.filter(pl.col("mode_seq_id") != 0).select(step_columns)
@@ -487,7 +491,7 @@ class PlanUpdater:
 
         return add_plan_id(
             pl.concat([possible_plan_steps_no_id, stay_home_steps], how="vertical_relaxed"),
-            index_folder=sequence_index_folder,
+            previous_index=plan_id_index,
         )
 
     def get_transition_probabilities(

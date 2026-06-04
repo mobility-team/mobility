@@ -175,7 +175,8 @@ class Run(FileAsset):
         """Build the content-addressed state asset chain for the run iterations."""
         state_assets: list[IterationStateAsset] = []
         previous_state: FileAsset = initial_state
-        sequence_index_folder = initial_state.sequence_index_folder
+        previous_destination_sequences: DestinationSequences | None = None
+        previous_mode_sequences: ModeSequences | None = None
 
         for iteration_index in range(1, parameters.run.n_iterations + 1):
             seeds = IterationSeedsAsset(
@@ -208,13 +209,13 @@ class Run(FileAsset):
                 iteration=iteration_index,
                 base_folder=self.iterations.folder_paths["destination-sequences"],
                 previous_state=previous_state,
+                previous_destination_sequences=previous_destination_sequences,
                 seed_asset=seeds,
                 activity_sequences=activity_sequences,
                 activities=activities,
                 scenario=scenario,
                 transport_zones=population.transport_zones,
                 transport_costs=resolved_transport_costs,
-                sequence_index_folder=sequence_index_folder,
                 parameters=parameters,
             )
             mode_sequences = ModeSequences(
@@ -222,10 +223,10 @@ class Run(FileAsset):
                 is_weekday=is_weekday,
                 iteration=iteration_index,
                 base_folder=self.iterations.folder_paths["modes"],
+                previous_mode_sequences=previous_mode_sequences,
                 destination_sequences=destination_sequences,
                 transport_costs=resolved_transport_costs,
                 working_folder=base_folder,
-                sequence_index_folder=sequence_index_folder,
                 parameters=parameters,
             )
             state_asset = IterationStateAsset(
@@ -244,11 +245,12 @@ class Run(FileAsset):
                 modes=modes,
                 parameters=parameters,
                 scenario=scenario,
-                sequence_index_folder=sequence_index_folder,
                 cache_iteration_events=parameters.outputs.cache_iteration_events,
             )
             state_assets.append(state_asset)
             previous_state = state_asset
+            previous_destination_sequences = destination_sequences
+            previous_mode_sequences = mode_sequences
 
         return state_assets
 
@@ -464,6 +466,7 @@ class Run(FileAsset):
             current_plans=state.current_plans,
             current_plan_steps=state.current_plan_steps,
             candidate_plan_steps=state.candidate_plan_steps,
+            plan_id_index=state.plan_id_index,
             destination_saturation=state.destination_saturation,
             costs=state.costs,
         )

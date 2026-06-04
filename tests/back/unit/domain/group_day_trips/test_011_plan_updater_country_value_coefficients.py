@@ -234,9 +234,7 @@ def test_destination_saturation_computes_shadow_price_above_soft_capacity():
 def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
     """Check that plan utility does not count travel time as home/night time."""
     updater = PlanUpdater()
-    index_folder = tmp_path / "plan_index"
-    index_folder.mkdir()
-    possible_plan_steps = add_plan_id(
+    possible_plan_steps, plan_id_index = add_plan_id(
         pl.DataFrame(
             {
                 "demand_group_id": [1],
@@ -251,8 +249,9 @@ def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
                 "utility": [5.0],
             }
         ),
-        index_folder=index_folder,
-    ).lazy()
+        previous_index=None,
+    )
+    possible_plan_steps = possible_plan_steps.lazy()
     home_night_dur = pl.DataFrame(
         {
             "country": ["fr"],
@@ -271,14 +270,15 @@ def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
         }
     )
 
-    result = updater.get_possible_plan_utility(
+    result, _ = updater.get_possible_plan_utility(
         possible_plan_steps,
         home_night_dur,
         value_of_time_stay_home=1.0,
         stay_home_plan=stay_home_plan,
         min_activity_time_constant=1.0,
-        sequence_index_folder=index_folder,
-    ).collect()
+        plan_id_index=plan_id_index,
+    )
+    result = result.collect()
 
     mobile_utility = result.filter(pl.col("mode_seq_id") != 0)["utility"].item()
     expected_home_night_utility = 10.0 * math.log(14.0 / (10.0 * math.exp(-1.0)))
@@ -287,9 +287,7 @@ def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
 
 def test_add_stay_home_plan_steps_preserves_candidate_retention_columns(tmp_path):
     updater = PlanUpdater()
-    index_folder = tmp_path / "stay_home_plan_index"
-    index_folder.mkdir()
-    possible_plan_steps = add_plan_id(
+    possible_plan_steps, plan_id_index = add_plan_id(
         pl.DataFrame(
             {
                 "demand_group_id": [1],
@@ -322,8 +320,9 @@ def test_add_stay_home_plan_steps_preserves_candidate_retention_columns(tmp_path
                 "utility": [5.0],
             }
         ),
-        index_folder=index_folder,
-    ).lazy()
+        previous_index=None,
+    )
+    possible_plan_steps = possible_plan_steps.lazy()
     stay_home_plan = pl.DataFrame(
         {
             "demand_group_id": [1],
@@ -349,11 +348,12 @@ def test_add_stay_home_plan_steps_preserves_candidate_retention_columns(tmp_path
         }
     )
 
-    result = updater.add_stay_home_plan_steps(
+    result, _ = updater.add_stay_home_plan_steps(
         possible_plan_steps,
         stay_home_plan,
-        sequence_index_folder=index_folder,
-    ).collect()
+        plan_id_index=plan_id_index,
+    )
+    result = result.collect()
 
     assert "last_seen_iteration" in result.columns
     assert result.filter(pl.col("mode_seq_id") == 0).select("last_seen_iteration").item() is None

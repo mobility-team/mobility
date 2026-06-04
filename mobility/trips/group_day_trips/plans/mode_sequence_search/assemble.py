@@ -20,9 +20,18 @@ def build_mode_sequence_keys(search_rows: pl.DataFrame) -> pl.DataFrame:
     return (
         search_rows
         .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_index"])
-        .agg(mode_index=pl.col("mode_index").sort_by("seq_step_index").cast(pl.Utf8()))
-        .with_columns(mode_index=pl.col("mode_index").list.join("-"))
-        .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_index", "mode_index"])
+        .agg(mode_sequence_key=pl.col("mode_index").sort_by("seq_step_index").cast(pl.Utf8()))
+        .with_columns(mode_sequence_key=pl.col("mode_sequence_key").list.join("-"))
+        .sort(
+            [
+                "demand_group_id",
+                "activity_seq_id",
+                "time_seq_id",
+                "dest_seq_id",
+                "mode_seq_index",
+                "mode_sequence_key",
+            ]
+        )
     )
 
 

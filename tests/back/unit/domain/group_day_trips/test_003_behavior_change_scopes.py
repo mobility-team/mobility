@@ -1,5 +1,4 @@
 import math
-from pathlib import Path
 
 import polars as pl
 import pytest
@@ -95,18 +94,14 @@ def _make_possible_plan_utility(rows: dict[str, list]) -> pl.LazyFrame:
     ).lazy()
 
 
-def _make_local_tmp_path(tmp_path: Path, name: str) -> Path:
-    path = tmp_path / "group_day_trips" / name
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
 def _with_plan_id(
     frame: pl.DataFrame | pl.LazyFrame,
     *,
-    tmp_path: Path,
+    tmp_path,
     name: str,
 ) -> pl.DataFrame | pl.LazyFrame:
-    return add_plan_id(frame, index_folder=_make_local_tmp_path(tmp_path, name))
+    indexed, _ = add_plan_id(frame, previous_index=None)
+    return indexed
 def test_parameters_resolve_behavior_change_scope_from_active_phases():
     parameters = GroupDayTripsBehaviorChangeParameters(
         phases=[
@@ -193,8 +188,7 @@ def test_get_transition_probabilities_blocks_stay_home_in_mode_replanning(tmp_pa
     assert result.filter(pl.col("activity_seq_id_trans") == 0).height == 0
 
 
-def test_add_plan_id_keeps_stay_home_and_non_stay_home_states_distinct(tmp_path):
-    index_folder = _make_local_tmp_path(tmp_path, "add_plan_id")
+def test_add_plan_id_keeps_stay_home_and_non_stay_home_states_distinct():
     plans = pl.DataFrame(
         {
             "demand_group_id": [1, 1],
@@ -212,7 +206,7 @@ def test_add_plan_id_keeps_stay_home_and_non_stay_home_states_distinct(tmp_path)
         },
     )
 
-    result = add_plan_id(plans, index_folder=index_folder)
+    result, plan_id_index = add_plan_id(plans, previous_index=None)
 
     assert result["plan_id"].n_unique() == 2
     assert (
@@ -226,8 +220,9 @@ def test_add_plan_id_keeps_stay_home_and_non_stay_home_states_distinct(tmp_path)
         .item()
     )
 
-    repeated = add_plan_id(plans, index_folder=index_folder)
+    repeated, repeated_index = add_plan_id(plans, previous_index=None)
     assert result["plan_id"].to_list() == repeated["plan_id"].to_list()
+    assert plan_id_index.to_dicts() == repeated_index.to_dicts()
 
 
 def test_candidate_memory_ignores_persisted_stay_home_rows():

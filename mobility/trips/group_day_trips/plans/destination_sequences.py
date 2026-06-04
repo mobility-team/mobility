@@ -10,7 +10,7 @@ from .debug_logs import (
     log_destination_sequence_diagnostics,
     log_step_dropout_diagnostics,
 )
-from .sequence_index import add_index
+from .stable_key_index import StableKeyIndex
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities.activity import resolve_activity_parameters
 
@@ -39,6 +39,7 @@ class DestinationSequences(FileAsset):
         iteration: int,
         base_folder: pathlib.Path,
         previous_state: FileAsset | None = None,
+        previous_destination_sequences: FileAsset | None = None,
         seed_asset: FileAsset | None = None,
         activity_sequences: FileAsset | None = None,
         activities: list[Any] | None = None,
@@ -51,11 +52,11 @@ class DestinationSequences(FileAsset):
         destination_saturation: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
         costs: pl.DataFrame | None = None,
-        sequence_index_folder: pathlib.Path | None = None,
         parameters: Any = None,
         seed: int | None = None,
     ) -> None:
         self.previous_state = previous_state
+        self.previous_destination_sequences = previous_destination_sequences
         self.seed_asset = seed_asset
         self.activity_sequences = activity_sequences
         self.activities = activities
@@ -80,15 +81,15 @@ class DestinationSequences(FileAsset):
         self.destination_saturation = destination_saturation
         self.demand_groups = demand_groups
         self.costs = costs
-        self.sequence_index_folder = sequence_index_folder
         self.parameters = parameters
         self.seed = seed
         inputs = {
-            "version": 6,
+            "version": 7,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "activity_sequences_asset": activity_sequences if isinstance(activity_sequences, FileAsset) else None,
             "previous_state": previous_state,
+            "previous_destination_sequences": previous_destination_sequences,
             "seed_asset": seed_asset,
             # Destination choice only needs the resolved activity/scenario values
             # and the current cost table. Run does not need to know these details.
@@ -110,13 +111,21 @@ class DestinationSequences(FileAsset):
             ),
             "seed": seed,
         }
-        cache_path = pathlib.Path(base_folder) / f"destination_sequences_{iteration}.parquet"
+        cache_path = {
+            "sequences": pathlib.Path(base_folder) / f"destination_sequences_{iteration}.parquet",
+            "index": pathlib.Path(base_folder) / f"destination_sequence_index_{iteration}.parquet",
+        }
         super().__init__(inputs, cache_path)
 
 
     def get_cached_asset(self) -> pl.DataFrame:
         """Return cached destination sequences for one iteration."""
-        return pl.read_parquet(self.cache_path)
+        return pl.read_parquet(self.cache_path["sequences"])
+
+
+    def get_index(self) -> pl.DataFrame:
+        """Return the destination-chain index cached with this iteration."""
+        return pl.read_parquet(self.cache_path["index"])
 
 
     def create_and_get_asset(self) -> pl.DataFrame:
@@ -135,8 +144,6 @@ class DestinationSequences(FileAsset):
             raise ValueError("Cannot build destination sequences without demand groups.")
         if self.costs is None:
             raise ValueError("Cannot build destination sequences without costs.")
-        if self.sequence_index_folder is None:
-            raise ValueError("Cannot build destination sequences without a sequence index folder.")
         if self.parameters is None:
             raise ValueError("Cannot build destination sequences without parameters.")
         if self.seed is None:
@@ -148,8 +155,8 @@ class DestinationSequences(FileAsset):
 
         destination_sequences = self._build_destination_sequences_for_scope()
 
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        destination_sequences.write_parquet(self.cache_path)
+        self.cache_path["sequences"].parent.mkdir(parents=True, exist_ok=True)
+        destination_sequences.write_parquet(self.cache_path["sequences"])
         return self.get_cached_asset()
 
     def _load_missing_runtime_inputs_from_previous_state(self) -> None:
@@ -176,17 +183,17 @@ class DestinationSequences(FileAsset):
         scope = self.parameters.behavior_change.scope_at(self.iteration)
 
         if scope == BehaviorChangeScope.FULL_REPLANNING:
-            return self._with_refreshed_active_destination_sequences(
-                self._sample_all_destination_sequences()
-            )
+            sampled_sequences = self._sample_all_destination_sequences()
+            return self._with_refreshed_active_destination_sequences(sampled_sequences)
 
         if scope == BehaviorChangeScope.DESTINATION_REPLANNING:
-            return self._with_refreshed_active_destination_sequences(
-                self._sample_active_destination_sequences()
-            )
+            sampled_sequences = self._sample_active_destination_sequences()
+            return self._with_refreshed_active_destination_sequences(sampled_sequences)
 
         if scope == BehaviorChangeScope.MODE_REPLANNING:
-            return self._reuse_current_destination_sequences()
+            reused_sequences = self._reuse_current_destination_sequences()
+            self._cache_empty_destination_sequence_index()
+            return reused_sequences
 
         raise ValueError(f"Unsupported behavior change scope: {scope}")
 
@@ -211,6 +218,7 @@ class DestinationSequences(FileAsset):
             raise ValueError("Cannot build destination sequences without activity sequences.")
         filtered_chains = self.activity_sequences.get_cached_asset()
         if filtered_chains.height == 0:
+            self._cache_empty_destination_sequence_index()
             return self._empty_destination_sequences()
 
         return self.run(
@@ -336,6 +344,19 @@ class DestinationSequences(FileAsset):
             }
         )
 
+    def _cache_empty_destination_sequence_index(self) -> None:
+        """Write a carried-forward destination index when no new chain is sampled."""
+        empty_keys = pl.DataFrame(schema={"destination_sequence_key": pl.String})
+        StableKeyIndex(
+            key_cols=["destination_sequence_key"],
+            index_col="dest_seq_id",
+            first_new_id=1,
+        ).extend_and_cache(
+            empty_keys,
+            previous_asset=self.previous_destination_sequences,
+            index_path=self.cache_path["index"],
+        )
+
     def run(
         self,
         activities: list[Any],
@@ -402,21 +423,24 @@ class DestinationSequences(FileAsset):
         destination_sequences = (
             complete_activity_sequences
             .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
-            .agg(to=pl.col("to").sort_by("seq_step_index").cast(pl.Utf8()))
-            .with_columns(to=pl.col("to").list.join("-"))
+            .agg(destination_sequence_key=pl.col("to").sort_by("seq_step_index").cast(pl.Utf8()))
+            .with_columns(destination_sequence_key=pl.col("destination_sequence_key").list.join("-"))
             .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
         )
         destination_sequences = (
             destination_sequences
-            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "to"])
+            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "destination_sequence_key"])
             .agg(dest_draw_id=pl.col("dest_draw_id").min())
             .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
         )
-        destination_sequences = add_index(
+        destination_sequences, _ = StableKeyIndex(
+            key_cols=["destination_sequence_key"],
+            index_col="dest_seq_id",
+            first_new_id=1,
+        ).extend_and_cache(
             destination_sequences,
-            col="to",
-            index_col_name="dest_seq_id",
-            index_folder=self.sequence_index_folder,
+            previous_asset=self.previous_destination_sequences,
+            index_path=self.cache_path["index"],
         )
         destination_sequences = (
             complete_activity_sequences

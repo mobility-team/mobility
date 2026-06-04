@@ -75,12 +75,22 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
 
     seen = {}
 
-    def fake_run(activities, transport_zones, destination_saturation, chains, demand_groups, costs, parameters, seed):
+    def fake_run(
+        activities,
+        transport_zones,
+        destination_saturation,
+        chains,
+        demand_groups,
+        costs,
+        parameters,
+        seed,
+    ):
         seen["chains"] = chains
         return pl.DataFrame(
             {
                 "demand_group_id": [1],
                 "activity_seq_id": [10],
+                "time_seq_id": [0],
                 "dest_seq_id": [100],
                 "seq_step_index": [0],
                 "from": [1],
@@ -93,6 +103,7 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
             schema={
                 "demand_group_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
                 "seq_step_index": pl.UInt32,
                 "from": pl.Int32,

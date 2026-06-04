@@ -16,6 +16,7 @@ from .iteration_assets import (
     CurrentPlansAsset,
     CurrentPlanStepsAsset,
     IterationCompleteAsset,
+    PlanIdIndexAsset,
     RemainingOpportunitiesAsset,
     RngStateAsset,
 )
@@ -29,6 +30,7 @@ class IterationState:
     current_plans: pl.DataFrame
     current_plan_steps: pl.DataFrame
     candidate_plan_steps: pl.DataFrame
+    plan_id_index: pl.DataFrame
     destination_saturation: pl.DataFrame
     rng_state: object
 
@@ -71,7 +73,6 @@ class Iteration:
             destination_saturation=destination_saturation,
             demand_groups=demand_groups,
             costs=costs,
-            sequence_index_folder=self.iterations.folder_paths["sequences-index"],
             parameters=parameters,
             seed=seed,
         )
@@ -117,7 +118,6 @@ class Iteration:
             destination_sequences=destination_sequences,
             transport_costs=transport_costs,
             working_folder=self.iterations.base_folder,
-            sequence_index_folder=self.iterations.folder_paths["sequences-index"],
             parameters=parameters,
         )
 
@@ -132,6 +132,12 @@ class Iteration:
             base_folder=iteration_state_folder,
         )
         candidate_plan_steps_asset = CandidatePlanStepsAsset(
+            run_key=self.iterations.run_inputs_hash,
+            is_weekday=self.iterations.is_weekday,
+            iteration=self.iteration,
+            base_folder=iteration_state_folder,
+        )
+        plan_id_index_asset = PlanIdIndexAsset(
             run_key=self.iterations.run_inputs_hash,
             is_weekday=self.iterations.is_weekday,
             iteration=self.iteration,
@@ -153,6 +159,14 @@ class Iteration:
                 "This cache was likely created with an older code version. "
                 "Clear the saved iteration artifacts and rerun from scratch."
             )
+        if plan_id_index_asset.cache_path.exists() is False:
+            raise RuntimeError(
+                "Saved PopulationGroupDayTrips iteration state is incomplete. "
+                f"Missing plan_id_index for run_inputs_hash={self.iterations.run_inputs_hash}, "
+                f"is_weekday={self.iterations.is_weekday}, iteration={self.iteration}. "
+                "This cache was likely created with an older code version. "
+                "Clear the saved iteration artifacts and rerun from scratch."
+            )
 
         return IterationState(
             current_plans=CurrentPlansAsset(
@@ -163,6 +177,7 @@ class Iteration:
             ).get(),
             current_plan_steps=current_plan_steps_asset.get(),
             candidate_plan_steps=candidate_plan_steps_asset.get(),
+            plan_id_index=plan_id_index_asset.get(),
             destination_saturation=RemainingOpportunitiesAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
@@ -202,6 +217,13 @@ class Iteration:
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
                 candidate_plan_steps=state.candidate_plan_steps,
+            ).create_and_get_asset()
+            PlanIdIndexAsset(
+                run_key=self.iterations.run_inputs_hash,
+                is_weekday=self.iterations.is_weekday,
+                iteration=self.iteration,
+                base_folder=iteration_state_folder,
+                plan_id_index=state.plan_id_index,
             ).create_and_get_asset()
             RemainingOpportunitiesAsset(
                 run_key=self.iterations.run_inputs_hash,
@@ -308,6 +330,7 @@ class Iterations:
             "iteration-state": [
                 "*current_plans_*.parquet",
                 "*current_plan_steps_*.parquet",
+                "*plan_id_index_*.parquet",
                 "*remaining_opportunities_*.parquet",
                 "*rng_state_*.pkl",
                 "*iteration_complete_*.json",
@@ -345,7 +368,6 @@ class Iterations:
             "activity-sequences",
             "destination-sequences",
             "modes",
-            "sequences-index",
             "transitions",
             "iteration-state",
         ]
