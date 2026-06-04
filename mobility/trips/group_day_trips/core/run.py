@@ -10,6 +10,7 @@ from ..iterations import (
     InitialIterationStateAsset,
     IterationSeedsAsset,
     Iterations,
+    IterationTransportCostsAsset,
     IterationStateAsset,
 )
 from ..evaluation.population_weighted_plan_steps import PopulationWeightedPlanSteps
@@ -35,7 +36,6 @@ from mobility.transport.costs.transport_costs import TransportCosts
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.input_hashing import hash_inputs
 from mobility.activities import Activity
-from mobility.activities.activity import resolve_activity_parameters
 from mobility.surveys import SurveyPlanAssets
 from mobility.surveys.mobility_survey import MobilitySurvey
 from mobility.population import Population
@@ -67,6 +67,7 @@ class Run(FileAsset):
         is_weekday: bool,
         enabled: bool = True,
         scenario: str,
+        replication: int = 0,
     ) -> None:
         """Initialize a single weekday or weekend PopulationGroupDayTrips run."""
         run_context_inputs = {
@@ -87,7 +88,10 @@ class Run(FileAsset):
             parameters=parameters,
             is_weekday=is_weekday,
             scenario=scenario,
+            replication=replication,
         )
+        self.scenario = scenario
+        self.replication = int(replication)
 
         self.transport_costs = transport_costs
         self._expected_diagnostics_inputs: ExpectedDiagnosticsInputs | None = None
@@ -109,8 +113,17 @@ class Run(FileAsset):
             modes=modes,
             parameters=parameters,
             scenario=scenario,
-            initial_transport_costs=transport_costs.asset_for_iteration(self.run_context, 1),
+            initial_transport_costs=IterationTransportCostsAsset(
+                is_weekday=is_weekday,
+                iteration=1,
+                base_folder=group_day_trips_folder,
+                transport_costs=transport_costs,
+                scenario=scenario,
+                previous_state=None,
+                n_iter_per_cost_update=parameters.run.n_iter_per_cost_update,
+            ),
         )
+        self.iteration_transport_cost_assets: list[IterationTransportCostsAsset] = []
         self.iteration_state_assets = self._build_iteration_state_assets(
             run_key=run_context_hash,
             is_weekday=is_weekday,
@@ -170,10 +183,16 @@ class Run(FileAsset):
                 iteration=iteration_index,
                 base_folder=base_folder,
             )
-            resolved_transport_costs = transport_costs.asset_for_iteration(
-                self.run_context,
-                iteration_index,
+            resolved_transport_costs = IterationTransportCostsAsset(
+                is_weekday=is_weekday,
+                iteration=iteration_index,
+                base_folder=base_folder,
+                transport_costs=transport_costs,
+                scenario=scenario,
+                previous_state=(None if iteration_index == 1 else previous_state),
+                n_iter_per_cost_update=parameters.run.n_iter_per_cost_update,
             )
+            self.iteration_transport_cost_assets.append(resolved_transport_costs)
             activity_sequences = ActivitySequences(
                 run_key=run_key,
                 is_weekday=is_weekday,
@@ -192,12 +211,9 @@ class Run(FileAsset):
                 seed_asset=seeds,
                 activity_sequences=activity_sequences,
                 activities=activities,
-                resolved_activity_parameters=resolve_activity_parameters(
-                    activities,
-                    iteration_index,
-                    scenario=scenario,
-                ),
+                scenario=scenario,
                 transport_zones=population.transport_zones,
+                transport_costs=resolved_transport_costs,
                 sequence_index_folder=sequence_index_folder,
                 parameters=parameters,
             )
@@ -223,11 +239,6 @@ class Run(FileAsset):
                 destination_sequences=destination_sequences,
                 mode_sequences=mode_sequences,
                 transport_costs=resolved_transport_costs,
-                next_transport_costs=transport_costs.for_iteration(
-                    iteration_index + 1,
-                    scenario=scenario,
-                ),
-                run_context=self.run_context,
                 population=population,
                 activities=activities,
                 modes=modes,
@@ -254,11 +265,13 @@ class Run(FileAsset):
 
         final_costs = self._build_final_costs(state)
         log_memory_checkpoint("finalization:after_build_final_costs", costs=final_costs)
+
         final_plan_steps = self._build_final_plan_steps(state, final_costs)
         log_memory_checkpoint(
             "finalization:after_build_final_plan_steps",
             plan_steps=final_plan_steps,
         )
+
         transitions = self._build_transitions()
         log_memory_checkpoint("finalization:after_build_transitions", transitions=transitions)
 
@@ -355,10 +368,12 @@ class Run(FileAsset):
 
     def _build_final_costs(self, state: RunState) -> pl.DataFrame:
         """Compute the final OD costs to attach to the written outputs."""
-        return self.transport_costs.asset_for_iteration(
-            self.run_context,
-            self.parameters.run.n_iterations,
-        ).get_costs_by_od_and_mode(
+        final_transport_costs = (
+            self.iteration_transport_cost_assets[-1]
+            if self.iteration_transport_cost_assets
+            else self.initial_iteration_state.initial_transport_costs
+        )
+        return final_transport_costs.get_costs_by_od_and_mode(
             ["cost", "distance", "time", "ghg_emissions_per_trip"]
         )
 
@@ -403,7 +418,11 @@ class Run(FileAsset):
         if self.parameters.outputs.cache_iteration_events is False:
             return pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA)
 
-        transition_paths = self.iterations.list_transition_event_paths()
+        transition_paths = [
+            state_asset.transition_events_asset.cache_path
+            for state_asset in self.iteration_state_assets
+            if state_asset.transition_events_asset.cache_path.exists()
+        ]
         if not transition_paths:
             raise RuntimeError(
                 "Run finished without persisted transition events. "
@@ -493,29 +512,10 @@ class Run(FileAsset):
         )
 
     def remove(self) -> None:
-        """Remove cached outputs and saved iteration artifacts for this run."""
+        """Remove final cached outputs for this run.
+
+        Iteration states, sequence samples, and congestion costs are shared DAG
+        cache assets. They are intentionally kept so other scenario runs can
+        reuse unchanged iterations.
+        """
         super().remove()
-        self._remove_run_iteration_artifacts()
-
-    def _remove_run_iteration_artifacts(self) -> None:
-        """Remove all iteration-derived artifacts for this run."""
-        self._remove_run_iteration_state_artifacts()
-        self._remove_run_iteration_congestion_artifacts()
-
-    def _remove_run_iteration_state_artifacts(self) -> None:
-        """Remove saved run iteration state folders."""
-        Iterations(
-            run_inputs_hash=self.run_context.inputs_hash,
-            is_weekday=self.is_weekday,
-            base_folder=self.cache_path["plan_steps"].parent,
-        ).remove_all()
-
-    def _remove_run_iteration_congestion_artifacts(self) -> None:
-        """Remove congestion snapshots and congestion-derived caches for this run."""
-        for next_transport_costs, congestion_state, flow_assets_by_mode in (
-            self.transport_costs.iter_run_congestion_artifacts(self.run_context)
-        ):
-            next_transport_costs.remove_congestion_artifacts(congestion_state)
-
-            for flow_asset in flow_assets_by_mode.values():
-                flow_asset.remove()

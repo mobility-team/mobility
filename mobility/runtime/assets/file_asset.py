@@ -1,5 +1,6 @@
 import pathlib
 import os
+import logging
 import networkx as nx
 
 from mobility.runtime.assets.asset import Asset
@@ -76,11 +77,26 @@ class FileAsset(Asset):
             Any: The cached or newly created asset.
         """
         
+        logging.debug(
+            "Checking asset DAG for %s (%s)...",
+            self.__class__.__name__,
+            self.inputs_hash,
+        )
         self.update_ancestors_if_needed()
                 
         if self.is_update_needed():
+            logging.debug(
+                "Rebuilding asset %s (%s)...",
+                self.__class__.__name__,
+                self.inputs_hash,
+            )
             asset = self.create_and_get_asset(*args, **kwargs)
             self.update_hash(self.inputs_hash)
+            logging.debug(
+                "Asset %s (%s) is ready.",
+                self.__class__.__name__,
+                self.inputs_hash,
+            )
             return asset
         return self.get_cached_asset(*args, **kwargs)
         
@@ -145,8 +161,14 @@ class FileAsset(Asset):
                 for nested in value:
                     yield from iter_file_assets(nested)
         
+        visited_assets = set()
+
         def add_upstream_deps(asset):
             graph.add_node(asset)
+            if asset in visited_assets:
+                return
+
+            visited_assets.add(asset)
             for inp in asset.inputs.values():
                 for dep in iter_file_assets(inp):
                     graph.add_node(dep)
@@ -156,6 +178,14 @@ class FileAsset(Asset):
         for inp in self.inputs.values():
             for dep in iter_file_assets(inp):
                 add_upstream_deps(dep)
+
+        logging.debug(
+            "Asset DAG for %s (%s) has %s upstream assets and %s dependency edges.",
+            self.__class__.__name__,
+            self.inputs_hash,
+            str(graph.number_of_nodes()),
+            str(graph.number_of_edges()),
+        )
         
         # Find out which ones need to be updated and recompute them, as well
         # as all their descendants
@@ -175,8 +205,20 @@ class FileAsset(Asset):
         assets = [asset for asset in topo_order if asset in update_needed_assets]
         
         for asset in assets:
+            logging.debug(
+                "Rebuilding upstream asset %s (%s) for %s (%s)...",
+                asset.__class__.__name__,
+                asset.inputs_hash,
+                self.__class__.__name__,
+                self.inputs_hash,
+            )
             asset.create_and_get_asset()
             asset.update_hash(asset.inputs_hash)
+            logging.debug(
+                "Upstream asset %s (%s) is ready.",
+                asset.__class__.__name__,
+                asset.inputs_hash,
+            )
         
         return None
         

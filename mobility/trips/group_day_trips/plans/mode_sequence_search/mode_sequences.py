@@ -67,13 +67,14 @@ class ModeSequences(FileAsset):
         self.sequence_index_folder = sequence_index_folder
         self.parameters = parameters
         inputs = {
-            "version": 1,
-            "run_key": run_key,
+            "version": 2,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "destination_sequences": destination_sequences,
             "transport_costs": transport_costs,
-            "parameters": parameters,
+            "mode_sequence_parameters": (
+                parameters.mode_sequences if parameters is not None else None
+            ),
         }
         cache_path = pathlib.Path(base_folder) / f"mode_sequences_{iteration}.parquet"
         super().__init__(inputs, cache_path)

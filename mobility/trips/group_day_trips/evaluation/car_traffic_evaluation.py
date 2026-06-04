@@ -26,7 +26,16 @@ class CarTrafficEvaluation:
         car_mode = car_mode[0]
         travel_costs = car_mode.inputs["travel_costs"]
 
-        congested_graph_asset = travel_costs.asset_for_iteration(self.results.run, iteration).inputs["congested_path_graph"]
+        iteration_transport_costs = self.results.run.iteration_transport_cost_assets[
+            iteration - 1
+        ]
+        congestion_state = iteration_transport_costs.congestion_flows.get()
+        if congestion_state is None:
+            congested_graph_asset = travel_costs.inputs["congested_path_graph"]
+        else:
+            congested_graph_asset = travel_costs.asset_for_congestion_state(
+                congestion_state
+            ).inputs["congested_path_graph"]
 
         freeflow_graph = self.build_graph_lines_dataframe(travel_costs.modified_path_graph)
         congested_graph = self.build_graph_lines_dataframe(congested_graph_asset)

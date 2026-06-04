@@ -53,6 +53,22 @@ class MobilitySurveyPlanSteps(FileAsset):
         self.survey = survey
         self.activities = activities
         self.modes = modes
+        activity_mapping = {
+            activity_id: activity.name
+            for activity in activities
+            if activity.name != "other"
+            for activity_id in (activity.inputs["parameters"].survey_ids or [])
+        }
+        activity_anchor_by_name = {
+            activity.name: activity.is_anchor
+            for activity in activities
+        }
+        mode_mapping = {
+            mode_id: mode.inputs["parameters"].name
+            for mode in modes
+            for mode_id in (mode.inputs["parameters"].survey_ids or [])
+        }
+        mode_values = get_mode_values(modes, "other")
         folder_path = (
             pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"])
             / "mobility_surveys"
@@ -60,10 +76,15 @@ class MobilitySurveyPlanSteps(FileAsset):
         )
         cache_path = folder_path / "group_day_trip_plan_steps.parquet"
         inputs = {
-            "version": 3.2,
+            "version": 3.3,
             "survey": survey,
-            "activities": activities,
-            "modes": modes,
+            # Survey plans only use activity/mode survey-code mappings, anchor
+            # flags, and the canonical mode enum. Future utility parameters do
+            # not affect this asset.
+            "activity_mapping": activity_mapping,
+            "activity_anchor_by_name": activity_anchor_by_name,
+            "mode_mapping": mode_mapping,
+            "mode_values": mode_values,
         }
         super().__init__(inputs, cache_path)
 

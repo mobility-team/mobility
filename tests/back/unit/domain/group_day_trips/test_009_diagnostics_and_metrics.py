@@ -265,12 +265,12 @@ def test_metrics_evaluation_wrappers_pass_run_results(monkeypatch):
 
 
 def test_travel_costs_plot_uses_report_style_and_mode_colors(monkeypatch, tmp_path):
-    class FakeTransportCosts:
-        def asset_for_iteration(self, run, iteration):
-            seen["iteration"] = iteration
-            return self
+    class FakeIterationTransportCosts:
+        def __init__(self, iteration):
+            self.iteration = iteration
 
         def get_costs_by_od_and_mode(self, columns):
+            seen["iteration"] = self.iteration
             seen["columns"] = columns
             return pl.DataFrame(
                 {
@@ -305,7 +305,13 @@ def test_travel_costs_plot_uses_report_style_and_mode_colors(monkeypatch, tmp_pa
 
     results = SimpleNamespace(
         parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=3)),
-        run=SimpleNamespace(transport_costs=FakeTransportCosts()),
+        run=SimpleNamespace(
+            iteration_transport_cost_assets=[
+                FakeIterationTransportCosts(1),
+                FakeIterationTransportCosts(2),
+                FakeIterationTransportCosts(3),
+            ],
+        ),
         transport_zones=SimpleNamespace(get=lambda: pd.DataFrame()),
     )
     seen = {}

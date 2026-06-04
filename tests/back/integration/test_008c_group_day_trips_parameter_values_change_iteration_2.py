@@ -111,7 +111,14 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data):
     static_run = static.run("weekday")
     dynamic_run = dynamic.run("weekday")
 
+    assert dynamic_run.initial_iteration_state.inputs_hash == static_run.initial_iteration_state.inputs_hash
+    assert dynamic_run.iteration_state_assets[0].inputs_hash == static_run.iteration_state_assets[0].inputs_hash
+    assert dynamic_run.iteration_state_assets[1].inputs_hash != static_run.iteration_state_assets[1].inputs_hash
+
     static_plan_steps = static_run.get()["plan_steps"].collect()
+    static_iteration_1_state_path = static_run.iteration_state_assets[0].cache_path["current_plans"]
+    static_iteration_1_state_mtime = static_iteration_1_state_path.stat().st_mtime
+
     dynamic_plan_steps = dynamic_run.get()["plan_steps"].collect()
     static_transitions = static_run.get()["transitions"].collect()
     dynamic_transitions = dynamic_run.get()["transitions"].collect()
@@ -120,6 +127,8 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data):
     assert dynamic_plan_steps.height > 0
     assert static_transitions.height > 0
     assert dynamic_transitions.height > 0
+    assert dynamic_run.iteration_state_assets[0].cache_path["current_plans"] == static_iteration_1_state_path
+    assert dynamic_run.iteration_state_assets[0].cache_path["current_plans"].stat().st_mtime == static_iteration_1_state_mtime
 
     static_iter_2 = static_transitions.filter(pl.col("iteration") == 2)
     dynamic_iter_2 = dynamic_transitions.filter(pl.col("iteration") == 2)
