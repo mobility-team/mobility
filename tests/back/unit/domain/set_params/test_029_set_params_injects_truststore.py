@@ -44,16 +44,28 @@ def test_set_params_sets_r_runner_idle_monitor_settings(tmp_path):
     assert os.environ["MOBILITY_R_CPU_CHECK_INTERVAL_SECONDS"] == "7"
 
 
-def test_set_params_sets_feedback_progress_by_default(tmp_path):
+def test_set_params_sets_feedback_logs_by_default_in_non_interactive_shell(tmp_path):
     set_params(
         package_data_folder_path=str(tmp_path / "pkg"),
         project_data_folder_path=str(tmp_path / "project"),
         r_packages=False,
     )
 
+    assert os.environ["MOBILITY_FEEDBACK"] == "logs"
+    assert os.environ["MOBILITY_PROGRESS"] == "log"
+    assert os.environ["MOBILITY_DEBUG"] == "0"
+
+
+def test_set_params_sets_feedback_progress_when_requested(tmp_path):
+    set_params(
+        package_data_folder_path=str(tmp_path / "pkg"),
+        project_data_folder_path=str(tmp_path / "project"),
+        r_packages=False,
+        feedback="progress",
+    )
+
     assert os.environ["MOBILITY_FEEDBACK"] == "progress"
     assert os.environ["MOBILITY_PROGRESS"] == "rich"
-    assert os.environ["MOBILITY_DEBUG"] == "0"
 
 
 def test_set_params_sets_feedback_logs_mode(tmp_path):

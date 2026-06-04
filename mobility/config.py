@@ -61,7 +61,8 @@ def set_params(
     feedback (str, optional): controls normal run feedback.
         Use "progress" for Rich progress bars, "logs" for regular INFO logs,
         or "debug" for detailed DEBUG logs and R logs. When omitted, Mobility
-        uses "progress", except when debug=True or logging_level="DEBUG".
+        uses "progress" in an interactive console and "logs" in CI or other
+        non-interactive shells, except when debug=True or logging_level="DEBUG".
     progress (str|bool, optional): old name for feedback. Prefer feedback.
     r_timeout_seconds (int, optional): timeout applied to each R script run. Leave as None to disable the timeout.
     r_max_retries (int, optional): number of times to retry a failed or timed out R script run.
@@ -117,6 +118,8 @@ def _normalize_feedback_setting(feedback, *, progress=None, debug=False, logging
     if feedback is None:
         if debug or _is_debug_logging_level(logging_level):
             return "debug"
+        if os.environ.get("CI") or not sys.stderr.isatty():
+            return "logs"
         return "progress"
 
     value = str(feedback).lower()

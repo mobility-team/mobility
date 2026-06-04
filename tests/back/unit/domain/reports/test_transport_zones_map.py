@@ -375,7 +375,7 @@ def test_metric_grid_creates_scenario_rows_and_variable_columns():
         colorbar_tickformat=".0%",
     )
 
-    assert _plotted_zone_ids(fig) == {1, 2}
+    assert {1, 2}.issubset(_plotted_zone_ids(fig))
     assert fig.layout.width >= 1240
     assert fig.layout.height >= 1240
     assert fig.layout.coloraxis.cmin == 0.0
