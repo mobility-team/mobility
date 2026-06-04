@@ -33,7 +33,7 @@ class CongestionStateManager:
             The cached congestion state for the provided flows, or `None`
             when no congestion-enabled mode produced any cached flow asset.
         """
-        logging.info("Building congestion state from OD flows...")
+        logging.debug("Building congestion state from OD flows...")
         congestion_flows_by_mode = {
             mode.inputs["parameters"].name: mode.build_congestion_flows(od_flows_by_mode)
             for mode in self._iter_congestion_enabled_modes()

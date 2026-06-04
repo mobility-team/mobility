@@ -30,6 +30,7 @@ class _FakeRun:
         self.enabled = enabled
         self.survey_plan_assets = survey_plan_assets
         self.scenario = scenario
+        self.replication = kwargs.get("replication")
         base = Path("cache") / ("weekday" if is_weekday else "weekend")
         self.cache_path = {
             "plan_steps": base / "plan_steps.parquet",
@@ -153,6 +154,8 @@ def test_group_day_trips_wrapper_uses_explicit_nested_parameters(monkeypatch):
     assert [survey.inputs["parameters"].country for survey in weekday_run.survey_plan_assets.surveys] == ["fr"]
     assert [survey.inputs["parameters"].country for survey in weekend_run.survey_plan_assets.surveys] == ["fr"]
     assert weekend_run.enabled is False
+    assert weekday_run.replication == 2
+    assert weekend_run.replication == 2
     assert "iteration_metrics" not in weekday_run.cache_path
     assert "iteration_metrics" not in weekend_run.cache_path
 

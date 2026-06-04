@@ -138,6 +138,7 @@ class PopulationGroupDayTrips:
                 is_weekday=is_weekday,
                 enabled=is_weekday or parameters.periods.simulate_weekend,
                 scenario=scenario,
+                replication=replication,
             )
         return self._runs[key]
 

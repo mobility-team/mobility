@@ -35,7 +35,7 @@ class ModifiedPathGraph(FileAsset):
 
     def get_cached_asset(self) -> pathlib.Path:
         
-        logging.info("Modified graph already prepared. Reusing the files in : " + str(self.cache_path.parent))
+        logging.debug("Modified graph already prepared. Reusing the files in : " + str(self.cache_path.parent))
          
         return self.cache_path
 

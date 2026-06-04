@@ -193,7 +193,7 @@ class TransportCosts(FileAsset):
             last_completed_iteration=iteration - 1,
             cost_update_interval=run.parameters.run.n_iter_per_cost_update,
         )
-        logging.info(
+        logging.debug(
             "TransportCosts asset_for_iteration: run_key=%s is_weekday=%s iteration=%s "
             "last_completed_iteration=%s congestion_state_iteration=%s congestion_enabled=%s",
             run.inputs_hash,
@@ -228,7 +228,7 @@ class TransportCosts(FileAsset):
         Returns:
             The cached multimodal cost table for this asset variant.
         """
-        logging.info("Transport costs already prepared. Reusing the file : %s", str(self.cache_path))
+        logging.debug("Transport costs already prepared. Reusing the file : %s", str(self.cache_path))
         return pl.read_parquet(self.cache_path)
 
     def create_and_get_asset(self) -> pl.DataFrame:

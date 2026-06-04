@@ -18,6 +18,8 @@ def clean_env(monkeypatch):
         "HTTP_PROXY",
         "HTTPS_PROXY",
         "MOBILITY_DEBUG",
+        "MOBILITY_FEEDBACK",
+        "MOBILITY_PROGRESS",
         "MOBILITY_R_TIMEOUT_SECONDS",
         "MOBILITY_R_MAX_RETRIES",
         "MOBILITY_R_RETRY_DELAY_SECONDS",

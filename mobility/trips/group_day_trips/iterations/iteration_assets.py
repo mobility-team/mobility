@@ -24,6 +24,7 @@ from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 from mobility.trips.group_day_trips.transitions.transition_events import TransitionEventsAsset
 from mobility.transport.costs.congestion_state import CongestionState
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
+from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from ..plans.candidate_plan_steps import CandidatePlanStepsAsset
 
 
@@ -190,6 +191,7 @@ class InitialIterationStateAsset(FileAsset):
     def create_and_get_asset(self) -> RunState:
         """Build and cache the starting state for the iteration loop."""
         logging.debug("Building initial group-day-trips iteration state...")
+        get_group_day_trips_progress().step("Building initial population state")
         self.sequence_index_folder.mkdir(parents=True, exist_ok=True)
         survey_plans, survey_plan_steps, demand_groups = self.initializer.get_survey_plan_data(
             self.population,
@@ -268,6 +270,7 @@ class IterationSeedsAsset(FileAsset):
     def create_and_get_asset(self) -> dict[str, object]:
         """Draw and cache the stochastic seeds used by one iteration."""
         logging.debug("Drawing stochastic seeds for iteration %s...", str(self.iteration))
+        get_group_day_trips_progress().iteration_step(self.iteration, "drawing random seeds")
         self.previous_state.get()
         rng = random.Random()
         rng.setstate(self.previous_state.get_rng_state())
@@ -362,6 +365,10 @@ class CongestionFlowsAsset(FileAsset):
             logging.debug(
                 "Building congestion flows after iteration %s...",
                 str(self.iteration - 1),
+            )
+            get_group_day_trips_progress().iteration_step(
+                self.iteration,
+                "updating congestion flows",
             )
             previous = self.previous_state.get()
             od_flows_by_mode = (
@@ -459,6 +466,7 @@ class IterationTransportCostsAsset(FileAsset):
             "Building transport costs for group-day-trips iteration %s...",
             str(self.iteration),
         )
+        get_group_day_trips_progress().iteration_step(self.iteration, "preparing transport costs")
         congestion_state = self.congestion_flows.get()
         effective_transport_costs = self.transport_costs.asset_for_congestion_state(
             congestion_state
@@ -591,6 +599,7 @@ class IterationStateAsset(FileAsset):
     def create_and_get_asset(self) -> RunState:
         """Run one model iteration and cache the resulting state."""
         logging.debug("Starting group-day-trips iteration %s...", str(self.iteration))
+        get_group_day_trips_progress().iteration_step(self.iteration, "updating plan choices")
         self.sequence_index_folder.mkdir(parents=True, exist_ok=True)
         previous = self.previous_state.get()
         seeds = self.seeds.get()
@@ -655,6 +664,7 @@ class IterationStateAsset(FileAsset):
             ).create_and_get_asset()
 
         logging.debug("Group-day-trips iteration %s is ready.", str(self.iteration))
+        get_group_day_trips_progress().finish_iteration(self.iteration)
         return state
 
 

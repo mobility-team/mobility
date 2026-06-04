@@ -70,25 +70,25 @@ class GTFSRouter(FileAsset):
         return self.cache_path
     
     def check_expected_agencies(self, gtfs_files, expected_agencies):
-        logging.info(gtfs_files)
+        logging.debug(gtfs_files)
         for gtfs_url in gtfs_files:
-            logging.info("GTFS")
+            logging.debug("GTFS")
             gtfs=GTFSData(gtfs_url)
             agencies = gtfs.get_agencies_names(gtfs_url)
-            logging.info(agencies)
-            logging.info(type(agencies))
+            logging.debug(agencies)
+            logging.debug(type(agencies))
             for expected_agency in expected_agencies:
-                logging.info(f'Looking for {expected_agency} in {gtfs.name}')
+                logging.debug(f'Looking for {expected_agency} in {gtfs.name}')
                 if expected_agency.lower() in agencies.lower():
-                    logging.info(f"{expected_agency} found in {gtfs.name}")
+                    logging.debug(f"{expected_agency} found in {gtfs.name}")
                     expected_agencies.remove(expected_agency)
-        logging.info(expected_agencies)
+        logging.debug(expected_agencies)
         if expected_agencies == []:
-            logging.info("All expected agencies were found")
+            logging.debug("All expected agencies were found")
             return True
         else:
-            logging.info("Some agencies were not found in GTFS files.")
-            logging.info(expected_agencies)
+            logging.debug("Some agencies were not found in GTFS files.")
+            logging.debug(expected_agencies)
             raise IndexError('Missing agencies')
             
         

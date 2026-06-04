@@ -63,7 +63,7 @@ class PublicTransportGraph(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pd.DataFrame:
-        logging.info("Graph already prepared. Reusing the file : " + str(self.cache_path))
+        logging.debug("Graph already prepared. Reusing the file : " + str(self.cache_path))
         return self.cache_path
 
     def create_and_get_asset(self) -> pd.DataFrame:
