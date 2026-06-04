@@ -48,13 +48,19 @@ class ActivitySequences(FileAsset):
         self.parameters = parameters
         self.seed = seed
         inputs = {
-            "version": 3,
-            "run_key": run_key,
+            "version": 4,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "previous_state": previous_state,
             "seed_asset": seed_asset,
-            "parameters": parameters,
+            "activity_sequence_parameters": (
+                parameters.activity_sequences if parameters is not None else None
+            ),
+            "behavior_change_scope": (
+                parameters.behavior_change.scope_at(iteration)
+                if parameters is not None
+                else None
+            ),
             "seed": seed,
         }
         cache_path = pathlib.Path(base_folder) / f"activity_sequences_{iteration}.parquet"

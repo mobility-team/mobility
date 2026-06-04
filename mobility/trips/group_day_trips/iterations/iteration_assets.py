@@ -1,4 +1,5 @@
 import json
+import logging
 import pathlib
 import pickle
 import random
@@ -21,6 +22,8 @@ from mobility.trips.group_day_trips.plans.mode_sequence_search import ModeSequen
 from mobility.trips.group_day_trips.plans.plan_initializer import PlanInitializer
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 from mobility.trips.group_day_trips.transitions.transition_events import TransitionEventsAsset
+from mobility.transport.costs.congestion_state import CongestionState
+from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from ..plans.candidate_plan_steps import CandidatePlanStepsAsset
 
 
@@ -143,17 +146,34 @@ class InitialIterationStateAsset(FileAsset):
             survey_plan_assets=survey_plan_assets,
             is_weekday=is_weekday,
         )
+        initial_activity_parameters = resolve_activity_parameters(
+            activities,
+            1,
+            scenario=scenario,
+        )
         inputs = {
-            "version": 1,
-            "run_key": run_key,
+            "version": 2,
             "is_weekday": is_weekday,
             "population": population,
             "survey_plan_assets": survey_plan_assets,
             "population_weighted_plan_steps": self.population_weighted_plan_steps,
-            "activities": activities,
+            # Initial opportunities depend on the opportunity source, not every
+            # future activity parameter value. The resolved iteration-1
+            # parameters below cover the coefficients used in the opportunity
+            # capacity and saturation columns.
+            "activity_opportunity_sources": [
+                {
+                    "name": activity.name,
+                    "has_opportunities": activity.has_opportunities,
+                    "opportunities": activity.opportunities,
+                    "population": activity.inputs.get("population"),
+                }
+                for activity in activities
+            ],
+            "initial_activity_parameters": initial_activity_parameters,
             "modes": modes,
-            "parameters": parameters,
-            "scenario": scenario,
+            "run_seed": parameters.run.seed,
+            "min_activity_time_constant": parameters.plan_update.min_activity_time_constant,
             "initial_transport_costs": initial_transport_costs,
         }
         super().__init__(inputs, _state_cache_paths(base_folder, 0))
@@ -169,6 +189,7 @@ class InitialIterationStateAsset(FileAsset):
 
     def create_and_get_asset(self) -> RunState:
         """Build and cache the starting state for the iteration loop."""
+        logging.debug("Building initial group-day-trips iteration state...")
         self.sequence_index_folder.mkdir(parents=True, exist_ok=True)
         survey_plans, survey_plan_steps, demand_groups = self.initializer.get_survey_plan_data(
             self.population,
@@ -179,11 +200,7 @@ class InitialIterationStateAsset(FileAsset):
             self.population_weighted_plan_steps.get(),
             demand_groups,
         )
-        resolved_activity_parameters = resolve_activity_parameters(
-            self.activities,
-            1,
-            scenario=self.scenario,
-        )
+        resolved_activity_parameters = self.inputs["initial_activity_parameters"]
         stay_home_plan, current_plans = self.initializer.get_stay_home_state(
             demand_groups,
             home_night_dur,
@@ -197,6 +214,7 @@ class InitialIterationStateAsset(FileAsset):
             demand_groups,
             self.activities,
             self.population.transport_zones,
+            resolved_activity_parameters=resolved_activity_parameters,
         )
         rng = random.Random(self.parameters.run.seed)
         state = RunState(
@@ -214,6 +232,7 @@ class InitialIterationStateAsset(FileAsset):
             start_iteration=1,
         )
         _write_run_state(self.cache_path, state, rng.getstate())
+        logging.debug("Initial group-day-trips iteration state is ready.")
         return state
 
 
@@ -248,6 +267,7 @@ class IterationSeedsAsset(FileAsset):
 
     def create_and_get_asset(self) -> dict[str, object]:
         """Draw and cache the stochastic seeds used by one iteration."""
+        logging.debug("Drawing stochastic seeds for iteration %s...", str(self.iteration))
         self.previous_state.get()
         rng = random.Random()
         rng.setstate(self.previous_state.get_rng_state())
@@ -259,7 +279,232 @@ class IterationSeedsAsset(FileAsset):
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.cache_path, "wb") as file:
             pickle.dump(seeds, file, protocol=pickle.HIGHEST_PROTOCOL)
+        logging.debug("Stochastic seeds for iteration %s are ready.", str(self.iteration))
         return seeds
+
+
+class CongestionFlowsAsset(FileAsset):
+    """Cached vehicle flows used to update congested costs after one iteration.
+
+    The input is the previous iteration state, not the run folder. This means two
+    scenario runs that produce the same current plan steps will reuse the same
+    congestion-flow files before rebuilding the next transport costs.
+    """
+
+    def __init__(
+        self,
+        *,
+        is_weekday: bool,
+        iteration: int,
+        base_folder: pathlib.Path,
+        previous_state: FileAsset | None,
+        transport_costs: Any,
+        n_iter_per_cost_update: int,
+    ) -> None:
+        self.is_weekday = is_weekday
+        self.iteration = iteration
+        self.previous_state = previous_state
+        self.transport_costs = transport_costs
+        self.n_iter_per_cost_update = int(n_iter_per_cost_update)
+        inputs = {
+            "version": 1,
+            "is_weekday": is_weekday,
+            "iteration": iteration,
+            "previous_state": previous_state,
+            "transport_costs": transport_costs,
+            "n_iter_per_cost_update": int(n_iter_per_cost_update),
+        }
+        cache_path = pathlib.Path(base_folder) / "congestion-flows" / f"congestion_flows_{iteration}.json"
+        super().__init__(inputs, cache_path)
+
+    def get_cached_asset(self) -> CongestionState | None:
+        """Return the cached congestion state, or None when no update is due."""
+        with open(self.cache_path, "r", encoding="utf-8") as file:
+            metadata = json.load(file)
+
+        if metadata["has_congestion_state"] is False:
+            return None
+
+        flow_assets_by_mode = {
+            mode_name: VehicleODFlowsAsset.from_inputs(
+                run_key=self.inputs_hash,
+                is_weekday=self.is_weekday,
+                iteration=self.iteration - 1,
+                mode_name=mode_name,
+            )
+            for mode_name in metadata["mode_names"]
+        }
+        return CongestionState(
+            run_key=self.inputs_hash,
+            is_weekday=self.is_weekday,
+            iteration=self.iteration - 1,
+            flow_assets_by_mode=flow_assets_by_mode,
+        )
+
+    def create_and_get_asset(self) -> CongestionState | None:
+        """Aggregate plan-step flows and cache the matching vehicle-flow assets."""
+        congestion_state = None
+
+        # Iteration 1 uses the base transport costs. Later iterations only build
+        # congestion flows when the configured cost-update schedule says so.
+        should_update_costs = (
+            self.previous_state is not None
+            and self.iteration > 1
+            and self.transport_costs.has_enabled_congestion()
+            and self.n_iter_per_cost_update > 0
+            and self.transport_costs.should_recompute_congested_costs(
+                self.iteration - 1,
+                self.n_iter_per_cost_update,
+            )
+        )
+
+        if should_update_costs:
+            logging.debug(
+                "Building congestion flows after iteration %s...",
+                str(self.iteration - 1),
+            )
+            previous = self.previous_state.get()
+            od_flows_by_mode = (
+                previous.current_plan_steps
+                .filter(pl.col("activity_seq_id") != 0)
+                .with_columns(mode=pl.col("mode").cast(pl.String))
+                .group_by(["from", "to", "mode"])
+                .agg(flow_volume=pl.col("n_persons").sum())
+            )
+            congestion_state = self.transport_costs.build_congestion_state(
+                od_flows_by_mode,
+                run_key=self.inputs_hash,
+                is_weekday=self.is_weekday,
+                iteration=self.iteration - 1,
+            )
+        else:
+            logging.debug(
+                "Skipping congestion-flow update before iteration %s.",
+                str(self.iteration),
+            )
+
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.cache_path, "w", encoding="utf-8") as file:
+            json.dump(
+                {
+                    "has_congestion_state": congestion_state is not None,
+                    "mode_names": (
+                        sorted(congestion_state.flow_assets_by_mode)
+                        if congestion_state is not None
+                        else []
+                    ),
+                },
+                file,
+                sort_keys=True,
+            )
+        logging.debug(
+            "Congestion-flow asset for iteration %s is ready.",
+            str(self.iteration),
+        )
+        return congestion_state
+
+
+class IterationTransportCostsAsset(FileAsset):
+    """Cached full transport costs used by one model iteration.
+
+    This asset is the DAG edge between iteration states and congestion-sensitive
+    transport costs. It resolves mode parameters for the current iteration, then
+    applies the vehicle flows produced by the previous completed iteration when a
+    congestion update is due.
+    """
+
+    def __init__(
+        self,
+        *,
+        is_weekday: bool,
+        iteration: int,
+        base_folder: pathlib.Path,
+        transport_costs: Any,
+        scenario: str,
+        previous_state: FileAsset | None,
+        n_iter_per_cost_update: int,
+    ) -> None:
+        self.is_weekday = is_weekday
+        self.iteration = iteration
+        self.transport_costs = transport_costs.for_iteration(
+            iteration,
+            scenario=scenario,
+        )
+        self.congestion_flows = CongestionFlowsAsset(
+            is_weekday=is_weekday,
+            iteration=iteration,
+            base_folder=base_folder,
+            previous_state=previous_state,
+            transport_costs=self.transport_costs,
+            n_iter_per_cost_update=n_iter_per_cost_update,
+        )
+        self.modes = self.transport_costs.modes
+        inputs = {
+            "version": 1,
+            "is_weekday": is_weekday,
+            "iteration": iteration,
+            "transport_costs": self.transport_costs,
+            "congestion_flows": self.congestion_flows,
+        }
+        cache_path = pathlib.Path(base_folder) / "iteration-transport-costs" / f"transport_costs_{iteration}.parquet"
+        super().__init__(inputs, cache_path)
+
+    def get_cached_asset(self) -> pl.DataFrame:
+        """Return the full OD-by-mode transport-cost table for this iteration."""
+        return pl.read_parquet(self.cache_path)
+
+    def create_and_get_asset(self) -> pl.DataFrame:
+        """Build and cache transport costs for this iteration."""
+        logging.debug(
+            "Building transport costs for group-day-trips iteration %s...",
+            str(self.iteration),
+        )
+        congestion_state = self.congestion_flows.get()
+        effective_transport_costs = self.transport_costs.asset_for_congestion_state(
+            congestion_state
+        )
+        costs = effective_transport_costs.get()
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        costs.write_parquet(self.cache_path)
+        logging.debug(
+            "Transport costs for group-day-trips iteration %s are ready.",
+            str(self.iteration),
+        )
+        return costs
+
+    def get_costs_by_od_and_mode(
+        self,
+        metrics: list,
+        detail_distances: bool = False,
+    ) -> pl.DataFrame:
+        """Project cached costs to the OD-by-mode view used by plan scoring."""
+        metrics = list(metrics)
+        costs = self.get()
+
+        dist_cols = [col for col in costs.columns if col.endswith("_distance")]
+        selected_metrics = [metric for metric in metrics if metric != "ghg_emissions"]
+        if (
+            ("ghg_emissions" in metrics or "ghg_emissions_per_trip" in metrics)
+            and "ghg_emissions_per_trip" not in selected_metrics
+        ):
+            selected_metrics.append("ghg_emissions_per_trip")
+        if detail_distances:
+            selected_metrics.extend(dist_cols)
+
+        selected_metrics = list(dict.fromkeys(selected_metrics))
+        columns = ["from", "to", "mode"] + selected_metrics
+        available_columns = [column for column in columns if column in costs.columns]
+        return costs.select(available_columns)
+
+    def get_costs_by_od(self, metrics: list) -> pl.DataFrame:
+        """Aggregate cached costs to the OD-only view used by destination choice."""
+        costs = self.get_costs_by_od_and_mode(metrics, detail_distances=False)
+        costs = costs.with_columns((pl.col("cost").neg().exp()).alias("prob"))
+        costs = costs.with_columns(
+            (pl.col("prob") / pl.col("prob").sum().over(["from", "to"])).alias("prob")
+        )
+        costs = costs.with_columns((pl.col("prob") * pl.col("cost")).alias("cost"))
+        return costs.group_by(["from", "to"]).agg(pl.col("cost").sum())
 
 
 class IterationStateAsset(FileAsset):
@@ -278,8 +523,6 @@ class IterationStateAsset(FileAsset):
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
         transport_costs: Any,
-        next_transport_costs: Any,
-        run_context: Any,
         population: Any,
         activities: list[Any],
         modes: list[Any],
@@ -294,8 +537,6 @@ class IterationStateAsset(FileAsset):
         self.destination_sequences = destination_sequences
         self.mode_sequences = mode_sequences
         self.transport_costs = transport_costs
-        self.next_transport_costs = next_transport_costs
-        self.run_context = run_context
         self.population = population
         self.activities = activities
         self.modes = modes
@@ -305,8 +546,7 @@ class IterationStateAsset(FileAsset):
         self.cache_iteration_events = cache_iteration_events
         self.updater = PlanUpdater()
         inputs = {
-            "version": 1,
-            "run_key": run_key,
+            "version": 2,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "previous_state": previous_state,
@@ -315,18 +555,29 @@ class IterationStateAsset(FileAsset):
             "destination_sequences": destination_sequences,
             "mode_sequences": mode_sequences,
             "transport_costs": transport_costs,
-            "next_transport_costs": next_transport_costs,
-            "parameters": parameters,
-            "scenario": scenario,
+            # These resolved values are the activity/scenario inputs consumed by
+            # the plan update. Keeping them here avoids a broad run-level hash.
+            "resolved_activity_parameters": resolve_activity_parameters(
+                activities,
+                iteration,
+                scenario=scenario,
+            ),
+            "arrival_time_rigidity_by_activity": resolve_activity_arrival_time_rigidity(
+                activities,
+                iteration,
+                scenario=scenario,
+            ),
+            "plan_update_parameters": parameters.plan_update,
+            "behavior_change_scope": parameters.behavior_change.scope_at(iteration),
             "cache_iteration_events": cache_iteration_events,
         }
         self.iteration = iteration
         super().__init__(inputs, _state_cache_paths(base_folder, iteration))
         self.transition_events_asset = TransitionEventsAsset(
-            run_key=run_key,
+            run_key=self.inputs_hash,
             is_weekday=is_weekday,
             iteration=iteration,
-            base_folder=pathlib.Path(base_folder) / f"{run_key}-transitions",
+            base_folder=pathlib.Path(base_folder) / "transition-events",
         )
 
     def get_cached_asset(self) -> RunState:
@@ -339,23 +590,18 @@ class IterationStateAsset(FileAsset):
 
     def create_and_get_asset(self) -> RunState:
         """Run one model iteration and cache the resulting state."""
+        logging.debug("Starting group-day-trips iteration %s...", str(self.iteration))
         self.sequence_index_folder.mkdir(parents=True, exist_ok=True)
         previous = self.previous_state.get()
         seeds = self.seeds.get()
+        logging.debug("Preparing sampled alternatives for iteration %s...", str(self.iteration))
         self.activity_sequences.get()
         self.destination_sequences.get()
         self.mode_sequences.get()
 
-        resolved_activity_parameters = resolve_activity_parameters(
-            self.activities,
-            self.iteration,
-            scenario=self.scenario,
-        )
-        arrival_time_rigidity_by_activity = resolve_activity_arrival_time_rigidity(
-            self.activities,
-            self.iteration,
-            scenario=self.scenario,
-        )
+        logging.debug("Updating plan choices for iteration %s...", str(self.iteration))
+        resolved_activity_parameters = self.inputs["resolved_activity_parameters"]
+        arrival_time_rigidity_by_activity = self.inputs["arrival_time_rigidity_by_activity"]
         current_plans, current_plan_steps, candidate_plan_steps, transition_events = self.updater.get_new_plans(
             previous.current_plans,
             previous.current_plan_steps,
@@ -376,14 +622,7 @@ class IterationStateAsset(FileAsset):
             self.sequence_index_folder,
             self.parameters,
         )
-        costs = self.updater.get_new_costs(
-            previous.costs,
-            self.iteration,
-            self.parameters.run.n_iter_per_cost_update,
-            current_plan_steps,
-            self.next_transport_costs,
-            run=self.run_context,
-        )
+        costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
         destination_saturation = self.updater.get_destination_saturation(
             current_plan_steps,
             previous.opportunities,
@@ -408,13 +647,14 @@ class IterationStateAsset(FileAsset):
 
         if transition_events is not None and self.cache_iteration_events:
             TransitionEventsAsset(
-                run_key=self.inputs["run_key"],
+                run_key=self.inputs_hash,
                 is_weekday=self.inputs["is_weekday"],
                 iteration=self.iteration,
                 base_folder=self.transition_events_asset.cache_path.parent,
                 transition_events=transition_events,
             ).create_and_get_asset()
 
+        logging.debug("Group-day-trips iteration %s is ready.", str(self.iteration))
         return state
 
 

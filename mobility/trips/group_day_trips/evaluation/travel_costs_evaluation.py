@@ -89,11 +89,9 @@ class TravelCostsEvaluation:
         if iteration is None:
             iteration = int(self.results.parameters.run.n_iterations)
 
-        costs = ( 
-            self.results.run.transport_costs
-            .asset_for_iteration(self.results.run, iteration)
-            .get_costs_by_od_and_mode(["time", "distance"])
-        )
+        costs = self.results.run.iteration_transport_cost_assets[
+            iteration - 1
+        ].get_costs_by_od_and_mode(["time", "distance"])
         transport_zones = self.results.transport_zones.get()
         
         ref_costs = self.convert_to_dataframe(ref_costs)

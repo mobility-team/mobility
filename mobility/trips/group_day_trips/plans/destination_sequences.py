@@ -12,6 +12,7 @@ from .debug_logs import (
 )
 from .sequence_index import add_index
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.activities.activity import resolve_activity_parameters
 
 class DestinationSequences(FileAsset):
     """Persist destination sequences produced for one PopulationGroupDayTrips iteration."""
@@ -42,7 +43,9 @@ class DestinationSequences(FileAsset):
         activity_sequences: FileAsset | None = None,
         activities: list[Any] | None = None,
         resolved_activity_parameters: dict[str, Any] | None = None,
+        scenario: str | None = None,
         transport_zones: Any = None,
+        transport_costs: Any = None,
         current_plans: pl.DataFrame | None = None,
         current_plan_steps: pl.DataFrame | None = None,
         destination_saturation: pl.DataFrame | None = None,
@@ -56,8 +59,22 @@ class DestinationSequences(FileAsset):
         self.seed_asset = seed_asset
         self.activity_sequences = activity_sequences
         self.activities = activities
-        self.resolved_activity_parameters = resolved_activity_parameters
+        self.resolved_activity_parameters = (
+            resolved_activity_parameters
+            if resolved_activity_parameters is not None
+            else (
+                resolve_activity_parameters(
+                    activities,
+                    iteration,
+                    scenario=scenario,
+                )
+                if activities is not None
+                else None
+            )
+        )
+        self.scenario = scenario
         self.transport_zones = transport_zones
+        self.transport_costs = transport_costs
         self.current_plans = current_plans
         self.current_plan_steps = current_plan_steps
         self.destination_saturation = destination_saturation
@@ -67,17 +84,30 @@ class DestinationSequences(FileAsset):
         self.parameters = parameters
         self.seed = seed
         inputs = {
-            "version": 5,
-            "run_key": run_key,
+            "version": 6,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "activity_sequences_asset": activity_sequences if isinstance(activity_sequences, FileAsset) else None,
             "previous_state": previous_state,
             "seed_asset": seed_asset,
-            "activities": activities,
-            "resolved_activity_parameters": resolved_activity_parameters,
+            # Destination choice only needs the resolved activity/scenario values
+            # and the current cost table. Run does not need to know these details.
+            "resolved_activity_parameters": self.resolved_activity_parameters,
             "transport_zones": transport_zones,
-            "parameters": parameters,
+            "transport_costs": transport_costs,
+            "destination_sequence_parameters": (
+                parameters.destination_sequences if parameters is not None else None
+            ),
+            "plan_update_shadow_price_flag": (
+                parameters.plan_update.use_destination_shadow_prices
+                if parameters is not None
+                else None
+            ),
+            "behavior_change_scope": (
+                parameters.behavior_change.scope_at(iteration)
+                if parameters is not None
+                else None
+            ),
             "seed": seed,
         }
         cache_path = pathlib.Path(base_folder) / f"destination_sequences_{iteration}.parquet"
@@ -136,7 +166,9 @@ class DestinationSequences(FileAsset):
             self.destination_saturation = state.destination_saturation
         if self.demand_groups is None:
             self.demand_groups = state.demand_groups
-        if self.costs is None:
+        if self.costs is None and self.transport_costs is not None:
+            self.costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
+        elif self.costs is None:
             self.costs = state.costs
 
     def _build_destination_sequences_for_scope(self) -> pl.DataFrame:

@@ -352,7 +352,14 @@ class PlanInitializer:
 
         return stay_home_state, current_states
 
-    def get_opportunities(self, activity_demand_per_pers, demand_groups, activities, transport_zones):
+    def get_opportunities(
+        self,
+        activity_demand_per_pers,
+        demand_groups,
+        activities,
+        transport_zones,
+        resolved_activity_parameters=None,
+    ):
         """Compute destination opportunities per activity and zone."""
 
         demand = (
@@ -367,26 +374,38 @@ class PlanInitializer:
 
         activity_names = activity_demand_per_pers.schema["activity"].categories
 
-        opportunities = (
-            pl.concat(
-                [
-                    activity.get_opportunities(transport_zones).with_columns(
-                        activity=pl.lit(activity.name),
-                        sink_saturation_coeff=pl.lit(activity.inputs["parameters"].sink_saturation_coeff),
-                        destination_soft_capacity_factor=pl.lit(
-                            activity.inputs["parameters"].destination_soft_capacity_factor
-                        ),
-                        destination_sampling_overload_gamma=pl.lit(
-                            activity.inputs["parameters"].destination_sampling_overload_gamma
-                        ),
-                        destination_sampling_min_attraction_factor=pl.lit(
-                            activity.inputs["parameters"].destination_sampling_min_attraction_factor
-                        ),
-                    )
-                    for activity in activities
-                    if activity.has_opportunities is True
-                ]
+        opportunity_tables = []
+        for activity in activities:
+            if activity.has_opportunities is False:
+                continue
+
+            # Scenario or iteration-varying activity parameters are resolved by
+            # the caller. The opportunity source itself still comes from the
+            # activity because it may be a user table or a population proxy.
+            activity_parameters = (
+                resolved_activity_parameters[activity.name]
+                if resolved_activity_parameters is not None
+                else activity.inputs["parameters"]
             )
+            opportunity_tables.append(
+                activity.get_opportunities(transport_zones)
+                .with_columns(
+                    activity=pl.lit(activity.name),
+                    sink_saturation_coeff=pl.lit(activity_parameters.sink_saturation_coeff),
+                    destination_soft_capacity_factor=pl.lit(
+                        activity_parameters.destination_soft_capacity_factor
+                    ),
+                    destination_sampling_overload_gamma=pl.lit(
+                        activity_parameters.destination_sampling_overload_gamma
+                    ),
+                    destination_sampling_min_attraction_factor=pl.lit(
+                        activity_parameters.destination_sampling_min_attraction_factor
+                    ),
+                )
+            )
+
+        opportunities = (
+            pl.concat(opportunity_tables)
             .filter(pl.col("n_opp") > 0.0)
             .with_columns(
                 activity=pl.col("activity").cast(pl.Enum(activity_names)),

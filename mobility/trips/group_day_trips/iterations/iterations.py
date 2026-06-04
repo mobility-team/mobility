@@ -277,14 +277,14 @@ class Iterations:
             resume_iteration = min(int(resume_iteration), int(n_iterations))
 
         if resume_iteration is None:
-            logging.info(
+            logging.debug(
                 "No saved iteration found for run_key=%s is_weekday=%s. Starting from scratch.",
                 self.run_inputs_hash,
                 str(self.is_weekday),
             )
             return None
 
-        logging.info(
+        logging.debug(
             "Latest saved iteration found for run_key=%s is_weekday=%s: iteration=%s",
             self.run_inputs_hash,
             str(self.is_weekday),
@@ -329,13 +329,18 @@ class Iterations:
 
 
     def remove_all(self) -> None:
-        """Remove all run-scoped iteration folders."""
+        """Remove all shared iteration cache folders.
+
+        This is a low-level cache maintenance helper. Normal Run.remove() does
+        not call it because unchanged iteration assets can be reused by other
+        scenario runs.
+        """
         for path in self.folder_paths.values():
             shutil.rmtree(path, ignore_errors=True)
 
 
     def _build_folder_paths(self) -> dict[str, pathlib.Path]:
-        """Return the run-scoped folders used for iteration artifacts."""
+        """Return stable folders used for content-addressed iteration artifacts."""
         folder_names = [
             "activity-sequences",
             "destination-sequences",
@@ -344,7 +349,7 @@ class Iterations:
             "transitions",
             "iteration-state",
         ]
-        return {name: self.base_folder / f"{self.run_inputs_hash}-{name}" for name in folder_names}
+        return {name: self.base_folder / name for name in folder_names}
 
 
     def _find_latest_completed_iteration(self) -> int | None:

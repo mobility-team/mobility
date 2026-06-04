@@ -49,10 +49,11 @@ class SurveyPlanAssets(InMemoryAsset):
             )
 
         inputs = {
-            "version": 1,
+            "version": 2,
             "surveys": surveys,
-            "activities": activities,
-            "modes": modes,
+            # The merged survey wrapper changes only when one of its child
+            # survey assets changes. Do not hash full activity or mode objects
+            # here, because future scenario parameters are not survey logic.
             "per_survey_assets": per_survey_assets,
         }
         super().__init__(inputs)
