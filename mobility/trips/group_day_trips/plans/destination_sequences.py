@@ -63,7 +63,7 @@ class DestinationSequences(FileAsset):
         self.parameters = parameters
         self.seed = seed
         inputs = {
-            "version": 3,
+            "version": 5,
             "run_key": run_key,
             "is_weekday": is_weekday,
             "iteration": iteration,
@@ -318,6 +318,8 @@ class DestinationSequences(FileAsset):
         anchor_spatialized_sequences = self._spatialize_anchor_activities(
             source_activity_sequences,
             destination_probability,
+            costs,
+            parameters.destination_sequences.alpha,
             seed,
         )
         spatialized_activity_sequences = self._spatialize_other_activities(
@@ -508,112 +510,261 @@ class DestinationSequences(FileAsset):
         self,
         chains: pl.DataFrame,
         destination_probability: pl.DataFrame,
+        costs: pl.DataFrame,
+        alpha: float,
         seed: int,
     ) -> pl.DataFrame:
-        """Sample destinations for anchor activities and fill anchor destinations."""
+        """Sample anchor destinations with a forward tour-aware pass.
+
+        Anchor activities are fixed points in the daily schedule, for example
+        `studies`, `work`, and `home`. We sample them before the more flexible
+        non-anchor activities, because later non-anchor steps need to know the
+        next anchor location they are travelling toward.
+
+        The important rule is that anchors are sampled in travel order. A work
+        anchor after a study anchor is sampled from the sampled study location,
+        not independently from home. We also use the same simple two-leg penalty
+        as non-anchor activities:
+
+        `current location -> candidate anchor -> home`
+
+        This keeps sampled anchor chains reachable and avoids impossible legs
+        such as sampling a work zone that cannot be reached from the previous
+        anchor zone.
+        """
         logging.info("Spatializing anchor activities...")
-        chains_lf = chains.lazy()
+        chain_key_cols = [
+            "demand_group_id",
+            "home_zone_id",
+            "activity_seq_id",
+            "time_seq_id",
+            "dest_draw_id",
+        ]
         destination_probability_lf = destination_probability.lazy()
-
-        anchor_activities = (
-            chains_lf
-            .filter((pl.col("is_anchor")) & (pl.col("activity") != "home"))
-            .select(["demand_group_id", "home_zone_id", "activity_seq_id", "time_seq_id", "activity"])
-            .unique()
-        )
-
-        required_anchor_counts = (
-            anchor_activities
-            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id"])
-            .agg(required_anchor_activities=pl.col("activity").n_unique())
-        )
-
-        sampled_anchors = (
-            anchor_activities
-            .join(
-                destination_probability_lf,
-                left_on=["home_zone_id", "activity"],
-                right_on=["from", "activity"],
-            )
-            .with_columns(
-                noise=(
-                    pl.struct(["demand_group_id", "activity_seq_id", "time_seq_id", "activity", "to"])
-                    .hash(seed=seed)
-                    .cast(pl.Float64)
-                    .truediv(pl.lit(18446744073709551616.0))
-                    .log()
-                    .neg()
-                )
-            )
-            .with_columns(
-                sample_score=(
-                    pl.col("noise") / pl.col("p_ij").clip(1e-18)
-                    + pl.col("to").cast(pl.Float64) * 1e-18
-                )
-            )
-            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "activity", "sample_score", "to"])
-            .with_columns(
-                dest_draw_id=pl.col("to").cum_count().over(
-                    ["demand_group_id", "activity_seq_id", "time_seq_id", "activity"]
-                )
-                .cast(pl.UInt32)
-            )
-            .filter(pl.col("dest_draw_id") <= self.parameters.destination_sequences.k_destination_sequences)
-            .select(["demand_group_id", "activity_seq_id", "time_seq_id", "activity", "dest_draw_id", "to"])
-        )
-
-        valid_anchor_draws = (
-            sampled_anchors
-            .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
-            .agg(sampled_anchor_activities=pl.col("activity").n_unique())
-            .join(required_anchor_counts, on=["demand_group_id", "activity_seq_id", "time_seq_id"], how="left")
-            .filter(pl.col("sampled_anchor_activities") == pl.col("required_anchor_activities"))
-            .select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"])
-        )
-
-        all_sequences = (
-            chains_lf
-            .select(["demand_group_id", "home_zone_id", "activity_seq_id", "time_seq_id"])
-            .unique()
-        )
+        costs_lf = costs.lazy()
         destination_draw_ids = pl.DataFrame(
             {"dest_draw_id": list(range(1, int(self.parameters.destination_sequences.k_destination_sequences) + 1))},
             schema={"dest_draw_id": pl.UInt32},
-        ).lazy()
-        sequences_without_non_home_anchor = (
-            all_sequences
-            .join(
-                required_anchor_counts.select(["demand_group_id", "activity_seq_id", "time_seq_id"]),
-                on=["demand_group_id", "activity_seq_id", "time_seq_id"],
-                how="anti",
-            )
+        )
+
+        expanded_chains = (
+            chains
             .join(destination_draw_ids, how="cross")
+            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "seq_step_index"])
         )
-        sequences_with_valid_draws = all_sequences.join(
-            valid_anchor_draws,
-            on=["demand_group_id", "activity_seq_id", "time_seq_id"],
-            how="inner",
+
+        # `current_locations` is the last sampled anchor location for each draw.
+        # It starts at home and is updated only when an anchor or home step is
+        # spatialized. Non-anchor steps are sampled later and do not move this
+        # anchor-to-anchor reference point.
+        current_locations = (
+            expanded_chains
+            .select(chain_key_cols)
+            .unique()
+            .with_columns(pl.col("home_zone_id").alias("from"))
         )
-        sequence_draws = pl.concat(
-            [sequences_with_valid_draws, sequences_without_non_home_anchor],
-            how="vertical_relaxed",
-        )
+
+        spatialized_steps: list[pl.DataFrame] = []
+        missing_anchor_samples: list[pl.DataFrame] = []
+        seq_step_index = 1
+        while True:
+            chains_step = (
+                expanded_chains
+                .filter(pl.col("seq_step_index") == seq_step_index)
+                .join(current_locations, on=chain_key_cols)
+            )
+            if chains_step.height == 0:
+                break
+
+            chains_step_lf = chains_step.lazy()
+            home_steps = (
+                chains_step_lf
+                .filter(pl.col("activity") == "home")
+                .with_columns(to=pl.col("home_zone_id"))
+                .select(
+                    [
+                        "demand_group_id",
+                        "home_zone_id",
+                        "activity_seq_id",
+                        "time_seq_id",
+                        "dest_draw_id",
+                        "activity",
+                        "is_anchor",
+                        "seq_step_index",
+                        "step_count",
+                        "from",
+                        "to",
+                        "departure_time",
+                        "arrival_time",
+                        "next_departure_time",
+                    ]
+                )
+                .collect(engine="streaming")
+            )
+
+            anchor_candidates = (
+                chains_step_lf
+                .filter((pl.col("is_anchor")) & (pl.col("activity") != "home"))
+                .join(destination_probability_lf, on=["from", "activity"])
+            )
+            anchors_with_origin_costs = (
+                anchor_candidates
+                .join(
+                    costs_lf
+                    .select(
+                        [
+                            pl.col("from").alias("candidate_from"),
+                            pl.col("to").alias("candidate_to"),
+                            pl.col("cost").alias("cost_to_candidate"),
+                        ]
+                    ),
+                    left_on=["from", "to"],
+                    right_on=["candidate_from", "candidate_to"],
+                )
+            )
+            anchors_with_costs = (
+                anchors_with_origin_costs
+                .join(
+                    costs_lf
+                    .select(
+                        [
+                            pl.col("from").alias("home_return_from"),
+                            pl.col("to").alias("home_return_to"),
+                            pl.col("cost").alias("cost_to_home"),
+                        ]
+                    ),
+                    left_on=["to", "home_zone_id"],
+                    right_on=["home_return_from", "home_return_to"],
+                )
+            )
+            weighted_anchors = (
+                anchors_with_costs
+                .with_columns(
+                    chain_cost_via_candidate=pl.col("cost_to_candidate") + pl.col("cost_to_home"),
+                )
+                .with_columns(
+                    p_ij=(
+                        (
+                            pl.col("p_ij").clip(1e-18).log()
+                            - alpha * pl.col("chain_cost_via_candidate")
+                        ).exp()
+                    ),
+                )
+            )
+            sampled_anchor_steps = (
+                weighted_anchors
+                .with_columns(
+                    noise=(
+                        pl.struct(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"])
+                        .hash(seed=seed)
+                        .cast(pl.Float64)
+                        .truediv(pl.lit(18446744073709551616.0))
+                        .log()
+                        .neg()
+                    ),
+                )
+                .with_columns(
+                    sample_score=pl.col("noise") / pl.col("p_ij").clip(1e-18)
+                    + pl.col("to").cast(pl.Float64) * 1e-18
+                )
+                .with_columns(
+                    min_score=pl.col("sample_score").min().over(
+                        ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+                    )
+                )
+                .filter(pl.col("sample_score") == pl.col("min_score"))
+                .select(
+                    [
+                        "demand_group_id",
+                        "home_zone_id",
+                        "activity_seq_id",
+                        "time_seq_id",
+                        "dest_draw_id",
+                        "activity",
+                        "is_anchor",
+                        "seq_step_index",
+                        "step_count",
+                        "from",
+                        "to",
+                        "departure_time",
+                        "arrival_time",
+                        "next_departure_time",
+                    ]
+                )
+                .collect(engine="streaming")
+            )
+
+            non_anchor_steps = (
+                chains_step_lf
+                .filter(pl.col("is_anchor").not_())
+                .with_columns(to=pl.lit(None).cast(pl.UInt16))
+                .select(
+                    [
+                        "demand_group_id",
+                        "home_zone_id",
+                        "activity_seq_id",
+                        "time_seq_id",
+                        "dest_draw_id",
+                        "activity",
+                        "is_anchor",
+                        "seq_step_index",
+                        "step_count",
+                        "from",
+                        "to",
+                        "departure_time",
+                        "arrival_time",
+                        "next_departure_time",
+                    ]
+                )
+                .collect(engine="streaming")
+            )
+
+            anchor_inputs = chains_step.filter((pl.col("is_anchor")) & (pl.col("activity") != "home"))
+            if sampled_anchor_steps.height < anchor_inputs.height:
+                missing_anchor_samples.append(
+                    anchor_inputs
+                    .join(
+                        sampled_anchor_steps.select(chain_key_cols + ["seq_step_index"]),
+                        on=chain_key_cols + ["seq_step_index"],
+                        how="anti",
+                    )
+                    .select(chain_key_cols + ["activity", "seq_step_index", "from"])
+                )
+
+            spatialized_steps.extend([home_steps, sampled_anchor_steps, non_anchor_steps])
+
+            sampled_updates = (
+                pl.concat([home_steps, sampled_anchor_steps], how="vertical_relaxed")
+                .select(chain_key_cols + ["to"])
+                .rename({"to": "next_from"})
+            )
+            if sampled_updates.height > 0:
+                current_locations = (
+                    current_locations
+                    .join(sampled_updates, on=chain_key_cols, how="left")
+                    .with_columns(
+                        pl.coalesce(pl.col("next_from"), pl.col("from")).cast(pl.UInt16).alias("from")
+                    )
+                    .drop("next_from")
+                )
+
+            seq_step_index += 1
+
+        if missing_anchor_samples:
+            missing_anchors = pl.concat(missing_anchor_samples, how="vertical_relaxed")
+            logging.warning(
+                "Dropping %s anchor destination steps because no reachable anchor candidate could be sampled. "
+                "Sample steps: %s",
+                missing_anchors.height,
+                missing_anchors.head(20).to_dicts(),
+            )
+
         return (
-            chains_lf
-            .join(
-                sequence_draws.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]),
-                on=["demand_group_id", "activity_seq_id", "time_seq_id"],
-                how="inner",
-            )
-            .join(
-                sampled_anchors.rename({"to": "anchor_to"}),
-                on=["demand_group_id", "activity_seq_id", "time_seq_id", "activity", "dest_draw_id"],
-                how="left",
-            )
+            pl.concat(spatialized_steps, how="vertical_relaxed")
             .with_columns(
-                anchor_to=pl.when(pl.col("activity") == "home")
-                .then(pl.col("home_zone_id"))
-                .otherwise(pl.col("anchor_to"))
+                anchor_to=pl.when(pl.col("is_anchor"))
+                .then(pl.col("to"))
+                .otherwise(pl.lit(None, dtype=pl.UInt16))
             )
             .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "seq_step_index"])
             .with_columns(
@@ -621,7 +772,11 @@ class DestinationSequences(FileAsset):
                     ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
                 )
             )
-            .collect(engine="streaming")
+            # The next pass builds the actual step `from` and `to` columns.
+            # Keep only `anchor_to` here, otherwise stale/null step columns can
+            # interfere with the later Polars joins used to sample non-anchor
+            # destinations.
+            .drop(["from", "to"])
         )
 
 
@@ -810,6 +965,21 @@ class DestinationSequences(FileAsset):
             chains_step_lf
             .filter(pl.col("is_anchor"))
             .with_columns(to=pl.col("anchor_to"))
+            # Anchor destinations were sampled earlier, but we still check the
+            # actual leg used at this step. If a cost disappears after a cost
+            # update, the incomplete draw will be removed before mode search.
+            .join(
+                costs_lf
+                .select(
+                    [
+                        pl.col("from").alias("anchor_leg_from"),
+                        pl.col("to").alias("anchor_leg_to"),
+                    ]
+                )
+                .unique(),
+                left_on=["from", "to"],
+                right_on=["anchor_leg_from", "anchor_leg_to"],
+            )
             .select(
                 [
                     "demand_group_id",
