@@ -5,6 +5,7 @@ from .iteration_assets import (
     IterationStateAsset,
     IterationTransportCostsAsset,
     IterationCompleteAsset,
+    PlanIdIndexAsset,
     RemainingOpportunitiesAsset,
     RngStateAsset,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "IterationState",
     "IterationStateAsset",
     "IterationTransportCostsAsset",
+    "PlanIdIndexAsset",
     "RemainingOpportunitiesAsset",
     "RngStateAsset",
     "TransitionEventsAsset",

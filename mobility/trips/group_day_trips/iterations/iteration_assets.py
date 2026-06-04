@@ -39,6 +39,7 @@ STATE_TABLE_NAMES = [
     "current_plans",
     "current_plan_steps",
     "candidate_plan_steps",
+    "plan_id_index",
     "destination_saturation",
     "costs",
 ]
@@ -99,6 +100,7 @@ def _read_run_state(cache_path: dict[str, pathlib.Path], *, start_iteration: int
         opportunities=tables["opportunities"],
         current_plans=tables["current_plans"],
         candidate_plan_steps=tables["candidate_plan_steps"],
+        plan_id_index=tables["plan_id_index"],
         destination_saturation=tables["destination_saturation"],
         costs=tables["costs"],
         start_iteration=start_iteration,
@@ -153,7 +155,7 @@ class InitialIterationStateAsset(FileAsset):
             scenario=scenario,
         )
         inputs = {
-            "version": 2,
+            "version": 3,
             "is_weekday": is_weekday,
             "population": population,
             "survey_plan_assets": survey_plan_assets,
@@ -178,7 +180,6 @@ class InitialIterationStateAsset(FileAsset):
             "initial_transport_costs": initial_transport_costs,
         }
         super().__init__(inputs, _state_cache_paths(base_folder, 0))
-        self.sequence_index_folder = pathlib.Path(base_folder) / f"{self.inputs_hash}-sequences-index"
 
     def get_cached_asset(self) -> RunState:
         """Return the cached state before iteration 1."""
@@ -192,7 +193,6 @@ class InitialIterationStateAsset(FileAsset):
         """Build and cache the starting state for the iteration loop."""
         logging.debug("Building initial group-day-trips iteration state...")
         get_group_day_trips_progress().step("Building initial population state")
-        self.sequence_index_folder.mkdir(parents=True, exist_ok=True)
         survey_plans, survey_plan_steps, demand_groups = self.initializer.get_survey_plan_data(
             self.population,
             self.survey_plan_assets,
@@ -203,12 +203,11 @@ class InitialIterationStateAsset(FileAsset):
             demand_groups,
         )
         resolved_activity_parameters = self.inputs["initial_activity_parameters"]
-        stay_home_plan, current_plans = self.initializer.get_stay_home_state(
+        stay_home_plan, current_plans, plan_id_index = self.initializer.get_stay_home_state(
             demand_groups,
             home_night_dur,
             resolved_activity_parameters["home"],
             self.parameters.plan_update.min_activity_time_constant,
-            self.sequence_index_folder,
             self.modes,
         )
         opportunities = self.initializer.get_opportunities(
@@ -229,6 +228,7 @@ class InitialIterationStateAsset(FileAsset):
             opportunities=opportunities,
             current_plans=current_plans,
             candidate_plan_steps=None,
+            plan_id_index=plan_id_index,
             destination_saturation=opportunities.clone(),
             costs=self.initial_transport_costs.get_costs_by_od(["cost", "distance"]),
             start_iteration=1,
@@ -536,7 +536,6 @@ class IterationStateAsset(FileAsset):
         modes: list[Any],
         parameters: Any,
         scenario: str,
-        sequence_index_folder: pathlib.Path,
         cache_iteration_events: bool,
     ) -> None:
         self.previous_state = previous_state
@@ -550,11 +549,10 @@ class IterationStateAsset(FileAsset):
         self.modes = modes
         self.parameters = parameters
         self.scenario = scenario
-        self.sequence_index_folder = pathlib.Path(sequence_index_folder)
         self.cache_iteration_events = cache_iteration_events
         self.updater = PlanUpdater()
         inputs = {
-            "version": 2,
+            "version": 3,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "previous_state": previous_state,
@@ -600,7 +598,6 @@ class IterationStateAsset(FileAsset):
         """Run one model iteration and cache the resulting state."""
         logging.debug("Starting group-day-trips iteration %s...", str(self.iteration))
         get_group_day_trips_progress().iteration_step(self.iteration, "updating plan choices")
-        self.sequence_index_folder.mkdir(parents=True, exist_ok=True)
         previous = self.previous_state.get()
         seeds = self.seeds.get()
         logging.debug("Preparing sampled alternatives for iteration %s...", str(self.iteration))
@@ -611,7 +608,7 @@ class IterationStateAsset(FileAsset):
         logging.debug("Updating plan choices for iteration %s...", str(self.iteration))
         resolved_activity_parameters = self.inputs["resolved_activity_parameters"]
         arrival_time_rigidity_by_activity = self.inputs["arrival_time_rigidity_by_activity"]
-        current_plans, current_plan_steps, candidate_plan_steps, transition_events = self.updater.get_new_plans(
+        current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index = self.updater.get_new_plans(
             previous.current_plans,
             previous.current_plan_steps,
             previous.candidate_plan_steps,
@@ -628,7 +625,7 @@ class IterationStateAsset(FileAsset):
             previous.home_night_dur,
             previous.stay_home_plan,
             self.population.transport_zones,
-            self.sequence_index_folder,
+            previous.plan_id_index,
             self.parameters,
         )
         costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
@@ -647,6 +644,7 @@ class IterationStateAsset(FileAsset):
             opportunities=previous.opportunities,
             current_plans=current_plans,
             candidate_plan_steps=candidate_plan_steps,
+            plan_id_index=plan_id_index,
             destination_saturation=destination_saturation,
             costs=costs,
             start_iteration=self.iteration + 1,
@@ -731,6 +729,44 @@ class CurrentPlanStepsAsset(FileAsset):
             raise ValueError("Cannot save current plan steps without a dataframe.")
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.current_plan_steps.write_parquet(self.cache_path)
+        return self.get_cached_asset()
+
+
+class PlanIdIndexAsset(FileAsset):
+    """Saved-state table wrapper for the plan-id index.
+
+    Main iteration execution stores the same table inside `RunState`. This asset
+    supports the older `Iterations.load_state()` and `Iterations.save_state()`
+    table API, where each saved state table has its own small FileAsset wrapper.
+    """
+
+    def __init__(
+        self,
+        *,
+        run_key: str,
+        is_weekday: bool,
+        iteration: int,
+        base_folder: pathlib.Path,
+        plan_id_index: pl.DataFrame | None = None,
+    ) -> None:
+        self.plan_id_index = plan_id_index
+        inputs = {
+            "version": 1,
+            "run_key": run_key,
+            "is_weekday": is_weekday,
+            "iteration": iteration,
+        }
+        cache_path = pathlib.Path(base_folder) / f"plan_id_index_{iteration}.parquet"
+        super().__init__(inputs, cache_path)
+
+    def get_cached_asset(self) -> pl.DataFrame:
+        return pl.read_parquet(self.cache_path)
+
+    def create_and_get_asset(self) -> pl.DataFrame:
+        if self.plan_id_index is None:
+            raise ValueError("Cannot save the plan-id index without a dataframe.")
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self.plan_id_index.write_parquet(self.cache_path)
         return self.get_cached_asset()
 
 

@@ -269,7 +269,6 @@ class PlanInitializer:
         home_night_dur,
         home_activity_parameters: ActivityParameters,
         min_activity_time_constant: float,
-        sequence_index_folder,
         modes,
     ):
         """Create the baseline 'stay home all day' state."""
@@ -348,9 +347,13 @@ class PlanInitializer:
                 ]
             )
         )
-        current_states = add_plan_id(current_states, index_folder=sequence_index_folder).clone()
+        current_states, plan_id_index = add_plan_id(
+            current_states,
+            previous_index=None,
+        )
+        current_states = current_states.clone()
 
-        return stay_home_state, current_states
+        return stay_home_state, current_states, plan_id_index
 
     def get_opportunities(
         self,

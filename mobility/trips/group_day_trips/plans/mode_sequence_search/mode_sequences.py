@@ -7,7 +7,7 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 
-from ..sequence_index import add_index
+from ..stable_key_index import StableKeyIndex
 from .assemble import (
     assemble_mode_sequence_rows,
     build_mode_sequence_keys,
@@ -56,33 +56,41 @@ class ModeSequences(FileAsset):
         is_weekday: bool,
         iteration: int,
         base_folder: pathlib.Path,
+        previous_mode_sequences: FileAsset | None = None,
         destination_sequences: FileAsset,
         transport_costs: Any,
         working_folder: pathlib.Path,
-        sequence_index_folder: pathlib.Path,
         parameters: Any,
     ) -> None:
+        self.previous_mode_sequences = previous_mode_sequences
         self.destination_sequences = destination_sequences
         self.transport_costs = transport_costs
         self.working_folder = working_folder
-        self.sequence_index_folder = sequence_index_folder
         self.parameters = parameters
         inputs = {
-            "version": 2,
+            "version": 3,
             "is_weekday": is_weekday,
             "iteration": iteration,
+            "previous_mode_sequences": previous_mode_sequences,
             "destination_sequences": destination_sequences,
             "transport_costs": transport_costs,
             "mode_sequence_parameters": (
                 parameters.mode_sequences if parameters is not None else None
             ),
         }
-        cache_path = pathlib.Path(base_folder) / f"mode_sequences_{iteration}.parquet"
+        cache_path = {
+            "sequences": pathlib.Path(base_folder) / f"mode_sequences_{iteration}.parquet",
+            "index": pathlib.Path(base_folder) / f"mode_sequence_index_{iteration}.parquet",
+        }
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pl.DataFrame:
         """Return cached mode sequences for one iteration."""
-        return pl.read_parquet(self.cache_path)
+        return pl.read_parquet(self.cache_path["sequences"])
+
+    def get_index(self) -> pl.DataFrame:
+        """Return the mode-sequence index cached with this iteration."""
+        return pl.read_parquet(self.cache_path["index"])
 
     def create_and_get_asset(self) -> pl.DataFrame:
         """Compute and persist mode sequences for one iteration."""
@@ -150,11 +158,14 @@ class ModeSequences(FileAsset):
         )
 
         sequence_keys = build_mode_sequence_keys(search_rows)
-        sequence_keys = add_index(
+        sequence_keys, _ = StableKeyIndex(
+            key_cols=["mode_sequence_key"],
+            index_col="mode_seq_id",
+            first_new_id=1,
+        ).extend_and_cache(
             sequence_keys,
-            col="mode_index",
-            index_col_name="mode_seq_id",
-            index_folder=self.sequence_index_folder,
+            previous_asset=self.previous_mode_sequences,
+            index_path=self.cache_path["index"],
         )
 
         final_rows = finalize_mode_sequence_rows(
@@ -169,6 +180,6 @@ class ModeSequences(FileAsset):
             mode_sequences=final_rows,
         )
 
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        final_rows.write_parquet(self.cache_path)
+        self.cache_path["sequences"].parent.mkdir(parents=True, exist_ok=True)
+        final_rows.write_parquet(self.cache_path["sequences"])
         return self.get_cached_asset()

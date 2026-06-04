@@ -14,6 +14,7 @@ class RunState:
     opportunities: pl.DataFrame
     current_plans: pl.DataFrame
     candidate_plan_steps: pl.DataFrame | None
+    plan_id_index: pl.DataFrame
     destination_saturation: pl.DataFrame
     costs: pl.DataFrame
     start_iteration: int
