@@ -13,6 +13,7 @@ from .debug_logs import (
 from .stable_key_index import StableKeyIndex
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities.activity import resolve_activity_parameters
+from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 
 class DestinationSequences(FileAsset):
     """Persist destination sequences produced for one PopulationGroupDayTrips iteration."""
@@ -130,6 +131,7 @@ class DestinationSequences(FileAsset):
 
     def create_and_get_asset(self) -> pl.DataFrame:
         """Compute and persist destination sequences for one iteration."""
+        get_group_day_trips_progress().iteration_step(self.iteration, "destination sequences")
         self._load_missing_runtime_inputs_from_previous_state()
         if self.seed is None and self.seed_asset is not None:
             self.seed = self.seed_asset.get()["destination_sequences"]
@@ -542,7 +544,7 @@ class DestinationSequences(FileAsset):
         destination_probability_cutoff: float,
     ) -> pl.DataFrame:
         """Compute destination probabilities from utilities."""
-        logging.info(
+        logging.debug(
             "Computing the probability of choosing a destination based on current location, potential destinations, and activity (with radiation models)..."
         )
         costs_by_bin = destination_probability_inputs[0]
@@ -621,7 +623,7 @@ class DestinationSequences(FileAsset):
         such as sampling a work zone that cannot be reached from the previous
         anchor zone.
         """
-        logging.info("Spatializing anchor activities...")
+        logging.debug("Spatializing anchor activities...")
         chain_key_cols = [
             "demand_group_id",
             "home_zone_id",
@@ -878,7 +880,7 @@ class DestinationSequences(FileAsset):
         seed: int,
     ) -> pl.DataFrame:
         """Sample destinations for non-anchor activities step by step."""
-        logging.info("Spatializing other activities...")
+        logging.debug("Spatializing other activities...")
         chains_step = (
             chains
             .filter(pl.col("seq_step_index") == 1)
@@ -897,7 +899,7 @@ class DestinationSequences(FileAsset):
                     ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
                 ).unique().height,
             )
-            logging.info("Spatializing step %s...", str(seq_step_index))
+            logging.debug("Spatializing step %s...", str(seq_step_index))
             spatialized_step = (
                 self._spatialize_trip_chain_step(
                     seq_step_index,

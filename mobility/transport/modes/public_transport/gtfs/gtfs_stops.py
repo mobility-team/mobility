@@ -28,7 +28,7 @@ class GTFSStops(FileAsset):
         
     def get_cached_asset(self, bbox=None) -> pd.DataFrame:
 
-        logging.info("GTFS stops already prepared. Reusing the file : " + str(self.cache_path))
+        logging.debug("GTFS stops already prepared. Reusing the file : " + str(self.cache_path))
         
         gtfs_stops = gpd.read_file(self.cache_path, bbox=bbox)
 

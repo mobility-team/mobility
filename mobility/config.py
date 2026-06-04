@@ -29,6 +29,8 @@ def set_params(
     r_packages_download_method="auto",
     debug=False,
     logging_level="INFO",
+    feedback=None,
+    progress=None,
     r_timeout_seconds=None,
     r_max_retries=0,
     r_retry_delay_seconds=5,
@@ -56,6 +58,11 @@ def set_params(
     r_packages_download_method (str, optional): set this parameter to "wininet" to be able to install packages on some proxies. See the installation.md page for details.
     debug (bool, optional): set debug to True to see the R logs, including error messages
     logging_level (str|int, optional): root logging level, e.g. "INFO" or "DEBUG"
+    feedback (str, optional): controls normal run feedback.
+        Use "progress" for Rich progress bars, "logs" for regular INFO logs,
+        or "debug" for detailed DEBUG logs and R logs. When omitted, Mobility
+        uses "progress", except when debug=True or logging_level="DEBUG".
+    progress (str|bool, optional): old name for feedback. Prefer feedback.
     r_timeout_seconds (int, optional): timeout applied to each R script run. Leave as None to disable the timeout.
     r_max_retries (int, optional): number of times to retry a failed or timed out R script run.
     r_retry_delay_seconds (int, optional): waiting time between two R script attempts.
@@ -65,6 +72,16 @@ def set_params(
     r_idle_memory_change_mb (float, optional): RAM-change threshold used by the R idle monitor.
     r_cpu_check_interval_seconds (int, optional): frequency of the R idle monitor checks.
     """
+
+    feedback = _normalize_feedback_setting(
+        feedback,
+        progress=progress,
+        debug=debug,
+        logging_level=logging_level,
+    )
+    if feedback == "debug":
+        debug = True
+        logging_level = "DEBUG"
 
     setup_logging(logging_level)
 
@@ -82,12 +99,61 @@ def set_params(
     set_env_variable("MOBILITY_R_CPU_CHECK_INTERVAL_SECONDS", r_cpu_check_interval_seconds)
 
     os.environ["MOBILITY_DEBUG"] = "1" if debug else "0"
+    os.environ["MOBILITY_FEEDBACK"] = feedback
+    os.environ["MOBILITY_PROGRESS"] = _feedback_to_legacy_progress(feedback)
     setup_ssl_truststore(inject_into_ssl)
 
     setup_package_data_folder_path(package_data_folder_path)
     setup_project_data_folder_path(project_data_folder_path)
 
     install_r_packages(r_packages, r_packages_force_reinstall, r_packages_download_method)
+
+
+def _normalize_feedback_setting(feedback, *, progress=None, debug=False, logging_level="INFO") -> str:
+    """Return the user feedback mode stored in the environment."""
+    if progress is not None:
+        return _legacy_progress_to_feedback(progress)
+
+    if feedback is None:
+        if debug or _is_debug_logging_level(logging_level):
+            return "debug"
+        return "progress"
+
+    value = str(feedback).lower()
+    if value not in {"progress", "logs", "debug"}:
+        raise ValueError(
+            "Unknown feedback setting: "
+            f"{feedback}. Supported values are: 'progress', 'logs', and 'debug'."
+        )
+    return value
+
+
+def _is_debug_logging_level(logging_level) -> bool:
+    """Return True when the old logging_level argument asks for DEBUG logs."""
+    if isinstance(logging_level, str):
+        return logging_level.upper() == "DEBUG"
+    return int(logging_level) <= logging.DEBUG
+
+
+def _legacy_progress_to_feedback(progress) -> str:
+    """Map the old progress option to the new feedback modes."""
+    if isinstance(progress, bool):
+        return "progress" if progress else "logs"
+
+    value = str(progress).lower()
+    if value in {"auto", "rich"}:
+        return "progress"
+    if value in {"log", "off", "false", "no", "0"}:
+        return "logs"
+    raise ValueError(
+        "Unknown progress setting: "
+        f"{progress}. Supported values are: 'auto', 'rich', 'log', and False."
+    )
+
+
+def _feedback_to_legacy_progress(feedback: str) -> str:
+    """Keep MOBILITY_PROGRESS available for code outside this PR."""
+    return "rich" if feedback == "progress" else "log"
 
 
 def update(memory_reclaim_policy=None):

@@ -55,7 +55,7 @@ def run_python_mode_sequence_search(
     )
 
     if parameters.mode_sequences.mode_sequence_search_parallel is False:
-        logging.info("Finding probable mode sequences for the spatialized trip chains...")
+        logging.debug("Finding probable mode sequences for the spatialized trip chains...")
         compute_subtour_mode_probabilities_serial(
             parameters.mode_sequences.k_mode_sequences,
             unique_destination_chains,

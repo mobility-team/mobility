@@ -1,5 +1,6 @@
 import os
 import pathlib
+import logging
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import List
@@ -30,6 +31,11 @@ from ..plans import ActivitySequences, DestinationSequences, ModeSequences
 from ..transitions.transition_schema import TRANSITION_EVENT_SCHEMA
 from .memory_logging import log_memory_checkpoint
 from .parameters import GroupDayTripsParameters
+from .progress import (
+    GroupDayTripsProgressReporter,
+    get_group_day_trips_progress,
+    is_group_day_trips_progress_active,
+)
 from .results import RunResults
 from .run_state import RunState
 from mobility.transport.costs.transport_costs import TransportCosts
@@ -158,6 +164,22 @@ class Run(FileAsset):
         }
         super().__init__(inputs, cache_path)
 
+    def get(self, *args, **kwargs) -> dict[str, pl.LazyFrame]:
+        """Materialize the run while reporting high-level progress."""
+        if is_group_day_trips_progress_active():
+            return super().get(*args, **kwargs)
+
+        day_type = "weekday" if self.is_weekday else "weekend"
+        label = (
+            f"GroupDayTrips {day_type} "
+            f"scenario={self.scenario} repl={self.replication}"
+        )
+        with GroupDayTripsProgressReporter(
+            label=label,
+            total_iterations=self.parameters.run.n_iterations,
+        ):
+            return super().get(*args, **kwargs)
+
     def _build_iteration_state_assets(
         self,
         *,
@@ -257,6 +279,13 @@ class Run(FileAsset):
     def create_and_get_asset(self) -> dict[str, pl.LazyFrame]:
         """Run the simulation for this day type and materialize cached outputs."""
         self._raise_if_disabled()
+        logging.debug(
+            "Starting PopulationGroupDayTrips run: run_hash=%s is_weekday=%s iterations=%s",
+            self.inputs_hash,
+            str(self.is_weekday),
+            str(self.parameters.run.n_iterations),
+        )
+        get_group_day_trips_progress().step("Finalizing group-day-trips run")
         log_memory_checkpoint("run:start")
 
         state = self.final_iteration_state.get()
@@ -286,6 +315,7 @@ class Run(FileAsset):
             iteration_metrics=IterationMetricsHistory.from_records(iteration_metrics_records),
         )
         log_memory_checkpoint("run:after_write_outputs")
+        logging.debug("PopulationGroupDayTrips run finished: run_hash=%s", self.inputs_hash)
 
         return self.get_cached_asset()
 
@@ -341,6 +371,7 @@ class Run(FileAsset):
 
     def _build_iteration_metrics_records(self) -> list[dict]:
         """Build one diagnostics row from each cached iteration state."""
+        get_group_day_trips_progress().step("Building iteration diagnostics")
         iteration_metrics_builder = self._build_iteration_metrics_builder()
         records = []
         for state_asset in self.iteration_state_assets:
@@ -370,6 +401,7 @@ class Run(FileAsset):
 
     def _build_final_costs(self, state: RunState) -> pl.DataFrame:
         """Compute the final OD costs to attach to the written outputs."""
+        get_group_day_trips_progress().step("Building final cost table")
         final_transport_costs = (
             self.iteration_transport_cost_assets[-1]
             if self.iteration_transport_cost_assets
@@ -382,6 +414,7 @@ class Run(FileAsset):
 
     def _build_final_plan_steps(self, state: RunState, costs: pl.DataFrame) -> pl.DataFrame:
         """Join final per-step states with demand-group attributes and costs."""
+        get_group_day_trips_progress().step("Building final plan-step table")
         plan_steps = state.current_plan_steps
         duplicate_cost_columns = {"cost", "distance", "time", "ghg_emissions_per_trip"}
         existing_duplicate_columns = [col for col in plan_steps.columns if col in duplicate_cost_columns]
@@ -417,6 +450,7 @@ class Run(FileAsset):
 
     def _build_transitions(self) -> pl.DataFrame | pl.LazyFrame:
         """Combine persisted per-iteration transition events into the final table."""
+        get_group_day_trips_progress().step("Building final transition table")
         if self.parameters.outputs.cache_iteration_events is False:
             return pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA)
 
@@ -445,6 +479,7 @@ class Run(FileAsset):
         iteration_metrics: pl.DataFrame,
     ) -> None:
         """Write the final run artifacts to their parquet cache paths."""
+        get_group_day_trips_progress().step("Writing final run outputs")
         plan_steps.write_parquet(self.cache_path["plan_steps"])
         opportunities.write_parquet(self.cache_path["opportunities"])
         costs.write_parquet(self.cache_path["costs"])

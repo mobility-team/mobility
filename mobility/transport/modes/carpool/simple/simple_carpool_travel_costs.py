@@ -56,7 +56,7 @@ class SimpleCarpoolTravelCosts(Asset):
             pd.DataFrame: The cached DataFrame of travel costs.
         """
 
-        logging.info("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
+        logging.debug("Travel costs already prepared. Reusing the file : " + str(self.cache_path))
         costs = pd.read_parquet(self.cache_path)
         costs["mode"] = self.inputs["parameters"].name
 

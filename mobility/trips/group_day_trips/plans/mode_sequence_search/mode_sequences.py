@@ -5,6 +5,7 @@ import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
+from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 
 from ..stable_key_index import StableKeyIndex
 from .assemble import (
@@ -93,6 +94,7 @@ class ModeSequences(FileAsset):
 
     def create_and_get_asset(self) -> pl.DataFrame:
         """Compute and persist mode sequences for one iteration."""
+        get_group_day_trips_progress().iteration_step(self.iteration, "mode sequences")
         working_folder = self.working_folder
         destination_steps = self.destination_sequences.get_cached_asset()
 

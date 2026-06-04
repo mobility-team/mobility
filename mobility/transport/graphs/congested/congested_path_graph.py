@@ -49,7 +49,7 @@ class CongestedPathGraph(FileAsset):
 
     def get_cached_asset(self) -> pathlib.Path:
         
-        logging.info("Congested graph already prepared. Reusing the files in : " + str(self.cache_path.parent))
+        logging.debug("Congested graph already prepared. Reusing the files in : " + str(self.cache_path.parent))
          
         return self.cache_path
 

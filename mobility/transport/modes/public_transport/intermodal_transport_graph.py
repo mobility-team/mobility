@@ -97,7 +97,7 @@ class IntermodalTransportGraph(FileAsset):
 
     def get_cached_asset(self) -> pd.DataFrame:
         """Return the persisted intermodal graph marker path."""
-        logging.info("Intermodal graph already created. Reusing the file : " + str(self.cache_path))
+        logging.debug("Intermodal graph already created. Reusing the file : " + str(self.cache_path))
         return self.cache_path
 
     def create_and_get_asset(self) -> pd.DataFrame:
