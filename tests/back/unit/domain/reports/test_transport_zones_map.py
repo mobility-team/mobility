@@ -45,7 +45,8 @@ def _plotted_zone_ids(fig):
     zone_ids = set()
     for trace in fig.data:
         locations = getattr(trace, "locations", None)
-        if locations is not None:
+        values = getattr(trace, "z", None)
+        if locations is not None and values is not None:
             zone_ids.update(int(location) for location in locations)
     return zone_ids
 

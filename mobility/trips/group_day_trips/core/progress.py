@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from contextvars import ContextVar
 from time import perf_counter
 
@@ -22,6 +23,17 @@ def _legacy_progress_to_feedback(progress: str) -> str:
     if value in {"auto", "rich"}:
         return "progress"
     return "logs"
+
+
+def _default_feedback() -> str:
+    """Return the feedback mode to use when users did not choose one."""
+    if "MOBILITY_FEEDBACK" in os.environ:
+        return os.environ["MOBILITY_FEEDBACK"].lower()
+    if "MOBILITY_PROGRESS" in os.environ:
+        return _legacy_progress_to_feedback(os.environ["MOBILITY_PROGRESS"])
+    if os.environ.get("CI") or not sys.stderr.isatty():
+        return "logs"
+    return "progress"
 
 
 class GroupDayTripsProgressReporter:
@@ -48,10 +60,7 @@ class GroupDayTripsProgressReporter:
         self._iteration_start_times = {}
         self._completed_iterations = 0
         self._previous_root_logging_level = None
-        feedback = os.environ.get(
-            "MOBILITY_FEEDBACK",
-            _legacy_progress_to_feedback(os.environ.get("MOBILITY_PROGRESS", "rich")),
-        ).lower()
+        feedback = _default_feedback()
         self.enabled = (
             enabled
             if enabled is not None

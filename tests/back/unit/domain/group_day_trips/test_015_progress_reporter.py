@@ -35,6 +35,17 @@ def test_logs_feedback_reports_iteration_duration(monkeypatch, caplog):
     assert "Iteration 1: done in " in caplog.text
 
 
+def test_ci_default_feedback_uses_logs(monkeypatch):
+    """CI output should avoid Rich live displays that can conflict with other progress bars."""
+    monkeypatch.delenv("MOBILITY_FEEDBACK", raising=False)
+    monkeypatch.delenv("MOBILITY_PROGRESS", raising=False)
+    monkeypatch.setenv("CI", "true")
+
+    with GroupDayTripsProgressReporter(label="Test run", total_iterations=1) as progress:
+        assert progress.use_logs is True
+        assert progress.use_rich is False
+
+
 def test_progress_feedback_keeps_overall_label_when_phase_changes(monkeypatch):
     """Phase messages should not replace the run context shown on the overall task."""
     monkeypatch.setenv("MOBILITY_FEEDBACK", "progress")
