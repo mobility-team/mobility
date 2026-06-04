@@ -61,8 +61,7 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data):
             ),
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
             outputs=GroupDayTripsOutputParameters(
-                persist_iteration_artifacts=True,
-                save_transition_events=True,
+                cache_iteration_events=True,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
                 dest_prob_cutoff=0.9,
@@ -96,8 +95,7 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data):
             ),
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
             outputs=GroupDayTripsOutputParameters(
-                persist_iteration_artifacts=True,
-                save_transition_events=True,
+                cache_iteration_events=True,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
                 dest_prob_cutoff=0.9,

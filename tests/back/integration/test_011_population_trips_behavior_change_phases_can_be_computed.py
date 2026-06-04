@@ -50,8 +50,7 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
                 seed=0,
             ),
             outputs=GroupDayTripsOutputParameters(
-                persist_iteration_artifacts=True,
-                save_transition_events=True,
+                cache_iteration_events=True,
             ),
             behavior_change=GroupDayTripsBehaviorChangeParameters(
                 phases=[
@@ -75,9 +74,7 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
     result = weekday_run.get()
     weekday_plan_steps = result["plan_steps"].collect()
     weekday_transitions = result["transitions"].collect()
-    cache_parent = weekday_run.cache_path["plan_steps"].parent
-    inputs_hash = weekday_run.inputs_hash
-    destination_sequences_dir = cache_parent / f"{inputs_hash}-destination-sequences"
+    destination_sequences_dir = weekday_run.iterations.folder_paths["destination-sequences"]
     destination_sequences_1 = pl.read_parquet(next(destination_sequences_dir.glob("*destination_sequences_1.parquet")))
     destination_sequences_2 = pl.read_parquet(next(destination_sequences_dir.glob("*destination_sequences_2.parquet")))
     destination_sequences_3 = pl.read_parquet(next(destination_sequences_dir.glob("*destination_sequences_3.parquet")))

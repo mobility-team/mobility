@@ -30,6 +30,8 @@ class ActivitySequences(FileAsset):
         is_weekday: bool,
         iteration: int,
         base_folder: pathlib.Path,
+        previous_state: FileAsset | None = None,
+        seed_asset: FileAsset | None = None,
         current_plans: pl.DataFrame | None = None,
         survey_plans: pl.DataFrame | None = None,
         survey_plan_steps: pl.DataFrame | None = None,
@@ -37,6 +39,8 @@ class ActivitySequences(FileAsset):
         parameters: Any = None,
         seed: int | None = None,
     ) -> None:
+        self.previous_state = previous_state
+        self.seed_asset = seed_asset
         self.current_plans = current_plans
         self.survey_plans = survey_plans
         self.survey_plan_steps = survey_plan_steps
@@ -48,6 +52,10 @@ class ActivitySequences(FileAsset):
             "run_key": run_key,
             "is_weekday": is_weekday,
             "iteration": iteration,
+            "previous_state": previous_state,
+            "seed_asset": seed_asset,
+            "parameters": parameters,
+            "seed": seed,
         }
         cache_path = pathlib.Path(base_folder) / f"activity_sequences_{iteration}.parquet"
         super().__init__(inputs, cache_path)
@@ -58,6 +66,10 @@ class ActivitySequences(FileAsset):
 
     def create_and_get_asset(self) -> pl.DataFrame:
         """Compute and persist admitted activity-sequence rows for one iteration."""
+        self._load_missing_runtime_inputs_from_previous_state()
+        if self.seed is None and self.seed_asset is not None:
+            self.seed = self.seed_asset.get()["activity_sequences"]
+
         if self.current_plans is None:
             raise ValueError("Cannot build activity sequences without current plans.")
         if self.survey_plans is None:
@@ -75,6 +87,21 @@ class ActivitySequences(FileAsset):
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         activity_sequences.write_parquet(self.cache_path)
         return self.get_cached_asset()
+
+    def _load_missing_runtime_inputs_from_previous_state(self) -> None:
+        """Fill runtime dataframes from the cached state produced by the previous iteration."""
+        if self.previous_state is None:
+            return
+
+        state = self.previous_state.get()
+        if self.current_plans is None:
+            self.current_plans = state.current_plans
+        if self.survey_plans is None:
+            self.survey_plans = state.survey_plans
+        if self.survey_plan_steps is None:
+            self.survey_plan_steps = state.survey_plan_steps
+        if self.demand_groups is None:
+            self.demand_groups = state.demand_groups
 
     def _build_activity_sequences_for_scope(self) -> pl.DataFrame:
         """Return admitted timed activity-sequence rows for this iteration."""

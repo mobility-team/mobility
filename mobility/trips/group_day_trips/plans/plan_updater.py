@@ -156,7 +156,7 @@ class PlanUpdater:
             f"plan_updater:iteration:{iteration}:current_plan_steps",
             current_plan_steps=current_plan_steps,
         )
-        if parameters.outputs.save_transition_events:
+        if parameters.outputs.cache_iteration_events:
             transition_events = add_transition_plan_details(
                 transition_events,
                 possible_plan_steps.lazy(),

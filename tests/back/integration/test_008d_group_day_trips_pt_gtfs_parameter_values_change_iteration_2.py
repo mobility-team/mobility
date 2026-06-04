@@ -174,8 +174,7 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_parame
         ),
         periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
         outputs=GroupDayTripsOutputParameters(
-            persist_iteration_artifacts=True,
-            save_transition_events=True,
+            cache_iteration_events=True,
         ),
         destination_sequences=GroupDayTripsDestinationSequenceParameters(
             dest_prob_cutoff=0.9,

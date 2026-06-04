@@ -37,6 +37,8 @@ class DestinationSequences(FileAsset):
         is_weekday: bool,
         iteration: int,
         base_folder: pathlib.Path,
+        previous_state: FileAsset | None = None,
+        seed_asset: FileAsset | None = None,
         activity_sequences: FileAsset | None = None,
         activities: list[Any] | None = None,
         resolved_activity_parameters: dict[str, Any] | None = None,
@@ -50,6 +52,8 @@ class DestinationSequences(FileAsset):
         parameters: Any = None,
         seed: int | None = None,
     ) -> None:
+        self.previous_state = previous_state
+        self.seed_asset = seed_asset
         self.activity_sequences = activity_sequences
         self.activities = activities
         self.resolved_activity_parameters = resolved_activity_parameters
@@ -67,6 +71,14 @@ class DestinationSequences(FileAsset):
             "run_key": run_key,
             "is_weekday": is_weekday,
             "iteration": iteration,
+            "activity_sequences_asset": activity_sequences if isinstance(activity_sequences, FileAsset) else None,
+            "previous_state": previous_state,
+            "seed_asset": seed_asset,
+            "activities": activities,
+            "resolved_activity_parameters": resolved_activity_parameters,
+            "transport_zones": transport_zones,
+            "parameters": parameters,
+            "seed": seed,
         }
         cache_path = pathlib.Path(base_folder) / f"destination_sequences_{iteration}.parquet"
         super().__init__(inputs, cache_path)
@@ -79,6 +91,10 @@ class DestinationSequences(FileAsset):
 
     def create_and_get_asset(self) -> pl.DataFrame:
         """Compute and persist destination sequences for one iteration."""
+        self._load_missing_runtime_inputs_from_previous_state()
+        if self.seed is None and self.seed_asset is not None:
+            self.seed = self.seed_asset.get()["destination_sequences"]
+
         if self.activities is None:
             raise ValueError("Cannot build destination sequences without activities.")
         if self.transport_zones is None:
@@ -105,6 +121,23 @@ class DestinationSequences(FileAsset):
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         destination_sequences.write_parquet(self.cache_path)
         return self.get_cached_asset()
+
+    def _load_missing_runtime_inputs_from_previous_state(self) -> None:
+        """Fill runtime dataframes from the cached state produced by the previous iteration."""
+        if self.previous_state is None:
+            return
+
+        state = self.previous_state.get()
+        if self.current_plans is None:
+            self.current_plans = state.current_plans
+        if self.current_plan_steps is None:
+            self.current_plan_steps = state.current_plan_steps
+        if self.destination_saturation is None:
+            self.destination_saturation = state.destination_saturation
+        if self.demand_groups is None:
+            self.demand_groups = state.demand_groups
+        if self.costs is None:
+            self.costs = state.costs
 
     def _build_destination_sequences_for_scope(self) -> pl.DataFrame:
         """Return the destination sequences to use for this iteration."""
