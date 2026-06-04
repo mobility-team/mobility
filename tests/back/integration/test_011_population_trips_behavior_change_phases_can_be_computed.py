@@ -74,10 +74,15 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
     result = weekday_run.get()
     weekday_plan_steps = result["plan_steps"].collect()
     weekday_transitions = result["transitions"].collect()
-    destination_sequences_dir = weekday_run.iterations.folder_paths["destination-sequences"]
-    destination_sequences_1 = pl.read_parquet(next(destination_sequences_dir.glob("*destination_sequences_1.parquet")))
-    destination_sequences_2 = pl.read_parquet(next(destination_sequences_dir.glob("*destination_sequences_2.parquet")))
-    destination_sequences_3 = pl.read_parquet(next(destination_sequences_dir.glob("*destination_sequences_3.parquet")))
+    destination_sequences_1 = pl.read_parquet(
+        weekday_run.iteration_state_assets[0].destination_sequences.cache_path
+    )
+    destination_sequences_2 = pl.read_parquet(
+        weekday_run.iteration_state_assets[1].destination_sequences.cache_path
+    )
+    destination_sequences_3 = pl.read_parquet(
+        weekday_run.iteration_state_assets[2].destination_sequences.cache_path
+    )
 
     assert weekday_plan_steps.height > 0
     assert weekday_transitions.height > 0
