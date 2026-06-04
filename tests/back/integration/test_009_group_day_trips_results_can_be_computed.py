@@ -43,8 +43,7 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
                 seed=0,
             ),
             outputs=GroupDayTripsOutputParameters(
-                persist_iteration_artifacts=True,
-                save_transition_events=True,
+                cache_iteration_events=True,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
                 dest_prob_cutoff=0.9,

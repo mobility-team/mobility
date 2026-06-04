@@ -48,8 +48,7 @@ def _build_group_day_trips(test_data):
             ),
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
             outputs=GroupDayTripsOutputParameters(
-                persist_iteration_artifacts=True,
-                save_transition_events=True,
+                cache_iteration_events=True,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
                 dest_prob_cutoff=0.9,
@@ -69,32 +68,43 @@ def _build_group_day_trips(test_data):
     ],
     scope="session",
 )
-def test_008e_group_day_trips_can_resume_from_saved_iteration(test_data):
+def test_008e_group_day_trips_reuses_cached_iteration_state(test_data):
     pop_trips = _build_group_day_trips(test_data)
-    pop_trips.run("weekday")
-    pop_trips.remove()
-
     run = pop_trips.run("weekday")
-    iterations, resume_from_iteration = run._prepare_iterations(run.inputs_hash)
+    run.remove()
 
-    assert resume_from_iteration is None
+    first_result = run.get()
+    first_plan_steps = first_result["plan_steps"].collect()
+    first_transitions = first_result["transitions"].collect()
+    first_iteration_metrics = first_result["iteration_metrics"].collect()
+    final_state_path = run.final_iteration_state.cache_path["current_plans"]
+    final_state_mtime = final_state_path.stat().st_mtime
 
-    state = run._build_state(
-        iterations=iterations,
-        resume_from_iteration=resume_from_iteration,
-    )
-    iteration_1 = iterations.iteration(1)
-    run._run_model_iteration(
-        state=state,
-        iteration=iteration_1,
-    )
-    iteration_1.save_state(state, run.rng.getstate())
+    assert first_plan_steps.height > 0
+    assert first_transitions.height > 0
+    assert first_iteration_metrics["iteration"].to_list() == [1, 2]
 
-    saved_iteration_state = iterations.iteration(1).load_state()
-    assert saved_iteration_state.current_plans.height > 0
-    assert saved_iteration_state.current_plan_steps.height > 0
-    assert saved_iteration_state.candidate_plan_steps.height > 0
-    assert saved_iteration_state.destination_saturation.columns == [
+    # Remove only the final run outputs. The content-addressed iteration state
+    # cache stays in place, so the next identical run can skip the iteration loop
+    # and rebuild only the final output tables.
+    for path in run.cache_path.values():
+        path.unlink(missing_ok=True)
+
+    rerun = _build_group_day_trips(test_data).run("weekday")
+    assert rerun.final_iteration_state.inputs_hash == run.final_iteration_state.inputs_hash
+
+    result = rerun.get()
+    plan_steps = result["plan_steps"].collect()
+    transitions = result["transitions"].collect()
+    iteration_metrics = result["iteration_metrics"].collect()
+
+    assert rerun.final_iteration_state.cache_path["current_plans"].stat().st_mtime == final_state_mtime
+    assert plan_steps.height > 0
+    assert transitions.height > 0
+    assert iteration_metrics.height == 2
+    assert sorted(transitions["iteration"].unique().to_list()) == [1, 2]
+    assert iteration_metrics["iteration"].to_list() == [1, 2]
+    assert rerun.final_iteration_state.get().destination_saturation.columns == [
         "activity",
         "to",
         "opportunity_capacity",
@@ -107,19 +117,6 @@ def test_008e_group_day_trips_can_resume_from_saved_iteration(test_data):
         "destination_sampling_min_attraction_factor",
         "destination_sampling_attraction_factor",
     ]
-
-    resumed_pop_trips = _build_group_day_trips(test_data)
-    result = resumed_pop_trips.run("weekday").get()
-
-    plan_steps = result["plan_steps"].collect()
-    transitions = result["transitions"].collect()
-    iteration_metrics = result["iteration_metrics"].collect()
-
-    assert plan_steps.height > 0
-    assert transitions.height > 0
-    assert iteration_metrics.height == 2
-    assert sorted(transitions["iteration"].unique().to_list()) == [1, 2]
-    assert iteration_metrics["iteration"].to_list() == [1, 2]
     assert {
         "total_loss",
         "activity_loss",

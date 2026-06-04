@@ -186,39 +186,22 @@ class GroupDayTripsPeriodParameters(BaseModel):
 
 
 class GroupDayTripsOutputParameters(BaseModel):
-    """Settings for saved outputs and resumable iteration artifacts."""
+    """Settings for optional cached outputs from the iteration loop."""
 
     model_config = ConfigDict(extra="forbid")
 
-    save_transition_events: Annotated[
+    cache_iteration_events: Annotated[
         bool,
         Field(
             default=False,
-            title="Save transition events",
-            description="Whether to persist per-iteration transition-event logs.",
-        ),
-    ]
-    persist_iteration_artifacts: Annotated[
-        bool,
-        Field(
-            default=False,
-            title="Persist iteration artifacts",
+            title="Cache iteration events",
             description=(
-                "Whether to persist resumable per-iteration state artifacts. "
-                "Disable this to keep only the final outputs."
+                "Whether to cache detailed transition events for each model "
+                "iteration and include them in the final transitions output. "
+                "Core iteration state is always cached."
             ),
         ),
     ]
-
-    @model_validator(mode="after")
-    def validate_transition_events(self) -> "GroupDayTripsOutputParameters":
-        """Transition events are only available with iteration artifacts."""
-        if self.persist_iteration_artifacts is False and self.save_transition_events:
-            raise ValueError(
-                "GroupDayTripsOutputParameters.save_transition_events cannot be True "
-                "when persist_iteration_artifacts is False."
-            )
-        return self
 
 
 class GroupDayTripsBehaviorChangeParameters(BaseModel):

@@ -72,6 +72,8 @@ class ModeSequences(FileAsset):
             "is_weekday": is_weekday,
             "iteration": iteration,
             "destination_sequences": destination_sequences,
+            "transport_costs": transport_costs,
+            "parameters": parameters,
         }
         cache_path = pathlib.Path(base_folder) / f"mode_sequences_{iteration}.parquet"
         super().__init__(inputs, cache_path)

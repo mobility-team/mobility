@@ -47,7 +47,7 @@ def state_waterfall(
             "`state_waterfall` requires persisted transition events, but the "
             "run transitions table is empty. Rerun PopulationGroupDayTrips "
             "with GroupDayTripsParameters(outputs=GroupDayTripsOutputParameters("
-            "persist_iteration_artifacts=True, save_transition_events=True))."
+            "cache_iteration_events=True))."
         )
     _validate_transition_inputs(transitions_df)
 

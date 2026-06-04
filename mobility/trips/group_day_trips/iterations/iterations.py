@@ -232,8 +232,8 @@ class Iteration:
             ) from exc
 
 
-    def save_transition_events(self, transition_events: pl.LazyFrame) -> None:
-        """Persist transition events produced during this iteration."""
+    def cache_transition_events(self, transition_events: pl.LazyFrame) -> None:
+        """Cache transition events produced during this iteration."""
         TransitionEventsAsset(
             run_key=self.iterations.run_inputs_hash,
             is_weekday=self.iterations.is_weekday,
