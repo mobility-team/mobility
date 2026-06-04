@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 REQUIRED_SNIPPETS = [
-    'mobility.TransportZones("fr-09122", radius=10.0)',
+    'mobility.TransportZones("fr-87085", radius=10.0)',
     "mobility.EMPMobilitySurvey()",
     "mobility.Population(",
     "mobility.PopulationGroupDayTrips(",

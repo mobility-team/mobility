@@ -114,9 +114,20 @@ def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files
     walk_mode = mobility.WalkMode(transport_zones)
     bicycle_mode = mobility.BicycleMode(transport_zones)
     mode_registry = mobility.ModeRegistry([car_mode, walk_mode, bicycle_mode])
+
+    # The synthetic GTFS line is only used to check that iteration 2 picks up
+    # new GTFS inputs, so keep the access and exit walks generous enough for
+    # small test areas.
+    synthetic_gtfs_transfer = mobility.IntermodalTransfer(
+        max_travel_time=2.0,
+        average_speed=5.0,
+        transfer_time=1.0,
+    )
     public_transport_mode = mobility.PublicTransportMode(
         transport_zones,
         mode_registry=mode_registry,
+        first_intermodal_transfer=synthetic_gtfs_transfer,
+        last_intermodal_transfer=synthetic_gtfs_transfer,
         routing_parameters=mobility.PublicTransportRoutingParameters(
             additional_gtfs_files=additional_gtfs_files,
             max_traveltime=10.0,

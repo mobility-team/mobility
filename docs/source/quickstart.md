@@ -26,7 +26,7 @@ If you prefer, you can also call ``mobility.set_params()`` with explicit paths.
 
 The example uses:
 
-* Foix, France, with a 10 km radius, for a small and relatively fast run,
+* Limoges, France, with a 10 km radius, to use the smaller Limousin OSM extract,
 * the French EMP mobility survey,
 * a synthetic population of 1000 people,
 * three transport modes: car, walk, and bicycle,
@@ -48,8 +48,8 @@ mobility.set_params(
     project_data_folder_path=os.environ["MOBILITY_PROJECT_DATA_FOLDER"]
 )
 
-# Using Foix (a small town) and a limited radius for quick results
-transport_zones = mobility.TransportZones("fr-09122", radius=10.0)
+# Using Limoges and a limited radius to reuse the smaller Limousin OSM extract
+transport_zones = mobility.TransportZones("fr-87085", radius=10.0)
 
 # Using EMP, the latest national mobility survey for France
 survey = mobility.EMPMobilitySurvey()
@@ -106,10 +106,10 @@ On a first run, this step can also trigger data preparation and R package setup 
 ### 2. Define the study area
 
 ```python
-transport_zones = mobility.TransportZones("fr-09122", radius=10.0)
+transport_zones = mobility.TransportZones("fr-87085", radius=10.0)
 ```
 
-This creates the study area around Foix and builds the transport-zone input used by the rest of the workflow.
+This creates the study area around Limoges and builds the transport-zone input used by the rest of the workflow.
 
 ### 3. Build the population and model inputs
 
@@ -179,7 +179,7 @@ A successful run should give you:
 * an origin-destination flow plot,
 * a parameter report for traceability.
 
-The first execution can take noticeably longer than later ones because Mobility may need to prepare local data and dependencies.
+The first execution can take noticeably longer than later ones because Mobility may need to prepare local data and dependencies. This example uses the same Limousin OSM extract as the tests, so later runs can reuse the cache.
 
 ## Common first-run issues
 

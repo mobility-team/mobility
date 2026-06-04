@@ -5,8 +5,8 @@ import mobility
 def run_quickstart_ci():
     # In CI/integration tests, test setup configures Mobility paths in conftest.py.
 
-    # Using Foix (a small town) and a limited radius for quick results
-    transport_zones = mobility.TransportZones("fr-09122", radius=10.0)
+    # Using Limoges and a limited radius to reuse the smaller Limousin OSM extract
+    transport_zones = mobility.TransportZones("fr-87085", radius=10.0)
 
     # Using EMP, the latest national mobility survey for France
     survey = mobility.EMPMobilitySurvey()

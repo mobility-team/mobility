@@ -92,7 +92,7 @@ def pytest_configure(config):
 
 def get_test_data():
     return {
-        "transport_zones_local_admin_unit_id": "fr-09261", #fails with Foix 09122 and Rodez 12202, let's test Saint-Girons
+        "transport_zones_local_admin_unit_id": "fr-87085",  # Limoges keeps tests inside the smaller Limousin OSM extract.
         "transport_zones_radius": 10.0,
         "population_sample_size": 10
     }
