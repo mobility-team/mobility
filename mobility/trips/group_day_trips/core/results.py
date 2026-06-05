@@ -17,6 +17,8 @@ from ..evaluation.routing_evaluation import RoutingEvaluation
 from ..evaluation.travel_costs_evaluation import TravelCostsEvaluation
 from ..transitions.transition_metrics import state_waterfall as _state_waterfall
 
+from ....surveys.france import WorkHomeFlows_fr
+
 
 class RunResults:
     """Run-scoped analysis helper for one day-type output set."""
@@ -69,6 +71,7 @@ class RunResults:
             "travel_costs": self.travel_costs,
             "routing": self.routing,
             "public_transport_network": self.public_transport_network,
+            "ssi": self.ssi,
         }
 
     @property
@@ -787,8 +790,8 @@ class RunResults:
 
         x_min = float(biggest_flows[["x"]].min().iloc[0])
         y_min = float(biggest_flows[["y"]].min().iloc[0])
-        plt.plot([x_min, x_min + 4000], [y_min, y_min], linewidth=2, color=color)
-        plt.text(x_min + 6000, y_min - 1000, "1 000", color=color)
+        plt.plot([x_min-10000, x_min-8000], [y_min-2000, y_min-2000], linewidth=2, color=color)
+        plt.text(x_min-6500, y_min-2500, "1 000", color=color)
         plt.title(f"{mode_name} flows between transport zones on {self.period}")
 
         for _, row in biggest_flows.iterrows():
@@ -834,6 +837,85 @@ class RunResults:
         geoflows = geoflows[geoflows["prominence"] <= n_levels]
         xy_coords = geoflows["geometry"].centroid.get_coordinates()
         return geoflows.merge(xy_coords, left_index=True, right_index=True)
+
+    
+    def ssi(self, threshold=20, *args, **kwargs):
+        transport_zones_df = pl.from_pandas(self.transport_zones.get()[["local_admin_unit_id", "transport_zone_id"]])
+        od_flows = self.plan_steps.collect().join(
+            transport_zones_df, left_on="from", right_on="transport_zone_id")
+        od_flows = od_flows.join(
+            transport_zones_df, left_on="to", right_on="transport_zone_id", suffix=('_to'))
+
+        od_flows_work = (
+            od_flows
+            .filter(pl.col("activity") == "work")
+            .group_by("local_admin_unit_id", "local_admin_unit_id_to")
+            .agg(pl.col("n_persons").sum())
+            .rename({"local_admin_unit_id" : "local_admin_unit_id_from"})
+            )
+
+        whf = pl.from_pandas(WorkHomeFlows_fr().get())
+        od_flows_work = od_flows_work.join(whf, on=["local_admin_unit_id_from","local_admin_unit_id_to"])
+
+        od_flows_work_above_threshold = (
+            od_flows_work.filter((pl.col("insee_flows") > threshold) | (pl.col("n_persons") > threshold))
+            )
+
+        # Classic SSI formula
+        ssi = (
+            od_flows_work_above_threshold
+            .select(
+                (
+                    2 * pl.min_horizontal("n_persons", "insee_flows").sum()
+                    / (pl.col("n_persons").sum() + pl.col("insee_flows").sum())
+                ).alias(f"ssi-{threshold}")
+            )
+        )
+
+
+        # Modified SSI formula from Liu & Yan 2020
+        # https://doi.org/10.1038/s41598-020-61613-y
+        # modified with threshold
+        # removes i -> i
+        ssi_liu_yan_2020 = (
+            od_flows_work_above_threshold
+            # exclude i = j and flows under threshold
+            .filter(pl.col("local_admin_unit_id_from") != pl.col("local_admin_unit_id_to"))
+            # compute local Sørensen term
+            .with_columns(
+                (
+                    2 * pl.min_horizontal("n_persons", "insee_flows")
+                    / (pl.col("n_persons") + pl.col("insee_flows"))
+                ).alias("local_ssi")
+            )
+            # mean
+            .select(
+                (pl.col("local_ssi").mean()).alias("ssi_liu_yan_2020")
+            )
+        )
+
+        # Other SSI from Yan et al. 2014
+        # https://doi.org/10.1098/rsif.2014.0834
+        # modified with threshold
+        ssi_yan_2014 = (
+            od_flows_work_above_threshold
+            # compute local Sørensen term
+            .with_columns(
+                (
+                    2 * pl.min_horizontal("n_persons", "insee_flows")
+                    / (pl.col("n_persons") + pl.col("insee_flows"))
+                ).alias("local_ssi")
+            )
+            # mean
+            .select(
+                (pl.col("local_ssi").mean()).alias("ssi_yan_2014")
+            )
+            )
+
+        ssis = pl.concat([ssi, ssi_liu_yan_2020, ssi_yan_2014], how="horizontal")
+        
+        return ssis
+
 
     @staticmethod
     def _show_labels(labels, size, color):
