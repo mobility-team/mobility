@@ -29,7 +29,7 @@ json._default_encoder = _FallbackJSONEncoder()  # type: ignore[attr-defined]
 # -------------------- Fixtures de test --------------------
 def get_test_data():
     return {
-        "transport_zones_local_admin_unit_id": "fr-09261",  # Saint-Girons
+        "transport_zones_local_admin_unit_id": "fr-87085",  # Limoges keeps tests inside the smaller Limousin OSM extract.
         "transport_zones_radius": 10.0,
         "population_sample_size": 10,
     }

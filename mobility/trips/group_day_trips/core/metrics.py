@@ -4602,20 +4602,36 @@ class RunMetrics:
         flows_per_commune = population_df.merge(tzdf, left_on="from", right_on="transport_zone_id")
         flows_per_commune = flows_per_commune.groupby("local_admin_unit_id")["n_persons"].sum().reset_index()
         flows_per_commune = flows_per_commune.merge(study_area_df)
-        flows_per_commune = flows_per_commune.sort_values(by="n_persons", ascending=False).head(n_cities * 2).reset_index()
+        flows_per_commune = (
+            flows_per_commune.sort_values(by="n_persons", ascending=False)
+            .head(n_cities * 2)
+            .reset_index(drop=True)
+        )
+
+        if flows_per_commune.empty:
+            return gpd.GeoDataFrame(
+                columns=["local_admin_unit_id", "local_admin_unit_name", "prominence", "x", "y"]
+            )
+
+        # First rank cities by travel volume, then lower the rank of nearby cities
+        # so labels stay readable on dense maps.
         flows_per_commune.loc[0, "prominence"] = 1
         flows_per_commune.loc[1 : n_cities // 2, "prominence"] = 2
         flows_per_commune.loc[n_cities // 2 + 1 : n_cities, "prominence"] = 3
         flows_per_commune.loc[n_cities + 1 : n_cities * 2, "prominence"] = 3
 
         geoflows = gpd.GeoDataFrame(flows_per_commune)
+        n_reference_cities = min(n_cities // 2, len(geoflows))
 
-        for i in range(n_cities // 2):
-            coords = flows_per_commune.loc[i, "geometry"]
+        for i in range(n_reference_cities):
+            coords = geoflows.loc[i, "geometry"]
             geoflows["dists"] = geoflows["geometry"].distance(coords)
-            geoflows.loc[
-                ((geoflows["dists"] < distance_km * 1000) & (geoflows.index > i)), "prominence"
-            ] = geoflows["prominence"] + 2
+            nearby_lower_ranked_cities = (geoflows["dists"] < distance_km * 1000) & (
+                geoflows.index > i
+            )
+            geoflows.loc[nearby_lower_ranked_cities, "prominence"] = (
+                geoflows.loc[nearby_lower_ranked_cities, "prominence"] + 2
+            )
             geoflows = geoflows.sort_values(by="prominence").reset_index(drop=True)
 
         geoflows = geoflows[geoflows["prominence"] <= n_levels]
