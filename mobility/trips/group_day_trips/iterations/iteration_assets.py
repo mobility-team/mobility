@@ -22,7 +22,6 @@ from mobility.trips.group_day_trips.plans.mode_sequence_search import ModeSequen
 from mobility.trips.group_day_trips.plans.plan_initializer import PlanInitializer
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 from mobility.trips.group_day_trips.transitions.transition_events import TransitionEventsAsset
-from mobility.transport.costs.congestion_state import CongestionState
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from ..plans.candidate_plan_steps import CandidatePlanStepsAsset
@@ -125,7 +124,6 @@ class InitialIterationStateAsset(FileAsset):
     def __init__(
         self,
         *,
-        run_key: str,
         is_weekday: bool,
         base_folder: pathlib.Path,
         population: Any,
@@ -286,12 +284,74 @@ class IterationSeedsAsset(FileAsset):
         return seeds
 
 
+class PersonODFlowsByModeAsset(FileAsset):
+    """Cached person OD flows by mode after one completed iteration."""
+
+    def __init__(
+        self,
+        *,
+        source_iteration: int,
+        base_folder: pathlib.Path,
+        previous_state: FileAsset,
+    ) -> None:
+        self.source_iteration = int(source_iteration)
+        self.previous_state = previous_state
+        inputs = {
+            "version": 1,
+            "source_iteration": int(source_iteration),
+            "previous_state": previous_state,
+        }
+        cache_path = (
+            pathlib.Path(base_folder)
+            / "person-od-flows"
+            / f"person_od_flows_by_mode_{source_iteration}.parquet"
+        )
+        super().__init__(inputs, cache_path)
+
+    def get_cached_asset(self) -> pl.DataFrame:
+        """Return person OD flows by mode."""
+        return pl.read_parquet(self.cache_path)
+
+    def create_and_get_asset(self) -> pl.DataFrame:
+        """Aggregate the current plan steps into person OD flows by mode."""
+        previous = self.previous_state.get()
+        if previous.current_plan_steps is None:
+            flows = pl.DataFrame(
+                schema={
+                    "from": pl.Int32,
+                    "to": pl.Int32,
+                    "mode": pl.String,
+                    "flow_volume": pl.Float64,
+                }
+            )
+        else:
+            flows = (
+                previous.current_plan_steps
+                .filter(pl.col("activity_seq_id") != 0)
+                .with_columns(
+                    pl.col("from").cast(pl.Int32),
+                    pl.col("to").cast(pl.Int32),
+                    mode=pl.col("mode").cast(pl.String),
+                )
+                .group_by(["from", "to", "mode"])
+                .agg(flow_volume=pl.col("n_persons").sum().cast(pl.Float64))
+            )
+
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        flows.write_parquet(self.cache_path)
+        logging.debug(
+            "Person OD flows by mode after iteration %s are ready.",
+            str(self.source_iteration),
+        )
+        return flows
+
+
 class CongestionFlowsAsset(FileAsset):
     """Cached vehicle flows used to update congested costs after one iteration.
 
-    The input is the previous iteration state, not the run folder. This means two
-    scenario runs that produce the same current plan steps will reuse the same
-    congestion-flow files before rebuilding the next transport costs.
+    The inputs are the previous iteration state and the road flow conversion
+    settings. This means two scenario runs that share the same upstream state
+    and road settings also share the road traffic assignment.
     """
 
     def __init__(
@@ -309,59 +369,88 @@ class CongestionFlowsAsset(FileAsset):
         self.previous_state = previous_state
         self.transport_costs = transport_costs
         self.n_iter_per_cost_update = int(n_iter_per_cost_update)
+        self.road_flow_parameters = (
+            transport_costs.road_flows.road_flow_parameters()
+            if transport_costs.has_enabled_congestion()
+            else []
+        )
+        self.should_update_costs = (
+            previous_state is not None
+            and iteration > 1
+            and bool(self.road_flow_parameters)
+            and self.n_iter_per_cost_update > 0
+            and transport_costs.should_recompute_congested_costs(
+                iteration - 1,
+                self.n_iter_per_cost_update,
+            )
+        )
+        self.previous_congestion_flows = (
+            self._previous_congestion_flows(previous_state)
+            if (
+                previous_state is not None
+                and iteration > 1
+                and bool(self.road_flow_parameters)
+                and self.n_iter_per_cost_update > 0
+                and not self.should_update_costs
+            )
+            else None
+        )
+        self.person_od_flows_by_mode = (
+            PersonODFlowsByModeAsset(
+                source_iteration=iteration - 1,
+                base_folder=base_folder,
+                previous_state=previous_state,
+            )
+            if self.should_update_costs
+            else None
+        )
         inputs = {
-            "version": 1,
+            "version": 5,
             "is_weekday": is_weekday,
             "iteration": iteration,
-            "previous_state": previous_state,
-            "transport_costs": transport_costs,
+            "previous_congestion_flows": self.previous_congestion_flows,
+            "person_od_flows_by_mode": self.person_od_flows_by_mode,
+            "road_flow_parameters": self.road_flow_parameters,
             "n_iter_per_cost_update": int(n_iter_per_cost_update),
         }
         cache_path = pathlib.Path(base_folder) / "congestion-flows" / f"congestion_flows_{iteration}.json"
         super().__init__(inputs, cache_path)
 
-    def get_cached_asset(self) -> CongestionState | None:
-        """Return the cached congestion state, or None when no update is due."""
+    def _previous_congestion_flows(self, previous_state: FileAsset | None) -> FileAsset | None:
+        """Return the previous iteration congestion-flow asset when it exists."""
+        if previous_state is None:
+            return None
+
+        previous_transport_costs = previous_state.inputs.get("transport_costs")
+        return getattr(previous_transport_costs, "congestion_flows", None)
+
+    def get_cached_asset(self) -> VehicleODFlowsAsset | None:
+        """Return the cached road flow asset, or None when no update is due."""
         with open(self.cache_path, "r", encoding="utf-8") as file:
             metadata = json.load(file)
 
-        if metadata["has_congestion_state"] is False:
+        if metadata.get("has_road_flow_asset", False) is False:
             return None
 
-        flow_assets_by_mode = {
-            mode_name: VehicleODFlowsAsset.from_inputs(
-                run_key=self.inputs_hash,
-                is_weekday=self.is_weekday,
-                iteration=self.iteration - 1,
-                mode_name=mode_name,
-            )
-            for mode_name in metadata["mode_names"]
-        }
-        return CongestionState(
-            run_key=self.inputs_hash,
-            is_weekday=self.is_weekday,
-            iteration=self.iteration - 1,
-            flow_assets_by_mode=flow_assets_by_mode,
+        if metadata.get("source") == "previous":
+            if self.previous_congestion_flows is None:
+                return None
+            return self.previous_congestion_flows.get_cached_asset()
+
+        if self.person_od_flows_by_mode is None:
+            return None
+
+        return VehicleODFlowsAsset(
+            person_od_flows_by_mode=self.person_od_flows_by_mode,
+            road_flow_parameters=self.road_flow_parameters,
         )
 
-    def create_and_get_asset(self) -> CongestionState | None:
-        """Aggregate plan-step flows and cache the matching vehicle-flow assets."""
-        congestion_state = None
+    def create_and_get_asset(self) -> VehicleODFlowsAsset | None:
+        """Aggregate plan-step flows and cache the matching road vehicle flows."""
+        road_flow_asset = None
+        source = None
 
-        # Iteration 1 uses the base transport costs. Later iterations only build
-        # congestion flows when the configured cost-update schedule says so.
-        should_update_costs = (
-            self.previous_state is not None
-            and self.iteration > 1
-            and self.transport_costs.has_enabled_congestion()
-            and self.n_iter_per_cost_update > 0
-            and self.transport_costs.should_recompute_congested_costs(
-                self.iteration - 1,
-                self.n_iter_per_cost_update,
-            )
-        )
-
-        if should_update_costs:
+        if self.should_update_costs:
             logging.debug(
                 "Building congestion flows after iteration %s...",
                 str(self.iteration - 1),
@@ -370,19 +459,16 @@ class CongestionFlowsAsset(FileAsset):
                 self.iteration,
                 "updating congestion flows",
             )
-            previous = self.previous_state.get()
-            od_flows_by_mode = (
-                previous.current_plan_steps
-                .filter(pl.col("activity_seq_id") != 0)
-                .with_columns(mode=pl.col("mode").cast(pl.String))
-                .group_by(["from", "to", "mode"])
-                .agg(flow_volume=pl.col("n_persons").sum())
+            road_flow_asset = self.transport_costs.build_road_flow_asset(
+                self.person_od_flows_by_mode,
             )
-            congestion_state = self.transport_costs.build_congestion_state(
-                od_flows_by_mode,
-                run_key=self.inputs_hash,
-                is_weekday=self.is_weekday,
-                iteration=self.iteration - 1,
+            source = "current"
+        elif self.previous_congestion_flows is not None:
+            road_flow_asset = self.previous_congestion_flows.get()
+            source = "previous" if road_flow_asset is not None else None
+            logging.debug(
+                "Reusing congestion flows before iteration %s.",
+                str(self.iteration),
             )
         else:
             logging.debug(
@@ -394,10 +480,11 @@ class CongestionFlowsAsset(FileAsset):
         with open(self.cache_path, "w", encoding="utf-8") as file:
             json.dump(
                 {
-                    "has_congestion_state": congestion_state is not None,
+                    "has_road_flow_asset": road_flow_asset is not None,
+                    "source": source,
                     "mode_names": (
-                        sorted(congestion_state.flow_assets_by_mode)
-                        if congestion_state is not None
+                        [parameters["mode_name"] for parameters in self.road_flow_parameters]
+                        if road_flow_asset is not None
                         else []
                     ),
                 },
@@ -408,7 +495,7 @@ class CongestionFlowsAsset(FileAsset):
             "Congestion-flow asset for iteration %s is ready.",
             str(self.iteration),
         )
-        return congestion_state
+        return road_flow_asset
 
 
 class IterationTransportCostsAsset(FileAsset):
@@ -467,9 +554,9 @@ class IterationTransportCostsAsset(FileAsset):
             str(self.iteration),
         )
         get_group_day_trips_progress().iteration_step(self.iteration, "preparing transport costs")
-        congestion_state = self.congestion_flows.get()
-        effective_transport_costs = self.transport_costs.asset_for_congestion_state(
-            congestion_state
+        road_flow_asset = self.congestion_flows.get()
+        effective_transport_costs = self.transport_costs.asset_for_road_flows(
+            road_flow_asset
         )
         costs = effective_transport_costs.get()
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -521,7 +608,6 @@ class IterationStateAsset(FileAsset):
     def __init__(
         self,
         *,
-        run_key: str,
         is_weekday: bool,
         iteration: int,
         base_folder: pathlib.Path,

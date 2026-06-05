@@ -1,102 +1,115 @@
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import polars as pl
-import pandas as pd
 from pydantic import BaseModel
 
-from mobility.transport.costs.congestion_state_manager import CongestionStateManager
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
-from mobility.transport.costs.transport_costs import TransportCosts
+from mobility.transport.costs.road_flow_manager import RoadFlowManager
+
+
+class _PersonODFlowsAsset(InMemoryAsset):
+    def __init__(self, *, source_key: str, flows: pl.DataFrame):
+        self.flows = flows
+        super().__init__({"source_key": source_key})
+
+    def get(self):
+        return self.flows
 
 
 class _FakeModeParameters(BaseModel):
     name: str
     congestion: bool
+    persons_per_vehicle: float = 2.0
 
 
-def _make_mode(*, name: str, congestion: bool):
+def _make_mode(*, name: str, congestion: bool, persons_per_vehicle: float = 2.0):
     return SimpleNamespace(
         inputs={
-            "parameters": _FakeModeParameters(name=name, congestion=congestion),
+            "parameters": _FakeModeParameters(
+                name=name,
+                congestion=congestion,
+                persons_per_vehicle=persons_per_vehicle,
+            ),
             "generalized_cost": name,
         }
     )
 
 
-def test_get_costs_for_next_iteration_recomputes_when_congestion_enabled(project_dir):
-    # Use a minimal mode stub with congestion enabled so the test only exercises
-    # the aggregator decision logic, not the real routing/cost stack.
-    aggregator = TransportCosts(modes=[_make_mode(name="car", congestion=True)])
-    od_flows_by_mode = pl.DataFrame(
-        {"from": [1], "to": [2], "mode": ["car"], "flow_volume": [10.0]}
+def test_vehicle_od_flows_share_when_upstream_person_flows_are_the_same(project_dir):
+    flows = pl.DataFrame(
+        {
+            "from": [1],
+            "to": [2],
+            "mode": ["car"],
+            "flow_volume": [10.0],
+        }
+    )
+    first_person_flows = _PersonODFlowsAsset(source_key="same-upstream", flows=flows)
+    second_person_flows = _PersonODFlowsAsset(source_key="same-upstream", flows=flows)
+
+    first_vehicle_flows = VehicleODFlowsAsset(
+        person_od_flows_by_mode=first_person_flows,
+        road_flow_parameters=[{"mode_name": "car", "vehicles_per_person": 1.0}],
+    )
+    second_vehicle_flows = VehicleODFlowsAsset(
+        person_od_flows_by_mode=second_person_flows,
+        road_flow_parameters=[{"mode_name": "car", "vehicles_per_person": 1.0}],
     )
 
-    congestion_state = object()
+    assert first_vehicle_flows.inputs_hash == second_vehicle_flows.inputs_hash
+    assert first_vehicle_flows.cache_path == second_vehicle_flows.cache_path
 
-    # Mock the expensive side effects and the final cost lookup: this test is a
-    # regression guard for "did we trigger congestion recomputation at all?".
-    with patch.object(aggregator, "build_congestion_state", return_value=congestion_state) as build_mock:
-        with patch.object(aggregator, "asset_for_congestion_state", return_value=SimpleNamespace(
-            get_costs_by_od=lambda metrics: "costs"
-        )) as asset_mock:
-            result_costs = aggregator.get_costs_for_next_iteration(
-                run=SimpleNamespace(inputs_hash="run-key", is_weekday=True),
-                iteration=1,
-                od_flows_by_mode=od_flows_by_mode,
-            )
 
-    # If congestion is enabled and the update interval matches, the aggregator
-    # must rebuild congested costs before returning the next iteration cost view.
-    build_mock.assert_called_once_with(
-        od_flows_by_mode,
-        run_key="run-key",
-        is_weekday=True,
-        iteration=1,
+def test_vehicle_od_flows_do_not_share_by_flow_content_only(project_dir):
+    flows = pl.DataFrame(
+        {
+            "from": [1],
+            "to": [2],
+            "mode": ["car"],
+            "flow_volume": [10.0],
+        }
     )
-    asset_mock.assert_called_once_with(congestion_state)
-    assert result_costs == "costs"
+    baseline_person_flows = _PersonODFlowsAsset(source_key="baseline", flows=flows)
+    project_person_flows = _PersonODFlowsAsset(source_key="project", flows=flows)
 
-
-def test_vehicle_od_flow_snapshot_hash_differs_between_weekday_and_weekend(project_dir):
-    flows = pd.DataFrame({"from": [1], "to": [2], "vehicle_volume": [10.0]})
-
-    weekday_asset = VehicleODFlowsAsset(
-        flows,
-        run_key="run-key",
-        is_weekday=True,
-        iteration=1,
-        mode_name="car",
+    baseline_vehicle_flows = VehicleODFlowsAsset(
+        person_od_flows_by_mode=baseline_person_flows,
+        road_flow_parameters=[{"mode_name": "car", "vehicles_per_person": 1.0}],
     )
-    weekend_asset = VehicleODFlowsAsset(
-        flows,
-        run_key="run-key",
-        is_weekday=False,
-        iteration=1,
-        mode_name="car",
+    project_vehicle_flows = VehicleODFlowsAsset(
+        person_od_flows_by_mode=project_person_flows,
+        road_flow_parameters=[{"mode_name": "car", "vehicles_per_person": 1.0}],
     )
 
-    assert weekday_asset.inputs_hash != weekend_asset.inputs_hash
-    assert weekday_asset.cache_path != weekend_asset.cache_path
+    assert baseline_vehicle_flows.inputs_hash != project_vehicle_flows.inputs_hash
+    assert baseline_vehicle_flows.cache_path != project_vehicle_flows.cache_path
 
 
-def test_congestion_state_manager_overwrites_existing_vehicle_flow_snapshot(project_dir):
-    manager = CongestionStateManager(SimpleNamespace())
-
-    manager._create_vehicle_flow_snapshot(
-        pl.DataFrame({"from": [1], "to": [2], "vehicle_volume": [3.0]}),
-        run_key="run-key",
-        is_weekday=True,
-        iteration=1,
-        mode_name="car",
+def test_road_flow_manager_uses_one_shared_road_flow_asset_for_car_and_carpool(
+    project_dir,
+):
+    transport_costs = SimpleNamespace(
+        modes=[
+            _make_mode(name="car", congestion=True),
+            _make_mode(name="carpool", congestion=True, persons_per_vehicle=2.0),
+            _make_mode(name="walk", congestion=False),
+        ]
     )
-    overwritten = manager._create_vehicle_flow_snapshot(
-        pl.DataFrame({"from": [1], "to": [2], "vehicle_volume": [7.0]}),
-        run_key="run-key",
-        is_weekday=True,
-        iteration=1,
-        mode_name="car",
+    person_flows = _PersonODFlowsAsset(
+        source_key="iteration-1",
+        flows=pl.DataFrame(
+            {
+                "from": [1, 1],
+                "to": [2, 2],
+                "mode": ["car", "carpool"],
+                "flow_volume": [10.0, 4.0],
+            }
+        ),
     )
 
-    persisted = overwritten.get_cached_asset()
-    assert persisted["vehicle_volume"].tolist() == [7.0]
+    road_flow_asset = RoadFlowManager(transport_costs).build(person_flows)
+
+    assert road_flow_asset is not None
+    road_flows = road_flow_asset.get_cached_asset()
+    assert road_flows["vehicle_volume"].tolist() == [12.0]

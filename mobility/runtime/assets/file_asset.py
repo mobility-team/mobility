@@ -161,16 +161,37 @@ class FileAsset(Asset):
                 for nested in value:
                     yield from iter_file_assets(nested)
         
-        visited_assets = set()
+        canonical_assets = {}
+
+        def asset_cache_key(asset):
+            if isinstance(asset.cache_path, dict):
+                cache_path = tuple(
+                    (str(key), str(path))
+                    for key, path in sorted(asset.cache_path.items())
+                )
+            else:
+                cache_path = str(asset.cache_path)
+            return (asset.__class__, asset.inputs_hash, cache_path)
+
+        def canonical_asset(asset):
+            key = asset_cache_key(asset)
+            if key not in canonical_assets:
+                canonical_assets[key] = asset
+            return canonical_assets[key]
+
+        visited_asset_keys = set()
 
         def add_upstream_deps(asset):
+            asset = canonical_asset(asset)
+            asset_key = asset_cache_key(asset)
             graph.add_node(asset)
-            if asset in visited_assets:
+            if asset_key in visited_asset_keys:
                 return
 
-            visited_assets.add(asset)
+            visited_asset_keys.add(asset_key)
             for inp in asset.inputs.values():
                 for dep in iter_file_assets(inp):
+                    dep = canonical_asset(dep)
                     graph.add_node(dep)
                     graph.add_edge(dep, asset)
                     add_upstream_deps(dep)

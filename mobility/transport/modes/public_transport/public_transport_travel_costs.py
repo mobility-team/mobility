@@ -156,15 +156,15 @@ class PublicTransportTravelCosts(TravelCostsAsset):
         self.inputs["intermodal_graph"].update()
         self.create_and_get_asset()
 
-    def asset_for_congestion_state(self, congestion_state):
+    def asset_for_road_flows(self, road_flow_asset):
         """Return a PT variant rebound to congestion-aware leg travel costs."""
-        first_leg_variant = self._travel_costs_for_congestion_state(
+        first_leg_variant = self._travel_costs_for_road_flows(
             self.first_leg_travel_costs,
-            congestion_state,
+            road_flow_asset,
         )
-        last_leg_variant = self._travel_costs_for_congestion_state(
+        last_leg_variant = self._travel_costs_for_road_flows(
             self.last_leg_travel_costs,
-            congestion_state,
+            road_flow_asset,
         )
 
         if (
@@ -186,9 +186,9 @@ class PublicTransportTravelCosts(TravelCostsAsset):
             last_modal_transfer=self.inputs["last_modal_transfer"],
         )
 
-    def remove_congestion_artifacts(self, congestion_state) -> None:
+    def remove_congestion_artifacts(self, road_flow_asset) -> None:
         """Remove PT-owned congestion-specific variants without touching leg-owned caches."""
-        variant = self.asset_for_congestion_state(congestion_state)
+        variant = self.asset_for_road_flows(road_flow_asset)
         if variant is self:
             return
 
@@ -200,10 +200,10 @@ class PublicTransportTravelCosts(TravelCostsAsset):
         return self.inputs["intermodal_graph"].audit_gtfs()
 
     @staticmethod
-    def _travel_costs_for_congestion_state(travel_costs: Any, congestion_state):
-        """Resolve one leg travel-cost asset for the requested congestion state."""
+    def _travel_costs_for_road_flows(travel_costs: Any, road_flow_asset):
+        """Resolve one leg travel-cost asset for the requested road flows."""
         if isinstance(travel_costs, TravelCostsAsset) is False:
             return travel_costs
 
-        variant = travel_costs.asset_for_congestion_state(congestion_state)
+        variant = travel_costs.asset_for_road_flows(road_flow_asset)
         return travel_costs if variant is None else variant

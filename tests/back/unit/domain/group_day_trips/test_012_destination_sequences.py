@@ -26,7 +26,6 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
             return self._df
 
     destination_sequences = DestinationSequences(
-        run_key="run",
         is_weekday=True,
         iteration=3,
         base_folder=_make_local_tmp_path(tmp_path, "active_destination_sequences"),
@@ -123,7 +122,6 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
 
 def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_path):
     destination_sequences = DestinationSequences(
-        run_key="run",
         is_weekday=True,
         iteration=5,
         base_folder=_make_local_tmp_path(tmp_path, "refresh_active_destinations"),
@@ -222,7 +220,6 @@ def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_
 
 def test_refresh_active_mode_alternatives_default_keeps_sampled_destinations_only(tmp_path):
     destination_sequences = DestinationSequences(
-        run_key="run",
         is_weekday=True,
         iteration=5,
         base_folder=_make_local_tmp_path(tmp_path, "refresh_active_destinations_default"),
@@ -260,7 +257,6 @@ def test_refresh_active_mode_alternatives_default_keeps_sampled_destinations_onl
 
 def test_destination_probability_inputs_use_cost_and_sink_even_without_destination_utilities(tmp_path):
     destination_sequences = DestinationSequences(
-        run_key="run",
         is_weekday=True,
         iteration=1,
         base_folder=_make_local_tmp_path(tmp_path, "destination_utilities_default_zero"),
@@ -312,7 +308,6 @@ def test_destination_probability_inputs_use_cost_and_sink_even_without_destinati
 
 def test_destination_probability_inputs_use_shadow_attraction_when_enabled(tmp_path):
     destination_sequences = DestinationSequences(
-        run_key="run",
         is_weekday=True,
         iteration=1,
         base_folder=_make_local_tmp_path(tmp_path, "destination_shadow_inputs"),
@@ -363,7 +358,6 @@ def test_destination_probability_inputs_use_shadow_attraction_when_enabled(tmp_p
 
 def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candidates(tmp_path):
     destination_sequences = DestinationSequences(
-        run_key="run",
         is_weekday=True,
         iteration=1,
         base_folder=_make_local_tmp_path(tmp_path, "non_anchor_chain_cost_weighting"),
@@ -503,7 +497,6 @@ def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candi
 
 def test_spatialize_anchor_activities_samples_from_current_anchor_location(tmp_path):
     destination_sequences = DestinationSequences(
-        run_key="run",
         is_weekday=True,
         iteration=1,
         base_folder=_make_local_tmp_path(tmp_path, "anchor_current_location"),
@@ -599,7 +592,6 @@ def test_spatialize_anchor_activities_samples_from_current_anchor_location(tmp_p
 
 def test_spatialize_anchor_activities_uses_chain_cost_to_reweight_candidates(tmp_path):
     destination_sequences = DestinationSequences(
-        run_key="run",
         is_weekday=True,
         iteration=1,
         base_folder=_make_local_tmp_path(tmp_path, "anchor_chain_cost_weighting"),
@@ -735,7 +727,6 @@ def test_spatialize_anchor_activities_uses_chain_cost_to_reweight_candidates(tmp
 
 def test_spatialize_trip_chain_step_drops_anchor_without_leg_cost(tmp_path):
     destination_sequences = DestinationSequences(
-        run_key="run",
         is_weekday=True,
         iteration=1,
         base_folder=_make_local_tmp_path(tmp_path, "missing_anchor_leg_cost"),
@@ -871,7 +862,6 @@ def test_drop_incomplete_destination_draws_removes_partial_draws():
 
 def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path):
     destination_sequences = DestinationSequences(
-        run_key="run",
         is_weekday=True,
         iteration=4,
         base_folder=_make_local_tmp_path(tmp_path, "reuse_current_destination_sequences"),

@@ -52,7 +52,6 @@ class ModeSequences(FileAsset):
     def __init__(
         self,
         *,
-        run_key: str,
         is_weekday: bool,
         iteration: int,
         base_folder: pathlib.Path,

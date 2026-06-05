@@ -17,7 +17,7 @@ from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityPar
 from mobility.transport.graphs.modified.modifiers.speed_modifier import SpeedModifier
 from mobility.transport.graphs.congested.congested_path_graph import CongestedPathGraph
 from mobility.transport.graphs.contracted.contracted_path_graph import ContractedPathGraph
-from mobility.transport.costs.congestion_state import CongestionState
+from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 
 from typing import List
 
@@ -110,18 +110,18 @@ class PathTravelCosts(TravelCostsAsset):
 
         super().__init__(inputs, cache_path)
 
-    def get(self, congestion: bool = False, congestion_state: CongestionState | None = None) -> pd.DataFrame:
-        requested_congestion = congestion and congestion_state is None
+    def get(self, congestion: bool = False, road_flow_asset: VehicleODFlowsAsset | None = None) -> pd.DataFrame:
+        requested_congestion = congestion and road_flow_asset is None
         self.update_ancestors_if_needed()
 
         if self.is_update_needed():
             asset = self.create_and_get_asset(congestion=requested_congestion)
             self.update_hash(self.inputs_hash)
-            if congestion_state is None:
+            if road_flow_asset is None:
                 return asset
 
-        if congestion and congestion_state is not None:
-            asset = self.asset_for_congestion_state(congestion_state)
+        if congestion and road_flow_asset is not None:
+            asset = self.asset_for_road_flows(road_flow_asset)
             if asset is not None:
                 return asset.get()
 
@@ -220,41 +220,23 @@ class PathTravelCosts(TravelCostsAsset):
             return self.asset_for_flow_asset(flow_asset).inputs["contracted_path_graph"].inputs["congested_graph"].get()
         return self.inputs["congested_path_graph"].get()
 
-    def asset_for_iteration(self, run, iteration: int):
-        """Return the travel-cost asset instance corresponding to one simulation iteration."""
-        if iteration < 1:
-            raise ValueError("Iteration should be >= 1.")
-        n_iterations = int(run.parameters.run.n_iterations)
-        if iteration > n_iterations:
-            raise ValueError(
-                f"Iteration should be <= {n_iterations} for this run."
-            )
-
-        flow_asset = self.inputs["congested_path_graph"].get_flow_asset_for_iteration(run, iteration)
-        if flow_asset is None:
-            return self
-        return self.asset_for_flow_asset(flow_asset)
-
-    def get_for_iteration(self, run, iteration: int):
-        """Materialize the travel costs corresponding to one simulation iteration."""
-        return self.asset_for_iteration(run, iteration).get()
-
-    def asset_for_congestion_state(self, congestion_state: CongestionState):
-        flow_asset = congestion_state.for_mode(self.inputs["mode_name"])
-        if flow_asset is None:
+    def asset_for_road_flows(self, road_flow_asset: VehicleODFlowsAsset | None):
+        if road_flow_asset is None:
             return None
-        return self.asset_for_flow_asset(flow_asset)
+        if self.inputs["congested_path_graph"].inputs["handles_congestion"] is False:
+            return None
+        return self.asset_for_flow_asset(road_flow_asset)
 
     def asset_for_flow_asset(self, flow_asset):
         congested_graph = CongestedPathGraph(
             modified_graph=self.inputs["modified_path_graph"],
             transport_zones=self.inputs["transport_zones"],
-            handles_congestion=self.inputs["congested_path_graph"].handles_congestion,
-            congestion_flows_scaling_factor=self.inputs["congested_path_graph"].congestion_flows_scaling_factor,
-            target_max_vehicles_per_od_endpoint=self.inputs["congested_path_graph"].target_max_vehicles_per_od_endpoint,
-            congestion_assignment_max_iterations=self.inputs["congested_path_graph"].congestion_assignment_max_iterations,
-            congestion_assignment_max_gap=self.inputs["congested_path_graph"].congestion_assignment_max_gap,
-            congestion_assignment_retained_volume_share=self.inputs["congested_path_graph"].congestion_assignment_retained_volume_share,
+            handles_congestion=self.inputs["congested_path_graph"].inputs["handles_congestion"],
+            congestion_flows_scaling_factor=self.inputs["congested_path_graph"].inputs["congestion_flows_scaling_factor"],
+            target_max_vehicles_per_od_endpoint=self.inputs["congested_path_graph"].inputs["target_max_vehicles_per_od_endpoint"],
+            congestion_assignment_max_iterations=self.inputs["congested_path_graph"].inputs["congestion_assignment_max_iterations"],
+            congestion_assignment_max_gap=self.inputs["congested_path_graph"].inputs["congestion_assignment_max_gap"],
+            congestion_assignment_retained_volume_share=self.inputs["congested_path_graph"].inputs["congestion_assignment_retained_volume_share"],
             vehicle_flows=flow_asset,
         )
         contracted_graph = ContractedPathGraph(congested_graph)
@@ -272,9 +254,9 @@ class PathTravelCosts(TravelCostsAsset):
         )
         return variant
 
-    def remove_congestion_artifacts(self, congestion_state: CongestionState) -> None:
+    def remove_congestion_artifacts(self, road_flow_asset: VehicleODFlowsAsset) -> None:
         """Remove one congestion-specific travel-cost variant and owned graph caches."""
-        variant = self.asset_for_congestion_state(congestion_state)
+        variant = self.asset_for_road_flows(road_flow_asset)
         if variant is None or variant is self:
             return
 

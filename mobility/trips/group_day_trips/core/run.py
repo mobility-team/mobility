@@ -110,7 +110,6 @@ class Run(FileAsset):
             base_folder=group_day_trips_folder,
         )
         self.initial_iteration_state = InitialIterationStateAsset(
-            run_key=run_context_hash,
             is_weekday=is_weekday,
             base_folder=group_day_trips_folder,
             population=population,
@@ -131,7 +130,6 @@ class Run(FileAsset):
         )
         self.iteration_transport_cost_assets: list[IterationTransportCostsAsset] = []
         self.iteration_state_assets = self._build_iteration_state_assets(
-            run_key=run_context_hash,
             is_weekday=is_weekday,
             base_folder=group_day_trips_folder,
             population=population,
@@ -183,7 +181,6 @@ class Run(FileAsset):
     def _build_iteration_state_assets(
         self,
         *,
-        run_key: str,
         is_weekday: bool,
         base_folder: pathlib.Path,
         population: Population,
@@ -217,7 +214,6 @@ class Run(FileAsset):
             )
             self.iteration_transport_cost_assets.append(resolved_transport_costs)
             activity_sequences = ActivitySequences(
-                run_key=run_key,
                 is_weekday=is_weekday,
                 iteration=iteration_index,
                 base_folder=self.iterations.folder_paths["activity-sequences"],
@@ -226,7 +222,6 @@ class Run(FileAsset):
                 parameters=parameters,
             )
             destination_sequences = DestinationSequences(
-                run_key=run_key,
                 is_weekday=is_weekday,
                 iteration=iteration_index,
                 base_folder=self.iterations.folder_paths["destination-sequences"],
@@ -241,7 +236,6 @@ class Run(FileAsset):
                 parameters=parameters,
             )
             mode_sequences = ModeSequences(
-                run_key=run_key,
                 is_weekday=is_weekday,
                 iteration=iteration_index,
                 base_folder=self.iterations.folder_paths["modes"],
@@ -252,7 +246,6 @@ class Run(FileAsset):
                 parameters=parameters,
             )
             state_asset = IterationStateAsset(
-                run_key=run_key,
                 is_weekday=is_weekday,
                 iteration=iteration_index,
                 base_folder=base_folder,

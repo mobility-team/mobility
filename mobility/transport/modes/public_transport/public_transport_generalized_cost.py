@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
-from mobility.transport.costs.congestion_state import CongestionState
+from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 
 class PublicTransportGeneralizedCost(InMemoryAsset):
     
@@ -34,7 +34,7 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
             metrics=["cost"],
             congestion: bool = True,
             detail_distances: bool = False,
-            congestion_state: CongestionState | None = None,
+            road_flow_asset: VehicleODFlowsAsset | None = None,
         ) -> pd.DataFrame:
 
         first_leg_mode_name = self.inputs["first_leg_mode_name"]
@@ -42,6 +42,8 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
         
         metrics = list(metrics)
         travel_costs = self.inputs["travel_costs"]
+        if congestion and road_flow_asset is not None:
+            travel_costs = travel_costs.asset_for_road_flows(road_flow_asset)
         costs = travel_costs.get()
         
         study_area = travel_costs.inputs["transport_zones"].study_area.get()

@@ -152,4 +152,6 @@ class PublicTransportRoutingParameters(BaseModel):
     def validate_time_window(self) -> "PublicTransportRoutingParameters":
         if self.start_time_max < self.start_time_min:
             raise ValueError("start_time_max should be greater than or equal to start_time_min.")
+        if self.additional_gtfs_files == []:
+            self.additional_gtfs_files = None
         return self

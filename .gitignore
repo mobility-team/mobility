@@ -228,3 +228,5 @@ certs/
 
 # Local scratch file created while refreshing ignore rules
 .gitignore-new
+
+.worktrees/

@@ -1097,36 +1097,6 @@ class PlanUpdater:
 
         return current_plan_steps.drop("plan_id") if "plan_id" in current_plan_steps.columns else current_plan_steps
 
-    def get_new_costs(
-        self,
-        costs,
-        iteration,
-        n_iter_per_cost_update,
-        current_plan_steps,
-        transport_costs,
-        run,
-    ):
-        """Return the OD costs to use after the current iteration."""
-
-        if (
-            n_iter_per_cost_update <= 0
-            or transport_costs.should_recompute_congested_costs(iteration, n_iter_per_cost_update) is False
-        ):
-            return costs
-
-        od_flows_by_mode = (
-            current_plan_steps.filter(pl.col("activity_seq_id") != 0)
-            .with_columns(mode=pl.col("mode").cast(pl.String))
-            .group_by(["from", "to", "mode"])
-            .agg(flow_volume=pl.col("n_persons").sum())
-        )
-
-        return transport_costs.get_costs_for_next_iteration(
-            run=run,
-            iteration=iteration,
-            od_flows_by_mode=od_flows_by_mode,
-        )
-
     def get_destination_saturation(
         self,
         current_plan_steps,

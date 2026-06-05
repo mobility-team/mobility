@@ -93,7 +93,7 @@ def test_public_transport_routing_parameters_resolve_scenario_gtfs_files():
     assert baseline.additional_gtfs_files is None
 
     assert isinstance(saleve_jura_1, PublicTransportRoutingParameters)
-    assert saleve_jura_1.additional_gtfs_files == []
+    assert saleve_jura_1.additional_gtfs_files is None
     assert saleve_jura_5.additional_gtfs_files == ["rer.zip"]
 
 
