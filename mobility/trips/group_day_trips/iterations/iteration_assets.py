@@ -23,6 +23,7 @@ from mobility.trips.group_day_trips.plans.plan_initializer import PlanInitialize
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 from mobility.trips.group_day_trips.transitions.transition_events import TransitionEventsAsset
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
+from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from ..plans.candidate_plan_steps import CandidatePlanStepsAsset
 
@@ -172,7 +173,10 @@ class InitialIterationStateAsset(FileAsset):
                 for activity in activities
             ],
             "initial_activity_parameters": initial_activity_parameters,
-            "modes": modes,
+            # The initial stay-home state only needs the canonical mode enum.
+            # Keep the full mode objects as runtime attributes so scenario
+            # routing parameters do not leak into this initial-state hash.
+            "mode_values": get_mode_values(modes, "stay_home"),
             "run_seed": parameters.run.seed,
             "min_activity_time_constant": parameters.plan_update.min_activity_time_constant,
             "initial_transport_costs": initial_transport_costs,
@@ -295,6 +299,7 @@ class PersonODFlowsByModeAsset(FileAsset):
         previous_state: FileAsset,
     ) -> None:
         self.source_iteration = int(source_iteration)
+        self.iteration = self.source_iteration
         self.previous_state = previous_state
         inputs = {
             "version": 1,

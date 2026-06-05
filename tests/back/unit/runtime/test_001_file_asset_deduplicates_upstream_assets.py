@@ -1,4 +1,5 @@
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 
 
 class _CountingAsset(FileAsset):
@@ -27,6 +28,11 @@ class _ParentAsset(FileAsset):
         return None
 
 
+class _MemoryWrapperAsset(InMemoryAsset):
+    def __init__(self, *, child):
+        super().__init__({"child": child})
+
+
 def test_update_ancestors_deduplicates_logically_identical_file_assets(tmp_path):
     """Do not rebuild the same upstream asset twice when it appears as two objects."""
     _CountingAsset.create_calls = 0
@@ -41,3 +47,17 @@ def test_update_ancestors_deduplicates_logically_identical_file_assets(tmp_path)
 
     assert _CountingAsset.create_calls == 1
     assert first_child.cache_path.exists()
+
+
+def test_update_ancestors_rebuilds_file_assets_below_in_memory_file_inputs(tmp_path):
+    """Rebuild file assets even when an in-memory asset sits below another FileAsset."""
+    _CountingAsset.create_calls = 0
+    child = _CountingAsset(name="hidden", cache_folder=tmp_path / "child")
+    wrapper = _MemoryWrapperAsset(child=child)
+    bridge = _ParentAsset(children=[wrapper], cache_folder=tmp_path / "bridge")
+    parent = _ParentAsset(children=[bridge], cache_folder=tmp_path / "parent")
+
+    parent.update_ancestors_if_needed()
+
+    assert _CountingAsset.create_calls == 1
+    assert child.cache_path.exists()
