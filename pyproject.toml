@@ -65,6 +65,11 @@ dev = [
   "myst_parser>=3,<6",
 ]
 
+dag = [
+  "dash>=3,<4",
+  "dash-cytoscape>=1,<2",
+]
+
 spyder = [
     "spyder-kernels"
 ]
