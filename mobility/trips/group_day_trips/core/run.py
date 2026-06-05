@@ -96,6 +96,14 @@ class Run(FileAsset):
             scenario=scenario,
             replication=replication,
         )
+        self.population = population
+        self.activities = activities
+        self.modes = modes
+        self.surveys = surveys
+        self.survey_plan_assets = survey_plan_assets
+        self.parameters = parameters
+        self.is_weekday = is_weekday
+        self.enabled = enabled
         self.scenario = scenario
         self.replication = int(replication)
 
@@ -147,8 +155,8 @@ class Run(FileAsset):
         )
 
         inputs = {
-            **run_context_inputs,
-            "version": 18,
+            "version": 19,
+            "run_context_hash": run_context_hash,
             "final_iteration_state": self.final_iteration_state,
         }
 

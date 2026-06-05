@@ -4,6 +4,7 @@ import logging
 import networkx as nx
 
 from mobility.runtime.assets.asset import Asset
+from mobility.runtime.assets.graph import build_upstream_file_asset_graph
 from typing import Any
 from abc import abstractmethod
 
@@ -148,57 +149,9 @@ class FileAsset(Asset):
             RuntimeError: If a dependency cycle is detected among FileAssets.
         """
         
-        # Build a graph of input assets
-        graph = nx.DiGraph()
-
-        def iter_file_assets(value):
-            if isinstance(value, FileAsset):
-                yield value
-            elif isinstance(value, dict):
-                for nested in value.values():
-                    yield from iter_file_assets(nested)
-            elif isinstance(value, (list, tuple, set)):
-                for nested in value:
-                    yield from iter_file_assets(nested)
-        
-        canonical_assets = {}
-
-        def asset_cache_key(asset):
-            if isinstance(asset.cache_path, dict):
-                cache_path = tuple(
-                    (str(key), str(path))
-                    for key, path in sorted(asset.cache_path.items())
-                )
-            else:
-                cache_path = str(asset.cache_path)
-            return (asset.__class__, asset.inputs_hash, cache_path)
-
-        def canonical_asset(asset):
-            key = asset_cache_key(asset)
-            if key not in canonical_assets:
-                canonical_assets[key] = asset
-            return canonical_assets[key]
-
-        visited_asset_keys = set()
-
-        def add_upstream_deps(asset):
-            asset = canonical_asset(asset)
-            asset_key = asset_cache_key(asset)
-            graph.add_node(asset)
-            if asset_key in visited_asset_keys:
-                return
-
-            visited_asset_keys.add(asset_key)
-            for inp in asset.inputs.values():
-                for dep in iter_file_assets(inp):
-                    dep = canonical_asset(dep)
-                    graph.add_node(dep)
-                    graph.add_edge(dep, asset)
-                    add_upstream_deps(dep)
-        
-        for inp in self.inputs.values():
-            for dep in iter_file_assets(inp):
-                add_upstream_deps(dep)
+        # Build the graph of upstream file assets. The same graph builder is
+        # also used by the debug UI, so both paths see the same dependencies.
+        graph = build_upstream_file_asset_graph(self)
 
         logging.debug(
             "Asset DAG for %s (%s) has %s upstream assets and %s dependency edges.",
