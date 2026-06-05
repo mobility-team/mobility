@@ -1,7 +1,10 @@
 import pytest
 
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
-from mobility.transport.costs.travel_costs_asset import TravelCostsAsset
+from mobility.transport.costs.travel_costs_asset import TravelCostsBase
+from mobility.transport.modes.carpool.detailed.detailed_carpool_travel_costs import (
+    DetailedCarpoolTravelCosts,
+)
 from mobility.transport.modes.public_transport.public_transport_travel_costs import (
     PublicTransportTravelCosts,
 )
@@ -16,7 +19,22 @@ class _Removable:
         self.remove_calls += 1
 
 
-class _LegTravelCosts(TravelCostsAsset):
+class _CostTable:
+    def __init__(self, value):
+        self.value = value
+        self.get_calls = 0
+
+    def get(self):
+        self.get_calls += 1
+        return self.value
+
+
+class _CongestedPathGraph:
+    def __init__(self, *, handles_congestion):
+        self.inputs = {"handles_congestion": handles_congestion}
+
+
+class _LegTravelCosts(TravelCostsBase):
     def __init__(self, variant):
         self.variant = variant
         self.inputs = {}
@@ -123,6 +141,76 @@ def _make_path_travel_costs():
     asset = object.__new__(PathTravelCosts)
     asset.inputs = {"mode_name": "car"}
     return asset
+
+
+def test_path_get_uses_freeflow_without_road_flow_asset():
+    asset = _make_path_travel_costs()
+    asset.freeflow_costs = _CostTable("free-flow")
+    asset.congested_costs = _CostTable("congested")
+    asset.default_congestion = False
+    asset.congested_path_graph = _CongestedPathGraph(handles_congestion=True)
+
+    assert asset.get() == "free-flow"
+    assert asset.get(congestion=True) == "free-flow"
+    assert asset.freeflow_costs.get_calls == 2
+    assert asset.congested_costs.get_calls == 0
+
+
+def test_path_get_defaults_to_congested_for_road_flow_variant():
+    asset = _make_path_travel_costs()
+    asset.freeflow_costs = _CostTable("free-flow")
+    asset.congested_costs = _CostTable("congested")
+    asset.default_congestion = True
+
+    assert asset.get() == "congested"
+    assert asset.freeflow_costs.get_calls == 0
+    assert asset.congested_costs.get_calls == 1
+
+
+def test_path_get_uses_freeflow_when_mode_does_not_handle_congestion():
+    asset = _make_path_travel_costs()
+    asset.freeflow_costs = _CostTable("free-flow")
+    asset.congested_costs = _CostTable("congested")
+    asset.default_congestion = False
+    asset.congested_path_graph = _CongestedPathGraph(handles_congestion=False)
+
+    assert asset.get(congestion=True) == "free-flow"
+    assert asset.freeflow_costs.get_calls == 1
+    assert asset.congested_costs.get_calls == 0
+
+
+def test_detailed_carpool_get_uses_freeflow_without_road_flow_asset():
+    asset = object.__new__(DetailedCarpoolTravelCosts)
+    asset.freeflow_costs = _CostTable("free-flow")
+    asset.congested_costs = _CostTable("congested")
+    asset.default_congestion = False
+
+    assert asset.get() == "free-flow"
+    assert asset.get(congestion=True) == "free-flow"
+
+
+def test_detailed_carpool_get_defaults_to_congested_for_road_flow_variant():
+    asset = object.__new__(DetailedCarpoolTravelCosts)
+    asset.freeflow_costs = _CostTable("free-flow")
+    asset.congested_costs = _CostTable("congested")
+    asset.default_congestion = True
+
+    assert asset.get() == "congested"
+
+
+def test_detailed_carpool_remove_congestion_artifacts_keeps_shared_freeflow_table():
+    asset = object.__new__(DetailedCarpoolTravelCosts)
+    freeflow_costs = _Removable()
+    congested_costs = _Removable()
+    variant = object.__new__(DetailedCarpoolTravelCosts)
+    variant.freeflow_costs = freeflow_costs
+    variant.congested_costs = congested_costs
+    asset.asset_for_road_flows = lambda road_flow_asset: variant
+
+    asset.remove_congestion_artifacts(object())
+
+    assert freeflow_costs.remove_calls == 0
+    assert congested_costs.remove_calls == 1
 
 
 def test_path_asset_for_road_flows_ignores_modes_that_do_not_handle_congestion():

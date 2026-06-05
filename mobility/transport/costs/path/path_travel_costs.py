@@ -3,13 +3,13 @@ from __future__ import annotations
 import os
 import pathlib
 import logging
-import shutil
 import pandas as pd
-import geopandas as gpd
 
 from importlib import resources
 from mobility.transport.graphs.core.path_graph import PathGraph
-from mobility.transport.costs.travel_costs_asset import TravelCostsAsset
+from mobility.transport.costs.travel_costs_asset import TravelCostsBase
+from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.costs.parameters.path_routing_parameters import PathRoutingParameters
@@ -21,7 +21,69 @@ from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 
 from typing import List
 
-class PathTravelCosts(TravelCostsAsset):
+
+class PathTravelCostsTable(TravelCostsBase, FileAsset):
+    """Single path travel-cost table for one routing graph."""
+
+    def __init__(
+        self,
+        *,
+        mode_name: str,
+        transport_zones: TransportZones,
+        routing_graph,
+        routing_parameters: PathRoutingParameters,
+        cost_kind: str,
+    ) -> None:
+        self.mode_name = mode_name
+        self.transport_zones = transport_zones
+        self.routing_graph = routing_graph
+        self.routing_parameters = routing_parameters
+        self.cost_kind = cost_kind
+        inputs = {
+            "version": 1,
+            "mode_name": mode_name,
+            "transport_zones": transport_zones,
+            "routing_graph": routing_graph,
+            "routing_parameters": routing_parameters,
+            "cost_kind": cost_kind,
+        }
+        cache_path = (
+            pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
+            / f"travel_costs_{cost_kind}_{mode_name}.parquet"
+        )
+        super().__init__(inputs, cache_path)
+
+    def get_cached_asset(self) -> pd.DataFrame:
+        """Return the cached OD travel-cost table."""
+        logging.debug("Travel costs already prepared. Reusing the file : %s", str(self.cache_path))
+        return pd.read_parquet(self.cache_path)
+
+    def create_and_get_asset(self) -> pd.DataFrame:
+        """Compute this OD travel-cost table from its routing graph."""
+        logging.info("Preparing travel costs for mode %s", self.mode_name)
+        self.transport_zones.get()
+        return self._compute_costs_by_od()
+
+    def _compute_costs_by_od(self) -> pd.DataFrame:
+        """Compute path travel times and distances by OD."""
+        logging.info("Computing travel times and distances by OD...")
+        script = RScriptRunner(
+            resources.files('mobility.transport.costs.path').joinpath(
+                'prepare_dodgr_costs.R'
+            )
+        )
+        script.run(
+            args=[
+                str(self.transport_zones.cache_path),
+                str(self.routing_graph.get()),
+                str(self.routing_parameters.max_beeline_distance),
+                str(self.cache_path),
+            ]
+        )
+        return pd.read_parquet(self.cache_path)
+
+
+class PathTravelCosts(TravelCostsBase, InMemoryAsset):
     """
     A class for managing travel cost calculations for certain modes using OpenStreetMap (OSM) data, inheriting from the Asset class.
 
@@ -55,6 +117,7 @@ class PathTravelCosts(TravelCostsAsset):
             congestion_assignment_retained_volume_share: float = 0.95,
             speed_modifiers: List[SpeedModifier] = [],
             contracted_graph: ContractedPathGraph | None = None,
+            default_congestion: bool = False,
         ):
         """
         Initializes a TravelCosts object with the given transport zones and travel mode.
@@ -87,6 +150,28 @@ class PathTravelCosts(TravelCostsAsset):
             congested_path_graph = contracted_graph.inputs["congested_graph"]
             modified_path_graph = congested_path_graph.inputs["modified_graph"]
             simplified_path_graph = None
+
+        self.mode_name = mode_name
+        self.transport_zones = transport_zones
+        self.simplified_path_graph = simplified_path_graph
+        self.modified_path_graph = modified_path_graph
+        self.congested_path_graph = congested_path_graph
+        self.contracted_path_graph = contracted_path_graph
+        self.freeflow_costs = PathTravelCostsTable(
+            mode_name=mode_name,
+            transport_zones=transport_zones,
+            routing_graph=contracted_path_graph,
+            routing_parameters=routing_parameters,
+            cost_kind="free_flow",
+        )
+        self.congested_costs = PathTravelCostsTable(
+            mode_name=mode_name,
+            transport_zones=transport_zones,
+            routing_graph=contracted_path_graph,
+            routing_parameters=routing_parameters,
+            cost_kind="congested",
+        )
+        self.default_congestion = bool(default_congestion)
         
         inputs = {
             "transport_zones": transport_zones,
@@ -101,131 +186,45 @@ class PathTravelCosts(TravelCostsAsset):
             "congestion_assignment_max_iterations": congestion_assignment_max_iterations,
             "congestion_assignment_max_gap": congestion_assignment_max_gap,
             "congestion_assignment_retained_volume_share": congestion_assignment_retained_volume_share,
+            "default_congestion": self.default_congestion,
         }
-
-        cache_path = {
-            "freeflow": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / ("travel_costs_free_flow_" + mode_name + ".parquet"),
-            "congested": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / ("travel_costs_congested_" + mode_name + ".parquet")
-        }
-
-        super().__init__(inputs, cache_path)
+        super().__init__(inputs)
 
     def get(self, congestion: bool = False, road_flow_asset: VehicleODFlowsAsset | None = None) -> pd.DataFrame:
-        requested_congestion = congestion and road_flow_asset is None
-        self.update_ancestors_if_needed()
-
-        if self.is_update_needed():
-            asset = self.create_and_get_asset(congestion=requested_congestion)
-            self.update_hash(self.inputs_hash)
-            if road_flow_asset is None:
-                return asset
+        if congestion and self._handles_congestion() is False:
+            return self.freeflow_costs.get()
 
         if congestion and road_flow_asset is not None:
             asset = self.asset_for_road_flows(road_flow_asset)
             if asset is not None:
                 return asset.get()
 
-        return self.get_cached_asset(congestion=congestion)
-
-    def get_cached_asset(self, congestion: bool = False) -> pd.DataFrame:
-        """
-        Retrieves the travel costs DataFrame from the cache.
-
-        Returns:
-            pd.DataFrame: The cached DataFrame of travel costs.
-        """
-        
-        if congestion is False:
-            path = self.cache_path["freeflow"]
-        else:
-            path = self.cache_path["congested"]
-
-        logging.debug("Travel costs already prepared. Reusing the file : " + str(path))
-        costs = pd.read_parquet(path)
-
-        return costs
-
-    def create_and_get_asset(self, congestion: bool = False) -> pd.DataFrame:
-        """
-        Creates and retrieves travel costs based on the current inputs.
-
-        Returns:
-            pd.DataFrame: A DataFrame of calculated travel costs.
-        """
-        
-        mode = self.inputs["mode_name"]
-        
-        logging.info("Preparing travel costs for mode " + mode)
-        
-        self.inputs["transport_zones"].get()
-        
-        if congestion is False:
-            self.inputs["contracted_path_graph"].get()
-            output_path = self.cache_path["freeflow"]
-            path_graph = self.inputs["contracted_path_graph"]
-        else:
-            self.inputs["congested_path_graph"].get()
-            output_path = self.cache_path["congested"]
-            path_graph = self.inputs["congested_path_graph"]
-        
-        costs = self.compute_costs_by_OD(
-            self.inputs["transport_zones"],
-            path_graph,
-            output_path,
-        )
-        
-        if congestion is False:
-            shutil.copy(self.cache_path["freeflow"], self.cache_path["congested"])
-
-        return costs
-
-
-
-    def compute_costs_by_OD(
-            self,
-            transport_zones: TransportZones,
-            path_graph: PathGraph,
-            output_path: pathlib.Path
-        ) -> pd.DataFrame:
-        """
-        Calculates travel costs for the specified mode of transportation using the created graph.
-
-        Args:
-            transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
-            graph (str): Path to the routable graph file.
-
-        Returns:
-            pd.DataFrame: A DataFrame containing calculated travel costs.
-        """
-
-        logging.info("Computing travel times and distances by OD...")
-        
-        script = RScriptRunner(resources.files('mobility.transport.costs.path').joinpath('prepare_dodgr_costs.R'))
-        script.run(
-            args=[
-                str(transport_zones.cache_path),
-                str(path_graph.cache_path),
-                str(self.inputs["routing_parameters"].max_beeline_distance),
-                str(output_path)
-            ]
-        )
-        
-        costs = pd.read_parquet(output_path)
-
-        return costs
+        # A congested cost table only differs from free-flow costs when it is
+        # tied to an explicit road-flow asset.
+        if self.default_congestion:
+            return self.congested_costs.get()
+        return self.freeflow_costs.get()
     
     def get_congested_graph_path(self, flow_asset=None) -> pathlib.Path:
         """Return the graph path backing the current congested cost view."""
         if flow_asset is not None:
-            return self.asset_for_flow_asset(flow_asset).inputs["contracted_path_graph"].inputs["congested_graph"].get()
-        return self.inputs["congested_path_graph"].get()
+            return self.asset_for_flow_asset(flow_asset).congested_path_graph.get()
+        return self.congested_path_graph.get()
 
     def asset_for_road_flows(self, road_flow_asset: VehicleODFlowsAsset | None):
         if road_flow_asset is None:
             return None
-        if self.inputs["congested_path_graph"].inputs["handles_congestion"] is False:
+        if self._handles_congestion() is False:
             return None
         return self.asset_for_flow_asset(road_flow_asset)
+
+    def _handles_congestion(self) -> bool:
+        """Return whether this path mode can use congestion-sensitive costs."""
+        if hasattr(self, "congested_path_graph"):
+            congested_path_graph = self.congested_path_graph
+        else:
+            congested_path_graph = self.inputs["congested_path_graph"]
+        return bool(congested_path_graph.inputs["handles_congestion"])
 
     def asset_for_flow_asset(self, flow_asset):
         congested_graph = CongestedPathGraph(
@@ -251,8 +250,14 @@ class PathTravelCosts(TravelCostsAsset):
             congestion_assignment_max_gap=self.inputs["congestion_assignment_max_gap"],
             congestion_assignment_retained_volume_share=self.inputs["congestion_assignment_retained_volume_share"],
             contracted_graph=contracted_graph,
+            default_congestion=True,
         )
         return variant
+
+    def remove(self) -> None:
+        """Remove path travel-cost tables owned by this selector."""
+        self.freeflow_costs.remove()
+        self.congested_costs.remove()
 
     def remove_congestion_artifacts(self, road_flow_asset: VehicleODFlowsAsset) -> None:
         """Remove one congestion-specific travel-cost variant and owned graph caches."""
@@ -268,4 +273,3 @@ class PathTravelCosts(TravelCostsAsset):
             congested_graph = getattr(contracted_graph, "inputs", {}).get("congested_graph")
             if congested_graph is not None:
                 congested_graph.remove()
-        

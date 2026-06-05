@@ -12,7 +12,7 @@ from mobility.runtime.parameter_values import resolve_parameter_values
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.costs.road_flow_manager import RoadFlowManager
-from mobility.transport.costs.travel_costs_asset import TravelCostsAsset
+from mobility.transport.costs.travel_costs_asset import TravelCostsBase
 
 
 class TransportCosts(FileAsset):
@@ -353,6 +353,6 @@ class TransportCosts(FileAsset):
 
         for mode in self.modes:
             travel_costs = mode.inputs.get("travel_costs")
-            if travel_costs is None or isinstance(travel_costs, TravelCostsAsset) is False:
+            if travel_costs is None or isinstance(travel_costs, TravelCostsBase) is False:
                 continue
             travel_costs.remove_congestion_artifacts(road_flow_asset)

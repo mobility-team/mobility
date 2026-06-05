@@ -8,14 +8,15 @@ import pandas as pd
 
 from importlib import resources
 
-from mobility.transport.costs.travel_costs_asset import TravelCostsAsset
+from mobility.transport.costs.travel_costs_asset import TravelCostsBase
+from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.modes.public_transport.public_transport_graph import PublicTransportRoutingParameters
 from mobility.transport.modes.public_transport.intermodal_transport_graph import IntermodalTransportGraph
 from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
 
-class PublicTransportTravelCosts(TravelCostsAsset):
+class PublicTransportTravelCosts(TravelCostsBase, FileAsset):
     """
     A class for managing public transport travel costs calculations using GTFS files, inheriting from the FileAsset class.
 
@@ -202,7 +203,7 @@ class PublicTransportTravelCosts(TravelCostsAsset):
     @staticmethod
     def _travel_costs_for_road_flows(travel_costs: Any, road_flow_asset):
         """Resolve one leg travel-cost asset for the requested road flows."""
-        if isinstance(travel_costs, TravelCostsAsset) is False:
+        if isinstance(travel_costs, TravelCostsBase) is False:
             return travel_costs
 
         variant = travel_costs.asset_for_road_flows(road_flow_asset)
