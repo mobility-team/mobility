@@ -1,10 +1,5 @@
-from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
-from mobility.transport.costs.congestion_state import CongestionState
-from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.costs.transport_costs import TransportCosts
 from mobility.transport.costs.travel_costs_asset import TravelCostsAsset
 
@@ -14,8 +9,8 @@ class _FakeTravelCostsAsset(TravelCostsAsset):
         self.inputs = {}
         self.remove_calls = []
 
-    def remove_congestion_artifacts(self, congestion_state):
-        self.remove_calls.append(congestion_state)
+    def remove_congestion_artifacts(self, road_flow_asset):
+        self.remove_calls.append(road_flow_asset)
 
     def get_cached_asset(self):
         return None
@@ -41,34 +36,6 @@ class _RemovableVariant:
         self.remove_calls += 1
 
 
-class _IterationTransportCosts:
-    def __init__(self):
-        self.load_calls = []
-        self.congestion_states = []
-
-    def load_congestion_state(
-        self,
-        *,
-        run_key,
-        is_weekday,
-        last_completed_iteration,
-        cost_update_interval,
-    ):
-        self.load_calls.append(
-            {
-                "run_key": run_key,
-                "is_weekday": is_weekday,
-                "last_completed_iteration": last_completed_iteration,
-                "cost_update_interval": cost_update_interval,
-            }
-        )
-        return SimpleNamespace(iteration=last_completed_iteration)
-
-    def asset_for_congestion_state(self, congestion_state):
-        self.congestion_states.append(congestion_state)
-        return self
-
-
 def _make_mode(*, name: str, congestion: bool, travel_costs=None):
     return SimpleNamespace(
         inputs={
@@ -91,156 +58,16 @@ def test_remove_congestion_artifacts_removes_variant_and_delegates_to_mode_asset
         ]
     )
     variant = _RemovableVariant()
-    congestion_state = object()
+    road_flow_asset = object()
 
     monkeypatch.setattr(
         aggregator,
-        "asset_for_congestion_state",
-        lambda state: variant,
+        "asset_for_road_flows",
+        lambda flow_asset: variant,
     )
 
-    aggregator.remove_congestion_artifacts(congestion_state)
+    aggregator.remove_congestion_artifacts(road_flow_asset)
 
     assert variant.remove_calls == 1
-    assert travel_costs.remove_calls == [congestion_state]
-
-
-@pytest.mark.parametrize(
-    ("modes", "update_interval"),
-    [
-        ([_make_mode(name="car", congestion=False)], 1),
-        ([_make_mode(name="car", congestion=True)], 0),
-    ],
-)
-def test_iter_run_congestion_artifacts_returns_nothing_when_disabled(
-    project_dir,
-    modes,
-    update_interval,
-):
-    aggregator = TransportCosts(modes=modes)
-    run = SimpleNamespace(
-        parameters=SimpleNamespace(
-            run=SimpleNamespace(
-                n_iter_per_cost_update=update_interval,
-                n_iterations=2,
-            ),
-        ),
-        inputs_hash="run-key",
-        is_weekday=True,
-    )
-
-    assert list(aggregator.iter_run_congestion_artifacts(run)) == []
-
-
-def test_iter_run_congestion_artifacts_yields_existing_flow_assets_on_refresh_iterations(
-    project_dir,
-    monkeypatch,
-    tmp_path,
-):
-    aggregator = TransportCosts(modes=[_make_mode(name="car", congestion=True)])
-    next_mode = _make_mode(name="car", congestion=True)
-    next_transport_costs = SimpleNamespace(
-        congestion_states=SimpleNamespace(
-            _iter_congestion_enabled_modes=lambda: iter([next_mode])
-        )
-    )
-    requested_iterations = []
-
-    def fake_for_iteration(iteration: int):
-        requested_iterations.append(iteration)
-        return next_transport_costs
-
-    existing_path = tmp_path / "existing.parquet"
-    existing_path.write_text("stub", encoding="utf-8")
-    missing_path = tmp_path / "missing.parquet"
-
-    def fake_from_inputs(*, iteration: int, **kwargs):
-        path = existing_path if iteration == 1 else missing_path
-        return SimpleNamespace(cache_path=Path(path))
-
-    monkeypatch.setattr(aggregator, "for_iteration", fake_for_iteration)
-    monkeypatch.setattr(
-        VehicleODFlowsAsset,
-        "from_inputs",
-        staticmethod(fake_from_inputs),
-    )
-
-    run = SimpleNamespace(
-        parameters=SimpleNamespace(
-            run=SimpleNamespace(
-                n_iter_per_cost_update=2,
-                n_iterations=3,
-            ),
-        ),
-        inputs_hash="run-key",
-        is_weekday=False,
-    )
-
-    artifacts = list(aggregator.iter_run_congestion_artifacts(run))
-
-    assert requested_iterations == [2, 4]
-    assert len(artifacts) == 1
-
-    next_asset, congestion_state, flow_assets_by_mode = artifacts[0]
-    assert next_asset is next_transport_costs
-    assert isinstance(congestion_state, CongestionState)
-    assert congestion_state.iteration == 1
-    assert congestion_state.run_key == "run-key"
-    assert congestion_state.is_weekday is False
-    assert flow_assets_by_mode["car"].cache_path == existing_path
-
-
-def test_asset_for_iteration_uses_run_parameters(project_dir, monkeypatch):
-    """Check one run iteration reads its bounds and cost interval from parameters.run."""
-    aggregator = TransportCosts(modes=[_make_mode(name="car", congestion=True)])
-    iteration_asset = _IterationTransportCosts()
-    requested_iterations = []
-
-    def fake_for_iteration(iteration: int, *, scenario=None):
-        requested_iterations.append((iteration, scenario))
-        return iteration_asset
-
-    monkeypatch.setattr(aggregator, "for_iteration", fake_for_iteration)
-    run = SimpleNamespace(
-        parameters=SimpleNamespace(
-            run=SimpleNamespace(
-                n_iter_per_cost_update=2,
-                n_iterations=3,
-            ),
-        ),
-        inputs_hash="run-key",
-        is_weekday=True,
-        scenario="baseline",
-    )
-
-    assert aggregator.asset_for_iteration(run, 3) is iteration_asset
-    assert requested_iterations == [(3, "baseline")]
-    assert iteration_asset.load_calls == [
-        {
-            "run_key": "run-key",
-            "is_weekday": True,
-            "last_completed_iteration": 2,
-            "cost_update_interval": 2,
-        }
-    ]
-    assert len(iteration_asset.congestion_states) == 1
-    assert iteration_asset.congestion_states[0].iteration == 2
-
-
-def test_asset_for_iteration_rejects_iteration_after_run_end(project_dir):
-    """Check the upper iteration bound comes from parameters.run."""
-    aggregator = TransportCosts(modes=[_make_mode(name="car", congestion=True)])
-    run = SimpleNamespace(
-        parameters=SimpleNamespace(
-            run=SimpleNamespace(
-                n_iter_per_cost_update=1,
-                n_iterations=2,
-            ),
-        ),
-        inputs_hash="run-key",
-        is_weekday=True,
-    )
-
-    with pytest.raises(ValueError, match="<= 2"):
-        aggregator.asset_for_iteration(run, 3)
+    assert travel_costs.remove_calls == [road_flow_asset]
 

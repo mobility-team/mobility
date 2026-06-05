@@ -1,12 +1,7 @@
-from types import SimpleNamespace
-
 import pytest
 
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
 from mobility.transport.costs.travel_costs_asset import TravelCostsAsset
-from mobility.transport.modes.carpool.detailed.detailed_carpool_travel_costs import (
-    DetailedCarpoolTravelCosts,
-)
 from mobility.transport.modes.public_transport.public_transport_travel_costs import (
     PublicTransportTravelCosts,
 )
@@ -26,7 +21,7 @@ class _LegTravelCosts(TravelCostsAsset):
         self.variant = variant
         self.inputs = {}
 
-    def asset_for_congestion_state(self, congestion_state):
+    def asset_for_road_flows(self, road_flow_asset):
         return self.variant
 
     def get_cached_asset(self):
@@ -55,15 +50,15 @@ def _make_public_transport_asset(first_leg, last_leg):
     return asset
 
 
-def test_public_transport_asset_for_congestion_state_returns_self_when_legs_do_not_change():
+def test_public_transport_asset_for_road_flows_returns_self_when_legs_do_not_change():
     first_leg = _LegTravelCosts(None)
     last_leg = _LegTravelCosts(None)
     asset = _make_public_transport_asset(first_leg, last_leg)
 
-    assert asset.asset_for_congestion_state(object()) is asset
+    assert asset.asset_for_road_flows(object()) is asset
 
 
-def test_public_transport_asset_for_congestion_state_rebinds_changed_leg(monkeypatch):
+def test_public_transport_asset_for_road_flows_rebinds_changed_leg(monkeypatch):
     first_leg_variant = object()
     first_leg = _LegTravelCosts(first_leg_variant)
     last_leg = _LegTravelCosts(None)
@@ -94,7 +89,7 @@ def test_public_transport_asset_for_congestion_state_rebinds_changed_leg(monkeyp
 
     monkeypatch.setattr(PublicTransportTravelCosts, "__init__", fake_init)
 
-    variant = asset.asset_for_congestion_state(object())
+    variant = asset.asset_for_road_flows(object())
 
     assert variant is not asset
     assert variant.first_leg_travel_costs is first_leg_variant
@@ -107,7 +102,7 @@ def test_public_transport_remove_congestion_artifacts_removes_owned_variant():
     asset = _make_public_transport_asset(first_leg=object(), last_leg=object())
     intermodal_graph = _Removable()
     variant = _Removable(inputs={"intermodal_graph": intermodal_graph})
-    asset.asset_for_congestion_state = lambda congestion_state: variant
+    asset.asset_for_road_flows = lambda road_flow_asset: variant
 
     asset.remove_congestion_artifacts(object())
 
@@ -117,7 +112,7 @@ def test_public_transport_remove_congestion_artifacts_removes_owned_variant():
 
 def test_public_transport_remove_congestion_artifacts_is_noop_when_variant_is_self():
     asset = _make_public_transport_asset(first_leg=object(), last_leg=object())
-    asset.asset_for_congestion_state = lambda congestion_state: asset
+    asset.asset_for_road_flows = lambda road_flow_asset: asset
 
     asset.remove_congestion_artifacts(object())
 
@@ -130,10 +125,19 @@ def _make_path_travel_costs():
     return asset
 
 
+def test_path_asset_for_road_flows_ignores_modes_that_do_not_handle_congestion():
+    asset = _make_path_travel_costs()
+    asset.inputs["congested_path_graph"] = _Removable(
+        inputs={"handles_congestion": False}
+    )
+
+    assert asset.asset_for_road_flows(object()) is None
+
+
 @pytest.mark.parametrize("variant_factory", [lambda asset: None, lambda asset: asset])
 def test_path_remove_congestion_artifacts_returns_early_for_missing_variant(variant_factory):
     asset = _make_path_travel_costs()
-    asset.asset_for_congestion_state = lambda congestion_state: variant_factory(asset)
+    asset.asset_for_road_flows = lambda road_flow_asset: variant_factory(asset)
 
     asset.remove_congestion_artifacts(object())
 
@@ -143,83 +147,11 @@ def test_path_remove_congestion_artifacts_removes_owned_graph_chain():
     congested_graph = _Removable()
     contracted_graph = _Removable(inputs={"congested_graph": congested_graph})
     variant = _Removable(inputs={"contracted_path_graph": contracted_graph})
-    asset.asset_for_congestion_state = lambda congestion_state: variant
+    asset.asset_for_road_flows = lambda road_flow_asset: variant
 
     asset.remove_congestion_artifacts(object())
 
     assert variant.remove_calls == 1
     assert contracted_graph.remove_calls == 1
     assert congested_graph.remove_calls == 1
-
-
-class _FlowByIteration:
-    def __init__(self, flow_asset=None):
-        self.flow_asset = flow_asset
-        self.calls = []
-
-    def get_flow_asset_for_iteration(self, run, iteration: int):
-        self.calls.append((run, iteration))
-        return self.flow_asset
-
-
-def _run_parameters(*, n_iterations: int):
-    return SimpleNamespace(
-        parameters=SimpleNamespace(
-            run=SimpleNamespace(n_iterations=n_iterations)
-        )
-    )
-
-
-def test_path_asset_for_iteration_uses_run_parameters_for_bounds():
-    """Check path costs validate iterations from parameters.run."""
-    asset = _make_path_travel_costs()
-    asset.inputs["congested_path_graph"] = _FlowByIteration()
-
-    with pytest.raises(ValueError, match="<= 2"):
-        asset.asset_for_iteration(_run_parameters(n_iterations=2), 3)
-
-
-def test_path_asset_for_iteration_returns_flow_variant():
-    """Check path costs ask the congested graph for the active flow."""
-    flow_asset = object()
-    variant = object()
-    graph = _FlowByIteration(flow_asset)
-    asset = _make_path_travel_costs()
-    asset.inputs["congested_path_graph"] = graph
-    asset.asset_for_flow_asset = lambda flow: variant
-    run = _run_parameters(n_iterations=3)
-
-    assert asset.asset_for_iteration(run, 2) is variant
-    assert graph.calls == [(run, 2)]
-
-
-def test_carpool_asset_for_iteration_uses_run_parameters_for_bounds():
-    """Check carpool costs validate iterations from parameters.run."""
-    asset = object.__new__(DetailedCarpoolTravelCosts)
-    asset.inputs = {
-        "car_travel_costs": SimpleNamespace(
-            inputs={"congested_path_graph": _FlowByIteration()}
-        )
-    }
-
-    with pytest.raises(ValueError, match="<= 1"):
-        asset.asset_for_iteration(_run_parameters(n_iterations=1), 2)
-
-
-def test_carpool_asset_for_iteration_returns_flow_variant():
-    """Check carpool costs reuse the car congestion flow for one iteration."""
-    flow_asset = object()
-    variant = object()
-    graph = _FlowByIteration(flow_asset)
-    asset = object.__new__(DetailedCarpoolTravelCosts)
-    asset.inputs = {
-        "car_travel_costs": SimpleNamespace(
-            inputs={"congested_path_graph": graph}
-        )
-    }
-    asset.asset_for_flow_asset = lambda flow: variant
-    run = _run_parameters(n_iterations=3)
-
-    assert asset.asset_for_iteration(run, 2) is variant
-    assert graph.calls == [(run, 2)]
 

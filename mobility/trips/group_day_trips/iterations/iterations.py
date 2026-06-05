@@ -60,7 +60,6 @@ class Iteration:
     ) -> DestinationSequences:
         """Return the destination-sequences asset for this iteration."""
         return DestinationSequences(
-            run_key=self.iterations.run_inputs_hash,
             is_weekday=self.iterations.is_weekday,
             iteration=self.iteration,
             base_folder=self.iterations.folder_paths["destination-sequences"],
@@ -89,7 +88,6 @@ class Iteration:
     ) -> ActivitySequences:
         """Return the activity-sequences asset for this iteration."""
         return ActivitySequences(
-            run_key=self.iterations.run_inputs_hash,
             is_weekday=self.iterations.is_weekday,
             iteration=self.iteration,
             base_folder=self.iterations.folder_paths["activity-sequences"],
@@ -111,7 +109,6 @@ class Iteration:
     ) -> ModeSequences:
         """Return the mode-sequences asset for this iteration."""
         return ModeSequences(
-            run_key=self.iterations.run_inputs_hash,
             is_weekday=self.iterations.is_weekday,
             iteration=self.iteration,
             base_folder=self.iterations.folder_paths["modes"],

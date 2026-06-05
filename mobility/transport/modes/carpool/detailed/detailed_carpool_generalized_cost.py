@@ -6,7 +6,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
-from mobility.transport.costs.congestion_state import CongestionState
+from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.costs.parameters.cost_of_time_parameters import CostOfTimeParameters
 
 class DetailedCarpoolGeneralizedCost(InMemoryAsset):
@@ -24,13 +24,13 @@ class DetailedCarpoolGeneralizedCost(InMemoryAsset):
         metrics=["cost"],
         congestion: bool = False,
         detail_distances: bool = False,
-        congestion_state: CongestionState | None = None,
+        road_flow_asset: VehicleODFlowsAsset | None = None,
     ) -> pd.DataFrame:
         
         metrics = list(metrics)
         costs = self.inputs["travel_costs"].get(
             congestion=congestion,
-            congestion_state=congestion_state,
+            road_flow_asset=road_flow_asset,
         )
         
         study_area = self.inputs["travel_costs"].inputs["car_travel_costs"].inputs["transport_zones"].study_area.get()

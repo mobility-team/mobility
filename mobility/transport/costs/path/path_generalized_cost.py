@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
-from mobility.transport.costs.congestion_state import CongestionState
+from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 
 class PathGeneralizedCost(InMemoryAsset):
     
@@ -21,13 +21,13 @@ class PathGeneralizedCost(InMemoryAsset):
         metrics=["cost"],
         congestion: bool = False,
         detail_distances: bool = False,
-        congestion_state: CongestionState | None = None,
+        road_flow_asset: VehicleODFlowsAsset | None = None,
     ) -> pd.DataFrame:
         
         metrics = list(metrics)
         costs = self.inputs["travel_costs"].get(
             congestion=congestion,
-            congestion_state=congestion_state,
+            road_flow_asset=road_flow_asset,
         )
         
         # study_area = self.travel_costs.transport_zones.study_area.get()

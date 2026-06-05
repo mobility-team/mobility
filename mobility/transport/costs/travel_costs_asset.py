@@ -6,12 +6,12 @@ from mobility.runtime.assets.file_asset import FileAsset
 class TravelCostsAsset(FileAsset):
     """Base class for per-mode travel-cost assets with congestion helpers."""
 
-    def asset_for_congestion_state(self, congestion_state):
-        """Return the effective asset for one congestion state."""
+    def asset_for_road_flows(self, road_flow_asset):
+        """Return the effective asset for one road-flow asset."""
         return self
 
-    def remove_congestion_artifacts(self, congestion_state) -> None:
+    def remove_congestion_artifacts(self, road_flow_asset) -> None:
         """Remove congestion-derived artifacts owned by this asset."""
-        variant = self.asset_for_congestion_state(congestion_state)
+        variant = self.asset_for_road_flows(road_flow_asset)
         if variant is not None and variant is not self:
             variant.remove()
