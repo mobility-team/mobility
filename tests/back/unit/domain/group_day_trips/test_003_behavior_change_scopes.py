@@ -188,6 +188,104 @@ def test_get_transition_probabilities_blocks_stay_home_in_mode_replanning(tmp_pa
     assert result.filter(pl.col("activity_seq_id_trans") == 0).height == 0
 
 
+def test_get_transition_probabilities_no_transitions_keeps_current_plan(tmp_path):
+    updater = PlanUpdater()
+    current_plans = _make_current_plans(
+        {
+            "demand_group_id": [1, 1],
+            "activity_seq_id": [0, 10],
+            "time_seq_id": [0, 20],
+            "dest_seq_id": [0, 100],
+            "mode_seq_id": [0, 1000],
+            "utility": [0.0, 1.0],
+            "n_persons": [3.0, 5.0],
+        }
+    )
+    possible_plan_utility = _make_possible_plan_utility(
+        {
+            "demand_group_id": [1, 1, 1, 1],
+            "activity_seq_id": [0, 10, 10, 10],
+            "time_seq_id": [0, 20, 20, 20],
+            "dest_seq_id": [0, 100, 100, 101],
+            "mode_seq_id": [0, 1000, 1001, 1002],
+            "utility": [2.0, 4.0, 20.0, 30.0],
+        }
+    )
+    possible_plan_steps = _make_possible_plan_steps(
+        {
+            "demand_group_id": [1, 1, 1, 1],
+            "activity_seq_id": [0, 10, 10, 10],
+            "time_seq_id": [0, 20, 20, 20],
+            "dest_seq_id": [0, 100, 100, 101],
+            "mode_seq_id": [0, 1000, 1001, 1002],
+            "seq_step_index": [0, 0, 0, 0],
+            "activity": ["home", "work", "work", "work"],
+            "from": [1, 1, 1, 1],
+            "to": [1, 2, 2, 3],
+            "mode": ["stay_home", "car", "walk", "bike"],
+            "duration_per_pers": [24.0, 8.0, 8.0, 8.0],
+            "departure_time": [0.0, 8.0, 8.0, 8.0],
+            "arrival_time": [0.0, 9.0, 9.5, 9.4],
+            "next_departure_time": [24.0, 17.0, 17.0, 17.0],
+            "iteration": [1, 1, 1, 1],
+            "csp": ["x", "x", "x", "x"],
+            "cost": [0.0, 1.0, 0.5, 0.3],
+            "distance": [0.0, 10.0, 2.0, 4.0],
+            "time": [0.0, 1.0, 1.5, 1.4],
+            "mean_duration_per_pers": [24.0, 8.0, 8.0, 8.0],
+            "value_of_time": [0.0, 1.0, 1.0, 1.0],
+            "k_saturation_utility": [1.0, 1.0, 1.0, 1.0],
+            "min_activity_time": [0.0, 1.0, 1.0, 1.0],
+            "utility": [2.0, 4.0, 20.0, 30.0],
+        }
+    )
+
+    result = updater.get_transition_probabilities(
+        current_plans=current_plans,
+        possible_plan_utility=_with_plan_id(
+            possible_plan_utility,
+            tmp_path=tmp_path,
+            name="transition_probabilities_no_transitions_utility",
+        ),
+        possible_plan_steps=_with_plan_id(
+            possible_plan_steps,
+            tmp_path=tmp_path,
+            name="transition_probabilities_no_transitions_steps",
+        ),
+        behavior_change_scope=BehaviorChangeScope.NO_TRANSITIONS,
+        transport_zones=None,
+        transition_revision_probability=0.5,
+    )
+
+    result = result.sort(["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"])
+    result_plan_keys = result.select(
+        [
+            "activity_seq_id_trans",
+            "time_seq_id_trans",
+            "dest_seq_id_trans",
+            "mode_seq_id_trans",
+        ]
+    ).to_dicts()
+
+    assert result_plan_keys == [
+        {
+            "activity_seq_id_trans": 0,
+            "time_seq_id_trans": 0,
+            "dest_seq_id_trans": 0,
+            "mode_seq_id_trans": 0,
+        },
+        {
+            "activity_seq_id_trans": 10,
+            "time_seq_id_trans": 20,
+            "dest_seq_id_trans": 100,
+            "mode_seq_id_trans": 1000,
+        }
+    ]
+    assert result.select("utility_trans").to_series().to_list() == pytest.approx([2.0, 4.0])
+    assert result.select("q_transition").to_series().to_list() == pytest.approx([1.0, 1.0])
+    assert result.select("p_transition").to_series().to_list() == pytest.approx([1.0, 1.0])
+
+
 def test_add_plan_id_keeps_stay_home_and_non_stay_home_states_distinct():
     plans = pl.DataFrame(
         {

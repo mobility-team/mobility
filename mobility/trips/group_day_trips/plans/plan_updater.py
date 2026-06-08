@@ -583,7 +583,10 @@ class PlanUpdater:
         current_plans_for_transitions = current_plans.lazy()
         possible_plan_utility_for_transitions = possible_plan_utility
 
-        if behavior_change_scope != BehaviorChangeScope.FULL_REPLANNING:
+        if behavior_change_scope not in (
+            BehaviorChangeScope.FULL_REPLANNING,
+            BehaviorChangeScope.NO_TRANSITIONS,
+        ):
             current_plans_for_transitions = current_plans_for_transitions.filter(pl.col("mode_seq_id") != 0)
             possible_plan_utility_for_transitions = possible_plan_utility_for_transitions.filter(
                 pl.col("mode_seq_id") != 0
@@ -600,6 +603,13 @@ class PlanUpdater:
                 (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
                 & (pl.col("time_seq_id") == pl.col("time_seq_id_trans"))
                 & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
+            )
+        elif behavior_change_scope == BehaviorChangeScope.NO_TRANSITIONS:
+            scope_pair_constraint = (
+                (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
+                & (pl.col("time_seq_id") == pl.col("time_seq_id_trans"))
+                & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
+                & (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
             )
 
         is_self_transition = (

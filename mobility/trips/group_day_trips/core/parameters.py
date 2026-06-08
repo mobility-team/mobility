@@ -12,6 +12,7 @@ class BehaviorChangeScope(str, Enum):
     FULL_REPLANNING = "full_replanning"
     DESTINATION_REPLANNING = "destination_replanning"
     MODE_REPLANNING = "mode_replanning"
+    NO_TRANSITIONS = "no_transitions"
 
 
 class BehaviorChangePhase(BaseModel):
@@ -38,8 +39,9 @@ class BehaviorChangePhase(BaseModel):
                 "occupied non-stay-home motive sequence fixed and resamples "
                 "destination plus mode sequences. `mode_replanning` keeps each "
                 "currently occupied non-stay-home motive and destination "
-                "sequence fixed and resamples mode sequences only. Stay-home is "
-                "frozen in restricted phases."
+                "sequence fixed and resamples mode sequences only. "
+                "`no_transitions` keeps each plan fixed and only refreshes its "
+                "costs and utility. Stay-home is frozen in restricted phases."
             ),
         ),
     ]
