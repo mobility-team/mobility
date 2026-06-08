@@ -15,7 +15,7 @@ def test_901_ensure_quickstart_works():
     output = module.run_quickstart_ci()
 
     weekday_plan_steps = output["weekday_plan_steps"]
-    global_metrics = output["global_metrics"]
+    trip_count_by_mode = output["trip_count_by_mode"]
 
     assert weekday_plan_steps.height > 0
-    assert global_metrics is not None
+    assert trip_count_by_mode.height > 0
