@@ -8,7 +8,7 @@ def run_quickstart_ci():
     # Using Limoges and a limited radius to reuse the smaller Limousin OSM extract
     transport_zones = mobility.TransportZones("fr-87085", radius=10.0)
 
-    # Using EMP, the latest national mobility survey for France
+    # Use EMP 2018-2019, the current Mobility survey source for French examples.
     survey = mobility.EMPMobilitySurvey()
 
     # Creating a smaller synthetic population for faster CI runs
@@ -40,20 +40,23 @@ def run_quickstart_ci():
     weekday_run = population_trips.run("weekday")
     weekday_plan_steps = weekday_run.get()["plan_steps"].collect()
 
-    # You can compute global metrics for this population
-    global_metrics = weekday_run.results().metrics.aggregate()
+    # Use population_trips.results(...) as the main entry point for indicators.
+    weekday_results = population_trips.results("weekday")
+    trip_count_by_mode = weekday_results.metrics.trip_count(
+        by_variable="mode",
+        iterations="last",
+        output="table",
+    )
     
-    # You can plot weekday OD flows, with labels for prominent cities
-    weekday_results = weekday_run.results()
-    labels = weekday_results.metrics.get_prominent_cities()
-    #weekday_results.metrics.plot_od_flows(labels=labels) #Not plotting on CI to avoid crashes
+    # CI does not create plots, but the user quickstart plots OD flows with
+    # weekday_results.metrics.trip_count(by_zone=["origin_zone", "destination_zone"]).
 
     # You can get a report of the parameters used in the model
     parameters_report = weekday_run.parameters_dataframe()
 
     return {
         "weekday_plan_steps": weekday_plan_steps,
-        "global_metrics": global_metrics,
+        "trip_count_by_mode": trip_count_by_mode,
     }
 
 

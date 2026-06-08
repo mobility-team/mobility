@@ -1,5 +1,14 @@
 # Contributing to Mobility
-* Vous pouvez regarder nos [issues](https://github.com/mobility-team/mobility/issues), particulièrement celles marquées comme [good-first-issue](https://github.com/mobility-team/mobility/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), et proposer d'y contribuer.
-* Tester l'outil et nous indiquer là où la documentation peut être améliorée est très utile ! Que ce soit pour une suggestion ou une issue, n'hésitez pas à [ouvrir une issue](https://github.com/mobility-team/mobility/issues/new).
-* Nous espérons que vous pourrez utiliser Mobility pour vos travaux de recherche et de conseil ! Nous comptons sur vous pour partager le code que vous avez utilisé.
-* Nous suivons PEP8 pour notre code Python. Pour d'autres bonnes pratiques, [suivez le guide](https://github.com/mobility-team/mobility/tree/main/mobility) !
+
+You can contribute without being a professional developer.
+
+Good first contributions:
+
+- test Mobility on a small study area and report unclear steps,
+- improve examples and documentation,
+- look at [good first issues](https://github.com/mobility-team/mobility/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22),
+- open an issue when the documentation doesn't explain what you needed.
+
+For code changes, follow the style used in the package. Keep names, comments, and tests clear enough for a transport modeller who knows some Python.
+
+If you use Mobility for research, teaching, or consulting, sharing your study code makes the result easier to understand and reproduce.
