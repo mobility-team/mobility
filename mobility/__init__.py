@@ -62,7 +62,9 @@ from .transport.modes.carpool import (
     DetailedCarpoolGeneralizedCostParameters,
 )
 from .transport.modes.public_transport import (
+    build_project_gtfs_zip,
     build_gtfs_zip,
+    GTFSBuilder,
     GTFSFeedSpec,
     GTFSLineSpec,
     GTFSStopSpec,

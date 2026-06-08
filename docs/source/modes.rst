@@ -95,6 +95,41 @@ The public transport service from the Tuesday with the most operational services
 
 The GTFS data versions used for the Greater Geneva study are from late 2024.
 
+You can also create a small additional GTFS feed directly in Python, for example
+to test a new line or a service scenario before adding it to the public transport
+mode:
+
+.. code-block:: python
+
+    import mobility
+
+    builder = mobility.GTFSBuilder(
+        agency_id="test_agency",
+        agency_name="Test Agency",
+        route_id="test_line",
+        route_short_name="T1",
+        route_type="bus",
+        service_id="test_service",
+    )
+
+    builder.add_stops(
+        {
+            "first_stop": [6.151086, 46.209558],
+            "second_stop": [6.192774, 46.253015],
+        }
+    )
+    builder.add_line(
+        [("first_stop", "second_stop", 27 * 60)],
+        start_time=6 * 3600,
+        end_time=9 * 3600,
+        period=15 * 60,
+    )
+
+    gtfs_path = builder.write_project_zip("test_line.zip")
+
+Pass ``gtfs_path`` in ``additional_gtfs_files`` when configuring public
+transport routing.
+
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Public Transport Graph Creation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
