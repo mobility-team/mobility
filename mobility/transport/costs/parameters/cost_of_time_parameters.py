@@ -4,7 +4,7 @@ import numpy as np
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from mobility.runtime.parameter_values import ParameterValue
+from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
 
 
 class CostOfTimeParameters(BaseModel):
@@ -12,13 +12,13 @@ class CostOfTimeParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    intercept: Annotated[float | ParameterValue, Field(default=20.0)]
-    breaks: Annotated[list[float] | ParameterValue, Field(default_factory=lambda: [0.0, 10000000.0])]
-    slopes: Annotated[list[float] | ParameterValue, Field(default_factory=lambda: [0.0])]
-    max_value: Annotated[float | ParameterValue, Field(default=20.0)]
+    intercept: Annotated[float | ParameterValue | SensitivityValue, Field(default=20.0)]
+    breaks: Annotated[list[float] | ParameterValue | SensitivityValue, Field(default_factory=lambda: [0.0, 10000000.0])]
+    slopes: Annotated[list[float] | ParameterValue | SensitivityValue, Field(default_factory=lambda: [0.0])]
+    max_value: Annotated[float | ParameterValue | SensitivityValue, Field(default=20.0)]
 
-    country_coeff_fr: Annotated[float | ParameterValue, Field(default=1.0)]
-    country_coeff_ch: Annotated[float | ParameterValue, Field(default=1.0)]
+    country_coeff_fr: Annotated[float | ParameterValue | SensitivityValue, Field(default=1.0)]
+    country_coeff_ch: Annotated[float | ParameterValue | SensitivityValue, Field(default=1.0)]
 
     @model_validator(mode="after")
     def validate_breaks_and_slopes(self) -> "CostOfTimeParameters":
@@ -30,7 +30,7 @@ class CostOfTimeParameters(BaseModel):
         Raises:
             ValueError: If slope count does not match break count minus one.
         """
-        if isinstance(self.breaks, ParameterValue) or isinstance(self.slopes, ParameterValue):
+        if isinstance(self.breaks, (ParameterValue, SensitivityValue)) or isinstance(self.slopes, (ParameterValue, SensitivityValue)):
             return self
 
         if len(self.slopes) != len(self.breaks) - 1:

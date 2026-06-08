@@ -13,6 +13,7 @@ from .debug_logs import (
 from .stable_key_index import StableKeyIndex
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities.activity import resolve_activity_parameters
+from mobility.runtime.parameter_values import SensitivityCase
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 
 class DestinationSequences(FileAsset):
@@ -45,6 +46,7 @@ class DestinationSequences(FileAsset):
         activities: list[Any] | None = None,
         resolved_activity_parameters: dict[str, Any] | None = None,
         scenario: str | None = None,
+        sensitivity_case: SensitivityCase | None = None,
         transport_zones: Any = None,
         transport_costs: Any = None,
         current_plans: pl.DataFrame | None = None,
@@ -68,12 +70,14 @@ class DestinationSequences(FileAsset):
                     activities,
                     iteration,
                     scenario=scenario,
+                    sensitivity_case=sensitivity_case,
                 )
                 if activities is not None
                 else None
             )
         )
         self.scenario = scenario
+        self.sensitivity_case = sensitivity_case
         self.transport_zones = transport_zones
         self.transport_costs = transport_costs
         self.current_plans = current_plans
@@ -84,9 +88,10 @@ class DestinationSequences(FileAsset):
         self.parameters = parameters
         self.seed = seed
         inputs = {
-            "version": 7,
+            "version": 8,
             "is_weekday": is_weekday,
             "iteration": iteration,
+            "sensitivity_case": sensitivity_case,
             "activity_sequences_asset": activity_sequences if isinstance(activity_sequences, FileAsset) else None,
             "previous_state": previous_state,
             "previous_destination_sequences": previous_destination_sequences,

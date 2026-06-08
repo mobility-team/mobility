@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from mobility.runtime.parameter_values import DEFAULT_SCENARIO
+from mobility.runtime.parameter_values import DEFAULT_SCENARIO, SensitivityCase
 from mobility.runtime.scenarios import Scenarios
 
 from .diagnostics import GroupDayTripsResultDiagnostics
@@ -19,6 +19,8 @@ class ResultRun:
 
     run: object
     scenario: str
+    sensitivity_case: SensitivityCase | None
+    sensitivity_case_id: str
     day_type: str
     replication: int
 
@@ -34,6 +36,7 @@ class GroupDayTripsResults:
         scenarios: str | list[str] | tuple[str, ...] | None,
         n_replications: int,
         scenario_manifest: Scenarios | None = None,
+        sensitivity_cases: list[SensitivityCase | None] | None = None,
         replication: int | None = None,
         replications: list[int] | range | None = None,
     ) -> None:
@@ -48,6 +51,13 @@ class GroupDayTripsResults:
         if self.scenario_manifest is not None:
             self.scenario_manifest.validate_requested(self.scenarios)
         self.n_replications = int(n_replications)
+        self.sensitivity_cases = (
+            [None]
+            if sensitivity_cases is None
+            else list(sensitivity_cases)
+        )
+        if not self.sensitivity_cases:
+            raise ValueError("GroupDayTripsResults needs at least one sensitivity case.")
         self.replications = self._validate_replications(
             replication=replication,
             replications=replications,
@@ -67,13 +77,21 @@ class GroupDayTripsResults:
                     run=self._run(
                         self.day_type,
                         scenario=scenario,
+                        sensitivity_case=sensitivity_case,
                         replication=replication,
                     ),
                     scenario=scenario,
+                    sensitivity_case=sensitivity_case,
+                    sensitivity_case_id=(
+                        "base"
+                        if sensitivity_case is None
+                        else sensitivity_case.case_id
+                    ),
                     day_type=self.day_type,
                     replication=replication,
                 )
                 for scenario in self.scenarios
+                for sensitivity_case in self.sensitivity_cases
                 for replication in self.replications
             ]
         return self._run_contexts

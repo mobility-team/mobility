@@ -12,6 +12,7 @@ from mobility.activities.activity import (
     resolve_activity_arrival_time_rigidity,
     resolve_activity_parameters,
 )
+from mobility.runtime.parameter_values import SensitivityCase
 from mobility.trips.group_day_trips.core.run_state import RunState
 from mobility.trips.group_day_trips.evaluation.population_weighted_plan_steps import (
     PopulationWeightedPlanSteps,
@@ -134,6 +135,7 @@ class InitialIterationStateAsset(FileAsset):
         parameters: Any,
         scenario: str,
         initial_transport_costs: Any,
+        sensitivity_case: SensitivityCase | None = None,
     ) -> None:
         self.population = population
         self.survey_plan_assets = survey_plan_assets
@@ -141,6 +143,7 @@ class InitialIterationStateAsset(FileAsset):
         self.modes = modes
         self.parameters = parameters
         self.scenario = scenario
+        self.sensitivity_case = sensitivity_case
         self.initial_transport_costs = initial_transport_costs
         self.initializer = PlanInitializer()
         self.population_weighted_plan_steps = PopulationWeightedPlanSteps(
@@ -152,10 +155,12 @@ class InitialIterationStateAsset(FileAsset):
             activities,
             1,
             scenario=scenario,
+            sensitivity_case=sensitivity_case,
         )
         inputs = {
-            "version": 3,
+            "version": 4,
             "is_weekday": is_weekday,
+            "sensitivity_case": sensitivity_case,
             "population": population,
             "survey_plan_assets": survey_plan_assets,
             "population_weighted_plan_steps": self.population_weighted_plan_steps,
@@ -522,12 +527,14 @@ class IterationTransportCostsAsset(FileAsset):
         scenario: str,
         previous_state: FileAsset | None,
         n_iter_per_cost_update: int,
+        sensitivity_case: SensitivityCase | None = None,
     ) -> None:
         self.is_weekday = is_weekday
         self.iteration = iteration
         self.transport_costs = transport_costs.for_iteration(
             iteration,
             scenario=scenario,
+            sensitivity_case=sensitivity_case,
         )
         self.congestion_flows = CongestionFlowsAsset(
             is_weekday=is_weekday,
@@ -539,9 +546,10 @@ class IterationTransportCostsAsset(FileAsset):
         )
         self.modes = self.transport_costs.modes
         inputs = {
-            "version": 1,
+            "version": 2,
             "is_weekday": is_weekday,
             "iteration": iteration,
+            "sensitivity_case": sensitivity_case,
             "transport_costs": self.transport_costs,
             "congestion_flows": self.congestion_flows,
         }
@@ -628,6 +636,7 @@ class IterationStateAsset(FileAsset):
         parameters: Any,
         scenario: str,
         cache_iteration_events: bool,
+        sensitivity_case: SensitivityCase | None = None,
     ) -> None:
         self.previous_state = previous_state
         self.seeds = seeds
@@ -640,12 +649,14 @@ class IterationStateAsset(FileAsset):
         self.modes = modes
         self.parameters = parameters
         self.scenario = scenario
+        self.sensitivity_case = sensitivity_case
         self.cache_iteration_events = cache_iteration_events
         self.updater = PlanUpdater()
         inputs = {
-            "version": 3,
+            "version": 4,
             "is_weekday": is_weekday,
             "iteration": iteration,
+            "sensitivity_case": sensitivity_case,
             "previous_state": previous_state,
             "seeds": seeds,
             "activity_sequences": activity_sequences,
@@ -658,11 +669,13 @@ class IterationStateAsset(FileAsset):
                 activities,
                 iteration,
                 scenario=scenario,
+                sensitivity_case=sensitivity_case,
             ),
             "arrival_time_rigidity_by_activity": resolve_activity_arrival_time_rigidity(
                 activities,
                 iteration,
                 scenario=scenario,
+                sensitivity_case=sensitivity_case,
             ),
             "plan_update_parameters": parameters.plan_update,
             "behavior_change_scope": parameters.behavior_change.scope_at(iteration),

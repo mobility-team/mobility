@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated, List
 
 from pydantic import Field
-from mobility.runtime.parameter_values import ParameterValue
+from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
 
 from mobility.activities.activity import Activity, ActivityParameters
 
@@ -49,12 +49,12 @@ class HomeParameters(ActivityParameters):
     """Parameters specific to the home activity."""
 
     value_of_time: Annotated[
-        float | ParameterValue,
+        float | ParameterValue | SensitivityValue,
         Field(default=10.0),
     ]
 
     value_of_time_stay_home: Annotated[
-        float | ParameterValue,
+        float | ParameterValue | SensitivityValue,
         Field(default=0.0),
     ]
 

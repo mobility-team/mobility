@@ -11,7 +11,7 @@ from typing import Annotated, List
 from pydantic import Field
 from mobility.activities.activity import Activity, ActivityParameters
 from mobility.activities.leisure.leisure_facilities_distribution import LeisureFacilitiesDistribution
-from mobility.runtime.parameter_values import ParameterValue
+from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
 from mobility.runtime.validation_types import UnitIntervalFloat
 
 
@@ -174,7 +174,7 @@ class LeisureActivity(Activity):
 class LeisureParameters(ActivityParameters):
     """Parameters specific to the leisure activity."""
 
-    value_of_time: Annotated[float | ParameterValue, Field(default=10.0)]
+    value_of_time: Annotated[float | ParameterValue | SensitivityValue, Field(default=10.0)]
     saturation_fun_ref_level: Annotated[float, Field(default=1.5, ge=0.0)]
     saturation_fun_beta: Annotated[float, Field(default=4.0, ge=0.0)]
     survey_ids: Annotated[
