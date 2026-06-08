@@ -97,7 +97,7 @@ def test_public_transport_routing_parameters_resolve_scenario_gtfs_files():
     assert saleve_jura_5.additional_gtfs_files == ["rer.zip"]
 
 
-def test_scenario_generalized_cost_parameter_resolves_to_plain_value():
+def test_scenario_generalized_cost_parameter_uses_default_fallback():
     generalized_cost_parameters = GeneralizedCostParameters(
         cost_constant=ParameterValue.by_scenario(default=1.0, zone30=2.0)
     )
@@ -119,11 +119,13 @@ def test_scenario_generalized_cost_parameter_resolves_to_plain_value():
         == 2.0
     )
 
-    with pytest.raises(ValueError, match="Scenario 'missing' is not defined"):
+    assert (
         resolve_parameter_values(
             generalized_cost_parameters,
             scenario="missing",
-        )
+        ).cost_constant
+        == 1.0
+    )
 
 
 def test_scenario_generalized_cost_parameter_requires_defined_default_scenario():

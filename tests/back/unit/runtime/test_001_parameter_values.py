@@ -35,6 +35,24 @@ def test_parameter_value_accepts_scenario_iteration_mapping():
     ]
 
 
+def test_parameter_value_uses_explicit_default_for_other_scenarios():
+    value = ParameterValue.by_scenario(default=0.0, carbon_tax=0.12)
+
+    assert resolve_parameter_values(value, scenario="ljls") == 0.0
+    assert resolve_parameter_values(value, scenario="carbon_tax") == 0.12
+
+
+def test_parameter_value_uses_explicit_default_iterations_for_other_scenarios():
+    value = ParameterValue.by_scenario_and_iteration(
+        default=0.0,
+        carbon_tax={1: 0.0, 5: 0.12},
+    )
+
+    assert resolve_parameter_values(value, scenario="ljls", iteration=1) == 0.0
+    assert resolve_parameter_values(value, scenario="ljls", iteration=5) == 0.0
+    assert resolve_parameter_values(value, scenario="carbon_tax", iteration=5) == 0.12
+
+
 def test_parameter_value_returns_deep_copied_mutable_values():
     value = ParameterValue.constant({"files": ["base.zip"]})
 

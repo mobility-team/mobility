@@ -12,7 +12,12 @@ DEFAULT_SCENARIO = "default"
 
 
 class ParameterValue(BaseModel):
-    """Parameter value that can vary by scenario and by iteration."""
+    """Parameter value that can vary by scenario and by iteration.
+
+    Plain values apply to every scenario. When scenario-specific values include
+    an explicit ``default`` scenario, that value is used as the fallback for
+    scenarios that do not define their own value.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
@@ -151,14 +156,17 @@ class ParameterValue(BaseModel):
         if None in self.values_by_scenario:
             return self.values_by_scenario[None]
 
-        if scenario not in self.values_by_scenario:
-            scenarios = ", ".join(sorted(self.scenario_names()))
-            raise ValueError(
-                f"Scenario '{scenario}' is not defined for this ParameterValue. "
-                f"Available scenarios: {scenarios}."
-            )
+        if scenario in self.values_by_scenario:
+            return self.values_by_scenario[scenario]
 
-        return self.values_by_scenario[scenario]
+        if DEFAULT_SCENARIO in self.values_by_scenario:
+            return self.values_by_scenario[DEFAULT_SCENARIO]
+
+        scenarios = ", ".join(sorted(self.scenario_names()))
+        raise ValueError(
+            f"Scenario '{scenario}' is not defined for this ParameterValue. "
+            f"Available scenarios: {scenarios}."
+        )
 
     @staticmethod
     def _step_value(points: dict[int, Any], iteration: int) -> Any:
