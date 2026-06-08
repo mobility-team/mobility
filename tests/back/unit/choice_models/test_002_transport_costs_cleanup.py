@@ -1,10 +1,10 @@
 from types import SimpleNamespace
 
 from mobility.transport.costs.transport_costs import TransportCosts
-from mobility.transport.costs.travel_costs_asset import TravelCostsAsset
+from mobility.transport.costs.travel_costs_asset import TravelCostsBase
 
 
-class _FakeTravelCostsAsset(TravelCostsAsset):
+class _FakeTravelCosts(TravelCostsBase):
     def __init__(self):
         self.inputs = {}
         self.remove_calls = []
@@ -50,7 +50,7 @@ def test_remove_congestion_artifacts_removes_variant_and_delegates_to_mode_asset
     project_dir,
     monkeypatch,
 ):
-    travel_costs = _FakeTravelCostsAsset()
+    travel_costs = _FakeTravelCosts()
     aggregator = TransportCosts(
         modes=[
             _make_mode(name="car", congestion=True, travel_costs=travel_costs),
