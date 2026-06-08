@@ -1,10 +1,11 @@
 import pathlib
 import os
-import logging
-import networkx as nx
 
 from mobility.runtime.assets.asset import Asset
-from mobility.runtime.assets.graph import build_upstream_file_asset_graph
+from mobility.runtime.assets.resolver import (
+    asset_resolution_context,
+    get_current_asset_resolver,
+)
 from typing import Any
 from abc import abstractmethod
 
@@ -78,28 +79,12 @@ class FileAsset(Asset):
             Any: The cached or newly created asset.
         """
         
-        logging.debug(
-            "Checking asset DAG for %s (%s)...",
-            self.__class__.__name__,
-            self.inputs_hash,
-        )
-        self.update_ancestors_if_needed()
-                
-        if self.is_update_needed():
-            logging.debug(
-                "Rebuilding asset %s (%s)...",
-                self.__class__.__name__,
-                self.inputs_hash,
-            )
-            asset = self.create_and_get_asset(*args, **kwargs)
-            self.update_hash(self.inputs_hash)
-            logging.debug(
-                "Asset %s (%s) is ready.",
-                self.__class__.__name__,
-                self.inputs_hash,
-            )
-            return asset
-        return self.get_cached_asset(*args, **kwargs)
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            return resolver.get(self, *args, **kwargs)
+
+        with asset_resolution_context() as resolver:
+            return resolver.get(self, *args, **kwargs)
         
 
     def is_update_needed(self) -> bool:
@@ -149,51 +134,13 @@ class FileAsset(Asset):
             RuntimeError: If a dependency cycle is detected among FileAssets.
         """
         
-        # Build the graph of upstream file assets. The same graph builder is
-        # also used by the debug UI, so both paths see the same dependencies.
-        graph = build_upstream_file_asset_graph(self)
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            resolver.prepare_upstream_assets(self)
+            return None
 
-        logging.debug(
-            "Asset DAG for %s (%s) has %s upstream assets and %s dependency edges.",
-            self.__class__.__name__,
-            self.inputs_hash,
-            str(graph.number_of_nodes()),
-            str(graph.number_of_edges()),
-        )
-        
-        # Find out which ones need to be updated and recompute them, as well
-        # as all their descendants
-        update_needed_assets = set()
-
-        for asset in graph.nodes:
-            if asset.is_update_needed():
-                update_needed_assets.add(asset)
-                for descendant in nx.descendants(graph, asset):
-                    update_needed_assets.add(descendant)
-    
-        try:
-            topo_order = list(nx.topological_sort(graph))
-        except nx.NetworkXUnfeasible:
-            raise RuntimeError("Dependency cycle detected among FileAssets")
-        
-        assets = [asset for asset in topo_order if asset in update_needed_assets]
-        
-        for asset in assets:
-            logging.debug(
-                "Rebuilding upstream asset %s (%s) for %s (%s)...",
-                asset.__class__.__name__,
-                asset.inputs_hash,
-                self.__class__.__name__,
-                self.inputs_hash,
-            )
-            asset.create_and_get_asset()
-            asset.update_hash(asset.inputs_hash)
-            logging.debug(
-                "Upstream asset %s (%s) is ready.",
-                asset.__class__.__name__,
-                asset.inputs_hash,
-            )
-        
+        with asset_resolution_context() as resolver:
+            resolver.prepare_upstream_assets(self)
         return None
         
     def get_cached_hash(self) -> str:
