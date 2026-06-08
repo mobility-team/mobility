@@ -1,18 +1,19 @@
 # Dependencies
-Mobility builds on the incredibly valuable ecosystem of open source projects of the Python and R community. They are listed below.
 
-We also try to limit build and installation times, so we should try to take on a dependency only when it's really needed. We probably have some clean up to do in the lists below...
+Mobility uses open-source Python and R packages. They are listed below.
 
-If you still want to add a dependency :
+Keep the dependency list short. Add a package only when the project needs it.
+
+If you want to add a dependency:
 - Make your case in an issue.
 - Add it to the lists here.
-- If it's a python package, add it to the [pyproject.toml](./pyproject.toml) dependencies list so it's installed when installing Mobility.
-- If it's an R package, add it to :
-    - [set_params.py](./mobility/set_params.py) function so it's installed when setting up Mobility in user scripts.
-    - [DESCRIPTION](./DESCRIPTION) file so it's installed by github in its test environment when running automated tests.
+- If it's a Python package, add it to the [pyproject.toml](../pyproject.toml) dependencies list.
+- If it's an R package, add it to:
+    - the R package list in [config.py](../mobility/config.py),
+    - [DESCRIPTION](../DESCRIPTION), so GitHub can install it during automated tests.
 
 # Python
-List from [pyproject.toml](./pyproject.toml) :
+List from [pyproject.toml](../pyproject.toml):
 - [geopandas](https://github.com/geopandas/geopandas)
 - [numpy](https://numpy.org/)
 - [pandas](https://pandas.pydata.org/)
@@ -42,7 +43,7 @@ List from [pyproject.toml](./pyproject.toml) :
 - [networkx](https://networkx.org/)
 
 # R
-List from [set_params.py](./mobility/set_params.py) or [DESCRIPTION](./DESCRIPTION) :
+List from [config.py](../mobility/config.py) or [DESCRIPTION](../DESCRIPTION):
 - [arrow](https://arrow.apache.org/)
 - [cluster](https://stat.ethz.ch/R-manual/R-devel/library/cluster/html/00Index.html)
 - [codetools](https://stat.ethz.ch/R-manual/R-devel/library/codetools/html/00Index.html)

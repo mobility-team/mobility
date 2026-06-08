@@ -1,0 +1,49 @@
+name: Build docs
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "README.md"
+      - "docs/**"
+      - "pyproject.toml"
+      - ".readthedocs.yaml"
+      - ".github/workflows/build-docs.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "README.md"
+      - "docs/**"
+      - "pyproject.toml"
+      - ".readthedocs.yaml"
+      - ".github/workflows/build-docs.yml"
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/mobility-team/mobility-ci:ubuntu-24.04-r-4.4.1-py3.12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Python dependencies
+        run: |
+          echo "VIRTUAL_ENV=/opt/venv-ci" >> "${GITHUB_ENV}"
+          echo "/opt/venv-ci/bin" >> "${GITHUB_PATH}"
+        shell: bash
+
+      - name: Install current package
+        run: |
+          uv pip install --python "${VIRTUAL_ENV}/bin/python" -e . --no-deps
+        shell: bash
+
+      - name: Install documentation dependencies
+        run: |
+          python -m pip install -r docs/requirements.txt
+        shell: bash
+
+      - name: Build Sphinx documentation
+        run: |
+          python -m sphinx -W -b html docs/source docs/_build/html
+        shell: bash
