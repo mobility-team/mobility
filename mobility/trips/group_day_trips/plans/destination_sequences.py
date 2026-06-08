@@ -191,7 +191,7 @@ class DestinationSequences(FileAsset):
             sampled_sequences = self._sample_active_destination_sequences()
             return self._with_refreshed_active_destination_sequences(sampled_sequences)
 
-        if scope == BehaviorChangeScope.MODE_REPLANNING:
+        if scope in (BehaviorChangeScope.MODE_REPLANNING, BehaviorChangeScope.NO_TRANSITIONS):
             reused_sequences = self._reuse_current_destination_sequences()
             self._cache_empty_destination_sequence_index()
             return reused_sequences

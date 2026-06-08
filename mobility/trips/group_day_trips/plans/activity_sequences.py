@@ -117,7 +117,11 @@ class ActivitySequences(FileAsset):
         if scope == BehaviorChangeScope.FULL_REPLANNING:
             return self._sample_all_activity_sequences()
 
-        if scope in (BehaviorChangeScope.DESTINATION_REPLANNING, BehaviorChangeScope.MODE_REPLANNING):
+        if scope in (
+            BehaviorChangeScope.DESTINATION_REPLANNING,
+            BehaviorChangeScope.MODE_REPLANNING,
+            BehaviorChangeScope.NO_TRANSITIONS,
+        ):
             return self._select_active_activity_sequences()
 
         raise ValueError(f"Unsupported behavior change scope: {scope}")
