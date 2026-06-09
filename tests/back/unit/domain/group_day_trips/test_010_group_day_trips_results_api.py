@@ -11,9 +11,11 @@ from shapely.geometry import Polygon
 
 from mobility.reports import TransportZoneMaps
 from mobility.runtime import Scenario, Scenarios
+from mobility.runtime.parameter_values import SensitivityCase, SensitivityValue
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.trips.group_day_trips.core.group_day_trips import PopulationGroupDayTrips
 from mobility.trips.group_day_trips.results import GroupDayTripsResults
+from mobility.trips.group_day_trips.sensitivity import GroupDayTripsSensitivityAnalysis
 from mobility.trips.group_day_trips.results.plots import (
     plot_metric_by_zone,
     plot_metric_grid_by_zone,
@@ -169,7 +171,14 @@ def _run_factory(base_folder: Path):
         },
     )
 
-    def run(day_type: str, *, scenario: str | None = None, replication: int = 0):
+    def run(
+        day_type: str,
+        *,
+        scenario: str | None = None,
+        sensitivity_case=None,
+        replication: int = 0,
+    ):
+        sensitivity_case_id = "base" if sensitivity_case is None else sensitivity_case.case_id
         scenario_distance_shift = 3.0 if scenario == "test" else 0.0
         demand_groups = pl.DataFrame(
             {
@@ -233,7 +242,7 @@ def _run_factory(base_folder: Path):
         )
         return _FakeRun(
             base_folder=base_folder,
-            name=f"{scenario}-{day_type}-{replication}",
+            name=f"{scenario}-{sensitivity_case_id}-{day_type}-{replication}",
             plan_steps=plan_steps,
             demand_groups=demand_groups,
             costs=costs,
@@ -355,7 +364,71 @@ def test_results_object_no_longer_accepts_iterations(tmp_path, monkeypatch):
             scenarios="default",
             iterations=[1, 2],
             n_replications=2,
-        )
+    )
+
+
+def test_sensitivity_metric_compares_cases_to_base(tmp_path, monkeypatch):
+    """Check sensitivity metrics keep scenario and compare each case to base."""
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    base_factory = _run_factory(tmp_path)
+
+    def run(day_type: str, *, scenario: str | None = None, sensitivity_case=None, replication: int = 0):
+        fake_scenario = scenario
+        if sensitivity_case is not None:
+            fake_scenario = f"{scenario}-{sensitivity_case.case_id}"
+        run_asset = base_factory(day_type, scenario=fake_scenario, replication=replication)
+        if sensitivity_case is not None:
+            run_asset.frames["plan_steps"] = run_asset.frames["plan_steps"].with_columns(
+                pl.when(pl.col("mode") == "car")
+                .then(pl.col("distance") + 2.0)
+                .otherwise(pl.col("distance"))
+                .alias("distance")
+            )
+        return run_asset
+
+    setup = SimpleNamespace(
+        modes=[],
+        activities=[],
+        parameters={
+            "car_cost": SensitivityValue.relative(
+                1.0,
+                changes=[0.2],
+                name="car_cost",
+                label="Car cost",
+                labels=["+20%"],
+            )
+        },
+        results=lambda day_type, scenarios, sensitivity_cases: GroupDayTripsResults(
+            run=run,
+            day_type=day_type,
+            scenarios=scenarios,
+            n_replications=1,
+            sensitivity_cases=sensitivity_cases,
+        ),
+    )
+    analysis = GroupDayTripsSensitivityAnalysis(
+        setup=setup,
+        scenarios=["default"],
+    )
+    analysis.cases = [
+        None,
+        SensitivityCase(
+            case_id="car_cost_1",
+            parameter_name="car_cost",
+            parameter_label="Car cost",
+            variation_type="relative",
+            variation_value=0.2,
+            variation_label="+20%",
+        ),
+    ]
+
+    result = analysis.travel_distance(by_variable="mode")
+    car_result = result.filter(pl.col("mode") == "car").table
+
+    assert car_result["scenario"].to_list() == ["default"]
+    assert car_result["parameter"].to_list() == ["Car cost"]
+    assert car_result["variation"].to_list() == ["+20%"]
+    assert car_result["gap"].to_list() == [4.0]
 
 
 def test_result_tables_add_scope_columns(tmp_path, monkeypatch):
@@ -542,7 +615,13 @@ def test_multi_zone_grouping_rejects_normalization(tmp_path, monkeypatch):
 def test_zone_person_count_normalization_aligns_zone_id_types(tmp_path, monkeypatch):
     """Check zone normalization works when run tables store zone ids differently."""
 
-    def run(day_type: str, *, scenario: str | None = None, replication: int = 0):
+    def run(
+        day_type: str,
+        *,
+        scenario: str | None = None,
+        sensitivity_case=None,
+        replication: int = 0,
+    ):
         demand_groups = pl.DataFrame(
             {
                 "home_zone_id": ["1", "2"],
@@ -600,7 +679,13 @@ def test_metrics_can_filter_to_inner_zone_residents(tmp_path, monkeypatch):
             super().__init__(base_folder=base_folder)
             self.frame["is_inner_zone"] = [True, False]
 
-    def run(day_type: str, *, scenario: str | None = None, replication: int = 0):
+    def run(
+        day_type: str,
+        *,
+        scenario: str | None = None,
+        sensitivity_case=None,
+        replication: int = 0,
+    ):
         transport_zones = TransportZonesWithOuterZone(base_folder=tmp_path)
         demand_groups = pl.DataFrame(
             {
@@ -802,7 +887,13 @@ def test_external_reference_person_count_uses_reference_population(tmp_path, mon
         ),
     )
 
-    def run(day_type: str, *, scenario: str | None = None, replication: int = 0):
+    def run(
+        day_type: str,
+        *,
+        scenario: str | None = None,
+        sensitivity_case=None,
+        replication: int = 0,
+    ):
         demand_groups = pl.DataFrame(
             {
                 "demand_group_id": [1, 2],
@@ -953,7 +1044,13 @@ def test_immobility_and_demand_group_metrics_remain_special_methods(tmp_path, mo
 def test_sparse_dimension_groups_count_missing_seed_as_zero(tmp_path, monkeypatch):
     """Check that a group missing in one seed still contributes a zero."""
 
-    def run(day_type: str, *, scenario: str | None = None, replication: int = 0):
+    def run(
+        day_type: str,
+        *,
+        scenario: str | None = None,
+        sensitivity_case=None,
+        replication: int = 0,
+    ):
         demand_groups = pl.DataFrame(
             {
                 "home_zone_id": ["z1", "z2"],

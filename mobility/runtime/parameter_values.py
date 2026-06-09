@@ -9,6 +9,199 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from mobility.runtime.assets.asset import Asset
 
 DEFAULT_SCENARIO = "default"
+DEFAULT_SENSITIVITY_CASE = "base"
+
+
+class SensitivityCase(BaseModel):
+    """One parameter variation used during a sensitivity run."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    case_id: str
+    parameter_name: str | None = None
+    parameter_label: str | None = None
+    variation_type: Literal["values", "relative", "absolute"] | None = None
+    variation_value: Any = None
+    variation_label: str | None = None
+
+    @property
+    def is_base(self) -> bool:
+        """Return whether this case leaves all sensitivity values unchanged."""
+        return self.parameter_name is None
+
+    def matches(self, parameter_name: str) -> bool:
+        """Return whether this case applies to one sensitivity parameter."""
+        return self.parameter_name == parameter_name
+
+
+class SensitivityValue(BaseModel):
+    """Value that can be varied during a sensitivity analysis.
+
+    A sensitivity value behaves like its base value in normal runs. During a
+    sensitivity run, it applies the active sensitivity case when the case targets
+    this value's ``name``.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    value: Any
+    name: str
+    label: str | None = None
+    variation_type: Literal["values", "relative", "absolute"]
+    variation_values: tuple[Any, ...]
+    variation_labels: tuple[str, ...] | None = None
+
+    @classmethod
+    def values(
+        cls,
+        value: Any,
+        values: list[Any] | tuple[Any, ...],
+        *,
+        name: str,
+        label: str | None = None,
+        labels: list[str] | tuple[str, ...] | None = None,
+    ) -> "SensitivityValue":
+        """Return a value with explicit candidate values for sensitivity runs."""
+        return cls._build(
+            value,
+            variation_type="values",
+            variation_values=tuple(values),
+            name=name,
+            label=label,
+            labels=labels,
+        )
+
+    @classmethod
+    def relative(
+        cls,
+        value: Any,
+        changes: list[float] | tuple[float, ...],
+        *,
+        name: str,
+        label: str | None = None,
+        labels: list[str] | tuple[str, ...] | None = None,
+    ) -> "SensitivityValue":
+        """Return a value varied by relative changes around its base value."""
+        return cls._build(
+            value,
+            variation_type="relative",
+            variation_values=tuple(changes),
+            name=name,
+            label=label,
+            labels=labels,
+        )
+
+    @classmethod
+    def absolute(
+        cls,
+        value: Any,
+        changes: list[float] | tuple[float, ...],
+        *,
+        name: str,
+        label: str | None = None,
+        labels: list[str] | tuple[str, ...] | None = None,
+    ) -> "SensitivityValue":
+        """Return a value varied by absolute changes around its base value."""
+        return cls._build(
+            value,
+            variation_type="absolute",
+            variation_values=tuple(changes),
+            name=name,
+            label=label,
+            labels=labels,
+        )
+
+    @classmethod
+    def _build(
+        cls,
+        value: Any,
+        *,
+        variation_type: Literal["values", "relative", "absolute"],
+        variation_values: tuple[Any, ...],
+        name: str,
+        label: str | None,
+        labels: list[str] | tuple[str, ...] | None,
+    ) -> "SensitivityValue":
+        if not name:
+            raise ValueError("SensitivityValue.name should not be empty.")
+        if not variation_values:
+            raise ValueError("SensitivityValue needs at least one variation value.")
+        if labels is not None and len(labels) != len(variation_values):
+            raise ValueError("SensitivityValue labels should match the number of variation values.")
+        if _contains_parameter_value(value) or _contains_parameter_value(variation_values):
+            raise ValueError(
+                "SensitivityValue should wrap final values, not ParameterValue. "
+                "Put SensitivityValue inside the relevant ParameterValue scenario or iteration point."
+            )
+        return cls(
+            value=value,
+            name=name,
+            label=label,
+            variation_type=variation_type,
+            variation_values=variation_values,
+            variation_labels=tuple(labels) if labels is not None else None,
+        )
+
+    @model_validator(mode="after")
+    def validate_final_values(self) -> "SensitivityValue":
+        """Check sensitivity values wrap final values, not scenario rules."""
+        if _contains_parameter_value(self.value) or _contains_parameter_value(self.variation_values):
+            raise ValueError(
+                "SensitivityValue should wrap final values, not ParameterValue. "
+                "Put SensitivityValue inside the relevant ParameterValue scenario or iteration point."
+            )
+        return self
+
+    def cases(self) -> list[SensitivityCase]:
+        """Return sensitivity cases generated from this value."""
+        cases = []
+        for index, variation_value in enumerate(self.variation_values):
+            if self.variation_labels is not None:
+                variation_label = self.variation_labels[index]
+            else:
+                variation_label = self._default_variation_label(variation_value)
+            cases.append(
+                SensitivityCase(
+                    case_id=f"{self.name}_{index + 1}",
+                    parameter_name=self.name,
+                    parameter_label=self.label or self.name,
+                    variation_type=self.variation_type,
+                    variation_value=variation_value,
+                    variation_label=variation_label,
+                )
+            )
+        return cases
+
+    def at(
+        self,
+        *,
+        sensitivity_case: SensitivityCase | None = None,
+    ) -> Any:
+        """Return the base value or the value for the active sensitivity case."""
+        base_value = self._copy_plain_value(self.value)
+        if sensitivity_case is None or not sensitivity_case.matches(self.name):
+            return self._copy_plain_value(base_value)
+        if sensitivity_case.variation_type == "values":
+            return self._copy_plain_value(sensitivity_case.variation_value)
+        if sensitivity_case.variation_type == "relative":
+            return base_value * (1.0 + sensitivity_case.variation_value)
+        if sensitivity_case.variation_type == "absolute":
+            return base_value + sensitivity_case.variation_value
+        return self._copy_plain_value(base_value)
+
+    @staticmethod
+    def _copy_plain_value(value: Any) -> Any:
+        if isinstance(value, (list, dict, set, tuple)):
+            return deepcopy(value)
+        return value
+
+    @staticmethod
+    def _default_variation_label(value: Any) -> str:
+        if isinstance(value, (int, float)):
+            if value > 0:
+                return f"+{value:g}"
+            return f"{value:g}"
+        return str(value)
 
 
 class ParameterValue(BaseModel):
@@ -97,7 +290,12 @@ class ParameterValue(BaseModel):
 
         return self
 
-    def at(self, *, scenario: str | None = None, iteration: int = 1) -> Any:
+    def at(
+        self,
+        *,
+        scenario: str | None = None,
+        iteration: int = 1,
+    ) -> Any:
         """Return the plain value for one scenario and one iteration."""
         scenario_name = DEFAULT_SCENARIO if scenario is None else scenario
         points = self._points_for_scenario(scenario_name)
@@ -119,6 +317,8 @@ class ParameterValue(BaseModel):
 
     @classmethod
     def _points_from_value(cls, value: Any) -> dict[int, Any]:
+        if isinstance(value, SensitivityValue):
+            return {1: value}
         if isinstance(value, ParameterValue):
             if value.has_scenarios():
                 raise ValueError(
@@ -193,15 +393,73 @@ class ParameterValue(BaseModel):
         return value
 
 
+def _contains_parameter_value(value: Any) -> bool:
+    """Return whether a value contains a ParameterValue object."""
+    seen = set()
+
+    def contains(item: Any) -> bool:
+        if isinstance(item, ParameterValue):
+            return True
+
+        if isinstance(item, (Asset, BaseModel, dict, list, tuple, set)):
+            item_id = id(item)
+            if item_id in seen:
+                return False
+            seen.add(item_id)
+
+        if isinstance(item, Asset):
+            return contains(item.inputs)
+
+        if isinstance(item, BaseModel):
+            return any(
+                contains(getattr(item, field_name))
+                for field_name in item.__class__.model_fields
+            )
+
+        if isinstance(item, dict):
+            return any(
+                contains(key) or contains(dict_value)
+                for key, dict_value in item.items()
+            )
+
+        if isinstance(item, (list, tuple, set)):
+            return any(contains(list_value) for list_value in item)
+
+        return False
+
+    return contains(value)
+
+
 def resolve_parameter_values(
     value: Any,
     *,
     scenario: str | None = None,
     iteration: int = 1,
+    sensitivity_case: SensitivityCase | None = None,
 ) -> Any:
     """Return a copy of ``value`` where ParameterValue objects are plain values."""
+    if isinstance(value, SensitivityValue):
+        resolved_value = value.at(
+            sensitivity_case=sensitivity_case,
+        )
+        return resolve_parameter_values(
+            resolved_value,
+            scenario=scenario,
+            iteration=iteration,
+            sensitivity_case=sensitivity_case,
+        )
+
     if isinstance(value, ParameterValue):
-        return value.at(scenario=scenario, iteration=iteration)
+        resolved_value = value.at(
+            scenario=scenario,
+            iteration=iteration,
+        )
+        return resolve_parameter_values(
+            resolved_value,
+            scenario=scenario,
+            iteration=iteration,
+            sensitivity_case=sensitivity_case,
+        )
 
     if isinstance(value, BaseModel):
         resolved_data = {
@@ -209,6 +467,7 @@ def resolve_parameter_values(
                 getattr(value, field_name),
                 scenario=scenario,
                 iteration=iteration,
+                sensitivity_case=sensitivity_case,
             )
             for field_name in value.__class__.model_fields
         }
@@ -216,27 +475,52 @@ def resolve_parameter_values(
 
     if isinstance(value, dict):
         return {
-            resolve_parameter_values(key, scenario=scenario, iteration=iteration): (
-                resolve_parameter_values(item, scenario=scenario, iteration=iteration)
+            resolve_parameter_values(
+                key,
+                scenario=scenario,
+                iteration=iteration,
+                sensitivity_case=sensitivity_case,
+            ): (
+                resolve_parameter_values(
+                    item,
+                    scenario=scenario,
+                    iteration=iteration,
+                    sensitivity_case=sensitivity_case,
+                )
             )
             for key, item in value.items()
         }
 
     if isinstance(value, list):
         return [
-            resolve_parameter_values(item, scenario=scenario, iteration=iteration)
+            resolve_parameter_values(
+                item,
+                scenario=scenario,
+                iteration=iteration,
+                sensitivity_case=sensitivity_case,
+            )
             for item in value
         ]
 
     if isinstance(value, tuple):
         return tuple(
-            resolve_parameter_values(item, scenario=scenario, iteration=iteration)
+            resolve_parameter_values(
+                item,
+                scenario=scenario,
+                iteration=iteration,
+                sensitivity_case=sensitivity_case,
+            )
             for item in value
         )
 
     if isinstance(value, set):
         return {
-            resolve_parameter_values(item, scenario=scenario, iteration=iteration)
+            resolve_parameter_values(
+                item,
+                scenario=scenario,
+                iteration=iteration,
+                sensitivity_case=sensitivity_case,
+            )
             for item in value
         }
 
@@ -282,3 +566,53 @@ def collect_parameter_value_scenarios(value: Any) -> set[str]:
         return set()
 
     return collect(value)
+
+
+def collect_sensitivity_values(value: Any) -> list[SensitivityValue]:
+    """Return sensitivity values found inside a setup object."""
+    seen = set()
+    sensitivity_values: list[SensitivityValue] = []
+
+    def collect(item: Any) -> None:
+        if isinstance(item, SensitivityValue):
+            sensitivity_values.append(item)
+            collect(item.value)
+            return
+
+        if isinstance(item, ParameterValue):
+            item_id = id(item)
+            if item_id in seen:
+                return
+            seen.add(item_id)
+            for points in item.values_by_scenario.values():
+                for point_value in points.values():
+                    collect(point_value)
+            return
+
+        if isinstance(item, (Asset, BaseModel, dict, list, tuple, set)):
+            item_id = id(item)
+            if item_id in seen:
+                return
+            seen.add(item_id)
+
+        if isinstance(item, Asset):
+            collect(item.inputs)
+            return
+
+        if isinstance(item, BaseModel):
+            for field_name in item.__class__.model_fields:
+                collect(getattr(item, field_name))
+            return
+
+        if isinstance(item, dict):
+            for key, dict_value in item.items():
+                collect(key)
+                collect(dict_value)
+            return
+
+        if isinstance(item, (list, tuple, set)):
+            for list_value in item:
+                collect(list_value)
+
+    collect(value)
+    return sensitivity_values

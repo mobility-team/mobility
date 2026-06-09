@@ -59,6 +59,7 @@ class ScopedRunTable(FileAsset):
             "scope": tuple(
                 (
                     run_context.scenario,
+                    run_context.sensitivity_case_id,
                     run_context.day_type,
                     run_context.replication,
                 )
@@ -97,6 +98,7 @@ class ScopedRunTable(FileAsset):
             scoped_tables.append(
                 table.with_columns(
                     scenario=pl.lit(run_context.scenario, dtype=pl.String),
+                    sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
                     day_type=pl.lit(run_context.day_type, dtype=pl.String),
                     iteration=iteration_expr,
                     replication=pl.lit(run_context.replication, dtype=pl.Int32),
@@ -144,6 +146,7 @@ class ScopedRunTable(FileAsset):
                 scoped_tables.append(
                     current_plan_steps.with_columns(
                         scenario=pl.lit(run_context.scenario, dtype=pl.String),
+                        sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
                         day_type=pl.lit(run_context.day_type, dtype=pl.String),
                         replication=pl.lit(run_context.replication, dtype=pl.Int32),
                         iteration=pl.lit(iteration, dtype=pl.Int32),
@@ -188,6 +191,7 @@ class ScopedRunTable(FileAsset):
                 scoped_tables.append(
                     table.with_columns(
                         scenario=pl.lit(run_context.scenario, dtype=pl.String),
+                        sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
                         day_type=pl.lit(run_context.day_type, dtype=pl.String),
                         replication=pl.lit(run_context.replication, dtype=pl.Int32),
                         iteration=pl.lit(iteration, dtype=pl.Int32),
@@ -211,6 +215,7 @@ class ScopedRunTable(FileAsset):
                 .filter(pl.col("iteration").is_in(self.selected_iterations))
                 .with_columns(
                     scenario=pl.lit(run_context.scenario, dtype=pl.String),
+                    sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
                     day_type=pl.lit(run_context.day_type, dtype=pl.String),
                     replication=pl.lit(run_context.replication, dtype=pl.Int32),
                     iteration=pl.col("iteration").cast(pl.Int32),

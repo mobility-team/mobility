@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import logging
 import os
 import pathlib
@@ -8,7 +7,7 @@ import pathlib
 import polars as pl
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
-from mobility.runtime.parameter_values import resolve_parameter_values
+from mobility.runtime.parameter_values import SensitivityCase, resolve_parameter_values
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.costs.road_flow_manager import RoadFlowManager
@@ -52,6 +51,7 @@ class TransportCosts(FileAsset):
         self,
         iteration: int,
         scenario: str | None = None,
+        sensitivity_case: SensitivityCase | None = None,
     ) -> "TransportCosts":
         """Return the static transport-cost variant for one iteration.
 
@@ -70,6 +70,7 @@ class TransportCosts(FileAsset):
                 mode,
                 iteration=iteration,
                 scenario=scenario,
+                sensitivity_case=sensitivity_case,
             )
             for mode in self.modes
         ]
@@ -85,14 +86,16 @@ class TransportCosts(FileAsset):
         *,
         iteration: int,
         scenario: str | None,
+        sensitivity_case: SensitivityCase | None,
     ):
         """Return one mode with iteration and scenario values resolved."""
         for_iteration = getattr(mode, "for_iteration", None)
         if callable(for_iteration):
-            parameters = inspect.signature(for_iteration).parameters
-            if "scenario" in parameters:
-                return for_iteration(iteration, scenario=scenario)
-            return for_iteration(iteration)
+            return for_iteration(
+                iteration,
+                scenario=scenario,
+                sensitivity_case=sensitivity_case,
+            )
 
         generalized_cost = mode.inputs.get("generalized_cost")
         if not isinstance(generalized_cost, InMemoryAsset):
@@ -102,6 +105,7 @@ class TransportCosts(FileAsset):
             generalized_cost.inputs,
             scenario=scenario,
             iteration=iteration,
+            sensitivity_case=sensitivity_case,
         )
         if resolved_gc_inputs == generalized_cost.inputs:
             return mode

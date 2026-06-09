@@ -1,9 +1,10 @@
 from enum import StrEnum
 
-from mobility.runtime.parameter_values import DEFAULT_SCENARIO
+from mobility.runtime.parameter_values import DEFAULT_SCENARIO, SensitivityCase
 from mobility.runtime.scenarios import Scenarios
 from mobility.transport.costs.transport_costs import TransportCosts
 from ..results import GroupDayTripsResults
+from ..sensitivity import GroupDayTripsSensitivityAnalysis
 from .parameters import GroupDayTripsParameters
 from .run import Run
 from mobility.activities import Activity, HomeActivity, OtherActivity
@@ -87,13 +88,14 @@ class PopulationGroupDayTrips:
             activities=self.activities,
             parameters=self.parameters,
         )
-        self._runs: dict[tuple[str, int, DayType], Run] = {}
+        self._runs: dict[tuple[str, str, int, DayType], Run] = {}
 
     def run(
         self,
         day_type: str | DayType,
         *,
         scenario: str | None = None,
+        sensitivity_case: SensitivityCase | None = None,
         replication: int = 0,
     ) -> Run:
         """Return one weekday or weekend run.
@@ -116,8 +118,9 @@ class PopulationGroupDayTrips:
         """
         day_type = DayType(day_type)
         scenario = DEFAULT_SCENARIO if scenario is None else scenario
+        sensitivity_case_id = "base" if sensitivity_case is None else sensitivity_case.case_id
         self.scenarios.validate_requested([scenario])
-        key = (scenario, replication, day_type)
+        key = (scenario, sensitivity_case_id, replication, day_type)
         if key not in self._runs:
             parameters = self.parameters.with_replication(replication)
             survey_plan_assets = SurveyPlanAssets(
@@ -138,6 +141,7 @@ class PopulationGroupDayTrips:
                 is_weekday=is_weekday,
                 enabled=is_weekday or parameters.periods.simulate_weekend,
                 scenario=scenario,
+                sensitivity_case=sensitivity_case,
                 replication=replication,
             )
         return self._runs[key]
@@ -147,6 +151,7 @@ class PopulationGroupDayTrips:
         day_type: str | DayType = DayType.WEEKDAY,
         *,
         scenarios: str | list[str] | tuple[str, ...] | None = None,
+        sensitivity_cases: list[SensitivityCase | None] | None = None,
         replication: int | None = None,
         replications: list[int] | range | None = None,
     ) -> GroupDayTripsResults:
@@ -163,9 +168,22 @@ class PopulationGroupDayTrips:
             day_type=day_type.value,
             scenarios=scenarios,
             scenario_manifest=self.scenarios,
+            sensitivity_cases=sensitivity_cases,
             n_replications=self.parameters.run.n_replications,
             replication=replication,
             replications=replications,
+        )
+
+    def sensitivity(
+        self,
+        *,
+        scenarios: str | list[str] | tuple[str, ...] | None = None,
+    ):
+        """Return sensitivity-analysis helpers for selected scenarios."""
+        self.scenarios.validate_requested(Scenarios.selected_names(scenarios))
+        return GroupDayTripsSensitivityAnalysis(
+            setup=self,
+            scenarios=Scenarios.selected_names(scenarios),
         )
 
     def remove(self):
@@ -177,24 +195,32 @@ class PopulationGroupDayTrips:
         """
         scenarios = {DEFAULT_SCENARIO}
         scenarios.update(self.scenarios.names)
-        scenarios.update(scenario for scenario, _, _ in self._runs)
+        scenarios.update(scenario for scenario, _, _, _ in self._runs)
 
         replications = set(range(self.parameters.run.n_replications))
-        replications.update(replication for _, replication, _ in self._runs)
+        replications.update(replication for _, _, replication, _ in self._runs)
+
+        sensitivity_cases = [None]
+        for run in self._runs.values():
+            sensitivity_case = getattr(run, "sensitivity_case", None)
+            if sensitivity_case is not None and sensitivity_case not in sensitivity_cases:
+                sensitivity_cases.append(sensitivity_case)
 
         day_types = {DayType.WEEKDAY}
         if self.parameters.periods.simulate_weekend:
             day_types.add(DayType.WEEKEND)
-        day_types.update(day_type for _, _, day_type in self._runs)
+        day_types.update(day_type for _, _, _, day_type in self._runs)
 
         for scenario in scenarios:
-            for replication in replications:
-                for day_type in day_types:
-                    self.run(
-                        day_type,
-                        scenario=scenario,
-                        replication=replication,
-                    ).remove()
+            for sensitivity_case in sensitivity_cases:
+                for replication in replications:
+                    for day_type in day_types:
+                        self.run(
+                            day_type,
+                            scenario=scenario,
+                            sensitivity_case=sensitivity_case,
+                            replication=replication,
+                        ).remove()
 
         self._runs = {}
 
