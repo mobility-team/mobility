@@ -6,8 +6,7 @@ import pathlib
 
 import polars as pl
 
-from mobility.runtime.assets.in_memory_asset import InMemoryAsset
-from mobility.runtime.parameter_values import SensitivityCase, resolve_parameter_values
+from mobility.runtime.parameter_values import SensitivityCase
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.costs.road_flow_manager import RoadFlowManager
@@ -66,9 +65,8 @@ class TransportCosts(FileAsset):
         """
 
         resolved_modes = [
-            self._resolve_mode_for_iteration(
-                mode,
-                iteration=iteration,
+            mode.for_iteration(
+                iteration,
                 scenario=scenario,
                 sensitivity_case=sensitivity_case,
             )
@@ -79,55 +77,6 @@ class TransportCosts(FileAsset):
             congestion=self.inputs["congestion"],
             road_flow_asset=self.inputs["road_flow_asset"],
         )
-
-    def _resolve_mode_for_iteration(
-        self,
-        mode,
-        *,
-        iteration: int,
-        scenario: str | None,
-        sensitivity_case: SensitivityCase | None,
-    ):
-        """Return one mode with iteration and scenario values resolved."""
-        for_iteration = getattr(mode, "for_iteration", None)
-        if callable(for_iteration):
-            return for_iteration(
-                iteration,
-                scenario=scenario,
-                sensitivity_case=sensitivity_case,
-            )
-
-        generalized_cost = mode.inputs.get("generalized_cost")
-        if not isinstance(generalized_cost, InMemoryAsset):
-            return mode
-
-        resolved_gc_inputs = resolve_parameter_values(
-            generalized_cost.inputs,
-            scenario=scenario,
-            iteration=iteration,
-            sensitivity_case=sensitivity_case,
-        )
-        if resolved_gc_inputs == generalized_cost.inputs:
-            return mode
-
-        resolved_generalized_cost = self._copy_in_memory_asset(
-            generalized_cost,
-            resolved_gc_inputs,
-        )
-        resolved_mode_inputs = dict(mode.inputs)
-        resolved_mode_inputs["generalized_cost"] = resolved_generalized_cost
-        return self._copy_in_memory_asset(mode, resolved_mode_inputs)
-
-    @staticmethod
-    def _copy_in_memory_asset(asset: InMemoryAsset, inputs: dict):
-        """Copy an in-memory asset with new inputs and a matching input hash."""
-        clone = asset.__class__.__new__(asset.__class__)
-        clone.__dict__ = dict(asset.__dict__)
-        clone.inputs = inputs
-        clone.inputs_hash = clone.compute_inputs_hash()
-        for name, value in inputs.items():
-            setattr(clone, name, value)
-        return clone
 
     def asset_for_congestion(self, congestion: bool) -> "TransportCosts":
         """Return the transport-cost variant for a congestion flag.
