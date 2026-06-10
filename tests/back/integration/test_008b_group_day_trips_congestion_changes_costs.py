@@ -41,6 +41,10 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
     baseline_public_transport_mode = mobility.PublicTransportMode(
         transport_zones,
         mode_registry=baseline_mode_registry,
+        routing_parameters=mobility.PublicTransportRoutingParameters(
+            gtfs_reference_date="2026-01-01",
+            gtfs_sources_folder="inputs/gtfs_sources",
+        ),
     )
 
     baseline = PopulationGroupDayTrips(
@@ -83,6 +87,10 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
     congested_public_transport_mode = mobility.PublicTransportMode(
         transport_zones,
         mode_registry=congested_mode_registry,
+        routing_parameters=mobility.PublicTransportRoutingParameters(
+            gtfs_reference_date="2026-01-01",
+            gtfs_sources_folder="inputs/gtfs_sources",
+        ),
     )
 
     congested = PopulationGroupDayTrips(
