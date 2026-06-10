@@ -114,6 +114,8 @@ def test_004_public_transport_costs_can_be_computed(test_data, safe_json):
         last_intermodal_transfer=transfer,
         generalized_cost_parameters=gen_cost_parms,
         routing_parameters=mobility.PublicTransportRoutingParameters(
+            gtfs_reference_date="2026-01-01",
+            gtfs_sources_folder="inputs/gtfs_sources",
             max_traveltime=10.0,
             max_perceived_time=10.0,
         ),

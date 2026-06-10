@@ -11,6 +11,7 @@ from .gtfs_builder import (
     GTFSLineSpec,
     GTFSStopSpec,
 )
+from .gtfs.gtfs_sources import GTFSSources
 
 __all__ = [
     "PublicTransportMode",
@@ -22,4 +23,5 @@ __all__ = [
     "GTFSFeedSpec",
     "GTFSLineSpec",
     "GTFSStopSpec",
+    "GTFSSources",
 ]

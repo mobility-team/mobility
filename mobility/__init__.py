@@ -71,6 +71,7 @@ from .transport.modes.public_transport import (
     PublicTransportMode,
     PublicTransportParameters,
     PublicTransportRoutingParameters,
+    GTFSSources,
 )
 from .transport.modes.core import IntermodalTransfer, ModeRegistry
 from .runtime.parameter_values import DEFAULT_SCENARIO, ParameterValue, SensitivityValue

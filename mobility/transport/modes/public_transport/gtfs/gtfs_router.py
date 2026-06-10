@@ -1,7 +1,6 @@
 import gtfs_kit
 import os
 import pathlib
-import json
 import logging
 import pandas as pd
 
@@ -10,8 +9,7 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.spatial.transport_zones import TransportZones
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 
-from mobility.runtime.io.download_file import download_file
-from mobility.transport.modes.public_transport.gtfs.gtfs_stops import GTFSStops
+from mobility.transport.modes.public_transport.gtfs.gtfs_sources import GTFSSources
 
 from .gtfs_data import GTFSData
 
@@ -20,9 +18,10 @@ class GTFSRouter(FileAsset):
     Creates a GTFS router for the given transport zones and saves it in .rds format.
     Currently works for France and Switzerland.
     
-    Uses GTFSStops to get a list of the stops within the transport zones, the downloads the GTFS (GTFSData class),
-    checks that expected agencies are present (if they were provided by the user in PublicTransportRoutingParameters)
-    and creates the GTFS router using the R script prepare_gtfs_router.R
+    Uses the GTFS sources file to select GTFS files intersecting
+    the transport zones, downloads the selected GTFS files with GTFSData,
+    checks that expected agencies are present when requested, and creates the
+    GTFS router using the R script prepare_gtfs_router.R.
     
     For each GTFS source, this script will only keep stops with the region, add missing route types (by default bus),
     make IDs unique and remove erroneous calendar dates. 
@@ -32,13 +31,18 @@ class GTFSRouter(FileAsset):
     Finally, this global Tuesday-only GTFS is saved.
     """
     
-    def __init__(self, transport_zones: TransportZones, additional_gtfs_files: list = None, expected_agencies: list = None):
-        
+    def __init__(
+        self,
+        transport_zones: TransportZones,
+        gtfs_sources: GTFSSources,
+        additional_gtfs_files: list = None,
+        expected_agencies: list = None,
+    ):
         inputs = {
             "transport_zones": transport_zones,
+            "gtfs_sources": gtfs_sources,
             "additional_gtfs_files": additional_gtfs_files,
-            "download_date": os.environ["MOBILITY_GTFS_DOWNLOAD_DATE"],
-            "expected_agencies": expected_agencies
+            "expected_agencies": expected_agencies,
         }
         
         cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "gtfs_router.rds"
@@ -55,15 +59,13 @@ class GTFSRouter(FileAsset):
         transport_zones = self.inputs["transport_zones"]
         expected_agencies = self.inputs["expected_agencies"]
         
-        stops = self.get_stops(transport_zones)
-
-        gtfs_files = self.get_gtfs_files(stops)
+        gtfs_files = self.get_gtfs_files(transport_zones)
         
         if self.inputs["additional_gtfs_files"] is not None:
             gtfs_files.extend(self.inputs["additional_gtfs_files"])
             
         if expected_agencies is not None:
-            self.check_expected_agencies(gtfs_files, expected_agencies)
+            self.check_expected_agencies(gtfs_files, list(expected_agencies))
         
         self.prepare_gtfs_router(transport_zones, gtfs_files)
 
@@ -71,16 +73,15 @@ class GTFSRouter(FileAsset):
     
     def check_expected_agencies(self, gtfs_files, expected_agencies):
         logging.debug(gtfs_files)
-        for gtfs_url in gtfs_files:
+        for gtfs_file in gtfs_files:
             logging.debug("GTFS")
-            gtfs=GTFSData(gtfs_url)
-            agencies = gtfs.get_agencies_names(gtfs_url)
+            agencies = GTFSData.get_agencies_names(gtfs_file)
             logging.debug(agencies)
             logging.debug(type(agencies))
             for expected_agency in expected_agencies:
-                logging.debug(f'Looking for {expected_agency} in {gtfs.name}')
+                logging.debug(f'Looking for {expected_agency} in {gtfs_file}')
                 if expected_agency.lower() in agencies.lower():
-                    logging.debug(f"{expected_agency} found in {gtfs.name}")
+                    logging.debug(f"{expected_agency} found in {gtfs_file}")
                     expected_agencies.remove(expected_agency)
         logging.debug(expected_agencies)
         if expected_agencies == []:
@@ -91,20 +92,6 @@ class GTFSRouter(FileAsset):
             logging.debug(expected_agencies)
             raise IndexError('Missing agencies')
             
-        
-    def get_stops(self, transport_zones):
-        
-        transport_zones = transport_zones.get()
-        
-        admin_prefixes = ["fr", "ch"]
-        admin_prefixes = [prefix for prefix in admin_prefixes if transport_zones["local_admin_unit_id"].str.contains(prefix).any()]
-        
-        stops = GTFSStops(admin_prefixes, self.inputs["download_date"])
-        stops = stops.get(bbox=tuple(transport_zones.total_bounds))
-        
-        return stops
-    
-    
     def prepare_gtfs_router(self, transport_zones, gtfs_files):
         
         gtfs_files = ",".join(gtfs_files)
@@ -123,45 +110,16 @@ class GTFSRouter(FileAsset):
         return None
     
     
-    def get_gtfs_files(self, stops):
-        
-        gtfs_urls = self.get_gtfs_urls(stops)
-        gtfs_files = [GTFSData(gtfs_url).get() for gtfs_url in gtfs_urls]
-        gtfs_files = [str(f[0]) for f in gtfs_files if f[1] == True]
+    def get_gtfs_files(self, transport_zones):
+        transport_zones = transport_zones.get()
+        gtfs_sources = self.inputs["gtfs_sources"]
+        gtfs_sources.get()
+        selected_sources = gtfs_sources.get_gtfs_resources_for_area(transport_zones)
+
+        gtfs_files = GTFSData.download_gtfs_files(selected_sources.to_dict("records"))
+        gtfs_files = [str(path) for path, file_ok in gtfs_files if file_ok]
             
         return gtfs_files
-            
-            
-            
-    def get_gtfs_urls(self, stops):
-        
-        gtfs_urls = []
-        
-        # Add resource urls that are already known (for Switzerland for example)
-        gtfs_urls.extend(stops["resource_url"].dropna().unique().tolist())
-        
-        # Add transport.data.gouv.fr resource urls by matching their datagouv_id in the global metadata file
-        datagouv_dataset_urls = stops["dataset_url"].dropna().unique()
-        datagouv_dataset_ids = [pathlib.Path(url).name for url in datagouv_dataset_urls]
-        
-        url = "https://transport.data.gouv.fr/api/datasets"
-        path = ( 
-            pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "gtfs"/
-            (self.inputs["download_date"] + "_gtfs_metadata.json")
-        )
-        download_file(url, path)
-            
-        with open(path, "r", encoding="UTF-8") as f:
-            metadata = json.load(f)
-            
-        for dataset_metadata in metadata:
-            if dataset_metadata["datagouv_id"] in datagouv_dataset_ids:
-                gtfs_resources = [r for r in dataset_metadata["resources"] if "format" in r.keys()]
-                gtfs_resources = [r for r in gtfs_resources if r["format"] == "GTFS"]
-                for r in gtfs_resources:
-                    gtfs_urls.append(r["original_url"])
-                
-        return gtfs_urls
     
     def audit_gtfs(self):
         """
@@ -175,14 +133,12 @@ class GTFSRouter(FileAsset):
         """
                 
         transport_zones = self.inputs["transport_zones"]
-        stops = self.get_stops(transport_zones)
-        gtfs_files = self.get_gtfs_files(stops)
+        gtfs_files = self.get_gtfs_files(transport_zones)
 
         for i, gtfs_url in enumerate(gtfs_files, start=1):
             logging.info("GTFS")
             logging.info(gtfs_url)
-            gtfs=GTFSData(gtfs_url)
-            agencies = gtfs.get_agencies_names(gtfs_url)
+            agencies = GTFSData.get_agencies_names(gtfs_url)
 
             try:
                 feed = gtfs_kit.read_feed(gtfs_url, dist_units='m')

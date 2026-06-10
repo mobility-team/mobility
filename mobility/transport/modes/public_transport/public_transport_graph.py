@@ -18,6 +18,7 @@ from mobility.transport.modes.core.defaults import (
     DEFAULT_LONG_RANGE_MOTORIZED_MAX_BEELINE_DISTANCE_KM,
 )
 from .gtfs.gtfs_router import GTFSRouter
+from .gtfs.gtfs_sources import GTFSSources
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
 from mobility.transport.modes.core.transport_mode import TransportMode
 from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
@@ -34,7 +35,7 @@ class PublicTransportGraph(FileAsset):
     
     Args:
         transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
-        parameters: PublicTransportRoutingParameters. Will use standard parameters by default
+        parameters: PublicTransportRoutingParameters with an explicit GTFS reference date and sources folder.
     """
 
     def __init__(
@@ -43,12 +44,24 @@ class PublicTransportGraph(FileAsset):
             parameters: "PublicTransportRoutingParameters | None" = None
     ):
         if parameters is None:
-            parameters = PublicTransportRoutingParameters()
+            raise ValueError(
+                "PublicTransportGraph requires PublicTransportRoutingParameters "
+                "with an explicit `gtfs_reference_date` and `gtfs_sources_folder`."
+            )
         
+        gtfs_sources = GTFSSources(
+            gtfs_reference_date=parameters.gtfs_reference_date,
+            gtfs_sources_folder=parameters.gtfs_sources_folder,
+            countries=self.get_countries(transport_zones),
+            use_live_gtfs=parameters.use_live_gtfs,
+            max_gtfs_file_age_days=parameters.max_gtfs_file_age_days,
+        )
+
         gtfs_router = GTFSRouter(
-            transport_zones,
-            parameters.additional_gtfs_files,
-            parameters.expected_agencies
+            transport_zones=transport_zones,
+            gtfs_sources=gtfs_sources,
+            additional_gtfs_files=parameters.additional_gtfs_files,
+            expected_agencies=parameters.expected_agencies,
         )
 
         inputs = {
@@ -113,6 +126,13 @@ class PublicTransportGraph(FileAsset):
     def audit_gtfs(self):
         return self.gtfs_router.audit_gtfs()
 
+    def get_countries(self, transport_zones: TransportZones) -> list[str]:
+        """Return country codes from the actual transport zones."""
+        zones = transport_zones.get()
+        return sorted(
+            {str(lau_id).split("-", 1)[0] for lau_id in zones["local_admin_unit_id"]}
+        )
+
 
 class PublicTransportRoutingParameters(BaseModel):
     """
@@ -147,6 +167,45 @@ class PublicTransportRoutingParameters(BaseModel):
         Field(default=None),
     ]
     expected_agencies: Annotated[list[str] | None, Field(default=None)]
+    gtfs_reference_date: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Date used to select GTFS source files, in YYYY-MM-DD format."
+            ),
+        ),
+    ]
+    max_gtfs_file_age_days: Annotated[
+        int,
+        Field(
+            default=30,
+            ge=0,
+            description=(
+                "Maximum accepted age, in days, of an archived GTFS file "
+                "relative to gtfs_reference_date."
+            ),
+        ),
+    ]
+    gtfs_sources_folder: Annotated[
+        pathlib.Path | None,
+        Field(
+            default=None,
+            description=(
+                "Project folder where Mobility stores the GTFS sources SQLite file."
+            ),
+        ),
+    ]
+    use_live_gtfs: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "Allow Mobility to use live GTFS URLs. This can make two runs "
+                "select different public transport schedules."
+            ),
+        ),
+    ]
 
     @model_validator(mode="after")
     def validate_time_window(self) -> "PublicTransportRoutingParameters":
@@ -154,4 +213,16 @@ class PublicTransportRoutingParameters(BaseModel):
             raise ValueError("start_time_max should be greater than or equal to start_time_min.")
         if self.additional_gtfs_files == []:
             self.additional_gtfs_files = None
+        if self.gtfs_reference_date is None:
+            raise ValueError(
+                "Public transport routing requires `gtfs_reference_date` "
+                "(YYYY-MM-DD) to select reproducible GTFS inputs."
+            )
+        GTFSSources.parse_reference_date(self.gtfs_reference_date)
+        if self.gtfs_sources_folder is None:
+            raise ValueError(
+                "Public transport routing requires `gtfs_sources_folder`, for example "
+                "`inputs/gtfs_sources`, so selected GTFS sources can be "
+                "shared with other users."
+            )
         return self

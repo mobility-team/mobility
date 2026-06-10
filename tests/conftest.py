@@ -74,9 +74,6 @@ def do_mobility_setup(local, clear_inputs, clear_results, debug_r):
         **extra_params,
     )
 
-    # Default for tests; can be overridden by env/.env
-    os.environ.setdefault("MOBILITY_GTFS_DOWNLOAD_DATE", "2025-01-01")
-
 def pytest_configure(config):
     do_mobility_setup(
         config.getoption("--local"),

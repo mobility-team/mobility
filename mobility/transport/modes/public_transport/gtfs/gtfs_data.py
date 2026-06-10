@@ -5,7 +5,7 @@ import zipfile
 import hashlib
 
 from mobility.runtime.assets.file_asset import FileAsset
-from mobility.runtime.io.download_file import download_file, clean_path
+from mobility.runtime.io.download_file import clean_path, download_file, download_files
 
 class GTFSData(FileAsset):
     """
@@ -14,10 +14,34 @@ class GTFSData(FileAsset):
     Checks that the GTFS zip is >1ko and contains an agency.txt file.
     """
     
-    def __init__(self, url: str):
+    def __init__(
+        self,
+        provider: str,
+        dataset_id: str,
+        resource_id: str,
+        download_url: str,
+        gtfs_file_date: str | None,
+        source_status: str,
+        sources_created_at_utc: str,
+    ):
         
-        path = clean_path(url)
-        name = hashlib.md5(url.encode('utf-8')).hexdigest() + "_" + path.name
+        path = clean_path(download_url)
+        live_sources_created_at_utc = None
+        if source_status == "live":
+            live_sources_created_at_utc = sources_created_at_utc
+
+        source_key = "|".join(
+            [
+                provider,
+                dataset_id,
+                resource_id,
+                download_url,
+                str(gtfs_file_date),
+                source_status,
+                str(live_sources_created_at_utc),
+            ]
+        )
+        name = hashlib.md5(source_key.encode('utf-8')).hexdigest() + "_" + path.name
         cache_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "gtfs" / name
         
         if cache_path.suffix != ".zip":
@@ -26,8 +50,13 @@ class GTFSData(FileAsset):
         self.name = name 
             
         inputs = {
-            "url": url,
-            "download_date": os.environ["MOBILITY_GTFS_DOWNLOAD_DATE"]
+            "provider": provider,
+            "dataset_id": dataset_id,
+            "resource_id": resource_id,
+            "download_url": download_url,
+            "gtfs_file_date": gtfs_file_date,
+            "source_status": source_status,
+            "live_sources_created_at_utc": live_sources_created_at_utc,
         }
 
         super().__init__(inputs, cache_path)
@@ -42,7 +71,7 @@ class GTFSData(FileAsset):
     def create_and_get_asset(self):
         
         download_file(
-            self.url,
+            self.download_url,
             self.cache_path,
             raise_on_error=False
         )
@@ -50,6 +79,34 @@ class GTFSData(FileAsset):
         file_ok = self.is_gtfs_file_ok(self.cache_path)
         
         return [self.cache_path, file_ok]
+
+    @classmethod
+    def download_gtfs_files(cls, sources: list[dict]) -> list[list]:
+        """Download selected GTFS sources in parallel and validate each file."""
+        gtfs_files = [
+            cls(
+                provider=source["provider"],
+                dataset_id=source["dataset_id"],
+                resource_id=source["resource_id"],
+                download_url=source["download_url"],
+                gtfs_file_date=source["gtfs_file_date"],
+                source_status=source["status"],
+                sources_created_at_utc=source["sources_created_at_utc"],
+            )
+            for source in sources
+        ]
+
+        files_to_download = [
+            (gtfs_file.download_url, gtfs_file.cache_path)
+            for gtfs_file in gtfs_files
+            if gtfs_file.is_update_needed()
+        ]
+        download_files(files_to_download, raise_on_error=False)
+
+        return [
+            [gtfs_file.cache_path, gtfs_file.is_gtfs_file_ok(gtfs_file.cache_path)]
+            for gtfs_file in gtfs_files
+        ]
 
     
     def is_gtfs_file_ok(self, path):
@@ -77,13 +134,14 @@ class GTFSData(FileAsset):
                 logging.info("Downloaded file is a proper GTFS zip which contains an agency file.")
             else:
                 logging.info("Downloaded file is a proper GTFS zip but does not contain an agency file, it will not be used by Mobility.")
-            return True
+            return has_an_agency
         except:
             logging.info("Downloaded file is not a regular GTFS zip file, it will not be used by Mobility.")
             return False
     
     
-    def get_agencies_names(self, path):
+    @staticmethod
+    def get_agencies_names(path):
                 
         with zipfile.ZipFile(path, 'r') as gtfs_folder:
             with gtfs_folder.open("agency.txt") as agency:

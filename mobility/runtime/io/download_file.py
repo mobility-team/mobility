@@ -2,6 +2,7 @@ import logging
 import os
 import pathlib
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from rich.progress import Progress
@@ -12,6 +13,8 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+
+from mobility.runtime.io.http import request_url
 
 
 def download_file(url, path, max_retries=3, timeout=(10, 120), raise_on_error=True):
@@ -46,12 +49,6 @@ def download_file(url, path, max_retries=3, timeout=(10, 120), raise_on_error=Tr
 
     logging.info("Downloading " + url)
 
-    verify = os.environ.get("MOBILITY_CERT_FILE", True)
-    proxies = {
-        "http": os.environ.get("HTTP_PROXY"),
-        "https": os.environ.get("HTTPS_PROXY"),
-    }
-
     retryer = Retrying(
         stop=stop_after_attempt(max_retries + 1),
         wait=wait_exponential(multiplier=1, min=1, max=10),
@@ -61,33 +58,32 @@ def download_file(url, path, max_retries=3, timeout=(10, 120), raise_on_error=Tr
     )
 
     def _download_once() -> None:
+        response = None
         try:
-            with requests.Session() as session:
-                with session.get(
-                    url,
-                    stream=True,
-                    proxies=proxies,
-                    verify=verify,
-                    timeout=timeout,
-                ) as response:
-                    if response.status_code == 404:
-                        logging.error(f"Error 404: The resource at {url} was not found.")
-                        return
-                    if response.status_code == 401:
-                        logging.error(
-                            f"Error 401: The resource at {url} could not be accessed (authorization error)."
-                        )
-                        return
+            response = request_url(
+                url,
+                max_retries=0,
+                timeout=timeout,
+                stream=True,
+                allowed_status_codes={401, 404},
+            )
+            if response.status_code == 404:
+                logging.error(f"Error 404: The resource at {url} was not found.")
+                return
+            if response.status_code == 401:
+                logging.error(
+                    f"Error 401: The resource at {url} could not be accessed (authorization error)."
+                )
+                return
 
-                    response.raise_for_status()
-                    total_size = int(response.headers.get("content-length", 0))
+            total_size = int(response.headers.get("content-length", 0))
 
-                    with Progress() as progress:
-                        task = progress.add_task("[green]Downloading...", total=total_size)
-                        with open(temp_path, "wb") as file:
-                            for data in response.iter_content(chunk_size=chunk_size):
-                                file.write(data)
-                                progress.update(task, advance=len(data))
+            with Progress() as progress:
+                task = progress.add_task("[green]Downloading...", total=total_size)
+                with open(temp_path, "wb") as file:
+                    for data in response.iter_content(chunk_size=chunk_size):
+                        file.write(data)
+                        progress.update(task, advance=len(data))
 
             os.replace(temp_path, path)
             logging.info("Downloaded file to " + str(path))
@@ -96,6 +92,9 @@ def download_file(url, path, max_retries=3, timeout=(10, 120), raise_on_error=Tr
             if temp_path.exists():
                 temp_path.unlink()
             raise
+        finally:
+            if response is not None:
+                response.close()
 
     try:
         retryer(_download_once)
@@ -108,6 +107,49 @@ def download_file(url, path, max_retries=3, timeout=(10, 120), raise_on_error=Tr
         logging.warning(log_message, url, max_retries + 1, req_err)
 
     return path
+
+
+def download_files(url_path_pairs, max_workers=4, max_retries=3, timeout=(10, 120), raise_on_error=True):
+    """
+    Download several files in parallel and return paths in input order.
+
+    Args:
+        url_path_pairs (list): list of ``(url, path)`` pairs.
+        max_workers (int): maximum number of parallel downloads.
+        max_retries (int): maximum retries for each download.
+        timeout (int or tuple): the timeout setting for requests.
+        raise_on_error (bool): whether to raise on failed downloads.
+
+    Returns:
+        list[pathlib.Path]: downloaded file paths, in input order.
+    """
+    url_path_pairs = list(url_path_pairs)
+    paths = [None] * len(url_path_pairs)
+    if len(url_path_pairs) == 0:
+        return paths
+
+    worker_count = min(max_workers, len(url_path_pairs))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(
+                download_file,
+                url,
+                path,
+                max_retries=max_retries,
+                timeout=timeout,
+                raise_on_error=raise_on_error,
+            ): index
+            for index, (url, path) in enumerate(url_path_pairs)
+        }
+        try:
+            for future in as_completed(futures):
+                paths[futures[future]] = future.result()
+        except Exception:
+            for pending_future in futures:
+                pending_future.cancel()
+            raise
+
+    return paths
 
 
 def clean_path(path):

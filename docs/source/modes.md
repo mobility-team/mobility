@@ -124,6 +124,10 @@ walk_pt = mobility.PublicTransportMode(
     last_leg_mode=walk,
     first_intermodal_transfer=walk_transfer,
     last_intermodal_transfer=walk_transfer,
+    routing_parameters=mobility.PublicTransportRoutingParameters(
+        gtfs_reference_date="2026-01-01",
+        gtfs_sources_folder="inputs/gtfs_sources",
+    ),
 )
 ```
 
@@ -132,6 +136,18 @@ Project scenarios can add extra GTFS files. Use this to represent a defined serv
 ### GTFS Data Preparation
 
 GTFS feeds describe stops, calendars, service times, routes, and public-transport modes such as bus, tram, train, and metro.
+
+Mobility can select official GTFS files for France and Switzerland. The modeler must provide a `gtfs_reference_date` and a project folder for the GTFS sources file. Mobility then builds a small SQLite file listing the GTFS sources selected for that date and study area. This file can be kept with the project inputs so another user can run with the same source catalog.
+
+By default, Mobility only uses reproducible archived GTFS files. If an intersecting source has no archived file, or if its latest archived file is too old, Mobility warns and skips it. If no usable public transport source remains for the study area, the run fails. Live GTFS URLs can be enabled explicitly with `use_live_gtfs=True`, but this makes results depend on the provider state at download time.
+
+```python
+routing_parameters = mobility.PublicTransportRoutingParameters(
+    gtfs_reference_date="2026-01-01",
+    gtfs_sources_folder="inputs/gtfs_sources",
+    max_gtfs_file_age_days=30,
+)
+```
 
 For project use, operator feeds are filtered to keep lines with at least one stop in the study transport zones. The feeds use a common date and are merged into one feed. Missing transfers are added between stops within 200 metres, with transfer time estimated from straight-line distance.
 

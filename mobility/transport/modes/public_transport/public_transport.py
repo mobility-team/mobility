@@ -81,7 +81,10 @@ class PublicTransportMode(TransportMode):
             )
 
         if routing_parameters is None:
-            routing_parameters = PublicTransportRoutingParameters()
+            raise ValueError(
+                "PublicTransportMode requires routing_parameters with an "
+                "explicit `gtfs_reference_date` and `gtfs_sources_folder`."
+            )
 
         travel_costs = PublicTransportTravelCosts(
             transport_zones=transport_zones,

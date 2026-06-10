@@ -41,6 +41,10 @@ def test_008_group_day_trips_can_be_computed(test_data):
     public_transport_mode = mobility.PublicTransportMode(
         transport_zones,
         mode_registry=mode_registry,
+        routing_parameters=mobility.PublicTransportRoutingParameters(
+            gtfs_reference_date="2026-01-01",
+            gtfs_sources_folder="inputs/gtfs_sources",
+        ),
     )
 
     group_day_trips = PopulationGroupDayTrips(

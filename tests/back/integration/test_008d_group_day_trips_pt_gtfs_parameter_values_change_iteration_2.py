@@ -129,6 +129,8 @@ def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files
         first_intermodal_transfer=synthetic_gtfs_transfer,
         last_intermodal_transfer=synthetic_gtfs_transfer,
         routing_parameters=mobility.PublicTransportRoutingParameters(
+            gtfs_reference_date="2026-01-01",
+            gtfs_sources_folder="inputs/gtfs_sources",
             additional_gtfs_files=additional_gtfs_files,
             max_traveltime=10.0,
             max_perceived_time=10.0,

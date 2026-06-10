@@ -251,6 +251,6 @@ After this first run, read:
 - the main modelling workflow,
 - model checks for a study,
 - study area and transport zones,
-- transport modes,
+- transport modes, including how to configure public transport GTFS sources,
 - scenarios,
 - results and indicators.
