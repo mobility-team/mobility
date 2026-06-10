@@ -166,7 +166,7 @@ class PublicTransportMode(TransportMode):
         scenario: str | None = None,
         sensitivity_case: SensitivityCase | None = None,
     ) -> "PublicTransportMode":
-        """Return a PT mode with routing parameters resolved for one iteration."""
+        """Return a PT mode with all leg parameters resolved for one iteration."""
         
         routing_parameters = self.inputs["travel_costs"].inputs["parameters"]
         resolved_routing_parameters = resolve_parameter_values(
@@ -182,10 +182,22 @@ class PublicTransportMode(TransportMode):
             iteration=iteration,
             sensitivity_case=sensitivity_case,
         )
+        resolved_first_leg_mode = self.first_leg_mode.for_iteration(
+            iteration,
+            scenario=scenario,
+            sensitivity_case=sensitivity_case,
+        )
+        resolved_last_leg_mode = self.last_leg_mode.for_iteration(
+            iteration,
+            scenario=scenario,
+            sensitivity_case=sensitivity_case,
+        )
 
         if (
             resolved_routing_parameters == routing_parameters
             and resolved_mid_parameters == generalized_cost.inputs["mid_parameters"]
+            and resolved_first_leg_mode is self.first_leg_mode
+            and resolved_last_leg_mode is self.last_leg_mode
         ):
             return self
 
@@ -193,8 +205,8 @@ class PublicTransportMode(TransportMode):
 
         return PublicTransportMode(
             transport_zones=travel_costs.inputs["transport_zones"],
-            first_leg_mode=self.first_leg_mode,
-            last_leg_mode=self.last_leg_mode,
+            first_leg_mode=resolved_first_leg_mode,
+            last_leg_mode=resolved_last_leg_mode,
             first_intermodal_transfer=travel_costs.inputs["first_modal_transfer"],
             last_intermodal_transfer=travel_costs.inputs["last_modal_transfer"],
             routing_parameters=resolved_routing_parameters,
