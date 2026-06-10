@@ -205,6 +205,6 @@ If R package installation fails behind a proxy, see the installation page for th
 After this first run, the next useful pages are:
 
 * transport zones,
-* transport modes,
+* transport modes, including how to configure public transport GTFS sources,
 * trips,
 * carbon computation and scenario analysis.

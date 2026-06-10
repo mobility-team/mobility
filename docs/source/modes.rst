@@ -87,13 +87,37 @@ GTFS Data Preparation
 
 The data detailing public transport service is sourced from feeds published in the GTFS (General Transit Feed Specification) standard: stop locations, days and times of service, and transport modes (bus, tram, train, metro, etc.).
 
+Mobility can select official GTFS files for France and Switzerland. The modeler
+must provide a ``gtfs_reference_date`` and a project folder for the GTFS sources
+file. Mobility then builds a small SQLite file listing the GTFS sources selected
+for that date and study area. This file can be kept with the project inputs so
+another user can run with the same source catalog.
+
+By default, Mobility only uses reproducible archived GTFS files. If an
+intersecting source has no archived file, or if its latest archived file is too
+old, Mobility warns and skips it. If no usable public transport source remains
+for the study area, the run fails. Live GTFS URLs can be enabled explicitly with
+``use_live_gtfs=True``, but this makes results depend on the provider state at
+download time.
+
+.. code-block:: python
+
+    public_transport = mobility.PublicTransportMode(
+        transport_zones,
+        first_leg_mode=mobility.WalkMode(transport_zones),
+        last_leg_mode=mobility.WalkMode(transport_zones),
+        routing_parameters=mobility.PublicTransportRoutingParameters(
+            gtfs_reference_date="2026-01-01",
+            gtfs_sources_folder="inputs/gtfs_sources",
+            max_gtfs_file_age_days=30,
+        ),
+    )
+
 Operator feeds are filtered to retain only lines with at least one stop in the studied transport zones. They are then aligned to a common date before being merged into a single feed.
 
 Transfers between lines that were not originally specified are added within a 200-meter radius around each stop, with transfer times calculated based on straight-line distance between stops.
 
 The public transport service from the Tuesday with the most operational services is used as the reference for modeling.
-
-The GTFS data versions used for the Greater Geneva study are from late 2024.
 
 You can also create a small additional GTFS feed directly in Python, for example
 to test a new line or a service scenario before adding it to the public transport
