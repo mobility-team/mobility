@@ -123,7 +123,7 @@ def test_initial_state_inputs_keep_full_modes_out_of_dependencies(tmp_path, monk
     monkeypatch.setattr(
         iteration_assets,
         "resolve_activity_parameters",
-        lambda activities, iteration, scenario=None: {},
+        lambda activities, iteration, scenario=None, sensitivity_case=None: {},
     )
 
     initial_state = iteration_assets.InitialIterationStateAsset(

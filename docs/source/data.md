@@ -1,51 +1,112 @@
-# Data
-Data used by Mobility. Only available in French and for France for now!
+# Data Sources
 
-## Données carbone
-### Base Carbone
-#### Description
-La Base Carbone de l'ADEME recense les facteurs d'émissions en France, et est la base de données de référence. Au moment où cette documentation a été mise à jour (avril 2023), c'est la V22 de la Base Carbone qui est utilisée, et nous développons une requête automatique des données à l'aide de l'[API Base Carbone](https://api.gouv.fr/les-api/api_base_carbone).
+Mobility prepares many inputs from open data. The goal is to reduce the amount of manual data preparation needed by transport modellers.
 
-#### Variables
-Un fichier de mapping permet de faire le lien entre les modes utilisés dans les enquêtes de mobilité et ceux dont les facteurs d'émission sont répertoriés dans la base.
+## Mobility Surveys
 
-## Sondages (`surveys`)
-### ENTP-2008
-#### Description
-L'enquête nationale transports déplacements a été réalisée en 2007-2008. [D'après l'INSEE](https://www.insee.fr/fr/metadonnees/source/serie/s1277), « son objectif est la connaissance des déplacements des ménages résidant en France métropolitaine et de leur usage des moyens de transport tant collectifs qu'individuels,  ainsi que la connaissance du parc des véhicules détenus par les ménages et de leur utilisation ».
-### Utilisation
-Ces données sont utilisées pour échantillonner sur une certaine durée des déplacement représentatifs de ménages, selon leur CSP, leur catégorie d'unité urbaine, leur nombre de voitures et le nombre de personnes au sein du ménage.
-#### Variables
-Les variables sont décrites dans [PROGEDO](https://data.progedo.fr/studies/doi/10.13144/lil-0634?tab=variables).
-#### Conservation
-L'équipe Mobility conserve les données détaillées de l'enquête sur [data.gouv.fr](https://www.data.gouv.fr/fr/datasets/donnees-detaillees-de-lenquete-national-transports-et-deplacements-2008/).
-C'est ce lien qui est utilisé par le code de Mobility pour récupérer automatiquement les données si elles ne sont pas déjà présentes localement.
+For France, Mobility uses national mobility surveys such as:
 
-Les données sont disponibles sous Licence Ouverte.
+- ENTD 2007-2008,
+- EMP 2018-2019.
 
-#### Traitement des données
-Les étapes successives de traitement des données sont documentées dans le code.
+These surveys describe observed travel behaviour. Mobility uses them to build activity and trip patterns for synthetic people.
 
-### EMP-2019
-L'[enquête de mobilité des personnes](https://www.statistiques.developpement-durable.gouv.fr/resultats-detailles-de-lenquete-mobilite-des-personnes-de-2019) a été réalisée en 2018 et 2019. Malgré son changement de nom, elle reprend la même méthodologie que l'ENTD 2008, et elle est traitée de manière similaire par `mobility`.
-#### Variables
-Contrairement à l'ENTD 2008, un [document d'accompagnement est disponible](https://www.statistiques.developpement-durable.gouv.fr/sites/default/files/2022-04/mise_a_disposition_tables_emp2019_public_V2.pdf).
-#### Conservation
-Les données sont également conservées sur [data.gouv.fr](https://www.data.gouv.fr/fr/datasets/donnees-detaillees-de-lenquete-mobilite-des-personnes-2018-2019/).
+Survey transfer is a modelling assumption. National surveys provide detailed behavioural patterns, but they do not remove the need to compare the base case with local evidence when local evidence exists.
 
-Les données sont disponibles sous Licence Ouverte.
+Some survey codes still appear in model inputs or outputs. The [survey codes page](survey_codes.md) lists the main French codes for socio-professional categories, motives, and trip modes.
 
-#### Licence
-La base est [publiée par l'ADEME](https://www.data.gouv.fr/fr/datasets/base-carbone-r-1/) sous Licence Ouverte.
+### ENTD 2007-2008
 
-## Autres données INSEE
+The national transport and travel survey, `Enquete Nationale Transports Deplacements`, was run in 2007 and 2008. INSEE describes it as a survey about household trips, use of individual and collective transport modes, and the vehicle fleet owned by households.
+
+Mobility uses ENTD data to sample representative mobility behaviour over a period, using variables such as socio-professional category, urban unit category, number of household cars, and household size.
+
+Useful references:
+
+- [INSEE source description](https://www.insee.fr/fr/metadonnees/source/serie/s1277)
+- [PROGEDO variable catalogue](https://data.progedo.fr/studies/doi/10.13144/lil-0634?tab=variables)
+- [Detailed ENTD data kept by the Mobility team on data.gouv.fr](https://www.data.gouv.fr/fr/datasets/donnees-detaillees-de-lenquete-national-transports-et-deplacements-2008/)
+
+The detailed data is available under Licence Ouverte.
+
+### EMP 2018-2019
+
+The personal mobility survey, `Enquete Mobilite des Personnes`, was run in 2018 and 2019. It follows a method close to ENTD 2008, so Mobility can process it in a similar way.
+
+Useful references:
+
+- [Official EMP 2018-2019 results](https://www.statistiques.developpement-durable.gouv.fr/resultats-detailles-de-lenquete-mobilite-des-personnes-de-2019)
+- [EMP public-use documentation PDF](https://www.statistiques.developpement-durable.gouv.fr/sites/default/files/2022-04/mise_a_disposition_tables_emp2019_public_V2.pdf)
+- [Detailed EMP data kept by the Mobility team on data.gouv.fr](https://www.data.gouv.fr/fr/datasets/donnees-detaillees-de-lenquete-mobilite-des-personnes-2018-2019/)
+
+The detailed data is available under Licence Ouverte.
+
+## Administrative And Population Data
+
+Mobility uses administrative and population data to build local study inputs, such as:
+
+- local administrative units,
+- census population,
+- home-work flows,
+- home-study flows,
+- urban unit categories.
+
+For French territories, these datasets usually come from INSEE or national open-data portals.
+
+The synthetic population and result metrics use represented-person weights. When checking a project setup, compare the represented population by territory and segment with the population source used for the study.
+
 ### ESANE
-Données d'équipements issues de l'[Élaboration des statistiques annuelles d'entreprises (ÉSANE)](https://www.insee.fr/fr/metadonnees/source/serie/s1188).
 
-### Base des unités urbaines 2020
-Le fichier `cities_category.csv` reprend la [base des unités urbaines 2020](https://www.insee.fr/fr/information/4802589) permettant de faire le lien entre une commune et sa catégorie au sens INSEE. Ce fichier est stocké directement dans le répertoire et devrait être actualisé si une nouvelle base est publiée (a priori vers 2030). Pour reproduire les résultats de 2008 « dans leur contexte », il pourrait être utile d'utiliser une base plus ancienne (ce qui n'est pas le cas dans la code en avril 2023).
+Facility and business data can come from INSEE's annual business statistics, `Elaboration des statistiques annuelles d'entreprises`.
 
-Le code R (rural) est devenu H (Hors unité urbaine) dans les dernières données, cela est pris en compte par le parseur dans la conversion de l'EMP 2019 au format de l'ENTD 2008.
+Reference:
 
-![image](https://user-images.githubusercontent.com/105421514/233382976-7c4f9bb8-f773-4532-9942-01122c399586.png)
-![image](https://user-images.githubusercontent.com/105421514/233383016-068a3f15-aad3-4408-a633-c05768ec04a1.png)
+- [INSEE ESANE source description](https://www.insee.fr/fr/metadonnees/source/serie/s1188)
+
+### Urban Unit Categories
+
+The file `cities_category.csv` maps French communes to their INSEE urban unit category. It is based on the [2020 urban unit database](https://www.insee.fr/fr/information/4802589).
+
+This file is stored in the repository because the mapping is small and changes rarely. A future update will probably be needed when INSEE publishes a new urban unit database, likely around 2030.
+
+One small compatibility detail matters for survey processing: the old rural code `R` became `H` in newer data. Mobility handles this when it converts EMP 2019 data to the ENTD 2008-style format used by the model.
+
+## Activities And Opportunities
+
+Activities need opportunity data. For example:
+
+- jobs for work,
+- schools or universities for study,
+- shops for shopping,
+- leisure facilities for leisure.
+
+The exact source depends on the country and the activity.
+
+These raw activity sources are converted into destination opportunity capacity inside the model. A report should keep both levels visible when they matter: the raw proxy used for the activity, and the resulting capacity or occupation indicators used by the simulation.
+
+## Transport Networks
+
+Road, cycling, and walking networks mainly come from OpenStreetMap.
+
+Public transport uses GTFS feeds when available.
+
+Network and service data should be treated as model inputs with versions and dates. This is especially important for public transport feeds, OSM extracts, and scenario-specific network changes.
+
+## Emissions
+
+Greenhouse gas emission factors are based on public emission-factor datasets, including ADEME data for French use cases.
+
+For French studies, Mobility uses emission factors from ADEME Base Carbone.
+
+Useful references:
+
+- [ADEME Base Carbone API](https://api.gouv.fr/les-api/api_base_carbone)
+- [Base Carbone on data.gouv.fr](https://www.data.gouv.fr/fr/datasets/base-carbone-r-1/)
+
+Mobility keeps a mapping between survey transport modes and the emission-factor modes available in Base Carbone. This makes carbon indicators easier to compute from model results, but it is still a modelling assumption that should stay visible in a study report.
+
+## Data Cache
+
+Mobility stores prepared data in the folders configured with `mobility.set_params(...)`.
+
+Keep project data folders for traceability. They help explain which inputs were used to produce a result.

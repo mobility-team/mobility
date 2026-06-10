@@ -2,7 +2,7 @@ import logging
 
 from typing import List
 
-from mobility.runtime.parameter_values import resolve_parameter_values
+from mobility.runtime.parameter_values import SensitivityCase, resolve_parameter_values
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.modes.core.transport_mode import TransportMode, TransportModeParameters
 from mobility.transport.modes.core.mode_registry import ModeRegistry
@@ -164,6 +164,7 @@ class PublicTransportMode(TransportMode):
         self,
         iteration: int,
         scenario: str | None = None,
+        sensitivity_case: SensitivityCase | None = None,
     ) -> "PublicTransportMode":
         """Return a PT mode with routing parameters resolved for one iteration."""
         
@@ -172,12 +173,14 @@ class PublicTransportMode(TransportMode):
             routing_parameters,
             scenario=scenario,
             iteration=iteration,
+            sensitivity_case=sensitivity_case,
         )
         generalized_cost = self.inputs["generalized_cost"]
         resolved_mid_parameters = resolve_parameter_values(
             generalized_cost.inputs["mid_parameters"],
             scenario=scenario,
             iteration=iteration,
+            sensitivity_case=sensitivity_case,
         )
 
         if (

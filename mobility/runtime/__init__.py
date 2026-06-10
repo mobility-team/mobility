@@ -2,8 +2,12 @@
 
 from .parameter_values import (
     DEFAULT_SCENARIO,
+    DEFAULT_SENSITIVITY_CASE,
     ParameterValue,
+    SensitivityCase,
+    SensitivityValue,
     collect_parameter_value_scenarios,
+    collect_sensitivity_values,
     resolve_parameter_values,
 )
 from .scenarios import (
@@ -15,11 +19,15 @@ from .scenarios import (
 
 __all__ = [
     "DEFAULT_SCENARIO",
+    "DEFAULT_SENSITIVITY_CASE",
     "ParameterValue",
+    "SensitivityCase",
+    "SensitivityValue",
     "Scenario",
     "ScenarioParameterChange",
     "Scenarios",
     "collect_parameter_value_changes",
     "collect_parameter_value_scenarios",
+    "collect_sensitivity_values",
     "resolve_parameter_values",
 ]

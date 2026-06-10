@@ -41,6 +41,7 @@ from .run_state import RunState
 from mobility.transport.costs.transport_costs import TransportCosts
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.input_hashing import hash_inputs
+from mobility.runtime.parameter_values import SensitivityCase
 from mobility.activities import Activity
 from mobility.surveys import SurveyPlanAssets
 from mobility.surveys.mobility_survey import MobilitySurvey
@@ -73,11 +74,17 @@ class Run(FileAsset):
         is_weekday: bool,
         enabled: bool = True,
         scenario: str,
+        sensitivity_case: SensitivityCase | None = None,
         replication: int = 0,
     ) -> None:
         """Initialize a single weekday or weekend PopulationGroupDayTrips run."""
+        sensitivity_case_id = (
+            "base"
+            if sensitivity_case is None
+            else sensitivity_case.case_id
+        )
         run_context_inputs = {
-            "version": 17,
+            "version": 18,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -87,6 +94,7 @@ class Run(FileAsset):
             "is_weekday": is_weekday,
             "enabled": enabled,
             "scenario": scenario,
+            "sensitivity_case": sensitivity_case,
         }
         run_context_hash = hash_inputs(run_context_inputs)
         self.run_context = SimpleNamespace(
@@ -94,6 +102,7 @@ class Run(FileAsset):
             parameters=parameters,
             is_weekday=is_weekday,
             scenario=scenario,
+            sensitivity_case=sensitivity_case,
             replication=replication,
         )
         self.population = population
@@ -105,6 +114,8 @@ class Run(FileAsset):
         self.is_weekday = is_weekday
         self.enabled = enabled
         self.scenario = scenario
+        self.sensitivity_case = sensitivity_case
+        self.sensitivity_case_id = sensitivity_case_id
         self.replication = int(replication)
 
         self.transport_costs = transport_costs
@@ -126,12 +137,14 @@ class Run(FileAsset):
             modes=modes,
             parameters=parameters,
             scenario=scenario,
+            sensitivity_case=sensitivity_case,
             initial_transport_costs=IterationTransportCostsAsset(
                 is_weekday=is_weekday,
                 iteration=1,
                 base_folder=group_day_trips_folder,
                 transport_costs=transport_costs,
                 scenario=scenario,
+                sensitivity_case=sensitivity_case,
                 previous_state=None,
                 n_iter_per_cost_update=parameters.run.n_iter_per_cost_update,
             ),
@@ -146,6 +159,7 @@ class Run(FileAsset):
             modes=modes,
             parameters=parameters,
             scenario=scenario,
+            sensitivity_case=sensitivity_case,
             initial_state=self.initial_iteration_state,
         )
         self.final_iteration_state = (
@@ -178,7 +192,8 @@ class Run(FileAsset):
         day_type = "weekday" if self.is_weekday else "weekend"
         label = (
             f"GroupDayTrips {day_type} "
-            f"scenario={self.scenario} repl={self.replication}"
+            f"scenario={self.scenario} sensitivity={self.sensitivity_case_id} "
+            f"repl={self.replication}"
         )
         with GroupDayTripsProgressReporter(
             label=label,
@@ -197,6 +212,7 @@ class Run(FileAsset):
         modes: List[TransportMode],
         parameters: GroupDayTripsParameters,
         scenario: str,
+        sensitivity_case: SensitivityCase | None,
         initial_state: FileAsset,
     ) -> list[IterationStateAsset]:
         """Build the content-addressed state asset chain for the run iterations."""
@@ -217,6 +233,7 @@ class Run(FileAsset):
                 base_folder=base_folder,
                 transport_costs=transport_costs,
                 scenario=scenario,
+                sensitivity_case=sensitivity_case,
                 previous_state=(None if iteration_index == 1 else previous_state),
                 n_iter_per_cost_update=parameters.run.n_iter_per_cost_update,
             )
@@ -239,6 +256,7 @@ class Run(FileAsset):
                 activity_sequences=activity_sequences,
                 activities=activities,
                 scenario=scenario,
+                sensitivity_case=sensitivity_case,
                 transport_zones=population.transport_zones,
                 transport_costs=resolved_transport_costs,
                 parameters=parameters,
@@ -268,6 +286,7 @@ class Run(FileAsset):
                 modes=modes,
                 parameters=parameters,
                 scenario=scenario,
+                sensitivity_case=sensitivity_case,
                 cache_iteration_events=parameters.outputs.cache_iteration_events,
             )
             state_assets.append(state_asset)

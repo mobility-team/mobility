@@ -1,28 +1,20 @@
-import os
 import dotenv
 import mobility
 
-# Dear Mobility users, this quickstart should always work, please open an issue if this is not the case (and sorry for that)
-
-# Note to Mobility developers : thank you for doing that! <3
-# If you bring changes to this quickstart, please also update quickstart-fr-ci (in the same folder)
-# If those changes are substantial, please consider updating test_901_quickstart_drift_guard.py in the unit folder test 
-
 dotenv.load_dotenv()
 
-mobility.set_params(
-)
+mobility.set_params()
 
-# Using Limoges and a limited radius to reuse the smaller Limousin OSM extract
+# Use Limoges and a limited radius to reuse the smaller Limousin OSM extract.
 transport_zones = mobility.TransportZones("fr-87085", radius=10.0)
 
-# Using EMP, the latest national mobility survey for France
+# Use EMP 2018-2019, the current Mobility survey source for French examples.
 survey = mobility.EMPMobilitySurvey()
 
-# Creating a synthetic population of 1000 for the area
+# Create a synthetic population of 1000 people for the area.
 population = mobility.Population(transport_zones, sample_size=1000)
 
-# Simulating trips for this population for car, walk, bicycle
+# Simulate trips for this population with car, walk, and bicycle.
 population_trips = mobility.PopulationGroupDayTrips(
     population=population,
     modes=[
@@ -44,17 +36,24 @@ population_trips = mobility.PopulationGroupDayTrips(
     ),
 )
 
-# You can get weekday plan steps to inspect them
+# Run the weekday model.
 weekday_run = population_trips.run("weekday")
 weekday_plan_steps = weekday_run.get()["plan_steps"].collect()
 
-# You can compute global metrics for weekday trips
-global_metrics = weekday_run.results().metrics.aggregate()
+# Use population_trips.results(...) as the main entry point for indicators.
+weekday_results = population_trips.results("weekday")
+trip_count_by_mode = weekday_results.metrics.trip_count(
+    by_variable="mode",
+    iterations="last",
+    output="table",
+)
 
-# You can plot weekday OD flows, with labels for prominent cities
-weekday_results = weekday_run.results()
-labels = weekday_results.metrics.get_prominent_cities()
-weekday_results.metrics.plot_od_flows(labels=labels)
+# Plot origin-destination flows between transport zones.
+od_flow_plot = weekday_results.metrics.trip_count(
+    by_zone=["origin_zone", "destination_zone"],
+    iterations="last",
+    output="plot",
+)
 
-# You can get a report of the parameters used in the model
+# Get a report of the parameters used by the model.
 parameters_report = weekday_run.parameters_dataframe()

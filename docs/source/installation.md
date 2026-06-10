@@ -1,69 +1,213 @@
 # Installation
-## Installer les outils de développement
-- Installer mamba avec [miniforge](https://github.com/conda-forge/miniforge), pour créer un environnement dédié pour mobility et gérer ses dépendances Python et R.
-- Installer [git](https://git-scm.com/), pour pouvoir récupérer le code de mobility.
-- Installer un environnement de développement, pour pouvoir utiliser la librairie dans des scripts. Vous pouvez par exemple utiliser [spyder](https://www.spyder-ide.org/) (idéalement dans un environnement mamba, voir les [instructions d'installation de spyder](https://docs.spyder-ide.org/current/installation.html#conda-environment)) ou [vs code](https://code.visualstudio.com/).
 
-## Récupérer le code avec git
-Vous pouvez soit utiliser git directement soit GitHub Desktop.
+Mobility currently uses Python, R, and compiled tools such as `osmium-tool`.
 
-### Avec git
-- Ouvrir une invite de commande, puis allez dans le dossier dans lequel vous souhaitez stocker le code de Mobility : `cd path/to/mobility-repo`. Sous Windows, choisissez un dossier standard (par exemple "C:\Users\username\Documents\GitHub\mobility"), l'utilisation de dossiers système peut bloquer l'installation.
-- Récupérer le code avec la commande : `git clone https://github.com/mobility-team/mobility.git`
-- Si nécessaire, se placer sur la branche main : `git checkout main`
+For now, the supported installation path is the mamba environment provided by the repository. This is because Mobility uses Python, R, and tools such as `osmium-tool` together.
 
-### Avec GitHub Desktop
-- Installer et ouvrir GitHub Desktop
-- File > Clone repository > URL > `mobility-team/mobility`. Sous Windows, choisissez un dossier standard (par exemple `C:\Users\username\Documents\GitHub\mobility`), l'utilisation de dossiers système peut bloquer l'installation.
-- Rester sur la branche main
+## 1. Install the tools
 
-## Créer un environnement dédié et installer les dépendances de mobility
-- Ouvrir Miniforge Prompt et se placer dans le dossier où a été installé mobility ( `cd path/to/mobility-repo`)
-- Créer un environnement pour mobility à partir du fichier environment.yml : `mamba env create -n mobility -f environment.yml`
-- Activer l'environnement mobility : `mamba activate mobility`
-- Installer mobility avec pip : `pip install -e .`
-- Si vous utilisez spyder, installez la librairie spyder-kernels : `pip install spyder-kernels`
-- Installer les dépendances R de mobility en lançant Python dans l'invite de commande, avec la commande `python`, puis :
+Install:
+
+- [Miniforge](https://github.com/conda-forge/miniforge), to get `mamba`,
+- [Git](https://git-scm.com/), to download the Mobility code,
+- an editor such as VS Code or Spyder.
+
+On Windows, clone the repository in a normal user folder, for example:
+
+```shell
+C:\Users\your.name\Documents\GitHub\mobility
+```
+
+## 2. Get the code
+
+Open a Miniforge Prompt, choose the folder where you keep Git projects, then run:
+
+```shell
+git clone https://github.com/mobility-team/mobility.git
+cd mobility
+```
+
+## 3. Create the mamba environment
+
+Create the environment from the repository file:
+
+```shell
+mamba env create -n mobility -f environment.yml
+mamba activate mobility
+```
+
+Then install Mobility in editable mode:
+
+```shell
+pip install -e .
+```
+
+Editable mode means that changes made in the local repository are used directly by Python.
+
+## 4. Choose data folders
+
+Mobility stores downloaded and prepared data on disk. Use two folders:
+
+- one package data folder for shared datasets,
+- one project data folder for project-specific inputs and cache files.
+
+You can pass these folders directly:
+
 ```python
 import mobility
-mobility.set_params(debug=True)
+
+mobility.set_params(
+    package_data_folder_path=r"C:\Users\your.name\Documents\mobility-data",
+    project_data_folder_path=r"C:\Users\your.name\Documents\mobility-projects\first-project",
+)
 ```
-- Vous pouvez sortir du terminal Python avec `exit()`
 
-> Si votre code renvoie une erreur de type R indiquant qu'un package est manquant (généralement pak), il est possible que le téléchargement soit bloqué par votre proxy d'entreprise. Voici la procédure dans ce cas si vous êtes sur Windows :
+If you do not pass paths, Mobility uses a default folder in your user directory and asks for confirmation when it has to create it.
 
-> Relancer la commande d'installation en changeant de méthode de téléchargement `mobility.set_params(debug=True, r_packages_download_method="wininet")`. Pak devrait pouvoir s'installer correctement, puis installer les autres packages.
-> Si cela ne fonctionne toujours pas, essayer d'installer les packages manuellement :
-> * Dans une invite de commande, après avoir exécuté `mamba activate mobility`, utiliser la commande `R` pour entrer dans le terminal R.
-> * Dans un premier temps, utiliser la commande `install.packages('pak')`, puis `install.packages('pak', method='wininet')` si la première n'a pas marché.
-> * Utiliser la commande `q()` pour quitter le terminal R. Retenter l'utilisation de `mobility.set_params(debug=True)`.
-> * Si cela ne suffit pas, utiliser (à nouveau dans R) la commande `install.packages(c('remotes', 'dodgr', 'sf', 'geodist', 'dplyr', 'sfheaders', 'nngeo', 'data.table', 'reshape2', 'arrow', 'stringr', 'hms', 'lubridate', 'codetools', 'future', 'future.apply', 'ggplot2', 'svglite', 'cppRouting', 'duckdb', 'jsonlite', 'gtfsrouter', 'geos', 'FNN', 'cluster', 'dbscan'), method='wininet')` pour installer les packages R.
-> * Sur Windows, utiliser la commande `install.packages(file.choose(), repos=NULL)` et aller sélectionner le fichier ZIP `osmdata_0.2.5.005.zip` dans `mobility/mobility/runtime/resources/`, cela permet d'installer une version d'osmdata plus rapide (modifiée par nos soins).
-> * Utiliser la commande `q()` pour quitter le terminal R.
+For repeated project work, it is usually clearer to store the paths in a `.env` file and load them in your scripts:
 
-Pour faire fonctionner Mobility, vous pouvez ensuite utiliser un IDE comme Spyder ou VS Code.
+```text
+MOBILITY_PACKAGE_DATA_FOLDER=C:\Users\your.name\Documents\mobility-data
+MOBILITY_PROJECT_DATA_FOLDER=C:\Users\your.name\Documents\mobility-projects\first-project
+```
 
-### Spyder
-Lancer Spyder et bien spécifier comme interpréteur celui que vous avez créé. Sur Windows, il peut se trouver dans le dossier `C:\Users\dubrocac\AppData\Local\miniforge3\envs\mobility`.
-> Si Spyder ne reconnaît pas l'environnement que vous avez créé même en lui spécifiant la bonne version de python dans Outils > Préférences > Interpreteur Python, vous pouvez :
-> * Utiliser la commande `mamba install spyder` dans l'environnement `mobility`
-> * Accepter les changements proposés
-> * Lancer la commande `spyder` depuis l'environnement
+## 5. Install R packages
+
+The first call to `mobility.set_params(...)` installs the R packages used by Mobility.
+
+This can take time on a new computer. Later runs reuse the installed packages.
+
+If you are behind a company proxy on Windows and R package download fails, try:
+
+```python
+import mobility
+
+mobility.set_params(
+    package_data_folder_path=r"C:\Users\your.name\Documents\mobility-data",
+    project_data_folder_path=r"C:\Users\your.name\Documents\mobility-projects\first-project",
+    r_packages_download_method="wininet",
+)
+```
+
+## 6. Check the installation
+
+Run the quickstart script from the repository:
+
+```shell
+python examples/quickstart-fr.py
+```
+
+The first run can be slow because Mobility may download and prepare local data.
+
+You are done when the script finishes without an error and creates a first set of cached project files in your project data folder. If the origin-destination plot opens, your Python, R, data folders, and basic routing setup are working together.
+
+If the command fails before the model starts, first check that the `mobility` mamba environment is active and that `mobility.set_params(...)` can access your data folders.
+
+## Editors
+
+You can use Mobility from any editor that points to the `mobility` mamba environment.
 
 ### VS Code
-Lancer VS Code et bien spécifier comme interpréteur celui que vous avez créé. Sur Windows, il peut se trouver dans le dossier `C:\Users\dubrocac\AppData\Local\miniforge3\envs\mobility`.
 
-## Erreurs communes
-### L'étape 'Parsing OSM data' prend trop de temps
-Sur Windows, assurez-vous de bien utiliser le package `osmdata_0.2.5.005.zip` fourni dans Mobility.
-- Pour obtenir une liste des packages existants, utilisez la commande :
-```ip = as.data.frame(installed.packages()[,c(1,3:4)])
-ip = ip[is.na(ip$Priority),1:2,drop=FALSE]
+In VS Code, select the Python interpreter from the `mobility` environment. On Windows, it is often located in a folder like:
+
+```text
+C:\Users\your.name\AppData\Local\miniforge3\envs\mobility
+```
+
+### Spyder
+
+Spyder can also work well for exploratory modelling. If Spyder does not detect the `mobility` environment, install Spyder inside that environment:
+
+```shell
+mamba activate mobility
+mamba install spyder
+spyder
+```
+
+If you run Spyder from another environment, install the matching kernel package in `mobility`:
+
+```shell
+mamba activate mobility
+pip install spyder-kernels
+```
+
+## Common Problems
+
+### OSM parsing is very slow on Windows
+
+Make sure the R package `osmdata` uses the Mobility-provided patched version. If needed, open R inside the `mobility` environment and install the ZIP file stored in:
+
+```text
+mobility/mobility/runtime/resources/osmdata_0.2.5.005.zip
+```
+
+To check the installed R packages, open R inside the `mobility` environment and run:
+
+```r
+ip = as.data.frame(installed.packages()[, c(1, 3:4)])
+ip = ip[is.na(ip$Priority), 1:2, drop = FALSE]
 ip
 ```
-- Si la version d'osmdata est déjà 0.2.5.005, votre configuration est correcte et le problème est ailleurs !
-- Sinon, utiliser la commande `install.packages(file.choose(), repos=NULL)` et aller sélectionner le fichier ZIP `osmdata_0.2.5.005.zip` dans `mobility/mobility/runtime/resources/`.
-- Utiliser la commande `q()` pour quitter le terminal R.
 
-### Autres problèmes
-Les problèmes actuellement rencontrés sont [listés comme bugs](https://github.com/mobility-team/mobility/issues?q=is%3Aissue%20state%3Aopen%20label%3Abug). N'hésitez pas à les regarder si besoin et à [soumettre une nouvelle issue](https://github.com/mobility-team/mobility/issues/new) si nécessaire.
+If the `osmdata` version differs from `0.2.5.005`, install the Mobility ZIP manually:
+
+```r
+install.packages(file.choose(), repos = NULL)
+```
+
+Then select `mobility/mobility/runtime/resources/osmdata_0.2.5.005.zip`.
+
+### R package installation fails behind a proxy
+
+Use `r_packages_download_method="wininet"` in `mobility.set_params(...)`.
+
+If the error continues, you can install the R packages manually.
+
+First open R inside the `mobility` environment:
+
+```shell
+mamba activate mobility
+R
+```
+
+Then install `pak`:
+
+```r
+install.packages("pak")
+```
+
+If the download still fails on Windows, retry with:
+
+```r
+install.packages("pak", method = "wininet")
+```
+
+Exit R with `q()`, then retry:
+
+```python
+import mobility
+
+mobility.set_params(debug=True)
+```
+
+If R still reports missing packages, reopen R and install the main package list with `wininet`:
+
+```r
+install.packages(
+    c(
+        "remotes", "dodgr", "sf", "geodist", "dplyr", "sfheaders",
+        "nngeo", "data.table", "reshape2", "arrow", "stringr", "hms",
+        "lubridate", "codetools", "future", "future.apply", "ggplot2",
+        "svglite", "cppRouting", "duckdb", "jsonlite", "gtfsrouter",
+        "geos", "FNN", "cluster", "dbscan"
+    ),
+    method = "wininet"
+)
+```
+
+Then install the patched `osmdata` ZIP as described above.
+
+### You need help with a new error
+
+Check the [open bug reports](https://github.com/mobility-team/mobility/issues?q=is%3Aissue%20state%3Aopen%20label%3Abug). If no open issue matches the problem, open a new issue with the command you ran and the full error message.

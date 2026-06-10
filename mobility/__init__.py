@@ -74,7 +74,7 @@ from .transport.modes.public_transport import (
     GTFSSources,
 )
 from .transport.modes.core import IntermodalTransfer, ModeRegistry
-from .runtime.parameter_values import DEFAULT_SCENARIO, ParameterValue
+from .runtime.parameter_values import DEFAULT_SCENARIO, ParameterValue, SensitivityValue
 from .runtime.scenarios import Scenario, Scenarios
 
 from .transport.graphs.modified.modifiers import (
