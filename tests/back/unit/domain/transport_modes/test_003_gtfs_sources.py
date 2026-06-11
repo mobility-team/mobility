@@ -8,6 +8,10 @@ from shapely.geometry import Polygon, box
 
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.modes.public_transport.gtfs.gtfs_data import GTFSData
+from mobility.transport.modes.public_transport.gtfs.gtfs_area_filter import (
+    FrenchGTFSAreaFilter,
+)
+from mobility.transport.modes.public_transport.gtfs import gtfs_area_filter
 from mobility.transport.modes.public_transport.gtfs.gtfs_router import GTFSRouter
 from mobility.transport.modes.public_transport.gtfs.gtfs_source_providers import (
     FrenchGTFS,
@@ -898,6 +902,172 @@ def test_003_transport_data_gouv_insert_data_fetches_metadata_in_catalog_order(m
         "https://example.com/archive-b.zip",
         "https://example.com/archive-a.zip",
     ]
+
+
+def test_003_french_gtfs_area_filter_matches_admin_codes():
+    area_filter = FrenchGTFSAreaFilter(
+        countries={"FR"},
+        regions={"11"},
+        departements={"75"},
+        epcis={"200054781"},
+        communes={"75056", "75101"},
+    )
+
+    assert area_filter.matches_dataset(
+        {"covered_area": [{"type": "region", "nom": "Île-de-France", "insee": "11"}]}
+    )
+    assert area_filter.matches_dataset(
+        {"covered_area": [{"type": "commune", "nom": "Paris", "insee": "75056"}]}
+    )
+    assert not area_filter.matches_dataset(
+        {"covered_area": [{"type": "region", "nom": "Bretagne", "insee": "53"}]}
+    )
+    assert not area_filter.matches_dataset(
+        {"covered_area": [{"type": "pays", "nom": "Monaco", "insee": "MC"}]}
+    )
+
+
+def test_003_french_gtfs_area_filter_keeps_uncertain_datasets():
+    area_filter = FrenchGTFSAreaFilter(
+        countries={"FR"},
+        regions=set(),
+        departements=set(),
+        epcis=set(),
+        communes=set(),
+    )
+
+    assert area_filter.matches_dataset({})
+    assert area_filter.matches_dataset({"covered_area": []})
+    assert area_filter.matches_dataset({"covered_area": [{"type": "unknown", "insee": "x"}]})
+    assert area_filter.matches_dataset({"covered_area": [{"type": "region"}]})
+
+
+def test_003_french_gtfs_area_filter_adds_parent_commune_codes(monkeypatch):
+    class FakeFrenchAdminUnits:
+        def __init__(self, level):
+            assert level == "commune"
+
+        def get(self):
+            return gpd.GeoDataFrame(
+                {
+                    "admin_id": ["fr-75101"],
+                    "parent_commune_id": ["fr-75056"],
+                    "epci_id": ["fr-200054781"],
+                    "departement_id": ["fr-75"],
+                    "region_id": ["fr-11"],
+                },
+                geometry=[box(2.0, 48.0, 3.0, 49.0)],
+                crs=4326,
+            )
+
+    monkeypatch.setattr(gtfs_area_filter, "FrenchAdminUnits", FakeFrenchAdminUnits)
+    transport_zones = gpd.GeoDataFrame(
+        {"local_admin_unit_id": ["fr-75101"]},
+        geometry=[box(2.0, 48.0, 3.0, 49.0)],
+        crs=4326,
+    )
+
+    area_filter = FrenchGTFSAreaFilter.from_transport_zones(transport_zones)
+
+    assert area_filter.communes == {"75101", "75056"}
+    assert area_filter.epcis == {"200054781"}
+    assert area_filter.departements == {"75"}
+    assert area_filter.regions == {"11"}
+
+
+def test_003_transport_data_gouv_insert_data_prefilters_catalog_with_covered_area(monkeypatch):
+    catalog_payload = [
+        {
+            "id": "dataset-kept",
+            "title": "Kept",
+            "covered_area": [{"type": "region", "nom": "Île-de-France", "insee": "11"}],
+            "resources": [{"id": "resource-kept", "format": "GTFS"}],
+        },
+        {
+            "id": "dataset-dropped",
+            "title": "Dropped",
+            "covered_area": [{"type": "region", "nom": "Bretagne", "insee": "53"}],
+            "resources": [{"id": "resource-dropped", "format": "GTFS"}],
+        },
+    ]
+    detailed_payload = {
+        "id": "dataset-kept",
+        "resources": [
+            {"id": "resource-kept", "format": "GTFS", "url": "https://example.com/live.zip"}
+        ],
+        "history": [
+            {
+                "resource_id": "resource-kept",
+                "payload": {
+                    "format": "GTFS",
+                    "permanent_url": "https://example.com/archive.zip",
+                    "download_datetime": "2025-01-01T00:00:00Z",
+                },
+            }
+        ],
+    }
+    coverage_payload = {
+        "features": [
+            {
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [
+                        [
+                            [0.0, 0.0],
+                            [1.0, 0.0],
+                            [1.0, 1.0],
+                            [0.0, 1.0],
+                            [0.0, 0.0],
+                        ]
+                    ],
+                }
+            }
+        ]
+    }
+    requested_url_batches = []
+
+    def fake_request_url(url, **kwargs):
+        return _FakeHTTPResponse(catalog_payload)
+
+    def fake_request_urls(urls, **kwargs):
+        requested_url_batches.append(list(urls))
+        responses = []
+        for url in urls:
+            if url.endswith("/geojson"):
+                responses.append(_FakeHTTPResponse(coverage_payload))
+            else:
+                responses.append(_FakeHTTPResponse(detailed_payload))
+        return responses
+
+    class FakeSources:
+        def __init__(self):
+            self.inserted_rows = []
+
+        def insert_gtfs_file(self, connection, **kwargs):
+            self.inserted_rows.append(kwargs)
+
+    monkeypatch.setattr(gtfs_source_providers_module, "request_url", fake_request_url)
+    monkeypatch.setattr(gtfs_source_providers_module, "request_urls", fake_request_urls)
+
+    provider = FrenchGTFS(
+        dt.date(2025, 1, 15),
+        "2025-01-15T00:00:00Z",
+        area_filter=FrenchGTFSAreaFilter(
+            countries={"FR"},
+            regions={"11"},
+            departements=set(),
+            epcis=set(),
+            communes=set(),
+        ),
+    )
+    sources = FakeSources()
+    provider.insert_data(None, sources)
+
+    assert requested_url_batches == [
+        ["https://transport.data.gouv.fr/api/datasets/dataset-kept"],
+        ["https://transport.data.gouv.fr/api/datasets/dataset-kept/geojson"],
+    ]
+    assert [row["dataset_id"] for row in sources.inserted_rows] == ["dataset-kept"]
 
 
 def test_003_transport_data_gouv_resource_marks_stale_archive():

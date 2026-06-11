@@ -3,6 +3,7 @@ import logging
 import pathlib
 import re
 import sqlite3
+from contextlib import closing
 
 import geopandas as gpd
 import pandas as pd
@@ -10,6 +11,9 @@ from shapely import wkb
 from shapely.ops import unary_union
 
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.transport.modes.public_transport.gtfs.gtfs_area_filter import (
+    FrenchGTFSAreaFilter,
+)
 from mobility.transport.modes.public_transport.gtfs.gtfs_source_providers import (
     FrenchGTFS,
     SwissGTFS,
@@ -32,6 +36,7 @@ class GTFSSources(FileAsset):
         countries: list[str] | tuple[str, ...],
         use_live_gtfs: bool = False,
         max_gtfs_file_age_days: int = 30,
+        transport_zones=None,
     ):
         reference_date = self.parse_reference_date(gtfs_reference_date)
         countries = self.normalize_countries(countries)
@@ -44,6 +49,8 @@ class GTFSSources(FileAsset):
             "use_live_gtfs": use_live_gtfs,
             "max_gtfs_file_age_days": max_gtfs_file_age_days,
         }
+        if transport_zones is not None:
+            inputs["transport_zones"] = transport_zones
 
         file_name = (
             f"gtfs_sources_{reference_date.isoformat()}_"
@@ -75,26 +82,8 @@ class GTFSSources(FileAsset):
         if temp_path.exists():
             temp_path.unlink()
 
-        connection = None
         try:
-            connection = sqlite3.connect(temp_path)
-            try:
-                self.create_schema(connection)
-
-                for country in self.inputs["countries"]:
-                    source = self.data_sources_by_country[country](
-                        reference_date,
-                        sources_created_at_utc,
-                        use_live_gtfs=self.inputs["use_live_gtfs"],
-                        max_gtfs_file_age_days=self.inputs["max_gtfs_file_age_days"],
-                    )
-                    source.insert_data(connection, self)
-
-                self.insert_metadata(connection, sources_created_at_utc)
-                connection.commit()
-            finally:
-                connection.close()
-
+            self.write_sources_file(temp_path, reference_date, sources_created_at_utc)
             temp_path.replace(self.cache_path)
         except Exception:
             if temp_path.exists():
@@ -102,6 +91,61 @@ class GTFSSources(FileAsset):
             raise
 
         return self.cache_path
+
+    def write_sources_file(
+        self,
+        temp_path: pathlib.Path,
+        reference_date: dt.date,
+        sources_created_at_utc: str,
+    ) -> None:
+        """Build the temporary SQLite sources file before it replaces the cache."""
+        with closing(sqlite3.connect(temp_path)) as connection:
+            self.create_schema(connection)
+            self.insert_country_sources(connection, reference_date, sources_created_at_utc)
+            self.insert_metadata(connection, sources_created_at_utc)
+            connection.commit()
+
+    def insert_country_sources(
+        self,
+        connection: sqlite3.Connection,
+        reference_date: dt.date,
+        sources_created_at_utc: str,
+    ) -> None:
+        """Fetch and insert GTFS source rows for each requested country."""
+        for country in self.inputs["countries"]:
+            source = self.build_country_source(country, reference_date, sources_created_at_utc)
+            source.insert_data(connection, self)
+
+    def build_country_source(
+        self,
+        country: str,
+        reference_date: dt.date,
+        sources_created_at_utc: str,
+    ):
+        """Create the provider used to fetch one country's GTFS source metadata."""
+        source_kwargs = {
+            "use_live_gtfs": self.inputs["use_live_gtfs"],
+            "max_gtfs_file_age_days": self.inputs["max_gtfs_file_age_days"],
+        }
+        if country == "fr":
+            area_filter = self.build_french_area_filter()
+            if area_filter is not None:
+                source_kwargs["area_filter"] = area_filter
+
+        return self.data_sources_by_country[country](
+            reference_date,
+            sources_created_at_utc,
+            **source_kwargs,
+        )
+
+    def build_french_area_filter(self):
+        """Return the optional French covered_area filter for this sources file."""
+        transport_zones = self.inputs.get("transport_zones")
+        if transport_zones is None:
+            return None
+        if hasattr(transport_zones, "get"):
+            transport_zones = transport_zones.get()
+        return FrenchGTFSAreaFilter.from_transport_zones(transport_zones)
 
     def get_gtfs_resources_for_area(self, transport_zones: gpd.GeoDataFrame) -> pd.DataFrame:
         """Return GTFS sources whose declared coverage intersects the study area."""

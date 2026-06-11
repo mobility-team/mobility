@@ -55,6 +55,7 @@ class PublicTransportGraph(FileAsset):
             countries=self.get_countries(transport_zones),
             use_live_gtfs=parameters.use_live_gtfs,
             max_gtfs_file_age_days=parameters.max_gtfs_file_age_days,
+            transport_zones=transport_zones,
         )
 
         gtfs_router = GTFSRouter(
