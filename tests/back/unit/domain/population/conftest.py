@@ -44,7 +44,6 @@ def _maybe_stub_module(qualified_name: str):
 
 file_asset_module = _maybe_stub_module("mobility.runtime.assets.file_asset")
 population_pkg = _maybe_stub_module("mobility.population")
-parsers_admin_module = _maybe_stub_module("mobility.spatial.admin_boundaries")
 asset_module = _maybe_stub_module("mobility.runtime.assets.asset")
 
 # Only add stubs if attributes don’t exist yet (don’t overwrite real ones)
@@ -74,17 +73,6 @@ if not hasattr(population_pkg, "CensusLocalizedIndividuals"):
         def get(self):
             return pd.DataFrame()
     setattr(population_pkg, "CensusLocalizedIndividuals", _DummyCensusLocalizedIndividuals)
-
-if not hasattr(parsers_admin_module, "get_french_regions_boundaries"):
-    def _dummy_regions_boundaries():
-        return pd.DataFrame({"INSEE_REG": [], "geometry": []})
-    setattr(parsers_admin_module, "get_french_regions_boundaries", _dummy_regions_boundaries)
-
-if not hasattr(parsers_admin_module, "get_french_cities_boundaries"):
-    def _dummy_cities_boundaries():
-        return pd.DataFrame({"INSEE_COM": [], "INSEE_CAN": []})
-    setattr(parsers_admin_module, "get_french_cities_boundaries", _dummy_cities_boundaries)
-
 
 # --------------------------------------------------------------------------------------
 # Project/environment fixtures
@@ -272,7 +260,7 @@ def patch_mobility_parsers(monkeypatch):
     already-imported names inside mobility.population.population.
     """
     import mobility.population as population_pkg_local
-    import mobility.spatial.admin_boundaries as admin_boundaries_module
+    import mobility.spatial.admin_units as admin_units_module
     population_module = sys.modules.get("mobility.population.population")
 
     class CityLegalPopulationFake:
@@ -311,15 +299,35 @@ def patch_mobility_parsers(monkeypatch):
     # Patch the population package
     monkeypatch.setattr(population_pkg_local, "CityLegalPopulation", CityLegalPopulationFake, raising=True)
     monkeypatch.setattr(population_pkg_local, "CensusLocalizedIndividuals", CensusLocalizedIndividualsFake, raising=True)
-    monkeypatch.setattr(admin_boundaries_module, "get_french_regions_boundaries", regions_boundaries_fake, raising=True)
-    monkeypatch.setattr(admin_boundaries_module, "get_french_cities_boundaries", cities_boundaries_fake, raising=True)
+    monkeypatch.setattr(
+        admin_units_module.FrenchAdminUnits,
+        "get_population_region_boundaries",
+        staticmethod(regions_boundaries_fake),
+        raising=True,
+    )
+    monkeypatch.setattr(
+        admin_units_module.FrenchAdminUnits,
+        "get_population_commune_boundaries",
+        staticmethod(cities_boundaries_fake),
+        raising=True,
+    )
 
     # Also patch the already-imported names inside mobility.population.population (if loaded)
     if population_module is not None:
         monkeypatch.setattr(population_module, "CityLegalPopulation", CityLegalPopulationFake, raising=True)
         monkeypatch.setattr(population_module, "CensusLocalizedIndividuals", CensusLocalizedIndividualsFake, raising=True)
-        monkeypatch.setattr(population_module, "get_french_regions_boundaries", regions_boundaries_fake, raising=True)
-        monkeypatch.setattr(population_module, "get_french_cities_boundaries", cities_boundaries_fake, raising=True)
+        monkeypatch.setattr(
+            population_module.FrenchAdminUnits,
+            "get_population_region_boundaries",
+            staticmethod(regions_boundaries_fake),
+            raising=True,
+        )
+        monkeypatch.setattr(
+            population_module.FrenchAdminUnits,
+            "get_population_commune_boundaries",
+            staticmethod(cities_boundaries_fake),
+            raising=True,
+        )
 
 
 # --------------------------------------------------------------------------------------

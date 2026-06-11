@@ -53,6 +53,18 @@ See [study area and transport zones](transport_zones.md).
 
 Use this only when you need to inspect the administrative-unit input table directly.
 
+### `mobility.spatial.FrenchAdminUnits(...)`
+
+Use this lower-level object when you need French administrative boundaries by level. Supported levels are `"country"`, `"region"`, `"departement"`, `"epci"`, and `"commune"`.
+
+It returns `admin_level`, `admin_id`, `admin_name`, `country`, `geometry`, and longitude-latitude bbox columns.
+
+### `mobility.spatial.SwissAdminUnits(...)`
+
+Use this lower-level object when you need Swiss administrative boundaries. Supported levels are `"country"` and `"municipality"`.
+
+It returns the same normalized columns as `FrenchAdminUnits`.
+
 ### `mobility.StudyArea(...)`
 
 Use this when you need a lower-level study-area object before transport zones are built. Most user scripts can start directly with `TransportZones`.

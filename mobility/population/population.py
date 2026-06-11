@@ -15,7 +15,7 @@ from rich.progress import Progress
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.population.city_legal_population import CityLegalPopulation
 from mobility.population.census_localized_individuals import CensusLocalizedIndividuals
-from mobility.spatial.admin_boundaries import get_french_regions_boundaries, get_french_cities_boundaries
+from mobility.spatial.admin_units import FrenchAdminUnits
 
 
 class Population(FileAsset):
@@ -161,12 +161,12 @@ class Population(FileAsset):
             lau_to_tz_coeff: pd.DataFrame
         ):
         
-        regions = get_french_regions_boundaries()
+        regions = FrenchAdminUnits.get_population_region_boundaries()
         transport_zones = transport_zones[transport_zones["local_admin_unit_id"].str.contains("fr-")]
         transport_zones = gpd.sjoin(transport_zones, regions[["INSEE_REG", "geometry"]], predicate="intersects") 
         transport_zones_regions = transport_zones["INSEE_REG"].drop_duplicates().tolist()
         
-        cantons = get_french_cities_boundaries()
+        cantons = FrenchAdminUnits.get_population_commune_boundaries()
         cantons = cantons[["INSEE_COM", "INSEE_CAN"]]
         cantons.columns = ["local_admin_unit_id", "CANTVILLE"]
         

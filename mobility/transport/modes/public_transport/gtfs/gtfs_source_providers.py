@@ -25,11 +25,13 @@ class GTFSDataSource:
         sources_created_at_utc: str,
         use_live_gtfs: bool = False,
         max_gtfs_file_age_days: int = 30,
+        area_filter=None,
     ):
         self.reference_date = reference_date
         self.sources_created_at_utc = sources_created_at_utc
         self.use_live_gtfs = use_live_gtfs
         self.max_gtfs_file_age_days = max_gtfs_file_age_days
+        self.area_filter = area_filter
 
     @staticmethod
     def use_rich_progress() -> bool:
@@ -139,6 +141,9 @@ class FrenchGTFS(GTFSDataSource):
 
             dataset_id = self.dataset_id(catalog_dataset)
             if dataset_id is None:
+                continue
+
+            if self.area_filter is not None and not self.area_filter.matches_dataset(catalog_dataset):
                 continue
 
             catalog_datasets.append((dataset_id, catalog_dataset, catalog_resources))
