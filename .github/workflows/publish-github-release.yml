@@ -13,8 +13,8 @@ jobs:
   build-artifacts:
     runs-on: ubuntu-24.04
     container:
-      # ghcr.io/mobility-team/mobility-ci:ubuntu-24.04-r-4.4.1-py3.12
-      image: ghcr.io/mobility-team/mobility-ci@sha256:24831213265cf0bfbbabbc9a01b83b7eb6c04d6f1af5a890f3e611d6c731e22e
+      # docker manifest inspect ghcr.io/mobility-team/mobility-ci:ubuntu-24.04-r-4.4.1-py3.12 --verbose
+      image: ghcr.io/mobility-team/mobility-ci@sha256:4a177dced973d756b16df25fac6a50f2e42be671fe278efaa5b5fbed9c288fc2
     permissions:
       contents: read
 
