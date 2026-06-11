@@ -12,7 +12,10 @@ download_file_module = import_module("mobility.runtime.io.download_file")
 
 
 class _FakeProgress:
+    started_count = 0
+
     def __enter__(self):
+        type(self).started_count += 1
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -154,6 +157,46 @@ def test_download_file_uses_large_default_chunk_size(monkeypatch, tmp_path):
     assert path.read_bytes() == b"data"
     assert response.chunk_sizes == [1024 * 1024]
     assert response.closed is True
+
+
+def test_download_file_does_not_start_rich_progress_in_ci(monkeypatch, tmp_path):
+    response = _FakeResponse(
+        status_code=200,
+        chunks=[b"data"],
+        headers={"content-length": "4"},
+    )
+    _FakeProgress.started_count = 0
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.delenv("MOBILITY_FEEDBACK", raising=False)
+    monkeypatch.delenv("MOBILITY_PROGRESS", raising=False)
+    monkeypatch.setattr(download_file_module, "Progress", _FakeProgress)
+    monkeypatch.setattr(download_file_module, "request_url", lambda *args, **kwargs: response)
+
+    path = tmp_path / "file.txt"
+    result = download_file("https://example.com/file.txt", path, max_retries=0)
+
+    assert result == path
+    assert path.read_bytes() == b"data"
+    assert _FakeProgress.started_count == 0
+
+
+def test_download_file_starts_rich_progress_when_feedback_asks_for_it(monkeypatch, tmp_path):
+    response = _FakeResponse(
+        status_code=200,
+        chunks=[b"data"],
+        headers={"content-length": "4"},
+    )
+    _FakeProgress.started_count = 0
+    monkeypatch.setenv("MOBILITY_FEEDBACK", "progress")
+    monkeypatch.setattr(download_file_module, "Progress", _FakeProgress)
+    monkeypatch.setattr(download_file_module, "request_url", lambda *args, **kwargs: response)
+
+    path = tmp_path / "file.txt"
+    result = download_file("https://example.com/file.txt", path, max_retries=0)
+
+    assert result == path
+    assert path.read_bytes() == b"data"
+    assert _FakeProgress.started_count == 1
 
 
 def test_download_files_returns_paths_in_input_order(monkeypatch, tmp_path):

@@ -2,6 +2,7 @@ import logging
 import os
 import pathlib
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -78,12 +79,33 @@ def download_file(url, path, max_retries=3, timeout=(10, 120), raise_on_error=Tr
 
             total_size = int(response.headers.get("content-length", 0))
 
-            with Progress() as progress:
-                task = progress.add_task("[green]Downloading...", total=total_size)
-                with open(temp_path, "wb") as file:
+            # Rich progress uses a live console display. Avoid it in CI and in
+            # log mode because parallel downloads can already have a live display.
+            feedback = os.environ.get("MOBILITY_FEEDBACK")
+            feedback = feedback.lower() if feedback is not None else None
+            progress_setting = os.environ.get("MOBILITY_PROGRESS")
+            progress_setting = progress_setting.lower() if progress_setting is not None else None
+            use_rich_progress = (
+                feedback == "progress"
+                or (feedback is None and progress_setting in {"auto", "rich"})
+                or (
+                    feedback is None
+                    and progress_setting is None
+                    and not os.environ.get("CI")
+                    and sys.stderr.isatty()
+                )
+            )
+
+            with open(temp_path, "wb") as file:
+                if use_rich_progress:
+                    with Progress() as progress:
+                        task = progress.add_task("[green]Downloading...", total=total_size)
+                        for data in response.iter_content(chunk_size=chunk_size):
+                            file.write(data)
+                            progress.update(task, advance=len(data))
+                else:
                     for data in response.iter_content(chunk_size=chunk_size):
                         file.write(data)
-                        progress.update(task, advance=len(data))
 
             os.replace(temp_path, path)
             logging.info("Downloaded file to " + str(path))
