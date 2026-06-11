@@ -1,26 +1,27 @@
-from importlib import metadata, resources
+from importlib import metadata
 
 
 def main():
-    resource_folder = resources.files("mobility.runtime.resources")
+    distribution = metadata.distribution("mobility-tools")
     expected_files = [
-        "osmdata_0.2.5.005.zip",
-        "gtfs/gtfs_route_types.csv",
-        "ademe/Base_Carbone_V22.0.csv",
-        "ademe/mapping.csv",
-        "surveys/entd_mode.xlsx",
+        "mobility/runtime/resources/osmdata_0.2.5.005.zip",
+        "mobility/runtime/resources/gtfs/gtfs_route_types.csv",
+        "mobility/runtime/resources/ademe/Base_Carbone_V22.0.csv",
+        "mobility/runtime/resources/ademe/mapping.csv",
+        "mobility/runtime/resources/surveys/entd_mode.xlsx",
     ]
 
+    installed_files = {str(file_path).replace("\\", "/") for file_path in distribution.files or []}
     missing_files = [
         file_path
         for file_path in expected_files
-        if not resource_folder.joinpath(file_path).is_file()
+        if file_path not in installed_files
     ]
 
     if missing_files:
         raise SystemExit(f"Missing files in wheel: {missing_files}")
 
-    print(f"Installed mobility-tools {metadata.version('mobility-tools')} from wheel.")
+    print(f"Installed mobility-tools {distribution.version} from wheel.")
 
 
 if __name__ == "__main__":
