@@ -12,19 +12,20 @@ permissions:
 jobs:
   build-artifacts:
     runs-on: ubuntu-24.04
-    container:
-      # docker manifest inspect ghcr.io/mobility-team/mobility-ci:ubuntu-24.04-r-4.4.1-py3.12 --verbose
-      image: ghcr.io/mobility-team/mobility-ci@sha256:4a177dced973d756b16df25fac6a50f2e42be671fe278efaa5b5fbed9c288fc2
     permissions:
       contents: read
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Select Python dependencies
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tool
         run: |
-          echo "VIRTUAL_ENV=/opt/venv-ci" >> "${GITHUB_ENV}"
-          echo "/opt/venv-ci/bin" >> "${GITHUB_PATH}"
+          python -m pip install "build>=1.5,<2"
         shell: bash
 
       - name: Check tag matches package version
@@ -49,7 +50,7 @@ jobs:
 
       - name: Build wheel and source archive
         run: |
-          python -m build --wheel --sdist --outdir dist --no-isolation
+          python -m build --wheel --sdist --outdir dist
         shell: bash
 
       - name: Copy install environment files

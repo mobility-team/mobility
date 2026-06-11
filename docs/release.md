@@ -5,15 +5,14 @@ Use this checklist when publishing a new Mobility version.
 ## Before tagging
 
 1. Merge the release pull request into `main`.
-2. Wait for the CI image workflow to publish a new image.
-3. Update the pinned CI image digest in `.github/workflows/publish-github-release.yml`.
-4. Check that `pyproject.toml` has the version you want to release.
-5. Check that PyPI Trusted Publishing is configured for:
+2. Wait for the main CI workflows to pass.
+3. Check that `pyproject.toml` has the version you want to release.
+4. Check that PyPI Trusted Publishing is configured for:
    - project: `mobility-tools`,
    - repository: `mobility-team/mobility`,
    - workflow: `publish-github-release.yml`,
    - environment: `pypi`.
-6. Check that the GitHub `pypi` environment requires reviewer approval.
+5. Check that the GitHub `pypi` environment requires reviewer approval.
 
 ## Tag the release
 

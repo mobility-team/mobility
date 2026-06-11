@@ -15,7 +15,7 @@ git ls-remote https://github.com/codecov/codecov-action.git refs/tags/v5
 git ls-remote https://github.com/docker/setup-buildx-action.git refs/tags/v3
 git ls-remote https://github.com/docker/login-action.git refs/tags/v3
 git ls-remote https://github.com/docker/build-push-action.git refs/tags/v6
-git ls-remote https://github.com/actions/setup-python.git refs/tags/v3
+git ls-remote https://github.com/actions/setup-python.git refs/tags/v5
 git ls-remote https://github.com/mamba-org/setup-micromamba.git refs/tags/v1
 git ls-remote https://github.com/r-lib/actions.git refs/tags/v2
 ```
@@ -52,12 +52,5 @@ then write this in the workflow:
 
 The long value after `@` is the exact code version that GitHub Actions will run.
 The short `# v4` comment is only there to help humans know which release tag it came from.
-
-The release workflow also pins the CI container image by digest. To update it,
-inspect the manifest for the source tag and use the Linux amd64 digest:
-
-```shell
-docker manifest inspect ghcr.io/mobility-team/mobility-ci:ubuntu-24.04-r-4.4.1-py3.12
-```
 
 Only update these pins in a reviewed pull request.
