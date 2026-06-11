@@ -5,20 +5,17 @@ Description: Manages R package dependencies for GitHub Actions.
 License: GPL-3
 Imports:
     arrow,
-    cluster,
     cppRouting,
     data.table,
+    DBI,
     dbscan,
     dodgr,
     dplyr,
     duckdb,
     FNN,
-    future,
     future.apply,
     geos,
-    ggplot2,
     gtfsrouter,
-    hms,
     jsonlite,
     log4r,
     lubridate,
@@ -27,4 +24,4 @@ Imports:
     remotes,
     sf,
     sfheaders,
-    readxl
+    wk

@@ -109,7 +109,7 @@ def _build_gtfs_zip(
     return str(gtfs_zip)
 
 
-def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files):
+def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files, gtfs_sources_folder: str):
     car_mode = mobility.CarMode(transport_zones)
     walk_mode = mobility.WalkMode(transport_zones)
     bicycle_mode = mobility.BicycleMode(transport_zones)
@@ -130,7 +130,7 @@ def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files
         last_intermodal_transfer=synthetic_gtfs_transfer,
         routing_parameters=mobility.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-01-01",
-            gtfs_sources_folder="inputs/gtfs_sources",
+            gtfs_sources_folder=gtfs_sources_folder,
             additional_gtfs_files=additional_gtfs_files,
             max_traveltime=10.0,
             max_perceived_time=10.0,
@@ -153,6 +153,7 @@ def _read_cppr_graph_edges(graph_path: str | pathlib.Path, output_path: pathlib.
 )
 def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_parameter_values(
     test_data,
+    gtfs_sources_folder,
     monkeypatch,
     tmp_path,
 ):
@@ -209,6 +210,7 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_parame
                     2: [slow_gtfs_zip],
                 },
             ),
+            gtfs_sources_folder=gtfs_sources_folder,
         ),
         activities=[
             HomeActivity(),
@@ -229,6 +231,7 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_parame
                     2: [fast_gtfs_zip],
                 },
             ),
+            gtfs_sources_folder=gtfs_sources_folder,
         ),
         activities=[
             HomeActivity(),

@@ -25,7 +25,7 @@ else:
 
 DASH_INSTALL_MESSAGE = (
     "The asset DAG viewer needs Dash dependencies. "
-    "Install them with `pip install mobility[dag]`."
+    "Install Mobility again with `pip install mobility-tools`."
 )
 
 

@@ -15,7 +15,7 @@ Mobility can help you explore questions such as:
 
 After a first run, you can inspect simulated daily plan steps, aggregate indicators by mode or activity, origin-destination flow plots, diagnostics by iteration, and scenario comparisons.
 
-The package is mainly focused today on French and Swiss territories. It uses open data, mobility surveys, Python, R, and compiled tools such as `osmium-tool`. For now, the supported installation path is the mamba environment provided by this repository.
+The package is mainly focused today on French and Swiss territories. It uses open data, mobility surveys, Python, R, and compiled tools such as `osmium-tool`. Users install the mamba environment from a release file, then install Mobility from PyPI as `mobility-tools`.
 
 <img width="305" height="256" alt="Flow map of Bayonne region" src="https://github.com/user-attachments/assets/629e5ed0-aa5a-4949-acc6-60615e8f31b5" />
 <img width="305" height="256" alt="Car modal share of Bayonne region" src="https://github.com/user-attachments/assets/9fb95b35-4443-40d0-8640-ce1c9846d83b" />

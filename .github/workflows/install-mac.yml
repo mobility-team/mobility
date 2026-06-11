@@ -10,15 +10,15 @@ jobs:
 
     steps:
     
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
 
     - name: Set up Python 3.11
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@3542bca2639a428e1796aaa6a2ffef0c0f575566 # v3
       with:
         python-version: '3.11'
 
     - name: Install conda dependencies
-      uses: mamba-org/setup-micromamba@v1
+      uses: mamba-org/setup-micromamba@4b9113af4fba0e9e1124b252dd6497a419e7396d # v1
       with:
         micromamba-version: '2.0.5-0'
         environment-file: environment-test.yml
@@ -31,13 +31,13 @@ jobs:
       shell: bash -el {0}
 
     - name: Set up R
-      uses: r-lib/actions/setup-r@v2
+      uses: r-lib/actions/setup-r@a51a8012b0aab7c32ef9d19bf54da93f3254335e # v2
       with:
         r-version: '4.4.1'
         use-public-rspm: true
 
     - name: Install R packages
-      uses: r-lib/actions/setup-r-dependencies@v2
+      uses: r-lib/actions/setup-r-dependencies@a51a8012b0aab7c32ef9d19bf54da93f3254335e # v2
       with:
         cache: true
 

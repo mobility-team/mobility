@@ -8,12 +8,34 @@ The development workflow is meant to stay simple and explicit.
 
 ## Install For Development
 
-Use the same mamba environment as users:
+Install the development version when you want to change Mobility code, run tests, or open a pull request.
+
+First clone the repository:
+
+```shell
+git clone https://github.com/mobility-team/mobility.git
+cd mobility
+```
+
+Then create the same mamba environment as users:
 
 ```shell
 mamba env create -n mobility -f environment.yml
 mamba activate mobility
+```
+
+Install Mobility in editable mode:
+
+```shell
 pip install -e .
+```
+
+Editable mode means that Python imports the code from your local repository. When you change a `.py` file, the next Python run uses that change without reinstalling the package.
+
+Check that the local package is imported:
+
+```shell
+python -c "import mobility; print(mobility.__file__)"
 ```
 
 ## Run Tests

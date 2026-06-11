@@ -81,7 +81,7 @@ def _to_df(maybe_df_or_path):
     depends=["tests/back/integration/test_002_population_sample_can_be_created.py::test_002_population_sample_can_be_created"],
     scope="session",
 )
-def test_004_public_transport_costs_can_be_computed(test_data, safe_json):
+def test_004_public_transport_costs_can_be_computed(test_data, safe_json, gtfs_sources_folder):
     transport_zones = mobility.TransportZones(
         local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
         radius=test_data["transport_zones_radius"],
@@ -115,7 +115,7 @@ def test_004_public_transport_costs_can_be_computed(test_data, safe_json):
         generalized_cost_parameters=gen_cost_parms,
         routing_parameters=mobility.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-01-01",
-            gtfs_sources_folder="inputs/gtfs_sources",
+            gtfs_sources_folder=gtfs_sources_folder,
             max_traveltime=10.0,
             max_perceived_time=10.0,
         ),

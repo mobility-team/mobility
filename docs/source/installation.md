@@ -2,47 +2,68 @@
 
 Mobility currently uses Python, R, and compiled tools such as `osmium-tool`.
 
-For now, the supported installation path is the mamba environment provided by the repository. This is because Mobility uses Python, R, and tools such as `osmium-tool` together.
+The supported installation path uses a mamba environment for Python, R, and system tools, then installs Mobility from PyPI as `mobility-tools`.
+The Python import name is still `mobility`.
 
 ## 1. Install the tools
 
 Install:
 
 - [Miniforge](https://github.com/conda-forge/miniforge), to get `mamba`,
-- [Git](https://git-scm.com/), to download the Mobility code,
-- an editor such as VS Code or Spyder.
+- an editor such as VS Code.
 
-On Windows, clone the repository in a normal user folder, for example:
+## 2. Create the mamba environment
 
-```shell
-C:\Users\your.name\Documents\GitHub\mobility
-```
+Download the environment file from the latest Mobility release, then create the environment.
 
-## 2. Get the code
+### Windows
 
-Open a Miniforge Prompt, choose the folder where you keep Git projects, then run:
+Open a Miniforge Prompt or PowerShell and run:
 
-```shell
-git clone https://github.com/mobility-team/mobility.git
-cd mobility
-```
+```powershell
+$version = "v0.2.0"
+$base = "https://github.com/mobility-team/mobility/releases/download/$version"
 
-## 3. Create the mamba environment
-
-Create the environment from the repository file:
-
-```shell
+Invoke-WebRequest "$base/environment.yml" -OutFile "environment.yml"
 mamba env create -n mobility -f environment.yml
 mamba activate mobility
 ```
 
-Then install Mobility in editable mode:
+### macOS
 
 ```shell
-pip install -e .
+version="v0.2.0"
+base="https://github.com/mobility-team/mobility/releases/download/$version"
+
+curl -L -o environment.yml "$base/environment.yml"
+mamba env create -n mobility -f environment.yml
+mamba activate mobility
 ```
 
-Editable mode means that changes made in the local repository are used directly by Python.
+### Linux
+
+```shell
+version="v0.2.0"
+base="https://github.com/mobility-team/mobility/releases/download/$version"
+
+curl -L -o environment.yml "$base/environment.yml"
+mamba env create -n mobility -f environment.yml
+mamba activate mobility
+```
+
+## 3. Install Mobility
+
+Install Mobility from PyPI:
+
+```shell
+pip install mobility-tools==0.2.0
+```
+
+Then check that Python can import it:
+
+```shell
+python -c "import mobility; print(mobility.__file__)"
+```
 
 ## 4. Choose data folders
 
@@ -91,11 +112,9 @@ mobility.set_params(
 
 ## 6. Check the installation
 
-Run the quickstart script from the repository:
+Run the quickstart from the documentation:
 
-```shell
-python examples/quickstart-fr.py
-```
+[Quickstart](quickstart.md)
 
 The first run can be slow because Mobility may download and prepare local data.
 
@@ -115,31 +134,16 @@ In VS Code, select the Python interpreter from the `mobility` environment. On Wi
 C:\Users\your.name\AppData\Local\miniforge3\envs\mobility
 ```
 
-### Spyder
-
-Spyder can also work well for exploratory modelling. If Spyder does not detect the `mobility` environment, install Spyder inside that environment:
-
-```shell
-mamba activate mobility
-mamba install spyder
-spyder
-```
-
-If you run Spyder from another environment, install the matching kernel package in `mobility`:
-
-```shell
-mamba activate mobility
-pip install spyder-kernels
-```
-
 ## Common Problems
 
 ### OSM parsing is very slow on Windows
 
-Make sure the R package `osmdata` uses the Mobility-provided patched version. If needed, open R inside the `mobility` environment and install the ZIP file stored in:
+Make sure the R package `osmdata` uses the Mobility-provided patched version. On Windows, `mobility.set_params(...)` installs this version automatically from the installed Python package.
 
-```text
-mobility/mobility/runtime/resources/osmdata_0.2.5.005.zip
+If needed, print the ZIP file path with:
+
+```shell
+python -c "from importlib import resources; print(resources.files('mobility.runtime.resources').joinpath('osmdata_0.2.5.005.zip'))"
 ```
 
 To check the installed R packages, open R inside the `mobility` environment and run:
@@ -156,7 +160,7 @@ If the `osmdata` version differs from `0.2.5.005`, install the Mobility ZIP manu
 install.packages(file.choose(), repos = NULL)
 ```
 
-Then select `mobility/mobility/runtime/resources/osmdata_0.2.5.005.zip`.
+Then select the printed `osmdata_0.2.5.005.zip` path.
 
 ### R package installation fails behind a proxy
 
@@ -196,11 +200,10 @@ If R still reports missing packages, reopen R and install the main package list 
 ```r
 install.packages(
     c(
-        "remotes", "dodgr", "sf", "geodist", "dplyr", "sfheaders",
-        "nngeo", "data.table", "reshape2", "arrow", "stringr", "hms",
-        "lubridate", "codetools", "future", "future.apply", "ggplot2",
-        "svglite", "cppRouting", "duckdb", "jsonlite", "gtfsrouter",
-        "geos", "FNN", "cluster", "dbscan"
+        "remotes", "dodgr", "sf", "dplyr", "sfheaders", "nngeo",
+        "data.table", "arrow", "lubridate", "future.apply", "cppRouting",
+        "duckdb", "DBI", "jsonlite", "gtfsrouter", "geos", "wk", "FNN",
+        "dbscan"
     ),
     method = "wininet"
 )

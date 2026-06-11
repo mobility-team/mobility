@@ -1,0 +1,4 @@
+.github/workflows/* @mobility-team/package-maintainers
+.github/scripts/* @mobility-team/package-maintainers
+pyproject.toml @mobility-team/package-maintainers
+environment.yml @mobility-team/package-maintainers

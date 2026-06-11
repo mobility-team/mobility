@@ -8,3 +8,8 @@ updates:
       - "requirements-ci.txt"
       - "requirements-min.txt"
       - "docs/requirements.txt"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
