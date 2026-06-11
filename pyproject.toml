@@ -3,8 +3,8 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mobility"
-version = "0.1"
+name = "mobility-tools"
+version = "0.2.0"
 dependencies = [
   "geopandas>=1.1,<1.2",
   "numpy>=2.0,<3",
@@ -20,11 +20,12 @@ dependencies = [
   "geojson>=3,<4",
   "matplotlib>=3.10,<4",
   "mapclassify>=2.10,<3",
-  "seaborn>=0.13,<0.14",
   "pyogrio>=0.12,<1",
   "polars>=1.39.3,<1.40",
   "psutil>=7,<8",
   "networkx>=3.5,<4",
+  "dash>=3,<4",
+  "dash-cytoscape>=1,<2",
   "plotly>=6.0,<7",
   "scikit-learn>=1.8,<1.9",
   "gtfs_kit>=12.0,<13",
@@ -56,22 +57,12 @@ truststore = [
 ]
 
 dev = [
+  "build>=1.5,<2",
   "coverage>=7,<8",
   "flake8>=7,<8",
   "pytest>=8,<10",
   "pytest-cov>=5,<8",
   "pytest-dependency>=0.6,<1",
-  "sphinxcontrib-napoleon>=0.7,<1",
-  "myst_parser>=3,<6",
-]
-
-dag = [
-  "dash>=3,<4",
-  "dash-cytoscape>=1,<2",
-]
-
-spyder = [
-    "spyder-kernels"
 ]
 
 [project.urls]
@@ -83,9 +74,11 @@ Changelog = "https://github.com/mobility-team/mobility/releases"
 
 [tool.setuptools.package-data]
 mobility = [
-    "data/gtfs/gtfs_route_types.csv",
-    "resources/*",
-    "r_utils/*",
+    "runtime/resources/osmdata_0.2.5.005.zip",
+    "runtime/resources/gtfs/gtfs_route_types.csv",
+    "runtime/resources/ademe/Base_Carbone_V22.0.csv",
+    "runtime/resources/ademe/mapping.csv",
+    "runtime/resources/surveys/entd_mode.xlsx",
     "**/*.R"
 ]
 

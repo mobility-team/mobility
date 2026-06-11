@@ -685,11 +685,11 @@ def test_create_asset_dag_app_builds_a_dash_layout(tmp_path):
 
 
 def test_dash_app_creation_explains_missing_optional_dependencies(tmp_path, monkeypatch):
-    """Tell users which optional dependency group installs the DAG viewer."""
+    """Tell users how to fix a broken install without Dash."""
     child = _TextAsset(name="child", cache_folder=tmp_path)
     monkeypatch.setattr(dag_ui, "_DASH_IMPORT_ERROR", ImportError("dash missing"))
 
-    with pytest.raises(ImportError, match="pip install mobility\\[dag\\]"):
+    with pytest.raises(ImportError, match="pip install mobility-tools"):
         create_asset_dag_app(child)
 
 

@@ -1,5 +1,7 @@
 import enum
 import json
+import os
+import pathlib
 
 import pytest
 
@@ -37,3 +39,11 @@ def get_test_data():
 @pytest.fixture
 def test_data():
     return get_test_data()
+
+
+@pytest.fixture
+def gtfs_sources_folder():
+    """Store GTFS source cache files in the Mobility project test cache."""
+    folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "inputs" / "gtfs_sources"
+    folder.mkdir(parents=True, exist_ok=True)
+    return str(folder)

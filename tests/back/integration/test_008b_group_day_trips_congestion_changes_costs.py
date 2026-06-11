@@ -20,7 +20,7 @@ from mobility.surveys.france import EMPMobilitySurvey
     ],
     scope="session",
 )
-def test_008b_group_day_trips_congestion_changes_costs(test_data):
+def test_008b_group_day_trips_congestion_changes_costs(test_data, gtfs_sources_folder):
     transport_zones = mobility.TransportZones(
         local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
         radius=test_data["transport_zones_radius"],
@@ -43,7 +43,7 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
         mode_registry=baseline_mode_registry,
         routing_parameters=mobility.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-01-01",
-            gtfs_sources_folder="inputs/gtfs_sources",
+            gtfs_sources_folder=gtfs_sources_folder,
         ),
     )
 
@@ -89,7 +89,7 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data):
         mode_registry=congested_mode_registry,
         routing_parameters=mobility.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-01-01",
-            gtfs_sources_folder="inputs/gtfs_sources",
+            gtfs_sources_folder=gtfs_sources_folder,
         ),
     )
 

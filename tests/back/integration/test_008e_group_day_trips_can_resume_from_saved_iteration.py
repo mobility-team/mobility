@@ -14,7 +14,7 @@ from mobility.trips.group_day_trips import (
 )
 
 
-def _build_group_day_trips(test_data):
+def _build_group_day_trips(test_data, gtfs_sources_folder):
     transport_zones = mobility.TransportZones(
         local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
         radius=test_data["transport_zones_radius"],
@@ -35,7 +35,7 @@ def _build_group_day_trips(test_data):
         mode_registry=mode_registry,
         routing_parameters=mobility.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-01-01",
-            gtfs_sources_folder="inputs/gtfs_sources",
+            gtfs_sources_folder=gtfs_sources_folder,
         ),
     )
 
@@ -72,8 +72,8 @@ def _build_group_day_trips(test_data):
     ],
     scope="session",
 )
-def test_008e_group_day_trips_reuses_cached_iteration_state(test_data):
-    pop_trips = _build_group_day_trips(test_data)
+def test_008e_group_day_trips_reuses_cached_iteration_state(test_data, gtfs_sources_folder):
+    pop_trips = _build_group_day_trips(test_data, gtfs_sources_folder)
     run = pop_trips.run("weekday")
     run.remove()
 
@@ -94,7 +94,7 @@ def test_008e_group_day_trips_reuses_cached_iteration_state(test_data):
     for path in run.cache_path.values():
         path.unlink(missing_ok=True)
 
-    rerun = _build_group_day_trips(test_data).run("weekday")
+    rerun = _build_group_day_trips(test_data, gtfs_sources_folder).run("weekday")
     assert rerun.final_iteration_state.inputs_hash == run.final_iteration_state.inputs_hash
 
     result = rerun.get()

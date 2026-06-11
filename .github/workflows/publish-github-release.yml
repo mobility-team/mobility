@@ -1,0 +1,123 @@
+name: Publish GitHub release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-artifacts:
+    runs-on: ubuntu-24.04
+    container:
+      # ghcr.io/mobility-team/mobility-ci:ubuntu-24.04-r-4.4.1-py3.12
+      image: ghcr.io/mobility-team/mobility-ci@sha256:24831213265cf0bfbbabbc9a01b83b7eb6c04d6f1af5a890f3e611d6c731e22e
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Select Python dependencies
+        run: |
+          echo "VIRTUAL_ENV=/opt/venv-ci" >> "${GITHUB_ENV}"
+          echo "/opt/venv-ci/bin" >> "${GITHUB_PATH}"
+        shell: bash
+
+      - name: Check tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          python - <<'PY'
+          import pathlib
+          import os
+          import tomllib
+
+          package_version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          tag_version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+
+          if tag_version != package_version:
+              raise SystemExit(
+                  f"Release tag v{tag_version} does not match pyproject.toml version {package_version}."
+              )
+
+          print(f"Release tag v{tag_version} matches pyproject.toml.")
+          PY
+        shell: bash
+
+      - name: Build wheel and source archive
+        run: |
+          python -m build --wheel --sdist --outdir dist --no-isolation
+        shell: bash
+
+      - name: Copy install environment files
+        run: |
+          cp environment.yml dist/environment.yml
+        shell: bash
+
+      - name: Install wheel
+        run: |
+          python -m pip install --force-reinstall --no-deps dist/mobility_tools-*.whl
+        shell: bash
+
+      - name: Check wheel resources
+        run: |
+          temp_dir="$(mktemp -d)"
+          cd "${temp_dir}"
+          python "${GITHUB_WORKSPACE}/.github/scripts/check_runtime_resources.py"
+        shell: bash
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mobility-release-artifacts
+          path: dist/*
+
+  publish-github-release:
+    needs: build-artifacts
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download built artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mobility-release-artifacts
+          path: dist
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: dist/*
+
+  publish-pypi:
+    needs: build-artifacts
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Download built artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mobility-release-artifacts
+          path: dist
+
+      - name: Remove non-PyPI release assets
+        run: |
+          rm dist/environment.yml
+        shell: bash
+
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          packages-dir: dist

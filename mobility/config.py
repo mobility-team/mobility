@@ -414,17 +414,15 @@ def install_r_packages(r_packages, r_packages_force_reinstall, r_packages_downlo
             {'source': 'CRAN', 'name': 'nngeo'},
             {'source': 'CRAN', 'name': 'data.table'},
             {'source': 'CRAN', 'name': 'arrow'},
-            {'source': 'CRAN', 'name': 'hms'},
             {'source': 'CRAN', 'name': 'lubridate'},
-            {'source': 'CRAN', 'name': 'future'},
             {'source': 'CRAN', 'name': 'future.apply'},
-            {'source': 'CRAN', 'name': 'ggplot2'},
             {'source': 'CRAN', 'name': 'cppRouting'},
             {'source': 'CRAN', 'name': 'duckdb'},
+            {'source': 'CRAN', 'name': 'DBI'},
             {'source': 'CRAN', 'name': 'gtfsrouter'},
             {'source': 'CRAN', 'name': 'geos'},
+            {'source': 'CRAN', 'name': 'wk'},
             {'source': 'CRAN', 'name': 'FNN'},
-            {'source': 'CRAN', 'name': 'cluster'},
             {'source': 'CRAN', 'name': 'dbscan'}
         ]
 
