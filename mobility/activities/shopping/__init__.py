@@ -1,4 +1,4 @@
 from .shop import ShopActivity, ShopParameters
-from .shops_turnover_distribution import ShopsTurnoverDistribution
+from .shopping_opportunities import ShoppingOpportunities
 
-__all__ = ["ShopActivity", "ShopsTurnoverDistribution"]
+__all__ = ["ShopActivity", "ShopParameters", "ShoppingOpportunities"]

@@ -10,7 +10,7 @@ import os
 from pydantic import Field
 
 from mobility.activities.activity import Activity, ActivityParameters
-from mobility.activities.studies.schools_capacity_distribution import SchoolsCapacityDistribution
+from mobility.activities.studies.study_opportunities import StudyOpportunities
 from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
 from mobility.runtime.validation_types import UnitIntervalFloat
 
@@ -73,9 +73,14 @@ class StudyActivity(Activity):
 
         else:
 
+            transport_zones_asset = transport_zones
             transport_zones = transport_zones.get()
             
-            opportunities = SchoolsCapacityDistribution().get()
+            tz_lau_ids = transport_zones["local_admin_unit_id"].unique().tolist()
+            opportunities = StudyOpportunities(
+                countries=transport_zones_asset.countries,
+                local_admin_unit_ids=tz_lau_ids,
+            ).get()
             
             opportunities.drop(columns="local_admin_unit_id", inplace= True)
 
@@ -87,8 +92,6 @@ class StudyActivity(Activity):
                 predicate="within"   
             ).drop(columns=["index_right"])
             opportunities = opportunities.dropna(subset=["transport_zone_id"])
-            
-            opportunities["country"] = opportunities["local_admin_unit_id"].str[0:2]
             
             opportunities = (
                 opportunities.groupby(["transport_zone_id", "local_admin_unit_id", "country", "weight"], dropna=False)["n_students"]

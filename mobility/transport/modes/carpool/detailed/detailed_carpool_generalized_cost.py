@@ -63,8 +63,7 @@ class DetailedCarpoolGeneralizedCost(InMemoryAsset):
         gen_cost += params.carpooling_cost_of_distance * costs["carpooling_distance"]
         gen_cost += params.carpooling_cost_of_time.compute(costs["carpooling_distance"], costs["country_from"]) * costs["carpooling_time"]
         
-        # ct = np.where(costs["country_from"] == "fr", ct*self.parameters.cost_of_time_country_coeff_fr, ct)
-        # ct = np.where(costs["country_to"] == "ch", ct*self.parameters.cost_of_time_country_coeff_ch, ct)
+        # Country coefficients are handled through the simple carpool parameter map when needed.
         
         # Compute revenues        
         revenues_distance = np.where(

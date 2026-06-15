@@ -49,6 +49,16 @@ surveys = [
 
 Each country in the population needs survey data. If a project adds a custom survey parser, keep that parser in the project repository and pass the resulting survey object to Mobility.
 
+Population, admin units, activity opportunities, and public-transport sources are country-specific data inputs. The shared model only needs the normalized tables and the matching `country` code for each study-area part.
+
+To add a country, prepare these inputs with the same lower-case country code:
+
+- local admin units with `local_admin_unit_id`, `local_admin_unit_name`, `country`, `urban_unit_category`, and `geometry`,
+- population groups with `transport_zone_id`, `local_admin_unit_id`, household/person attributes, `country`, and `weight`,
+- mobility surveys with `survey_name` and `country`,
+- activity opportunities with destination zone `to` and opportunity count `n_opp`,
+- GTFS source files covering the study area.
+
 National surveys contain detailed behaviour patterns. For a serious project, compare model outputs with local evidence when it exists: household travel surveys, commuting flows, counts, public-transport boardings, or other project data.
 
 ## Practical Advice

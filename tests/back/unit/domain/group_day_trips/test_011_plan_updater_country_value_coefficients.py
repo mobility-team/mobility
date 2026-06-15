@@ -72,6 +72,7 @@ def test_plan_updater_prepares_destination_country_value_coefficient():
             {
                 "transport_zone_id": [10, 20],
                 "local_admin_unit_id": ["fr001", "ch001"],
+                "country": ["fr", "ch"],
             }
         )
     )
@@ -162,6 +163,7 @@ def test_plan_updater_integrates_shadow_price_in_activity_value_when_enabled():
             {
                 "transport_zone_id": [10],
                 "local_admin_unit_id": ["fr001"],
+                "country": ["fr"],
             }
         )
     )

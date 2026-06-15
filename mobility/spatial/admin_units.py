@@ -9,6 +9,7 @@ from shapely.ops import unary_union
 
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.spatial.admin_datasets import AdminExpressDataset, SwissTopoBoundariesDataset
+from mobility.spatial.selected_rows import read_selected_rows
 
 
 FRENCH_ADMIN_LEVELS = {"country", "region", "departement", "epci", "commune"}
@@ -31,6 +32,70 @@ def require_columns(dataframe: pd.DataFrame, columns: list[str], layer_name: str
     missing_columns = [column for column in columns if column not in dataframe.columns]
     if len(missing_columns) > 0:
         raise ValueError(f"{layer_name} is missing columns: {missing_columns}.")
+
+
+def read_selected_admin_units(admin_units_asset: FileAsset, admin_ids: list[str]) -> gpd.GeoDataFrame:
+    """Read only the requested admin units when the prepared file can do it."""
+    columns = ["admin_level", "admin_id", "admin_name", "country", "geometry"]
+    selected_ids = sorted(set(str(admin_id) for admin_id in admin_ids if admin_id is not None))
+    if len(selected_ids) == 0:
+        return gpd.GeoDataFrame(columns=columns, geometry="geometry", crs=3035)
+
+    if admin_units_asset.is_update_needed():
+        admin_units = admin_units_asset.get()
+    else:
+        try:
+            admin_units = gpd.read_parquet(
+                admin_units_asset.cache_path,
+                filters=[("admin_id", "in", selected_ids)],
+            )
+        except (TypeError, ValueError):
+            admin_units = gpd.read_parquet(admin_units_asset.cache_path)
+
+    return admin_units[admin_units["admin_id"].isin(selected_ids)].copy()
+
+
+def read_admin_units_within_bounds(admin_units_asset: FileAsset, bounds: tuple[float, float, float, float]) -> gpd.GeoDataFrame:
+    """Read admin units whose bounding boxes touch the given lon-lat bounds."""
+    minx, miny, maxx, maxy = bounds
+
+    # If the prepared file does not exist yet, build it once then filter it.
+    if admin_units_asset.is_update_needed():
+        admin_units = admin_units_asset.get()
+    else:
+        try:
+            admin_units = gpd.read_parquet(
+                admin_units_asset.cache_path,
+                filters=[
+                    ("minx", "<=", maxx),
+                    ("maxx", ">=", minx),
+                    ("miny", "<=", maxy),
+                    ("maxy", ">=", miny),
+                ],
+            )
+        except (TypeError, ValueError):
+            admin_units = gpd.read_parquet(admin_units_asset.cache_path)
+
+    return keep_admin_units_within_bounds(admin_units, bounds)
+
+
+def keep_admin_units_within_bounds(
+    admin_units: gpd.GeoDataFrame,
+    bounds: tuple[float, float, float, float],
+) -> gpd.GeoDataFrame:
+    """Keep admin units whose stored lon-lat bounding boxes touch the bounds."""
+    minx, miny, maxx, maxy = bounds
+    bbox_columns = {"minx", "miny", "maxx", "maxy"}
+    if not bbox_columns.issubset(admin_units.columns):
+        admin_units = add_bbox_columns(admin_units)
+
+    selected = (
+        (admin_units["minx"] <= maxx)
+        & (admin_units["maxx"] >= minx)
+        & (admin_units["miny"] <= maxy)
+        & (admin_units["maxy"] >= miny)
+    )
+    return admin_units[selected].copy()
 
 
 class FrenchAdminUnits(FileAsset):
@@ -68,6 +133,14 @@ class FrenchAdminUnits(FileAsset):
     def get_cached_asset(self) -> gpd.GeoDataFrame:
         logging.info("French %s admin units already prepared. Reusing %s.", self.level, self.cache_path)
         return gpd.read_parquet(self.cache_path)
+
+    def get_by_ids(self, admin_ids: list[str]) -> gpd.GeoDataFrame:
+        """Return only the requested French admin units."""
+        return read_selected_admin_units(self, admin_ids)
+
+    def get_within_bounds(self, bounds: tuple[float, float, float, float]) -> gpd.GeoDataFrame:
+        """Return French admin units whose bounding boxes touch the bounds."""
+        return read_admin_units_within_bounds(self, bounds)
 
     def create_and_get_asset(self) -> gpd.GeoDataFrame:
         logging.info("Preparing French %s admin units.", self.level)
@@ -261,6 +334,14 @@ class SwissAdminUnits(FileAsset):
     def get_cached_asset(self) -> gpd.GeoDataFrame:
         logging.info("Swiss %s admin units already prepared. Reusing %s.", self.level, self.cache_path)
         return gpd.read_parquet(self.cache_path)
+
+    def get_by_ids(self, admin_ids: list[str]) -> gpd.GeoDataFrame:
+        """Return only the requested Swiss admin units."""
+        return read_selected_admin_units(self, admin_ids)
+
+    def get_within_bounds(self, bounds: tuple[float, float, float, float]) -> gpd.GeoDataFrame:
+        """Return Swiss admin units whose bounding boxes touch the bounds."""
+        return read_admin_units_within_bounds(self, bounds)
 
     def create_and_get_asset(self) -> gpd.GeoDataFrame:
         logging.info("Preparing Swiss %s admin units.", self.level)

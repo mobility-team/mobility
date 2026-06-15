@@ -1,54 +1,13 @@
-import os
+﻿import os
 import pathlib
-import logging
-import zipfile
+
 import pandas as pd
-import pyarrow.parquet as pq
-import geopandas as gpd
 
-from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.io.download_file import download_file
-from mobility.spatial.local_admin_units import LocalAdminUnits
 
 
-class ShopsTurnoverDistribution(FileAsset):
-    """
-    This class processes and retrieves the spatial distribution of shop turnovers
-    based on INSEE and BFS data for France and Switzerland.
-    """
-
-    def __init__(self):
-        inputs = {}
-
-        # Define cache paths for storing preprocessed data
-        cache_path = {
-            "shops_turnover": pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "insee" / "shops_turnover.parquet"
-        }
-
-        super().__init__(inputs, cache_path)
-
-    def get_cached_asset(self) -> pd.DataFrame:
-        """
-        Retrieves cached data if it exists.
-        """
-        logging.info(f"Using cached shops' turnover data from: {self.cache_path['shops_turnover']}")
-        
-        return pd.read_parquet(self.cache_path["shops_turnover"])
-
-    def create_and_get_asset(self) -> pd.DataFrame:
-        """
-        Creates and retrieves the shops' turnover spatial distribution.
-        """
-        shops_turnover_ratio = self.prepare_shops_turnover_ratio()
-        shops_turnover_fr = self.prepare_french_shops_turnover_distribution(shops_turnover_ratio)
-        shops_turnover_ch = self.prepare_swiss_shops_turnover_distribution(shops_turnover_ratio)
-
-        # Combine datasets and save
-        shops_turnover = pd.concat([shops_turnover_fr, shops_turnover_ch])
-        shops_turnover = shops_turnover.dropna(subset=["local_admin_unit_id"])
-        shops_turnover.to_parquet(self.cache_path["shops_turnover"])
-        
-        return shops_turnover
+class FrenchSwissShoppingTurnover:
+    """Turnover and classification tables used by current French and Swiss shopping data."""
 
     def prepare_shops_turnover_ratio(self) -> pd.DataFrame:
         """
@@ -86,12 +45,11 @@ class ShopsTurnoverDistribution(FileAsset):
             facilities_turnover_ratio["turnover"] / facilities_turnover_ratio["n_companies"]
         )
 
-        # Map company size categories
         size_mapping = {
             "Ensemble des catégories d'entreprise": "all",
             "Microentreprises (MICRO)": "micro",
             "Petites et moyennes entreprises (PME), hors Microentreprises": "pme",
-            "Entreprises de taille intermédiaire (ETI) ou Grandes entreprises (GE)": "eti_ge"
+            "Entreprises de taille intermédiaire (ETI) ou Grandes entreprises (GE)": "eti_ge",
         }
         facilities_turnover_ratio["size"] = facilities_turnover_ratio["size"].map(size_mapping)
 
@@ -115,143 +73,6 @@ class ShopsTurnoverDistribution(FileAsset):
             (shops_turnover_ratio["size"] == "all")
         ]
         return shops_turnover_ratio
-
-    def prepare_french_shops_turnover_distribution(self, shops_turnover_ratio) -> pd.DataFrame:
-        """
-        Prepares turnover data for shops in France.
-        """
-
-        insee_data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "insee"
-
-        # Download shop location data
-        url = "https://www.data.gouv.fr/api/1/datasets/r/b532ef31-edd9-4017-adda-b077aa0d39e3"
-        parquet_path = insee_data_folder / "BPE24.parquet"
-        download_file(url, parquet_path)
-
-
-        french_shops = pq.read_table(
-            parquet_path
-            )
-        french_shops = french_shops.to_pandas()
-        french_shops = french_shops.dropna(subset=["LONGITUDE"])
-        french_shops = french_shops[french_shops["TYPEQU"].str.startswith("B")]
-
-
-        french_shops_turnover = pd.merge(
-            french_shops,
-            shops_turnover_ratio,
-            left_on="TYPEQU",
-            right_on="code_equipement",
-            how = "left"
-            )
-
-        french_shops_turnover = french_shops_turnover[[
-            "DEPCOM", "naf_id", "LONGITUDE", "LATITUDE", "turnover_by_equipment"
-            ]]
-        french_shops_turnover.columns = ["local_admin_unit_id", "naf_id", "lon", "lat", "turnover"]
-        french_shops_turnover["local_admin_unit_id"] = "fr-" + french_shops_turnover["local_admin_unit_id"]
-
-        os.unlink(parquet_path)
-
-        return french_shops_turnover
-
-    def prepare_swiss_shops_turnover_distribution(self, shops_turnover_ratio) -> pd.DataFrame:
-        """
-        Prepares turnover data for shops in Switzerland.
-        """
-
-        bfs_data_folder = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "bfs"
-
-        # Download Swiss employment data
-        url_statent = "https://dam-api.bfs.admin.ch/hub/api/dam/assets/32258837/master"
-        statent_zip_path = bfs_data_folder / "ag-b-00.03-22-STATENT2022.zip"
-        download_file(url_statent, statent_zip_path)
-
-        # Extract the archive
-        with zipfile.ZipFile(statent_zip_path, "r") as zip_ref:
-            zip_ref.extractall(bfs_data_folder)
-
-        swiss_employees_colnames = pd.read_csv(
-            bfs_data_folder / "ag-b-00.03-22-STATENT2022" / "STATENT_2022.csv",
-            sep=";",
-            index_col=0,
-            nrows=0
-        ).columns.tolist()
-        selected_columns = [swiss_employees_colnames[i] for i in [1, 2, 3] + list(range(226, 311))]
-
-
-        statent_path= bfs_data_folder / "ag-b-00.03-22-STATENT2022" / "STATENT_2022.csv"
-
-        # Lire uniquement les colonnes sélectionnées
-        swiss_employees = pd.read_csv(
-            statent_path,
-            sep=";",
-            usecols=selected_columns
-        )
-
-        swiss_employees = swiss_employees.melt(id_vars=['E_KOORD', 'N_KOORD', 'RELI'])
-
-        swiss_employees = swiss_employees[swiss_employees["value"] != 0]
-        swiss_employees["NOGA"]  = swiss_employees["variable"].str.extract(r'B08(\d+)VZA')
-
-        noga_to_naf = self.prepare_noga_to_naf()
-
-        swiss_employees = pd.merge(swiss_employees, noga_to_naf, on = "NOGA")
-        swiss_employees["naf_id"] = swiss_employees["NAF"].str.replace(".", "", regex=False).str[:3]
-
-        insee_to_naf = self.prepare_insee_to_naf()
-        insee_to_naf["naf_id"] = insee_to_naf["code_naf"].str.replace(".", "", regex=False).str[:3]
-        swiss_employees = pd.merge(swiss_employees, insee_to_naf, on="naf_id", how = "left")
-        swiss_employees = swiss_employees.dropna(subset=["code_equipement"])
-
-        swiss_shop_employees = swiss_employees[swiss_employees["code_equipement"].str.startswith("B")]
-        swiss_shops_turnover = pd.merge(
-            swiss_shop_employees,
-            shops_turnover_ratio,
-            on=["code_equipement", "naf_id"],
-            how = "left"
-            )
-
-        swiss_shops_turnover = swiss_shops_turnover.groupby(["E_KOORD", "N_KOORD", "RELI", "Description NOGA", "naf_id"]).agg({
-            "value": "mean",
-            "turnover_by_employee": "mean",
-            "turnover_by_equipment": "mean"
-        }).reset_index()
-
-        swiss_shops_turnover["turnover"] = swiss_shops_turnover["turnover_by_employee"] * swiss_shops_turnover["value"]
-
-        # Adjust point to the center of the grid
-        grid_resolution = 100
-        swiss_shops_turnover["E_KOORD_center"] = swiss_shops_turnover["E_KOORD"] + grid_resolution/2
-        swiss_shops_turnover["N_KOORD_center"] = swiss_shops_turnover["N_KOORD"] + grid_resolution/2
-
-        # transform in GeoDataFrame
-        swiss_shops_turnover = gpd.GeoDataFrame(swiss_shops_turnover,
-                               geometry=gpd.points_from_xy(
-                                   swiss_shops_turnover["E_KOORD_center"],
-                                   swiss_shops_turnover["N_KOORD_center"]),
-                               crs="EPSG:2056"
-                               )
-
-        swiss_shops_turnover = swiss_shops_turnover.to_crs(epsg=3035)
-
-        local_admin_units = LocalAdminUnits().get()
-        swiss_shops_turnover = gpd.sjoin(swiss_shops_turnover, local_admin_units, how="left", predicate="within")
-        swiss_shops_turnover = swiss_shops_turnover.dropna(subset=["local_admin_unit_id"])
-
-        swiss_shops_turnover = swiss_shops_turnover.to_crs(epsg=4326)
-
-        swiss_shops_turnover["lon"] = swiss_shops_turnover.geometry.x
-        swiss_shops_turnover["lat"] = swiss_shops_turnover.geometry.y
-        swiss_shops_turnover = pd.DataFrame(swiss_shops_turnover.drop(columns='geometry'))
-
-        swiss_shops_turnover = swiss_shops_turnover[["local_admin_unit_id", "naf_id", "lon" , "lat", "turnover"]]
-
-        os.unlink(statent_zip_path)
-        os.unlink(statent_path)
-
-        return swiss_shops_turnover
-
 
     def prepare_insee_to_naf(self):
 

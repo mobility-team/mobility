@@ -30,12 +30,9 @@ class PathGeneralizedCost(InMemoryAsset):
             road_flow_asset=road_flow_asset,
         )
         
-        # study_area = self.travel_costs.transport_zones.study_area.get()
         transport_zones_df = self.inputs["travel_costs"].inputs["transport_zones"].get().drop(columns="geometry")
-        
-        
-        # transport_zones = pd.merge(transport_zones, study_area[["local_admin_unit_id", "country"]], on="local_admin_unit_id")
-        transport_zones_df["country"] = transport_zones_df["local_admin_unit_id"].astype(str).str[:2]
+        if "country" not in transport_zones_df.columns:
+            raise ValueError("Transport zones must contain a `country` column.")
         transport_zones_df["country"] = transport_zones_df["country"].astype(str)
         
         costs = pd.merge(

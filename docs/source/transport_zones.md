@@ -18,6 +18,23 @@ This creates a small study area around Limoges. It keeps runtime lower than a la
 
 Use this pattern when you want to test the workflow around one commune before preparing a full study perimeter. Choose the radius as a modelling assumption: it should keep the run tractable and avoid an artificial cut through important nearby origins or destinations.
 
+## Cross-Border Radius Searches
+
+A radius search can only include countries for which Mobility has local
+administrative units. Mobility first builds the study area from local
+administrative units, then uses the countries found in that study area to select
+population, activity, survey, and public transport inputs.
+
+For example, a radius around Strasbourg currently uses French local
+administrative units. German municipalities are not added, because Germany does
+not yet have local administrative units in Mobility. Downstream objects therefore
+do not request German population or activity data for that run.
+
+When a neighbouring country is missing from a radius-based study area, treat the
+result as a modelling limitation of the current data coverage. To include that
+country, first add its local administrative units, then add the other data needed
+by the model.
+
 ## Several Local Administrative Units
 
 For a project study, pass a list of local administrative unit ids:

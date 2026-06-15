@@ -1,5 +1,6 @@
 import warnings
 
+from mobility.countries import normalize_country_codes
 from mobility.population import Population
 from mobility.surveys.mobility_survey import MobilitySurvey
 
@@ -40,13 +41,11 @@ def select_surveys_for_population(
 
 
 def _get_population_countries(population: Population) -> list[str]:
-    """Infer population countries from the study-area local admin ids."""
+    """Return population countries from the transport zones table."""
     transport_zones = population.transport_zones
-    if hasattr(transport_zones, "get_study_area_countries"):
-        return transport_zones.get_study_area_countries()
-
-    study_area = transport_zones.study_area.get()
-    return sorted({
-        str(local_admin_unit_id)[:2]
-        for local_admin_unit_id in study_area["local_admin_unit_id"]
-    })
+    countries = normalize_country_codes(getattr(transport_zones, "countries", None))
+    if not countries and hasattr(transport_zones, "study_area"):
+        countries = normalize_country_codes(getattr(transport_zones.study_area, "countries", None))
+    if not countries:
+        raise ValueError("Population transport zones should expose a country list.")
+    return countries

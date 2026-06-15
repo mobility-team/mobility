@@ -78,6 +78,8 @@ def test_003_gtfs_router_tracks_sources_as_input(tmp_path):
 
 def test_003_public_transport_graph_gets_countries_from_actual_zones():
     class FakeTransportZones:
+        countries = ["ch", "fr"]
+
         def get(self):
             return gpd.GeoDataFrame(
                 {"local_admin_unit_id": ["fr-87085", "ch-261"]},
@@ -115,7 +117,10 @@ def test_003_gtfs_sources_create_missing_file_in_user_folder(tmp_path, monkeypat
             )
 
     folder = tmp_path / "inputs" / "gtfs_sources"
-    monkeypatch.setattr(GTFSSources, "data_sources_by_country", {"fr": FakeFrenchGTFS})
+    monkeypatch.setattr(
+        "mobility.transport.modes.public_transport.gtfs.gtfs_sources.available_gtfs_sources",
+        lambda: {"fr": FakeFrenchGTFS},
+    )
 
     sources = GTFSSources("2025-01-01", folder, ["fr"])
 
@@ -161,7 +166,10 @@ def test_003_gtfs_sources_use_existing_file_without_provider_calls(tmp_path, mon
         sources.create_schema(connection)
         sources.insert_metadata(connection, "2025-01-01T00:00:00Z")
 
-    monkeypatch.setattr(GTFSSources, "data_sources_by_country", {"fr": ProviderThatShouldNotRun})
+    monkeypatch.setattr(
+        "mobility.transport.modes.public_transport.gtfs.gtfs_sources.available_gtfs_sources",
+        lambda: {"fr": ProviderThatShouldNotRun},
+    )
 
     assert sources.get() == sources.cache_path
 
@@ -214,7 +222,10 @@ def test_003_gtfs_sources_rebuild_invalid_existing_file(tmp_path, monkeypatch):
     finally:
         connection.close()
 
-    monkeypatch.setattr(GTFSSources, "data_sources_by_country", {"fr": FakeFrenchGTFS})
+    monkeypatch.setattr(
+        "mobility.transport.modes.public_transport.gtfs.gtfs_sources.available_gtfs_sources",
+        lambda: {"fr": FakeFrenchGTFS},
+    )
 
     assert sources.get() == sources.cache_path
     assert sources.validate_metadata()["gtfs_reference_date"] == "2025-01-01"
@@ -247,7 +258,10 @@ def test_003_gtfs_sources_failed_build_does_not_leave_final_sqlite(tmp_path, mon
             )
             raise RuntimeError("download blocked")
 
-    monkeypatch.setattr(GTFSSources, "data_sources_by_country", {"fr": FailingFrenchGTFS})
+    monkeypatch.setattr(
+        "mobility.transport.modes.public_transport.gtfs.gtfs_sources.available_gtfs_sources",
+        lambda: {"fr": FailingFrenchGTFS},
+    )
     sources = GTFSSources("2025-01-01", tmp_path / "gtfs_sources", ["fr"])
 
     with pytest.raises(RuntimeError, match="download blocked"):
@@ -1126,3 +1140,45 @@ def test_003_transport_data_gouv_resource_snapshot_accepts_live_url_when_request
 
     assert selected["url"] == resource["url"]
     assert selected["is_reproducible"] is False
+
+
+def test_003_gtfs_sources_can_use_a_new_country_source_class(tmp_path, monkeypatch):
+    class FakeGermanGTFS:
+        def __init__(
+            self,
+            reference_date,
+            sources_created_at_utc,
+            use_live_gtfs=False,
+            max_gtfs_file_age_days=30,
+            area_filter=None,
+        ):
+            self.reference_date = reference_date
+            self.sources_created_at_utc = sources_created_at_utc
+            self.use_live_gtfs = use_live_gtfs
+            self.max_gtfs_file_age_days = max_gtfs_file_age_days
+            self.area_filter = area_filter
+
+        def insert_data(self, connection, gtfs_sources):
+            gtfs_sources.insert_gtfs_file(
+                connection,
+                country="de",
+                provider="fake",
+                dataset_id="dataset-de",
+                resource_id="resource-de",
+                title="Fake Germany",
+                download_url="https://example.com/de.zip",
+                gtfs_file_date="2025-01-01",
+                gtfs_file_age_days=0,
+                status="archived",
+                coverage_geometry=box(0.0, 0.0, 1.0, 1.0),
+            )
+
+    monkeypatch.setattr(
+        "mobility.transport.modes.public_transport.gtfs.gtfs_sources.available_gtfs_sources",
+        lambda: {"de": FakeGermanGTFS},
+    )
+
+    sources = GTFSSources("2025-01-01", tmp_path / "gtfs_sources", ["DE"])
+
+    assert sources.inputs["countries"] == ["de"]
+    assert isinstance(sources.build_country_source("de", dt.date(2025, 1, 1), "2025-01-01T00:00:00Z"), FakeGermanGTFS)

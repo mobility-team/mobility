@@ -584,7 +584,8 @@ class RunMetrics:
             .with_columns(pl.col("csp").cast(pl.String()))
             .join(
                 self.results.demand_groups.rename({"n_persons": "n_persons_dem_grp", "home_zone_id": "transport_zone_id"})
-                .with_columns(pl.col("csp").cast(pl.String())),
+                .with_columns(pl.col("csp").cast(pl.String()))
+                .select(["transport_zone_id", "csp", "n_cars", "n_persons_dem_grp"]),
                 on=["transport_zone_id", "csp", "n_cars"],
                 how="right",
             )

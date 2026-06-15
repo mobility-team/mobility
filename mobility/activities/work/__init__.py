@@ -1,9 +1,10 @@
 from .work import WorkActivity, WorkParameters
-from .jobs_active_population_distribution import JobsActivePopulationDistribution
-from .jobs_active_population_flows import JobsActivePopulationFlows
+from .work_opportunities import WorkOpportunities
+from .work_flows import WorkFlows
 
 __all__ = [
-    "JobsActivePopulationDistribution",
-    "JobsActivePopulationFlows",
+    "WorkOpportunities",
+    "WorkFlows",
     "WorkActivity",
+    "WorkParameters",
 ]

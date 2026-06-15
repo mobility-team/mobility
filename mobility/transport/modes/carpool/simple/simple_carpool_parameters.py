@@ -1,9 +1,8 @@
 from dataclasses import dataclass, field
-from mobility.parameters import ModeParameters
 from typing import List, Union, Dict
 
 @dataclass
-class SimpleCarpoolParameters(ModeParameters):
+class SimpleCarpoolParameters:
     """
     Attributes:
         number_persons (int): number of persons in the vehicule.
@@ -26,8 +25,7 @@ class SimpleCarpoolParameters(ModeParameters):
     cost_of_time_c0_short: float = 0.0
     cost_of_time_c0: float = 0.0
     cost_of_time_c1: float = 0.0
-    cost_of_time_country_coeff_fr: float = 1.0
-    cost_of_time_country_coeff_ch: float = 1.0
+    country_coefficients: Dict[str, float] = field(default_factory=dict)
     
     cost_of_time_od_coeffs: List[
         Dict[
@@ -64,8 +62,3 @@ class SimpleCarpoolParameters(ModeParameters):
     
     def __post_init__(self):
         self.name = "simple_carpool" + str(self.number_persons)
-    
-    
-    
-    
-    

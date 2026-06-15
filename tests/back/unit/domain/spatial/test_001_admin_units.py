@@ -1,12 +1,16 @@
 import pathlib
 
 import geopandas as gpd
+import pandas as pd
 import pytest
 from shapely.geometry import box
 
+from mobility.runtime.assets.asset import Asset
 from mobility.spatial.admin_datasets import AdminExpressDataset
 from mobility.spatial.admin_units import FrenchAdminUnits
 from mobility.spatial.local_admin_units import LocalAdminUnits
+from mobility.spatial.local_admin_units_categories import LocalAdminUnitsCategories
+from mobility.spatial.study_area import StudyArea
 
 
 def test_001_admin_express_dataset_requires_expected_extracted_files(tmp_path, monkeypatch):
@@ -109,8 +113,297 @@ def test_001_local_admin_units_tracks_country_admin_assets_as_inputs(tmp_path, m
 
     local_admin_units = LocalAdminUnits()
 
-    assert "french_local_admin_units" in local_admin_units.inputs
-    assert "swiss_local_admin_units" in local_admin_units.inputs
+    assert set(local_admin_units.inputs["admin_units_by_country"]) == {"fr", "ch"}
+    assert local_admin_units.inputs["categories"].inputs["countries"] == []
+    assert set(local_admin_units.inputs["categories"].inputs["categories_by_country"]) == {"fr", "ch"}
+
+
+def test_001_local_admin_unit_categories_load_selected_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+
+    class FakeFrenchCategories(Asset):
+        requested_ids = []
+
+        def __init__(self):
+            super().__init__({"country": "fr"})
+
+        def get_cached_hash(self):
+            return self.inputs_hash
+
+        def get(self):
+            raise AssertionError("Selected local admin units should use get_by_ids.")
+
+        def get_by_ids(self, local_admin_unit_ids):
+            self.requested_ids.append(tuple(local_admin_unit_ids))
+            return pd.DataFrame(
+                {
+                    "local_admin_unit_id": ["fr-75056"],
+                    "urban_unit_category": ["C"],
+                }
+            )
+
+    class FakeSwissCategories(Asset):
+        requested_ids = []
+
+        def __init__(self):
+            super().__init__({"country": "ch"})
+
+        def get_cached_hash(self):
+            return self.inputs_hash
+
+        def get(self):
+            raise AssertionError("Selected local admin units should use get_by_ids.")
+
+        def get_by_ids(self, local_admin_unit_ids):
+            self.requested_ids.append(tuple(local_admin_unit_ids))
+            return pd.DataFrame(
+                {
+                    "local_admin_unit_id": ["ch-6621"],
+                    "urban_unit_category": ["B"],
+                }
+            )
+
+    monkeypatch.setattr(
+        "mobility.spatial.local_admin_units_categories.available_local_admin_unit_categories",
+        lambda: {"fr": FakeFrenchCategories(), "ch": FakeSwissCategories()},
+    )
+
+    categories = LocalAdminUnitsCategories().get_by_ids(["ch-6621", "fr-75056"])
+
+    assert set(categories["local_admin_unit_id"]) == {"fr-75056", "ch-6621"}
+    assert FakeFrenchCategories.requested_ids == [("ch-6621", "fr-75056")]
+    assert FakeSwissCategories.requested_ids == [("ch-6621", "fr-75056")]
+
+
+def test_001_local_admin_units_loads_selected_admin_units(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+
+    class FakeFrenchAdminUnits(Asset):
+        requested_ids = []
+
+        def __init__(self, level):
+            super().__init__({"level": level, "country": "fr"})
+
+        def get_cached_hash(self):
+            return self.inputs_hash
+
+        def get(self):
+            raise AssertionError("Explicit local admin unit lists should use get_by_ids.")
+
+        def get_by_ids(self, admin_ids):
+            self.requested_ids.append(tuple(admin_ids))
+            return gpd.GeoDataFrame(
+                {
+                    "admin_id": ["fr-75056"],
+                    "admin_name": ["Paris"],
+                    "country": ["fr"],
+                },
+                geometry=[box(0, 0, 1, 1)],
+                crs=3035,
+            )
+
+    class FakeSwissAdminUnits(Asset):
+        requested_ids = []
+
+        def __init__(self, level):
+            super().__init__({"level": level, "country": "ch"})
+
+        def get_cached_hash(self):
+            return self.inputs_hash
+
+        def get(self):
+            raise AssertionError("Explicit local admin unit lists should use get_by_ids.")
+
+        def get_by_ids(self, admin_ids):
+            self.requested_ids.append(tuple(admin_ids))
+            return gpd.GeoDataFrame(
+                {
+                    "admin_id": ["ch-6621"],
+                    "admin_name": ["Geneve"],
+                    "country": ["ch"],
+                },
+                geometry=[box(1, 1, 2, 2)],
+                crs=3035,
+            )
+
+    def fake_categories_get_by_ids(self, local_admin_unit_ids):
+        assert set(local_admin_unit_ids) == {"fr-75056", "ch-6621"}
+        return pd.DataFrame(
+            {
+                "local_admin_unit_id": ["fr-75056", "ch-6621"],
+                "urban_unit_category": ["C", "B"],
+            }
+        )
+
+    monkeypatch.setattr(
+        "mobility.spatial.local_admin_units.available_admin_units",
+        lambda: {
+            "fr": (FakeFrenchAdminUnits, "commune"),
+            "ch": (FakeSwissAdminUnits, "municipality"),
+        },
+    )
+    monkeypatch.setattr(LocalAdminUnitsCategories, "get_by_ids", fake_categories_get_by_ids)
+
+    local_admin_units = LocalAdminUnits(
+        local_admin_unit_ids=["ch-6621", "fr-75056"],
+    ).create_and_get_asset()
+
+    assert set(local_admin_units["local_admin_unit_id"]) == {"fr-75056", "ch-6621"}
+    assert FakeFrenchAdminUnits.requested_ids == [("ch-6621", "fr-75056")]
+    assert FakeSwissAdminUnits.requested_ids == [("ch-6621", "fr-75056")]
+
+
+def test_001_local_admin_units_fails_when_selected_admin_unit_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+
+    class FakeAdminUnits(Asset):
+        def __init__(self, level):
+            super().__init__({"level": level, "country": "fr"})
+
+        def get_cached_hash(self):
+            return self.inputs_hash
+
+        def get(self):
+            raise AssertionError("Explicit local admin unit lists should use get_by_ids.")
+
+        def get_by_ids(self, admin_ids):
+            return gpd.GeoDataFrame(
+                {"admin_id": [], "admin_name": [], "country": []},
+                geometry=[],
+                crs=3035,
+            )
+
+    monkeypatch.setattr(
+        "mobility.spatial.local_admin_units.available_admin_units",
+        lambda: {"fr": (FakeAdminUnits, "commune")},
+    )
+
+    with pytest.raises(ValueError, match="No local admin unit found"):
+        LocalAdminUnits(local_admin_unit_ids=["fr-00000"]).create_and_get_asset()
+
+
+def test_001_local_admin_units_fails_when_category_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+
+    class FakeAdminUnits(Asset):
+        def __init__(self, level):
+            super().__init__({"level": level, "country": "fr"})
+
+        def get_cached_hash(self):
+            return self.inputs_hash
+
+        def get(self):
+            raise AssertionError("Explicit local admin unit lists should use get_by_ids.")
+
+        def get_by_ids(self, admin_ids):
+            return gpd.GeoDataFrame(
+                {
+                    "admin_id": ["fr-75056"],
+                    "admin_name": ["Paris"],
+                    "country": ["fr"],
+                },
+                geometry=[box(0, 0, 1, 1)],
+                crs=3035,
+            )
+
+    def fake_categories_get_by_ids(self, local_admin_unit_ids):
+        return pd.DataFrame(columns=["local_admin_unit_id", "urban_unit_category"])
+
+    monkeypatch.setattr(
+        "mobility.spatial.local_admin_units.available_admin_units",
+        lambda: {"fr": (FakeAdminUnits, "commune")},
+    )
+    monkeypatch.setattr(LocalAdminUnitsCategories, "get_by_ids", fake_categories_get_by_ids)
+
+    with pytest.raises(ValueError, match="No urban unit category found"):
+        LocalAdminUnits(local_admin_unit_ids=["fr-75056"]).create_and_get_asset()
+
+
+def test_001_local_admin_units_loads_admin_units_near_bounds(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+
+    class FakeFrenchAdminUnits(Asset):
+        requested_bounds = []
+
+        def __init__(self, level):
+            super().__init__({"level": level, "country": "fr"})
+
+        def get_cached_hash(self):
+            return self.inputs_hash
+
+        def get(self):
+            raise AssertionError("Bounds should be used before loading all admin units.")
+
+        def get_within_bounds(self, bounds):
+            self.requested_bounds.append(bounds)
+            return gpd.GeoDataFrame(
+                {
+                    "admin_id": ["fr-75056"],
+                    "admin_name": ["Paris"],
+                    "country": ["fr"],
+                },
+                geometry=[box(0, 0, 1, 1)],
+                crs=3035,
+            )
+
+    class FakeSwissAdminUnits(Asset):
+        requested_bounds = []
+
+        def __init__(self, level):
+            super().__init__({"level": level, "country": "ch"})
+
+        def get_cached_hash(self):
+            return self.inputs_hash
+
+        def get(self):
+            raise AssertionError("Bounds should be used before loading all admin units.")
+
+        def get_within_bounds(self, bounds):
+            self.requested_bounds.append(bounds)
+            return gpd.GeoDataFrame(
+                {"admin_id": [], "admin_name": [], "country": []},
+                geometry=[],
+                crs=3035,
+            )
+
+    def fake_categories_get_by_ids(self, local_admin_unit_ids):
+        assert local_admin_unit_ids == ["fr-75056"]
+        return pd.DataFrame(
+            {
+                "local_admin_unit_id": ["fr-75056"],
+                "urban_unit_category": ["C"],
+            }
+        )
+
+    monkeypatch.setattr(
+        "mobility.spatial.local_admin_units.available_admin_units",
+        lambda: {
+            "fr": (FakeFrenchAdminUnits, "commune"),
+            "ch": (FakeSwissAdminUnits, "municipality"),
+        },
+    )
+    monkeypatch.setattr(LocalAdminUnitsCategories, "get_by_ids", fake_categories_get_by_ids)
+
+    local_admin_units = LocalAdminUnits(bounds=(1.0, 2.0, 3.0, 4.0)).create_and_get_asset()
+
+    assert local_admin_units["local_admin_unit_id"].tolist() == ["fr-75056"]
+    assert FakeFrenchAdminUnits.requested_bounds == [(1.0, 2.0, 3.0, 4.0)]
+    assert FakeSwissAdminUnits.requested_bounds == [(1.0, 2.0, 3.0, 4.0)]
+
+
+def test_001_study_area_radius_mode_tracks_only_the_center_unit_first(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+
+    study_area = StudyArea(local_admin_unit_id="fr-75056", radius=20.0)
+
+    assert study_area.inputs["local_admin_units"].inputs["radius"] == 20.0
+    assert (
+        study_area.inputs["local_admin_units"]
+        .inputs["center_local_admin_unit"]
+        .inputs["local_admin_unit_ids"]
+        == ["fr-75056"]
+    )
 
 
 def test_001_population_commune_boundaries_use_admin_units(monkeypatch):

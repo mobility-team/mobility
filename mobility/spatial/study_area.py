@@ -1,7 +1,6 @@
 from __future__ import annotations
 import os
 import logging
-import pandas as pd
 import geopandas as gpd
 import pathlib
 import geojson
@@ -10,6 +9,7 @@ from typing import Union, List
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Annotated
 
+from mobility.countries import normalize_country_codes
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.spatial.local_admin_units import LocalAdminUnits
 
@@ -31,7 +31,6 @@ class StudyArea(FileAsset):
         get_cached_asset: Retrieve a cached transport zones GeoDataFrame.
         create_and_get_asset: Create and retrieve transport zones based on the current inputs.
         filter_within_radius: Filter local admin units within a specified radius.
-        ids_to_countries: 
         create_study_area_boundary:
     """
 
@@ -54,9 +53,22 @@ class StudyArea(FileAsset):
             owner_name="StudyArea",
         )
 
+        if isinstance(parameters.local_admin_unit_id, list):
+            local_admin_units = LocalAdminUnits(
+                local_admin_unit_ids=parameters.local_admin_unit_id,
+            )
+        else:
+            center_local_admin_unit = LocalAdminUnits(
+                local_admin_unit_ids=[parameters.local_admin_unit_id],
+            )
+            local_admin_units = LocalAdminUnits(
+                center_local_admin_unit=center_local_admin_unit,
+                radius=parameters.radius,
+            )
+
         inputs = {
-            "version": "1",
-            "local_admin_units": LocalAdminUnits(),
+            "version": "2",
+            "local_admin_units": local_admin_units,
             "parameters": parameters,
             "cutout_geometries": cutout_geometries
         }
@@ -67,6 +79,7 @@ class StudyArea(FileAsset):
         }
 
         super().__init__(inputs, cache_path)
+        self._countries: list[str] | None = None
 
     def get_cached_asset(self) -> gpd.GeoDataFrame:
         """
@@ -80,6 +93,7 @@ class StudyArea(FileAsset):
             
             logging.info("Study area already created. Reusing the file " + str(self.cache_path))
             local_admin_units = gpd.read_file(self.cache_path["polygons"])
+            self._countries = self._extract_countries(local_admin_units)
             self.value = local_admin_units
             return local_admin_units
         
@@ -99,10 +113,9 @@ class StudyArea(FileAsset):
         logging.info("Creating study area...")
 
         local_admin_unit_id = self.inputs["parameters"].local_admin_unit_id
-        local_admin_units = self.inputs["local_admin_units"].get()
 
         if isinstance(local_admin_unit_id, str):
-            
+            local_admin_units = self.inputs["local_admin_units"].get()
             local_admin_units = self.filter_within_radius(
                 local_admin_units,
                 local_admin_unit_id,
@@ -110,8 +123,10 @@ class StudyArea(FileAsset):
             )
             
         else:
-            
-            local_admin_units = local_admin_units[local_admin_units["local_admin_unit_id"].isin(local_admin_unit_id)]
+            local_admin_units = self.inputs["local_admin_units"].get()
+            missing_ids = sorted(set(local_admin_unit_id) - set(local_admin_units["local_admin_unit_id"]))
+            if missing_ids:
+                raise ValueError(f"No local admin unit found for: {missing_ids}.")
 
 
         local_admin_units = local_admin_units[
@@ -119,13 +134,15 @@ class StudyArea(FileAsset):
              "urban_unit_category", "geometry"]
         ].copy()
         
-        
+
         self.create_study_area_boundary(local_admin_units)
         
         local_admin_units = self.apply_cutout(
             local_admin_units,
             self.inputs["cutout_geometries"]
         )
+
+        self._countries = self._extract_countries(local_admin_units)
         
         local_admin_units.to_file(self.cache_path["polygons"], driver="GPKG", index=False)
         
@@ -154,16 +171,13 @@ class StudyArea(FileAsset):
 
         return local_admin_units
 
+    @property
+    def countries(self) -> list[str]:
+        """Return the country codes present in the study area."""
+        if self._countries is None:
+            self._countries = self._extract_countries(self.get())
+        return self._countries
 
-    
-    def ids_to_countries(self, local_admin_unit_ids):
-        #Where is this used?
-        local_admin_units = self.get()
-        id_country_map = local_admin_units[["local_admin_unit_id", "country"]].set_index("local_admin_unit_id").to_dict()
-        return pd.Series(local_admin_unit_ids).map(id_country_map)
-    
-
-        
     def create_study_area_boundary(
             self,
             study_area: gpd.GeoDataFrame
@@ -201,6 +215,15 @@ class StudyArea(FileAsset):
             study_area = gpd.overlay(study_area, cutout_geometries, how="difference")
             
         return study_area
+
+    @staticmethod
+    def _extract_countries(study_area: gpd.GeoDataFrame) -> list[str]:
+        if "country" not in study_area.columns:
+            raise ValueError("Study area should contain a `country` column.")
+        countries = normalize_country_codes(study_area["country"].tolist())
+        if not countries:
+            raise ValueError("Study area should contain at least one country.")
+        return countries
     
         
 class StudyAreaParameters(BaseModel):

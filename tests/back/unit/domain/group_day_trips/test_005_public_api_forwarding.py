@@ -68,10 +68,17 @@ def _patch_group_day_trips_wrapper(monkeypatch):
 
 
 def _make_population(*countries: str):
-    rows = [{"local_admin_unit_id": f"{country}001"} for country in countries]
-    study_area = SimpleNamespace(get=lambda: pd.DataFrame(rows))
+    rows = [
+        {
+            "local_admin_unit_id": f"{country}001",
+            "country": country,
+        }
+        for country in countries
+    ]
+    study_area = SimpleNamespace(get=lambda: pd.DataFrame(rows), countries=sorted(countries))
     transport_zones = SimpleNamespace(
         study_area=study_area,
+        countries=sorted(countries),
         get_study_area_countries=lambda: sorted(countries),
     )
     return SimpleNamespace(transport_zones=transport_zones)

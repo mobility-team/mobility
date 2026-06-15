@@ -300,6 +300,8 @@ Main arguments:
 - `scenarios`: declared scenarios, optional for a first default run,
 - `parameters`: run and model parameters.
 
+When you add a new country, keep the population, survey, local admin unit, opportunity, and GTFS inputs aligned on the same `country` code. The shared workflow only combines those prepared tables.
+
 Use `population_trips.run(...)` to execute one concrete run. Use `population_trips.results(...)` to read indicators across scenarios or replications.
 
 ## Group-Day-Trip Parameters
