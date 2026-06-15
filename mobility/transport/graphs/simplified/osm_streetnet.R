@@ -69,9 +69,10 @@ get_weight_streetnet_keep_cols <- function(mode) {
   c(
     "hgv", "hov", "access",
     "motor_vehicle", "motorcar", "vehicle",
+    "hov:lanes", "hov:lanes:forward", "hov:lanes:backward",
     "lanes:forward", "lanes:backward",
     "lanes:psv:forward", "lanes:psv:backward",
-    "psv:lanes:forward", "psv:lanes:backward"
+    "psv:lanes", "psv:lanes:forward", "psv:lanes:backward"
   )
 }
 

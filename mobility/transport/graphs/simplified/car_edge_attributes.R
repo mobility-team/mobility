@@ -35,6 +35,39 @@ car_access_is_allowed <- function(edges) {
   !(blocked_by_private | blocked_by_no)
 }
 
+#' Check whether lane tags include at least one general traffic lane.
+#'
+#' @param x Character vector of OSM lane access values such as "yes|designated".
+#' @return Logical vector with TRUE where a "yes" lane is present.
+lane_tags_have_general_lane <- function(x) {
+  x <- as.character(x)
+  x[is.na(x) | x == ""] <- NA_character_
+
+  has_general_lane <- rep(FALSE, length(x))
+  valid <- !is.na(x)
+  if (any(valid)) {
+    has_general_lane[valid] <- grepl("(^|\\|)[[:space:]]*yes[[:space:]]*(\\||$)", x[valid], perl = TRUE)
+  }
+
+  has_general_lane
+}
+
+#' Check whether each HOV-designated edge is reserved on all lanes.
+#'
+#' @param edges Data frame or data table containing HOV access columns.
+#' @return Logical vector with TRUE where the whole edge should be treated as HOV-only.
+hov_is_designated_on_all_lanes <- function(edges) {
+  hov_only <- ifelse(is.na(edges$hov), FALSE, edges$hov == "designated")
+
+  for (col in c("hov:lanes", "hov:lanes:forward", "hov:lanes:backward")) {
+    if (col %in% names(edges)) {
+      hov_only <- hov_only & !lane_tags_have_general_lane(edges[[col]])
+    }
+  }
+
+  hov_only
+}
+
 #' Filter a dodgr street graph to roads usable by cars.
 #'
 #' The function removes HGV-only and ridesharing-only roads, computes the
@@ -49,7 +82,7 @@ filter_car_streetnet_graph <- function(graph) {
     graph <- graph[graph$hgv != "designated" | is.na(graph$hgv), ]
   }
   if ("hov" %in% colnames(graph)) {
-    graph <- graph[graph$hov != "designated" | is.na(graph$hov), ]
+    graph <- graph[!hov_is_designated_on_all_lanes(graph), ]
   }
 
   graph$car_access_allowed <- car_access_is_allowed(graph)
@@ -97,10 +130,18 @@ count_designated_psv_lanes <- function(x) {
   counts
 }
 
+#' Count designated HOV lanes in lane strings.
+#'
+#' @param x Character vector of hov:lanes:* values.
+#' @return Numeric vector with the number of designated HOV lanes, or NA when unknown.
+count_designated_hov_lanes <- function(x) {
+  count_designated_psv_lanes(x)
+}
+
 #' Build car edges with capacity attributes for the cppRouting graph.
 #'
 #' The function keeps dodgr edge identifiers, computes directional car lanes,
-#' subtracts reserved public-service-vehicle lanes, and attaches congestion
+#' subtracts reserved public-service-vehicle and HOV lanes, and attaches congestion
 #' parameters from the highway capacity table.
 #'
 #' @param graph Filtered dodgr car street graph.
@@ -115,10 +156,11 @@ build_car_edges <- function(graph, osm_data, osm_capacity_parameters) {
     "highway",
     "access",
     "car_access_allowed",
+    "hov:lanes", "hov:lanes:forward", "hov:lanes:backward",
     "lanes",
     "lanes:forward", "lanes:backward",
     "lanes:psv:forward", "lanes:psv:backward",
-    "psv:lanes:forward", "psv:lanes:backward"
+    "psv:lanes", "psv:lanes:forward", "psv:lanes:backward"
   )
 
   graph_dt <- as.data.table(graph)
@@ -155,8 +197,27 @@ build_car_edges <- function(graph, osm_data, osm_capacity_parameters) {
   missing_backward_psv <- is.na(edges$psv_lanes_backward)
   edges[missing_backward_psv, psv_lanes_backward := count_designated_psv_lanes(`psv:lanes:backward`[missing_backward_psv])]
 
+  missing_forward_psv <- is.na(edges$psv_lanes_forward)
+  edges[missing_forward_psv, psv_lanes_forward := count_designated_psv_lanes(`psv:lanes`[missing_forward_psv])]
+
+  missing_backward_psv <- is.na(edges$psv_lanes_backward)
+  edges[missing_backward_psv, psv_lanes_backward := count_designated_psv_lanes(`psv:lanes`[missing_backward_psv])]
+
+  edges[, hov_lanes_forward := count_designated_hov_lanes(`hov:lanes:forward`)]
+  edges[, hov_lanes_backward := count_designated_hov_lanes(`hov:lanes:backward`)]
+
+  missing_forward_hov <- is.na(edges$hov_lanes_forward)
+  edges[missing_forward_hov, hov_lanes_forward := count_designated_hov_lanes(`hov:lanes`[missing_forward_hov])]
+
+  missing_backward_hov <- is.na(edges$hov_lanes_backward)
+  edges[missing_backward_hov, hov_lanes_backward := count_designated_hov_lanes(`hov:lanes`[missing_backward_hov])]
+
   edges[is.na(psv_lanes_forward), psv_lanes_forward := 0]
   edges[is.na(psv_lanes_backward), psv_lanes_backward := 0]
+  edges[is.na(hov_lanes_forward), hov_lanes_forward := 0]
+  edges[is.na(hov_lanes_backward), hov_lanes_backward := 0]
+  edges[, reserved_lanes_forward := pmax(psv_lanes_forward, hov_lanes_forward)]
+  edges[, reserved_lanes_backward := pmax(psv_lanes_backward, hov_lanes_backward)]
 
   # Infer one directional lane count from the opposite direction plus the total
   # lane count when possible.
@@ -208,11 +269,11 @@ build_car_edges <- function(graph, osm_data, osm_capacity_parameters) {
 
   edges[
     is_original_direction == TRUE,
-    car_lanes := pmax(lanes_forward - psv_lanes_forward, 0)
+    car_lanes := pmax(lanes_forward - reserved_lanes_forward, 0)
   ]
   edges[
     is_original_direction == FALSE,
-    car_lanes := pmax(lanes_backward - psv_lanes_backward, 0)
+    car_lanes := pmax(lanes_backward - reserved_lanes_backward, 0)
   ]
 
   # Keep at least one usable car lane as a conservative fallback when OSM tags
@@ -225,7 +286,10 @@ build_car_edges <- function(graph, osm_data, osm_capacity_parameters) {
   edges[, c(
     "pair_v0", "pair_v1", "pair_n_edges",
     "lanes_total", "lanes_forward", "lanes_backward",
-    "psv_lanes_forward", "psv_lanes_backward", "car_lanes"
+    "psv_lanes_forward", "psv_lanes_backward",
+    "hov_lanes_forward", "hov_lanes_backward",
+    "reserved_lanes_forward", "reserved_lanes_backward",
+    "car_lanes"
   ) := NULL]
 
   edges
