@@ -27,6 +27,7 @@ def dependency_fakes(monkeypatch, tmp_path):
             self.radius = radius
             self.cutout_geometries = cutout_geometries
             self.parameters = parameters
+            self._countries = None
             self.inputs = {
                 "parameters": parameters,
                 "cutout_geometries": cutout_geometries,
@@ -35,6 +36,25 @@ def dependency_fakes(monkeypatch, tmp_path):
                 "polygons": str(tmp_path / "study_area_polygons.gpkg"),
                 "boundary": str(tmp_path / "study_area_boundary.geojson"),
             }
+
+        def get(self):
+            return pd.DataFrame(
+                {
+                    "local_admin_unit_id": ["fr-09122"],
+                    "country": ["fr"],
+                }
+            )
+
+        @property
+        def countries(self):
+            if self._countries is None:
+                study_area = self.get()
+                if "country" not in study_area.columns:
+                    raise ValueError("Study area should contain a `country` column.")
+                self._countries = sorted(
+                    study_area["country"].dropna().astype(str).str.lower().unique().tolist()
+                )
+            return self._countries
 
     def _StudyArea_spy(local_admin_unit_id=None, radius=None, cutout_geometries=None, **kwargs):
         parameters = kwargs.get("parameters")
@@ -330,24 +350,12 @@ def test_get_study_area_countries_uses_explicit_country_column(dependency_fakes,
     assert transport_zones.get_study_area_countries() == ["ch", "fr"]
 
 
-def test_get_study_area_countries_can_infer_from_local_admin_units(dependency_fakes, monkeypatch):
+def test_get_study_area_countries_requires_explicit_country_information(dependency_fakes, monkeypatch):
     transport_zones = TransportZones(local_admin_unit_id="fr-09122")
     monkeypatch.setattr(
         transport_zones.study_area,
         "get",
         lambda: pd.DataFrame({"local_admin_unit_id": ["fr-09122", "ch-6621", None]}),
-        raising=False,
-    )
-
-    assert transport_zones.get_study_area_countries() == ["ch", "fr"]
-
-
-def test_get_study_area_countries_requires_country_information(dependency_fakes, monkeypatch):
-    transport_zones = TransportZones(local_admin_unit_id="fr-09122")
-    monkeypatch.setattr(
-        transport_zones.study_area,
-        "get",
-        lambda: pd.DataFrame({"name": ["Foix"]}),
         raising=False,
     )
 

@@ -120,9 +120,13 @@ class SimpleCarpoolTravelCosts(Asset):
         ct = np.where(costs["distance"] > 80, 37.0, ct)
         ct *= 1.17 # Inflation coeff
         
-        # Apply coefficients by country of origin
-        ct = np.where(costs["country_from"] == "fr", ct*params.cost_of_time_country_coeff_fr, ct)
-        ct = np.where(costs["country_to"] == "ch", ct*params.cost_of_time_country_coeff_ch, ct)
+        # Apply one country coefficient per OD pair.
+        country_coefficients = params.country_coefficients
+        if country_coefficients:
+            destination_coeff = costs["country_to"].map(country_coefficients)
+            origin_coeff = costs["country_from"].map(country_coefficients)
+            coeff = destination_coeff.fillna(origin_coeff).fillna(1.0)
+            ct = ct * coeff.to_numpy()
         
         # Apply coefficients by OD
         for ct_od_coeffs in params.cost_of_time_od_coeffs:

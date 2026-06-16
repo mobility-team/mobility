@@ -48,8 +48,12 @@ class PublicTransportGeneralizedCost(InMemoryAsset):
         
         study_area = travel_costs.inputs["transport_zones"].study_area.get()
         transport_zones = travel_costs.inputs["transport_zones"].get()
-        
-        transport_zones = pd.merge(transport_zones, study_area[["local_admin_unit_id", "country"]], on="local_admin_unit_id")
+        if "country" not in transport_zones.columns:
+            transport_zones = pd.merge(
+                transport_zones,
+                study_area[["local_admin_unit_id", "country"]],
+                on="local_admin_unit_id",
+            )
         
         costs = pd.merge(
             costs,

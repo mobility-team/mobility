@@ -74,9 +74,12 @@ class LeisureActivity(Activity):
 
         else:
 
+            transport_zones_asset = transport_zones
             transport_zones = transport_zones.get()
             
-            opportunities = LeisureFacilitiesDistribution().get()
+            opportunities = LeisureFacilitiesDistribution(
+                study_area=transport_zones_asset.study_area,
+            ).get()
             
             opportunities = gpd.sjoin(
                 opportunities,
@@ -85,8 +88,6 @@ class LeisureActivity(Activity):
                 predicate="within"   
             ).drop(columns=["index_right"])
             opportunities = opportunities.dropna(subset=["transport_zone_id"])
-            
-            opportunities["country"] = opportunities["local_admin_unit_id"].str[0:2]
             
             opportunities = (
                 opportunities.groupby(["transport_zone_id", "local_admin_unit_id", "country", "weight"], dropna=False)["freq_score"]

@@ -277,6 +277,7 @@ def fake_transport_zones():
     study_area_geodataframe = gpd.GeoDataFrame(
         {
             "local_admin_unit_id": [1, 2],
+            "country": ["fr", "fr"],
             "urban_unit_category": ["C", "B"],
             "geometry": [None, None],
         }

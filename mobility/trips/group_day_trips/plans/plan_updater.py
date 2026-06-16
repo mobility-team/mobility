@@ -7,7 +7,6 @@ import polars as pl
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
-from mobility.transport.modes.core.mode_values import get_mode_values
 from ..transitions.transition_events import (
     add_transition_plan_details,
     build_transition_events_lazy,
@@ -285,10 +284,10 @@ class PlanUpdater:
             )
         )
         destination_country = pl.from_pandas(
-            transport_zones.get().drop("geometry", axis=1, errors="ignore")[["transport_zone_id", "local_admin_unit_id"]]
+            transport_zones.get().drop("geometry", axis=1, errors="ignore")[["transport_zone_id", "country"]]
         ).with_columns(
             to=pl.col("transport_zone_id").cast(pl.Int32),
-            destination_country=pl.col("local_admin_unit_id").str.slice(0, 2),
+            destination_country=pl.col("country").cast(pl.Utf8),
         ).select(["to", "destination_country"])
         country_value_coefficients = pl.from_dicts(
             [

@@ -46,6 +46,37 @@ activities = [
 
 Each activity brings its own opportunity data or opportunity-building logic.
 
+For the standard activities, the modeller normally defines only the study area
+and transport zones. Mobility then builds the needed opportunity data for the
+countries present in those transport zones and keeps the rows that match the
+selected local admin units.
+
+The built-in data currently covers:
+
+- work opportunities from jobs and active population,
+- study opportunities from school and university capacity,
+- shopping opportunities from shop turnover proxies,
+- leisure opportunities from OpenStreetMap facilities.
+
+If the study area contains a country without the needed built-in data, Mobility
+fails with a clear message. Adding that country means preparing the same
+normalized opportunity table for that activity, not changing the
+`PopulationGroupDayTrips` workflow.
+
+For a new country, each standard activity needs the same kind of input:
+
+- work needs jobs, active population, and home-work flows,
+- study needs school or university capacity, and school flows when that source is available,
+- shopping needs a shop opportunity proxy,
+- leisure is still built from OpenStreetMap facilities.
+
+These inputs live with the activity they describe. For example, work data for a
+country belongs in `mobility/activities/work/countries/` and has work
+opportunities and work flows in the same normalized format as the existing
+countries.
+
+The full country checklist is documented in [add a country](add_country.md).
+
 Use the minimal activity set when you are checking installation, testing a territory, or debugging modes.
 
 Use the detailed activity set when the study question needs those motives. For example:

@@ -14,21 +14,15 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.transport.modes.public_transport.gtfs.gtfs_area_filter import (
     FrenchGTFSAreaFilter,
 )
-from mobility.transport.modes.public_transport.gtfs.gtfs_source_providers import (
-    FrenchGTFS,
-    SwissGTFS,
-)
+from mobility.transport.modes.public_transport.gtfs.countries import available_gtfs_sources
+from mobility.transport.modes.public_transport.gtfs.gtfs_source_providers import SwissGTFS
+from mobility.countries import normalize_country_codes
 
 
 class GTFSSources(FileAsset):
     """Project SQLite file that freezes the GTFS sources used by a run."""
 
     schema_version = "1"
-    data_sources_by_country = {
-        "fr": FrenchGTFS,
-        "ch": SwissGTFS,
-    }
-
     def __init__(
         self,
         gtfs_reference_date: str,
@@ -122,7 +116,7 @@ class GTFSSources(FileAsset):
         reference_date: dt.date,
         sources_created_at_utc: str,
     ):
-        """Create the provider used to fetch one country's GTFS source metadata."""
+        """Create the source used to fetch one country's GTFS metadata."""
         source_kwargs = {
             "use_live_gtfs": self.inputs["use_live_gtfs"],
             "max_gtfs_file_age_days": self.inputs["max_gtfs_file_age_days"],
@@ -132,7 +126,7 @@ class GTFSSources(FileAsset):
             if area_filter is not None:
                 source_kwargs["area_filter"] = area_filter
 
-        return self.data_sources_by_country[country](
+        return available_gtfs_sources()[country](
             reference_date,
             sources_created_at_utc,
             **source_kwargs,
@@ -393,11 +387,11 @@ class GTFSSources(FileAsset):
     @classmethod
     def normalize_countries(cls, countries: list[str] | tuple[str, ...]) -> list[str]:
         """Return sorted supported country codes."""
-        normalized = sorted(set(str(country).lower() for country in countries))
+        normalized = normalize_country_codes(countries)
         unknown_countries = [
             country
             for country in normalized
-            if country not in cls.data_sources_by_country
+            if country not in available_gtfs_sources()
         ]
         if len(unknown_countries) > 0:
             raise ValueError(f"Unsupported GTFS countries: {unknown_countries}.")

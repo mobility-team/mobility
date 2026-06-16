@@ -137,9 +137,9 @@ Project scenarios can add extra GTFS files. Use this to represent a defined serv
 
 GTFS feeds describe stops, calendars, service times, routes, and public-transport modes such as bus, tram, train, and metro.
 
-Mobility can select official GTFS files for France and Switzerland. The modeler must provide a `gtfs_reference_date` and a project folder for the GTFS sources file. Mobility then builds a small SQLite file listing the GTFS sources selected for that date and study area. This file can be kept with the project inputs so another user can run with the same source catalog.
+Mobility can select official GTFS files for the countries covered by the study area. The modeler must provide a `gtfs_reference_date` and a project folder for the GTFS sources file. Mobility then builds a small SQLite file listing the GTFS sources selected for that date and study area. This file can be kept with the project inputs so another user can run with the same source catalog.
 
-For France, Mobility first uses the `covered_area` metadata from transport.data.gouv.fr to skip GTFS datasets that are clearly outside the study area. This is only a first filter. Mobility still checks the provider coverage geometry before selecting a GTFS source for the run.
+For France, Mobility first uses the `covered_area` metadata from transport.data.gouv.fr to skip GTFS datasets that are clearly outside the study area. This is only a first filter. Mobility still checks the operator coverage geometry before selecting a GTFS file for the run. Other countries can use the same pattern with their own GTFS source table.
 
 By default, Mobility only uses reproducible archived GTFS files. If an intersecting source has no archived file, or if its latest archived file is too old, Mobility warns and skips it. If no usable public transport source remains for the study area, the run fails. Live GTFS URLs can be enabled explicitly with `use_live_gtfs=True`, but this makes results depend on the provider state at download time.
 

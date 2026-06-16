@@ -1,4 +1,4 @@
-"""Module providing transport zones for the desired study area in France and Switzerland."""
+"""Module providing transport zones for the selected study area."""
 from __future__ import annotations
 
 import os
@@ -136,12 +136,18 @@ class TransportZones(FileAsset):
             
             logging.info("Transport zones already created. Reusing the file " + str(self.cache_path))
             transport_zones = gpd.read_file(self.cache_path)
+            transport_zones = self.attach_countries(transport_zones)
             self.value = transport_zones
             return transport_zones
         
         else:
             
             return self.value
+
+    @property
+    def countries(self) -> list[str]:
+        """Return the country codes present in the study area."""
+        return self.study_area.countries
 
 
     def create_and_get_asset(self) -> gpd.GeoDataFrame:
@@ -169,6 +175,7 @@ class TransportZones(FileAsset):
             raise ValueError(f"Unknown transport zones backend: {self.inputs['parameters'].backend}")
 
         transport_zones = gpd.read_file(self.cache_path)
+        transport_zones = self.attach_countries(transport_zones)
 
         # Remove transport zones that are not adjacent to at least another one
         # (= filter "islands" that were selected but are not connected to the
@@ -281,19 +288,29 @@ class TransportZones(FileAsset):
 
     def get_study_area_countries(self) -> list[str]:
         """Return the country codes present in the study area."""
-        study_area = self.study_area.get()
+        return self.countries
 
-        if "country" in study_area.columns:
-            countries = study_area["country"]
-        elif "local_admin_unit_id" in study_area.columns:
-            countries = study_area["local_admin_unit_id"].dropna().astype(str).str.slice(0, 2)
-        else:
-            raise ValueError(
-                "TransportZones study area should contain a `country` or "
-                "`local_admin_unit_id` column."
+    def attach_countries(self, transport_zones: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """Add the study-area country column to transport zones if needed."""
+        country_columns = [column for column in ["country", "country_x", "country_y"] if column in transport_zones.columns]
+        if "country" not in transport_zones.columns and country_columns:
+            transport_zones = transport_zones.copy()
+            transport_zones["country"] = transport_zones[country_columns].bfill(axis=1).iloc[:, 0]
+        if any(column in transport_zones.columns for column in ["country_x", "country_y"]):
+            transport_zones = transport_zones.drop(
+                columns=[column for column in ["country_x", "country_y"] if column in transport_zones.columns]
             )
 
-        return sorted(countries.dropna().astype(str).unique().tolist())
+        if "country" in transport_zones.columns:
+            if transport_zones["country"].isna().any():
+                raise ValueError("Some transport zones have no country.")
+            return transport_zones
+
+        study_area = self.study_area.get()[["local_admin_unit_id", "country"]].drop_duplicates()
+        transport_zones = transport_zones.merge(study_area, on="local_admin_unit_id", how="left")
+        if transport_zones["country"].isna().any():
+            raise ValueError("Some transport zones could not be matched to a country.")
+        return transport_zones
 
 
 class TransportZonesParameters(BaseModel):

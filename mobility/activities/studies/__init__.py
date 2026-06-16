@@ -1,9 +1,10 @@
 from .study import StudyActivity, StudyParameters
-from .schools_capacity_distribution import SchoolsCapacityDistribution
-from .school_students_flows import SchoolStudentsFlows
+from .study_opportunities import StudyOpportunities
+from .study_flows import StudyFlows
 
 __all__ = [
-    "SchoolStudentsFlows",
-    "SchoolsCapacityDistribution",
+    "StudyFlows",
+    "StudyOpportunities",
     "StudyActivity",
+    "StudyParameters",
 ]

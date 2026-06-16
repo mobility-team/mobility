@@ -225,6 +225,7 @@ def fake_transport_zones():
         "transport_zone_id": ["tz-1", "tz-2"],
         "local_admin_unit_id": ["fr-75056", "fr-92050"],
         "weight": [0.6, 0.4],
+        "country": ["fr", "fr"],
         "geometry": [None, None],
     })
     geo_data_frame = geopandas_module.GeoDataFrame(data_frame, geometry="geometry")
@@ -232,6 +233,11 @@ def fake_transport_zones():
     class TransportZonesAsset:
         def __init__(self, geo_data_frame):
             self._geo_data_frame = geo_data_frame
+            self.study_area = types.SimpleNamespace(
+                get=lambda: geo_data_frame[["local_admin_unit_id", "country"]].copy(),
+                countries=["fr"],
+            )
+            self.countries = ["fr"]
             self.inputs = {}
         def get(self):
             return self._geo_data_frame.copy()
@@ -264,6 +270,9 @@ def patch_mobility_parsers(monkeypatch):
     population_module = sys.modules.get("mobility.population.population")
 
     class CityLegalPopulationFake:
+        def __init__(self, countries=None):
+            self.countries = countries
+
         def get(self):
             data_frame = pd.DataFrame({
                 "local_admin_unit_id": ["fr-75056", "fr-92050", "ch-2601"],

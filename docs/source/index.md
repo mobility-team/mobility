@@ -44,6 +44,8 @@ model_checks
 transport_zones
 population
 activities
+add_country
+current_countries
 modes
 scenarios
 run_parameters

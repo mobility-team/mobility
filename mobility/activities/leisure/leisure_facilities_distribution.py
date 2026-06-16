@@ -8,8 +8,6 @@ import geopandas as gpd
 from shapely.geometry import shape, Polygon, MultiPolygon
 
 from mobility.runtime.assets.file_asset import FileAsset
-from mobility.spatial.local_admin_units import LocalAdminUnits
-from mobility.spatial.study_area import StudyArea
 from mobility.spatial.osm import OSMData
 from mobility.activities.leisure.leisures_frequentation import LEISURE_MAPPING, LEISURE_FREQUENCY
 
@@ -25,8 +23,10 @@ class LeisureFacilitiesDistribution(FileAsset):
     - stored as a Parquet GeoDataFrame in EPSG:3035
     """
 
-    def __init__(self) -> None:
-        inputs = {}
+    def __init__(self, study_area) -> None:
+        inputs = {
+            "study_area": study_area,
+        }
 
         cache_path = (
             pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"])
@@ -52,10 +52,7 @@ class LeisureFacilitiesDistribution(FileAsset):
 
     def _prepare_leisure_facilities(self) -> gpd.GeoDataFrame:
         
-        admin_units = LocalAdminUnits().get()
-        admin_units_ids = admin_units["local_admin_unit_id"].tolist()
-
-        study_area = StudyArea(admin_units_ids)
+        study_area = self.inputs["study_area"]
 
         pbf_path = OSMData(
             study_area,

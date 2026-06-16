@@ -129,10 +129,10 @@ class PublicTransportGraph(FileAsset):
 
     def get_countries(self, transport_zones: TransportZones) -> list[str]:
         """Return country codes from the actual transport zones."""
-        zones = transport_zones.get()
-        return sorted(
-            {str(lau_id).split("-", 1)[0] for lau_id in zones["local_admin_unit_id"]}
-        )
+        countries = transport_zones.countries
+        if not countries:
+            raise ValueError("Transport zones should expose a country list.")
+        return countries
 
 
 class PublicTransportRoutingParameters(BaseModel):

@@ -46,9 +46,9 @@ class PopulationWeightedPlanSteps(FileAsset):
         lau_to_city_cat = (
             pl.from_pandas(
                 self.population.transport_zones.study_area.get()
-                .drop("geometry", axis=1)[["local_admin_unit_id", "urban_unit_category"]]
+                .drop("geometry", axis=1)[["local_admin_unit_id", "country", "urban_unit_category"]]
                 .rename({"urban_unit_category": "city_category"}, axis=1)
-            ).with_columns(country=pl.col("local_admin_unit_id").str.slice(0, 2))
+            )
         )
 
         demand_groups = (

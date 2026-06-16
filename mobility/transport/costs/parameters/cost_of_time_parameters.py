@@ -17,8 +17,7 @@ class CostOfTimeParameters(BaseModel):
     slopes: Annotated[list[float] | ParameterValue | SensitivityValue, Field(default_factory=lambda: [0.0])]
     max_value: Annotated[float | ParameterValue | SensitivityValue, Field(default=20.0)]
 
-    country_coeff_fr: Annotated[float | ParameterValue | SensitivityValue, Field(default=1.0)]
-    country_coeff_ch: Annotated[float | ParameterValue | SensitivityValue, Field(default=1.0)]
+    country_coefficients: Annotated[dict[str, float], Field(default_factory=dict)]
 
     @model_validator(mode="after")
     def validate_breaks_and_slopes(self) -> "CostOfTimeParameters":
@@ -68,8 +67,8 @@ class CostOfTimeParameters(BaseModel):
 
         cost = np.where(cost > self.max_value, self.max_value, cost)
 
-        cost = np.where(country == "fr", cost * self.country_coeff_fr, cost)
-        cost = np.where(country == "ch", cost * self.country_coeff_ch, cost)
+        for country_code, coefficient in self.country_coefficients.items():
+            cost = np.where(country == country_code, cost * coefficient, cost)
 
         return cost
                    

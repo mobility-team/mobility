@@ -8,7 +8,7 @@ from typing import Annotated, List
 from pydantic import Field
 
 from mobility.activities.activity import Activity, ActivityParameters
-from mobility.activities.shopping.shops_turnover_distribution import ShopsTurnoverDistribution
+from mobility.activities.shopping.shopping_opportunities import ShoppingOpportunities
 from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
 from mobility.runtime.validation_types import UnitIntervalFloat
 
@@ -72,10 +72,14 @@ class ShopActivity(Activity):
 
         else:
 
+            transport_zones_asset = transport_zones
             transport_zones = transport_zones.get().drop("geometry", axis=1)
-            transport_zones["country"] = transport_zones["local_admin_unit_id"].str[0:2]
 
-            opportunities = ShopsTurnoverDistribution().get()
+            tz_lau_ids = transport_zones["local_admin_unit_id"].unique().tolist()
+            opportunities = ShoppingOpportunities(
+                countries=transport_zones_asset.countries,
+                local_admin_unit_ids=tz_lau_ids,
+            ).get()
             opportunities = opportunities.groupby("local_admin_unit_id", as_index=False)[["turnover"]].sum()
 
             opportunities = pd.merge(

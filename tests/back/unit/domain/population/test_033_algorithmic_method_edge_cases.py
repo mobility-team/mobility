@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 
 import mobility.population.population as population_module
+from mobility.population.switzerland import SwissPopulationGroups
 
 
 def test_get_swiss_pop_groups_raises_without_census():
@@ -17,6 +18,7 @@ def test_get_swiss_pop_groups_raises_without_census():
             data_frame = pd.DataFrame({
                 "transport_zone_id": ["tz-fr", "tz-ch"],
                 "local_admin_unit_id": ["fr-75056", "ch-2601"],
+                "country": ["fr", "ch"],
                 "weight": [0.5, 0.5],
                 "geometry": [None, None],
             })
@@ -29,7 +31,7 @@ def test_get_swiss_pop_groups_raises_without_census():
     )
 
     with pytest.raises(ValueError):
-        population.get_swiss_pop_groups(
+        SwissPopulationGroups(population.inputs["switzerland_census"]).build(
             transport_zones=population.inputs["transport_zones"].get(),
             legal_pop_by_city=pd.DataFrame({"local_admin_unit_id": ["ch-2601"], "legal_population": [5000]}),
             lau_to_tz_coeff=pd.DataFrame({
@@ -65,6 +67,7 @@ def test_get_swiss_pop_groups_happy_path():
             data_frame = pd.DataFrame({
                 "transport_zone_id": ["tz-ch"],
                 "local_admin_unit_id": ["ch-2601"],
+                "country": ["ch"],
                 "weight": [1.0],
                 "geometry": [None],
             })
@@ -85,7 +88,7 @@ def test_get_swiss_pop_groups_happy_path():
         .rename(columns={"weight": "lau_to_tz_coeff"})
     )
 
-    swiss_population_groups = population.get_swiss_pop_groups(
+    swiss_population_groups = SwissPopulationGroups(population.inputs["switzerland_census"]).build(
         transport_zones_geo_data_frame,
         legal_population_by_city,
         lau_to_transport_zone_coefficients,

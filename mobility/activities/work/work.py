@@ -8,7 +8,7 @@ from typing import Annotated, List, Dict
 from pydantic import Field
 
 from mobility.activities.activity import Activity, ActivityParameters
-from mobility.activities.work.jobs_active_population_distribution import JobsActivePopulationDistribution
+from mobility.activities.work.work_opportunities import WorkOpportunities
 from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
 from mobility.runtime.validation_types import UnitIntervalFloat
 
@@ -74,12 +74,15 @@ class WorkActivity(Activity):
 
         else:
 
+            transport_zones_asset = transport_zones
             transport_zones = transport_zones.get().drop("geometry", axis=1)
-            transport_zones["country"] = transport_zones["local_admin_unit_id"].str[0:2]
             
             tz_lau_ids = transport_zones["local_admin_unit_id"].unique().tolist()
 
-            opportunities = JobsActivePopulationDistribution().get()[0]
+            opportunities = WorkOpportunities(
+                countries=transport_zones_asset.countries,
+                local_admin_unit_ids=tz_lau_ids,
+            ).get()[0]
             opportunities = opportunities.loc[tz_lau_ids, "n_jobs_total"].reset_index()
 
             opportunities = pd.merge(
