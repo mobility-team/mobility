@@ -13,7 +13,7 @@ class SwissLocalAdminUnitsCategories(FileAsset):
     """Swiss municipality categories used by the shared local-admin-units file."""
 
     def __init__(self):
-        inputs = {}
+        inputs = {"cache_version": 2}
         cache_path = (
             pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"])
             / "bfs"
@@ -44,19 +44,32 @@ class SwissLocalAdminUnitsCategories(FileAsset):
         categories = categories.iloc[:, [0, 2]]
         categories.columns = ["local_admin_unit_id", "urban_unit_category"]
         categories["local_admin_unit_id"] = "ch-" + categories["local_admin_unit_id"].astype(str)
-        categories["urban_unit_category"] = categories["urban_unit_category"].map(
+
+        # The stable part of the BFS typology is the numeric code in parentheses.
+        # The French wording can change slightly between source files.
+        type_codes = categories["urban_unit_category"].astype(str).str.extract(r"\((\d{2})\)", expand=False)
+        categories["urban_unit_category"] = type_codes.map(
             {
-                "Commune urbaine d’une grande agglomération (11)": "C",
-                "Commune urbaine d'une agglomération moyenne (12)": "C",
-                "Commune urbaine d’une petite ou hors agglomération (13)": "I",
-                "Commune périurbaine de forte densité (21)": "B",
-                "Commune périurbaine de moyenne densité (22)": "B",
-                "Commune périurbaine de faible densité (23)": "B",
-                "Commune d’un centre rural (31)": "R",
-                "Commune rurale en situation centrale (32)": "R",
-                "Commune rurale périphérique (33)": "R",
+                "11": "C",
+                "12": "C",
+                "13": "I",
+                "21": "B",
+                "22": "B",
+                "23": "B",
+                "31": "R",
+                "32": "R",
+                "33": "R",
             }
         )
+        unknown_categories = categories.loc[
+            categories["urban_unit_category"].isna(),
+            "local_admin_unit_id",
+        ].tolist()
+        if unknown_categories:
+            raise ValueError(
+                "No Swiss urban unit category could be read for local admin units: "
+                f"{sorted(unknown_categories)}."
+            )
 
         categories.to_parquet(self.cache_path)
         return categories
