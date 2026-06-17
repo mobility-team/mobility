@@ -11,6 +11,7 @@ from mobility.spatial.admin_units import FrenchAdminUnits
 from mobility.spatial.local_admin_units import LocalAdminUnits
 from mobility.spatial.local_admin_units_categories import LocalAdminUnitsCategories
 from mobility.spatial.study_area import StudyArea
+from mobility.spatial.switzerland import SwissLocalAdminUnitsCategories
 
 
 def test_001_admin_express_dataset_requires_expected_extracted_files(tmp_path, monkeypatch):
@@ -173,6 +174,49 @@ def test_001_local_admin_unit_categories_load_selected_ids(tmp_path, monkeypatch
     assert set(categories["local_admin_unit_id"]) == {"fr-75056", "ch-6621"}
     assert FakeFrenchCategories.requested_ids == [("ch-6621", "fr-75056")]
     assert FakeSwissCategories.requested_ids == [("ch-6621", "fr-75056")]
+
+
+def test_001_swiss_local_admin_unit_categories_use_bfs_type_codes(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+
+    def fake_download_file(url, file_path):
+        return pathlib.Path(file_path)
+
+    def fake_read_excel(file_path, skiprows, skipfooter):
+        return pd.DataFrame(
+            {
+                "bfs_id": [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009],
+                "unused": [""] * 9,
+                "typology": [
+                    "Urban wording can vary (11)",
+                    "Urban wording with another apostrophe (12)",
+                    "Small urban area wording can vary (13)",
+                    "Periurban high density wording can vary (21)",
+                    "Periurban middle density wording can vary (22)",
+                    "Periurban low density wording can vary (23)",
+                    "Rural centre wording can vary (31)",
+                    "Central rural wording can vary (32)",
+                    "Peripheral rural wording can vary (33)",
+                ],
+            }
+        )
+
+    monkeypatch.setattr("mobility.spatial.switzerland.download_file", fake_download_file)
+    monkeypatch.setattr("mobility.spatial.switzerland.pd.read_excel", fake_read_excel)
+
+    categories = SwissLocalAdminUnitsCategories().create_and_get_asset()
+
+    assert categories["urban_unit_category"].tolist() == [
+        "C",
+        "C",
+        "I",
+        "B",
+        "B",
+        "B",
+        "R",
+        "R",
+        "R",
+    ]
 
 
 def test_001_local_admin_units_loads_selected_admin_units(tmp_path, monkeypatch):
