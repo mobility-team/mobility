@@ -65,6 +65,45 @@ Then check that Python can import it:
 python -c "import mobility; print(mobility.__file__)"
 ```
 
+## Docker
+
+If you use Docker, you can use the Mobility runtime image instead of creating the mamba environment yourself.
+The container includes Python, R, `osmium-tool`, and the system libraries needed by Mobility.
+
+From a folder that contains your script, run one of the commands below.
+
+On macOS, Linux, WSL, or Git Bash:
+
+```shell
+docker run --rm -it \
+  -v "$PWD:/app" \
+  -w /app \
+  ghcr.io/mobility-team/mobility-runtime:0.2.0 \
+  python your_script.py
+```
+
+On Windows PowerShell:
+
+```powershell
+docker run --rm -it `
+  -v "${PWD}:/app" `
+  -w /app `
+  ghcr.io/mobility-team/mobility-runtime:0.2.0 `
+  python your_script.py
+```
+
+If you cloned the Mobility repository and want to run the French quickstart, replace `your_script.py` with `examples/quickstart-fr.py`:
+
+```shell
+docker run --rm -it \
+  -v "$PWD:/app" \
+  -w /app \
+  ghcr.io/mobility-team/mobility-runtime:0.2.0 \
+  python examples/quickstart-fr.py
+```
+
+Use Docker when you want one prepared environment and do not want to manage R packages and system libraries by hand.
+
 ## 4. Choose data folders
 
 Mobility stores downloaded and prepared data on disk. Use two folders:
