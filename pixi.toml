@@ -1,0 +1,13 @@
+[workspace]
+name = "mobility"
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
+
+[dependencies]
+python = "3.12.*"
+osmium-tool = "1.18.0.*"
+uv = "0.10.9.*"
+r-base = "4.5.2.*"
+
+[pypi-dependencies]
+mobility-tools = { path = ".", editable = true, extras = ["dev", "truststore"] }

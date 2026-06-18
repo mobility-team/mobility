@@ -25,7 +25,7 @@ If you want to understand the model assumptions, read model steps, data sources,
 
 If you want to contribute, read the developer guide after you can run the quickstart locally.
 
-After the first path, you should have a working mamba environment, a small weekday run around Limoges, and a first `population_trips.results("weekday")` object that you can use for indicators.
+After the first path, you should have a working Mobility environment, a small weekday run around Limoges, and a first `population_trips.results("weekday")` object that you can use for indicators.
 
 ```{toctree}
 :caption: Start
