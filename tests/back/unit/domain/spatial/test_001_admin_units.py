@@ -334,7 +334,7 @@ def test_001_local_admin_units_fails_when_selected_admin_unit_is_missing(tmp_pat
     )
     monkeypatch.setattr(LocalAdminUnitsCategories, "get_by_ids", fake_categories_get_by_ids)
 
-    with pytest.raises(ValueError, match="No urban unit category found"):
+    with pytest.raises(ValueError, match="No local admin unit found for: ['fr-75056']."):
         LocalAdminUnits(local_admin_unit_ids=["fr-75056"]).create_and_get_asset()
 
 
