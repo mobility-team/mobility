@@ -13,12 +13,17 @@ class SwissLocalAdminUnitsCategories(FileAsset):
     """Swiss municipality categories used by the shared local-admin-units file."""
 
     def __init__(self):
-        inputs = {"cache_version": 2}
+
         cache_path = (
             pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"])
             / "bfs"
             / "local_admin_units_categories_ch.parquet"
         )
+    
+        inputs = {
+            "version": 2
+        }
+    
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pd.DataFrame:

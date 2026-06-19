@@ -1,4 +1,5 @@
 import pathlib
+import re
 
 import geopandas as gpd
 import pandas as pd
@@ -325,8 +326,20 @@ def test_001_local_admin_units_fails_when_selected_admin_unit_is_missing(tmp_pat
     with pytest.raises(ValueError, match="No local admin unit found"):
         LocalAdminUnits(local_admin_unit_ids=["fr-00000"]).create_and_get_asset()
 
+    def fake_categories_get_by_ids(self, local_admin_unit_ids):
+        return pd.DataFrame(columns=["local_admin_unit_id", "urban_unit_category"])
 
-def test_001_local_admin_units_fails_when_category_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "mobility.spatial.local_admin_units.available_admin_units",
+        lambda: {"fr": (FakeAdminUnits, "commune")},
+    )
+    monkeypatch.setattr(LocalAdminUnitsCategories, "get_by_ids", fake_categories_get_by_ids)
+
+    with pytest.raises(ValueError, match=re.escape("No local admin unit found for: ['fr-75056'].")):
+        LocalAdminUnits(local_admin_unit_ids=["fr-75056"]).create_and_get_asset()
+
+
+def test_001_local_admin_units_warns_and_defaults_to_rural_when_category_is_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
 
     class FakeAdminUnits(Asset):
@@ -351,6 +364,7 @@ def test_001_local_admin_units_fails_when_category_is_missing(tmp_path, monkeypa
             )
 
     def fake_categories_get_by_ids(self, local_admin_unit_ids):
+        assert local_admin_unit_ids == ["fr-75056"]
         return pd.DataFrame(columns=["local_admin_unit_id", "urban_unit_category"])
 
     monkeypatch.setattr(
@@ -359,8 +373,11 @@ def test_001_local_admin_units_fails_when_category_is_missing(tmp_path, monkeypa
     )
     monkeypatch.setattr(LocalAdminUnitsCategories, "get_by_ids", fake_categories_get_by_ids)
 
-    with pytest.raises(ValueError, match="No urban unit category found"):
-        LocalAdminUnits(local_admin_unit_ids=["fr-75056"]).create_and_get_asset()
+    with pytest.warns(UserWarning, match="setting them to rural"):
+        local_admin_units = LocalAdminUnits(local_admin_unit_ids=["fr-75056"]).create_and_get_asset()
+
+    assert local_admin_units["local_admin_unit_id"].tolist() == ["fr-75056"]
+    assert local_admin_units["urban_unit_category"].tolist() == ["R"]
 
 
 def test_001_local_admin_units_loads_admin_units_near_bounds(tmp_path, monkeypatch):
