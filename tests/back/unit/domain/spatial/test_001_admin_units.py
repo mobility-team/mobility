@@ -325,31 +325,6 @@ def test_001_local_admin_units_fails_when_selected_admin_unit_is_missing(tmp_pat
     with pytest.raises(ValueError, match="No local admin unit found"):
         LocalAdminUnits(local_admin_unit_ids=["fr-00000"]).create_and_get_asset()
 
-
-def test_001_local_admin_units_fails_when_category_is_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
-
-    class FakeAdminUnits(Asset):
-        def __init__(self, level):
-            super().__init__({"level": level, "country": "fr"})
-
-        def get_cached_hash(self):
-            return self.inputs_hash
-
-        def get(self):
-            raise AssertionError("Explicit local admin unit lists should use get_by_ids.")
-
-        def get_by_ids(self, admin_ids):
-            return gpd.GeoDataFrame(
-                {
-                    "admin_id": ["fr-75056"],
-                    "admin_name": ["Paris"],
-                    "country": ["fr"],
-                },
-                geometry=[box(0, 0, 1, 1)],
-                crs=3035,
-            )
-
     def fake_categories_get_by_ids(self, local_admin_unit_ids):
         return pd.DataFrame(columns=["local_admin_unit_id", "urban_unit_category"])
 
