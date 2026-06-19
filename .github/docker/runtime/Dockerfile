@@ -2,7 +2,7 @@ FROM ubuntu:24.04
 
 ARG R_VERSION=4.4.1
 ARG UV_VERSION=0.10.9
-ARG MOBILITY_VERSION=0.2.0
+ARG MOBILITY_PACKAGE=mobility-tools
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV R_VERSION=${R_VERSION}
@@ -42,8 +42,8 @@ COPY DESCRIPTION /tmp/mobility-r-deps/
 RUN Rscript -e "options(repos = c(CRAN = Sys.getenv('RSPM'))); install.packages('pak', repos = sprintf('https://r-lib.github.io/p/pak/stable/%s/%s/%s', .Platform\$pkgType, R.Version()\$os, R.Version()\$arch)); pak::pkg_install(c('deps::/tmp/mobility-r-deps', 'any::sessioninfo'), dependencies = TRUE)" \
     && rm -rf /var/lib/apt/lists/*
 
-# Install the released Mobility package from PyPI.
-RUN uv pip install --python /opt/venv/bin/python "mobility-tools==${MOBILITY_VERSION}"
+# Install Mobility from PyPI. Release publishing passes an exact package version.
+RUN uv pip install --python /opt/venv/bin/python "${MOBILITY_PACKAGE}"
 
 WORKDIR /app
 
