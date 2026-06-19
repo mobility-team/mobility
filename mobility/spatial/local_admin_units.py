@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
+import warnings
 
 import geopandas as gpd
 import pandas as pd
@@ -44,7 +45,7 @@ class LocalAdminUnits(FileAsset):
             )
 
         inputs = {
-            "cache_version": 2,
+            "version": 2,
             "countries": countries,
             "local_admin_unit_ids": local_admin_unit_ids,
             "bounds": bounds,
@@ -106,8 +107,9 @@ class LocalAdminUnits(FileAsset):
             local_admin_units["urban_unit_category"].isna()
         ]["local_admin_unit_id"].tolist()
         if missing_categories:
-            raise ValueError(
-                "No urban unit category found for local admin units: "
+            local_admin_units["urban_unit_category"] = local_admin_units["urban_unit_category"].fillna("R")
+            warnings.warn(
+                "No urban unit category found for local admin units, setting them to rural: "
                 f"{sorted(missing_categories)}."
             )
 
