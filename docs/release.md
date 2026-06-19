@@ -34,8 +34,12 @@ Use the same version as `pyproject.toml`. For example, `version = "0.2.1"` uses 
    - `pixi.toml`,
    - `environment.yml`.
 3. Check that PyPI has the new `mobility-tools` version.
-4. Publish the draft GitHub release.
-5. Test the user Pixi install command from a temporary project folder:
+4. Run the `Build runtime image` workflow manually from `main`:
+   - set `publish` to `true`,
+   - set `run_quickstart` to `true`.
+5. Check that the GitHub container registry has the new `mobility-runtime` version.
+6. Publish the draft GitHub release.
+7. Test the user Pixi install command from a temporary project folder:
 
 ```shell
 version="v0.2.1"
@@ -45,9 +49,15 @@ pixi install
 pixi run python -c "import mobility; print(mobility.__file__)"
 ```
 
-6. Test the direct PyPI install command:
+8. Test the direct PyPI install command:
 
 ```shell
 pip install mobility-tools==0.2.1
 python -c "import mobility; print(mobility.__file__)"
+```
+
+9. Test the Docker image:
+
+```shell
+docker run --rm ghcr.io/mobility-team/mobility-runtime:0.2.1 python -c "import mobility; print(mobility.__file__)"
 ```

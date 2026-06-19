@@ -140,7 +140,7 @@ On macOS, Linux, WSL, or Git Bash:
 docker run --rm -it \
   -v "$PWD:/app" \
   -w /app \
-  ghcr.io/mobility-team/mobility-runtime:0.2.0 \
+  ghcr.io/mobility-team/mobility-runtime:0.2.1 \
   python your_script.py
 ```
 
@@ -150,7 +150,7 @@ On Windows PowerShell:
 docker run --rm -it `
   -v "${PWD}:/app" `
   -w /app `
-  ghcr.io/mobility-team/mobility-runtime:0.2.0 `
+  ghcr.io/mobility-team/mobility-runtime:0.2.1 `
   python your_script.py
 ```
 
@@ -160,7 +160,7 @@ If you cloned the Mobility repository and want to run the French quickstart, rep
 docker run --rm -it \
   -v "$PWD:/app" \
   -w /app \
-  ghcr.io/mobility-team/mobility-runtime:0.2.0 \
+  ghcr.io/mobility-team/mobility-runtime:0.2.1 \
   python examples/quickstart-fr.py
 ```
 

@@ -1,14 +1,6 @@
 name: Build runtime image
 
 on:
-  push:
-    tags:
-      - "v*"
-    paths:
-      - "DESCRIPTION"
-      - "pyproject.toml"
-      - ".github/docker/runtime/Dockerfile"
-      - ".github/workflows/build-runtime-image.yml"
   pull_request:
     branches: [ "main" ]
     paths:
@@ -38,6 +30,7 @@ jobs:
     outputs:
       mobility_version: ${{ steps.package-version.outputs.mobility_version }}
       mobility_minor_version: ${{ steps.package-version.outputs.mobility_minor_version }}
+      mobility_package: ${{ steps.package-version.outputs.mobility_package }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -47,14 +40,15 @@ jobs:
         run: |
           version="$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")"
           minor_version="${version%.*}"
+          package="mobility-tools==${version}"
 
-          if [[ "${GITHUB_REF}" == refs/tags/v* && "${GITHUB_REF_NAME#v}" != "${version}" ]]; then
-            echo "Release tag ${GITHUB_REF_NAME} does not match pyproject.toml version ${version}."
-            exit 1
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            package="mobility-tools"
           fi
 
           echo "mobility_version=${version}" >> "${GITHUB_OUTPUT}"
           echo "mobility_minor_version=${minor_version}" >> "${GITHUB_OUTPUT}"
+          echo "mobility_package=${package}" >> "${GITHUB_OUTPUT}"
         shell: bash
 
       - name: Set up Docker Buildx
@@ -68,7 +62,7 @@ jobs:
           load: true
           tags: mobility-runtime:test
           build-args: |
-            MOBILITY_VERSION=${{ steps.package-version.outputs.mobility_version }}
+            MOBILITY_PACKAGE=${{ steps.package-version.outputs.mobility_package }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -83,7 +77,7 @@ jobs:
         shell: bash
 
       - name: Run quickstart
-        if: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.run_quickstart) }}
+        if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_quickstart) }}
         run: |
           docker run --rm \
             -e MOBILITY_PACKAGE_DATA_FOLDER=/tmp/mobility-data \
@@ -96,7 +90,7 @@ jobs:
 
   publish:
     needs: validate
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
     runs-on: ubuntu-24.04
 
     steps:
@@ -127,9 +121,7 @@ jobs:
             echo "ghcr.io/mobility-team/mobility-runtime:${{ needs.validate.outputs.mobility_version }}"
             echo "ghcr.io/mobility-team/mobility-runtime:${{ needs.validate.outputs.mobility_minor_version }}"
             echo "ghcr.io/mobility-team/mobility-runtime:sha-${GITHUB_SHA}"
-            if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-              echo "ghcr.io/mobility-team/mobility-runtime:latest"
-            fi
+            echo "ghcr.io/mobility-team/mobility-runtime:latest"
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
         shell: bash
@@ -142,6 +134,6 @@ jobs:
           push: true
           tags: ${{ steps.image-tags.outputs.tags }}
           build-args: |
-            MOBILITY_VERSION=${{ needs.validate.outputs.mobility_version }}
+            MOBILITY_PACKAGE=${{ needs.validate.outputs.mobility_package }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
