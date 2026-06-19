@@ -2,6 +2,10 @@
 .git
 .gitignore
 .gitattributes
+.codex/
+.agents/
+.worktrees/
+mobility.worktrees/
 
 
 # CI
