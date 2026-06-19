@@ -2,3 +2,5 @@
 .github/scripts/* @mobility-team/package-maintainers
 pyproject.toml @mobility-team/package-maintainers
 environment.yml @mobility-team/package-maintainers
+pixi.toml @mobility-team/package-maintainers
+pixi-release.toml @mobility-team/package-maintainers

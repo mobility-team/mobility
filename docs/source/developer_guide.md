@@ -17,30 +17,46 @@ git clone https://github.com/mobility-team/mobility.git
 cd mobility
 ```
 
-Then create the same mamba environment as users:
+Then create the Pixi environment:
 
 ```shell
-mamba env create -n mobility -f environment.yml
-mamba activate mobility
+pixi install
 ```
 
-Install Mobility in editable mode:
+The repository `pixi.toml` installs Mobility in editable mode.
 
-```shell
-pip install -e .
-```
-
-Editable mode means that Python imports the code from your local repository. When you change a `.py` file, the next Python run uses that change without reinstalling the package.
+Editable mode means that Python imports the code from your local repository. When you change a `.py` file, the next Python run uses that change.
 
 Check that the local package is imported:
 
 ```shell
+pixi run python -c "import mobility; print(mobility.__file__)"
+```
+
+The printed path should point to the repository you cloned.
+
+### Mamba Fallback
+
+If you already use mamba, this path is still supported for now:
+
+```shell
+mamba env create -n mobility -f environment.yml
+mamba activate mobility
+python -m pip install -e ".[dev,truststore]"
 python -c "import mobility; print(mobility.__file__)"
 ```
 
 ## Run Tests
 
 Use the project test command:
+
+```shell
+pixi run python -m pytest --local --use-truststore
+```
+
+`--use-truststore` is for tests that download data on company networks. It is not needed for normal user scripts unless you hit a certificate error. For user scripts, see the certificate notes in the installation page.
+
+If you use mamba, run:
 
 ```shell
 mamba run -n mobility python -m pytest --local --use-truststore

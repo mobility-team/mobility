@@ -56,6 +56,7 @@ jobs:
       - name: Copy install environment files
         run: |
           cp environment.yml dist/environment.yml
+          cp pixi-release.toml dist/pixi.toml
         shell: bash
 
       - name: Install wheel
@@ -116,6 +117,7 @@ jobs:
       - name: Remove non-PyPI release assets
         run: |
           rm dist/environment.yml
+          rm dist/pixi.toml
         shell: bash
 
       - name: Publish distributions to PyPI

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mobility-tools"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
   "geopandas>=1.1,<1.2",
   "numpy>=2.0,<3",

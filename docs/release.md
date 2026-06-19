@@ -19,11 +19,11 @@ Use this checklist when publishing a new Mobility version.
 Create the tag from `main`:
 
 ```shell
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
-Use the same version as `pyproject.toml`. For example, `version = "0.2.0"` uses tag `v0.2.0`.
+Use the same version as `pyproject.toml`. For example, `version = "0.2.1"` uses tag `v0.2.1`.
 
 ## After the workflow runs
 
@@ -31,12 +31,23 @@ Use the same version as `pyproject.toml`. For example, `version = "0.2.0"` uses 
 2. Check that the GitHub release has:
    - the wheel,
    - the source archive,
+   - `pixi.toml`,
    - `environment.yml`.
 3. Check that PyPI has the new `mobility-tools` version.
 4. Publish the draft GitHub release.
-5. Test the user install command:
+5. Test the user Pixi install command from a temporary project folder:
 
 ```shell
-pip install mobility-tools==0.2.0
+version="v0.2.1"
+base="https://github.com/mobility-team/mobility/releases/download/$version"
+curl -L -o pixi.toml "$base/pixi.toml"
+pixi install
+pixi run python -c "import mobility; print(mobility.__file__)"
+```
+
+6. Test the direct PyPI install command:
+
+```shell
+pip install mobility-tools==0.2.1
 python -c "import mobility; print(mobility.__file__)"
 ```

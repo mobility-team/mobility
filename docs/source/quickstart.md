@@ -15,7 +15,7 @@ The goal is to:
 
 ## Before You Start
 
-Install Mobility with the mamba environment first.
+Install Mobility first. The recommended path uses Pixi. The mamba path is still supported for now.
 
 On a first run, Mobility may download data, prepare local files, and install R packages. This can take a while. Later runs reuse the local cache.
 
@@ -204,15 +204,7 @@ default   weekday   1          car      217089.35   null            1
 
 Use these numbers as an example of the table shape and scale. They can change when input data, package defaults, random seeds, or the local cache change. For your first check, the table should contain rows, the columns should be understandable, and the represented trip counts should be plausible for the represented population.
 
-If a download fails with a certificate error on a company network, retry the setup with truststore injection:
-
-```python
-mobility.set_params(
-    package_data_folder_path=r"C:\Users\your.name\Documents\mobility-data",
-    project_data_folder_path=r"C:\Users\your.name\Documents\mobility-projects\first-project",
-    inject_into_ssl=True,
-)
-```
+If a download fails with a certificate error on a company network, see the certificate notes in the installation page.
 
 ## You Are Done When
 
