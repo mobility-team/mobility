@@ -689,6 +689,8 @@ class IterationStateAsset(FileAsset):
             iteration=iteration,
             base_folder=pathlib.Path(base_folder) / "transition-events",
         )
+        if cache_iteration_events:
+            self.cache_path["transition_events"] = self.transition_events_asset.cache_path
 
     def get_cached_asset(self) -> RunState:
         """Return the cached state after this iteration."""
@@ -757,13 +759,8 @@ class IterationStateAsset(FileAsset):
         _write_run_state(self.cache_path, state, seeds["rng_state_after_sampling"])
 
         if transition_events is not None and self.cache_iteration_events:
-            TransitionEventsAsset(
-                run_key=self.inputs_hash,
-                is_weekday=self.inputs["is_weekday"],
-                iteration=self.iteration,
-                base_folder=self.transition_events_asset.cache_path.parent,
-                transition_events=transition_events,
-            ).create_and_get_asset()
+            self.transition_events_asset.transition_events = transition_events
+            self.transition_events_asset.get()
 
         logging.debug("Group-day-trips iteration %s is ready.", str(self.iteration))
         get_group_day_trips_progress().finish_iteration(self.iteration)
