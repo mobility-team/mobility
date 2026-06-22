@@ -75,6 +75,7 @@ from .transport.modes.public_transport import (
 )
 from .transport.modes.core import IntermodalTransfer, ModeRegistry
 from .runtime.parameter_values import DEFAULT_SCENARIO, ParameterValue, SensitivityValue
+from .runtime.project_cache import ProjectCache
 from .runtime.scenarios import Scenario, Scenarios
 
 from .transport.graphs.modified.modifiers import (
