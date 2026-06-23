@@ -7,6 +7,7 @@ import sys
 import warnings
 
 from importlib import resources
+from mobility.runtime.logging_levels import TRACE_LEVEL, register_trace_level
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.runtime.project_cache import register_current_script_if_available
 
@@ -140,7 +141,7 @@ def _normalize_feedback_setting(feedback, *, progress=None, debug=False, logging
 def _is_debug_logging_level(logging_level) -> bool:
     """Return True when the old logging_level argument asks for DEBUG logs."""
     if isinstance(logging_level, str):
-        return logging_level.upper() == "DEBUG"
+        return logging_level.upper() in {"DEBUG", "TRACE"}
     return int(logging_level) <= logging.DEBUG
 
 
@@ -298,8 +299,9 @@ def setup_logging(logging_level="INFO"):
 
     This function sets up basic logging configuration including format, level, and date format.
     """
+    register_trace_level()
     if isinstance(logging_level, str):
-        level = getattr(logging, logging_level.upper(), None)
+        level = TRACE_LEVEL if logging_level.upper() == "TRACE" else getattr(logging, logging_level.upper(), None)
         if not isinstance(level, int):
             raise ValueError(f"Unknown logging level: {logging_level}")
     else:
