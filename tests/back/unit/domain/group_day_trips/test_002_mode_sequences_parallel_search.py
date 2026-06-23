@@ -3,6 +3,8 @@ import pickle
 from types import SimpleNamespace
 
 import polars as pl
+import pytest
+from mobility.trips.group_day_trips.plans.mode_sequence_search.prepare import build_location_chains
 from mobility.trips.group_day_trips.plans.mode_sequence_search.search_python import (
     run_python_mode_sequence_search,
     run_python_mode_sequence_search_subprocess,
@@ -41,6 +43,58 @@ def _mode_sequence_parameters(
             mode_sequence_search_parallel=mode_sequence_search_parallel,
         )
     )
+
+
+def test_build_location_chains_fails_on_one_location_chain():
+    destination_steps = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "demand_subgroup_id": [0],
+            "activity_seq_id": [10],
+            "time_seq_id": [20],
+            "dest_seq_id": [30],
+            "seq_step_index": [1],
+            "from": [100],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt8,
+            "from": pl.UInt16,
+        },
+    )
+
+    with pytest.raises(ValueError, match="fewer than two locations"):
+        build_location_chains(destination_steps)
+
+
+def test_build_location_chains_fails_when_destination_sequence_id_has_multiple_location_chains():
+    destination_steps = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1, 2, 2],
+            "demand_subgroup_id": [0, 0, 0, 0],
+            "activity_seq_id": [10, 10, 10, 10],
+            "time_seq_id": [20, 20, 20, 20],
+            "dest_seq_id": [30, 30, 30, 30],
+            "seq_step_index": [1, 2, 1, 2],
+            "from": [100, 200, 300, 400],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt8,
+            "from": pl.UInt16,
+        },
+    )
+
+    with pytest.raises(ValueError, match="multiple location chains"):
+        build_location_chains(destination_steps)
 
 
 def test_run_python_mode_sequence_search_subprocess_serializes_inputs_for_worker(monkeypatch, tmp_path):

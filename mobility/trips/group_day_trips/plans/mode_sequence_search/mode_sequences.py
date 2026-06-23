@@ -67,7 +67,7 @@ class ModeSequences(FileAsset):
         self.working_folder = working_folder
         self.parameters = parameters
         inputs = {
-            "version": 3,
+            "version": 5,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "previous_mode_sequences": previous_mode_sequences,

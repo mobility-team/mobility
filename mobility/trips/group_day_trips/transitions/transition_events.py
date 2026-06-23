@@ -3,12 +3,14 @@ import pathlib
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.trips.group_day_trips.plans.demand_subgroups import DEMAND_UNIT_COLS, with_demand_subgroup_id
 
 from .transition_schema import TRANSITION_EVENT_COLUMNS
 
 
 def build_transition_events_lazy(transitions: pl.LazyFrame, *, iteration: int) -> pl.LazyFrame:
     """Build the core transition-event table from raw plan-to-plan transitions."""
+    transitions = with_demand_subgroup_id(transitions)
     return transitions.with_columns(
         iteration=pl.lit(iteration).cast(pl.UInt32),
         utility_from=pl.col("utility_from_updated"),
@@ -23,6 +25,7 @@ def build_transition_events_lazy(transitions: pl.LazyFrame, *, iteration: int) -
         [
             "iteration",
             "demand_group_id",
+            "demand_subgroup_id",
             "activity_seq_id",
             "time_seq_id",
             "dest_seq_id",
@@ -49,7 +52,9 @@ def add_transition_plan_details(
     possible_plan_steps: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """Attach full from/to plan details to transition events."""
-    plan_keys = ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]
+    transition_events = with_demand_subgroup_id(transition_events)
+    possible_plan_steps = with_demand_subgroup_id(possible_plan_steps)
+    plan_keys = DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]
 
     plan_details = (
         possible_plan_steps.with_columns(
@@ -98,7 +103,7 @@ def add_transition_plan_details(
 
     events_with_details = transition_events.join(from_details, on=plan_keys, how="left").join(
         to_details,
-        on=["demand_group_id", "activity_seq_id_trans", "time_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"],
+        on=DEMAND_UNIT_COLS + ["activity_seq_id_trans", "time_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"],
         how="left",
     )
 
@@ -158,7 +163,7 @@ class TransitionEventsAsset(FileAsset):
     ) -> None:
         self.transition_events = transition_events
         inputs = {
-            "version": 1,
+            "version": 2,
             "run_key": run_key,
             "is_weekday": is_weekday,
             "iteration": iteration,

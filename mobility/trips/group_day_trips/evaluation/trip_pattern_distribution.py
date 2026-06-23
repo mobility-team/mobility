@@ -43,6 +43,7 @@ def build_trip_pattern_distribution(
     candidate_columns = [
         "country",
         "demand_group_id",
+        "demand_subgroup_id",
         "home_zone_id",
         "csp",
         "n_cars",

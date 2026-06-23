@@ -29,6 +29,8 @@ def add_demand_group_columns(
         return plan_steps
 
     join_columns = SCOPE_COLUMNS + ["demand_group_id"]
+    if "demand_subgroup_id" in plan_schema and "demand_subgroup_id" in demand_schema:
+        join_columns.append("demand_subgroup_id")
     missing_join_columns = [
         column
         for column in join_columns
