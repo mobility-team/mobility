@@ -176,10 +176,16 @@ def _load_demand_group_keys(
             + ", ".join(missing)
         )
 
+    subgroup_expr = (
+        pl.col("demand_subgroup_id").cast(pl.UInt32)
+        if "demand_subgroup_id" in available
+        else pl.lit(0, dtype=pl.UInt32).alias("demand_subgroup_id")
+    )
     keys = (
         demand_groups
         .select(
             pl.col("demand_group_id").cast(pl.UInt32),
+            subgroup_expr,
             pl.col("home_zone_id").cast(pl.Int32),
             pl.col("csp").cast(pl.String),
             pl.col("n_cars").cast(pl.Int32),
@@ -293,8 +299,15 @@ def _enrich_transitions(
     """
     enriched = (
         transitions_df
-        .with_columns(demand_group_id=pl.col("demand_group_id").cast(pl.UInt32))
-        .join(demand_group_keys, on="demand_group_id", how="left")
+        .with_columns(
+            demand_group_id=pl.col("demand_group_id").cast(pl.UInt32),
+            demand_subgroup_id=(
+                pl.col("demand_subgroup_id").cast(pl.UInt32)
+                if "demand_subgroup_id" in transitions_df.columns
+                else pl.lit(0, dtype=pl.UInt32)
+            ),
+        )
+        .join(demand_group_keys, on=["demand_group_id", "demand_subgroup_id"], how="left")
         .with_columns(
             activity_seq_id=pl.col("activity_seq_id").cast(pl.UInt32),
             time_seq_id=pl.col("time_seq_id").cast(pl.UInt32),

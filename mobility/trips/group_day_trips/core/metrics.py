@@ -4342,10 +4342,13 @@ class RunMetrics:
         if missing_columns:
             missing = ", ".join(sorted(missing_columns))
             raise ValueError(f"Demand groups are missing: {missing}.")
+        join_columns = ["demand_group_id"]
+        if "demand_subgroup_id" in plan_columns and "demand_subgroup_id" in demand_group_columns:
+            join_columns.append("demand_subgroup_id")
 
         return plan_steps.join(
-            demand_groups_lazy.select(["demand_group_id", "home_zone_id"]),
-            on="demand_group_id",
+            demand_groups_lazy.select(join_columns + ["home_zone_id"]),
+            on=join_columns,
             how="left",
         )
 
