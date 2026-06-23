@@ -291,10 +291,18 @@ def plot_metric_over_iterations(
     fig.update_layout(
         width=width,
         height=height,
+        title={
+            "text": title,
+            "x": 0.02,
+            "xanchor": "left",
+            "y": 0.98,
+            "yanchor": "top",
+            "pad": {"b": 6},
+        },
         xaxis_title="Iteration",
         yaxis_title=metric.replace("_", " "),
         showlegend=True,
-        margin={"l": 70, "r": 45, "t": 95, "b": 80},
+        margin={"l": 70, "r": 45, "t": 92, "b": 80},
         legend={
             "orientation": "h",
             "yanchor": "bottom",

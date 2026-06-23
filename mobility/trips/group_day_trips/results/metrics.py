@@ -6,6 +6,10 @@ from typing import Literal
 import polars as pl
 
 from mobility.reports import TransportZoneMaps
+from mobility.runtime.assets.resolver import (
+    asset_resolution_context,
+    get_current_asset_resolver,
+)
 
 from .assets.final_state_metrics import Immobility, TripCountByDemandGroup
 from .assets.person_metrics import (
@@ -44,6 +48,7 @@ NormalizeScope = Literal["zone", "study_area"]
 IterationSelector = str | int | list[int] | range
 MetricReference = Literal["external"] | tuple[Literal["scenario"], str] | None
 ReferenceView = Literal["gap", "values"]
+DemandGroupSelector = str | int | list[str | int] | tuple[str | int, ...] | None
 
 REFERENCE_DIMENSIONS = {"mode", "activity", "distance_bin", "time_bin"}
 
@@ -93,12 +98,19 @@ class GroupDayTripsResultMetrics:
         self.results = results
         self._transport_zone_maps = None
 
-    def _table(self, table_name: str, *, iterations: IterationSelector = "last") -> ScopedRunTable:
+    def _table(
+        self,
+        table_name: str,
+        *,
+        iterations: IterationSelector = "last",
+        columns: list[str] | tuple[str, ...] | None = None,
+    ) -> ScopedRunTable:
         """Return one scoped run output table for this result set."""
         return ScopedRunTable(
             results=self.results,
             table_name=table_name,
             iterations=iterations,
+            columns=columns,
         )
 
     def metric(
@@ -113,6 +125,9 @@ class GroupDayTripsResultMetrics:
         reference_view: ReferenceView = "gap",
         inner_zone_residents_only: bool = False,
         iterations: IterationSelector = "last",
+        home_zone_ids: DemandGroupSelector = None,
+        csp: DemandGroupSelector = None,
+        modes: DemandGroupSelector = None,
         output: MetricOutput = "table",
         scenarios: str | list[str] | tuple[str, ...] | None = None,
         width: int = 760,
@@ -125,6 +140,59 @@ class GroupDayTripsResultMetrics:
         min_line_width: float = 0.1,
     ) -> pl.DataFrame:
         """Return one simple trip metric, optionally split and normalized."""
+        with asset_resolution_context(get_current_asset_resolver()):
+            return self._metric(
+                name,
+                by_zone=by_zone,
+                by_variable=by_variable,
+                normalize_by=normalize_by,
+                normalize_scope=normalize_scope,
+                reference=reference,
+                reference_view=reference_view,
+                inner_zone_residents_only=inner_zone_residents_only,
+                iterations=iterations,
+                home_zone_ids=home_zone_ids,
+                csp=csp,
+                modes=modes,
+                output=output,
+                scenarios=scenarios,
+                width=width,
+                height=height,
+                labels=labels,
+                n_largest=n_largest,
+                min_value=min_value,
+                min_share=min_share,
+                max_line_width=max_line_width,
+                min_line_width=min_line_width,
+            )
+
+    def _metric(
+        self,
+        name: MetricName,
+        *,
+        by_zone: ZoneDimensions | None,
+        by_variable: VariableDimension | None,
+        normalize_by: NormalizeBy | None,
+        normalize_scope: NormalizeScope | None,
+        reference: MetricReference,
+        reference_view: ReferenceView,
+        inner_zone_residents_only: bool,
+        iterations: IterationSelector,
+        home_zone_ids: DemandGroupSelector,
+        csp: DemandGroupSelector,
+        modes: DemandGroupSelector,
+        output: MetricOutput,
+        scenarios: str | list[str] | tuple[str, ...] | None,
+        width: int,
+        height: int,
+        labels: bool,
+        n_largest: int | None,
+        min_value: float | None,
+        min_share: float | None,
+        max_line_width: float,
+        min_line_width: float,
+    ) -> pl.DataFrame:
+        """Compute one simple trip metric inside the caller's asset resolver."""
         if name not in METRIC_SPECS:
             raise ValueError(
                 "Unknown metric name. Expected one of: "
@@ -132,7 +200,7 @@ class GroupDayTripsResultMetrics:
                 + "."
             )
         spec = METRIC_SPECS[name]
-        return self._metric(
+        return self._metric_values(
             quantity=spec.quantity,
             quantity_column=spec.quantity_column,
             indicator=spec.indicator,
@@ -144,6 +212,9 @@ class GroupDayTripsResultMetrics:
             reference_view=reference_view,
             inner_zone_residents_only=inner_zone_residents_only,
             iterations=iterations,
+            home_zone_ids=home_zone_ids,
+            csp=csp,
+            modes=modes,
             output=output,
             scenarios=scenarios,
             width=width,
@@ -335,7 +406,7 @@ class GroupDayTripsResultMetrics:
             )
         return values
 
-    def _metric(
+    def _metric_values(
         self,
         *,
         quantity: str,
@@ -349,6 +420,9 @@ class GroupDayTripsResultMetrics:
         reference_view: ReferenceView,
         inner_zone_residents_only: bool,
         iterations: IterationSelector,
+        home_zone_ids: DemandGroupSelector,
+        csp: DemandGroupSelector,
+        modes: DemandGroupSelector,
         output: MetricOutput,
         scenarios: str | list[str] | tuple[str, ...] | None,
         width: int,
@@ -369,8 +443,11 @@ class GroupDayTripsResultMetrics:
             by_zone=by_zone,
             by_variable=by_variable,
         )
+        self._validate_demand_group_filters(home_zone_ids=home_zone_ids, csp=csp, modes=modes)
         reference_kind = self._reference_kind(reference)
         self._validate_reference_view(reference_view, reference_kind=reference_kind)
+        if reference_kind == "external" and self._has_metric_filter(home_zone_ids=home_zone_ids, csp=csp, modes=modes):
+            raise ValueError("External references are not available with metric filters.")
         if reference_kind == "external" and indicator is None:
             raise ValueError(f"No reference is available for {quantity}.")
         if reference_kind == "external" and not self.results.uses_last_iteration(iterations):
@@ -388,7 +465,8 @@ class GroupDayTripsResultMetrics:
         variable_column = self._variable_column(by_variable) if by_variable is not None else None
         group_columns = zone_columns + ([variable_column] if variable_column is not None else [])
 
-        if quantity == "trip_count":
+        has_metric_filter = self._has_metric_filter(home_zone_ids=home_zone_ids, csp=csp, modes=modes)
+        if quantity == "trip_count" and not has_metric_filter:
             values = self._trip_count(
                 output_column=(
                     "trip_count"
@@ -405,11 +483,59 @@ class GroupDayTripsResultMetrics:
                     values,
                     normalize_scope=normalize_scope,
                     zone_column=zone_column,
+                group_columns=group_columns,
+                value_column="trip_count",
+                output_column=metric_column,
+                inner_zone_residents_only=inner_zone_residents_only,
+                iterations=iterations,
+                home_zone_ids=home_zone_ids,
+                csp=csp,
+            )
+            elif normalize_by == "metric_total":
+                values = self._with_metric_total_share(
+                    values,
+                    denominator_columns=self._denominator_columns(
+                        normalize_scope=normalize_scope,
+                        zone_column=zone_column,
+                    ),
+                    group_columns=group_columns,
+                    value_column="trip_count",
+                    output_column=metric_column,
+                )
+        elif quantity == "trip_count":
+            trip_count_by_replication = self._trip_count_by_replication(
+                group_columns=group_columns,
+                inner_zone_residents_only=inner_zone_residents_only,
+                iterations=iterations,
+                value_column="trip_count",
+                home_zone_ids=home_zone_ids,
+                csp=csp,
+                modes=modes,
+            )
+            output_columns = RESULT_COLUMNS + group_columns
+            values = (
+                trip_count_by_replication
+                .group_by(output_columns)
+                .agg(
+                    pl.col("trip_count").mean().alias("trip_count"),
+                    pl.col("trip_count").std().alias("trip_count_std"),
+                    pl.col("replication").n_unique().cast(pl.UInt32).alias("n_replications"),
+                )
+                .sort(output_columns)
+            )
+            if normalize_by == "person_count":
+                values = self._with_person_count_normalization(
+                    values,
+                    normalize_scope=normalize_scope,
+                    zone_column=zone_column,
                     group_columns=group_columns,
                     value_column="trip_count",
                     output_column=metric_column,
                     inner_zone_residents_only=inner_zone_residents_only,
                     iterations=iterations,
+                    home_zone_ids=home_zone_ids,
+                    csp=csp,
+                    modes=modes,
                 )
             elif normalize_by == "metric_total":
                 values = self._with_metric_total_share(
@@ -429,6 +555,9 @@ class GroupDayTripsResultMetrics:
                 group_columns=group_columns,
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
+                home_zone_ids=home_zone_ids,
+                csp=csp,
+                modes=modes,
             )
             if normalize_by == "person_count":
                 values = self._with_person_count_normalization(
@@ -440,6 +569,8 @@ class GroupDayTripsResultMetrics:
                     output_column=metric_column,
                     inner_zone_residents_only=inner_zone_residents_only,
                     iterations=iterations,
+                    home_zone_ids=home_zone_ids,
+                    csp=csp,
                 )
             elif normalize_by == "metric_total":
                 values = self._with_metric_total_share(
@@ -466,6 +597,8 @@ class GroupDayTripsResultMetrics:
                     normalize_scope=normalize_scope,
                     inner_zone_residents_only=inner_zone_residents_only,
                     iterations=iterations,
+                    home_zone_ids=home_zone_ids,
+                    csp=csp,
                 )
                 values = self._with_scenario_reference(
                     values,
@@ -891,7 +1024,7 @@ class GroupDayTripsResultMetrics:
             for column in per_replication_values.columns
             if column not in SCOPE_COLUMNS + [metric_column]
         ]
-        pairing_columns = ["day_type", "iteration", "replication"] + dimension_columns
+        pairing_columns = ["sensitivity_case", "day_type", "iteration", "replication"] + dimension_columns
         paired_output_columns = RESULT_COLUMNS + dimension_columns
 
         reference_rows = (
@@ -903,6 +1036,28 @@ class GroupDayTripsResultMetrics:
             )
         )
         model_rows = values.filter(pl.col("scenario").is_in(model_scenarios))
+        scope_match_columns = [column for column in RESULT_COLUMNS if column != "scenario"]
+        model_keys = model_rows.select(["scenario"] + join_columns).unique()
+        reference_keys_for_models = (
+            model_rows
+            .select(RESULT_COLUMNS)
+            .unique()
+            .join(
+                reference_rows.select(join_columns).unique(),
+                on=scope_match_columns,
+                how="inner",
+            )
+            .select(["scenario"] + join_columns)
+        )
+        model_index = pl.concat(
+            [model_keys, reference_keys_for_models],
+            how="vertical_relaxed",
+        ).unique()
+        model_rows = (
+            model_index
+            .join(model_rows, on=["scenario"] + join_columns, how="left")
+            .with_columns(pl.col(metric_column).fill_null(0.0))
+        )
         output_columns = [
             column
             for column in model_rows.columns
@@ -922,9 +1077,36 @@ class GroupDayTripsResultMetrics:
         model_replications = per_replication_values.filter(
             pl.col("scenario").is_in(model_scenarios)
         )
+        replication_scope_match_columns = [column for column in SCOPE_COLUMNS if column != "scenario"]
+        model_replication_columns = SCOPE_COLUMNS + dimension_columns
+        model_replication_keys = model_replications.select(model_replication_columns).unique()
+        reference_replication_keys_for_models = (
+            model_replications
+            .select(SCOPE_COLUMNS)
+            .unique()
+            .join(
+                reference_replications.select(pairing_columns).unique(),
+                on=replication_scope_match_columns,
+                how="inner",
+            )
+            .select(model_replication_columns)
+        )
+        replication_index = pl.concat(
+            [model_replication_keys, reference_replication_keys_for_models],
+            how="vertical_relaxed",
+        ).unique()
+        model_replications = (
+            replication_index
+            .join(model_replications, on=model_replication_columns, how="left")
+            .with_columns(pl.col(metric_column).fill_null(0.0))
+        )
+        reference_replications = reference_replications.with_columns(
+            pl.col(reference_column).fill_null(0.0)
+        )
         paired_gaps = (
             model_replications
-            .join(reference_replications, on=pairing_columns, how="inner")
+            .join(reference_replications, on=pairing_columns, how="left")
+            .with_columns(pl.col(reference_column).fill_null(0.0))
             .with_columns(
                 paired_gap=pl.col(metric_column) - pl.col(reference_column),
             )
@@ -940,6 +1122,7 @@ class GroupDayTripsResultMetrics:
             .join(reference_rows, on=join_columns, how="left")
             .join(paired_gaps, on=paired_output_columns, how="left")
             .with_columns(
+                pl.col(reference_column).fill_null(0.0),
                 reference_source=pl.lit(f"scenario:{reference_scenario}"),
                 relative_gap=(
                     pl.col("gap") / pl.col(reference_column).abs().clip(1e-12)
@@ -1253,6 +1436,9 @@ class GroupDayTripsResultMetrics:
         group_columns: list[str],
         inner_zone_residents_only: bool,
         iterations: IterationSelector,
+        home_zone_ids: DemandGroupSelector = None,
+        csp: DemandGroupSelector = None,
+        modes: DemandGroupSelector = None,
     ) -> pl.DataFrame:
         """Return an absolute weighted quantity averaged over replications."""
         plan_steps = self._metric_plan_steps(
@@ -1260,7 +1446,20 @@ class GroupDayTripsResultMetrics:
             group_columns=group_columns,
             inner_zone_residents_only=inner_zone_residents_only,
             iterations=iterations,
+            attach_quantity=False,
+            home_zone_ids=home_zone_ids,
+            csp=csp,
+            modes=modes,
         )
+        if quantity_column not in plan_steps.collect_schema().names():
+            return self._weighted_quantity_from_costs(
+                plan_steps,
+                quantity_column=quantity_column,
+                output_column=output_column,
+                group_columns=group_columns,
+                iterations=iterations,
+            )
+
         required_columns = set(SCOPE_COLUMNS + group_columns + ["activity_seq_id", quantity_column, "n_persons"])
         missing_columns = required_columns.difference(plan_steps.collect_schema().names())
         if missing_columns:
@@ -1279,6 +1478,11 @@ class GroupDayTripsResultMetrics:
                     pl.col(quantity_column).cast(pl.Float64)
                     * pl.col("n_persons").cast(pl.Float64)
                 ).sum()
+            )
+            .pipe(
+                complete_missing_replication_groups,
+                group_columns=group_columns,
+                value_column="value",
             )
             .group_by(output_columns)
             .agg(
@@ -1302,6 +1506,9 @@ class GroupDayTripsResultMetrics:
         normalize_scope: NormalizeScope | None,
         inner_zone_residents_only: bool,
         iterations: IterationSelector,
+        home_zone_ids: DemandGroupSelector = None,
+        csp: DemandGroupSelector = None,
+        modes: DemandGroupSelector = None,
     ) -> pl.DataFrame:
         """Return metric values before averaging replications."""
         if quantity == "trip_count":
@@ -1311,6 +1518,9 @@ class GroupDayTripsResultMetrics:
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
                 value_column=value_column,
+                home_zone_ids=home_zone_ids,
+                csp=csp,
+                modes=modes,
             )
         else:
             value_column = quantity
@@ -1320,6 +1530,9 @@ class GroupDayTripsResultMetrics:
                 group_columns=group_columns,
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
+                home_zone_ids=home_zone_ids,
+                csp=csp,
+                modes=modes,
             )
 
         if normalize_by == "person_count":
@@ -1332,6 +1545,8 @@ class GroupDayTripsResultMetrics:
                 output_column=metric_column,
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
+                home_zone_ids=home_zone_ids,
+                csp=csp,
             )
         elif normalize_by == "metric_total":
             per_replication = self._with_metric_total_share_by_replication(
@@ -1356,12 +1571,18 @@ class GroupDayTripsResultMetrics:
         inner_zone_residents_only: bool,
         iterations: IterationSelector,
         value_column: str,
+        home_zone_ids: DemandGroupSelector = None,
+        csp: DemandGroupSelector = None,
+        modes: DemandGroupSelector = None,
     ) -> pl.DataFrame:
         """Return weighted trip counts by replication."""
         plan_steps = self._metric_plan_steps(
             group_columns=group_columns,
             inner_zone_residents_only=inner_zone_residents_only,
             iterations=iterations,
+            home_zone_ids=home_zone_ids,
+            csp=csp,
+            modes=modes,
         )
         return (
             plan_steps
@@ -1384,6 +1605,9 @@ class GroupDayTripsResultMetrics:
         group_columns: list[str],
         inner_zone_residents_only: bool,
         iterations: IterationSelector,
+        home_zone_ids: DemandGroupSelector = None,
+        csp: DemandGroupSelector = None,
+        modes: DemandGroupSelector = None,
     ) -> pl.DataFrame:
         """Return one weighted quantity by replication."""
         plan_steps = self._metric_plan_steps(
@@ -1391,7 +1615,20 @@ class GroupDayTripsResultMetrics:
             group_columns=group_columns,
             inner_zone_residents_only=inner_zone_residents_only,
             iterations=iterations,
+            attach_quantity=False,
+            home_zone_ids=home_zone_ids,
+            csp=csp,
+            modes=modes,
         )
+        if quantity_column not in plan_steps.collect_schema().names():
+            return self._weighted_quantity_from_costs_by_replication(
+                plan_steps,
+                quantity_column=quantity_column,
+                output_column=output_column,
+                group_columns=group_columns,
+                iterations=iterations,
+            )
+
         return (
             plan_steps
             .filter(pl.col("activity_seq_id") != 0)
@@ -1401,6 +1638,11 @@ class GroupDayTripsResultMetrics:
                     pl.col(quantity_column).cast(pl.Float64)
                     * pl.col("n_persons").cast(pl.Float64)
                 ).sum().alias(output_column)
+            )
+            .pipe(
+                complete_missing_replication_groups,
+                group_columns=group_columns,
+                value_column=output_column,
             )
             .collect(engine="streaming")
         )
@@ -1412,34 +1654,226 @@ class GroupDayTripsResultMetrics:
         group_columns: list[str],
         inner_zone_residents_only: bool,
         iterations: IterationSelector,
+        attach_quantity: bool = True,
+        home_zone_ids: DemandGroupSelector = None,
+        csp: DemandGroupSelector = None,
+        modes: DemandGroupSelector = None,
     ) -> pl.LazyFrame:
         """Return plan steps with the columns needed by metric queries."""
-        if quantity_column is None:
-            plan_steps = self._table("plan_steps", iterations=iterations).get()
+        plan_columns = self._metric_plan_step_columns(
+            quantity_column=quantity_column,
+            group_columns=group_columns,
+            inner_zone_residents_only=inner_zone_residents_only,
+            home_zone_ids=home_zone_ids,
+            csp=csp,
+            modes=modes,
+        )
+        if quantity_column is None or not attach_quantity:
+            plan_steps = self._table(
+                "plan_steps",
+                iterations=iterations,
+                columns=plan_columns,
+            ).get()
         else:
             plan_steps = self._plan_steps_with_quantity(
                 quantity_column,
                 iterations=iterations,
+                plan_columns=plan_columns,
             )
         needed_demand_columns = [
             column
             for column in group_columns
             if column in DEMAND_GROUP_COLUMNS
         ]
+        if home_zone_ids is not None and "home_zone_id" not in needed_demand_columns:
+            needed_demand_columns.append("home_zone_id")
+        if csp is not None and "csp" not in needed_demand_columns:
+            needed_demand_columns.append("csp")
         if inner_zone_residents_only and "home_zone_id" not in needed_demand_columns:
             needed_demand_columns.append("home_zone_id")
         if needed_demand_columns:
             plan_steps = add_demand_group_columns(
                 plan_steps,
-                self._table("demand_groups", iterations=iterations).get(),
+                self._table(
+                    "demand_groups",
+                    iterations=iterations,
+                    columns=self._demand_group_columns(needed_demand_columns),
+                ).get(),
                 needed_demand_columns,
             )
+        plan_steps = self._filter_demand_group_rows(
+            plan_steps,
+            home_zone_ids=home_zone_ids,
+            csp=csp,
+            modes=modes,
+        )
         if inner_zone_residents_only:
             plan_steps = filter_plan_steps_to_inner_zone_residents(
                 plan_steps,
                 self.results.transport_zones,
             )
         return with_analysis_dimensions(plan_steps, group_columns)
+
+    def _weighted_quantity_from_costs(
+        self,
+        plan_steps: pl.LazyFrame,
+        *,
+        quantity_column: str,
+        output_column: str,
+        group_columns: list[str],
+        iterations: IterationSelector,
+    ) -> pl.DataFrame:
+        """Return a weighted quantity after joining route-level flows to costs."""
+        output_columns = RESULT_COLUMNS + group_columns
+        values = self._route_flows_with_cost_quantity(
+            plan_steps,
+            quantity_column=quantity_column,
+            group_columns=group_columns,
+            iterations=iterations,
+        )
+        return (
+            values
+            .group_by(SCOPE_COLUMNS + group_columns)
+            .agg(
+                value=(
+                    pl.col(quantity_column).cast(pl.Float64)
+                    * pl.col("n_persons").cast(pl.Float64)
+                ).sum()
+            )
+            .pipe(
+                complete_missing_replication_groups,
+                group_columns=group_columns,
+                value_column="value",
+            )
+            .group_by(output_columns)
+            .agg(
+                pl.col("value").mean().alias(output_column),
+                pl.col("value").std().alias(f"{output_column}_std"),
+                pl.col("replication").n_unique().cast(pl.UInt32).alias("n_replications"),
+            )
+            .sort(output_columns)
+            .collect(engine="streaming")
+        )
+
+    def _weighted_quantity_from_costs_by_replication(
+        self,
+        plan_steps: pl.LazyFrame,
+        *,
+        quantity_column: str,
+        output_column: str,
+        group_columns: list[str],
+        iterations: IterationSelector,
+    ) -> pl.DataFrame:
+        """Return a per-replication weighted quantity using route-level costs."""
+        values = self._route_flows_with_cost_quantity(
+            plan_steps,
+            quantity_column=quantity_column,
+            group_columns=group_columns,
+            iterations=iterations,
+        )
+        return (
+            values
+            .group_by(SCOPE_COLUMNS + group_columns)
+            .agg(
+                (
+                    pl.col(quantity_column).cast(pl.Float64)
+                    * pl.col("n_persons").cast(pl.Float64)
+                ).sum().alias(output_column)
+            )
+            .pipe(
+                complete_missing_replication_groups,
+                group_columns=group_columns,
+                value_column=output_column,
+            )
+            .collect(engine="streaming")
+        )
+
+    def _route_flows_with_cost_quantity(
+        self,
+        plan_steps: pl.LazyFrame,
+        *,
+        quantity_column: str,
+        group_columns: list[str],
+        iterations: IterationSelector,
+    ) -> pl.LazyFrame:
+        """Aggregate plan steps to OD-mode flows before joining transport costs."""
+        route_columns = ["from", "to", "mode"]
+        join_columns = SCOPE_COLUMNS + route_columns
+        flow_columns = list(dict.fromkeys(SCOPE_COLUMNS + group_columns + route_columns))
+        flows = (
+            plan_steps
+            .filter(pl.col("activity_seq_id") != 0)
+            .with_columns(pl.col(column).cast(pl.String) for column in route_columns)
+            .group_by(flow_columns)
+            .agg(pl.col("n_persons").cast(pl.Float64).sum().alias("n_persons"))
+        )
+        costs = (
+            self._table(
+                "costs",
+                iterations=iterations,
+                columns=join_columns + [quantity_column],
+            )
+            .get()
+            .with_columns(pl.col(column).cast(pl.String) for column in route_columns)
+            .select(join_columns + [quantity_column])
+        )
+        return flows.join(costs, on=join_columns, how="left")
+
+    @staticmethod
+    def _metric_plan_step_columns(
+        *,
+        quantity_column: str | None,
+        group_columns: list[str],
+        inner_zone_residents_only: bool,
+        home_zone_ids: DemandGroupSelector = None,
+        csp: DemandGroupSelector = None,
+        modes: DemandGroupSelector = None,
+    ) -> list[str]:
+        """Return raw plan-step columns needed for one metric query."""
+        columns = list(SCOPE_COLUMNS) + ["activity_seq_id", "n_persons"]
+        if quantity_column is not None:
+            columns.append(quantity_column)
+        if quantity_column not in {None, "distance", "time"}:
+            columns.extend(["from", "to", "mode"])
+        if modes is not None:
+            columns.append("mode")
+        needed_demand_columns = [
+            column
+            for column in group_columns
+            if column in DEMAND_GROUP_COLUMNS
+        ]
+        if home_zone_ids is not None and "home_zone_id" not in needed_demand_columns:
+            needed_demand_columns.append("home_zone_id")
+        if csp is not None and "csp" not in needed_demand_columns:
+            needed_demand_columns.append("csp")
+        if inner_zone_residents_only and "home_zone_id" not in needed_demand_columns:
+            needed_demand_columns.append("home_zone_id")
+        if home_zone_ids is not None and "home_zone_id" not in needed_demand_columns:
+            needed_demand_columns.append("home_zone_id")
+        if csp is not None and "csp" not in needed_demand_columns:
+            needed_demand_columns.append("csp")
+        if needed_demand_columns:
+            columns.extend(needed_demand_columns)
+            columns.append("demand_group_id")
+            columns.append("demand_subgroup_id")
+        raw_group_columns = {
+            "origin_zone_id": "from",
+            "destination_zone_id": "to",
+            "mode": "mode",
+            "activity": "activity",
+            "distance_bin": "distance",
+            "time_bin": "time",
+        }
+        for group_column in group_columns:
+            raw_column = raw_group_columns.get(group_column)
+            if raw_column is not None:
+                columns.append(raw_column)
+        return list(dict.fromkeys(columns))
+
+    @staticmethod
+    def _demand_group_columns(extra_columns: list[str]) -> list[str]:
+        """Return scoped demand-group columns needed for joins or population."""
+        return list(dict.fromkeys(SCOPE_COLUMNS + ["demand_group_id", "demand_subgroup_id", "n_persons"] + list(extra_columns)))
 
     def _with_person_count_normalization_by_replication(
         self,
@@ -1452,6 +1886,8 @@ class GroupDayTripsResultMetrics:
         output_column: str,
         inner_zone_residents_only: bool,
         iterations: IterationSelector,
+        home_zone_ids: DemandGroupSelector = None,
+        csp: DemandGroupSelector = None,
     ) -> pl.DataFrame:
         """Normalize one per-replication metric by population."""
         if normalize_scope == "zone":
@@ -1463,6 +1899,8 @@ class GroupDayTripsResultMetrics:
                 by_replication=True,
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
+                home_zone_ids=home_zone_ids,
+                csp=csp,
             )
             join_columns = SCOPE_COLUMNS + [zone_column]
         else:
@@ -1470,6 +1908,8 @@ class GroupDayTripsResultMetrics:
                 by_replication=True,
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
+                home_zone_ids=home_zone_ids,
+                csp=csp,
             )
             join_columns = SCOPE_COLUMNS
 
@@ -1513,6 +1953,8 @@ class GroupDayTripsResultMetrics:
         output_column: str,
         inner_zone_residents_only: bool,
         iterations: IterationSelector,
+        home_zone_ids: DemandGroupSelector = None,
+        csp: DemandGroupSelector = None,
     ) -> pl.DataFrame:
         """Normalize a metric by population at the requested scope."""
         if normalize_scope == "zone":
@@ -1523,12 +1965,16 @@ class GroupDayTripsResultMetrics:
                 zone_column=zone_column,
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
+                home_zone_ids=home_zone_ids,
+                csp=csp,
             )
             join_columns = RESULT_COLUMNS + [zone_column]
         else:
             population = self._population(
                 inner_zone_residents_only=inner_zone_residents_only,
                 iterations=iterations,
+                home_zone_ids=home_zone_ids,
+                csp=csp,
             )
             join_columns = RESULT_COLUMNS
 
@@ -1574,14 +2020,32 @@ class GroupDayTripsResultMetrics:
         quantity_column: str,
         *,
         iterations: IterationSelector,
+        plan_columns: list[str] | None = None,
     ) -> pl.LazyFrame:
         """Return plan steps, joining costs when the requested quantity is absent."""
-        plan_steps = self._table("plan_steps", iterations=iterations).get()
+        plan_steps = self._table(
+            "plan_steps",
+            iterations=iterations,
+            columns=plan_columns,
+        ).get()
         if quantity_column in plan_steps.collect_schema().names():
             return plan_steps
 
-        costs = self._table("costs", iterations=iterations).get()
         join_columns = SCOPE_COLUMNS + ["from", "to", "mode"]
+        costs = self._table(
+            "costs",
+            iterations=iterations,
+            columns=join_columns + [quantity_column],
+        ).get()
+        route_join_columns = ["from", "to", "mode"]
+        plan_steps = plan_steps.with_columns(
+            pl.col(column).cast(pl.String)
+            for column in route_join_columns
+        )
+        costs = costs.with_columns(
+            pl.col(column).cast(pl.String)
+            for column in route_join_columns
+        )
         return plan_steps.join(
             costs.select(join_columns + [quantity_column]),
             on=join_columns,
@@ -1599,6 +2063,87 @@ class GroupDayTripsResultMetrics:
             return values
         selected_scenarios = select_scenarios(self.results, scenarios)
         return values.filter(pl.col("scenario").is_in(selected_scenarios))
+
+    @staticmethod
+    def _selector_values(
+        selector: DemandGroupSelector,
+        *,
+        name: str,
+        allow_int: bool = False,
+    ) -> list[str]:
+        """Return a demand-group selector as a non-empty string list."""
+        if selector is None:
+            return []
+        if isinstance(selector, (str, int)):
+            values = [selector]
+        elif isinstance(selector, (list, tuple)):
+            values = list(selector)
+        else:
+            raise TypeError(f"{name} should be one value or a list of values.")
+        if not values:
+            raise ValueError(f"{name} should not be an empty list.")
+        allowed_types = (str, int) if allow_int else (str,)
+        if not all(isinstance(value, allowed_types) for value in values):
+            expected = "strings or integers" if allow_int else "strings"
+            raise TypeError(f"{name} should only contain {expected}.")
+        return [str(value) for value in values]
+
+    @classmethod
+    def _validate_demand_group_filters(
+        cls,
+        *,
+        home_zone_ids: DemandGroupSelector,
+        csp: DemandGroupSelector,
+        modes: DemandGroupSelector = None,
+    ) -> None:
+        """Check metric filter selectors."""
+        cls._selector_values(home_zone_ids, name="home_zone_ids", allow_int=True)
+        cls._selector_values(csp, name="csp")
+        cls._selector_values(modes, name="modes")
+
+    @staticmethod
+    def _has_metric_filter(
+        *,
+        home_zone_ids: DemandGroupSelector,
+        csp: DemandGroupSelector,
+        modes: DemandGroupSelector = None,
+    ) -> bool:
+        """Return whether one metric row filter is active."""
+        return home_zone_ids is not None or csp is not None or modes is not None
+
+    @classmethod
+    def _filter_demand_group_rows(
+        cls,
+        frame: pl.LazyFrame,
+        *,
+        home_zone_ids: DemandGroupSelector,
+        csp: DemandGroupSelector,
+        modes: DemandGroupSelector = None,
+    ) -> pl.LazyFrame:
+        """Filter rows to selected resident groups and modes."""
+        home_zone_values = cls._selector_values(home_zone_ids, name="home_zone_ids", allow_int=True)
+        csp_values = cls._selector_values(csp, name="csp")
+        mode_values = cls._selector_values(modes, name="modes")
+        if not home_zone_values and not csp_values and not mode_values:
+            return frame
+        schema = frame.collect_schema().names()
+        filters = []
+        if home_zone_values:
+            if "home_zone_id" not in schema:
+                raise ValueError("Filtering by home_zone_ids needs `home_zone_id`.")
+            filters.append(pl.col("home_zone_id").cast(pl.String).is_in(home_zone_values))
+        if csp_values:
+            if "csp" not in schema:
+                raise ValueError("Filtering by csp needs `csp`.")
+            filters.append(pl.col("csp").cast(pl.String).is_in(csp_values))
+        if mode_values:
+            if "mode" not in schema:
+                raise ValueError("Filtering by modes needs `mode`.")
+            filters.append(pl.col("mode").cast(pl.String).is_in(mode_values))
+        predicate = filters[0]
+        for extra_filter in filters[1:]:
+            predicate = predicate & extra_filter
+        return frame.filter(predicate)
 
     def _survey_reference_marginal(self, marginal_columns: list[str]) -> SurveyReferenceMarginal:
         """Build one cached survey-reference marginal."""
@@ -1658,9 +2203,16 @@ class GroupDayTripsResultMetrics:
         by_replication: bool = False,
         inner_zone_residents_only: bool = False,
         iterations: IterationSelector,
+        home_zone_ids: DemandGroupSelector = None,
+        csp: DemandGroupSelector = None,
     ) -> pl.DataFrame:
         """Return resident population for the requested result scope."""
         demand_groups = self._table("demand_groups", iterations=iterations).get()
+        demand_groups = self._filter_demand_group_rows(
+            demand_groups,
+            home_zone_ids=home_zone_ids,
+            csp=csp,
+        )
         if inner_zone_residents_only:
             demand_groups = filter_demand_groups_to_inner_zone_residents(
                 demand_groups,
