@@ -3,6 +3,10 @@ from typing import Any
 
 import polars as pl
 
+from mobility.runtime.logging_levels import TRACE_LEVEL, is_trace_enabled
+
+from .demand_subgroups import DEMAND_UNIT_COLS, with_demand_subgroup_id
+
 
 def log_destination_sequence_diagnostics(
     *,
@@ -10,12 +14,15 @@ def log_destination_sequence_diagnostics(
     source_activity_sequences: pl.DataFrame,
     destination_sequences: pl.DataFrame,
 ) -> None:
-    """Log destination-chain diagnostics only when debug logging is enabled."""
-    if not logging.root.isEnabledFor(logging.DEBUG):
+    """Log destination-chain diagnostics only when trace logging is enabled."""
+    if not is_trace_enabled():
         return
 
+    source_activity_sequences = with_demand_subgroup_id(source_activity_sequences)
+    destination_sequences = with_demand_subgroup_id(destination_sequences)
     chain_lengths = _destination_chain_lengths(destination_sequences)
-    logging.debug(
+    logging.log(
+        TRACE_LEVEL,
         "Destination sequence step counts at iteration %s | grouped=%s",
         iteration,
         _distribution_by_count(chain_lengths, "step_count"),
@@ -25,9 +32,7 @@ def log_destination_sequence_diagnostics(
     if one_step_chains.height == 0:
         return
 
-    one_step_keys = one_step_chains.select(
-        ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"]
-    )
+    one_step_keys = one_step_chains.select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"])
     logging.warning(
         "Destination sequences contain %s one-step chains at iteration %s. "
         "Sample grouped chains: %s | Sample raw rows: %s",
@@ -53,13 +58,13 @@ def _destination_chain_lengths(destination_sequences: pl.DataFrame) -> pl.DataFr
     """Build one row per destination chain with ordered locations."""
     return (
         destination_sequences
-        .group_by(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"])
+        .group_by(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"])
         .agg(
             step_count=pl.len(),
             from_locations=pl.col("from").sort_by("seq_step_index"),
             to_locations=pl.col("to").sort_by("seq_step_index"),
         )
-        .sort(["step_count", "dest_seq_id", "demand_group_id", "activity_seq_id", "time_seq_id"])
+        .sort(["step_count", "dest_seq_id"] + DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"])
     )
 
 
@@ -84,10 +89,10 @@ def _one_step_chain_rows(
         destination_sequences
         .join(
             one_step_keys,
-            on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"],
+            on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"],
             how="inner",
         )
-        .sort(["dest_seq_id", "demand_group_id", "activity_seq_id", "time_seq_id", "seq_step_index"])
+        .sort(["dest_seq_id"] + DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "seq_step_index"])
     )
 
 
@@ -100,11 +105,11 @@ def _source_rows_for_chain_keys(
     return (
         source_activity_sequences
         .join(
-            one_step_keys.select(["demand_group_id", "activity_seq_id", "time_seq_id"]).unique(),
-            on=["demand_group_id", "activity_seq_id", "time_seq_id"],
+            one_step_keys.select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"]).unique(),
+            on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"],
             how="inner",
         )
-        .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "seq_step_index"])
+        .sort(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "seq_step_index"])
     )
 
 
@@ -120,8 +125,8 @@ def log_step_dropout_diagnostics(
     chain_key_cols: list[str],
     transport_zones: Any | None,
 ) -> None:
-    """Log spatialization dropouts only when debug logging is enabled."""
-    if not logging.root.isEnabledFor(logging.DEBUG):
+    """Log spatialization dropouts only when trace logging is enabled."""
+    if not is_trace_enabled():
         return
 
     # Start from the non-anchor rows that must survive this step.
