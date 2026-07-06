@@ -2,15 +2,15 @@ import pathlib
 
 import polars as pl
 
+from mobility.runtime.assets.cache_schema import read_cached_parquet
 from mobility.runtime.assets.file_asset import FileAsset
-from mobility.trips.group_day_trips.plans.demand_subgroups import DEMAND_UNIT_COLS, with_demand_subgroup_id
+from mobility.trips.group_day_trips.plans.demand_subgroups import DEMAND_UNIT_COLS
 
-from .transition_schema import TRANSITION_EVENT_COLUMNS
+from .transition_schema import TRANSITION_EVENT_COLUMNS, TRANSITION_EVENT_SCHEMA
 
 
 def build_transition_events_lazy(transitions: pl.LazyFrame, *, iteration: int) -> pl.LazyFrame:
     """Build the core transition-event table from raw plan-to-plan transitions."""
-    transitions = with_demand_subgroup_id(transitions)
     return transitions.with_columns(
         iteration=pl.lit(iteration).cast(pl.UInt32),
         utility_from=pl.col("utility_from_updated"),
@@ -52,8 +52,6 @@ def add_transition_plan_details(
     possible_plan_steps: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """Attach full from/to plan details to transition events."""
-    transition_events = with_demand_subgroup_id(transition_events)
-    possible_plan_steps = with_demand_subgroup_id(possible_plan_steps)
     plan_keys = DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]
 
     plan_details = (
@@ -172,7 +170,11 @@ class TransitionEventsAsset(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pl.DataFrame:
-        return pl.read_parquet(self.cache_path)
+        return read_cached_parquet(
+            self.cache_path,
+            table_name="transition_events",
+            required_schema=TRANSITION_EVENT_SCHEMA,
+        )
 
     def create_and_get_asset(self) -> pathlib.Path:
         if self.transition_events is None:

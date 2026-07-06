@@ -5,9 +5,13 @@ from typing import Any
 import polars as pl
 from scipy.stats import norm
 
+from mobility.runtime.assets.cache_schema import read_cached_parquet
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from .debug_logs import (
     log_destination_sequence_diagnostics,
+    log_destination_spatialization_step,
+    log_incomplete_destination_draws,
+    log_missing_anchor_destination_samples,
     log_step_dropout_diagnostics,
 )
 from .stable_key_index import StableKeyIndex
@@ -15,60 +19,35 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities.activity import resolve_activity_parameters
 from mobility.runtime.parameter_values import SensitivityCase
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
-from .demand_subgroups import DEMAND_UNIT_COLS, demand_unit_hash, with_demand_subgroup_id
-
-
-def _spatialization_cost_views(costs: pl.DataFrame) -> dict[str, pl.LazyFrame]:
-    """Build the cost projections reused by each destination spatialization step."""
-    costs_lf = costs.lazy()
-    return {
-        "to_candidate": costs_lf.select(
-            [
-                pl.col("from").alias("candidate_from"),
-                pl.col("to").alias("candidate_to"),
-                pl.col("cost").alias("cost_to_candidate"),
-            ]
-        ),
-        "to_anchor": costs_lf.select(
-            [
-                pl.col("from").alias("anchor_from"),
-                pl.col("to").alias("anchor_to_cost"),
-                pl.col("cost").alias("cost_to_anchor"),
-            ]
-        ),
-        "to_home": costs_lf.select(
-            [
-                pl.col("from").alias("home_return_from"),
-                pl.col("to").alias("home_return_to"),
-                pl.col("cost").alias("cost_to_home"),
-            ]
-        ),
-        "anchor_leg_pairs": costs_lf.select(
-            [
-                pl.col("from").alias("anchor_leg_from"),
-                pl.col("to").alias("anchor_leg_to"),
-            ]
-        ).unique(),
-    }
+from .demand_subgroups import DEMAND_UNIT_COLS, DEMAND_UNIT_SCHEMA, demand_unit_hash
 
 
 class DestinationSequences(FileAsset):
     """Persist destination sequences produced for one PopulationGroupDayTrips iteration."""
 
-    OUTPUT_COLUMNS = [
-        "demand_group_id",
-        "demand_subgroup_id",
-        "activity_seq_id",
-        "time_seq_id",
-        "dest_seq_id",
-        "seq_step_index",
-        "from",
-        "to",
-        "departure_time",
-        "arrival_time",
-        "next_departure_time",
-        "iteration",
-    ]
+    OUTPUT_SCHEMA = {
+        "demand_group_id": pl.UInt32,
+        "demand_subgroup_id": pl.UInt32,
+        "activity_seq_id": pl.UInt32,
+        "time_seq_id": pl.UInt32,
+        "dest_seq_id": pl.UInt32,
+        "seq_step_index": pl.UInt8,
+        "from": pl.UInt16,
+        "to": pl.UInt16,
+        "departure_time": pl.Float32,
+        "arrival_time": pl.Float32,
+        "next_departure_time": pl.Float32,
+        "iteration": pl.UInt16,
+    }
+    REQUIRED_SCHEMA = {
+        **DEMAND_UNIT_SCHEMA,
+        "activity_seq_id": pl.UInt32,
+        "time_seq_id": pl.UInt32,
+        "dest_seq_id": pl.UInt32,
+        "seq_step_index": pl.UInt8,
+    }
+
+    OUTPUT_COLUMNS = list(OUTPUT_SCHEMA)
 
     def __init__(
         self,
@@ -117,10 +96,10 @@ class DestinationSequences(FileAsset):
         self.sensitivity_case = sensitivity_case
         self.transport_zones = transport_zones
         self.transport_costs = transport_costs
-        self.current_plans = with_demand_subgroup_id(current_plans) if current_plans is not None else None
-        self.current_plan_steps = with_demand_subgroup_id(current_plan_steps) if current_plan_steps is not None else None
+        self.current_plans = current_plans
+        self.current_plan_steps = current_plan_steps
         self.destination_saturation = destination_saturation
-        self.demand_groups = with_demand_subgroup_id(demand_groups) if demand_groups is not None else None
+        self.demand_groups = demand_groups
         self.costs = costs
         self.parameters = parameters
         self.seed = seed
@@ -162,11 +141,15 @@ class DestinationSequences(FileAsset):
 
     def get_cached_asset(self) -> pl.DataFrame:
         """Return cached destination sequences for one iteration."""
-        return pl.read_parquet(self.cache_path["sequences"])
+        return read_cached_parquet(
+            self.cache_path["sequences"],
+            table_name="destination_sequences",
+            required_schema=self.REQUIRED_SCHEMA,
+        )
 
 
     def get_index(self) -> pl.DataFrame:
-        """Return the destination-chain index cached with this iteration."""
+        """Return the destination-sequence index cached with this iteration."""
         return pl.read_parquet(self.cache_path["index"])
 
 
@@ -177,26 +160,8 @@ class DestinationSequences(FileAsset):
         if self.seed is None and self.seed_asset is not None:
             self.seed = self.seed_asset.get()["destination_sequences"]
 
-        if self.activities is None:
-            raise ValueError("Cannot build destination sequences without activities.")
-        if self.transport_zones is None:
-            raise ValueError("Cannot build destination sequences without transport zones.")
-        if self.destination_saturation is None:
-            raise ValueError("Cannot build destination sequences without destination saturation.")
-        if self.demand_groups is None:
-            raise ValueError("Cannot build destination sequences without demand groups.")
-        if self.costs is None:
-            raise ValueError("Cannot build destination sequences without costs.")
-        if self.parameters is None:
-            raise ValueError("Cannot build destination sequences without parameters.")
-        if self.seed is None:
-            raise ValueError("Cannot build destination sequences without a seed.")
-        if self.resolved_activity_parameters is None:
-            raise ValueError("Cannot build destination sequences without resolved activity parameters.")
-        if self.current_plans is None:
-            raise ValueError("Cannot build destination sequences without current plans.")
-
-        destination_sequences = self._build_destination_sequences_for_scope()
+        scope = self.parameters.behavior_change.scope_at(self.iteration)
+        destination_sequences = self._build_destination_sequences_for_scope(scope)
 
         self.cache_path["sequences"].parent.mkdir(parents=True, exist_ok=True)
         destination_sequences.write_parquet(self.cache_path["sequences"])
@@ -209,29 +174,27 @@ class DestinationSequences(FileAsset):
 
         state = self.previous_state.get()
         if self.current_plans is None:
-            self.current_plans = with_demand_subgroup_id(state.current_plans)
+            self.current_plans = state.current_plans
         if self.current_plan_steps is None:
-            self.current_plan_steps = with_demand_subgroup_id(state.current_plan_steps)
+            self.current_plan_steps = state.current_plan_steps
         if self.destination_saturation is None:
             self.destination_saturation = state.destination_saturation
         if self.demand_groups is None:
-            self.demand_groups = with_demand_subgroup_id(state.demand_groups)
+            self.demand_groups = state.demand_groups
         if self.costs is None and self.transport_costs is not None:
             self.costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
         elif self.costs is None:
             self.costs = state.costs
 
-    def _build_destination_sequences_for_scope(self) -> pl.DataFrame:
+    def _build_destination_sequences_for_scope(self, scope: BehaviorChangeScope) -> pl.DataFrame:
         """Return the destination sequences to use for this iteration."""
-        scope = self.parameters.behavior_change.scope_at(self.iteration)
-
         if scope == BehaviorChangeScope.FULL_REPLANNING:
             sampled_sequences = self._sample_all_destination_sequences()
-            return self._with_refreshed_active_destination_sequences(sampled_sequences)
+            return self._with_current_active_destination_sequences(sampled_sequences)
 
         if scope == BehaviorChangeScope.DESTINATION_REPLANNING:
             sampled_sequences = self._sample_active_destination_sequences()
-            return self._with_refreshed_active_destination_sequences(sampled_sequences)
+            return self._with_current_active_destination_sequences(sampled_sequences)
 
         if scope in (BehaviorChangeScope.MODE_REPLANNING, BehaviorChangeScope.NO_TRANSITIONS):
             reused_sequences = self._reuse_current_destination_sequences()
@@ -241,9 +204,7 @@ class DestinationSequences(FileAsset):
         raise ValueError(f"Unsupported behavior change scope: {scope}")
 
     def _sample_all_destination_sequences(self) -> pl.DataFrame:
-        """Sample destination sequences from all non-stay-home activity chains."""
-        if self.activity_sequences is None:
-            raise ValueError("Cannot build destination sequences without activity sequences.")
+        """Sample destination sequences from all non-stay-home activity sequences."""
         return self.run(
             self.activities,
             self.transport_zones,
@@ -257,10 +218,8 @@ class DestinationSequences(FileAsset):
 
     def _sample_active_destination_sequences(self) -> pl.DataFrame:
         """Sample destination sequences for currently active activity sequences only."""
-        if self.activity_sequences is None:
-            raise ValueError("Cannot build destination sequences without activity sequences.")
-        filtered_chains = self.activity_sequences.get_cached_asset()
-        if filtered_chains.height == 0:
+        filtered_sequences = self.activity_sequences.get_cached_asset()
+        if filtered_sequences.height == 0:
             self._cache_empty_destination_sequence_index()
             return self._empty_destination_sequences()
 
@@ -268,7 +227,7 @@ class DestinationSequences(FileAsset):
             self.activities,
             self.transport_zones,
             self.destination_saturation,
-            filtered_chains,
+            filtered_sequences,
             self.demand_groups,
             self.costs,
             self.parameters,
@@ -283,12 +242,6 @@ class DestinationSequences(FileAsset):
 
         if active_dest_sequences.height == 0:
             return self._empty_destination_sequences()
-
-        if self.current_plan_steps is None:
-            raise ValueError(
-                "No current plan steps available for active non-stay-home "
-                f"plans at iteration={self.iteration}."
-            )
 
         reused = (
             self.current_plan_steps.lazy()
@@ -329,12 +282,11 @@ class DestinationSequences(FileAsset):
 
         return reused
 
-    def _with_refreshed_active_destination_sequences(self, sampled_sequences: pl.DataFrame) -> pl.DataFrame:
-        """Append active destination chains when active-mode refresh is enabled."""
+    def _with_current_active_destination_sequences(self, sampled_sequences: pl.DataFrame) -> pl.DataFrame:
+        """Append current active destination sequences when the option is enabled."""
         if not self.parameters.destination_sequences.refresh_active_mode_alternatives:
             return sampled_sequences
 
-        sampled_sequences = with_demand_subgroup_id(sampled_sequences)
         active_sequences = self._reuse_current_destination_sequences()
         if active_sequences.height == 0:
             return sampled_sequences.select(self.OUTPUT_COLUMNS)
@@ -367,25 +319,10 @@ class DestinationSequences(FileAsset):
 
     def _empty_destination_sequences(self) -> pl.DataFrame:
         """Return an empty destination-sequences dataframe with the expected schema."""
-        return pl.DataFrame(
-            schema={
-                "demand_group_id": pl.UInt32,
-                "demand_subgroup_id": pl.UInt32,
-                "activity_seq_id": pl.UInt32,
-                "time_seq_id": pl.UInt32,
-                "dest_seq_id": pl.UInt32,
-                "seq_step_index": pl.UInt8,
-                "from": pl.UInt16,
-                "to": pl.UInt16,
-                "departure_time": pl.Float32,
-                "arrival_time": pl.Float32,
-                "next_departure_time": pl.Float32,
-                "iteration": pl.UInt16,
-            }
-        )
+        return pl.DataFrame(schema=self.OUTPUT_SCHEMA)
 
     def _cache_empty_destination_sequence_index(self) -> None:
-        """Write a carried-forward destination index when no new chain is sampled."""
+        """Write a carried-forward destination index when no new sequence is sampled."""
         empty_keys = pl.DataFrame(schema={"destination_sequence_key": pl.String})
         StableKeyIndex(
             key_cols=["destination_sequence_key"],
@@ -420,12 +357,12 @@ class DestinationSequences(FileAsset):
             self.resolved_activity_parameters,
             parameters.destination_sequences.dest_prob_cutoff,
         )
-        cost_views = _spatialization_cost_views(costs)
+        cost_views = self._spatialization_cost_views(costs)
         activity_sequences = (
             activity_sequences
             .filter(pl.col("activity_seq_id") != 0)
             .join(
-                with_demand_subgroup_id(demand_groups).select(DEMAND_UNIT_COLS + ["home_zone_id"]),
+                demand_groups.select(DEMAND_UNIT_COLS + ["home_zone_id"]),
                 on=DEMAND_UNIT_COLS,
             )
             .select(
@@ -449,7 +386,6 @@ class DestinationSequences(FileAsset):
         anchor_spatialized_sequences = self._spatialize_anchor_activities(
             source_activity_sequences,
             destination_probability,
-            costs,
             parameters.destination_sequences.alpha,
             seed,
             cost_views,
@@ -594,8 +530,6 @@ class DestinationSequences(FileAsset):
         )
         costs_by_bin = destination_probability_inputs[0]
         cost_bin_to_destination = destination_probability_inputs[1]
-        if resolved_activity_parameters is None:
-            raise ValueError("Cannot compute destination probabilities without resolved activity parameters.")
         activities_lambda = {
             activity.name: resolved_activity_parameters[activity.name].radiation_lambda
             for activity in activities
@@ -642,38 +576,140 @@ class DestinationSequences(FileAsset):
         )
 
 
-    def _spatialize_anchor_activities(
-        self,
-        chains: pl.DataFrame,
-        destination_probability: pl.DataFrame,
-        costs: pl.DataFrame,
+    @staticmethod
+    def _spatialization_cost_views(costs: pl.DataFrame) -> dict[str, pl.LazyFrame]:
+        """Build the cost projections reused by each destination spatialization step."""
+        costs_lf = costs.lazy()
+        return {
+            "to_candidate": costs_lf.select(
+                [
+                    pl.col("from").alias("candidate_from"),
+                    pl.col("to").alias("candidate_to"),
+                    pl.col("cost").alias("cost_to_candidate"),
+                ]
+            ),
+            "to_anchor": costs_lf.select(
+                [
+                    pl.col("from").alias("anchor_from"),
+                    pl.col("to").alias("anchor_to_cost"),
+                    pl.col("cost").alias("cost_to_anchor"),
+                ]
+            ),
+            "to_home": costs_lf.select(
+                [
+                    pl.col("from").alias("home_return_from"),
+                    pl.col("to").alias("home_return_to"),
+                    pl.col("cost").alias("cost_to_home"),
+                ]
+            ),
+            "anchor_leg_pairs": costs_lf.select(
+                [
+                    pl.col("from").alias("anchor_leg_from"),
+                    pl.col("to").alias("anchor_leg_to"),
+                ]
+            ).unique(),
+        }
+
+
+    @staticmethod
+    def _sample_sequence_aware_destinations(
+        *,
+        steps_lf: pl.LazyFrame,
+        destination_probability_lf: pl.LazyFrame,
+        origin_cost_lf: pl.LazyFrame,
+        onward_cost_lf: pl.LazyFrame,
+        onward_left_on: list[str],
+        onward_right_on: list[str],
+        onward_cost_col: str,
         alpha: float,
         seed: int,
-        cost_views: dict[str, pl.LazyFrame] | None = None,
+        output_cols: list[str],
+    ) -> tuple[pl.LazyFrame, pl.LazyFrame, pl.LazyFrame, pl.LazyFrame]:
+        """Sample destinations while checking both legs around the candidate zone."""
+        active_probability = destination_probability_lf.join(
+            steps_lf.select(["from", "activity"]).unique(),
+            on=["from", "activity"],
+            how="semi",
+        )
+        candidates = steps_lf.join(active_probability, on=["from", "activity"])
+        candidates_with_origin_costs = candidates.join(
+            origin_cost_lf,
+            left_on=["from", "to"],
+            right_on=["candidate_from", "candidate_to"],
+        )
+        candidates_with_costs = candidates_with_origin_costs.join(
+            onward_cost_lf,
+            left_on=onward_left_on,
+            right_on=onward_right_on,
+        )
+        sampled = (
+            candidates_with_costs
+            .with_columns(
+                sequence_cost_via_candidate=pl.col("cost_to_candidate") + pl.col(onward_cost_col),
+            )
+            .with_columns(
+                p_ij=(
+                    (
+                        pl.col("p_ij").clip(1e-18).log()
+                        - alpha * pl.col("sequence_cost_via_candidate")
+                    ).exp()
+                ),
+            )
+            .with_columns(
+                noise=(
+                    demand_unit_hash(
+                        ["activity_seq_id", "time_seq_id", "dest_draw_id", "to"],
+                        seed=seed,
+                    )
+                    .cast(pl.Float64)
+                    .truediv(pl.lit(18446744073709551616.0))
+                    .log()
+                    .neg()
+                ),
+            )
+            .with_columns(
+                sample_score=pl.col("noise") / pl.col("p_ij").clip(1e-18)
+                + pl.col("to").cast(pl.Float64) * 1e-18
+            )
+            .with_columns(
+                min_score=pl.col("sample_score").min().over(
+                    DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"]
+                )
+            )
+            .filter(pl.col("sample_score") == pl.col("min_score"))
+            .select(output_cols)
+        )
+        return candidates, candidates_with_origin_costs, candidates_with_costs, sampled
+
+
+    def _spatialize_anchor_activities(
+        self,
+        sequences: pl.DataFrame,
+        destination_probability: pl.DataFrame,
+        alpha: float,
+        seed: int,
+        cost_views: dict[str, pl.LazyFrame],
     ) -> pl.DataFrame:
-        """Sample anchor destinations with a forward tour-aware pass.
+        """Choose the anchor destinations of each daily tour.
 
-        Anchor activities are fixed points in the daily schedule, for example
-        `studies`, `work`, and `home`. We sample them before the more flexible
-        non-anchor activities, because later non-anchor steps need to know the
-        next anchor location they are travelling toward.
+        Anchor activities structure the day, such as home, work, and studies.
+        They are sampled before non-anchor activities because a later shopping
+        or leisure stop needs to know the next anchor destination the person is
+        travelling toward.
 
-        The important rule is that anchors are sampled in travel order. A work
-        anchor after a study anchor is sampled from the sampled study location,
-        not independently from home. We also use the same simple two-leg penalty
-        as non-anchor activities:
+        Anchors are sampled in travel order. For example, if a person goes from
+        home to studies and then to work, the work destination is sampled from
+        the sampled studies zone, not independently from home. We also use a
+        simple two-leg penalty:
 
         `current location -> candidate anchor -> home`
 
-        This keeps sampled anchor chains reachable and avoids impossible legs
+        This keeps sampled anchor sequences reachable and avoids impossible legs
         such as sampling a work zone that cannot be reached from the previous
         anchor zone.
         """
         logging.debug("Spatializing anchor activities...")
-        chains = with_demand_subgroup_id(chains)
-        if cost_views is None:
-            cost_views = _spatialization_cost_views(costs)
-        chain_key_cols = [
+        sequence_key_cols = [
             "demand_group_id",
             "demand_subgroup_id",
             "home_zone_id",
@@ -681,305 +717,216 @@ class DestinationSequences(FileAsset):
             "time_seq_id",
             "dest_draw_id",
         ]
+        anchor_output_cols = sequence_key_cols + [
+            "activity",
+            "is_anchor",
+            "seq_step_index",
+            "step_count",
+            "from",
+            "to",
+            "departure_time",
+            "arrival_time",
+            "next_departure_time",
+        ]
         destination_probability_lf = destination_probability.lazy()
         destination_draw_ids = pl.DataFrame(
-            {"dest_draw_id": list(range(1, int(self.parameters.destination_sequences.k_destination_sequences) + 1))},
+            {"dest_draw_id": list(range(int(self.parameters.destination_sequences.k_destination_sequences)))},
             schema={"dest_draw_id": pl.UInt32},
         )
+        sequences = (
+            sequences
+            .sort(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "seq_step_index"])
+            .with_columns(
+                next_anchor_seq_step_index=(
+                    pl.when(pl.col("is_anchor"))
+                    .then(pl.col("seq_step_index"))
+                    .otherwise(pl.lit(None, dtype=pl.UInt8))
+                    .backward_fill()
+                    .over(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"])
+                )
+            )
+        )
 
-        expanded_chains = (
-            chains
+        expanded_anchor_steps = (
+            sequences
+            .filter(pl.col("is_anchor"))
             .join(destination_draw_ids, how="cross")
             .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "seq_step_index"])
         )
+        expanded_non_anchor_steps = (
+            sequences
+            .filter(pl.col("is_anchor").not_())
+            .join(destination_draw_ids, how="cross")
+            .with_columns(
+                pl.lit(None, dtype=pl.UInt16).alias("from"),
+                pl.lit(None, dtype=pl.UInt16).alias("to"),
+            )
+            .select(anchor_output_cols + ["next_anchor_seq_step_index"])
+        )
 
-        # `current_locations` is the last sampled anchor location for each draw.
-        # It starts at home and is updated only when an anchor or home step is
-        # spatialized. Non-anchor steps are sampled later and do not move this
-        # anchor-to-anchor reference point.
+        # Track the previous anchor destination for each draw. Non-anchor
+        # activities are sampled later, so they do not move this location.
         current_locations = (
-            expanded_chains
-            .select(chain_key_cols)
+            expanded_anchor_steps
+            .select(sequence_key_cols)
             .unique()
             .with_columns(pl.col("home_zone_id").alias("from"))
         )
 
-        spatialized_steps: list[pl.DataFrame] = []
-        missing_anchor_samples: list[pl.DataFrame] = []
-        seq_step_index = 1
-        while True:
-            chains_step = (
-                expanded_chains
-                .filter(pl.col("seq_step_index") == seq_step_index)
-                .join(current_locations, on=chain_key_cols)
-            )
-            if chains_step.height == 0:
-                break
+        sampled_anchor_steps_by_position: list[pl.DataFrame] = []
 
-            chains_step_lf = chains_step.lazy()
-            home_steps = (
-                chains_step_lf
+        anchor_step_indexes = expanded_anchor_steps["seq_step_index"].unique().sort().to_list()
+        for seq_step_index in anchor_step_indexes:
+            anchor_steps_at_position = (
+                expanded_anchor_steps
+                .filter(pl.col("seq_step_index") == seq_step_index)
+                .join(current_locations, on=sequence_key_cols)
+            )
+            if anchor_steps_at_position.height == 0:
+                continue
+
+            anchor_steps_at_position_lf = anchor_steps_at_position.lazy()
+
+            # Home is an anchor, but it is not sampled: its destination is
+            # always the household home zone.
+            home_anchor_steps = (
+                anchor_steps_at_position_lf
                 .filter(pl.col("activity") == "home")
                 .with_columns(to=pl.col("home_zone_id"))
-                .select(
-                    [
-                        "demand_group_id",
-                        "demand_subgroup_id",
-                        "home_zone_id",
-                        "activity_seq_id",
-                        "time_seq_id",
-                        "dest_draw_id",
-                        "activity",
-                        "is_anchor",
-                        "seq_step_index",
-                        "step_count",
-                        "from",
-                        "to",
-                        "departure_time",
-                        "arrival_time",
-                        "next_departure_time",
-                    ]
-                )
+                .select(anchor_output_cols)
                 .collect(engine="streaming")
             )
 
-            active_anchor_probability_keys = (
-                chains_step_lf
-                .filter((pl.col("is_anchor")) & (pl.col("activity") != "home"))
-                .select(["from", "activity"])
-                .unique()
-            )
-            active_anchor_probability = destination_probability_lf.join(
-                active_anchor_probability_keys,
-                on=["from", "activity"],
-                how="semi",
-            )
-            anchor_candidates = (
-                chains_step_lf
-                .filter((pl.col("is_anchor")) & (pl.col("activity") != "home"))
-                .join(active_anchor_probability, on=["from", "activity"])
-            )
-            anchors_with_origin_costs = (
-                anchor_candidates
-                .join(
-                    cost_views["to_candidate"],
-                    left_on=["from", "to"],
-                    right_on=["candidate_from", "candidate_to"],
+            non_home_anchor_steps = anchor_steps_at_position.filter(pl.col("activity") != "home")
+            if non_home_anchor_steps.height == 0:
+                sampled_anchor_steps = home_anchor_steps.head(0)
+            else:
+                non_home_anchor_steps_lf = non_home_anchor_steps.lazy()
+
+                # Keep anchor candidates that can be reached from the previous
+                # anchor and can then return home: previous anchor -> candidate
+                # anchor -> home.
+                _, _, _, sampled_anchor_steps_lf = self._sample_sequence_aware_destinations(
+                    steps_lf=non_home_anchor_steps_lf,
+                    destination_probability_lf=destination_probability_lf,
+                    origin_cost_lf=cost_views["to_candidate"],
+                    onward_cost_lf=cost_views["to_home"],
+                    onward_left_on=["to", "home_zone_id"],
+                    onward_right_on=["home_return_from", "home_return_to"],
+                    onward_cost_col="cost_to_home",
+                    alpha=alpha,
+                    seed=seed,
+                    output_cols=anchor_output_cols,
                 )
-            )
-            anchors_with_costs = (
-                anchors_with_origin_costs
-                .join(
-                    cost_views["to_home"],
-                    left_on=["to", "home_zone_id"],
-                    right_on=["home_return_from", "home_return_to"],
-                )
-            )
-            weighted_anchors = (
-                anchors_with_costs
-                .with_columns(
-                    chain_cost_via_candidate=pl.col("cost_to_candidate") + pl.col("cost_to_home"),
-                )
-                .with_columns(
-                    p_ij=(
-                        (
-                            pl.col("p_ij").clip(1e-18).log()
-                            - alpha * pl.col("chain_cost_via_candidate")
-                        ).exp()
-                    ),
-                )
-            )
-            sampled_anchor_steps = (
-                weighted_anchors
-                .with_columns(
-                    noise=(
-                        demand_unit_hash(
-                            ["activity_seq_id", "time_seq_id", "dest_draw_id", "to"],
-                            seed=seed,
-                        )
-                        .cast(pl.Float64)
-                        .truediv(pl.lit(18446744073709551616.0))
-                        .log()
-                        .neg()
-                    ),
-                )
-                .with_columns(
-                    sample_score=pl.col("noise") / pl.col("p_ij").clip(1e-18)
-                    + pl.col("to").cast(pl.Float64) * 1e-18
-                )
-                .with_columns(
-                    min_score=pl.col("sample_score").min().over(
-                        DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"]
-                    )
-                )
-                .filter(pl.col("sample_score") == pl.col("min_score"))
-                .select(
-                    [
-                        "demand_group_id",
-                        "demand_subgroup_id",
-                        "home_zone_id",
-                        "activity_seq_id",
-                        "time_seq_id",
-                        "dest_draw_id",
-                        "activity",
-                        "is_anchor",
-                        "seq_step_index",
-                        "step_count",
-                        "from",
-                        "to",
-                        "departure_time",
-                        "arrival_time",
-                        "next_departure_time",
-                    ]
-                )
-                .collect(engine="streaming")
+                sampled_anchor_steps = sampled_anchor_steps_lf.collect(engine="streaming")
+
+            log_missing_anchor_destination_samples(
+                sequence_key_cols=sequence_key_cols,
+                expected_anchor_steps=non_home_anchor_steps,
+                sampled_anchor_steps=sampled_anchor_steps,
             )
 
-            non_anchor_steps = (
-                chains_step_lf
-                .filter(pl.col("is_anchor").not_())
-                .with_columns(to=pl.lit(None).cast(pl.UInt16))
-                .select(
-                    [
-                        "demand_group_id",
-                        "demand_subgroup_id",
-                        "home_zone_id",
-                        "activity_seq_id",
-                        "time_seq_id",
-                        "dest_draw_id",
-                        "activity",
-                        "is_anchor",
-                        "seq_step_index",
-                        "step_count",
-                        "from",
-                        "to",
-                        "departure_time",
-                        "arrival_time",
-                        "next_departure_time",
-                    ]
-                )
-                .collect(engine="streaming")
-            )
+            sampled_anchor_steps_by_position.extend([home_anchor_steps, sampled_anchor_steps])
 
-            anchor_inputs = chains_step.filter((pl.col("is_anchor")) & (pl.col("activity") != "home"))
-            if sampled_anchor_steps.height < anchor_inputs.height:
-                missing_anchor_samples.append(
-                    anchor_inputs
-                    .join(
-                        sampled_anchor_steps.select(chain_key_cols + ["seq_step_index"]),
-                        on=chain_key_cols + ["seq_step_index"],
-                        how="anti",
-                    )
-                    .select(chain_key_cols + ["activity", "seq_step_index", "from"])
-                )
-
-            spatialized_steps.extend([home_steps, sampled_anchor_steps, non_anchor_steps])
-
-            sampled_updates = (
-                pl.concat([home_steps, sampled_anchor_steps], how="vertical_relaxed")
-                .select(chain_key_cols + ["to"])
+            next_anchor_locations = (
+                pl.concat([home_anchor_steps, sampled_anchor_steps], how="vertical_relaxed")
+                .select(sequence_key_cols + ["to"])
                 .rename({"to": "next_from"})
             )
-            if sampled_updates.height > 0:
+            if next_anchor_locations.height > 0:
                 current_locations = (
                     current_locations
-                    .join(sampled_updates, on=chain_key_cols, how="left")
+                    .join(next_anchor_locations, on=sequence_key_cols, how="left")
                     .with_columns(
                         pl.coalesce(pl.col("next_from"), pl.col("from")).cast(pl.UInt16).alias("from")
                     )
                     .drop("next_from")
                 )
-
-            seq_step_index += 1
-
-        if missing_anchor_samples:
-            missing_anchors = pl.concat(missing_anchor_samples, how="vertical_relaxed")
-            logging.warning(
-                "Dropping %s anchor destination steps because no reachable anchor candidate could be sampled. "
-                "Sample steps: %s",
-                missing_anchors.height,
-                missing_anchors.head(20).to_dicts(),
+        sampled_anchor_steps = (
+            pl.concat(sampled_anchor_steps_by_position, how="vertical_relaxed")
+            if sampled_anchor_steps_by_position
+            else expanded_non_anchor_steps.head(0)
+        )
+        sampled_anchor_locations = (
+            sampled_anchor_steps
+            .select(
+                sequence_key_cols
+                + [
+                    pl.col("seq_step_index").alias("next_anchor_seq_step_index"),
+                    pl.col("to").alias("anchor_to"),
+                ]
             )
-
-        return (
-            pl.concat(spatialized_steps, how="vertical_relaxed")
-            .with_columns(
-                anchor_to=pl.when(pl.col("is_anchor"))
-                .then(pl.col("to"))
-                .otherwise(pl.lit(None, dtype=pl.UInt16))
-            )
-            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "seq_step_index"])
-            .with_columns(
-                anchor_to=pl.col("anchor_to").backward_fill().over(
-                    DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"]
-                )
-            )
-            # The next pass builds the actual step `from` and `to` columns.
-            # Keep only `anchor_to` here, otherwise stale/null step columns can
-            # interfere with the later Polars joins used to sample non-anchor
-            # destinations.
+        )
+        spatialized_anchor_steps = (
+            sampled_anchor_steps
+            .with_columns(anchor_to=pl.col("to"))
             .drop(["from", "to"])
+        )
+        spatialized_non_anchor_steps = (
+            expanded_non_anchor_steps
+            .join(
+                sampled_anchor_locations,
+                on=sequence_key_cols + ["next_anchor_seq_step_index"],
+                how="left",
+            )
+            .drop(["from", "to", "next_anchor_seq_step_index"])
+        )
+        return pl.concat(
+            [spatialized_anchor_steps, spatialized_non_anchor_steps],
+            how="vertical_relaxed",
         )
 
 
     def _spatialize_other_activities(
         self,
-        chains: pl.DataFrame,
+        sequences: pl.DataFrame,
         destination_probability: pl.DataFrame,
         costs: pl.DataFrame,
         alpha: float,
         seed: int,
-        cost_views: dict[str, pl.LazyFrame] | None = None,
+        cost_views: dict[str, pl.LazyFrame],
     ) -> pl.DataFrame:
         """Sample destinations for non-anchor activities step by step."""
         logging.debug("Spatializing other activities...")
-        chains = with_demand_subgroup_id(chains)
-        if cost_views is None:
-            cost_views = _spatialization_cost_views(costs)
-        chains_step = (
-            chains
+        sequence_step = (
+            sequences
             .filter(pl.col("seq_step_index") == 1)
             .with_columns(pl.col("home_zone_id").alias("from"))
         )
         seq_step_index = 1
-        spatialized_chains: list[pl.DataFrame] = []
-        while chains_step.height > 0:
-            step_stats = chains_step.select(
-                input_rows=pl.len(),
+        spatialized_sequences: list[pl.DataFrame] = []
+        while sequence_step.height > 0:
+            step_counts = sequence_step.select(
                 non_anchor=pl.col("is_anchor").not_().sum(),
                 anchor=pl.col("is_anchor").sum(),
-                unique_draws=pl.struct(
-                    DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"]
-                ).n_unique(),
             ).row(0, named=True)
-            if logging.root.isEnabledFor(logging.DEBUG):
-                logging.debug(
-                    "Destination spatialization step %s input rows=%s non_anchor=%s anchor=%s unique_draws=%s",
-                    seq_step_index,
-                    step_stats["input_rows"],
-                    step_stats["non_anchor"],
-                    step_stats["anchor"],
-                    step_stats["unique_draws"],
-                )
+            non_anchor_count = int(step_counts["non_anchor"])
+            anchor_count = int(step_counts["anchor"])
+            log_destination_spatialization_step(
+                seq_step_index=seq_step_index,
+                sequence_step=sequence_step,
+                non_anchor_count=non_anchor_count,
+                anchor_count=anchor_count,
+            )
             logging.debug("Spatializing step %s...", str(seq_step_index))
             spatialized_step = (
-                self._spatialize_trip_chain_step(
+                self._spatialize_sequence_step(
                     seq_step_index,
-                    chains_step,
+                    sequence_step,
                     destination_probability,
                     costs,
                     alpha,
                     seed,
                     cost_views,
-                    int(step_stats["non_anchor"]),
-                    int(step_stats["anchor"]),
+                    non_anchor_count,
+                    anchor_count,
                 )
                 .with_columns(seq_step_index=pl.lit(seq_step_index).cast(pl.UInt8))
             )
-            spatialized_chains.append(spatialized_step)
+            spatialized_sequences.append(spatialized_step)
             seq_step_index += 1
-            chains_step = (
-                chains.lazy()
+            sequence_step = (
+                sequences.lazy()
                 .filter(pl.col("seq_step_index") == seq_step_index)
                 .join(
                     spatialized_step.lazy()
@@ -989,35 +936,25 @@ class DestinationSequences(FileAsset):
                 )
                 .collect(engine="streaming")
             )
-        return pl.concat(spatialized_chains)
+        return pl.concat(spatialized_sequences)
 
 
-    def _spatialize_trip_chain_step(
+    def _spatialize_sequence_step(
         self,
         seq_step_index: int,
-        chains_step: pl.DataFrame,
+        sequence_step: pl.DataFrame,
         destination_probability: pl.DataFrame,
         costs: pl.DataFrame,
         alpha: float,
         seed: int,
-        cost_views: dict[str, pl.LazyFrame] | None = None,
-        non_anchor_count: int | None = None,
-        anchor_count: int | None = None,
+        cost_views: dict[str, pl.LazyFrame],
+        non_anchor_count: int,
+        anchor_count: int,
     ) -> pl.DataFrame:
         """Sample destinations for one step between anchors."""
-        chains_step = with_demand_subgroup_id(chains_step)
-        if cost_views is None:
-            cost_views = _spatialization_cost_views(costs)
-        if non_anchor_count is None or anchor_count is None:
-            step_counts = chains_step.select(
-                non_anchor=pl.col("is_anchor").not_().sum(),
-                anchor=pl.col("is_anchor").sum(),
-            ).row(0, named=True)
-            non_anchor_count = int(step_counts["non_anchor"])
-            anchor_count = int(step_counts["anchor"])
-        chains_step_lf = chains_step.lazy()
+        sequence_step_lf = sequence_step.lazy()
         destination_probability_lf = destination_probability.lazy()
-        chain_key_cols = [
+        sequence_key_cols = [
             "demand_group_id",
             "demand_subgroup_id",
             "home_zone_id",
@@ -1044,98 +981,43 @@ class DestinationSequences(FileAsset):
         step_frames: list[pl.LazyFrame] = []
 
         if non_anchor_count > 0:
-            non_anchor_steps = chains_step_lf.filter(pl.col("is_anchor").not_())
-            active_probability_keys = non_anchor_steps.select(["from", "activity"]).unique()
-            active_destination_probability = destination_probability_lf.join(
-                active_probability_keys,
-                on=["from", "activity"],
-                how="semi",
-            )
+            non_anchor_steps = sequence_step_lf.filter(pl.col("is_anchor").not_())
 
-            # Start from the base destination probabilities for non-anchor
-            # activities. These probabilities come from the radiation model and
-            # only depend on the current origin, the activity, and destination
-            # opportunities.
-            non_anchor_candidates = non_anchor_steps.join(
-                active_destination_probability,
-                on=["from", "activity"],
-            )
-
-            # Attach the two legs that define the chain cost of visiting a
-            # candidate destination before continuing to the next anchor.
-            candidates_with_origin_costs = non_anchor_candidates.join(
-                cost_views["to_candidate"],
-                left_on=["from", "to"],
-                right_on=["candidate_from", "candidate_to"],
-            )
-            candidates_with_costs = candidates_with_origin_costs.join(
-                cost_views["to_anchor"],
-                left_on=["to", "anchor_to"],
-                right_on=["anchor_from", "anchor_to_cost"],
-            )
-
-            # Apply an additional chain-aware correction on top of the base
-            # radiation probability. This reduces unrealistic intermediate stops
-            # that would create costly onward travel to the next anchor.
-            weighted_candidates = (
-                candidates_with_costs
-                .with_columns(
-                    chain_cost_via_candidate=pl.col("cost_to_candidate") + pl.col("cost_to_anchor"),
-                )
-                .with_columns(
-                    p_ij=(
-                        (
-                            pl.col("p_ij").clip(1e-18).log()
-                            - alpha * pl.col("chain_cost_via_candidate")
-                        ).exp()
-                    ),
-                )
-            )
-
-            # Draw one destination per sequence and destination draw using the
-            # seeded exponential race sampling already used elsewhere.
-            sampled_non_anchor_steps = (
-                weighted_candidates
-                .with_columns(
-                    noise=(
-                        demand_unit_hash(
-                            ["activity_seq_id", "time_seq_id", "dest_draw_id", "to"],
-                            seed=seed,
-                        )
-                        .cast(pl.Float64)
-                        .truediv(pl.lit(18446744073709551616.0))
-                        .log()
-                        .neg()
-                    ),
-                )
-                .with_columns(
-                    sample_score=pl.col("noise") / pl.col("p_ij").clip(1e-18)
-                    + pl.col("to").cast(pl.Float64) * 1e-18
-                )
-                .with_columns(
-                    min_score=pl.col("sample_score").min().over(
-                        DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"]
-                    )
-                )
-                .filter(pl.col("sample_score") == pl.col("min_score"))
-                .select(output_cols)
+            # Keep non-anchor candidates that fit between the current location
+            # and the next anchor: current location -> candidate -> next anchor.
+            (
+                non_anchor_candidates,
+                candidates_with_origin_costs,
+                candidates_with_costs,
+                sampled_non_anchor_steps,
+            ) = self._sample_sequence_aware_destinations(
+                steps_lf=non_anchor_steps,
+                destination_probability_lf=destination_probability_lf,
+                origin_cost_lf=cost_views["to_candidate"],
+                onward_cost_lf=cost_views["to_anchor"],
+                onward_left_on=["to", "anchor_to"],
+                onward_right_on=["anchor_from", "anchor_to_cost"],
+                onward_cost_col="cost_to_anchor",
+                alpha=alpha,
+                seed=seed,
+                output_cols=output_cols,
             )
             step_frames.append(sampled_non_anchor_steps)
             log_step_dropout_diagnostics(
                 seq_step_index=seq_step_index,
-                chains_step=chains_step,
+                sequence_step=sequence_step,
                 costs=costs,
                 non_anchor_candidates=non_anchor_candidates,
                 candidates_with_origin_costs=candidates_with_origin_costs,
                 candidates_with_costs=candidates_with_costs,
                 sampled_non_anchor_steps=sampled_non_anchor_steps,
-                chain_key_cols=chain_key_cols,
+                sequence_key_cols=sequence_key_cols,
                 transport_zones=self.transport_zones,
             )
 
         if anchor_count > 0:
             steps_anchor = (
-                chains_step_lf
+                sequence_step_lf
                 .filter(pl.col("is_anchor"))
                 .with_columns(to=pl.col("anchor_to"))
                 # Anchor destinations were sampled earlier, but we still check
@@ -1150,15 +1032,6 @@ class DestinationSequences(FileAsset):
             )
             step_frames.append(steps_anchor)
 
-        if len(step_frames) == 0:
-            return (
-                chains_step_lf
-                .with_columns(to=pl.lit(None, dtype=pl.UInt16))
-                .select(output_cols)
-                .head(0)
-                .collect(engine="streaming")
-            )
-
         return pl.concat(step_frames).collect(engine="streaming")
 
     @staticmethod
@@ -1171,35 +1044,24 @@ class DestinationSequences(FileAsset):
 
         A non-anchor step can disappear when there is no valid travel-cost path from
         the sampled destination to the next anchor destination. If we keep the
-        remaining earlier steps, we create a truncated destination chain that later
+        remaining earlier steps, we create a truncated destination sequence that later
         becomes invalid input for mode-sequence search.
         """
-        activity_sequences = with_demand_subgroup_id(activity_sequences)
-        chain_key_cols = DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"]
+        sequence_key_cols = DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"]
         activity_sequences_with_counts = (
             activity_sequences
             .with_columns(
-                step_count_after_spatialization=pl.len().over(chain_key_cols).cast(pl.UInt8),
+                step_count_after_spatialization=pl.len().over(sequence_key_cols).cast(pl.UInt8),
             )
         )
-        incomplete_draws = (
-            activity_sequences_with_counts
-            .filter(pl.col("step_count_after_spatialization") != pl.col("step_count"))
-            .select(chain_key_cols + ["step_count", "step_count_after_spatialization"])
-            .unique()
-            .sort(chain_key_cols)
+        log_incomplete_destination_draws(
+            iteration=iteration,
+            activity_sequences_with_counts=activity_sequences_with_counts,
+            sequence_key_cols=sequence_key_cols,
         )
-        if incomplete_draws.height > 0:
-            logging.warning(
-                "Dropping %s incomplete destination draws at iteration %s because one or more steps disappeared during spatialization. "
-                "Sample draws: %s",
-                incomplete_draws.height,
-                iteration,
-                incomplete_draws.head(20).to_dicts(),
-            )
         return (
             activity_sequences_with_counts
             .filter(pl.col("step_count_after_spatialization") == pl.col("step_count"))
             .drop(["step_count", "step_count_after_spatialization"])
-            .sort(chain_key_cols + ["seq_step_index"])
+            .sort(sequence_key_cols + ["seq_step_index"])
         )

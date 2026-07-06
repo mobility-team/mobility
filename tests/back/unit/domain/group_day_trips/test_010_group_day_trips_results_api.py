@@ -958,7 +958,28 @@ def test_scoped_run_table_does_not_depend_on_full_run_asset(tmp_path):
 def test_run_iteration_table_scans_cached_plan_steps_without_state_load(tmp_path):
     """Check all-iteration results do not load the full saved iteration state."""
     plan_steps_path = tmp_path / "current_plan_steps.parquet"
-    pl.DataFrame({"activity_seq_id": [1], "n_persons": [2.0]}).write_parquet(plan_steps_path)
+    pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "demand_subgroup_id": [0],
+            "activity_seq_id": [1],
+            "time_seq_id": [1],
+            "dest_seq_id": [1],
+            "mode_seq_id": [1],
+            "seq_step_index": [1],
+            "n_persons": [2.0],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
+            "activity_seq_id": pl.UInt32,
+            "time_seq_id": pl.UInt32,
+            "dest_seq_id": pl.UInt32,
+            "mode_seq_id": pl.UInt32,
+            "seq_step_index": pl.UInt8,
+            "n_persons": pl.Float64,
+        },
+    ).write_parquet(plan_steps_path)
 
     class CachedStateAsset:
         cache_path = {"current_plan_steps": plan_steps_path}

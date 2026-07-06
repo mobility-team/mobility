@@ -7,7 +7,7 @@ import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
 
-from .calibration_plan_steps import _as_lazyframe, distance_bin_expr
+from .calibration_plan_steps import distance_bin_expr
 
 
 def get_survey_immobility_probabilities(surveys, *, is_weekday: bool) -> pl.DataFrame:
@@ -32,13 +32,12 @@ def get_survey_immobility_probabilities(surveys, *, is_weekday: bool) -> pl.Data
 
 
 def build_trip_pattern_distribution(
-    plan_steps: pl.LazyFrame | pl.DataFrame,
+    plan_steps: pl.LazyFrame,
     *,
     epsilon: float = 1e-12,
     immobility_probabilities: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Build a weighted trip-pattern distribution from raw ordered plan steps."""
-    plan_steps = _as_lazyframe(plan_steps)
     available_columns = set(plan_steps.collect_schema().names())
     candidate_columns = [
         "country",

@@ -12,7 +12,7 @@ from ..transitions.transition_events import (
     build_transition_events_lazy,
 )
 from .candidate_plan_steps import CandidatePlanStepsAsset
-from .demand_subgroups import DEMAND_UNIT_COLS, with_demand_subgroup_id
+from .demand_subgroups import DEMAND_UNIT_COLS
 from .plan_distance import PlanDistance
 from .plan_ids import PLAN_KEY_COLS, add_plan_id
 from .plan_schedule_updater import PlanScheduleUpdater
@@ -48,14 +48,6 @@ class PlanUpdater:
         parameters: Any,
     ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.LazyFrame | None, pl.DataFrame]:
         """Advance one iteration of plan updates."""
-        current_plans = with_demand_subgroup_id(current_plans)
-        if current_plan_steps is not None:
-            current_plan_steps = with_demand_subgroup_id(current_plan_steps)
-        if candidate_plan_steps is not None:
-            candidate_plan_steps = with_demand_subgroup_id(candidate_plan_steps)
-        demand_groups = with_demand_subgroup_id(demand_groups)
-        stay_home_plan = with_demand_subgroup_id(stay_home_plan)
-
         possible_plan_steps = self.get_possible_plan_steps(
             current_plans,
             current_plan_steps,
@@ -272,7 +264,6 @@ class PlanUpdater:
     ) -> pl.LazyFrame:
         """Score plan-step candidates under current costs and destination saturation."""
 
-        candidates = CandidatePlanStepsAsset._with_retention_columns(candidates)
         cost_by_od_and_modes = transport_costs.get_costs_by_od_and_mode(
             ["cost", "distance", "time"],
             detail_distances=False,
@@ -577,9 +568,6 @@ class PlanUpdater:
         min_transition_utility_gain: float = 0.0,
     ) -> pl.LazyFrame:
         """Build allowed from-to plan pairs under the active behavior scope."""
-        current_plans = with_demand_subgroup_id(current_plans)
-        possible_plan_utility = with_demand_subgroup_id(possible_plan_utility)
-
         logging.debug(
             "Building PopulationGroupDayTrips allowed plan transitions: scope=%s",
             str(behavior_change_scope),
@@ -714,8 +702,6 @@ class PlanUpdater:
         transition_distance_friction: float = 0.0,
     ) -> pl.DataFrame:
         """Compute one-step transition probabilities with distance-threshold filtering and revision."""
-        allowed_transitions = with_demand_subgroup_id(allowed_transitions)
-
         logging.debug("Collecting PopulationGroupDayTrips transition probabilities")
 
         plan_cols = PLAN_KEY_COLS
@@ -806,9 +792,6 @@ class PlanUpdater:
         plan_probability_pruning_min_iteration: int = 2,
     ) -> tuple[pl.DataFrame, pl.LazyFrame]:
         """Apply transition probabilities and emit transition events."""
-        current_plans = with_demand_subgroup_id(current_plans)
-        transition_probabilities = with_demand_subgroup_id(transition_probabilities)
-
         plan_cols = PLAN_KEY_COLS
 
         transitions = (
@@ -929,7 +912,6 @@ class PlanUpdater:
         retained_share: float,
     ) -> pl.DataFrame | None:
         """Build a raw-target to retained-target map from transition mass."""
-        transitions = with_demand_subgroup_id(transitions)
         target_cols = [
             "plan_id_trans",
             "demand_group_id",
@@ -1053,8 +1035,6 @@ class PlanUpdater:
         transitions: pl.LazyFrame,
     ) -> pl.LazyFrame:
         """Attach previous utility for the final transition target state."""
-        current_plans = with_demand_subgroup_id(current_plans)
-        transitions = with_demand_subgroup_id(transitions)
         prev_to_lookup = (
             current_plans.lazy()
             .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id", "utility"])
@@ -1084,9 +1064,6 @@ class PlanUpdater:
 
     def get_current_plan_steps(self, current_plans, possible_plan_steps):
         """Expand aggregate plans to per-step rows."""
-        current_plans = with_demand_subgroup_id(current_plans)
-        possible_plan_steps = with_demand_subgroup_id(possible_plan_steps)
-
         current_plan_steps = (
             current_plans.select(
                 [

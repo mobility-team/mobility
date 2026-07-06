@@ -23,13 +23,13 @@ def test_trace_diagnostics_do_not_collect_inputs_when_trace_is_disabled(caplog):
         )
         log_step_dropout_diagnostics(
             seq_step_index=1,
-            chains_step=pl.DataFrame(),
+            sequence_step=pl.DataFrame(),
             costs=pl.DataFrame(),
             non_anchor_candidates=pl.DataFrame().lazy(),
             candidates_with_origin_costs=pl.DataFrame().lazy(),
             candidates_with_costs=pl.DataFrame().lazy(),
             sampled_non_anchor_steps=pl.DataFrame().lazy(),
-            chain_key_cols=[],
+            sequence_key_cols=[],
             transport_zones=None,
         )
         log_location_chain_diagnostics(
@@ -40,10 +40,11 @@ def test_trace_diagnostics_do_not_collect_inputs_when_trace_is_disabled(caplog):
         )
 
 
-def test_log_destination_sequence_diagnostics_reports_one_step_chains(caplog):
+def test_log_destination_sequence_diagnostics_reports_one_step_sequences(caplog):
     source_activity_sequences = pl.DataFrame(
         {
             "demand_group_id": [1, 1, 2],
+            "demand_subgroup_id": [0, 0, 0],
             "activity_seq_id": [10, 10, 20],
             "time_seq_id": [100, 100, 200],
             "seq_step_index": [0, 1, 0],
@@ -53,6 +54,7 @@ def test_log_destination_sequence_diagnostics_reports_one_step_chains(caplog):
     destination_sequences = pl.DataFrame(
         {
             "demand_group_id": [1, 1, 2],
+            "demand_subgroup_id": [0, 0, 0],
             "activity_seq_id": [10, 10, 20],
             "time_seq_id": [100, 100, 200],
             "dest_seq_id": [1000, 1000, 2000],
@@ -70,16 +72,17 @@ def test_log_destination_sequence_diagnostics_reports_one_step_chains(caplog):
         )
 
     assert "Destination sequence step counts at iteration 7" in caplog.text
-    assert "Destination sequences contain 1 one-step chains at iteration 7" in caplog.text
-    assert "Activity-sequence source rows behind one-step destination chains at iteration 7" in caplog.text
+    assert "Destination sequences contain 1 one-step sequences at iteration 7" in caplog.text
+    assert "Activity-sequence source rows behind one-step destination sequences at iteration 7" in caplog.text
     assert "'dest_seq_id': 2000" in caplog.text
     assert "'activity': 'home'" in caplog.text
 
 
-def test_log_destination_sequence_diagnostics_skips_warning_for_complete_chains(caplog):
+def test_log_destination_sequence_diagnostics_skips_warning_for_complete_sequences(caplog):
     destination_sequences = pl.DataFrame(
         {
             "demand_group_id": [1, 1],
+            "demand_subgroup_id": [0, 0],
             "activity_seq_id": [10, 10],
             "time_seq_id": [100, 100],
             "dest_seq_id": [1000, 1000],
@@ -101,8 +104,8 @@ def test_log_destination_sequence_diagnostics_skips_warning_for_complete_chains(
 
 
 def test_log_step_dropout_diagnostics_reports_each_dropout_stage(caplog):
-    chain_key_cols = ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
-    chains_step = pl.DataFrame(
+    sequence_key_cols = ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+    sequence_step = pl.DataFrame(
         {
             "demand_group_id": [1, 2, 3, 4, 5],
             "activity_seq_id": [10, 20, 30, 40, 50],
@@ -153,13 +156,13 @@ def test_log_step_dropout_diagnostics_reports_each_dropout_stage(caplog):
     with caplog.at_level(TRACE_LEVEL):
         log_step_dropout_diagnostics(
             seq_step_index=2,
-            chains_step=chains_step,
+            sequence_step=sequence_step,
             costs=costs,
             non_anchor_candidates=non_anchor_candidates.lazy(),
             candidates_with_origin_costs=candidates_with_origin_costs.lazy(),
             candidates_with_costs=candidates_with_costs.lazy(),
             sampled_non_anchor_steps=sampled_non_anchor_steps.lazy(),
-            chain_key_cols=chain_key_cols,
+            sequence_key_cols=sequence_key_cols,
             transport_zones=transport_zones,
         )
 
@@ -173,7 +176,7 @@ def test_log_step_dropout_diagnostics_reports_each_dropout_stage(caplog):
 
 
 def test_log_step_dropout_diagnostics_skips_when_no_non_anchor_or_dropout(caplog):
-    chain_key_cols = ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+    sequence_key_cols = ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
     anchor_only = pl.DataFrame(
         {
             "demand_group_id": [1],
@@ -206,24 +209,24 @@ def test_log_step_dropout_diagnostics_skips_when_no_non_anchor_or_dropout(caplog
     with caplog.at_level(TRACE_LEVEL):
         log_step_dropout_diagnostics(
             seq_step_index=1,
-            chains_step=anchor_only,
+            sequence_step=anchor_only,
             costs=pl.DataFrame(),
             non_anchor_candidates=pl.DataFrame().lazy(),
             candidates_with_origin_costs=pl.DataFrame().lazy(),
             candidates_with_costs=pl.DataFrame().lazy(),
             sampled_non_anchor_steps=pl.DataFrame().lazy(),
-            chain_key_cols=chain_key_cols,
+            sequence_key_cols=sequence_key_cols,
             transport_zones=None,
         )
         log_step_dropout_diagnostics(
             seq_step_index=1,
-            chains_step=surviving_candidate,
+            sequence_step=surviving_candidate,
             costs=pl.DataFrame(),
             non_anchor_candidates=surviving_candidate.lazy(),
             candidates_with_origin_costs=surviving_candidate.lazy(),
             candidates_with_costs=surviving_candidate.lazy(),
             sampled_non_anchor_steps=surviving_candidate.lazy(),
-            chain_key_cols=chain_key_cols,
+            sequence_key_cols=sequence_key_cols,
             transport_zones=None,
         )
 
@@ -231,8 +234,8 @@ def test_log_step_dropout_diagnostics_skips_when_no_non_anchor_or_dropout(caplog
 
 
 def test_log_step_dropout_diagnostics_can_trace_costs_without_transport_zones(caplog):
-    chain_key_cols = ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
-    chains_step = pl.DataFrame(
+    sequence_key_cols = ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+    sequence_step = pl.DataFrame(
         {
             "demand_group_id": [1],
             "activity_seq_id": [10],
@@ -263,13 +266,13 @@ def test_log_step_dropout_diagnostics_can_trace_costs_without_transport_zones(ca
     with caplog.at_level(TRACE_LEVEL):
         log_step_dropout_diagnostics(
             seq_step_index=1,
-            chains_step=chains_step,
+            sequence_step=sequence_step,
             costs=pl.DataFrame({"from": [10], "to": [20], "cost": [1.0]}),
             non_anchor_candidates=non_anchor_candidates.lazy(),
             candidates_with_origin_costs=pl.DataFrame(schema=non_anchor_candidates.schema).lazy(),
             candidates_with_costs=pl.DataFrame(schema=non_anchor_candidates.schema).lazy(),
             sampled_non_anchor_steps=pl.DataFrame(schema=non_anchor_candidates.schema).lazy(),
-            chain_key_cols=chain_key_cols,
+            sequence_key_cols=sequence_key_cols,
             transport_zones=None,
         )
 
@@ -281,6 +284,7 @@ def test_log_location_chain_diagnostics_reports_invalid_unique_chains(caplog):
     destination_steps = pl.DataFrame(
         {
             "demand_group_id": [1, 1, 2],
+            "demand_subgroup_id": [0, 0, 0],
             "activity_seq_id": [10, 10, 20],
             "time_seq_id": [100, 100, 200],
             "dest_seq_id": [1000, 1000, 2000],
@@ -292,6 +296,7 @@ def test_log_location_chain_diagnostics_reports_invalid_unique_chains(caplog):
     trip_chains = pl.DataFrame(
         {
             "demand_group_id": [1, 2],
+            "demand_subgroup_id": [0, 0],
             "activity_seq_id": [10, 20],
             "time_seq_id": [100, 200],
             "dest_seq_id": [1000, 2000],
@@ -323,6 +328,7 @@ def test_log_location_chain_diagnostics_skips_warning_for_valid_chains(caplog):
     trip_chains = pl.DataFrame(
         {
             "demand_group_id": [1],
+            "demand_subgroup_id": [0],
             "activity_seq_id": [10],
             "time_seq_id": [100],
             "dest_seq_id": [1000],

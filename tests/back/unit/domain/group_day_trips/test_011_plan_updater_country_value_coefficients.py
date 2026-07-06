@@ -14,6 +14,7 @@ def test_plan_updater_prepares_destination_country_value_coefficient():
     candidates = pl.DataFrame(
         {
             "demand_group_id": [1, 1],
+            "demand_subgroup_id": [0, 0],
             "country": ["fr", "fr"],
             "activity_seq_id": [10, 10],
             "time_seq_id": [1, 1],
@@ -104,6 +105,7 @@ def test_plan_updater_integrates_shadow_price_in_activity_value_when_enabled():
     candidates = pl.DataFrame(
         {
             "demand_group_id": [1],
+            "demand_subgroup_id": [0],
             "country": ["fr"],
             "activity_seq_id": [10],
             "time_seq_id": [1],
@@ -240,6 +242,7 @@ def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
         pl.DataFrame(
             {
                 "demand_group_id": [1],
+                "demand_subgroup_id": [0],
                 "country": ["fr"],
                 "activity_seq_id": [10],
                 "time_seq_id": [100],
@@ -264,6 +267,7 @@ def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
     stay_home_plan = pl.DataFrame(
         {
             "demand_group_id": [1],
+            "demand_subgroup_id": [0],
             "activity_seq_id": [0],
             "time_seq_id": [0],
             "mode_seq_id": [0],
@@ -293,6 +297,7 @@ def test_add_stay_home_plan_steps_preserves_candidate_retention_columns(tmp_path
         pl.DataFrame(
             {
                 "demand_group_id": [1],
+                "demand_subgroup_id": [0],
                 "country": ["fr"],
                 "csp": ["worker"],
                 "activity_seq_id": [10],
@@ -328,6 +333,7 @@ def test_add_stay_home_plan_steps_preserves_candidate_retention_columns(tmp_path
     stay_home_plan = pl.DataFrame(
         {
             "demand_group_id": [1],
+            "demand_subgroup_id": [0],
             "country": ["fr"],
             "csp": ["worker"],
             "mean_home_night_per_pers": [10.0],
