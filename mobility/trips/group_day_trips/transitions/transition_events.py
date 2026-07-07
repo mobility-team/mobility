@@ -69,9 +69,9 @@ def add_transition_plan_details(
         .group_by(plan_keys)
         .agg(
             trip_count=pl.len().cast(pl.Float64),
-            activity_time=pl.col("duration_per_pers").fill_null(0.0).sum(),
-            travel_time=pl.col("time").fill_null(0.0).sum(),
-            distance=pl.col("distance").fill_null(0.0).sum(),
+            activity_time=pl.col("duration_per_pers").fill_null(0.0).sum().cast(pl.Float64),
+            travel_time=pl.col("time").fill_null(0.0).sum().cast(pl.Float64),
+            distance=pl.col("distance").fill_null(0.0).sum().cast(pl.Float64),
             steps=pl.col("step_desc").sort_by("seq_step_index").str.join("<br>"),
         )
     )
