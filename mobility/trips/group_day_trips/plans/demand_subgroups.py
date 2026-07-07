@@ -26,7 +26,13 @@ def split_large_demand_groups(
     *,
     max_persons_per_demand_subgroup: int | None,
 ) -> pl.DataFrame:
-    """Split high-weight demand groups into deterministic stochastic subgroups."""
+    """Split high-weight demand groups into deterministic demand subgroups.
+
+    This function owns subgroup creation. It starts each raw demand group at
+    subgroup 0, then expands large groups when a maximum subgroup size is set.
+    The represented persons are divided evenly across the generated subgroups,
+    so the total population weight is unchanged.
+    """
     if "demand_subgroup_id" in demand_groups.columns:
         raise ValueError(
             "`split_large_demand_groups()` expects raw demand groups without "
