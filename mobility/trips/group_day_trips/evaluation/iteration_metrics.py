@@ -99,15 +99,15 @@ class IterationMetricsBuilder:
         """Compute one persisted diagnostics row for a single model iteration."""
         loss_row = self.model_loss.history_row(
             iteration=iteration,
-            plan_steps=to_calibration_plan_steps(current_plan_steps),
+            plan_steps=to_calibration_plan_steps(current_plan_steps.lazy()),
         )
         trip_count_loss_row = self.model_trip_count_loss.history_row(
             iteration=iteration,
-            plan_steps=current_plan_steps,
+            plan_steps=current_plan_steps.lazy(),
         )
         entropy_row = self.model_entropy.history_row(
             iteration=iteration,
-            plan_steps=current_plan_steps,
+            plan_steps=current_plan_steps.lazy(),
         )
         total_loss = float(loss_row["total_loss"]) + float(trip_count_loss_row["trip_count_loss"])
         return {

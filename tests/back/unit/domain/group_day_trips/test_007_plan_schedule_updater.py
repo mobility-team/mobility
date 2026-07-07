@@ -9,10 +9,18 @@ from mobility.trips.group_day_trips.plans.plan_schedule_updater import PlanSched
 
 
 def _make_plan_steps(rows: dict[str, list]) -> pl.LazyFrame:
+    rows = {
+        **rows,
+        "demand_subgroup_id": rows.get(
+            "demand_subgroup_id",
+            [0] * len(rows["demand_group_id"]),
+        ),
+    }
     return pl.DataFrame(
         rows,
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
             "dest_seq_id": pl.UInt32,

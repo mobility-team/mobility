@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import polars as pl
 
-from .calibration_plan_steps import _as_lazyframe
 from .trip_pattern_distribution import get_survey_immobility_probabilities
 
 TRIP_COUNT_BINS = ["0", "1", "2", "3", "4", "5+"]
 
 
 def build_trip_count_distribution(
-    plan_steps: pl.LazyFrame | pl.DataFrame,
+    plan_steps: pl.LazyFrame,
     *,
     immobility_probabilities: pl.DataFrame | None = None,
     epsilon: float = 1e-12,
@@ -20,7 +19,6 @@ def build_trip_count_distribution(
     cleaned mobile survey plans. Mobile weights are scaled by the mobile share,
     and a zero-trip mass is added by country and socio-professional group.
     """
-    plan_steps = _as_lazyframe(plan_steps)
     available_columns = set(plan_steps.collect_schema().names())
     required_columns = {"activity_seq_id", "n_persons"}
     if not required_columns.issubset(available_columns):
@@ -136,14 +134,18 @@ class ModelTripCountLoss:
     def __init__(
         self,
         *,
-        expected_plan_steps,
+        expected_plan_steps: pl.LazyFrame,
         surveys=None,
         is_weekday: bool = True,
-        observed_plan_steps=None,
+        observed_plan_steps: pl.LazyFrame | None = None,
         history=None,
         epsilon: float = 1e-9,
     ) -> None:
         """Attach expected data, optional observed data, and optional history storage."""
+        if not isinstance(expected_plan_steps, pl.LazyFrame):
+            raise TypeError("ModelTripCountLoss expects lazy expected plan steps.")
+        if observed_plan_steps is not None and not isinstance(observed_plan_steps, pl.LazyFrame):
+            raise TypeError("ModelTripCountLoss expects lazy observed plan steps.")
         self.expected_plan_steps = expected_plan_steps
         self.surveys = surveys
         self.is_weekday = is_weekday
@@ -161,7 +163,7 @@ class ModelTripCountLoss:
                 else None
             )
             self._expected_distribution = build_trip_count_distribution(
-                _get_plan_steps(self.expected_plan_steps),
+                self.expected_plan_steps,
                 immobility_probabilities=immobility,
             )
         return self._expected_distribution
@@ -170,7 +172,7 @@ class ModelTripCountLoss:
         """Return the observed trip-count distribution for the attached run."""
         if self.observed_plan_steps is None:
             raise ValueError("No observed plan steps are attached to this ModelTripCountLoss instance.")
-        return build_trip_count_distribution(_get_plan_steps(self.observed_plan_steps))
+        return build_trip_count_distribution(self.observed_plan_steps)
 
     def comparison(self, plan_steps=None) -> pl.DataFrame:
         """Return observed-versus-expected trip-count distribution comparisons."""
@@ -255,8 +257,3 @@ def _trip_count_bin_expr(column: str) -> pl.Expr:
 def _all_trip_count_bins() -> pl.DataFrame:
     """Return all trip-count bins so missing classes get explicit zero mass."""
     return pl.DataFrame({"trip_count_bin": TRIP_COUNT_BINS})
-
-
-def _get_plan_steps(plan_steps):
-    """Return a plan-step frame from either a frame or a small asset wrapper."""
-    return plan_steps.get() if hasattr(plan_steps, "get") else plan_steps
