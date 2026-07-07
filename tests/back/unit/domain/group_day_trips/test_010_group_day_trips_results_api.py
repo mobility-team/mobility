@@ -13,8 +13,12 @@ from mobility.reports import TransportZoneMaps
 from mobility.runtime import Scenario, Scenarios
 from mobility.runtime.parameter_values import SensitivityCase, SensitivityValue
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.graph import build_asset_graph
+from mobility.runtime.assets.resolver import AssetResolver
 from mobility.trips.group_day_trips.core.group_day_trips import PopulationGroupDayTrips
+from mobility.trips.group_day_trips.core.run import Run
 from mobility.trips.group_day_trips.results import GroupDayTripsResults
+from mobility.trips.group_day_trips.results.metrics import GroupDayTripsResultMetrics
 from mobility.trips.group_day_trips.sensitivity import GroupDayTripsSensitivityAnalysis
 from mobility.trips.group_day_trips.results.plots import (
     plot_metric_by_zone,
@@ -39,6 +43,7 @@ class _FakeRun(FileAsset):
         transport_zones: FileAsset | None = None,
         surveys: list | None = None,
         iteration_plan_steps: dict[int, pl.DataFrame] | None = None,
+        iteration_costs: dict[int, pl.DataFrame] | None = None,
     ) -> None:
         self.frames = {
             "plan_steps": plan_steps,
@@ -50,6 +55,7 @@ class _FakeRun(FileAsset):
         }
         self._reference_plan_steps = reference_plan_steps
         self._iteration_plan_steps = iteration_plan_steps or {}
+        self._iteration_costs = iteration_costs or {}
         self.parameters = SimpleNamespace(
             run=SimpleNamespace(n_iterations=max(self._iteration_plan_steps, default=1))
         )
@@ -82,9 +88,11 @@ class _FakeRun(FileAsset):
 
     def iteration_table(self, table_name: str, iteration: int):
         """Return one fake saved iteration table."""
-        if table_name != "plan_steps":
-            raise ValueError(f"Fake run has no saved iteration table `{table_name}`.")
-        return self._iteration_plan_steps[iteration].lazy()
+        if table_name == "plan_steps":
+            return self._iteration_plan_steps[iteration].lazy()
+        if table_name == "costs":
+            return self._iteration_costs[iteration].lazy()
+        raise ValueError(f"Fake run has no saved iteration table `{table_name}`.")
 
 
 class _FakeLazyFrameAsset(FileAsset):
@@ -205,6 +213,8 @@ def _run_factory(base_folder: Path):
                     5.0 + 2.0 * replication + scenario_distance_shift,
                 ],
                 "time": [1.0 + replication, 0.5 + 0.2 * replication],
+                "cost": [2.0 + 2.0 * replication, 1.0 + 2.0 * replication],
+                "ghg_emissions_per_trip": [1.0 + replication, 0.5 + 0.5 * replication],
                 "duration_per_pers": [8.5, 0.75],
                 "departure_time": [8.0, 10.0],
                 "arrival_time": [8.5, 10.25],
@@ -252,6 +262,7 @@ def _run_factory(base_folder: Path):
             transport_zones=transport_zones,
             surveys=[survey],
             iteration_plan_steps=iteration_plan_steps,
+            iteration_costs={1: costs, 2: costs},
         )
 
     return run
@@ -533,6 +544,39 @@ def test_iteration_travel_metrics_can_group_by_demand_group_columns(tmp_path, mo
     assert time["travel_time"].to_list() == pytest.approx([0.5, 2.0, 0.5, 2.0])
 
 
+def test_iteration_emissions_use_quantity_stored_on_plan_steps(tmp_path, monkeypatch):
+    """Check saved iteration emissions do not need iteration-scoped cost tables."""
+    results = _results(tmp_path, replication=0)
+
+    emissions = results.metrics.ghg_emissions(
+        by_variable="mode",
+        iterations=[1, 2],
+    ).sort(["iteration", "mode"])
+
+    assert emissions["iteration"].to_list() == [1, 1, 2, 2]
+    assert emissions["mode"].to_list() == ["car", "walk", "car", "walk"]
+    assert emissions["ghg_emissions"].to_list() == pytest.approx([2.0, 0.5, 2.0, 0.5])
+
+
+def test_iteration_emissions_can_join_saved_iteration_costs(tmp_path, monkeypatch):
+    """Check emissions can use saved iteration costs when plan steps are narrow."""
+    results = _results(tmp_path, replication=0)
+    for run_context in results.run_contexts:
+        run_context.run._iteration_plan_steps = {
+            iteration: plan_steps.drop("ghg_emissions_per_trip")
+            for iteration, plan_steps in run_context.run._iteration_plan_steps.items()
+        }
+
+    emissions = results.metrics.ghg_emissions(
+        by_variable="mode",
+        iterations=[1, 2],
+    ).sort(["iteration", "mode"])
+
+    assert emissions["iteration"].to_list() == [1, 1, 2, 2]
+    assert emissions["mode"].to_list() == ["car", "walk", "car", "walk"]
+    assert emissions["ghg_emissions"].to_list() == pytest.approx([2.0, 0.5, 2.0, 0.5])
+
+
 def test_iteration_final_state_metrics_use_demand_group_columns(tmp_path, monkeypatch):
     """Check saved iteration final-state metrics can join demand-group dimensions."""
     results = _results(tmp_path, replication=0)
@@ -789,6 +833,212 @@ def test_compact_time_cost_and_emissions_metrics(tmp_path, monkeypatch):
     assert emissions["ghg_emissions_per_person"].to_list() == pytest.approx([(2.5 / 3.0 + 5.0 / 3.0) / 2.0])
 
 
+def test_weighted_metrics_count_zero_trip_groups_in_each_replication(tmp_path, monkeypatch):
+    """Check weighted metrics treat missing replication/group rows as zero."""
+    base_factory = _run_factory(tmp_path)
+
+    def run(day_type: str, *, scenario=None, sensitivity_case=None, replication: int = 0):
+        run_asset = base_factory(
+            day_type,
+            scenario=scenario,
+            sensitivity_case=sensitivity_case,
+            replication=replication,
+        )
+        if replication == 1:
+            run_asset.frames["plan_steps"] = run_asset.frames["plan_steps"].with_columns(
+                pl.when(pl.col("home_zone_id") == "z2")
+                .then(pl.lit(0))
+                .otherwise(pl.col("activity_seq_id"))
+                .alias("activity_seq_id")
+            )
+        return run_asset
+
+    results = GroupDayTripsResults(
+        run=run,
+        day_type="weekday",
+        scenarios="default",
+        n_replications=2,
+    )
+
+    distance = results.metrics.travel_distance(by_zone="home_zone").sort("home_zone_id")
+
+    assert distance["home_zone_id"].to_list() == ["z1", "z2"]
+    assert distance["travel_distance"].to_list() == pytest.approx([30.0, 2.5])
+    assert distance["travel_distance_std"].to_list() == pytest.approx([14.1421356237, 3.5355339059])
+    assert distance["n_replications"].to_list() == [2, 2]
+
+
+def test_compact_metrics_can_filter_demand_groups(tmp_path, monkeypatch):
+    """Check metrics can focus on selected resident home zones or CSPs."""
+    results = _results(tmp_path)
+
+    z1_trips = results.metrics.trip_count(by_variable="mode", home_zone_ids="z1").sort("mode")
+    worker_distance = results.metrics.travel_distance(
+        by_variable="mode",
+        normalize_by="person_count",
+        normalize_scope="study_area",
+        csp="worker",
+    ).sort("mode")
+    selected_emissions = results.metrics.ghg_emissions(
+        by_variable="mode",
+        home_zone_ids=["z1"],
+        csp=["worker"],
+    ).sort("mode")
+    walk_trips = results.metrics.trip_count(by_variable="mode", modes="walk").sort("mode")
+    selected_mode_distance = results.metrics.travel_distance(modes=["walk"]).sort("scenario")
+
+    assert z1_trips["mode"].to_list() == ["car"]
+    assert z1_trips["trip_count"].to_list() == pytest.approx([2.0])
+    assert worker_distance["mode"].to_list() == ["car"]
+    assert worker_distance["travel_distance_per_person"].to_list() == pytest.approx([15.0])
+    assert selected_emissions["mode"].to_list() == ["car"]
+    assert selected_emissions["ghg_emissions"].to_list() == pytest.approx([3.0])
+    assert walk_trips["mode"].to_list() == ["walk"]
+    assert walk_trips["trip_count"].to_list() == pytest.approx([1.0])
+    assert selected_mode_distance["travel_distance"].to_list() == pytest.approx([6.0])
+
+    integer_zone_frame = pl.DataFrame({"home_zone_id": [1, 2], "n_persons": [1.0, 2.0]}).lazy()
+    filtered_integer_zone = GroupDayTripsResultMetrics._filter_demand_group_rows(
+        integer_zone_frame,
+        home_zone_ids=1,
+        csp=None,
+    ).collect()
+    assert filtered_integer_zone["home_zone_id"].to_list() == [1]
+
+
+def test_compact_metric_filters_are_not_available_with_external_reference(tmp_path, monkeypatch):
+    """Check demand-group filters are not mixed with external survey references."""
+    results = _results(tmp_path)
+
+    with pytest.raises(ValueError, match="External references"):
+        results.metrics.trip_count(by_variable="mode", home_zone_ids="z1", reference="external")
+
+
+def test_compact_metric_call_reuses_one_asset_resolver(tmp_path, monkeypatch):
+    """Check one public metric query shares asset graph work across sibling assets."""
+    results = _results(tmp_path)
+    resolver_ids = []
+    original_get_dependency_graph = AssetResolver._get_dependency_graph
+
+    def record_resolver(self, *args, **kwargs):
+        resolver_ids.append(id(self))
+        return original_get_dependency_graph(self, *args, **kwargs)
+
+    monkeypatch.setattr(AssetResolver, "_get_dependency_graph", record_resolver)
+
+    results.metrics.trip_count(
+        by_variable="activity",
+        normalize_by="person_count",
+        normalize_scope="study_area",
+        output="plot",
+        inner_zone_residents_only=True,
+        iterations="last",
+        reference="external",
+        reference_view="values",
+    )
+
+    assert resolver_ids
+    assert len(set(resolver_ids)) == 1
+
+
+def test_scoped_run_table_does_not_depend_on_full_run_asset(tmp_path):
+    """Check result tables validate compact run outputs, not the full run DAG."""
+    results = _results(tmp_path)
+
+    graph = build_asset_graph(
+        results.metrics._table("plan_steps"),
+        include_root=True,
+        file_assets_only=True,
+        include_node_data=False,
+    )
+
+    assert not any(isinstance(asset, _FakeRun) for asset in graph.nodes)
+
+
+def test_run_iteration_table_scans_cached_plan_steps_without_state_load(tmp_path):
+    """Check all-iteration results do not load the full saved iteration state."""
+    plan_steps_path = tmp_path / "current_plan_steps.parquet"
+    pl.DataFrame({"activity_seq_id": [1], "n_persons": [2.0]}).write_parquet(plan_steps_path)
+
+    class CachedStateAsset:
+        cache_path = {"current_plan_steps": plan_steps_path}
+
+        def get(self):
+            raise AssertionError("Run.iteration_table should scan cached plan steps directly.")
+
+    run = object.__new__(Run)
+    run.iteration_state_assets = [CachedStateAsset()]
+
+    table = run.iteration_table("plan_steps", 1).collect()
+
+    assert table["n_persons"].to_list() == [2.0]
+
+
+def test_metric_projection_accepts_plan_steps_without_demand_group_id(tmp_path):
+    """Check projected final plan steps can use direct home-zone columns."""
+    transport_zones = _FakeTransportZones(base_folder=tmp_path)
+    reference_plan_steps = _FakeLazyFrameAsset(
+        base_folder=tmp_path,
+        name="reference_plan_steps_direct_home_zone",
+        frame=pl.DataFrame(
+            {
+                "home_zone_id": ["z1", "z2"],
+                "activity_seq_id": [1, 1],
+                "mode": ["car", "walk"],
+                "n_persons": [2.0, 1.0],
+            }
+        ),
+    )
+
+    def run(day_type: str, *, scenario=None, sensitivity_case=None, replication: int = 0):
+        plan_steps = pl.DataFrame(
+            {
+                "activity_seq_id": [1, 1],
+                "home_zone_id": ["z1", "z2"],
+                "from": ["z1", "z2"],
+                "to": ["z3", "z4"],
+                "mode": ["car", "walk"],
+                "n_persons": [2.0, 1.0],
+            }
+        )
+        demand_groups = pl.DataFrame(
+            {
+                "demand_group_id": [1, 2],
+                "home_zone_id": ["z1", "z2"],
+                "n_persons": [2.0, 1.0],
+            }
+        )
+        return _FakeRun(
+            base_folder=tmp_path,
+            name=f"direct_home_zone_{scenario or 'default'}_{day_type}_{replication}",
+            plan_steps=plan_steps,
+            demand_groups=demand_groups,
+            costs=pl.DataFrame({"from": ["z1", "z2"], "to": ["z3", "z4"], "mode": ["car", "walk"]}),
+            opportunities=pl.DataFrame(),
+            iteration_metrics=pl.DataFrame(),
+            reference_plan_steps=reference_plan_steps,
+            transport_zones=transport_zones,
+        )
+
+    results = GroupDayTripsResults(
+        run=run,
+        day_type="weekday",
+        scenarios="default",
+        n_replications=1,
+    )
+
+    metric = results.metrics.trip_count(
+        by_variable="mode",
+        by_zone="home_zone",
+        normalize_by="metric_total",
+        normalize_scope="zone",
+        inner_zone_residents_only=True,
+    ).sort(["home_zone_id", "mode"])
+
+    assert metric["home_zone_id"].to_list() == ["z1", "z2"]
+    assert metric["trip_count_share"].to_list() == pytest.approx([1.0, 1.0])
+
+
 def test_metrics_can_include_survey_reference(tmp_path, monkeypatch):
     """Check supported quantities can opt into external references."""
     results = _results(tmp_path)
@@ -978,6 +1228,109 @@ def test_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
         "scenario:default",
     ]
     assert distance_values["travel_distance"].to_list() == pytest.approx([36.0, 9.0, 30.0, 6.0])
+
+    emissions_by_home_zone = results.metrics.ghg_emissions(
+        by_zone="home_zone",
+        inner_zone_residents_only=True,
+        reference=("scenario", "default"),
+    ).sort("home_zone_id")
+
+    assert emissions_by_home_zone["scenario"].to_list() == ["test", "test"]
+    assert emissions_by_home_zone["home_zone_id"].to_list() == ["z1", "z2"]
+    assert emissions_by_home_zone["ghg_emissions"].to_list() == pytest.approx([3.0, 0.75])
+    assert emissions_by_home_zone["ghg_emissions_reference"].to_list() == pytest.approx([3.0, 0.75])
+    assert emissions_by_home_zone["gap"].to_list() == pytest.approx([0.0, 0.0])
+
+
+def test_scenario_reference_pairs_replications_within_sensitivity_case(tmp_path, monkeypatch):
+    """Check scenario deltas do not mix reference runs from other sensitivity cases."""
+    base_factory = _run_factory(tmp_path)
+    sensitivity_case = SensitivityCase(
+        case_id="high_distance",
+        parameter_name="distance",
+        parameter_label="Distance",
+        variation_type="absolute",
+        variation_value=100.0,
+        variation_label="+100",
+    )
+
+    def run(day_type: str, *, scenario: str | None = None, sensitivity_case=None, replication: int = 0):
+        run_asset = base_factory(
+            day_type,
+            scenario=scenario,
+            sensitivity_case=sensitivity_case,
+            replication=replication,
+        )
+        if sensitivity_case is not None:
+            run_asset.frames["plan_steps"] = run_asset.frames["plan_steps"].with_columns(
+                pl.when(pl.col("mode") == "car")
+                .then(pl.col("distance") + 100.0)
+                .otherwise(pl.col("distance"))
+                .alias("distance")
+            )
+        return run_asset
+
+    results = GroupDayTripsResults(
+        run=run,
+        day_type="weekday",
+        scenarios=["default", "test"],
+        n_replications=2,
+        sensitivity_cases=[None, sensitivity_case],
+    )
+
+    distance = results.metrics.travel_distance(
+        by_variable="mode",
+        reference=("scenario", "default"),
+    ).sort(["sensitivity_case", "mode"])
+
+    assert distance["sensitivity_case"].to_list() == [
+        "base",
+        "base",
+        "high_distance",
+        "high_distance",
+    ]
+    assert distance["mode"].to_list() == ["car", "walk", "car", "walk"]
+    assert distance["gap"].to_list() == pytest.approx([6.0, 3.0, 6.0, 3.0])
+
+
+def test_scenario_reference_compares_missing_dimension_rows_to_zero(tmp_path, monkeypatch):
+    """Check scenario gaps keep modes that exist only on one side of the comparison."""
+    base_factory = _run_factory(tmp_path)
+
+    def run(day_type: str, *, scenario: str | None = None, sensitivity_case=None, replication: int = 0):
+        run_asset = base_factory(
+            day_type,
+            scenario=scenario,
+            sensitivity_case=sensitivity_case,
+            replication=replication,
+        )
+        if scenario == "test":
+            run_asset.frames["plan_steps"] = run_asset.frames["plan_steps"].with_columns(
+                pl.when(pl.col("home_zone_id") == "z1")
+                .then(pl.lit("walk/public_transport/walk"))
+                .otherwise(pl.col("mode"))
+                .alias("mode")
+            )
+        return run_asset
+
+    results = GroupDayTripsResults(
+        run=run,
+        day_type="weekday",
+        scenarios=["default", "test"],
+        n_replications=1,
+    )
+
+    trip_count = results.metrics.trip_count(
+        by_zone="home_zone",
+        by_variable="mode",
+        reference=("scenario", "default"),
+    ).sort(["home_zone_id", "mode"])
+
+    assert trip_count["home_zone_id"].to_list() == ["z1", "z1", "z2"]
+    assert trip_count["mode"].to_list() == ["car", "walk/public_transport/walk", "walk"]
+    assert trip_count["trip_count"].to_list() == pytest.approx([0.0, 2.0, 1.0])
+    assert trip_count["trip_count_reference"].to_list() == pytest.approx([2.0, 0.0, 1.0])
+    assert trip_count["gap"].to_list() == pytest.approx([-2.0, 2.0, 0.0])
 
 
 def test_iteration_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
@@ -1218,6 +1571,9 @@ def test_metric_plot_uses_line_chart_for_multiple_iterations(tmp_path, monkeypat
 
     assert isinstance(fig, BaseFigure)
     assert fig.layout.title.text == "Travel distance by mode"
+    assert fig.layout.title.y == pytest.approx(0.98)
+    assert fig.layout.legend.y == pytest.approx(1.03)
+    assert 85 <= fig.layout.margin.t <= 100
     assert fig.layout.xaxis.title.text == "Iteration"
     assert all(trace.type == "scatter" for trace in fig.data)
     ribbon_traces = [trace for trace in fig.data if trace.fill == "toself"]
@@ -1333,6 +1689,7 @@ def test_reference_gap_map_uses_diverging_colors(tmp_path, monkeypatch):
     """Check map plots of reference gaps use a zero-centered diverging scale."""
     results = _results(tmp_path, scenarios=["default", "test"])
     calls = _record_metric_plot(monkeypatch, "plot_metric_grid_by_zone")
+    zone_calls = _record_metric_plot(monkeypatch, "plot_metric_by_zone")
 
     fig = results.metrics.trip_count(
         by_variable="mode",
@@ -1350,6 +1707,22 @@ def test_reference_gap_map_uses_diverging_colors(tmp_path, monkeypatch):
     assert calls[0]["kwargs"]["title"] == "Gap to reference: Trip count share by home zone and mode"
     assert calls[0]["kwargs"]["diverging_center"] == 0.0
     assert calls[0]["args"][1]["scenario"].unique(maintain_order=True).to_list() == ["test"]
+
+    emissions_fig = results.metrics.ghg_emissions(
+        by_zone="home_zone",
+        output="plot",
+        inner_zone_residents_only=True,
+        iterations="last",
+        reference=("scenario", "default"),
+    )
+
+    assert isinstance(emissions_fig, BaseFigure)
+    assert zone_calls[0]["kwargs"]["metric"] == "gap"
+    assert zone_calls[0]["kwargs"]["zone_column"] == "home_zone_id"
+    assert zone_calls[0]["kwargs"]["title"] == "Gap to reference: Ghg emissions by home zone"
+    assert zone_calls[0]["kwargs"]["diverging_center"] == 0.0
+    assert zone_calls[0]["args"][1]["home_zone_id"].to_list() == ["z1", "z2"]
+    assert zone_calls[0]["args"][1]["gap"].to_list() == pytest.approx([0.0, 0.0])
 
 
 def test_origin_destination_metric_plot_uses_flow_map_helper(tmp_path, monkeypatch):
