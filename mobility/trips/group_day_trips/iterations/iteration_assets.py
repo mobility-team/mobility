@@ -183,6 +183,7 @@ class InitialIterationStateAsset(FileAsset):
             # routing parameters do not leak into this initial-state hash.
             "mode_values": get_mode_values(modes, "stay_home"),
             "run_seed": parameters.run.seed,
+            "demand_group_parameters": parameters.demand_groups,
             "min_activity_time_constant": parameters.plan_update.min_activity_time_constant,
             "initial_transport_costs": initial_transport_costs,
         }
@@ -204,6 +205,7 @@ class InitialIterationStateAsset(FileAsset):
             self.population,
             self.survey_plan_assets,
             self.inputs["is_weekday"],
+            self.parameters,
         )
         activity_dur, home_night_dur, activity_demand_per_pers = self.initializer.get_survey_duration_summaries(
             self.population_weighted_plan_steps.get(),

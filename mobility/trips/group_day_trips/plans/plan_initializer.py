@@ -5,6 +5,7 @@ import polars as pl
 from mobility.activities.activity import ActivityParameters
 from mobility.surveys import SurveyPlanAssets
 from mobility.transport.modes.core.mode_values import get_mode_values
+from .demand_subgroups import DEMAND_UNIT_COLS, split_large_demand_groups
 from .plan_ids import add_plan_id
 
 
@@ -17,7 +18,7 @@ class PlanInitializer:
     and (5) fetch current OD costs.
     """
 
-    def get_survey_plan_data(self, population, survey_plan_assets: SurveyPlanAssets, is_weekday):
+    def get_survey_plan_data(self, population, survey_plan_assets: SurveyPlanAssets, is_weekday, parameters):
         """Build runtime survey plan inputs from survey assets and demand groups."""
 
         lau_to_city_cat = (
@@ -99,6 +100,10 @@ class PlanInitializer:
             )
             .sort(["home_zone_id", "country", "city_category", "csp", "n_cars"])
             .with_row_index("demand_group_id")
+        )
+        demand_groups = split_large_demand_groups(
+            demand_groups,
+            max_persons_per_demand_subgroup=parameters.demand_groups.max_persons_per_demand_subgroup,
         )
 
         survey_plans = (
@@ -277,7 +282,7 @@ class PlanInitializer:
         mode_values = get_mode_values(modes, "stay_home")
 
         stay_home_state = (
-            demand_groups.select(["demand_group_id", "country", "csp", "n_persons", "home_zone_id"])
+            demand_groups.select(DEMAND_UNIT_COLS + ["country", "csp", "n_persons", "home_zone_id"])
             .with_columns(
                 iteration=pl.lit(0, pl.UInt16()),
                 activity_seq_id=pl.lit(0, pl.UInt32()),
@@ -311,6 +316,7 @@ class PlanInitializer:
             .select(
                 [
                     "demand_group_id",
+                    "demand_subgroup_id",
                     "country",
                     "csp",
                     "mean_home_night_per_pers",
@@ -337,6 +343,7 @@ class PlanInitializer:
             stay_home_state.select(
                 [
                     "demand_group_id",
+                    "demand_subgroup_id",
                     "iteration",
                     "activity_seq_id",
                     "time_seq_id",

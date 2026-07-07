@@ -6,6 +6,7 @@ import polars as pl
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
+from .demand_subgroups import DEMAND_UNIT_COLS, demand_unit_hash, with_demand_subgroup_id
 
 
 class ActivitySequences(FileAsset):
@@ -13,6 +14,7 @@ class ActivitySequences(FileAsset):
 
     OUTPUT_COLUMNS = [
         "demand_group_id",
+        "demand_subgroup_id",
         "activity_seq_id",
         "time_seq_id",
         "activity",
@@ -102,13 +104,13 @@ class ActivitySequences(FileAsset):
 
         state = self.previous_state.get()
         if self.current_plans is None:
-            self.current_plans = state.current_plans
+            self.current_plans = with_demand_subgroup_id(state.current_plans)
         if self.survey_plans is None:
             self.survey_plans = state.survey_plans
         if self.survey_plan_steps is None:
             self.survey_plan_steps = state.survey_plan_steps
         if self.demand_groups is None:
-            self.demand_groups = state.demand_groups
+            self.demand_groups = with_demand_subgroup_id(state.demand_groups)
 
     def _build_activity_sequences_for_scope(self) -> pl.DataFrame:
         """Return admitted timed activity-sequence rows for this iteration."""
@@ -129,14 +131,14 @@ class ActivitySequences(FileAsset):
     def _sample_all_activity_sequences(self) -> pl.DataFrame:
         """Sample timed survey activity-sequence seeds from raw survey plans."""
         weighted_survey_plans = (
-            self.demand_groups
+            with_demand_subgroup_id(self.demand_groups)
             .join(self.survey_plans, on=["country", "city_category", "csp", "n_cars"], how="inner")
             .filter(pl.col("time_seq_id") != 0)
         )
 
         k_activity_sequences = self.parameters.activity_sequences.k_activity_sequences
         if k_activity_sequences is None:
-            selected = weighted_survey_plans.select(["demand_group_id", "activity_seq_id", "time_seq_id"]).unique()
+            selected = weighted_survey_plans.select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"]).unique()
             return selected.join(
                 self.survey_plan_steps,
                 on=["activity_seq_id", "time_seq_id"],
@@ -145,12 +147,11 @@ class ActivitySequences(FileAsset):
 
         activity_sequences = (
             weighted_survey_plans
-            .select(["demand_group_id", "activity_seq_id", "time_seq_id", "p_plan"])
-            .unique(subset=["demand_group_id", "activity_seq_id", "time_seq_id"], keep="first")
+            .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "p_plan"])
+            .unique(subset=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"], keep="first")
             .with_columns(
                 sample_u=(
-                    pl.struct(["demand_group_id", "activity_seq_id", "time_seq_id"])
-                    .hash(seed=self.seed)
+                    demand_unit_hash(["activity_seq_id", "time_seq_id"], seed=self.seed)
                     .cast(pl.Float64)
                     .truediv(pl.lit(18446744073709551616.0))
                     .clip(1e-18, 1.0 - 1e-18)
@@ -160,10 +161,10 @@ class ActivitySequences(FileAsset):
                 sample_score=(pl.col("sample_u").log().neg() / pl.col("p_plan").clip(1e-18))
                 + pl.col("time_seq_id").cast(pl.Float64) * 1e-18
             )
-            .sort(["demand_group_id", "sample_score", "time_seq_id"])
-            .with_columns(sample_rank=pl.col("time_seq_id").cum_count().over("demand_group_id"))
+            .sort(DEMAND_UNIT_COLS + ["sample_score", "time_seq_id"])
+            .with_columns(sample_rank=pl.col("time_seq_id").cum_count().over(DEMAND_UNIT_COLS))
             .filter(pl.col("sample_rank") <= k_activity_sequences)
-            .select(["demand_group_id", "activity_seq_id", "time_seq_id"])
+            .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"])
         )
 
         return activity_sequences.join(
@@ -175,9 +176,9 @@ class ActivitySequences(FileAsset):
     def _select_active_activity_sequences(self) -> pl.DataFrame:
         """Return the currently occupied non-stay-home activity sequences."""
         active_activity_sequences = (
-            self.current_plans
+            with_demand_subgroup_id(self.current_plans)
             .filter(pl.col("time_seq_id") != 0)
-            .select(["demand_group_id", "activity_seq_id", "time_seq_id"])
+            .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"])
             .unique()
         )
 
@@ -195,6 +196,7 @@ class ActivitySequences(FileAsset):
         return pl.DataFrame(
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": self.survey_plan_steps.schema["activity_seq_id"],
                 "time_seq_id": self.survey_plan_steps.schema["time_seq_id"],
                 "activity": self.survey_plan_steps.schema["activity"],

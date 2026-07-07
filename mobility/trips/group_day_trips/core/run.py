@@ -28,6 +28,8 @@ from ..evaluation.trip_pattern_distribution import (
     PopulationWeightedTripPatternDistribution,
 )
 from ..plans import ActivitySequences, DestinationSequences, ModeSequences
+from ..plans.demand_subgroups import DEMAND_UNIT_COLS
+from ..plans.plan_ids import PLAN_KEY_COLS
 from ..transitions.transition_schema import TRANSITION_EVENT_SCHEMA
 from .memory_logging import log_memory_checkpoint
 from .parameters import GroupDayTripsParameters
@@ -447,16 +449,16 @@ class Run(FileAsset):
             plan_steps
             .join(
                 state.current_plans.select(
-                    ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id", "utility"]
+                    PLAN_KEY_COLS + ["utility"]
                 ),
-                on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"],
+                on=PLAN_KEY_COLS,
                 how="left",
             )
             .join(
-                state.demand_groups.select(["demand_group_id", "home_zone_id", "csp", "n_cars"]),
-                on=["demand_group_id"],
+                state.demand_groups.select(DEMAND_UNIT_COLS + ["home_zone_id", "csp", "n_cars"]),
+                on=DEMAND_UNIT_COLS,
             )
-            .drop("demand_group_id")
+            .drop(DEMAND_UNIT_COLS)
             .join(
                 costs,
                 on=["from", "to", "mode"],
@@ -530,6 +532,38 @@ class Run(FileAsset):
         """Return lazy readers for this run's cached parquet outputs."""
         self._raise_if_disabled()
         return {key: pl.scan_parquet(path) for key, path in self.cache_path.items()}
+
+    def iteration_table(self, table_name: str, iteration: int) -> pl.LazyFrame:
+        """Return one table saved after a completed model iteration."""
+        if table_name not in {"plan_steps", "costs"}:
+            raise ValueError(
+                "Saved iteration tables currently support only `plan_steps` and `costs`. "
+                f"Received `{table_name}`."
+            )
+        if iteration < 1 or iteration > len(self.iteration_state_assets):
+            raise ValueError(
+                "iteration should be between 1 and the run's number of iterations. "
+                f"Received {iteration}."
+            )
+
+        if table_name == "costs":
+            costs_asset = self.iteration_transport_cost_assets[iteration - 1]
+            if costs_asset.cache_path.exists():
+                return pl.scan_parquet(costs_asset.cache_path)
+            return costs_asset.get().lazy()
+
+        state_asset = self.iteration_state_assets[iteration - 1]
+        current_plan_steps_path = state_asset.cache_path["current_plan_steps"]
+        if current_plan_steps_path.exists():
+            return pl.scan_parquet(current_plan_steps_path)
+
+        state = state_asset.get()
+        if state.current_plan_steps is None:
+            raise RuntimeError(
+                "Saved PopulationGroupDayTrips iteration state has no current plan steps "
+                f"for iteration={iteration}."
+            )
+        return state.current_plan_steps.lazy()
 
 
     def results(self) -> RunResults:

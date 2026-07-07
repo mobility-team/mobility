@@ -3,6 +3,7 @@ import pathlib
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
+from .demand_subgroups import DEMAND_UNIT_COLS, with_demand_subgroup_id
 
 
 class CandidatePlanStepsAsset(FileAsset):
@@ -10,6 +11,7 @@ class CandidatePlanStepsAsset(FileAsset):
 
     STRUCTURAL_COLUMNS = [
         "demand_group_id",
+        "demand_subgroup_id",
         "country",
         "activity_seq_id",
         "time_seq_id",
@@ -36,6 +38,7 @@ class CandidatePlanStepsAsset(FileAsset):
 
     DEDUPE_COLUMNS = [
         "demand_group_id",
+        "demand_subgroup_id",
         "activity_seq_id",
         "time_seq_id",
         "dest_seq_id",
@@ -54,7 +57,7 @@ class CandidatePlanStepsAsset(FileAsset):
     ) -> None:
         self.candidate_plan_steps = candidate_plan_steps
         inputs = {
-            "version": 1,
+            "version": 2,
             "run_key": run_key,
             "is_weekday": is_weekday,
             "iteration": iteration,
@@ -99,13 +102,18 @@ class CandidatePlanStepsAsset(FileAsset):
             )
         )
         return (
-            mode_sequences.get_cached_asset().lazy()
+            with_demand_subgroup_id(mode_sequences.get_cached_asset()).lazy()
             .join(
-                destination_sequences.get_cached_asset().lazy(),
-                on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "seq_step_index"],
+                with_demand_subgroup_id(destination_sequences.get_cached_asset()).lazy(),
+                on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "seq_step_index"],
             )
             .join(survey_plan_steps.lazy(), on=["activity_seq_id", "time_seq_id", "seq_step_index"])
-            .join(demand_groups.select(["demand_group_id", "country", "csp"]).lazy(), on="demand_group_id")
+            .join(
+                with_demand_subgroup_id(demand_groups)
+                .select(DEMAND_UNIT_COLS + ["country", "csp"])
+                .lazy(),
+                on=DEMAND_UNIT_COLS,
+            )
             .select(cls.STRUCTURAL_COLUMNS)
         )
 
@@ -118,6 +126,7 @@ class CandidatePlanStepsAsset(FileAsset):
             candidate_rows = candidate_rows.with_columns(
                 last_seen_iteration=pl.col("first_seen_iteration")
             )
+        candidate_rows = with_demand_subgroup_id(candidate_rows)
         return candidate_rows
 
     @classmethod
@@ -135,6 +144,8 @@ class CandidatePlanStepsAsset(FileAsset):
         max_inactive_age: int,
     ) -> pl.LazyFrame:
         """Merge new iteration candidates into the cumulative structural candidate memory."""
+        current_plans = with_demand_subgroup_id(current_plans)
+        demand_groups = with_demand_subgroup_id(demand_groups)
 
         candidate_sets = []
         if previous_candidate_plan_steps is not None:
@@ -149,8 +160,10 @@ class CandidatePlanStepsAsset(FileAsset):
                 previous_candidates
                 .filter(pl.col("mode_seq_id") != 0)
                 .join(
-                    current_plans.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]).lazy(),
-                    on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"],
+                    with_demand_subgroup_id(current_plans)
+                    .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"])
+                    .lazy(),
+                    on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"],
                     how="inner",
                 )
                 .with_columns(

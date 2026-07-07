@@ -218,6 +218,87 @@ def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_
     assert result.columns == DestinationSequences.OUTPUT_COLUMNS
 
 
+def test_refresh_active_mode_alternatives_keeps_distinct_subgroup_steps(tmp_path):
+    destination_sequences = DestinationSequences(
+        is_weekday=True,
+        iteration=5,
+        base_folder=_make_local_tmp_path(tmp_path, "refresh_active_destinations_subgroups"),
+        current_plans=pl.DataFrame(
+            {
+                "demand_group_id": [1, 1],
+                "demand_subgroup_id": [0, 1],
+                "activity_seq_id": [10, 10],
+                "time_seq_id": [20, 20],
+                "dest_seq_id": [30, 30],
+                "mode_seq_id": [40, 40],
+            },
+            schema={
+                "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
+                "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
+                "dest_seq_id": pl.UInt32,
+                "mode_seq_id": pl.UInt32,
+            },
+        ),
+        current_plan_steps=pl.DataFrame(
+            {
+                "demand_group_id": [1, 1, 1, 1],
+                "demand_subgroup_id": [0, 0, 1, 1],
+                "activity_seq_id": [10, 10, 10, 10],
+                "time_seq_id": [20, 20, 20, 20],
+                "dest_seq_id": [30, 30, 30, 30],
+                "seq_step_index": [1, 2, 1, 2],
+                "from": [100, 200, 101, 201],
+                "to": [200, 100, 201, 101],
+                "departure_time": [8.0, 17.0, 8.0, 17.0],
+                "arrival_time": [9.0, 18.0, 9.0, 18.0],
+                "next_departure_time": [17.0, 18.0, 17.0, 18.0],
+            },
+            schema={
+                "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
+                "activity_seq_id": pl.UInt32,
+                "time_seq_id": pl.UInt32,
+                "dest_seq_id": pl.UInt32,
+                "seq_step_index": pl.UInt8,
+                "from": pl.UInt16,
+                "to": pl.UInt16,
+                "departure_time": pl.Float32,
+                "arrival_time": pl.Float32,
+                "next_departure_time": pl.Float32,
+            },
+        ),
+        activities=[],
+        transport_zones=None,
+        destination_saturation=pl.DataFrame(),
+        demand_groups=pl.DataFrame(),
+        costs=pl.DataFrame(),
+        parameters=GroupDayTripsParameters(
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(
+                refresh_active_mode_alternatives=True,
+            ),
+        ),
+        seed=123,
+        resolved_activity_parameters={},
+    )
+    sampled = pl.DataFrame(schema={column: dtype for column, dtype in destination_sequences._empty_destination_sequences().schema.items()})
+
+    result = destination_sequences._with_refreshed_active_destination_sequences(sampled)
+
+    assert (
+        result
+        .group_by(["demand_group_id", "demand_subgroup_id", "activity_seq_id", "time_seq_id", "dest_seq_id"])
+        .len()
+        .sort("demand_subgroup_id")
+        .select(["demand_subgroup_id", "len"])
+        .to_dicts()
+    ) == [
+        {"demand_subgroup_id": 0, "len": 2},
+        {"demand_subgroup_id": 1, "len": 2},
+    ]
+
+
 def test_refresh_active_mode_alternatives_default_keeps_sampled_destinations_only(tmp_path):
     destination_sequences = DestinationSequences(
         is_weekday=True,

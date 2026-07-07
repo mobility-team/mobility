@@ -54,6 +54,8 @@ class TripCountByDemandGroup(FileAsset):
         per_replication = (
             demand_groups
             .select(group_columns + ["n_persons"])
+            .group_by(group_columns)
+            .agg(n_persons=pl.col("n_persons").cast(pl.Float64).sum())
             .join(trip_count, on=group_columns, how="left")
             .with_columns(
                 n_trips=pl.col("n_trips").fill_null(0.0),
@@ -142,6 +144,8 @@ class Immobility(FileAsset):
         per_replication = (
             demand_groups
             .select(join_keys + ["n_persons"])
+            .group_by(join_keys)
+            .agg(n_persons=pl.col("n_persons").cast(pl.Float64).sum())
             .join(immobile_population, on=join_keys, how="left")
             .with_columns(pl.col("n_persons_imm").fill_null(0.0))
             .join(zones.lazy(), on="home_zone_id", how="inner")

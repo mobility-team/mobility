@@ -359,6 +359,28 @@ class GroupDayTripsModeSequenceParameters(BaseModel):
     ]
 
 
+class GroupDayTripsDemandGroupParameters(BaseModel):
+    """Settings used to split large demand groups into smaller subgroups."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_persons_per_demand_subgroup: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            title="Maximum persons per demand subgroup",
+            description=(
+                "Optional maximum represented persons per demand subgroup. "
+                "Large demand groups are split into deterministic subgroups "
+                "before activity, destination, and mode sampling, so one "
+                "large group can keep several sampled alternatives instead of "
+                "placing all represented persons on the same sampled plan."
+            ),
+        ),
+    ]
+
+
 class GroupDayTripsPlanUpdateParameters(BaseModel):
     """Settings used when updating day-to-day plans."""
 
@@ -531,6 +553,10 @@ class GroupDayTripsParameters(BaseModel):
     mode_sequences: Annotated[
         GroupDayTripsModeSequenceParameters,
         Field(default_factory=GroupDayTripsModeSequenceParameters),
+    ]
+    demand_groups: Annotated[
+        GroupDayTripsDemandGroupParameters,
+        Field(default_factory=GroupDayTripsDemandGroupParameters),
     ]
     plan_update: Annotated[
         GroupDayTripsPlanUpdateParameters,

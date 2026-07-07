@@ -12,6 +12,7 @@ from ..transitions.transition_events import (
     build_transition_events_lazy,
 )
 from .candidate_plan_steps import CandidatePlanStepsAsset
+from .demand_subgroups import DEMAND_UNIT_COLS, with_demand_subgroup_id
 from .plan_distance import PlanDistance
 from .plan_ids import PLAN_KEY_COLS, add_plan_id
 from .plan_schedule_updater import PlanScheduleUpdater
@@ -47,6 +48,13 @@ class PlanUpdater:
         parameters: Any,
     ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.LazyFrame | None, pl.DataFrame]:
         """Advance one iteration of plan updates."""
+        current_plans = with_demand_subgroup_id(current_plans)
+        if current_plan_steps is not None:
+            current_plan_steps = with_demand_subgroup_id(current_plan_steps)
+        if candidate_plan_steps is not None:
+            candidate_plan_steps = with_demand_subgroup_id(candidate_plan_steps)
+        demand_groups = with_demand_subgroup_id(demand_groups)
+        stay_home_plan = with_demand_subgroup_id(stay_home_plan)
 
         possible_plan_steps = self.get_possible_plan_steps(
             current_plans,
@@ -179,7 +187,7 @@ class PlanUpdater:
         iteration: int,
     ) -> None:
         """Fail when non-stay-home current plans have no step details."""
-        plan_keys = ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]
+        plan_keys = PLAN_KEY_COLS
 
         missing_current = (
             current_plans.lazy()
@@ -312,6 +320,7 @@ class PlanUpdater:
         )
         possible_plan_step_columns = [
             "demand_group_id",
+            "demand_subgroup_id",
             "country",
             "activity_seq_id",
             "time_seq_id",
@@ -413,10 +422,12 @@ class PlanUpdater:
         plan_id_index: pl.DataFrame,
     ):
         """Aggregate per-step utilities to plan-level utilities."""
+        possible_plan_steps = with_demand_subgroup_id(possible_plan_steps)
+        stay_home_plan = with_demand_subgroup_id(stay_home_plan)
 
         possible_plan_utility = (
             possible_plan_steps.filter(pl.col("mode_seq_id") != 0).group_by(
-                ["plan_id", "demand_group_id", "country", "csp", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]
+                ["plan_id"] + DEMAND_UNIT_COLS + ["country", "csp", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]
             )
             .agg(
                 utility=pl.col("utility").sum(),
@@ -436,7 +447,7 @@ class PlanUpdater:
                 )
             )
             .with_columns(utility=pl.col("utility") + pl.col("utility_stay_home"))
-            .select(["demand_group_id", "activity_seq_id", "time_seq_id", "mode_seq_id", "dest_seq_id", "utility"])
+            .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "mode_seq_id", "dest_seq_id", "utility"])
         )
 
         possible_plan_utility = pl.concat(
@@ -453,7 +464,7 @@ class PlanUpdater:
                         * (pl.col("mean_home_night_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
                     )
                 )
-                .select(["demand_group_id", "activity_seq_id", "time_seq_id", "mode_seq_id", "dest_seq_id", "utility"]),
+                .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "mode_seq_id", "dest_seq_id", "utility"]),
             ]
         )
 
@@ -467,6 +478,9 @@ class PlanUpdater:
         plan_id_index: pl.DataFrame,
     ) -> tuple[pl.LazyFrame, pl.DataFrame]:
         """Append one synthetic timed step for the stay-home state so it can be embedded like other plans."""
+        possible_plan_steps = with_demand_subgroup_id(possible_plan_steps)
+        stay_home_plan = with_demand_subgroup_id(stay_home_plan)
+
         step_columns = [col for col in possible_plan_steps.collect_schema().names() if col != "plan_id"]
         possible_plan_steps_no_id = possible_plan_steps.filter(pl.col("mode_seq_id") != 0).select(step_columns)
 
@@ -568,6 +582,8 @@ class PlanUpdater:
         min_transition_utility_gain: float = 0.0,
     ) -> pl.LazyFrame:
         """Build allowed from-to plan pairs under the active behavior scope."""
+        current_plans = with_demand_subgroup_id(current_plans)
+        possible_plan_utility = with_demand_subgroup_id(possible_plan_utility)
 
         logging.debug(
             "Building PopulationGroupDayTrips allowed plan transitions: scope=%s",
@@ -639,11 +655,12 @@ class PlanUpdater:
                 possible_plan_utility_for_transitions,
                 (
                     (pl.col("demand_group_id") == pl.col("demand_group_id_trans"))
+                    & (pl.col("demand_subgroup_id") == pl.col("demand_subgroup_id_trans"))
                     & scope_pair_constraint
                 ),
                 suffix="_trans",
             )
-            .drop("demand_group_id_trans")
+            .drop("demand_group_id_trans", "demand_subgroup_id_trans")
             .rename({"plan_id": "plan_id_trans"})
             .with_columns(
                 max_utility_trans=pl.col("utility_trans").max().over(plan_cols),
@@ -702,6 +719,7 @@ class PlanUpdater:
         transition_distance_friction: float = 0.0,
     ) -> pl.DataFrame:
         """Compute one-step transition probabilities with distance-threshold filtering and revision."""
+        allowed_transitions = with_demand_subgroup_id(allowed_transitions)
 
         logging.debug("Collecting PopulationGroupDayTrips transition probabilities")
 
@@ -752,6 +770,7 @@ class PlanUpdater:
                 [
                     "plan_id_trans",
                     "demand_group_id",
+                    "demand_subgroup_id",
                     "activity_seq_id",
                     "time_seq_id",
                     "dest_seq_id",
@@ -792,6 +811,8 @@ class PlanUpdater:
         plan_probability_pruning_min_iteration: int = 2,
     ) -> tuple[pl.DataFrame, pl.LazyFrame]:
         """Apply transition probabilities and emit transition events."""
+        current_plans = with_demand_subgroup_id(current_plans)
+        transition_probabilities = with_demand_subgroup_id(transition_probabilities)
 
         plan_cols = PLAN_KEY_COLS
 
@@ -827,7 +848,7 @@ class PlanUpdater:
 
         new_states = (
             transitions.group_by(
-                ["plan_id_trans", "demand_group_id", "activity_seq_id_trans", "time_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"]
+                ["plan_id_trans"] + DEMAND_UNIT_COLS + ["activity_seq_id_trans", "time_seq_id_trans", "dest_seq_id_trans", "mode_seq_id_trans"]
             )
             .agg(
                 n_persons=pl.col("n_persons_moved").sum(),
@@ -913,9 +934,11 @@ class PlanUpdater:
         retained_share: float,
     ) -> pl.DataFrame | None:
         """Build a raw-target to retained-target map from transition mass."""
+        transitions = with_demand_subgroup_id(transitions)
         target_cols = [
             "plan_id_trans",
             "demand_group_id",
+            "demand_subgroup_id",
             "activity_seq_id_trans",
             "time_seq_id_trans",
             "dest_seq_id_trans",
@@ -937,6 +960,7 @@ class PlanUpdater:
             .sort(
                 [
                     "demand_group_id",
+                    "demand_subgroup_id",
                     "is_stay_home_target",
                     "n_persons",
                     "activity_seq_id_trans",
@@ -944,12 +968,12 @@ class PlanUpdater:
                     "dest_seq_id_trans",
                     "mode_seq_id_trans",
                 ],
-                descending=[False, False, True, False, False, False, False],
+                descending=[False, False, False, True, False, False, False, False],
             )
             .with_columns(
-                group_n_persons=pl.col("n_persons").sum().over(["demand_group_id", "is_stay_home_target"]),
-                cumulative_n_persons=pl.col("n_persons").cum_sum().over(["demand_group_id", "is_stay_home_target"]),
-                group_rank=pl.col("n_persons").cum_count().over(["demand_group_id", "is_stay_home_target"]),
+                group_n_persons=pl.col("n_persons").sum().over(DEMAND_UNIT_COLS + ["is_stay_home_target"]),
+                cumulative_n_persons=pl.col("n_persons").cum_sum().over(DEMAND_UNIT_COLS + ["is_stay_home_target"]),
+                group_rank=pl.col("n_persons").cum_count().over(DEMAND_UNIT_COLS + ["is_stay_home_target"]),
             )
             .with_columns(
                 previous_cumulative_share=(
@@ -966,11 +990,12 @@ class PlanUpdater:
             .filter(pl.col("is_retained"))
             .filter(
                 pl.col("group_rank")
-                == pl.col("group_rank").min().over(["demand_group_id", "is_stay_home_target"])
+                == pl.col("group_rank").min().over(DEMAND_UNIT_COLS + ["is_stay_home_target"])
             )
             .select(
                 [
                     "demand_group_id",
+                    "demand_subgroup_id",
                     "is_stay_home_target",
                     pl.col("plan_id_trans").alias("fallback_plan_id_trans"),
                     pl.col("activity_seq_id_trans").alias("fallback_activity_seq_id_trans"),
@@ -983,7 +1008,7 @@ class PlanUpdater:
         )
         mapping = (
             ranked
-            .join(fallback_targets, on=["demand_group_id", "is_stay_home_target"], how="left")
+            .join(fallback_targets, on=DEMAND_UNIT_COLS + ["is_stay_home_target"], how="left")
             .with_columns(
                 plan_id_trans_final=pl.when(pl.col("is_retained"))
                 .then(pl.col("plan_id_trans"))
@@ -1033,9 +1058,11 @@ class PlanUpdater:
         transitions: pl.LazyFrame,
     ) -> pl.LazyFrame:
         """Attach previous utility for the final transition target state."""
+        current_plans = with_demand_subgroup_id(current_plans)
+        transitions = with_demand_subgroup_id(transitions)
         prev_to_lookup = (
             current_plans.lazy()
-            .select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id", "utility"])
+            .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id", "utility"])
             .rename(
                 {
                     "activity_seq_id": "activity_seq_id_trans",
@@ -1051,6 +1078,7 @@ class PlanUpdater:
             prev_to_lookup,
             on=[
                 "demand_group_id",
+                "demand_subgroup_id",
                 "activity_seq_id_trans",
                 "time_seq_id_trans",
                 "dest_seq_id_trans",
@@ -1061,11 +1089,14 @@ class PlanUpdater:
 
     def get_current_plan_steps(self, current_plans, possible_plan_steps):
         """Expand aggregate plans to per-step rows."""
+        current_plans = with_demand_subgroup_id(current_plans)
+        possible_plan_steps = with_demand_subgroup_id(possible_plan_steps)
 
         current_plan_steps = (
             current_plans.select(
                 [
                     "demand_group_id",
+                    "demand_subgroup_id",
                     "activity_seq_id",
                     "time_seq_id",
                     "dest_seq_id",
@@ -1077,6 +1108,7 @@ class PlanUpdater:
                 possible_plan_steps.select(
                     [
                         "demand_group_id",
+                        "demand_subgroup_id",
                         "activity_seq_id",
                         "time_seq_id",
                         "dest_seq_id",
@@ -1094,7 +1126,7 @@ class PlanUpdater:
                         "next_departure_time",
                     ]
                 ),
-                on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"],
+                on=PLAN_KEY_COLS,
                 how="left",
             )
             .with_columns(
