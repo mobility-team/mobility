@@ -20,6 +20,69 @@ Main arguments:
 
 See [installation](installation.md) for folder setup and common installation problems.
 
+### Project cache cleanup
+
+Mobility records cache files used by project scripts. This lets you preview and
+remove old tracked cache files later. In a normal Python script, tracking starts
+automatically when `mobility.set_params(...)` runs.
+
+In a notebook or interactive session, register a clear name before running the
+model:
+
+```python
+cache = mobility.ProjectCache()
+cache.register_cache_source("baseline notebook")
+```
+
+Preview cleanup:
+
+```python
+cache = mobility.ProjectCache()
+report = cache.unused_files_preview()
+print(report)
+```
+
+Delete the reported tracked cache files only when the report is clear:
+
+```python
+cache = mobility.ProjectCache()
+cache.remove_unused_files()
+```
+
+Untracked files are reported separately. In this context, untracked means not
+registered by Mobility. On older projects, this can include old Mobility cache
+files created before the registry existed, but also exports, reports, copied
+input data, or any other local file. Protect the folders you want to keep before
+using the dedicated untracked-file removal:
+
+```python
+cache = mobility.ProjectCache()
+report = cache.untracked_files_preview()
+print(report)
+cache.remove_untracked_files()
+```
+
+Useful methods:
+
+- `cache.cache_sources()`: list scripts and notebooks that keep cache files alive,
+- `cache.unused_files_preview()`: show unused tracked cache files,
+- `cache.remove_unused_files()`: remove unused tracked cache files,
+- `cache.untracked_files_preview()`: show untracked files,
+- `cache.remove_untracked_files()`: remove untracked files,
+- `cache.archive_cache_source(...)`: stop an old cache source from keeping cache files alive,
+- `cache.restore_cache_source(...)`: make an archived cache source active again,
+- `cache.protect(...)`: protect a file or folder from cleanup,
+- `cache.protected_paths()`: list protected paths,
+- `cache.unprotect(...)`: remove one protection.
+
+Removal only works inside the project data folder. Unused-file removal deletes
+registered cache files that no latest script or notebook run uses anymore.
+Untracked-file removal removes files that are not registered by Mobility and
+are not protected.
+
+Changed scripts block tracked cache cleanup until they are rerun. They do not
+block untracked-file removal.
+
 ## Study Area
 
 ### `mobility.TransportZones(...)`

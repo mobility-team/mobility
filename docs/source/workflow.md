@@ -19,6 +19,60 @@ mobility.set_params(
 
 This tells Mobility where to store shared datasets and project cache files.
 
+### Project Cache
+
+Mobility keeps intermediate cache files in the project data folder. In a normal
+Python script, `mobility.set_params(...)` automatically records which cache
+files the script uses. You do not need to add anything else to the script.
+
+Later, you can preview a cleanup:
+
+```python
+cache = mobility.ProjectCache()
+print(cache.unused_files_preview())
+```
+
+`unused_files_preview()` never deletes files. It only shows what Mobility could remove.
+
+When the preview is clear, delete the listed tracked cache files:
+
+```python
+cache.remove_unused_files()
+```
+
+`unused_files_preview()` only looks at files registered by Mobility. An unused
+file is a registered cache file that no latest script or notebook run uses
+anymore. You can also explicitly protect folders that should never be removed:
+
+```python
+cache.protect("exports")
+cache.protect("reports")
+```
+
+In a notebook or interactive session, Mobility cannot reliably know which work
+should keep cache files alive. Give that work a clear name before running the
+model:
+
+```python
+cache = mobility.ProjectCache()
+cache.register_cache_source("baseline notebook")
+```
+
+Untracked files are handled separately. In this context, untracked means not
+registered by Mobility. On older projects, this can include old Mobility cache
+files created before the registry existed, but also exports, reports, copied
+input data, or any other local file. Protect the folders you want to keep, then
+use the dedicated untracked-file removal:
+
+```python
+print(cache.untracked_files_preview())
+cache.remove_untracked_files()
+```
+
+If a script changed since its last registered run, Mobility will not delete
+unused tracked cache files for that script. Untracked-file removal can still
+run, because those files are not linked to a registered cache source.
+
 ## 2. Define The Study Area
 
 ```python

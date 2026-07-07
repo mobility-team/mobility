@@ -8,6 +8,7 @@ import warnings
 
 from importlib import resources
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
+from mobility.runtime.project_cache import register_current_script_if_available
 
 # This is a workaround for retained native memory after heavy Polars workloads.
 # Keep the references below so we can revisit this if upstream behavior improves:
@@ -39,6 +40,7 @@ def set_params(
     r_idle_cpu_percent=1.0,
     r_idle_memory_change_mb=1.0,
     r_cpu_check_interval_seconds=5,
+    track_project_cache=True,
 ):
     """
     Sets up the necessary environment for the Mobility package.
@@ -72,6 +74,8 @@ def set_params(
     r_idle_cpu_percent (float, optional): CPU threshold used by the R idle monitor.
     r_idle_memory_change_mb (float, optional): RAM-change threshold used by the R idle monitor.
     r_cpu_check_interval_seconds (int, optional): frequency of the R idle monitor checks.
+    track_project_cache (bool, optional): Whether Mobility should track cache
+        files used by the running script for later project-data cleanup.
     """
 
     feedback = _normalize_feedback_setting(
@@ -106,6 +110,8 @@ def set_params(
 
     setup_package_data_folder_path(package_data_folder_path)
     setup_project_data_folder_path(project_data_folder_path)
+    if track_project_cache:
+        register_current_script_if_available()
 
     install_r_packages(r_packages, r_packages_force_reinstall, r_packages_download_method)
 

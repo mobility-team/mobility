@@ -9,6 +9,7 @@ import networkx as nx
 
 from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.graph import asset_graph_key, build_asset_graph
+from mobility.runtime.project_cache import record_file_asset_use
 
 
 _current_asset_resolver: ContextVar["AssetResolver | None"] = ContextVar(
@@ -165,6 +166,7 @@ class AssetResolver:
             # Mark the asset as prepared whether it was rebuilt or already
             # valid. Later reads in the same execution can skip it.
             self.prepared_asset_keys.add(dependency_asset_key)
+            record_file_asset_use(dependency_asset)
 
         return rebuilt_requested_asset_value
 
