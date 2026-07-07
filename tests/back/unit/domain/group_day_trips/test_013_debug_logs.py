@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pandas as pd
 import polars as pl
 
+from mobility.runtime.logging_levels import TRACE_LEVEL
 from mobility.trips.group_day_trips.plans.debug_logs import (
     log_destination_sequence_diagnostics,
     log_step_dropout_diagnostics,
@@ -13,8 +14,8 @@ from mobility.trips.group_day_trips.plans.mode_sequence_search.debug_logs import
 )
 
 
-def test_debug_diagnostics_do_not_collect_inputs_when_debug_is_disabled(caplog):
-    with caplog.at_level(logging.INFO):
+def test_trace_diagnostics_do_not_collect_inputs_when_trace_is_disabled(caplog):
+    with caplog.at_level(logging.DEBUG):
         log_destination_sequence_diagnostics(
             iteration=1,
             source_activity_sequences=pl.DataFrame(),
@@ -61,7 +62,7 @@ def test_log_destination_sequence_diagnostics_reports_one_step_chains(caplog):
         }
     )
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(TRACE_LEVEL):
         log_destination_sequence_diagnostics(
             iteration=7,
             source_activity_sequences=source_activity_sequences,
@@ -88,7 +89,7 @@ def test_log_destination_sequence_diagnostics_skips_warning_for_complete_chains(
         }
     )
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(TRACE_LEVEL):
         log_destination_sequence_diagnostics(
             iteration=7,
             source_activity_sequences=pl.DataFrame(),
@@ -149,7 +150,7 @@ def test_log_step_dropout_diagnostics_reports_each_dropout_stage(caplog):
         )
     )
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(TRACE_LEVEL):
         log_step_dropout_diagnostics(
             seq_step_index=2,
             chains_step=chains_step,
@@ -202,7 +203,7 @@ def test_log_step_dropout_diagnostics_skips_when_no_non_anchor_or_dropout(caplog
         }
     )
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(TRACE_LEVEL):
         log_step_dropout_diagnostics(
             seq_step_index=1,
             chains_step=anchor_only,
@@ -259,7 +260,7 @@ def test_log_step_dropout_diagnostics_can_trace_costs_without_transport_zones(ca
         }
     )
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(TRACE_LEVEL):
         log_step_dropout_diagnostics(
             seq_step_index=1,
             chains_step=chains_step,
@@ -304,7 +305,7 @@ def test_log_location_chain_diagnostics_reports_invalid_unique_chains(caplog):
         }
     )
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(TRACE_LEVEL):
         log_location_chain_diagnostics(
             iteration=5,
             destination_steps=destination_steps,
@@ -335,7 +336,7 @@ def test_log_location_chain_diagnostics_skips_warning_for_valid_chains(caplog):
         }
     )
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(TRACE_LEVEL):
         log_location_chain_diagnostics(
             iteration=5,
             destination_steps=pl.DataFrame(),

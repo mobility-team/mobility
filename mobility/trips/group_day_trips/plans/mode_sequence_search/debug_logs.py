@@ -3,6 +3,10 @@ from typing import Any
 
 import polars as pl
 
+from mobility.runtime.logging_levels import TRACE_LEVEL, is_trace_enabled
+
+from ..demand_subgroups import DEMAND_UNIT_COLS, with_demand_subgroup_id
+
 
 def log_location_chain_diagnostics(
     *,
@@ -11,13 +15,16 @@ def log_location_chain_diagnostics(
     trip_chains: pl.DataFrame,
     unique_destination_chains: pl.DataFrame,
 ) -> None:
-    """Log mode-search chain diagnostics only when debug logging is enabled."""
-    if not logging.root.isEnabledFor(logging.DEBUG):
+    """Log mode-search chain diagnostics only when trace logging is enabled."""
+    if not is_trace_enabled():
         return
 
+    destination_steps = with_demand_subgroup_id(destination_steps)
+    trip_chains = with_demand_subgroup_id(trip_chains)
     trip_chain_lengths = _trip_chain_lengths(trip_chains)
     unique_chain_lengths = _unique_chain_lengths(unique_destination_chains)
-    logging.debug(
+    logging.log(
+        TRACE_LEVEL,
         "Mode search chain lengths at iteration %s | grouped=%s | unique_dest_seq=%s",
         iteration,
         _chain_length_distribution(trip_chain_lengths),
@@ -84,7 +91,7 @@ def _grouped_invalid_chains(
     return (
         trip_chain_lengths
         .join(invalid_unique_chains.select("dest_seq_id"), on="dest_seq_id", how="inner")
-        .sort(["dest_seq_id", "demand_group_id", "activity_seq_id", "time_seq_id"])
+        .sort(["dest_seq_id"] + DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"])
     )
 
 
@@ -94,15 +101,13 @@ def _invalid_destination_steps(
     grouped_invalid_chains: pl.DataFrame,
 ) -> pl.DataFrame:
     """Return the raw destination rows behind invalid location chains."""
-    invalid_chain_keys = grouped_invalid_chains.select(
-        ["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"]
-    )
+    invalid_chain_keys = grouped_invalid_chains.select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"])
     return (
         destination_steps
         .join(
             invalid_chain_keys,
-            on=["demand_group_id", "activity_seq_id", "time_seq_id", "dest_seq_id"],
+            on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"],
             how="inner",
         )
-        .sort(["dest_seq_id", "demand_group_id", "activity_seq_id", "time_seq_id", "seq_step_index"])
+        .sort(["dest_seq_id"] + DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "seq_step_index"])
     )

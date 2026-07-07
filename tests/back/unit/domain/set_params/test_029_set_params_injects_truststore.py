@@ -116,6 +116,18 @@ def test_set_params_maps_old_debug_logging_level_to_feedback_debug(tmp_path):
     assert os.environ["MOBILITY_DEBUG"] == "1"
 
 
+def test_set_params_maps_trace_logging_level_to_feedback_debug(tmp_path):
+    set_params(
+        package_data_folder_path=str(tmp_path / "pkg"),
+        project_data_folder_path=str(tmp_path / "project"),
+        r_packages=False,
+        logging_level="TRACE",
+    )
+
+    assert os.environ["MOBILITY_FEEDBACK"] == "debug"
+    assert os.environ["MOBILITY_DEBUG"] == "1"
+
+
 def test_set_params_rejects_unknown_feedback_mode(tmp_path):
     with pytest.raises(ValueError, match="Unknown feedback setting"):
         set_params(
