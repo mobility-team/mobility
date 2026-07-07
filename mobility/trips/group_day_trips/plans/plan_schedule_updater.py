@@ -1,5 +1,6 @@
 import polars as pl
 
+from .demand_subgroups import with_demand_subgroup_id
 from .plan_ids import PLAN_KEY_COLS
 
 
@@ -16,6 +17,8 @@ class PlanScheduleUpdater:
         enabled: bool,
     ) -> pl.LazyFrame:
         """Return iteration-local plan timings updated from modeled travel times."""
+        possible_plan_steps = with_demand_subgroup_id(possible_plan_steps)
+
         if enabled is False:
             return possible_plan_steps
 

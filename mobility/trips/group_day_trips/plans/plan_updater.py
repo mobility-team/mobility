@@ -422,6 +422,8 @@ class PlanUpdater:
         plan_id_index: pl.DataFrame,
     ):
         """Aggregate per-step utilities to plan-level utilities."""
+        possible_plan_steps = with_demand_subgroup_id(possible_plan_steps)
+        stay_home_plan = with_demand_subgroup_id(stay_home_plan)
 
         possible_plan_utility = (
             possible_plan_steps.filter(pl.col("mode_seq_id") != 0).group_by(
@@ -476,6 +478,9 @@ class PlanUpdater:
         plan_id_index: pl.DataFrame,
     ) -> tuple[pl.LazyFrame, pl.DataFrame]:
         """Append one synthetic timed step for the stay-home state so it can be embedded like other plans."""
+        possible_plan_steps = with_demand_subgroup_id(possible_plan_steps)
+        stay_home_plan = with_demand_subgroup_id(stay_home_plan)
+
         step_columns = [col for col in possible_plan_steps.collect_schema().names() if col != "plan_id"]
         possible_plan_steps_no_id = possible_plan_steps.filter(pl.col("mode_seq_id") != 0).select(step_columns)
 
