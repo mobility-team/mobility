@@ -32,7 +32,18 @@ def split_large_demand_groups(
     *,
     max_persons_per_demand_subgroup: int | None,
 ) -> pl.DataFrame:
-    """Split high-weight demand groups into deterministic stochastic subgroups."""
+    """Split high-weight demand groups into deterministic demand subgroups.
+
+    When a maximum subgroup size is configured, each demand group is expanded
+    into ``ceil(n_persons / max_persons_per_demand_subgroup)`` rows. The
+    represented persons are divided evenly across those rows, so the total
+    population weight is unchanged.
+
+    The split happens before activity, destination, and mode sampling. For
+    example, a demand group representing 120 persons with a maximum subgroup
+    size of 50 becomes three 40-person subgroups that can draw different day
+    plans, instead of one 120-person group sharing a single sampled plan.
+    """
     demand_groups = with_demand_subgroup_id(demand_groups)
     if max_persons_per_demand_subgroup is None:
         return demand_groups
