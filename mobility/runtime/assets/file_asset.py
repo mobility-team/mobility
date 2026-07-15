@@ -169,14 +169,17 @@ class FileAsset(Asset):
             
 
     def remove(self):
-
-        if isinstance(self.cache_path, dict):
-            for k, v in self.cache_path.items():
-                path = pathlib.Path(v)
-                if path.exists():
-                    path.unlink()
-        else:
-            path = pathlib.Path(self.cache_path)
+        for path in self._cache_paths_to_remove():
+            path = pathlib.Path(path)
             if path.exists():
                 path.unlink()
+
+    def _cache_paths_to_remove(self):
+        if isinstance(self.cache_path, dict):
+            paths = [pathlib.Path(path) for path in self.cache_path.values()]
+        else:
+            paths = [pathlib.Path(self.cache_path)]
+
+        paths.append(pathlib.Path(self.hash_path))
+        return paths
             

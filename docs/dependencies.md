@@ -47,7 +47,7 @@ List from [pyproject.toml](../pyproject.toml) and [docs/requirements.txt](requir
 # R
 List from [config.py](../mobility/config.py) or [DESCRIPTION](../DESCRIPTION):
 - [arrow](https://arrow.apache.org/)
-- [cppRouting](https://github.com/vlarmet/cppRouting)
+- [cppRoutingCCH](https://github.com/mobility-team/cppRoutingCCH)
 - [data.table](https://r-datatable.com/)
 - [DBI](https://dbi.r-dbi.org/)
 - [dbscan](https://cran.r-project.org/package=dbscan)
@@ -67,3 +67,5 @@ List from [config.py](../mobility/config.py) or [DESCRIPTION](../DESCRIPTION):
 - [sf](https://r-spatial.github.io/sf/)
 - [sfheaders](https://github.com/dcooley/sfheaders)
 - [wk](https://paleolimbot.github.io/wk/)
+
+`cppRoutingCCH` is the Mobility routing backend used for CH and CCH road-network queries. It is installed from Mobility's r-universe repository.

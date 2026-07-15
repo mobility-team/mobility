@@ -15,7 +15,9 @@ from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.costs.parameters.path_routing_parameters import PathRoutingParameters
 from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport.graphs.modified.modifiers.speed_modifier import SpeedModifier
+from mobility.transport.graphs.modified.modified_path_graph import ModifiedPathGraph
 from mobility.transport.graphs.congested.congested_path_graph import CongestedPathGraph
+from mobility.transport.graphs.cch.cch_path_graph import CCHPathGraph
 from mobility.transport.graphs.contracted.contracted_path_graph import ContractedPathGraph
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 
@@ -33,12 +35,16 @@ class PathTravelCostsTable(TravelCostsBase, FileAsset):
         routing_graph,
         routing_parameters: PathRoutingParameters,
         cost_kind: str,
+        backend: str,
+        cch_graph: CCHPathGraph | None = None,
     ) -> None:
         self.mode_name = mode_name
         self.transport_zones = transport_zones
         self.routing_graph = routing_graph
         self.routing_parameters = routing_parameters
         self.cost_kind = cost_kind
+        self.backend = backend
+        self.cch_graph = cch_graph
         inputs = {
             "version": 1,
             "mode_name": mode_name,
@@ -46,6 +52,8 @@ class PathTravelCostsTable(TravelCostsBase, FileAsset):
             "routing_graph": routing_graph,
             "routing_parameters": routing_parameters,
             "cost_kind": cost_kind,
+            "backend": backend,
+            "cch_graph": cch_graph,
         }
         cache_path = (
             pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
@@ -69,13 +77,15 @@ class PathTravelCostsTable(TravelCostsBase, FileAsset):
         logging.info("Computing travel times and distances by OD...")
         script = RScriptRunner(
             resources.files('mobility.transport.costs.path').joinpath(
-                'prepare_dodgr_costs.R'
+                'prepare_travel_costs.R'
             )
         )
         script.run(
             args=[
                 str(self.transport_zones.cache_path),
                 str(self.routing_graph.get()),
+                self.backend,
+                "" if self.cch_graph is None else str(self.cch_graph.get()),
                 str(self.routing_parameters.max_beeline_distance),
                 str(self.cache_path),
             ]
@@ -85,22 +95,11 @@ class PathTravelCostsTable(TravelCostsBase, FileAsset):
 
 class PathTravelCosts(TravelCostsBase, InMemoryAsset):
     """
-    A class for managing travel cost calculations for certain modes using OpenStreetMap (OSM) data, inheriting from the Asset class.
+    Zone-to-zone path travel costs for car, walk and bicycle modes.
 
-    This class is responsible for creating, caching, and retrieving travel costs for modes car, walk, and bicycle,
-    based on specified transport zones and travel modes.
-
-    Attributes:
-        dodgr_modes (dict): Mapping of general travel modes to specific dodgr package modes.
-        transport_zones (gpd.GeoDataFrame): The geographical areas for which travel costs are calculated.
-        mode (str): The mode of transportation used for calculating travel costs.
-        gtfs (GTFS): GTFS object containing data about public transport routes and schedules.
-
-    Methods:
-        get_cached_asset: Retrieve a cached DataFrame of travel costs.
-        create_and_get_asset: Calculate and retrieve travel costs based on the current inputs.
-        dodgr_graph: Create a routable graph for the specified mode of transportation.
-        dodgr_costs: Calculate travel costs using the generated graph.
+    The free-flow table uses a reused contracted CH graph. Congestion-bound
+    tables use the current congested graph weights with a reusable CCH topology.
+    Only the selected table is built when callers ask for costs.
     """
 
     def __init__(
@@ -116,7 +115,10 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
             congestion_assignment_max_gap: float = 0.05,
             congestion_assignment_retained_volume_share: float = 0.95,
             speed_modifiers: List[SpeedModifier] = [],
-            contracted_graph: ContractedPathGraph | None = None,
+            modified_path_graph: ModifiedPathGraph | None = None,
+            congested_path_graph: CongestedPathGraph | None = None,
+            cch_path_graph: CCHPathGraph | None = None,
+            contracted_path_graph: ContractedPathGraph | None = None,
             default_congestion: bool = False,
         ):
         """
@@ -126,8 +128,30 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
             transport_zones (gpd.GeoDataFrame): GeoDataFrame defining the transport zones.
             mode (str): Mode of transportation for calculating travel costs.
         """
+        supplied_graphs = [modified_path_graph, congested_path_graph, cch_path_graph, contracted_path_graph]
+        has_direct_graphs = any(graph is not None for graph in supplied_graphs)
+        if has_direct_graphs and modified_path_graph is None:
+            raise ValueError(
+                "PathTravelCosts direct graph construction requires modified_path_graph. "
+                "Pass contracted_path_graph for CH costs, and congested_path_graph plus "
+                "cch_path_graph for CCH costs."
+            )
+        if has_direct_graphs and (congested_path_graph is None) != (cch_path_graph is None):
+            raise ValueError(
+                "PathTravelCosts direct graph construction requires both "
+                "congested_path_graph and cch_path_graph for congestion costs."
+            )
+        if has_direct_graphs and default_congestion and (congested_path_graph is None or cch_path_graph is None):
+            raise ValueError(
+                "PathTravelCosts default_congestion=True requires congested_path_graph "
+                "and cch_path_graph."
+            )
+        if has_direct_graphs and not default_congestion and contracted_path_graph is None:
+            raise ValueError(
+                "PathTravelCosts default_congestion=False requires contracted_path_graph."
+            )
 
-        if contracted_graph is None:
+        if modified_path_graph is None:
             path_graph = PathGraph(
                 mode_name,
                 transport_zones,
@@ -143,12 +167,10 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
             simplified_path_graph = path_graph.simplified
             modified_path_graph = path_graph.modified
             congested_path_graph = path_graph.congested
+            cch_path_graph = path_graph.cch
             contracted_path_graph = path_graph.contracted
         else:
             path_graph = None
-            contracted_path_graph = contracted_graph
-            congested_path_graph = contracted_graph.inputs["congested_graph"]
-            modified_path_graph = congested_path_graph.inputs["modified_graph"]
             simplified_path_graph = None
 
         self.mode_name = mode_name
@@ -156,21 +178,10 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
         self.simplified_path_graph = simplified_path_graph
         self.modified_path_graph = modified_path_graph
         self.congested_path_graph = congested_path_graph
+        self.cch_path_graph = cch_path_graph
         self.contracted_path_graph = contracted_path_graph
-        self.freeflow_costs = PathTravelCostsTable(
-            mode_name=mode_name,
-            transport_zones=transport_zones,
-            routing_graph=contracted_path_graph,
-            routing_parameters=routing_parameters,
-            cost_kind="free_flow",
-        )
-        self.congested_costs = PathTravelCostsTable(
-            mode_name=mode_name,
-            transport_zones=transport_zones,
-            routing_graph=contracted_path_graph,
-            routing_parameters=routing_parameters,
-            cost_kind="congested",
-        )
+        self._freeflow_costs = None
+        self._congested_costs = None
         self.default_congestion = bool(default_congestion)
         
         inputs = {
@@ -179,6 +190,7 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
             "simplified_path_graph": simplified_path_graph,
             "modified_path_graph": modified_path_graph,
             "congested_path_graph": congested_path_graph,
+            "cch_path_graph": cch_path_graph,
             "contracted_path_graph": contracted_path_graph,
             "routing_parameters": routing_parameters,
             "osm_capacity_parameters": osm_capacity_parameters,
@@ -189,6 +201,47 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
             "default_congestion": self.default_congestion,
         }
         super().__init__(inputs)
+
+    @property
+    def freeflow_costs(self):
+        """CH cost table, created only if static costs are requested."""
+        if self._freeflow_costs is None:
+            if self.contracted_path_graph is None:
+                raise ValueError("CH routing requires contracted_path_graph.")
+            self._freeflow_costs = PathTravelCostsTable(
+                mode_name=self.mode_name,
+                transport_zones=self.transport_zones,
+                routing_graph=self.contracted_path_graph,
+                routing_parameters=self.routing_parameters,
+                cost_kind="free_flow",
+                backend="ch",
+            )
+        return self._freeflow_costs
+
+    @freeflow_costs.setter
+    def freeflow_costs(self, value):
+        self._freeflow_costs = value
+
+    @property
+    def congested_costs(self):
+        """CCH cost table, created only if congestion-sensitive costs are requested."""
+        if self._congested_costs is None:
+            if self.congested_path_graph is None or self.cch_path_graph is None:
+                raise ValueError("CCH routing requires congested_path_graph and cch_path_graph.")
+            self._congested_costs = PathTravelCostsTable(
+                mode_name=self.mode_name,
+                transport_zones=self.transport_zones,
+                routing_graph=self.congested_path_graph,
+                routing_parameters=self.routing_parameters,
+                cost_kind="congested",
+                backend="cch",
+                cch_graph=self.cch_path_graph,
+            )
+        return self._congested_costs
+
+    @congested_costs.setter
+    def congested_costs(self, value):
+        self._congested_costs = value
 
     def get(self, congestion: bool = False, road_flow_asset: VehicleODFlowsAsset | None = None) -> pd.DataFrame:
         if congestion and self._handles_congestion() is False:
@@ -224,11 +277,14 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
             congested_path_graph = self.congested_path_graph
         else:
             congested_path_graph = self.inputs["congested_path_graph"]
+        if congested_path_graph is None:
+            return False
         return bool(congested_path_graph.inputs["handles_congestion"])
 
     def asset_for_flow_asset(self, flow_asset):
         congested_graph = CongestedPathGraph(
             modified_graph=self.inputs["modified_path_graph"],
+            cch_graph=self.inputs["cch_path_graph"],
             transport_zones=self.inputs["transport_zones"],
             handles_congestion=self.inputs["congested_path_graph"].inputs["handles_congestion"],
             congestion_flows_scaling_factor=self.inputs["congested_path_graph"].inputs["congestion_flows_scaling_factor"],
@@ -238,7 +294,6 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
             congestion_assignment_retained_volume_share=self.inputs["congested_path_graph"].inputs["congestion_assignment_retained_volume_share"],
             vehicle_flows=flow_asset,
         )
-        contracted_graph = ContractedPathGraph(congested_graph)
 
         variant = PathTravelCosts(
             mode_name=self.inputs["mode_name"],
@@ -249,15 +304,41 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
             congestion_assignment_max_iterations=self.inputs["congestion_assignment_max_iterations"],
             congestion_assignment_max_gap=self.inputs["congestion_assignment_max_gap"],
             congestion_assignment_retained_volume_share=self.inputs["congestion_assignment_retained_volume_share"],
-            contracted_graph=contracted_graph,
+            modified_path_graph=self.inputs["modified_path_graph"],
+            congested_path_graph=congested_graph,
+            cch_path_graph=self.inputs["cch_path_graph"],
+            contracted_path_graph=self.inputs["contracted_path_graph"],
             default_congestion=True,
         )
         return variant
 
+    @property
+    def active_routing_backend(self) -> str:
+        """Backend used by this cost asset's current default table."""
+        return "cch" if self.default_congestion else "ch"
+
+    @property
+    def active_routing_graph(self):
+        """Graph used by this cost asset's current default table."""
+        return self.congested_path_graph if self.default_congestion else self.contracted_path_graph
+
+    @property
+    def active_cch_graph(self):
+        """CCH topology used by this cost asset's current default table, if any."""
+        return self.cch_path_graph if self.default_congestion else None
+
     def remove(self) -> None:
         """Remove path travel-cost tables owned by this selector."""
-        self.freeflow_costs.remove()
-        self.congested_costs.remove()
+        if getattr(self, "_freeflow_costs", None) is not None or getattr(self, "contracted_path_graph", None) is not None:
+            self.freeflow_costs.remove()
+        if (
+            getattr(self, "_congested_costs", None) is not None
+            or (
+                getattr(self, "congested_path_graph", None) is not None
+                and getattr(self, "cch_path_graph", None) is not None
+            )
+        ):
+            self.congested_costs.remove()
 
     def remove_congestion_artifacts(self, road_flow_asset: VehicleODFlowsAsset) -> None:
         """Remove one congestion-specific travel-cost variant and owned graph caches."""
@@ -265,11 +346,8 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
         if variant is None or variant is self:
             return
 
-        variant.remove()
+        variant.congested_costs.remove()
 
-        contracted_graph = variant.inputs.get("contracted_path_graph")
-        if contracted_graph is not None:
-            contracted_graph.remove()
-            congested_graph = getattr(contracted_graph, "inputs", {}).get("congested_graph")
-            if congested_graph is not None:
-                congested_graph.remove()
+        congested_graph = variant.congested_path_graph
+        if congested_graph is not None:
+            congested_graph.remove()

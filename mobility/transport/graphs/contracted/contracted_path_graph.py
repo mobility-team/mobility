@@ -5,20 +5,21 @@ import logging
 from importlib import resources
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
-from mobility.transport.graphs.congested.congested_path_graph import CongestedPathGraph
+from mobility.transport.graphs.core.graph_cache_cleanup import graph_cache_paths
+from mobility.transport.graphs.modified.modified_path_graph import ModifiedPathGraph
 
 class ContractedPathGraph(FileAsset):
 
     def __init__(
             self,
-            congested_graph: CongestedPathGraph
+            modified_graph: ModifiedPathGraph
         ):
         
         inputs = {
-            "congested_graph": congested_graph
+            "modified_graph": modified_graph
         }
         
-        mode_name = congested_graph.mode_name
+        mode_name = modified_graph.mode_name
         folder_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
         file_name = pathlib.Path("path_graph_" + mode_name) / "contracted" / (mode_name + "-contracted-path-graph")
         cache_path = folder_path / file_name
@@ -31,12 +32,15 @@ class ContractedPathGraph(FileAsset):
          
         return self.cache_path
 
+    def _cache_paths_to_remove(self):
+        return graph_cache_paths(self.cache_path, self.hash_path)
+
     def create_and_get_asset(self) -> pathlib.Path:
         
         logging.info("Contracting graph...")
 
         self.contract_graph(
-            self.congested_graph.get(),
+            self.modified_graph.get(),
             self.cache_path
         )
 
@@ -44,7 +48,7 @@ class ContractedPathGraph(FileAsset):
 
     def contract_graph(
             self,
-            congested_graph_path: pathlib.Path,
+            modified_graph_path: pathlib.Path,
             output_file_path: pathlib.Path
         ) -> None:
          
@@ -52,7 +56,7 @@ class ContractedPathGraph(FileAsset):
 
         script.run(
             args=[
-                str(congested_graph_path),
+                str(modified_graph_path),
                 str(output_file_path)
             ]
         )

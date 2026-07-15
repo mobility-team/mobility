@@ -44,5 +44,5 @@ RUN python3.12 -m venv /opt/venv-ci \
     && uv pip sync --python /opt/venv-min/bin/python /tmp/mobility-python-deps/requirements-min.txt
 
 # Pre-install the R packages declared in DESCRIPTION, plus sessioninfo for CI logs.
-RUN Rscript -e "options(repos = c(CRAN = Sys.getenv('RSPM'))); install.packages('pak', repos = sprintf('https://r-lib.github.io/p/pak/stable/%s/%s/%s', .Platform\$pkgType, R.Version()\$os, R.Version()\$arch)); pak::pkg_install(c('deps::/tmp/mobility-r-deps', 'any::sessioninfo'), dependencies = TRUE)" \
+RUN Rscript -e "options(repos = c(mobilityteam = 'https://mobility-team.r-universe.dev', CRAN = Sys.getenv('RSPM'))); install.packages('pak', repos = sprintf('https://r-lib.github.io/p/pak/stable/%s/%s/%s', .Platform\$pkgType, R.Version()\$os, R.Version()\$arch)); pak::pkg_install(c('deps::/tmp/mobility-r-deps', 'any::sessioninfo'), dependencies = TRUE)" \
     && rm -rf /var/lib/apt/lists/*

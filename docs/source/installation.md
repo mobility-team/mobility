@@ -350,13 +350,23 @@ If R still reports missing packages, reopen R and install the main package list 
 install.packages(
     c(
         "remotes", "dodgr", "sf", "dplyr", "sfheaders", "nngeo",
-        "data.table", "arrow", "lubridate", "future.apply", "cppRouting",
+        "data.table", "arrow", "lubridate", "future.apply",
         "duckdb", "DBI", "jsonlite", "gtfsrouter", "geos", "wk", "FNN",
         "dbscan"
     ),
     method = "wininet"
 )
+install.packages(
+    "cppRoutingCCH",
+    repos = c(
+        "https://mobility-team.r-universe.dev",
+        "https://cloud.r-project.org"
+    ),
+    method = "wininet"
+)
 ```
+
+`cppRoutingCCH` is installed from Mobility's r-universe repository because Mobility uses it for CH and CCH road-network routing.
 
 Then install the patched `osmdata` ZIP as described above.
 

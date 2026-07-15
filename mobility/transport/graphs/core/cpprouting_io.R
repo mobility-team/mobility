@@ -313,6 +313,169 @@ read_cppr_contracted_graph <- function(path, hash) {
 }
 
 
+cch_cache_required_fields <- c(
+  "rank",
+  "tail",
+  "head",
+  "first_out",
+  "adj_head",
+  "adj_arc",
+  "input_arc",
+  "input_forward",
+  "rank_first_out",
+  "rank_adj_head",
+  "rank_adj_arc",
+  "elimination_tree_parent"
+)
+
+check_cppr_cch <- function(cch) {
+  missing_fields <- setdiff(cch_cache_required_fields, names(cch))
+  if (length(missing_fields) > 0) {
+    stop(
+      sprintf(
+        "CCH cache is missing required field(s): %s",
+        paste(missing_fields, collapse = ", ")
+      )
+    )
+  }
+
+  invisible(TRUE)
+}
+
+cch_cache_file <- function(path, hash, name, extension = "parquet") {
+  file.path(path, paste0(hash, "cch_", name, ".", extension))
+}
+
+save_cppr_cch <- function(cch, path, hash) {
+  check_cppr_cch(cch)
+
+  if (!dir.exists(path)) {
+    dir.create(path, recursive = TRUE)
+  }
+
+  metadata <- list(
+    format = "cpprouting_cch_parquet",
+    version = 1,
+    hash = hash,
+    nbnode = length(cch$rank),
+    nbedge = length(cch$input_arc),
+    fields = cch_cache_required_fields
+  )
+
+  con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
+  on.exit(dbDisconnect(con, shutdown = TRUE), add = TRUE)
+
+  for (field in cch_cache_required_fields) {
+    field_fp <- cch_cache_file(path, hash, field)
+    log_parquet_save_step(
+      field_fp,
+      duckdb_vector_to_parquet(cch[[field]], con, field_fp)
+    )
+  }
+
+  write_json(
+    metadata,
+    cch_cache_file(path, hash, "metadata", "json"),
+    auto_unbox = TRUE,
+    pretty = TRUE
+  )
+
+  invisible(path)
+}
+
+read_cppr_cch <- function(path, hash, graph = NULL) {
+  metadata_fp <- cch_cache_file(path, hash, "metadata", "json")
+  if (!file.exists(metadata_fp)) {
+    stop(sprintf("Missing CCH cache metadata: %s", metadata_fp))
+  }
+
+  metadata <- read_json(metadata_fp)
+  if (!identical(metadata$format, "cpprouting_cch_parquet") || metadata$version != 1) {
+    stop("Unsupported CCH cache format. Regenerate it with save_cppr_cch().")
+  }
+  if (!identical(metadata$hash, hash)) {
+    stop("CCH cache hash does not match the requested graph hash.")
+  }
+  if (!identical(unlist(metadata$fields), cch_cache_required_fields)) {
+    stop("CCH cache fields do not match the current cppRouting CCH format.")
+  }
+
+  con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
+  on.exit(dbDisconnect(con, shutdown = TRUE), add = TRUE)
+
+  cch <- lapply(cch_cache_required_fields, function(field) {
+    duckdb_parquet_to_vector(con, cch_cache_file(path, hash, field))
+  })
+  names(cch) <- cch_cache_required_fields
+
+  check_cppr_cch(cch)
+  if (!is.null(graph)) {
+    if (metadata$nbnode != graph$nbnode) {
+      stop("CCH cache does not match the supplied graph node count.")
+    }
+
+    # cppRouting stores the reusable CCH topology separately from graph labels
+    # and original edge attributes. Reattach them here when callers need a
+    # routable cppRouting object, while still allowing raw topology reads for
+    # cache tests and format validation.
+    cch$nbnode <- graph$nbnode
+    cch$dict <- graph$dict
+    cch$original <- graph[c("data", "attrib")]
+    cch <- structure(cch, class = "cppRouting_cch")
+  }
+
+  cch
+}
+
+
+read_cppr_routing_graph <- function(graph_fp, cch_fp, weights = NULL) {
+  graph_hash <- strsplit(basename(graph_fp), "-")[[1]][1]
+  cch_hash <- strsplit(basename(cch_fp), "-")[[1]][1]
+
+  graph <- read_cppr_graph(dirname(graph_fp), graph_hash)
+  cch <- read_cppr_cch(dirname(cch_fp), cch_hash, graph = graph)
+
+  if (is.null(weights)) {
+    weights <- graph$data$dist
+  }
+
+  list(
+    graph = graph,
+    cch = cch,
+    metric = cpp_cch_customize(cch, weights)
+  )
+}
+
+read_cppr_path_routing_graph <- function(graph_fp, backend, cch_fp = "", weights = NULL) {
+  hash <- strsplit(basename(graph_fp), "-")[[1]][1]
+  vertices <- as.data.table(read_parquet(file.path(dirname(dirname(graph_fp)), paste0(hash, "-vertices.parquet"))))
+
+  if (backend == "ch") {
+    graph <- read_cppr_contracted_graph(dirname(graph_fp), hash)
+    return(list(
+      graph = graph,
+      search_graph = list(data = graph$original$data, dict = graph$dict),
+      routing_graph = graph,
+      distance_values = graph$original$attrib$aux,
+      vertices = vertices
+    ))
+  }
+
+  if (backend == "cch") {
+    routing <- read_cppr_routing_graph(graph_fp, cch_fp, weights = weights)
+    return(list(
+      graph = routing$graph,
+      search_graph = routing$graph,
+      routing_graph = routing$metric,
+      distance_values = routing$graph$attrib$aux,
+      vertices = vertices,
+      cch = routing$cch
+    ))
+  }
+
+  stop("Routing backend must be 'ch' or 'cch'.")
+}
+
 save_graph_vertices <- function(vertices, path) {
   
   con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")

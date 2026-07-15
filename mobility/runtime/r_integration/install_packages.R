@@ -4,7 +4,7 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # args <- c(
 #   'D:\\dev\\mobility\\mobility',
-#   '[{"source": "CRAN", "name": "remotes"}, {"source": "CRAN", "name": "dodgr"}, {"source": "CRAN", "name": "sf"}, {"source": "CRAN", "name": "dplyr"}, {"source": "CRAN", "name": "sfheaders"}, {"source": "CRAN", "name": "nngeo"}, {"source": "CRAN", "name": "data.table"}, {"source": "CRAN", "name": "arrow"}, {"source": "CRAN", "name": "lubridate"}, {"source": "CRAN", "name": "future.apply"}, {"source": "CRAN", "name": "cppRouting"}, {"source": "CRAN", "name": "duckdb"}, {"source": "CRAN", "name": "DBI"}, {"source": "CRAN", "name": "gtfsrouter"}, {"source": "CRAN", "name": "geos"}, {"source": "CRAN", "name": "wk"}, {"source": "CRAN", "name": "FNN"}, {"source": "CRAN", "name": "dbscan"}, {"source": "local", "path": "D:\\\\dev\\\\mobility\\\\mobility\\\\resources\\\\osmdata_0.2.5.005.zip"}]',
+#   '[{"source": "CRAN", "name": "remotes"}, {"source": "CRAN", "name": "dodgr"}, {"source": "CRAN", "name": "sf"}, {"source": "CRAN", "name": "dplyr"}, {"source": "CRAN", "name": "sfheaders"}, {"source": "CRAN", "name": "nngeo"}, {"source": "CRAN", "name": "data.table"}, {"source": "CRAN", "name": "arrow"}, {"source": "CRAN", "name": "lubridate"}, {"source": "CRAN", "name": "future.apply"}, {"source": "r-universe", "universe": "mobility-team", "name": "cppRoutingCCH"}, {"source": "CRAN", "name": "duckdb"}, {"source": "CRAN", "name": "DBI"}, {"source": "CRAN", "name": "gtfsrouter"}, {"source": "CRAN", "name": "geos"}, {"source": "CRAN", "name": "wk"}, {"source": "CRAN", "name": "FNN"}, {"source": "CRAN", "name": "dbscan"}, {"source": "local", "path": "D:\\\\dev\\\\mobility\\\\mobility\\\\resources\\\\osmdata_0.2.5.005.zip"}]',
 #   'False',
 #   'auto'
 # )
@@ -123,6 +123,31 @@ pkg_install_with_fallback(
   force_reinstall,
   log = TRUE
 )
+
+# -----------------------------------------------------------------------------
+# R-universe packages
+r_universe_packages <- Filter(function(p) {p[["source"]]} == "r-universe", packages)
+
+if (length(r_universe_packages) > 0) {
+  for (package in r_universe_packages) {
+    package_name <- package[["name"]]
+    universe <- package[["universe"]]
+    if (is.null(universe)) {
+      stop(sprintf("Missing r-universe name for package '%s'.", package_name))
+    }
+    if (force_reinstall || !(package_name %in% rownames(installed.packages()))) {
+      info(logger, sprintf("Installing R package %s from r-universe %s.", package_name, universe))
+      install.packages(
+        package_name,
+        repos = c(
+          sprintf("https://%s.r-universe.dev", universe),
+          "https://cloud.r-project.org"
+        ),
+        method = download_method
+      )
+    }
+  }
+}
 
 # -----------------------------------------------------------------------------
 # Local packages

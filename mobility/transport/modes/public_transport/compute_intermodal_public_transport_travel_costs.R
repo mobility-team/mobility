@@ -7,7 +7,7 @@ library(lubridate)
 library(future.apply)
 library(lubridate)
 library(FNN)
-library(cppRouting)
+library(cppRoutingCCH)
 library(jsonlite)
 
 args <- commandArgs(trailingOnly = TRUE)
