@@ -5,15 +5,13 @@ on:
     branches: [ "main" ]
     paths:
       - "DESCRIPTION"
+      - "pyproject.toml"
+      - "mobility/**"
+      - "examples/quickstart-fr-ci.py"
       - ".github/docker/runtime/Dockerfile"
       - ".github/workflows/build-runtime-image.yml"
   workflow_dispatch:
     inputs:
-      publish:
-        description: "Publish the image to GHCR"
-        required: true
-        default: false
-        type: boolean
       run_quickstart:
         description: "Run the full CI quickstart inside the image"
         required: true
@@ -22,33 +20,23 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    outputs:
-      mobility_version: ${{ steps.package-version.outputs.mobility_version }}
-      mobility_minor_version: ${{ steps.package-version.outputs.mobility_minor_version }}
-      mobility_package: ${{ steps.package-version.outputs.mobility_package }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Read package version
-        id: package-version
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel from current source
         run: |
-          version="$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")"
-          minor_version="${version%.*}"
-          package="mobility-tools==${version}"
-
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            package="mobility-tools"
-          fi
-
-          echo "mobility_version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "mobility_minor_version=${minor_version}" >> "${GITHUB_OUTPUT}"
-          echo "mobility_package=${package}" >> "${GITHUB_OUTPUT}"
+          python -m pip install "build>=1.5,<2"
+          python -m build --wheel --outdir dist
         shell: bash
 
       - name: Set up Docker Buildx
@@ -61,8 +49,6 @@ jobs:
           file: .github/docker/runtime/Dockerfile
           load: true
           tags: mobility-runtime:test
-          build-args: |
-            MOBILITY_PACKAGE=${{ steps.package-version.outputs.mobility_package }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -87,53 +73,3 @@ jobs:
             mobility-runtime:test \
             bash -lc "mkdir -p /tmp/mobility-data /tmp/mobility-project && python examples/quickstart-fr-ci.py"
         shell: bash
-
-  publish:
-    needs: validate
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
-    runs-on: ubuntu-24.04
-
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Check publish branch
-        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
-        run: |
-          echo "Manual image publishing must run from the main branch."
-          exit 1
-        shell: bash
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prepare image tags
-        id: image-tags
-        run: |
-          {
-            echo "tags<<EOF"
-            echo "ghcr.io/mobility-team/mobility-runtime:${{ needs.validate.outputs.mobility_version }}"
-            echo "ghcr.io/mobility-team/mobility-runtime:${{ needs.validate.outputs.mobility_minor_version }}"
-            echo "ghcr.io/mobility-team/mobility-runtime:sha-${GITHUB_SHA}"
-            echo "ghcr.io/mobility-team/mobility-runtime:latest"
-            echo "EOF"
-          } >> "${GITHUB_OUTPUT}"
-        shell: bash
-
-      - name: Publish runtime image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: .github/docker/runtime/Dockerfile
-          push: true
-          tags: ${{ steps.image-tags.outputs.tags }}
-          build-args: |
-            MOBILITY_PACKAGE=${{ needs.validate.outputs.mobility_package }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max

@@ -1,7 +1,7 @@
 library(dodgr)
 library(osmdata)
 library(log4r)
-library(cppRouting)
+library(cppRoutingCCH)
 library(DBI)
 library(duckdb)
 library(jsonlite)
@@ -28,12 +28,13 @@ cppr_graph_fp <- args[2]
 transport_zones_fp <- args[3]
 congestion <- args[4]
 flows_fp <- args[5]
-congestion_flows_scaling_factor <- args[6]
-target_max_vehicles_per_od_endpoint <- args[7]
-congestion_assignment_max_iterations <- args[8]
-congestion_assignment_max_gap <- args[9]
-congestion_assignment_retained_volume_share <- args[10]
-output_fp <- args[11]
+cch_graph_fp <- args[6]
+congestion_flows_scaling_factor <- args[7]
+target_max_vehicles_per_od_endpoint <- args[8]
+congestion_assignment_max_iterations <- args[9]
+congestion_assignment_max_gap <- args[10]
+congestion_assignment_retained_volume_share <- args[11]
+output_fp <- args[12]
 
 
 source(file.path(package_fp, "transport", "graphs", "core", "cpprouting_io.R"))
@@ -144,8 +145,12 @@ if (congestion == TRUE & file.exists(flows_fp)) {
   od_flows[, flow_rank := NULL]
   info(logger, paste0("Retained ", format(nrow(od_flows), big.mark = ","), " vertex-flow rows after volume-share filtering."))
   
-  # Assign traffic 
-  info(logger, "Assigning traffic...")
+  info(logger, "Loading CCH topology for traffic assignment...")
+  cch_hash <- strsplit(basename(cch_graph_fp), "-")[[1]][1]
+  cch <- read_cppr_cch(dirname(cch_graph_fp), cch_hash, graph = cppr_graph)
+
+  # Assign traffic
+  info(logger, "Assigning traffic with CCH queries...")
   
   traffic <- assign_traffic(
     cppr_graph,
@@ -153,7 +158,8 @@ if (congestion == TRUE & file.exists(flows_fp)) {
     to = od_flows$vertex_id_to,
     demand = od_flows$vehicle_volume,
     algorithm = "cfw",
-    aon_method = "cbi",
+    aon_method = "cch",
+    cch = cch,
     max_gap = congestion_assignment_max_gap,
     max_it = congestion_assignment_max_iterations,
     verbose = TRUE

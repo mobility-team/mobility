@@ -169,14 +169,21 @@ class FileAsset(Asset):
             
 
     def remove(self):
-
-        if isinstance(self.cache_path, dict):
-            for k, v in self.cache_path.items():
-                path = pathlib.Path(v)
-                if path.exists():
-                    path.unlink()
-        else:
-            path = pathlib.Path(self.cache_path)
+        for path in self._cache_paths_to_remove():
+            path = pathlib.Path(path)
             if path.exists():
                 path.unlink()
+
+    def _cache_paths_to_remove(self):
+        if isinstance(self.cache_path, dict):
+            paths = [pathlib.Path(path) for path in self.cache_path.values()]
+        else:
+            paths = [pathlib.Path(self.cache_path)]
+
+        # Some focused cleanup callers only provide output paths. Normal
+        # FileAsset instances always have a hash marker, which is removed too.
+        hash_path = getattr(self, "hash_path", None)
+        if hash_path is not None:
+            paths.append(pathlib.Path(hash_path))
+        return paths
             

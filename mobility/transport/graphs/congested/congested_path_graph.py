@@ -7,6 +7,8 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.graphs.modified.modified_path_graph import ModifiedPathGraph
+from mobility.transport.graphs.cch.cch_path_graph import CCHPathGraph
+from mobility.transport.graphs.core.graph_cache_cleanup import graph_cache_paths
 from mobility.spatial.transport_zones import TransportZones
 
 class CongestedPathGraph(FileAsset):
@@ -14,6 +16,7 @@ class CongestedPathGraph(FileAsset):
     def __init__(
             self,
             modified_graph: ModifiedPathGraph,
+            cch_graph: CCHPathGraph,
             transport_zones: TransportZones,
             handles_congestion: bool = False,
             congestion_flows_scaling_factor: float = 1.0,
@@ -28,6 +31,7 @@ class CongestedPathGraph(FileAsset):
             "version": "1",
             "mode_name": modified_graph.mode_name,
             "modified_graph": modified_graph,
+            "cch_graph": cch_graph,
             "transport_zones": transport_zones,
             "vehicle_flows": vehicle_flows,
             "handles_congestion": handles_congestion,
@@ -53,16 +57,21 @@ class CongestedPathGraph(FileAsset):
          
         return self.cache_path
 
+    def _cache_paths_to_remove(self):
+        return graph_cache_paths(self.cache_path, self.hash_path)
+
     def create_and_get_asset(self) -> pathlib.Path:
         
         logging.info("Loading graph with traffic...")
         vehicle_flows = self.inputs["vehicle_flows"]
         if vehicle_flows is None:
             flows_file_path = self.flows_file_path
+            cch_graph_path = ""
             enable_congestion = False
         else:
             vehicle_flows.get()
             flows_file_path = vehicle_flows.cache_path
+            cch_graph_path = self.inputs["cch_graph"].get()
             enable_congestion = True
 
         self.load_graph(
@@ -70,6 +79,7 @@ class CongestedPathGraph(FileAsset):
             self.inputs["transport_zones"].cache_path,
             enable_congestion,
             flows_file_path,
+            cch_graph_path,
             self.inputs["congestion_flows_scaling_factor"],
             self.inputs["target_max_vehicles_per_od_endpoint"],
             self.inputs["congestion_assignment_max_iterations"],
@@ -85,6 +95,7 @@ class CongestedPathGraph(FileAsset):
             transport_zones_path: pathlib.Path,
             enable_congestion: bool,
             flows_file_path: pathlib.Path,
+            cch_graph_path: pathlib.Path,
             congestion_flows_scaling_factor: float,
             target_max_vehicles_per_od_endpoint: float,
             congestion_assignment_max_iterations: int,
@@ -100,6 +111,7 @@ class CongestedPathGraph(FileAsset):
                 str(transport_zones_path),
                 str(enable_congestion),
                 str(flows_file_path),
+                str(cch_graph_path),
                 str(congestion_flows_scaling_factor),
                 str(target_max_vehicles_per_od_endpoint),
                 str(congestion_assignment_max_iterations),

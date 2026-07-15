@@ -6,6 +6,7 @@ import geopandas as gpd
 import pytest
 from shapely.geometry import Polygon, box
 
+from mobility.runtime.parameter_values import ParameterValue
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.modes.public_transport.gtfs.gtfs_data import GTFSData
 from mobility.transport.modes.public_transport.gtfs.gtfs_area_filter import (
@@ -74,6 +75,21 @@ def test_003_gtfs_router_tracks_sources_as_input(tmp_path):
     router = GTFSRouter(transport_zones=transport_zones, gtfs_sources=sources)
 
     assert router.inputs["gtfs_sources"] is sources
+
+
+def test_003_gtfs_router_normalizes_additional_gtfs_paths(tmp_path):
+    paths = GTFSRouter.normalize_additional_gtfs_files(
+        [tmp_path / "local.zip", "other.zip"]
+    )
+
+    assert paths == [str(tmp_path / "local.zip"), "other.zip"]
+
+
+def test_003_gtfs_router_rejects_unresolved_additional_gtfs_parameter():
+    additional_files = ParameterValue.by_iteration({1: None, 5: ["event.zip"]})
+
+    with pytest.raises(ValueError, match="for_iteration"):
+        GTFSRouter.normalize_additional_gtfs_files(additional_files)
 
 
 def test_003_public_transport_graph_gets_countries_from_actual_zones():

@@ -3,7 +3,7 @@ library(gtfsrouter)
 library(data.table)
 library(sf)
 library(jsonlite)
-library(cppRouting)
+library(cppRoutingCCH)
 library(dbscan)
 
 args <- commandArgs(trailingOnly = TRUE)
