@@ -3,6 +3,8 @@ Version: 1.0
 Title: Dependencies for GitHub Actions
 Description: Manages R package dependencies for GitHub Actions.
 License: GPL-3
+Remotes:
+    r-lib/log4r
 Imports:
     arrow,
     cppRoutingCCH,

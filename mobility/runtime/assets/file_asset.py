@@ -180,6 +180,10 @@ class FileAsset(Asset):
         else:
             paths = [pathlib.Path(self.cache_path)]
 
-        paths.append(pathlib.Path(self.hash_path))
+        # Some focused cleanup callers only provide output paths. Normal
+        # FileAsset instances always have a hash marker, which is removed too.
+        hash_path = getattr(self, "hash_path", None)
+        if hash_path is not None:
+            paths.append(pathlib.Path(hash_path))
         return paths
             
