@@ -424,7 +424,12 @@ def install_r_packages(r_packages, r_packages_force_reinstall, r_packages_downlo
             {'source': 'CRAN', 'name': 'arrow'},
             {'source': 'CRAN', 'name': 'lubridate'},
             {'source': 'CRAN', 'name': 'future.apply'},
-            {'source': 'r-universe', 'universe': 'mobility-team', 'name': 'cppRoutingCCH'},
+            {
+                'source': 'r-universe',
+                'universe': 'mobility-team',
+                'name': 'cppRoutingCCH',
+                'minimum_version': '3.3.0'
+            },
             {'source': 'CRAN', 'name': 'duckdb'},
             {'source': 'CRAN', 'name': 'DBI'},
             {'source': 'CRAN', 'name': 'gtfsrouter'},

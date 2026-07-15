@@ -12,6 +12,7 @@ args <- commandArgs(trailingOnly = TRUE)
 packages <- args[2]
 force_reinstall <- as.logical(args[3])
 download_method <- args[4]
+source(file.path(args[1], "runtime", "r_integration", "package_versions.R"))
 
 # -----------------------------------------------------------------------------
 # Install pak if needed
@@ -132,19 +133,56 @@ if (length(r_universe_packages) > 0) {
   for (package in r_universe_packages) {
     package_name <- package[["name"]]
     universe <- package[["universe"]]
+    minimum_version <- package[["minimum_version"]]
     if (is.null(universe)) {
       stop(sprintf("Missing r-universe name for package '%s'.", package_name))
     }
-    if (force_reinstall || !(package_name %in% rownames(installed.packages()))) {
-      info(logger, sprintf("Installing R package %s from r-universe %s.", package_name, universe))
+
+    repos <- c(
+      sprintf("https://%s.r-universe.dev", universe),
+      "https://cloud.r-project.org"
+    )
+    installed_version <- if (package_name %in% rownames(installed.packages())) {
+      as.character(packageVersion(package_name))
+    } else {
+      NULL
+    }
+    available <- available.packages(repos = repos)
+    available_version <- if (package_name %in% rownames(available)) {
+      available[package_name, "Version"]
+    } else {
+      NULL
+    }
+
+    if (r_universe_package_needs_install(
+      installed_version,
+      available_version,
+      force_reinstall
+    )) {
+      info(
+        logger,
+        sprintf(
+          "Installing R package %s %s from r-universe %s.",
+          package_name,
+          if (is.null(available_version)) "" else available_version,
+          universe
+        )
+      )
       install.packages(
         package_name,
-        repos = c(
-          sprintf("https://%s.r-universe.dev", universe),
-          "https://cloud.r-project.org"
-        ),
+        repos = repos,
         method = download_method
       )
+    }
+
+    installed_version <- as.character(packageVersion(package_name))
+    if (!package_version_meets_minimum(installed_version, minimum_version)) {
+      stop(sprintf(
+        "R package %s %s or newer is required, but version %s is installed.",
+        package_name,
+        minimum_version,
+        installed_version
+      ))
     }
   }
 }

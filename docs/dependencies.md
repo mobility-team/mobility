@@ -68,4 +68,6 @@ List from [config.py](../mobility/config.py) or [DESCRIPTION](../DESCRIPTION):
 - [sfheaders](https://github.com/dcooley/sfheaders)
 - [wk](https://paleolimbot.github.io/wk/)
 
-`cppRoutingCCH` is the Mobility routing backend used for CH and CCH road-network queries. It is installed from Mobility's r-universe repository.
+`cppRoutingCCH` 3.3.0 or newer is the Mobility routing backend used for CH and
+CCH road-network queries. Mobility installs it from its r-universe repository
+when it is missing or when that repository provides a newer version.

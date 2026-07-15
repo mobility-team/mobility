@@ -7,7 +7,7 @@ Remotes:
     r-lib/log4r
 Imports:
     arrow,
-    cppRoutingCCH,
+    cppRoutingCCH (>= 3.3.0),
     data.table,
     DBI,
     dbscan,

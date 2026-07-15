@@ -366,7 +366,9 @@ install.packages(
 )
 ```
 
-`cppRoutingCCH` is installed from Mobility's r-universe repository because Mobility uses it for CH and CCH road-network routing.
+`cppRoutingCCH` 3.3.0 or newer is installed from Mobility's r-universe
+repository because Mobility uses it for CH and CCH road-network routing.
+Mobility upgrades it only when that repository provides a newer version.
 
 Then install the patched `osmdata` ZIP as described above.
 
