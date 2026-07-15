@@ -2,7 +2,6 @@ FROM ubuntu:24.04
 
 ARG R_VERSION=4.4.1
 ARG UV_VERSION=0.10.9
-ARG MOBILITY_PACKAGE=mobility-tools
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV R_VERSION=${R_VERSION}
@@ -42,8 +41,11 @@ COPY DESCRIPTION /tmp/mobility-r-deps/
 RUN Rscript -e "options(repos = c(mobilityteam = 'https://mobility-team.r-universe.dev', CRAN = Sys.getenv('RSPM'))); install.packages('pak', repos = sprintf('https://r-lib.github.io/p/pak/stable/%s/%s/%s', .Platform\$pkgType, R.Version()\$os, R.Version()\$arch)); pak::pkg_install(c('deps::/tmp/mobility-r-deps', 'any::sessioninfo'), dependencies = TRUE)" \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Mobility from PyPI. Release publishing passes an exact package version.
-RUN uv pip install --python /opt/venv/bin/python "${MOBILITY_PACKAGE}"
+# Install the wheel built from the same commit as DESCRIPTION. Pull-request
+# checks and release publishing both provide this artifact in dist/.
+COPY dist/mobility_tools-*.whl /tmp/mobility-wheel/
+RUN uv pip install --python /opt/venv/bin/python /tmp/mobility-wheel/mobility_tools-*.whl \
+    && rm -rf /tmp/mobility-wheel
 
 WORKDIR /app
 
