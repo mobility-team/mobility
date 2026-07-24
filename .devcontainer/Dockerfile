@@ -24,7 +24,7 @@ RUN git clone --branch v1.18.0 https://github.com/osmcode/osmium-tool.git /tmp/o
 
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
+ENV PATH=".local/bin:$PATH"
 
 # Copy only dependency metadata for caching
 WORKDIR /build
