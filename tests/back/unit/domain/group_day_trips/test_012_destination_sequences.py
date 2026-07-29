@@ -1,7 +1,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pandas as pd
 import polars as pl
+import pytest
 
 from mobility.trips.group_day_trips import (
     GroupDayTripsDestinationSequenceParameters,
@@ -9,12 +11,131 @@ from mobility.trips.group_day_trips import (
     GroupDayTripsPlanUpdateParameters,
 )
 from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+from mobility.trips.group_day_trips.plans.destination_plan_search import (
+    sample_destination_plans,
+)
 
 
 def _make_local_tmp_path(tmp_path: Path, name: str) -> Path:
     path = tmp_path / "group_day_trips" / name
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def test_destination_plan_search_flag_is_disabled_by_default():
+    parameters = GroupDayTripsDestinationSequenceParameters()
+
+    assert parameters.use_destination_plan_search is False
+
+
+def test_destination_plan_search_requires_positive_alpha():
+    with pytest.raises(ValueError, match="alpha must be greater than zero"):
+        GroupDayTripsDestinationSequenceParameters(
+            use_destination_plan_search=True,
+            alpha=0.0,
+        )
+
+
+def test_destination_plan_search_returns_mobility_sequence_rows():
+    activity_sequences = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1],
+            "demand_subgroup_id": [0, 0],
+            "home_zone_id": [1, 1],
+            "activity_seq_id": [10, 10],
+            "time_seq_id": [20, 20],
+            "activity": ["work", "home"],
+            "is_anchor": [True, True],
+            "seq_step_index": [1, 2],
+            "step_count": [2, 2],
+            "departure_time": [8.0, 17.0],
+            "arrival_time": [9.0, 18.0],
+            "next_departure_time": [17.0, 24.0],
+        }
+    )
+    activity_durations = pl.DataFrame(
+        {
+            "country": ["fr", "fr"],
+            "csp": ["employee", "employee"],
+            "activity": ["work", "home"],
+            "mean_duration_per_pers": [8.0, 6.0],
+        }
+    )
+    demand_groups = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "demand_subgroup_id": [0],
+            "home_zone_id": [1],
+            "country": ["fr"],
+            "csp": ["employee"],
+        }
+    )
+    destination_saturation = pl.DataFrame(
+        {
+            "to": [2, 3],
+            "activity": ["work", "work"],
+            "opportunity_capacity": [100.0, 1.0],
+            "k_saturation_utility": [1.0, 1.0],
+            "destination_shadow_price": [0.0, 0.0],
+        }
+    )
+    mode_costs = pl.DataFrame(
+        {
+            "from": [1, 1, 2, 3],
+            "to": [2, 3, 1, 1],
+            "mode": ["car", "car", "car", "car"],
+            "cost": [1.0, 2.0, 1.0, 2.0],
+            "time": [1.0, 1.5, 1.0, 1.5],
+        }
+    )
+    transport_zones = SimpleNamespace(
+        get=lambda: pd.DataFrame(
+            {
+                "transport_zone_id": [1, 2, 3],
+                "country": ["fr", "fr", "fr"],
+            }
+        )
+    )
+    activities = [
+        SimpleNamespace(name="home", is_anchor=True),
+        SimpleNamespace(name="work", is_anchor=True),
+    ]
+    resolved_activity_parameters = {
+        "home": SimpleNamespace(
+            value_of_time=1.0,
+            country_value_coefficients=None,
+            arrival_time_rigidity=None,
+        ),
+        "work": SimpleNamespace(
+            value_of_time=2.0,
+            country_value_coefficients={"fr": 1.0},
+            arrival_time_rigidity=None,
+        ),
+    }
+
+    result = sample_destination_plans(
+        activity_sequences=activity_sequences,
+        activity_durations=activity_durations,
+        demand_groups=demand_groups,
+        destination_saturation=destination_saturation,
+        mode_costs=mode_costs,
+        transport_zones=transport_zones,
+        activities=activities,
+        resolved_activity_parameters=resolved_activity_parameters,
+        min_activity_time_constant=2.0,
+        logit_scale=0.5,
+        update_plan_timings=False,
+        use_shadow_prices=False,
+        exploration_seed=123,
+        top_k=2,
+    )
+
+    assert result.select("dest_draw_id").unique().height == 2
+    assert result["seq_step_index"].to_list() == [1, 2, 1, 2]
+    assert result.group_by("dest_draw_id").agg("to").sort("dest_draw_id")["to"].to_list() == [
+        [2, 1],
+        [3, 1],
+    ]
 
 
 def test_sample_active_destination_sequences_keeps_only_active_activity_sequences(tmp_path):

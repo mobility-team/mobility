@@ -93,3 +93,36 @@ parameters_report = weekday_run.parameters_dataframe()
 ```
 
 This helps you explain later how a result was produced, which parameters changed, and which assumptions were held constant.
+
+## Try Complete Destination-Plan Search
+
+The existing step-by-step destination sampler remains the default. To try the
+bounded Rust search, install the optional dependency and enable it explicitly:
+
+```bash
+pip install "mobility-tools[destination-plan-search]"
+```
+
+Until version `0.1.0` of the sampler is published, contributors can install a
+local checkout instead:
+
+```bash
+python -m pip install --no-deps -e ../mobility-destination-sequence-sampler
+```
+
+```python
+from mobility import (
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsParameters,
+)
+
+parameters = GroupDayTripsParameters(
+    destination_sequences=GroupDayTripsDestinationSequenceParameters(
+        use_destination_plan_search=True,
+    )
+)
+```
+
+This search chooses and ranks complete destination chains together. It returns
+the best chains found by a bounded search; it does not prove that no better
+chain was omitted.

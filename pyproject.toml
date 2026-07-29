@@ -56,6 +56,10 @@ truststore = [
   "truststore>=0.10,<1",
 ]
 
+destination-plan-search = [
+  "mobility-destination-sequence-sampler==0.1.0",
+]
+
 dev = [
   "build>=1.5,<2",
   "coverage>=7,<8",

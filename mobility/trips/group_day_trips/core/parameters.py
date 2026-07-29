@@ -280,6 +280,17 @@ class GroupDayTripsDestinationSequenceParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    use_destination_plan_search: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Use destination plan search",
+            description=(
+                "Whether to use the bounded Rust top-k search to choose complete "
+                "destination plans. The default keeps the existing step-by-step sampler."
+            ),
+        ),
+    ]
     alpha: Annotated[
         float,
         Field(
@@ -325,6 +336,15 @@ class GroupDayTripsDestinationSequenceParameters(BaseModel):
             description="Standard deviation used to spread destination opportunities around OD point costs.",
         ),
     ]
+
+    @model_validator(mode="after")
+    def validate_destination_plan_search(self) -> "GroupDayTripsDestinationSequenceParameters":
+        """Validate settings required by the bounded destination-plan search."""
+        if self.use_destination_plan_search and self.alpha <= 0.0:
+            raise ValueError(
+                "alpha must be greater than zero when destination plan search is enabled."
+            )
+        return self
 
 
 class GroupDayTripsModeSequenceParameters(BaseModel):
