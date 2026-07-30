@@ -39,7 +39,7 @@ COPY DESCRIPTION /tmp/mobility-r-deps/
 
 # Install the R packages used by Mobility. pak also installs the matching
 # Ubuntu system libraries, which avoids mixing conda and system compilers.
-RUN Rscript -e "options(repos = c(CRAN = Sys.getenv('RSPM'))); install.packages('pak', repos = sprintf('https://r-lib.github.io/p/pak/stable/%s/%s/%s', .Platform\$pkgType, R.Version()\$os, R.Version()\$arch)); pak::pkg_install(c('deps::/tmp/mobility-r-deps', 'any::sessioninfo'), dependencies = TRUE)" \
+RUN Rscript -e "options(repos = c(mobilityteam = 'https://mobility-team.r-universe.dev', CRAN = Sys.getenv('RSPM'))); install.packages('pak', repos = sprintf('https://r-lib.github.io/p/pak/stable/%s/%s/%s', .Platform\$pkgType, R.Version()\$os, R.Version()\$arch)); pak::pkg_install(c('deps::/tmp/mobility-r-deps', 'any::sessioninfo'), dependencies = TRUE)" \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Mobility from PyPI. Release publishing passes an exact package version.
