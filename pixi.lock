@@ -144,6 +144,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/65/b6/09b01cdbc15224e2850365192d17b7bdebb8bdbd8780ed221fcdf0d9a515/pandas-3.0.3-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/67/f3/6cd296376653270ac1b423bb30bd70942d9916b6978c6f40472d6ac038e7/retrying-1.4.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/6b/b2/d17b2722c636d64b4e77ddc68d8d0625719d39f94021be8719a218af4c0a/backports_zstd-1.6.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/71/1e/80ed4e7951eaf2e7b248a2d7b7a261446c4a2b663ddba897aab8f0b947b4/mobility_destination_sequence_sampler-0.1.0.tar.gz
       - pypi: https://files.pythonhosted.org/packages/77/c7/2342da9830e3e9d4870305ca5d2091d2a83284f2953079b7bdd3b5e029d8/fonttools-4.63.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/78/b6/6307fbef88d9b5ee7421e68d78a9f162e0da4900bc5f5793f6d3d0e34fb8/annotated_types-0.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/7b/91/984aca2ec129e2757d1e4e3c81c3fcda9d0f85b74670a094cc443d9ee949/joblib-1.5.3-py3-none-any.whl
@@ -351,6 +352,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/5a/72/147da192e38635ada20e0a2e1a51cf8823d2119ce8883f7053879c2199b5/markupsafe-3.0.3-cp312-cp312-macosx_10_13_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/67/f3/6cd296376653270ac1b423bb30bd70942d9916b6978c6f40472d6ac038e7/retrying-1.4.2-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/71/1e/80ed4e7951eaf2e7b248a2d7b7a261446c4a2b663ddba897aab8f0b947b4/mobility_destination_sequence_sampler-0.1.0.tar.gz
       - pypi: https://files.pythonhosted.org/packages/78/b6/6307fbef88d9b5ee7421e68d78a9f162e0da4900bc5f5793f6d3d0e34fb8/annotated_types-0.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/7a/62/f5221a191a97157d240cf6643747558759126c76ee92f29a3f4aee3197a5/pycryptodomex-3.23.0-cp37-abi3-macosx_10_9_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/7b/91/984aca2ec129e2757d1e4e3c81c3fcda9d0f85b74670a094cc443d9ee949/joblib-1.5.3-py3-none-any.whl
@@ -570,6 +572,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/87/1b/9e33c09813d65e248f7f773119148a612516a4bea93e9c6f545f78455b7c/wheel-0.47.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/87/2e/8fa7d095f7ab28649ece149118ccbde8286be52037b02ab02fbe52c34601/dash-3.4.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/8b/5a/ba30a81239b909821b3153e303e7def45178bf353da4f72380e6c5e8793b/pytest-9.1.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/8c/ae/da68ccc1e484ae1805c8df0da1e7e248090adf4db935258916db9398db70/mobility_destination_sequence_sampler-0.1.0-cp311-abi3-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/90/bf/297716b3095fe719be20fcf7af1d2b6ab069c38199bbace2469608a69b3a/polars_runtime_32-1.39.3-cp310-abi3-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/93/8c/2e650f2afeb7ee576912636c23ddb621c91ac6a98e66dc8d29c3c69446e1/werkzeug-3.1.8-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/99/9f/795fedf35634f746151ca8839d05681ceb6287fbed6cc1c9bf235f7887c2/kiwisolver-1.5.0-cp312-cp312-macosx_11_0_arm64.whl
@@ -793,6 +796,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/dc/9b/47798a6c91d8bdb567fe2698fe81e0c6b7cb7ef4d13da4114b41d239f65d/typing_inspection-0.4.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e5/2f/a58a4443a4d052a4ea77557478336aefc26c7981f6408d37adba763aa758/matplotlib-3.11.0-cp312-cp312-win_amd64.whl
+      - pypi: https://files.pythonhosted.org/packages/e6/de/9f25f03f7d30fb85c661aa7d733844e99ef17cfd18a919ae7832fb368b22/mobility_destination_sequence_sampler-0.1.0-cp311-abi3-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/e7/05/c19819d5e3d95294a6f5947fb9b9629efb316b96de511b418c53d245aae6/cycler-0.12.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ea/b7/0d511af853024241dc3192bea77e4753ea606187bd2dd777a8209a5b01bb/dash_cytoscape-1.0.2.tar.gz
       - pypi: https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl
@@ -5671,6 +5675,7 @@ packages:
   - pydantic>=2.12,<3
   - tenacity>=9,<10
   - mobility-mode-sequence-search==0.1.0
+  - mobility-destination-sequence-sampler==0.1.0
   - truststore>=0.10,<1 ; extra == 'truststore'
   - build>=1.5,<2 ; extra == 'dev'
   - coverage>=7,<8 ; extra == 'dev'
@@ -6719,6 +6724,17 @@ packages:
   version: 1.6.0
   sha256: 1a99710fbb225d459d66def4dc2bb2cd4a9a0bdc8b799fc0621cfdd863be9c93
   requires_python: '>=3.10,<3.14'
+- pypi: https://files.pythonhosted.org/packages/71/1e/80ed4e7951eaf2e7b248a2d7b7a261446c4a2b663ddba897aab8f0b947b4/mobility_destination_sequence_sampler-0.1.0.tar.gz
+  name: mobility-destination-sequence-sampler
+  version: 0.1.0
+  sha256: 35b99d772886d4d23643399533eed56442a4f1ef9a997a0b44fbe70e775e5d1d
+  requires_dist:
+  - polars>=1.39,<2
+  - numpy>=2,<3 ; extra == 'dev'
+  - psutil>=6,<8 ; extra == 'dev'
+  - pytest>=8,<10 ; extra == 'dev'
+  - scipy>=1.15,<2 ; extra == 'dev'
+  requires_python: '>=3.11'
 - pypi: https://files.pythonhosted.org/packages/72/4b/9c6acfbe900e5c8698132244c68036b0455bd2169f46e356c83dc0366f11/inflate64-1.0.4-cp312-cp312-macosx_11_0_arm64.whl
   name: inflate64
   version: 1.0.4
@@ -7057,6 +7073,17 @@ packages:
   - setuptools ; extra == 'dev'
   - xmlschema ; extra == 'dev'
   requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/8c/ae/da68ccc1e484ae1805c8df0da1e7e248090adf4db935258916db9398db70/mobility_destination_sequence_sampler-0.1.0-cp311-abi3-macosx_11_0_arm64.whl
+  name: mobility-destination-sequence-sampler
+  version: 0.1.0
+  sha256: db13f790c5b9ce6abb9cf01f5104f67545b9d3ea53995e5d983477358d4522f9
+  requires_dist:
+  - polars>=1.39,<2
+  - numpy>=2,<3 ; extra == 'dev'
+  - psutil>=6,<8 ; extra == 'dev'
+  - pytest>=8,<10 ; extra == 'dev'
+  - scipy>=1.15,<2 ; extra == 'dev'
+  requires_python: '>=3.11'
 - pypi: https://files.pythonhosted.org/packages/8d/ab/9893ea9fb066be70ed9074ae543914a618c131ed8dff2da1e08b3a4df4db/pyproj-3.7.2-cp312-cp312-macosx_13_0_x86_64.whl
   name: pyproj
   version: 3.7.2
@@ -8380,6 +8407,17 @@ packages:
   - pillow>=9
   - pyparsing>=3
   - python-dateutil>=2.7
+  requires_python: '>=3.11'
+- pypi: https://files.pythonhosted.org/packages/e6/de/9f25f03f7d30fb85c661aa7d733844e99ef17cfd18a919ae7832fb368b22/mobility_destination_sequence_sampler-0.1.0-cp311-abi3-win_amd64.whl
+  name: mobility-destination-sequence-sampler
+  version: 0.1.0
+  sha256: d5f0233efe5fb6c8f549cab06759e79fa11ede6b886fdd4bd637735287c96c45
+  requires_dist:
+  - polars>=1.39,<2
+  - numpy>=2,<3 ; extra == 'dev'
+  - psutil>=6,<8 ; extra == 'dev'
+  - pytest>=8,<10 ; extra == 'dev'
+  - scipy>=1.15,<2 ; extra == 'dev'
   requires_python: '>=3.11'
 - pypi: https://files.pythonhosted.org/packages/e7/05/c19819d5e3d95294a6f5947fb9b9629efb316b96de511b418c53d245aae6/cycler-0.12.1-py3-none-any.whl
   name: cycler
