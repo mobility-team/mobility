@@ -155,6 +155,20 @@ Result metrics use represented-person weights, so a `sample_size` of 1000 does n
 
 Use this for French survey-based behaviour patterns from EMP 2018-2019.
 
+```python
+survey = mobility.EMPMobilitySurvey(
+    correct_zero_durations=True,
+)
+```
+
+Main argument:
+
+- `correct_zero_durations`: estimate short durations for activities reported
+  as zero between consecutive trips. The default is `False`.
+
+Use the constructor argument shown above. Mobility applies the correction
+while preparing and caching the survey.
+
 Project-specific survey objects can also be passed to `PopulationGroupDayTrips`, but the parser and documentation should live in the project repository.
 
 ## Activities

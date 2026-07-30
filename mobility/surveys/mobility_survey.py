@@ -5,6 +5,9 @@ import pandas as pd
 from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.surveys.zero_duration_activities import (
+    _correct_zero_duration_activities,
+)
 
 
 class MobilitySurvey(FileAsset):
@@ -81,6 +84,31 @@ class MobilitySurvey(FileAsset):
         """
         return {k: pd.read_parquet(path) for k, path in self.cache_path.items()}
 
+    def correct_zero_durations(self) -> None:
+        """Correct and persist zero-duration activities in this survey.
+
+        This runs once at survey creation, after the national parser has
+        written its standardized tables. The fit uses the survey's own trip
+        diaries and day weights; downstream consumers therefore receive the
+        same corrected ``short_trips`` table without owning correction logic.
+        """
+        short_trips = pd.read_parquet(self.cache_path["short_trips"])
+        days_trip = pd.read_parquet(self.cache_path["days_trip"])
+        day_weights = (
+            days_trip.reset_index()[["day_id", "pondki"]]
+            .drop_duplicates("day_id")
+        )
+        weighted_trips = short_trips.reset_index().merge(
+            day_weights,
+            on="day_id",
+            how="left",
+            validate="many_to_one",
+        )
+        corrected = _correct_zero_duration_activities(weighted_trips)
+        corrected.drop(columns="pondki", inplace=True)
+        corrected.set_index("day_id", inplace=True)
+        corrected.to_parquet(self.cache_path["short_trips"])
+
 class MobilitySurveyParameters(BaseModel):
     """Parameters used to configure a mobility survey asset."""
 
@@ -101,3 +129,14 @@ class MobilitySurveyParameters(BaseModel):
             description="ISO-like country code used to map surveys to population inputs.",
         ),
     ]
+
+    correct_zero_durations: Annotated[
+        bool,
+        Field(
+            title="Correct zero-duration activities",
+            description=(
+                "Fit plausible short activity durations from this survey and "
+                "correct equal consecutive arrival and departure times."
+            ),
+        ),
+    ] = False
