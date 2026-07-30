@@ -337,15 +337,6 @@ class GroupDayTripsDestinationSequenceParameters(BaseModel):
         ),
     ]
 
-    @model_validator(mode="after")
-    def validate_destination_plan_search(self) -> "GroupDayTripsDestinationSequenceParameters":
-        """Validate settings required by the bounded destination-plan search."""
-        if self.use_destination_plan_search and self.alpha <= 0.0:
-            raise ValueError(
-                "alpha must be greater than zero when destination plan search is enabled."
-            )
-        return self
-
 
 class GroupDayTripsModeSequenceParameters(BaseModel):
     """Settings used when searching mode sequences."""
@@ -479,8 +470,11 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
         Field(
             default=1.0,
             ge=0.0,
-            title="Transition logit scale",
-            description="Scale applied to plan utilities when choosing a new plan.",
+            title="Plan choice logit scale",
+            description=(
+                "Scale applied to plan utilities when ranking destination plans "
+                "and choosing a new plan."
+            ),
         ),
     ]
     transition_utility_pruning_delta: Annotated[

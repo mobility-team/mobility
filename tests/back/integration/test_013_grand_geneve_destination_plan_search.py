@@ -135,12 +135,12 @@ def test_grand_geneve_destination_plan_search_returns_complete_chains(
         destination_sequences=GroupDayTripsDestinationSequenceParameters(
             use_destination_plan_search=True,
             k_destination_sequences=3,
-            alpha=0.25,
         ),
         plan_update=GroupDayTripsPlanUpdateParameters(
             update_plan_timings_from_modeled_travel_times=True,
             use_destination_shadow_prices=True,
             min_activity_time_constant=2.0,
+            transition_logit_scale=0.25,
         ),
     )
     transport_costs = SimpleNamespace(

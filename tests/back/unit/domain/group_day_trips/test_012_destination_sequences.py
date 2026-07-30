@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 import pandas as pd
 import polars as pl
-import pytest
 
 from mobility.trips.group_day_trips import (
     GroupDayTripsDestinationSequenceParameters,
@@ -28,12 +27,34 @@ def test_destination_plan_search_flag_is_disabled_by_default():
     assert parameters.use_destination_plan_search is False
 
 
-def test_destination_plan_search_requires_positive_alpha():
-    with pytest.raises(ValueError, match="alpha must be greater than zero"):
-        GroupDayTripsDestinationSequenceParameters(
+def test_destination_plan_search_does_not_use_legacy_alpha():
+    parameters = GroupDayTripsDestinationSequenceParameters(
+        use_destination_plan_search=True,
+        alpha=0.0,
+    )
+
+    assert parameters.alpha == 0.0
+
+
+def test_plan_choice_logit_scale_is_part_of_destination_cache_key(tmp_path):
+    parameters = GroupDayTripsParameters(
+        destination_sequences=GroupDayTripsDestinationSequenceParameters(
             use_destination_plan_search=True,
-            alpha=0.0,
-        )
+        ),
+        plan_update=GroupDayTripsPlanUpdateParameters(
+            transition_logit_scale=0.25,
+        ),
+    )
+    destination_sequences = DestinationSequences(
+        is_weekday=True,
+        iteration=1,
+        base_folder=_make_local_tmp_path(tmp_path, "plan_choice_logit_scale"),
+        activities=[],
+        resolved_activity_parameters={},
+        parameters=parameters,
+    )
+
+    assert destination_sequences.inputs["plan_update_transition_logit_scale"] == 0.25
 
 
 def test_destination_plan_search_returns_mobility_sequence_rows():

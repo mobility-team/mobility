@@ -149,6 +149,11 @@ class DestinationSequences(FileAsset):
                 if parameters is not None
                 else None
             ),
+            "plan_update_transition_logit_scale": (
+                parameters.plan_update.transition_logit_scale
+                if parameters is not None
+                else None
+            ),
             "behavior_change_scope": (
                 parameters.behavior_change.scope_at(iteration)
                 if parameters is not None
@@ -462,7 +467,7 @@ class DestinationSequences(FileAsset):
                 min_activity_time_constant=(
                     parameters.plan_update.min_activity_time_constant
                 ),
-                logit_scale=parameters.destination_sequences.alpha,
+                logit_scale=parameters.plan_update.transition_logit_scale,
                 update_plan_timings=(
                     parameters.plan_update.update_plan_timings_from_modeled_travel_times
                 ),

@@ -33,6 +33,7 @@ dependencies = [
   "pydantic>=2.12,<3",
   "tenacity>=9,<10",
   "mobility-mode-sequence-search==0.1.0",
+  "mobility-destination-sequence-sampler==0.1.0",
 ]
 
 requires-python = ">=3.11"
@@ -54,10 +55,6 @@ classifiers = [
 [project.optional-dependencies]
 truststore = [
   "truststore>=0.10,<1",
-]
-
-destination-plan-search = [
-  "mobility-destination-sequence-sampler==0.1.0",
 ]
 
 dev = [

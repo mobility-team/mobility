@@ -3,6 +3,7 @@ import math
 from typing import Any
 
 import polars as pl
+from mobility_destination_sequence_sampler import DestinationPlanSearch
 
 from .demand_subgroups import DEMAND_UNIT_COLS, with_demand_subgroup_id
 
@@ -29,14 +30,6 @@ def sample_destination_plans(
     top_k: int,
 ) -> pl.DataFrame:
     """Return complete destination plans found by the bounded Rust search."""
-    try:
-        from mobility_destination_sequence_sampler import DestinationPlanSearch
-    except ImportError as error:
-        raise ImportError(
-            "Destination plan search requires the optional sampler package. "
-            "Install Mobility with the `destination-plan-search` extra."
-        ) from error
-
     activity_names = sorted(resolved_activity_parameters)
     activity_ids = {
         activity_name: activity_id

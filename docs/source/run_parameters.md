@@ -97,18 +97,7 @@ This helps you explain later how a result was produced, which parameters changed
 ## Try Complete Destination-Plan Search
 
 The existing step-by-step destination sampler remains the default. To try the
-bounded Rust search, install the optional dependency and enable it explicitly:
-
-```bash
-pip install "mobility-tools[destination-plan-search]"
-```
-
-Until version `0.1.0` of the sampler is published, contributors can install a
-local checkout instead:
-
-```bash
-python -m pip install --no-deps -e ../mobility-destination-sequence-sampler
-```
+bounded Rust search, enable it explicitly:
 
 ```python
 from mobility import (
@@ -122,6 +111,11 @@ parameters = GroupDayTripsParameters(
     )
 )
 ```
+
+The search uses `plan_update.transition_logit_scale` when ranking complete
+destination plans. The same scale is then used when choosing between plans.
+The destination-sequence `alpha` parameter only applies to the legacy
+step-by-step sampler.
 
 This search chooses and ranks complete destination chains together. It returns
 the best chains found by a bounded search; it does not prove that no better
