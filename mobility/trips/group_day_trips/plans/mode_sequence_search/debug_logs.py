@@ -5,7 +5,7 @@ import polars as pl
 
 from mobility.runtime.logging_levels import TRACE_LEVEL, is_trace_enabled
 
-from ..demand_subgroups import DEMAND_UNIT_COLS, with_demand_subgroup_id
+from ..demand_subgroups import DEMAND_UNIT_COLS
 
 
 def log_location_chain_diagnostics(
@@ -19,8 +19,6 @@ def log_location_chain_diagnostics(
     if not is_trace_enabled():
         return
 
-    destination_steps = with_demand_subgroup_id(destination_steps)
-    trip_chains = with_demand_subgroup_id(trip_chains)
     trip_chain_lengths = _trip_chain_lengths(trip_chains)
     unique_chain_lengths = _unique_chain_lengths(unique_destination_chains)
     logging.log(

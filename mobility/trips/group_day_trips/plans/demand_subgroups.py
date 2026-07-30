@@ -4,16 +4,10 @@ import polars as pl
 
 
 DEMAND_UNIT_COLS = ["demand_group_id", "demand_subgroup_id"]
-
-
-def with_demand_subgroup_id(frame: pl.DataFrame | pl.LazyFrame | None) -> pl.DataFrame | pl.LazyFrame | None:
-    """Return a frame with the default demand subgroup column."""
-    if frame is None:
-        return None
-    schema = frame.schema if isinstance(frame, pl.DataFrame) else frame.collect_schema()
-    if "demand_subgroup_id" in schema:
-        return frame
-    return frame.with_columns(pl.lit(0, dtype=pl.UInt32).alias("demand_subgroup_id"))
+DEMAND_UNIT_SCHEMA = {
+    "demand_group_id": pl.UInt32,
+    "demand_subgroup_id": pl.UInt32,
+}
 
 
 def demand_unit_hash(other_columns: list[str], *, seed: int) -> pl.Expr:
@@ -32,8 +26,22 @@ def split_large_demand_groups(
     *,
     max_persons_per_demand_subgroup: int | None,
 ) -> pl.DataFrame:
-    """Split high-weight demand groups into deterministic stochastic subgroups."""
-    demand_groups = with_demand_subgroup_id(demand_groups)
+    """Split high-weight demand groups into deterministic demand subgroups.
+
+    This function owns subgroup creation. It starts each raw demand group at
+    subgroup 0, then expands large groups when a maximum subgroup size is set.
+    The represented persons are divided evenly across the generated subgroups,
+    so the total population weight is unchanged.
+    """
+    if "demand_subgroup_id" in demand_groups.columns:
+        raise ValueError(
+            "`split_large_demand_groups()` expects raw demand groups without "
+            "`demand_subgroup_id` because it owns subgroup creation."
+        )
+
+    demand_groups = demand_groups.with_columns(
+        demand_subgroup_id=pl.lit(0, dtype=pl.UInt32)
+    )
     if max_persons_per_demand_subgroup is None:
         return demand_groups
 

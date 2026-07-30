@@ -12,13 +12,6 @@ TIME_BIN_BREAKS_MINUTES = [0.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 1e9]
 CALIBRATION_PLAN_STEP_COLUMNS = ["activity", "distance_bin", "time_bin", "mode", "distance", "time", "n_persons"]
 
 
-def _as_lazyframe(plan_steps: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame:
-    """Return a lazy frame regardless of the input plan-step container."""
-    if isinstance(plan_steps, pl.DataFrame):
-        return plan_steps.lazy()
-    return plan_steps
-
-
 def distance_bin_expr(column: str = "distance") -> pl.Expr:
     """Return the canonical distance-bin expression shared by calibration diagnostics."""
     return pl.col(column).cast(pl.Float64).cut(DISTANCE_BIN_BREAKS, left_closed=True).cast(pl.String)
@@ -30,10 +23,9 @@ def time_bin_expr(column: str = "time") -> pl.Expr:
 
 
 def to_calibration_plan_steps(
-    plan_steps: pl.LazyFrame | pl.DataFrame,
+    plan_steps: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """Convert raw plan steps to the canonical calibration-step schema."""
-    plan_steps = _as_lazyframe(plan_steps)
     is_stay_home = pl.col("mode").cast(pl.String) == "stay_home"
     return (
         plan_steps

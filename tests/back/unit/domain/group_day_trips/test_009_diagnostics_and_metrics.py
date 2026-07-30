@@ -2951,7 +2951,7 @@ def test_calibration_plan_steps_keep_stay_home_as_a_distribution_state():
         mode=pl.col("mode").cast(pl.Enum(["car", "stay_home"])),
     )
 
-    calibration_steps = to_calibration_plan_steps(raw_plan_steps).collect()
+    calibration_steps = to_calibration_plan_steps(raw_plan_steps.lazy()).collect()
 
     assert calibration_steps.sort("mode").to_dict(as_series=False) == {
         "activity": ["work", "stay_home"],
@@ -3006,14 +3006,14 @@ def test_model_loss_summary_history_and_validation():
         ).lazy()
     )
     loss = ModelLoss(
-        expected_plan_steps=_FrameAsset(expected, lazy=False),
+        expected_plan_steps=_FrameAsset(expected),
         observed_plan_steps=_FrameAsset(observed),
         history=history_store,
     )
 
     summary = loss.summary()
     history = loss.history()
-    history_row = loss.history_row(iteration=2, plan_steps=observed)
+    history_row = loss.history_row(iteration=2, plan_steps=observed.lazy())
 
     assert summary.height == 1
     assert summary["total_loss"].unique().item() > 0.0
@@ -3041,7 +3041,7 @@ def test_model_loss_summary_history_and_validation():
                     "time": [2.0],
                     "n_persons": [1.0],
                 }
-            )
+            ).lazy()
         )
 
 
@@ -3072,11 +3072,11 @@ def test_model_loss_is_based_on_distribution_shares_not_global_scale():
     scaled_expected = expected.with_columns(n_persons=pl.col("n_persons") * 10.0)
     scaled_observed = observed.with_columns(n_persons=pl.col("n_persons") * 10.0)
 
-    loss = ModelLoss(expected_plan_steps=_FrameAsset(expected, lazy=False))
-    scaled_loss = ModelLoss(expected_plan_steps=_FrameAsset(scaled_expected, lazy=False))
+    loss = ModelLoss(expected_plan_steps=_FrameAsset(expected))
+    scaled_loss = ModelLoss(expected_plan_steps=_FrameAsset(scaled_expected))
 
-    assert loss.total_loss(plan_steps=observed) == pytest.approx(
-        scaled_loss.total_loss(plan_steps=scaled_observed)
+    assert loss.total_loss(plan_steps=observed.lazy()) == pytest.approx(
+        scaled_loss.total_loss(plan_steps=scaled_observed.lazy())
     )
 
 
@@ -3105,7 +3105,7 @@ def test_model_loss_ignores_stay_home_when_comparing_trip_distributions():
         }
     )
 
-    comparison = ModelLoss(expected_plan_steps=_FrameAsset(expected, lazy=False)).comparison(plan_steps=observed)
+    comparison = ModelLoss(expected_plan_steps=_FrameAsset(expected)).comparison(plan_steps=observed.lazy())
 
     assert comparison["activity"].to_list() == ["work"]
     assert comparison["observed_total"].to_list() == pytest.approx([2.0])
@@ -3149,14 +3149,14 @@ def test_model_trip_count_loss_uses_cleaned_survey_steps_and_immobility():
     )
 
     distribution = build_trip_count_distribution(
-        expected_mobile_steps,
+        expected_mobile_steps.lazy(),
         immobility_probabilities=pl.DataFrame({"country": ["fr"], "csp": ["A"], "p_immobility": [0.2]}),
     )
     loss = ModelTripCountLoss(
-        expected_plan_steps=_FrameAsset(expected_mobile_steps),
+        expected_plan_steps=expected_mobile_steps.lazy(),
         surveys=[survey],
         is_weekday=True,
-        observed_plan_steps=_FrameAsset(observed_steps),
+        observed_plan_steps=observed_steps.lazy(),
     )
 
     expected_by_bin = dict(zip(distribution["trip_count_bin"], distribution["n_persons"]))
@@ -3183,7 +3183,7 @@ def test_model_entropy_and_trip_pattern_distribution_cover_mobile_and_stay_home_
             "n_persons": [2.0, 2.0, 1.0],
         }
     )
-    distribution = build_trip_pattern_distribution(raw_plan_steps)
+    distribution = build_trip_pattern_distribution(raw_plan_steps.lazy())
     expected_distribution = pl.DataFrame(
         {
             "trip_pattern": distribution["trip_pattern"].to_list(),
@@ -3223,9 +3223,9 @@ def test_model_entropy_and_trip_pattern_distribution_cover_mobile_and_stay_home_
     )
 
     comparison = entropy.comparison()
-    summary = entropy.summary(plan_steps=raw_plan_steps)
+    summary = entropy.summary(plan_steps=raw_plan_steps.lazy())
     history = entropy.history()
-    history_row = entropy.history_row(iteration=2, plan_steps=raw_plan_steps)
+    history_row = entropy.history_row(iteration=2, plan_steps=raw_plan_steps.lazy())
 
     assert set(distribution["trip_pattern"].to_list()) == {"stay_home", distribution["trip_pattern"][0]}
     assert distribution["probability"].sum() == pytest.approx(1.0)
@@ -3313,10 +3313,16 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
             observed_calibration_plan_steps=object(),
             expected_entropy_plan_steps=object(),
             observed_entropy_plan_steps=object(),
-            population_weighted_plan_steps=object(),
+            population_weighted_plan_steps=pl.DataFrame(
+                {"activity_seq_id": [0], "n_persons": [1.0]},
+                schema={"activity_seq_id": pl.UInt32, "n_persons": pl.Float64},
+            ).lazy(),
             surveys=[],
             is_weekday=True,
-            plan_steps=object(),
+            plan_steps=pl.DataFrame(
+                {"activity_seq_id": [0], "n_persons": [1.0]},
+                schema={"activity_seq_id": pl.UInt32, "n_persons": pl.Float64},
+            ).lazy(),
             iteration_metrics_store=history_store,
         )
     )
