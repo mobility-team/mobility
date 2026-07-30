@@ -15,6 +15,28 @@ Survey transfer is a modelling assumption. National surveys provide detailed beh
 
 Some survey codes still appear in model inputs or outputs. The [survey codes page](survey_codes.md) lists the main French codes for socio-professional categories, motives, and trip modes.
 
+### Zero-Duration Activities
+
+Some survey diaries give the same time for one trip's arrival and the next
+trip's departure. This produces an activity with a reported duration of zero,
+even though the person probably stopped briefly. For example, an arrival at
+08:30 followed by a departure at 08:30 records a zero-minute activity.
+
+You can ask Mobility to correct these records when it prepares the survey:
+
+```python
+survey = mobility.EMPMobilitySurvey(correct_zero_durations=True)
+```
+
+The correction is disabled by default. When enabled, Mobility estimates short
+activity durations from the same survey and adjusts the two surrounding trip
+times. It does not add, remove, or reorder trips. The activity after the final
+trip is unchanged because the diary does not record when it ends.
+
+Enabling this option changes the survey-derived activity-duration
+distribution. Record the setting in the study assumptions and check the
+resulting durations against suitable evidence.
+
 ### ENTD 2007-2008
 
 The national transport and travel survey, `Enquete Nationale Transports Deplacements`, was run in 2007 and 2008. INSEE describes it as a survey about household trips, use of individual and collective transport modes, and the vehicle fleet owned by households.
