@@ -102,6 +102,8 @@ mccabe==0.7.0
     # via flake8
 mdurl==0.1.2
     # via markdown-it-py
+mobility-destination-sequence-sampler==0.1.0
+    # via mobility-tools (pyproject.toml)
 mobility-mode-sequence-search==0.1.0
     # via mobility-tools (pyproject.toml)
 multivolumefile==0.2.3
@@ -160,6 +162,7 @@ pluggy==1.6.0
 polars==1.39.3
     # via
     #   mobility-tools (pyproject.toml)
+    #   mobility-destination-sequence-sampler
     #   mobility-mode-sequence-search
 polars-runtime-32==1.39.3
     # via polars

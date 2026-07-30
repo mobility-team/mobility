@@ -15,6 +15,7 @@ from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 
 def _make_possible_plan_steps(rows: dict[str, list]) -> pl.DataFrame:
     rows = {
+        "demand_subgroup_id": rows.get("demand_subgroup_id", [0] * len(rows["demand_group_id"])),
         "country": rows.get("country", ["fr"] * len(rows["demand_group_id"])),
         "time_seq_id": rows.get("time_seq_id", [0] * len(rows["demand_group_id"])),
         "first_seen_iteration": rows.get("first_seen_iteration", [None] * len(rows["demand_group_id"])),
@@ -26,6 +27,7 @@ def _make_possible_plan_steps(rows: dict[str, list]) -> pl.DataFrame:
         rows,
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "country": pl.Utf8,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
@@ -59,6 +61,7 @@ def _make_possible_plan_steps(rows: dict[str, list]) -> pl.DataFrame:
 
 def _make_current_plans(rows: dict[str, list]) -> pl.DataFrame:
     rows = {
+        "demand_subgroup_id": rows.get("demand_subgroup_id", [0] * len(rows["demand_group_id"])),
         "time_seq_id": rows.get("time_seq_id", [0] * len(rows["demand_group_id"])),
         **rows,
     }
@@ -66,6 +69,7 @@ def _make_current_plans(rows: dict[str, list]) -> pl.DataFrame:
         rows,
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
             "dest_seq_id": pl.UInt32,
@@ -78,6 +82,7 @@ def _make_current_plans(rows: dict[str, list]) -> pl.DataFrame:
 
 def _make_possible_plan_utility(rows: dict[str, list]) -> pl.LazyFrame:
     rows = {
+        "demand_subgroup_id": rows.get("demand_subgroup_id", [0] * len(rows["demand_group_id"])),
         "time_seq_id": rows.get("time_seq_id", [0] * len(rows["demand_group_id"])),
         **rows,
     }
@@ -85,6 +90,7 @@ def _make_possible_plan_utility(rows: dict[str, list]) -> pl.LazyFrame:
         rows,
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
             "dest_seq_id": pl.UInt32,
@@ -120,6 +126,7 @@ def test_get_transition_probabilities_blocks_stay_home_in_mode_replanning(tmp_pa
     current_plans = _make_current_plans(
         {
             "demand_group_id": [1, 1],
+            "demand_subgroup_id": [0, 0],
             "activity_seq_id": [0, 10],
             "dest_seq_id": [0, 100],
             "mode_seq_id": [0, 1000],
@@ -193,6 +200,7 @@ def test_get_transition_probabilities_no_transitions_keeps_current_plan(tmp_path
     current_plans = _make_current_plans(
         {
             "demand_group_id": [1, 1],
+            "demand_subgroup_id": [0, 0],
             "activity_seq_id": [0, 10],
             "time_seq_id": [0, 20],
             "dest_seq_id": [0, 100],
@@ -290,6 +298,7 @@ def test_add_plan_id_keeps_stay_home_and_non_stay_home_states_distinct():
     plans = pl.DataFrame(
         {
             "demand_group_id": [1, 1],
+            "demand_subgroup_id": [0, 0],
             "activity_seq_id": [0, 10],
             "time_seq_id": [0, 0],
             "dest_seq_id": [0, 100],
@@ -297,6 +306,7 @@ def test_add_plan_id_keeps_stay_home_and_non_stay_home_states_distinct():
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
             "dest_seq_id": pl.UInt32,
@@ -363,6 +373,7 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
         pl.DataFrame(
             {
                 "demand_group_id": [1],
+                "demand_subgroup_id": [0],
                 "activity_seq_id": [10],
                 "time_seq_id": [0],
                 "dest_seq_id": [100],
@@ -376,6 +387,7 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
             },
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -393,6 +405,7 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
         pl.DataFrame(
             {
                 "demand_group_id": [1],
+                "demand_subgroup_id": [0],
                 "activity_seq_id": [10],
                 "time_seq_id": [0],
                 "dest_seq_id": [100],
@@ -403,6 +416,7 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
             },
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -438,11 +452,13 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
     demand_groups = pl.DataFrame(
         {
             "demand_group_id": [1],
+            "demand_subgroup_id": [0],
             "country": ["fr"],
             "csp": ["x"],
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "country": pl.Utf8,
             "csp": pl.Utf8,
         },
@@ -456,6 +472,7 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
         current_plans=pl.DataFrame(
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -513,6 +530,7 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
         pl.DataFrame(
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -530,6 +548,7 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
         pl.DataFrame(
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -555,11 +574,13 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
     demand_groups = pl.DataFrame(
         {
             "demand_group_id": [1],
+            "demand_subgroup_id": [0],
             "country": ["fr"],
             "csp": ["x"],
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "country": pl.Utf8,
             "csp": pl.Utf8,
         },
@@ -573,6 +594,7 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
         current_plans=pl.DataFrame(
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -631,6 +653,7 @@ def test_candidate_memory_keeps_regenerated_inactive_plans_after_warmup():
         pl.DataFrame(
             {
                 "demand_group_id": [1],
+                "demand_subgroup_id": [0],
                 "activity_seq_id": [11],
                 "time_seq_id": [0],
                 "dest_seq_id": [101],
@@ -644,6 +667,7 @@ def test_candidate_memory_keeps_regenerated_inactive_plans_after_warmup():
             },
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -661,6 +685,7 @@ def test_candidate_memory_keeps_regenerated_inactive_plans_after_warmup():
         pl.DataFrame(
             {
                 "demand_group_id": [1],
+                "demand_subgroup_id": [0],
                 "activity_seq_id": [11],
                 "time_seq_id": [0],
                 "dest_seq_id": [101],
@@ -671,6 +696,7 @@ def test_candidate_memory_keeps_regenerated_inactive_plans_after_warmup():
             },
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -704,8 +730,13 @@ def test_candidate_memory_keeps_regenerated_inactive_plans_after_warmup():
         },
     )
     demand_groups = pl.DataFrame(
-        {"demand_group_id": [1], "country": ["fr"], "csp": ["x"]},
-        schema={"demand_group_id": pl.UInt32, "country": pl.Utf8, "csp": pl.Utf8},
+        {"demand_group_id": [1], "demand_subgroup_id": [0], "country": ["fr"], "csp": ["x"]},
+        schema={
+            "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
+            "country": pl.Utf8,
+            "csp": pl.Utf8,
+        },
     )
 
     result = CandidatePlanStepsAsset.build_candidate_memory(
@@ -716,6 +747,7 @@ def test_candidate_memory_keeps_regenerated_inactive_plans_after_warmup():
         current_plans=pl.DataFrame(
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -1223,6 +1255,7 @@ def test_apply_transitions_prunes_low_probability_targets_consistently(tmp_path)
     plan_keys = pl.DataFrame(
         {
             "demand_group_id": [1, 1, 1, 1],
+            "demand_subgroup_id": [0, 0, 0, 0],
             "activity_seq_id": [10, 11, 12, 13],
             "time_seq_id": [100, 101, 102, 103],
             "dest_seq_id": [1000, 1001, 1002, 1003],
@@ -1230,6 +1263,7 @@ def test_apply_transitions_prunes_low_probability_targets_consistently(tmp_path)
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
             "dest_seq_id": pl.UInt32,
@@ -1254,6 +1288,7 @@ def test_apply_transitions_prunes_low_probability_targets_consistently(tmp_path)
         [
             pl.col("plan_id").alias("plan_id_trans"),
             pl.lit(from_state["demand_group_id"], dtype=pl.UInt32).alias("demand_group_id"),
+            pl.lit(from_state["demand_subgroup_id"], dtype=pl.UInt32).alias("demand_subgroup_id"),
             pl.lit(from_state["activity_seq_id"], dtype=pl.UInt32).alias("activity_seq_id"),
             pl.lit(from_state["time_seq_id"], dtype=pl.UInt32).alias("time_seq_id"),
             pl.lit(from_state["dest_seq_id"], dtype=pl.UInt32).alias("dest_seq_id"),
@@ -1301,6 +1336,7 @@ def test_apply_transitions_probability_pruning_does_not_merge_mobile_targets_int
     plan_keys = pl.DataFrame(
         {
             "demand_group_id": [1, 1, 1, 1],
+            "demand_subgroup_id": [0, 0, 0, 0],
             "activity_seq_id": [0, 10, 11, 12],
             "time_seq_id": [0, 100, 101, 102],
             "dest_seq_id": [0, 1000, 1001, 1002],
@@ -1308,6 +1344,7 @@ def test_apply_transitions_probability_pruning_does_not_merge_mobile_targets_int
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
             "dest_seq_id": pl.UInt32,
@@ -1332,6 +1369,7 @@ def test_apply_transitions_probability_pruning_does_not_merge_mobile_targets_int
         [
             pl.col("plan_id").alias("plan_id_trans"),
             pl.lit(mobile_from_state["demand_group_id"], dtype=pl.UInt32).alias("demand_group_id"),
+            pl.lit(mobile_from_state["demand_subgroup_id"], dtype=pl.UInt32).alias("demand_subgroup_id"),
             pl.lit(mobile_from_state["activity_seq_id"], dtype=pl.UInt32).alias("activity_seq_id"),
             pl.lit(mobile_from_state["time_seq_id"], dtype=pl.UInt32).alias("time_seq_id"),
             pl.lit(mobile_from_state["dest_seq_id"], dtype=pl.UInt32).alias("dest_seq_id"),
@@ -1374,6 +1412,7 @@ def test_apply_transitions_probability_pruning_keeps_default_behavior(tmp_path):
     plan_keys = pl.DataFrame(
         {
             "demand_group_id": [1, 1],
+            "demand_subgroup_id": [0, 0],
             "activity_seq_id": [10, 11],
             "time_seq_id": [100, 101],
             "dest_seq_id": [1000, 1001],
@@ -1381,6 +1420,7 @@ def test_apply_transitions_probability_pruning_keeps_default_behavior(tmp_path):
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
             "dest_seq_id": pl.UInt32,
@@ -1401,6 +1441,7 @@ def test_apply_transitions_probability_pruning_keeps_default_behavior(tmp_path):
         [
             pl.col("plan_id").alias("plan_id_trans"),
             pl.lit(from_state["demand_group_id"], dtype=pl.UInt32).alias("demand_group_id"),
+            pl.lit(from_state["demand_subgroup_id"], dtype=pl.UInt32).alias("demand_subgroup_id"),
             pl.lit(from_state["activity_seq_id"], dtype=pl.UInt32).alias("activity_seq_id"),
             pl.lit(from_state["time_seq_id"], dtype=pl.UInt32).alias("time_seq_id"),
             pl.lit(from_state["dest_seq_id"], dtype=pl.UInt32).alias("dest_seq_id"),

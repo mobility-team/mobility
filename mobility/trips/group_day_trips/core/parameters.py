@@ -360,7 +360,7 @@ class GroupDayTripsModeSequenceParameters(BaseModel):
 
 
 class GroupDayTripsDemandGroupParameters(BaseModel):
-    """Settings used to define stochastic demand units."""
+    """Settings used to split large demand groups into smaller subgroups."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -371,9 +371,11 @@ class GroupDayTripsDemandGroupParameters(BaseModel):
             ge=1,
             title="Maximum persons per demand subgroup",
             description=(
-                "Optional maximum represented persons per stochastic demand "
-                "subgroup. Large demand groups are split into deterministic "
-                "subgroups before activity, destination, and mode sampling."
+                "Optional maximum represented persons per demand subgroup. "
+                "Large demand groups are split into deterministic subgroups "
+                "before activity, destination, and mode sampling, so one "
+                "large group can keep several sampled alternatives instead of "
+                "placing all represented persons on the same sampled plan."
             ),
         ),
     ]

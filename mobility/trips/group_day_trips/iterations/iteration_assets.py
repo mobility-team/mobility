@@ -7,6 +7,7 @@ from typing import Any
 
 import polars as pl
 
+from mobility.runtime.assets.cache_schema import read_cached_parquet, validate_cached_table
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities.activity import (
     resolve_activity_arrival_time_rigidity,
@@ -27,6 +28,8 @@ from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from ..plans.candidate_plan_steps import CandidatePlanStepsAsset
+from ..plans.demand_subgroups import DEMAND_UNIT_SCHEMA
+from ..plans.plan_ids import PLAN_KEY_SCHEMA, PLAN_STEP_KEY_SCHEMA
 
 
 STATE_TABLE_NAMES = [
@@ -44,6 +47,32 @@ STATE_TABLE_NAMES = [
     "destination_saturation",
     "costs",
 ]
+
+
+DEMAND_GROUPS_SCHEMA = {
+    **DEMAND_UNIT_SCHEMA,
+    "n_persons": pl.Float64,
+}
+CURRENT_PLANS_SCHEMA = {
+    **PLAN_KEY_SCHEMA,
+    "plan_id": pl.UInt32,
+    "n_persons": pl.Float64,
+}
+CURRENT_PLAN_STEPS_SCHEMA = {
+    **PLAN_STEP_KEY_SCHEMA,
+}
+PLAN_ID_INDEX_SCHEMA = {
+    **PLAN_KEY_SCHEMA,
+    "plan_id": pl.UInt32,
+}
+RUN_STATE_TABLE_SCHEMAS = {
+    "demand_groups": DEMAND_GROUPS_SCHEMA,
+    "stay_home_plan": CURRENT_PLAN_STEPS_SCHEMA,
+    "current_plans": CURRENT_PLANS_SCHEMA,
+    "current_plan_steps": CURRENT_PLAN_STEPS_SCHEMA,
+    "candidate_plan_steps": CandidatePlanStepsAsset.REQUIRED_SCHEMA,
+    "plan_id_index": PLAN_ID_INDEX_SCHEMA,
+}
 
 
 def _state_cache_paths(base_folder: pathlib.Path, iteration: int) -> dict[str, pathlib.Path]:
@@ -90,6 +119,17 @@ def _read_run_state(cache_path: dict[str, pathlib.Path], *, start_iteration: int
         tables["current_plan_steps"] = None
     if metadata.get("candidate_plan_steps_is_none", False):
         tables["candidate_plan_steps"] = None
+
+    for table_name, required_schema in RUN_STATE_TABLE_SCHEMAS.items():
+        table = tables[table_name]
+        if table is None:
+            continue
+        validate_cached_table(
+            table,
+            table_name=table_name,
+            required_schema=required_schema,
+            cache_path=cache_path[table_name],
+        )
 
     return RunState(
         survey_plans=tables["survey_plans"],
@@ -772,6 +812,8 @@ class IterationStateAsset(FileAsset):
 class CurrentPlansAsset(FileAsset):
     """Persisted current plan distribution after one completed iteration."""
 
+    REQUIRED_SCHEMA = CURRENT_PLANS_SCHEMA
+
     def __init__(
         self,
         *,
@@ -792,7 +834,11 @@ class CurrentPlansAsset(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pl.DataFrame:
-        return pl.read_parquet(self.cache_path)
+        return read_cached_parquet(
+            self.cache_path,
+            table_name="current_plans",
+            required_schema=self.REQUIRED_SCHEMA,
+        )
 
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.current_plans is None:
@@ -804,6 +850,8 @@ class CurrentPlansAsset(FileAsset):
 
 class CurrentPlanStepsAsset(FileAsset):
     """Persisted step-level details for the current plans after one completed iteration."""
+
+    REQUIRED_SCHEMA = CURRENT_PLAN_STEPS_SCHEMA
 
     def __init__(
         self,
@@ -825,7 +873,11 @@ class CurrentPlanStepsAsset(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pl.DataFrame:
-        return pl.read_parquet(self.cache_path)
+        return read_cached_parquet(
+            self.cache_path,
+            table_name="current_plan_steps",
+            required_schema=self.REQUIRED_SCHEMA,
+        )
 
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.current_plan_steps is None:
@@ -842,6 +894,8 @@ class PlanIdIndexAsset(FileAsset):
     supports the older `Iterations.load_state()` and `Iterations.save_state()`
     table API, where each saved state table has its own small FileAsset wrapper.
     """
+
+    REQUIRED_SCHEMA = PLAN_ID_INDEX_SCHEMA
 
     def __init__(
         self,
@@ -863,7 +917,11 @@ class PlanIdIndexAsset(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pl.DataFrame:
-        return pl.read_parquet(self.cache_path)
+        return read_cached_parquet(
+            self.cache_path,
+            table_name="plan_id_index",
+            required_schema=self.REQUIRED_SCHEMA,
+        )
 
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.plan_id_index is None:

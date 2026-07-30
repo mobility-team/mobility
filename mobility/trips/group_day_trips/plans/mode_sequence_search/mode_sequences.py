@@ -3,9 +3,11 @@ from typing import Any
 
 import polars as pl
 
+from mobility.runtime.assets.cache_schema import read_cached_parquet
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
+from mobility.trips.group_day_trips.plans.plan_ids import PLAN_STEP_KEY_SCHEMA
 
 from ..stable_key_index import StableKeyIndex
 from .assemble import (
@@ -49,6 +51,10 @@ class ModeSequences(FileAsset):
        `mode_seq_id` values and the expected storage schema.
     """
 
+    REQUIRED_SCHEMA = {
+        **PLAN_STEP_KEY_SCHEMA,
+    }
+
     def __init__(
         self,
         *,
@@ -85,7 +91,11 @@ class ModeSequences(FileAsset):
 
     def get_cached_asset(self) -> pl.DataFrame:
         """Return cached mode sequences for one iteration."""
-        return pl.read_parquet(self.cache_path["sequences"])
+        return read_cached_parquet(
+            self.cache_path["sequences"],
+            table_name="mode_sequences",
+            required_schema=self.REQUIRED_SCHEMA,
+        )
 
     def get_index(self) -> pl.DataFrame:
         """Return the mode-sequence index cached with this iteration."""
