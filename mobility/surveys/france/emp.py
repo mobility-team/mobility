@@ -31,11 +31,15 @@ class EMPMobilitySurvey(MobilitySurvey):
     def __init__(
         self,
         parameters: MobilitySurveyParameters | None = None,
+        *,
+        correct_zero_durations: bool | None = None,
     ):
         """Initialize EMP mobility survey with optional parameter overrides.
 
         Args:
             parameters: Optional pre-built survey parameters model.
+            correct_zero_durations: Correct activities recorded with zero
+                duration. Disabled by default.
         """
         parameters = self.prepare_parameters(
             parameters=parameters,
@@ -43,6 +47,7 @@ class EMPMobilitySurvey(MobilitySurvey):
             explicit_args={
                 "survey_name": "fr-EMP-2019",
                 "country": "fr",
+                "correct_zero_durations": correct_zero_durations,
             },
             owner_name="EMPMobilitySurvey",
         )
@@ -66,6 +71,8 @@ class EMPMobilitySurvey(MobilitySurvey):
 
         self.download_survey_data(dataset_path)
         self.parse_survey_data(dataset_path)
+        if self.inputs["parameters"].correct_zero_durations:
+            self.correct_zero_durations()
 
         return self.get_cached_asset()
 

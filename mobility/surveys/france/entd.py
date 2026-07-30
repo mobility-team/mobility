@@ -31,11 +31,16 @@ class ENTDMobilitySurvey(MobilitySurvey):
     def __init__(
         self,
         parameters: MobilitySurveyParameters | None = None,
+        *,
+        correct_zero_durations: bool | None = None,
     ):
         """Initialize ENTD mobility survey with optional parameter overrides.
 
         Args:
             parameters: Optional pre-built survey parameters model.
+            correct_zero_durations: Unsupported until the ENTD parser exposes
+                the survey's trip clock times. Passing ``True`` raises
+                ``ValueError``.
         """
         parameters = self.prepare_parameters(
             parameters=parameters,
@@ -43,9 +48,17 @@ class ENTDMobilitySurvey(MobilitySurvey):
             explicit_args={
                 "survey_name": "fr-ENTD-2008",
                 "country": "fr",
+                "correct_zero_durations": correct_zero_durations,
             },
             owner_name="ENTDMobilitySurvey",
         )
+        if parameters.correct_zero_durations:
+            # ENTD contains trip times, but this parser does not load and
+            # standardize them yet.
+            raise ValueError(
+                "ENTDMobilitySurvey cannot correct zero-duration activities "
+                "until its parser exposes the survey's trip clock times."
+            )
         super().__init__(parameters=parameters)
 
 

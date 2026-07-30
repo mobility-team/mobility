@@ -60,6 +60,21 @@ Mobility first builds daily activity-motive sequences for population groups.
 
 These sequences depend on survey behaviour and population characteristics such as socio-professional category, household car ownership, household size, and urban setting. Each sequence contains activity steps and expected activity-time needs.
 
+If a survey enables `correct_zero_durations`, Mobility estimates plausible
+short durations for activities whose preceding arrival equals their following
+departure. This optional preprocessing changes only the two surrounding
+clocks; it does not add, remove, or reorder trips.
+
+Timing resolution is inferred for each diary. A reported zero from a
+one-minute diary is corrected to one minute. For diaries whose clocks all lie
+on five-minute boundaries, Mobility fits an interval-censored Gamma duration
+distribution. In other words, a duration reported as 10 minutes is treated as
+an observation within the range that could round to 10 minutes, rather than
+as an exact measurement. Motives with enough observations are fitted
+separately; sparse motives use the survey-wide fit. The correction is limited
+by the travel time available on the two surrounding trips so neither trip
+becomes negative. See [Data Sources](data.md) for the user-facing assumption.
+
 The model then searches for destinations and mode sequences that can make the daily plan feasible under the current costs and opportunity constraints.
 
 ## Opportunity Capacity
