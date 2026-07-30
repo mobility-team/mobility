@@ -7,6 +7,7 @@ from typing import List
 
 import polars as pl
 
+from mobility.runtime.assets.cache_schema import read_cached_parquet, scan_cached_parquet
 from ..iterations import (
     InitialIterationStateAsset,
     IterationSeedsAsset,
@@ -14,6 +15,7 @@ from ..iterations import (
     IterationTransportCostsAsset,
     IterationStateAsset,
 )
+from ..iterations.iteration_assets import CURRENT_PLAN_STEPS_SCHEMA
 from ..evaluation.population_weighted_plan_steps import PopulationWeightedPlanSteps
 from ..evaluation.calibration_plan_steps import (
     ObservedCalibrationPlanSteps,
@@ -384,7 +386,7 @@ class Run(FileAsset):
         return IterationMetricsBuilder(
             model_loss=ModelLoss(expected_plan_steps=expected_inputs.calibration_plan_steps),
             model_trip_count_loss=ModelTripCountLoss(
-                expected_plan_steps=expected_inputs.population_weighted_plan_steps,
+                expected_plan_steps=expected_inputs.population_weighted_plan_steps.get(),
                 surveys=self.surveys,
                 is_weekday=self.is_weekday,
             ),
@@ -487,7 +489,15 @@ class Run(FileAsset):
                 "Call `remove()` to clear cached artifacts and rerun from scratch."
             )
 
-        return pl.concat([pl.read_parquet(path) for path in transition_paths], how="vertical")
+        transitions = [
+            read_cached_parquet(
+                path,
+                table_name="transition_events",
+                required_schema=TRANSITION_EVENT_SCHEMA,
+            )
+            for path in transition_paths
+        ]
+        return pl.concat(transitions, how="vertical")
 
 
     def _write_outputs(
@@ -555,7 +565,11 @@ class Run(FileAsset):
         state_asset = self.iteration_state_assets[iteration - 1]
         current_plan_steps_path = state_asset.cache_path["current_plan_steps"]
         if current_plan_steps_path.exists():
-            return pl.scan_parquet(current_plan_steps_path)
+            return scan_cached_parquet(
+                current_plan_steps_path,
+                table_name="current_plan_steps",
+                required_schema=CURRENT_PLAN_STEPS_SCHEMA,
+            )
 
         state = state_asset.get()
         if state.current_plan_steps is None:

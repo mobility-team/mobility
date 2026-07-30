@@ -2,12 +2,20 @@ import pathlib
 
 import polars as pl
 
+from mobility.runtime.assets.cache_schema import read_cached_parquet
 from mobility.runtime.assets.file_asset import FileAsset
-from .demand_subgroups import DEMAND_UNIT_COLS, with_demand_subgroup_id
+from .demand_subgroups import DEMAND_UNIT_COLS
+from .plan_ids import PLAN_STEP_KEY_SCHEMA
 
 
 class CandidatePlanStepsAsset(FileAsset):
     """Persisted candidate plan-step memory after one completed iteration."""
+
+    REQUIRED_SCHEMA = {
+        **PLAN_STEP_KEY_SCHEMA,
+        "first_seen_iteration": pl.UInt16,
+        "last_seen_iteration": pl.UInt16,
+    }
 
     STRUCTURAL_COLUMNS = [
         "demand_group_id",
@@ -66,7 +74,11 @@ class CandidatePlanStepsAsset(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pl.DataFrame:
-        return pl.read_parquet(self.cache_path)
+        return read_cached_parquet(
+            self.cache_path,
+            table_name="candidate_plan_steps",
+            required_schema=self.REQUIRED_SCHEMA,
+        )
 
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.candidate_plan_steps is None:
@@ -102,32 +114,18 @@ class CandidatePlanStepsAsset(FileAsset):
             )
         )
         return (
-            with_demand_subgroup_id(mode_sequences.get_cached_asset()).lazy()
+            mode_sequences.get_cached_asset().lazy()
             .join(
-                with_demand_subgroup_id(destination_sequences.get_cached_asset()).lazy(),
+                destination_sequences.get_cached_asset().lazy(),
                 on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "seq_step_index"],
             )
             .join(survey_plan_steps.lazy(), on=["activity_seq_id", "time_seq_id", "seq_step_index"])
             .join(
-                with_demand_subgroup_id(demand_groups)
-                .select(DEMAND_UNIT_COLS + ["country", "csp"])
-                .lazy(),
+                demand_groups.select(DEMAND_UNIT_COLS + ["country", "csp"]).lazy(),
                 on=DEMAND_UNIT_COLS,
             )
             .select(cls.STRUCTURAL_COLUMNS)
         )
-
-    @classmethod
-    def _with_retention_columns(cls, frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
-        """Add missing candidate-memory columns for older cached files."""
-        candidate_rows = frame.lazy() if isinstance(frame, pl.DataFrame) else frame
-        schema = frame.schema if isinstance(frame, pl.DataFrame) else frame.collect_schema()
-        if "last_seen_iteration" not in schema:
-            candidate_rows = candidate_rows.with_columns(
-                last_seen_iteration=pl.col("first_seen_iteration")
-            )
-        candidate_rows = with_demand_subgroup_id(candidate_rows)
-        return candidate_rows
 
     @classmethod
     def build_candidate_memory(
@@ -144,12 +142,9 @@ class CandidatePlanStepsAsset(FileAsset):
         max_inactive_age: int,
     ) -> pl.LazyFrame:
         """Merge new iteration candidates into the cumulative structural candidate memory."""
-        current_plans = with_demand_subgroup_id(current_plans)
-        demand_groups = with_demand_subgroup_id(demand_groups)
-
         candidate_sets = []
         if previous_candidate_plan_steps is not None:
-            previous_candidates = cls._with_retention_columns(previous_candidate_plan_steps)
+            previous_candidates = previous_candidate_plan_steps.lazy()
             candidate_sets.append(
                 previous_candidates
                 .filter(pl.col("mode_seq_id") != 0)
@@ -160,7 +155,7 @@ class CandidatePlanStepsAsset(FileAsset):
                 previous_candidates
                 .filter(pl.col("mode_seq_id") != 0)
                 .join(
-                    with_demand_subgroup_id(current_plans)
+                    current_plans
                     .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"])
                     .lazy(),
                     on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"],

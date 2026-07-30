@@ -5,7 +5,7 @@ from typing import Any
 import polars as pl
 from mobility_destination_sequence_sampler import DestinationPlanSearch
 
-from .demand_subgroups import DEMAND_UNIT_COLS, with_demand_subgroup_id
+from .demand_subgroups import DEMAND_UNIT_COLS
 
 
 SEQUENCE_COLUMNS = ["activity_seq_id", "time_seq_id"]
@@ -230,7 +230,7 @@ def _prepare_contexts(
     min_activity_time_constant: float,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Prepare and deduplicate complete activity-plan contexts."""
-    demand_groups = with_demand_subgroup_id(demand_groups).select(
+    demand_groups = demand_groups.select(
         RAW_CONTEXT_COLUMNS[:2]
         + [
             pl.col("home_zone_id").cast(pl.UInt32),
@@ -257,7 +257,7 @@ def _prepare_contexts(
         arrival_rigidity[activity_name] = float(rigidity)
 
     source_steps = (
-        with_demand_subgroup_id(activity_sequences)
+        activity_sequences
         .filter(pl.col("activity_seq_id") != 0)
         .with_columns(activity=pl.col("activity").cast(pl.String))
         .join(demand_groups, on=DEMAND_UNIT_COLS)

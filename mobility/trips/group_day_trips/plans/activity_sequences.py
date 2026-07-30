@@ -3,14 +3,22 @@ from typing import Any
 
 import polars as pl
 
+from mobility.runtime.assets.cache_schema import read_cached_parquet
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
-from .demand_subgroups import DEMAND_UNIT_COLS, demand_unit_hash, with_demand_subgroup_id
+from .demand_subgroups import DEMAND_UNIT_COLS, DEMAND_UNIT_SCHEMA, demand_unit_hash
 
 
 class ActivitySequences(FileAsset):
     """Persist admitted timed activity-sequence seeds for one iteration."""
+
+    REQUIRED_SCHEMA = {
+        **DEMAND_UNIT_SCHEMA,
+        "activity_seq_id": pl.UInt32,
+        "time_seq_id": pl.UInt32,
+        "seq_step_index": pl.UInt8,
+    }
 
     OUTPUT_COLUMNS = [
         "demand_group_id",
@@ -70,7 +78,11 @@ class ActivitySequences(FileAsset):
 
     def get_cached_asset(self) -> pl.DataFrame:
         """Return cached admitted activity-sequence rows for one iteration."""
-        return pl.read_parquet(self.cache_path)
+        return read_cached_parquet(
+            self.cache_path,
+            table_name="activity_sequences",
+            required_schema=self.REQUIRED_SCHEMA,
+        )
 
     def create_and_get_asset(self) -> pl.DataFrame:
         """Compute and persist admitted activity-sequence rows for one iteration."""
@@ -104,13 +116,13 @@ class ActivitySequences(FileAsset):
 
         state = self.previous_state.get()
         if self.current_plans is None:
-            self.current_plans = with_demand_subgroup_id(state.current_plans)
+            self.current_plans = state.current_plans
         if self.survey_plans is None:
             self.survey_plans = state.survey_plans
         if self.survey_plan_steps is None:
             self.survey_plan_steps = state.survey_plan_steps
         if self.demand_groups is None:
-            self.demand_groups = with_demand_subgroup_id(state.demand_groups)
+            self.demand_groups = state.demand_groups
 
     def _build_activity_sequences_for_scope(self) -> pl.DataFrame:
         """Return admitted timed activity-sequence rows for this iteration."""
@@ -131,7 +143,7 @@ class ActivitySequences(FileAsset):
     def _sample_all_activity_sequences(self) -> pl.DataFrame:
         """Sample timed survey activity-sequence seeds from raw survey plans."""
         weighted_survey_plans = (
-            with_demand_subgroup_id(self.demand_groups)
+            self.demand_groups
             .join(self.survey_plans, on=["country", "city_category", "csp", "n_cars"], how="inner")
             .filter(pl.col("time_seq_id") != 0)
         )
@@ -176,7 +188,7 @@ class ActivitySequences(FileAsset):
     def _select_active_activity_sequences(self) -> pl.DataFrame:
         """Return the currently occupied non-stay-home activity sequences."""
         active_activity_sequences = (
-            with_demand_subgroup_id(self.current_plans)
+            self.current_plans
             .filter(pl.col("time_seq_id") != 0)
             .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"])
             .unique()

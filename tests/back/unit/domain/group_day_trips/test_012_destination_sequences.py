@@ -13,6 +13,7 @@ from mobility.trips.group_day_trips.plans.destination_sequences import Destinati
 from mobility.trips.group_day_trips.plans.destination_plan_search import (
     sample_destination_plans,
 )
+from mobility.trips.group_day_trips.plans.demand_subgroups import demand_unit_hash
 
 
 def _make_local_tmp_path(tmp_path: Path, name: str) -> Path:
@@ -174,6 +175,7 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
         current_plans=pl.DataFrame(
             {
                 "demand_group_id": [1],
+                "demand_subgroup_id": [0],
                 "activity_seq_id": [10],
                 "time_seq_id": [1],
                 "dest_seq_id": [100],
@@ -181,6 +183,7 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
             },
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -191,6 +194,7 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
             pl.DataFrame(
                 {
                     "demand_group_id": [1],
+                    "demand_subgroup_id": [0],
                     "activity_seq_id": [10],
                     "time_seq_id": [0],
                     "seq_step_index": [0],
@@ -198,6 +202,7 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
                 },
                 schema={
                     "demand_group_id": pl.UInt32,
+                    "demand_subgroup_id": pl.UInt32,
                     "activity_seq_id": pl.UInt32,
                     "time_seq_id": pl.UInt32,
                     "seq_step_index": pl.UInt32,
@@ -220,17 +225,18 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
         activities,
         transport_zones,
         destination_saturation,
-        chains,
+        activity_sequences,
         demand_groups,
         costs,
         parameters,
         seed,
     ):
-        seen["chains"] = chains
+        seen["activity_sequences"] = activity_sequences
         return pl.DataFrame(
-            {
-                "demand_group_id": [1],
-                "activity_seq_id": [10],
+                {
+                    "demand_group_id": [1],
+                    "demand_subgroup_id": [0],
+                    "activity_seq_id": [10],
                 "time_seq_id": [0],
                 "dest_seq_id": [100],
                 "seq_step_index": [0],
@@ -241,9 +247,10 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
                 "next_departure_time": [17.0],
                 "iteration": [3],
             },
-            schema={
-                "demand_group_id": pl.UInt32,
-                "activity_seq_id": pl.UInt32,
+                schema={
+                    "demand_group_id": pl.UInt32,
+                    "demand_subgroup_id": pl.UInt32,
+                    "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
                 "seq_step_index": pl.UInt32,
@@ -259,10 +266,10 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
     destination_sequences.run = fake_run
     destination_sequences._sample_active_destination_sequences()
 
-    assert seen["chains"].select("activity_seq_id").to_series().to_list() == [10]
+    assert seen["activity_sequences"].select("activity_seq_id").to_series().to_list() == [10]
 
 
-def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_path):
+def test_refresh_active_mode_alternatives_appends_active_destination_sequences(tmp_path):
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=5,
@@ -270,6 +277,7 @@ def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_
         current_plans=pl.DataFrame(
             {
                 "demand_group_id": [1],
+                "demand_subgroup_id": [0],
                 "activity_seq_id": [10],
                 "time_seq_id": [20],
                 "dest_seq_id": [30],
@@ -277,6 +285,7 @@ def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_
             },
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -286,6 +295,7 @@ def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_
         current_plan_steps=pl.DataFrame(
             {
                 "demand_group_id": [1],
+                "demand_subgroup_id": [0],
                 "activity_seq_id": [10],
                 "time_seq_id": [20],
                 "dest_seq_id": [30],
@@ -298,6 +308,7 @@ def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_
             },
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -325,6 +336,7 @@ def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_
     sampled = pl.DataFrame(
         {
             "demand_group_id": [1],
+            "demand_subgroup_id": [0],
             "activity_seq_id": [11],
             "time_seq_id": [21],
             "dest_seq_id": [31],
@@ -339,6 +351,7 @@ def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
             "dest_seq_id": pl.UInt32,
@@ -353,7 +366,7 @@ def test_refresh_active_mode_alternatives_appends_active_destination_chains(tmp_
         },
     )
 
-    result = destination_sequences._with_refreshed_active_destination_sequences(sampled)
+    result = destination_sequences._with_current_active_destination_sequences(sampled)
 
     assert result.select("dest_seq_id").sort("dest_seq_id").to_series().to_list() == [30, 31]
     assert result.filter(pl.col("dest_seq_id") == 30).select("iteration").item() == 5
@@ -424,9 +437,9 @@ def test_refresh_active_mode_alternatives_keeps_distinct_subgroup_steps(tmp_path
         seed=123,
         resolved_activity_parameters={},
     )
-    sampled = pl.DataFrame(schema={column: dtype for column, dtype in destination_sequences._empty_destination_sequences().schema.items()})
+    sampled = pl.DataFrame(schema=DestinationSequences.OUTPUT_SCHEMA)
 
-    result = destination_sequences._with_refreshed_active_destination_sequences(sampled)
+    result = destination_sequences._with_current_active_destination_sequences(sampled)
 
     assert (
         result
@@ -473,7 +486,7 @@ def test_refresh_active_mode_alternatives_default_keeps_sampled_destinations_onl
         }
     )
 
-    result = destination_sequences._with_refreshed_active_destination_sequences(sampled)
+    result = destination_sequences._with_current_active_destination_sequences(sampled)
 
     assert result is sampled
 
@@ -579,11 +592,11 @@ def test_destination_probability_inputs_use_shadow_attraction_when_enabled(tmp_p
     assert probabilities["p_to"].to_list() == [2.0 / 3.0, 1.0 / 3.0]
 
 
-def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candidates(tmp_path):
+def test_spatialize_sequence_step_uses_sequence_cost_to_reweight_non_anchor_candidates(tmp_path):
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=1,
-        base_folder=_make_local_tmp_path(tmp_path, "non_anchor_chain_cost_weighting"),
+        base_folder=_make_local_tmp_path(tmp_path, "non_anchor_sequence_cost_weighting"),
         activities=[],
         transport_zones=None,
         destination_saturation=pl.DataFrame(),
@@ -602,15 +615,17 @@ def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candi
 
     candidate_noise = (
         pl.DataFrame(
-            {
-                "demand_group_id": [1] * len(candidate_destinations),
-                "activity_seq_id": [10] * len(candidate_destinations),
+                {
+                    "demand_group_id": [1] * len(candidate_destinations),
+                    "demand_subgroup_id": [0] * len(candidate_destinations),
+                    "activity_seq_id": [10] * len(candidate_destinations),
                 "time_seq_id": [1] * len(candidate_destinations),
-                "dest_draw_id": [1] * len(candidate_destinations),
+                    "dest_draw_id": [1] * len(candidate_destinations),
                 "to": candidate_destinations,
             },
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_draw_id": pl.UInt32,
@@ -619,9 +634,8 @@ def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candi
         )
         .with_columns(
             noise=(
-                pl.struct(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"])
-                .hash(seed=seed)
-                .cast(pl.Float64)
+                    demand_unit_hash(["activity_seq_id", "time_seq_id", "dest_draw_id", "to"], seed=seed)
+                    .cast(pl.Float64)
                 .truediv(pl.lit(18446744073709551616.0))
                 .log()
                 .neg()
@@ -632,9 +646,10 @@ def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candi
     lowest_noise_candidate = int(candidate_noise["to"][0])
     highest_noise_candidate = int(candidate_noise["to"][-1])
 
-    chains_step = pl.DataFrame(
+    sequence_step = pl.DataFrame(
         {
             "demand_group_id": [1],
+            "demand_subgroup_id": [0],
             "home_zone_id": [1],
             "activity_seq_id": [10],
             "time_seq_id": [1],
@@ -651,6 +666,7 @@ def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candi
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "home_zone_id": pl.UInt16,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
@@ -696,26 +712,32 @@ def test_spatialize_trip_chain_step_uses_chain_cost_to_reweight_non_anchor_candi
         },
     )
 
-    result_without_chain_penalty = destination_sequences._spatialize_trip_chain_step(
+    result_without_sequence_penalty = destination_sequences._spatialize_sequence_step(
         seq_step_index=1,
-        chains_step=chains_step,
+        sequence_step=sequence_step,
         destination_probability=destination_probability,
         costs=costs,
         alpha=0.0,
         seed=seed,
+        cost_views=DestinationSequences._spatialization_cost_views(costs),
+        non_anchor_count=1,
+        anchor_count=0,
     )
-    result_with_chain_penalty = destination_sequences._spatialize_trip_chain_step(
+    result_with_sequence_penalty = destination_sequences._spatialize_sequence_step(
         seq_step_index=1,
-        chains_step=chains_step,
+        sequence_step=sequence_step,
         destination_probability=destination_probability,
         costs=costs,
         alpha=1.0,
         seed=seed,
+        cost_views=DestinationSequences._spatialization_cost_views(costs),
+        non_anchor_count=1,
+        anchor_count=0,
     )
 
-    assert result_without_chain_penalty["to"].to_list() == [lowest_noise_candidate]
-    assert result_with_chain_penalty["to"].to_list() == [highest_noise_candidate]
-    assert result_with_chain_penalty["to"].to_list() != result_without_chain_penalty["to"].to_list()
+    assert result_without_sequence_penalty["to"].to_list() == [lowest_noise_candidate]
+    assert result_with_sequence_penalty["to"].to_list() == [highest_noise_candidate]
+    assert result_with_sequence_penalty["to"].to_list() != result_without_sequence_penalty["to"].to_list()
 
 
 def test_spatialize_anchor_activities_samples_from_current_anchor_location(tmp_path):
@@ -736,9 +758,10 @@ def test_spatialize_anchor_activities_samples_from_current_anchor_location(tmp_p
         current_plans=pl.DataFrame(),
     )
 
-    chains = pl.DataFrame(
+    sequences = pl.DataFrame(
         {
             "demand_group_id": [1, 1, 1],
+            "demand_subgroup_id": [0, 0, 0],
             "home_zone_id": [10, 10, 10],
             "activity_seq_id": [20, 20, 20],
             "time_seq_id": [1, 1, 1],
@@ -752,6 +775,7 @@ def test_spatialize_anchor_activities_samples_from_current_anchor_location(tmp_p
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "home_zone_id": pl.UInt16,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
@@ -792,11 +816,11 @@ def test_spatialize_anchor_activities_samples_from_current_anchor_location(tmp_p
     )
 
     result = destination_sequences._spatialize_anchor_activities(
-        chains,
+        sequences,
         destination_probability,
-        costs,
         alpha=0.0,
         seed=123,
+        cost_views=DestinationSequences._spatialization_cost_views(costs),
     )
 
     sampled_anchors = (
@@ -813,11 +837,11 @@ def test_spatialize_anchor_activities_samples_from_current_anchor_location(tmp_p
     ]
 
 
-def test_spatialize_anchor_activities_uses_chain_cost_to_reweight_candidates(tmp_path):
+def test_spatialize_anchor_activities_uses_sequence_cost_to_reweight_candidates(tmp_path):
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=1,
-        base_folder=_make_local_tmp_path(tmp_path, "anchor_chain_cost_weighting"),
+        base_folder=_make_local_tmp_path(tmp_path, "anchor_sequence_cost_weighting"),
         activities=[],
         transport_zones=None,
         destination_saturation=pl.DataFrame(),
@@ -837,15 +861,17 @@ def test_spatialize_anchor_activities_uses_chain_cost_to_reweight_candidates(tmp
     base_probability = 1.0 / len(candidate_destinations)
     candidate_noise = (
         pl.DataFrame(
-            {
-                "demand_group_id": [1] * len(candidate_destinations),
-                "activity_seq_id": [10] * len(candidate_destinations),
+                {
+                    "demand_group_id": [1] * len(candidate_destinations),
+                    "demand_subgroup_id": [0] * len(candidate_destinations),
+                    "activity_seq_id": [10] * len(candidate_destinations),
                 "time_seq_id": [1] * len(candidate_destinations),
-                "dest_draw_id": [1] * len(candidate_destinations),
+                "dest_draw_id": [0] * len(candidate_destinations),
                 "to": candidate_destinations,
             },
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_draw_id": pl.UInt32,
@@ -854,9 +880,8 @@ def test_spatialize_anchor_activities_uses_chain_cost_to_reweight_candidates(tmp
         )
         .with_columns(
             noise=(
-                pl.struct(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"])
-                .hash(seed=seed)
-                .cast(pl.Float64)
+                    demand_unit_hash(["activity_seq_id", "time_seq_id", "dest_draw_id", "to"], seed=seed)
+                    .cast(pl.Float64)
                 .truediv(pl.lit(18446744073709551616.0))
                 .log()
                 .neg()
@@ -867,9 +892,10 @@ def test_spatialize_anchor_activities_uses_chain_cost_to_reweight_candidates(tmp
     lowest_noise_candidate = int(candidate_noise["to"][0])
     highest_noise_candidate = int(candidate_noise["to"][-1])
 
-    chains = pl.DataFrame(
+    sequences = pl.DataFrame(
         {
             "demand_group_id": [1, 1],
+            "demand_subgroup_id": [0, 0],
             "home_zone_id": [home_zone, home_zone],
             "activity_seq_id": [10, 10],
             "time_seq_id": [1, 1],
@@ -883,6 +909,7 @@ def test_spatialize_anchor_activities_uses_chain_cost_to_reweight_candidates(tmp
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "home_zone_id": pl.UInt16,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
@@ -925,30 +952,30 @@ def test_spatialize_anchor_activities_uses_chain_cost_to_reweight_candidates(tmp
         },
     )
 
-    result_without_chain_penalty = destination_sequences._spatialize_anchor_activities(
-        chains,
+    result_without_sequence_penalty = destination_sequences._spatialize_anchor_activities(
+        sequences,
         destination_probability,
-        costs,
         alpha=0.0,
         seed=seed,
+        cost_views=DestinationSequences._spatialization_cost_views(costs),
     )
-    result_with_chain_penalty = destination_sequences._spatialize_anchor_activities(
-        chains,
+    result_with_sequence_penalty = destination_sequences._spatialize_anchor_activities(
+        sequences,
         destination_probability,
-        costs,
         alpha=1.0,
         seed=seed,
+        cost_views=DestinationSequences._spatialization_cost_views(costs),
     )
 
-    assert result_without_chain_penalty.filter(pl.col("activity") == "work")["anchor_to"].to_list() == [
+    assert result_without_sequence_penalty.filter(pl.col("activity") == "work")["anchor_to"].to_list() == [
         lowest_noise_candidate
     ]
-    assert result_with_chain_penalty.filter(pl.col("activity") == "work")["anchor_to"].to_list() == [
+    assert result_with_sequence_penalty.filter(pl.col("activity") == "work")["anchor_to"].to_list() == [
         highest_noise_candidate
     ]
 
 
-def test_spatialize_trip_chain_step_drops_anchor_without_leg_cost(tmp_path):
+def test_spatialize_sequence_step_drops_anchor_without_leg_cost(tmp_path):
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=1,
@@ -964,9 +991,10 @@ def test_spatialize_trip_chain_step_drops_anchor_without_leg_cost(tmp_path):
         current_plans=pl.DataFrame(),
     )
 
-    chains_step = pl.DataFrame(
+    sequence_step = pl.DataFrame(
         {
             "demand_group_id": [1],
+            "demand_subgroup_id": [0],
             "home_zone_id": [1],
             "activity_seq_id": [10],
             "time_seq_id": [1],
@@ -983,6 +1011,7 @@ def test_spatialize_trip_chain_step_drops_anchor_without_leg_cost(tmp_path):
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "home_zone_id": pl.UInt16,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
@@ -1019,13 +1048,16 @@ def test_spatialize_trip_chain_step_drops_anchor_without_leg_cost(tmp_path):
         },
     )
 
-    result = destination_sequences._spatialize_trip_chain_step(
+    result = destination_sequences._spatialize_sequence_step(
         seq_step_index=1,
-        chains_step=chains_step,
+        sequence_step=sequence_step,
         destination_probability=destination_probability,
         costs=costs,
         alpha=0.0,
         seed=123,
+        cost_views=DestinationSequences._spatialization_cost_views(costs),
+        non_anchor_count=0,
+        anchor_count=1,
     )
 
     assert result.is_empty()
@@ -1035,6 +1067,7 @@ def test_drop_incomplete_destination_draws_removes_partial_draws():
     activity_sequences = pl.DataFrame(
         {
             "demand_group_id": [1, 1, 2, 2],
+            "demand_subgroup_id": [0, 0, 0, 0],
             "home_zone_id": [100, 100, 200, 200],
             "activity_seq_id": [10, 10, 20, 20],
             "time_seq_id": [1, 1, 2, 2],
@@ -1051,6 +1084,7 @@ def test_drop_incomplete_destination_draws_removes_partial_draws():
         },
         schema={
             "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
             "home_zone_id": pl.UInt16,
             "activity_seq_id": pl.UInt32,
             "time_seq_id": pl.UInt32,
@@ -1091,6 +1125,7 @@ def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path)
         current_plans=pl.DataFrame(
             {
                 "demand_group_id": [1],
+                "demand_subgroup_id": [0],
                 "activity_seq_id": [10],
                 "time_seq_id": [1],
                 "dest_seq_id": [100],
@@ -1098,6 +1133,7 @@ def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path)
             },
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,
@@ -1107,6 +1143,7 @@ def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path)
         current_plan_steps=pl.DataFrame(
             {
                 "demand_group_id": [1, 1],
+                "demand_subgroup_id": [0, 0],
                 "activity_seq_id": [10, 10],
                 "time_seq_id": [1, 1],
                 "dest_seq_id": [100, 100],
@@ -1120,6 +1157,7 @@ def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path)
             },
             schema={
                 "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
                 "activity_seq_id": pl.UInt32,
                 "time_seq_id": pl.UInt32,
                 "dest_seq_id": pl.UInt32,

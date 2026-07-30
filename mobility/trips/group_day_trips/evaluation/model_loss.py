@@ -158,10 +158,8 @@ class ModelLoss:
             .agg(value=pl.col("value").sum())
         )
 
-    def _aggregate(self, plan_steps: pl.LazyFrame | pl.DataFrame) -> pl.DataFrame:
+    def _aggregate(self, plan_steps: pl.LazyFrame) -> pl.DataFrame:
         """Aggregate canonical calibration plan steps into loss marginals."""
-        if isinstance(plan_steps, pl.DataFrame):
-            plan_steps = plan_steps.lazy()
         available_columns = set(plan_steps.collect_schema().names())
         missing_columns = [col for col in CALIBRATION_PLAN_STEP_COLUMNS if col not in available_columns]
         if missing_columns:
