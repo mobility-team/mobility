@@ -6,6 +6,7 @@ import pandas as pd
 
 from importlib import resources
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
 from mobility.spatial.transport_zones import TransportZones
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 
@@ -61,8 +62,9 @@ class GTFSRouter(FileAsset):
         
         gtfs_files = self.get_gtfs_files(transport_zones)
         
-        if self.inputs["additional_gtfs_files"] is not None:
-            gtfs_files.extend(self.inputs["additional_gtfs_files"])
+        additional_gtfs_files = self.inputs["additional_gtfs_files"]
+        if additional_gtfs_files is not None:
+            gtfs_files.extend(self.normalize_additional_gtfs_files(additional_gtfs_files))
             
         if expected_agencies is not None:
             self.check_expected_agencies(gtfs_files, list(expected_agencies))
@@ -108,6 +110,29 @@ class GTFSRouter(FileAsset):
         )
             
         return None
+
+    @staticmethod
+    def normalize_additional_gtfs_files(additional_gtfs_files):
+        """Return additional GTFS paths after checking they are resolved."""
+        if isinstance(additional_gtfs_files, (ParameterValue, SensitivityValue)):
+            raise ValueError(
+                "additional_gtfs_files still contains scenario or iteration values. "
+                "Resolve the public transport mode with for_iteration(...) before "
+                "building the GTFS router."
+            )
+
+        if isinstance(additional_gtfs_files, (str, pathlib.Path)):
+            return [str(additional_gtfs_files)]
+
+        paths = []
+        for path in additional_gtfs_files:
+            if not isinstance(path, (str, pathlib.Path)):
+                raise ValueError(
+                    "additional_gtfs_files should contain only file paths. "
+                    f"Got {type(path).__name__}: {path!r}."
+                )
+            paths.append(str(path))
+        return paths
     
     
     def get_gtfs_files(self, transport_zones):

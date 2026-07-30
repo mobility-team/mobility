@@ -6,6 +6,7 @@ import json
 from importlib import resources
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
+from mobility.transport.graphs.core.graph_cache_cleanup import graph_cache_paths
 from mobility.transport.graphs.simplified.simplified_path_graph import SimplifiedPathGraph
 from mobility.transport.graphs.modified.modifiers.speed_modifier import SpeedModifier
 from mobility.transport.graphs.core.graph_gpkg_exporter import GraphGPKGExporter
@@ -38,6 +39,9 @@ class ModifiedPathGraph(FileAsset):
         logging.debug("Modified graph already prepared. Reusing the files in : " + str(self.cache_path.parent))
          
         return self.cache_path
+
+    def _cache_paths_to_remove(self):
+        return graph_cache_paths(self.cache_path, self.hash_path)
 
     def create_and_get_asset(self, enable_congestion: bool = False) -> pathlib.Path:
         

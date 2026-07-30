@@ -39,6 +39,13 @@ jobs:
         uv pip install --python "${VIRTUAL_ENV}/bin/python" -e . --no-deps
       shell: bash
 
+    # The published CI image is only updated after merging. Synchronise the
+    # declared R dependencies so pull requests test their own requirements.
+    - name: Synchronise R dependencies
+      run: |
+        Rscript -e "options(repos = c(mobilityteam = 'https://mobility-team.r-universe.dev', CRAN = Sys.getenv('RSPM'))); pak::pkg_install('deps::.')"
+      shell: bash
+
     - name: Install minimum test tools
       if: ${{ inputs.use_min_dep_versions }}
       run: |

@@ -10,6 +10,7 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityParameters
 from mobility.spatial.transport_zones import TransportZones
+from mobility.transport.graphs.core.graph_cache_cleanup import graph_cache_paths
 from mobility.transport.graphs.core.graph_gpkg_exporter import GraphGPKGExporter
 
 class SimplifiedPathGraph(FileAsset):
@@ -71,6 +72,9 @@ class SimplifiedPathGraph(FileAsset):
         logging.debug("Path graph already prepared. Reusing the graph in : " + str(self.cache_path.parent))
         
         return self.cache_path
+
+    def _cache_paths_to_remove(self):
+        return graph_cache_paths(self.cache_path, self.hash_path)
 
     def create_and_get_asset(self) -> pathlib.Path:
         

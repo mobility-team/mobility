@@ -1,9 +1,11 @@
 import pytest
 
+from mobility.transport.costs.path import path_travel_costs as path_travel_costs_module
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
 from mobility.transport.costs.travel_costs_asset import TravelCostsBase
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.transport.graphs.congested.congested_path_graph import CongestedPathGraph
 from mobility.transport.modes.carpool.detailed import (
     detailed_carpool_travel_costs as detailed_carpool_module,
 )
@@ -52,11 +54,28 @@ class _FakeAsset:
         return "fake-hash"
 
 
+class _FakePathGraph:
+    def __init__(self, *args, congestion=False, **kwargs):
+        if len(args) > 3:
+            congestion = args[3]
+        self.simplified = _FakeAsset()
+        self.modified = _FakeAsset()
+        self.contracted = _FakeAsset()
+        self.cch = _FakeAsset() if congestion else None
+        self.congested = (
+            _FakeAsset(inputs={"handles_congestion": True})
+            if congestion
+            else None
+        )
+
+
 class _PathReturningAsset:
     def __init__(self, value):
         self.value = value
+        self.get_calls = 0
 
     def get(self):
+        self.get_calls += 1
         return self.value
 
 
@@ -73,12 +92,28 @@ class _FakeScriptRunner:
 
 
 class _LegTravelCosts(TravelCostsBase):
-    def __init__(self, variant):
+    def __init__(self, variant, *, default_congestion=False):
         self.variant = variant
+        self.default_congestion = default_congestion
+        self.congested_path_graph = _FakeAsset()
+        self.contracted_path_graph = _FakeAsset()
+        self.cch_path_graph = _FakeAsset()
         self.inputs = {}
 
     def asset_for_road_flows(self, road_flow_asset):
         return self.variant
+
+    @property
+    def active_routing_backend(self):
+        return "cch" if self.default_congestion else "ch"
+
+    @property
+    def active_routing_graph(self):
+        return self.congested_path_graph if self.default_congestion else self.contracted_path_graph
+
+    @property
+    def active_cch_graph(self):
+        return self.cch_path_graph if self.default_congestion else None
 
     def get_cached_asset(self):
         return None
@@ -195,7 +230,75 @@ def _patch_asset_initializers(monkeypatch):
     monkeypatch.setattr(InMemoryAsset, "__init__", fake_in_memory_asset_init)
 
 
-def test_path_constructor_can_reuse_congested_graph_chain(project_dir, monkeypatch):
+def test_congested_graph_does_not_prepare_cch_without_vehicle_flows(project_dir, monkeypatch):
+    _patch_asset_initializers(monkeypatch)
+    modified_graph = _PathReturningAsset(project_dir / "modified-graph")
+    modified_graph.mode_name = "car"
+    cch_graph = _PathReturningAsset(project_dir / "cch-graph")
+    transport_zones = _FakeAsset()
+    transport_zones.cache_path = project_dir / "transport-zones.gpkg"
+    captured = {}
+
+    def fake_load_graph(self, *args):
+        captured["args"] = args
+
+    monkeypatch.setattr(CongestedPathGraph, "load_graph", fake_load_graph)
+
+    graph = CongestedPathGraph(
+        modified_graph=modified_graph,
+        cch_graph=cch_graph,
+        transport_zones=transport_zones,
+        handles_congestion=False,
+    )
+
+    graph.create_and_get_asset()
+
+    assert cch_graph.get_calls == 0
+    assert captured["args"][4] == ""
+
+
+def test_non_congested_path_costs_do_not_keep_cch_dependency(project_dir, monkeypatch):
+    _patch_asset_initializers(monkeypatch)
+    monkeypatch.setattr(path_travel_costs_module, "PathGraph", _FakePathGraph)
+
+    asset = PathTravelCosts(
+        mode_name="walk",
+        transport_zones=_FakeAsset(),
+        routing_parameters=_FakeAsset(),
+        osm_capacity_parameters=_FakeAsset(),
+        congestion=False,
+    )
+
+    assert asset.congested_path_graph is None
+    assert asset.cch_path_graph is None
+    assert asset.inputs["congested_path_graph"] is None
+    assert asset.inputs["cch_path_graph"] is None
+    assert asset.active_routing_backend == "ch"
+    assert asset.active_cch_graph is None
+    assert asset.freeflow_costs.routing_graph is asset.contracted_path_graph
+
+
+def test_congested_path_costs_keep_cch_dependency(project_dir, monkeypatch):
+    _patch_asset_initializers(monkeypatch)
+    monkeypatch.setattr(path_travel_costs_module, "PathGraph", _FakePathGraph)
+
+    asset = PathTravelCosts(
+        mode_name="car",
+        transport_zones=_FakeAsset(),
+        routing_parameters=_FakeAsset(),
+        osm_capacity_parameters=_FakeAsset(),
+        congestion=True,
+        default_congestion=True,
+    )
+
+    assert asset.congested_path_graph is not None
+    assert asset.cch_path_graph is not None
+    assert asset.active_routing_backend == "cch"
+    assert asset.active_cch_graph is asset.cch_path_graph
+    assert asset.congested_costs.routing_graph is asset.congested_path_graph
+
+
+def test_path_constructor_can_reuse_graph_and_cch_chain(project_dir, monkeypatch):
     _patch_asset_initializers(monkeypatch)
     modified_graph = _FakeAsset()
     congested_graph = _FakeAsset(
@@ -204,21 +307,89 @@ def test_path_constructor_can_reuse_congested_graph_chain(project_dir, monkeypat
             "handles_congestion": True,
         }
     )
-    contracted_graph = _FakeAsset(inputs={"congested_graph": congested_graph})
+    cch_graph = _FakeAsset()
+    contracted_graph = _FakeAsset()
 
     asset = PathTravelCosts(
         mode_name="car",
         transport_zones=_FakeAsset(),
         routing_parameters=_FakeAsset(),
         osm_capacity_parameters=_FakeAsset(),
-        contracted_graph=contracted_graph,
+        modified_path_graph=modified_graph,
+        congested_path_graph=congested_graph,
+        cch_path_graph=cch_graph,
+        contracted_path_graph=contracted_graph,
         default_congestion=True,
     )
 
     assert asset.modified_path_graph is modified_graph
     assert asset.congested_path_graph is congested_graph
+    assert asset.cch_path_graph is cch_graph
     assert asset.contracted_path_graph is contracted_graph
     assert asset.default_congestion is True
+    assert asset._freeflow_costs is None
+    assert asset._congested_costs is None
+    assert asset.freeflow_costs.routing_graph is contracted_graph
+    assert asset.freeflow_costs.backend == "ch"
+    assert asset.freeflow_costs.cch_graph is None
+    assert asset.congested_costs.routing_graph is congested_graph
+    assert asset.congested_costs.backend == "cch"
+    assert asset.congested_costs.cch_graph is cch_graph
+    assert asset.active_routing_backend == "cch"
+    assert asset.active_routing_graph is congested_graph
+    assert asset.active_cch_graph is cch_graph
+
+
+def test_path_constructor_can_use_only_cch_backend(project_dir, monkeypatch):
+    _patch_asset_initializers(monkeypatch)
+    modified_graph = _FakeAsset()
+    congested_graph = _FakeAsset(
+        inputs={
+            "modified_graph": modified_graph,
+            "handles_congestion": True,
+        }
+    )
+    cch_graph = _FakeAsset()
+
+    asset = PathTravelCosts(
+        mode_name="car",
+        transport_zones=_FakeAsset(),
+        routing_parameters=_FakeAsset(),
+        osm_capacity_parameters=_FakeAsset(),
+        modified_path_graph=modified_graph,
+        congested_path_graph=congested_graph,
+        cch_path_graph=cch_graph,
+        default_congestion=True,
+    )
+
+    assert asset._freeflow_costs is None
+    assert asset.active_routing_backend == "cch"
+    assert asset.active_routing_graph is congested_graph
+    assert asset._freeflow_costs is None
+    assert asset.congested_costs.backend == "cch"
+
+
+@pytest.mark.parametrize(
+    ("congested_graph", "cch_graph"),
+    [
+        (_FakeAsset(inputs={"handles_congestion": True}), None),
+        (None, _FakeAsset()),
+    ],
+)
+def test_path_constructor_rejects_partial_cch_chain(project_dir, monkeypatch, congested_graph, cch_graph):
+    _patch_asset_initializers(monkeypatch)
+
+    with pytest.raises(ValueError, match="congested_path_graph and cch_path_graph"):
+        PathTravelCosts(
+            mode_name="car",
+            transport_zones=_FakeAsset(),
+            routing_parameters=_FakeAsset(),
+            osm_capacity_parameters=_FakeAsset(),
+            modified_path_graph=_FakeAsset(),
+            congested_path_graph=congested_graph,
+            cch_path_graph=cch_graph,
+            contracted_path_graph=_FakeAsset(),
+        )
 
 
 def test_path_get_uses_freeflow_without_road_flow_asset():
@@ -509,16 +680,31 @@ def test_path_remove_congestion_artifacts_returns_early_for_missing_variant(vari
     asset.remove_congestion_artifacts(object())
 
 
-def test_path_remove_congestion_artifacts_removes_owned_graph_chain():
+def test_path_remove_congestion_artifacts_removes_owned_congested_graph():
     asset = _make_path_travel_costs()
     congested_graph = _Removable()
-    contracted_graph = _Removable(inputs={"congested_graph": congested_graph})
-    variant = _Removable(inputs={"contracted_path_graph": contracted_graph})
+    variant = _make_path_travel_costs()
+    variant.congested_costs = _Removable()
+    variant.congested_path_graph = congested_graph
     asset.asset_for_road_flows = lambda road_flow_asset: variant
 
     asset.remove_congestion_artifacts(object())
 
-    assert variant.remove_calls == 1
-    assert contracted_graph.remove_calls == 1
+    assert variant.congested_costs.remove_calls == 1
     assert congested_graph.remove_calls == 1
+
+
+def test_path_remove_congestion_artifacts_keeps_shared_freeflow_table():
+    asset = _make_path_travel_costs()
+    variant = _make_path_travel_costs()
+    variant.freeflow_costs = _Removable()
+    variant.congested_costs = _Removable()
+    variant.congested_path_graph = _Removable()
+    asset.asset_for_road_flows = lambda road_flow_asset: variant
+
+    asset.remove_congestion_artifacts(object())
+
+    assert variant.freeflow_costs.remove_calls == 0
+    assert variant.congested_costs.remove_calls == 1
+    assert variant.congested_path_graph.remove_calls == 1
 

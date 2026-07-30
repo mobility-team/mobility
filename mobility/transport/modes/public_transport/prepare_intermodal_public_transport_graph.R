@@ -7,7 +7,7 @@ library(lubridate)
 library(future.apply)
 library(lubridate)
 library(FNN)
-library(cppRouting)
+library(cppRoutingCCH)
 library(jsonlite)
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -17,7 +17,11 @@ args <- commandArgs(trailingOnly = TRUE)
 #   'D:\\data\\mobility\\projects\\grand-geneve\\9f060eb2ec610d2a3bdb3bd731e739c6-transport_zones.gpkg',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\public_transport_graph\\simplified\\4d58f32de6ef9c586aedacf9a5af0096-public-transport-graph',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_bicycle\\contracted\\a3001196ce680c9e218d05093418c1cd-bicycle-contracted-path-graph',
+#   'ch',
+#   '',
 #   'D:\\data\\mobility\\projects\\grand-geneve\\path_graph_walk\\contracted\\04c2f420aa4f610af7491b56aa785402-walk-contracted-path-graph',
+#   'ch',
+#   '',
 #   '{"max_travel_time": 0.3333333333333333, "average_speed": 15.0, "transfer_time": 2.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
 #   '{"max_travel_time": 0.3333333333333333, "average_speed": 5.0, "transfer_time": 1.0, "shortcuts_transfer_time": null, "shortcuts_locations": null}',
 #   '',
@@ -29,12 +33,16 @@ package_path <- args[1]
 tz_file_path <- args[2]
 pt_graph_fp <- args[3]
 first_leg_graph_fp <- args[4]
-last_leg_graph_fp <- args[5]
-first_modal_shift <- args[6]
-last_modal_shift <- args[7]
-osm_parkings_fp <- args[8]
-parameters <- args[9]
-output_fp <- args[10]
+first_leg_backend <- args[5]
+first_leg_cch_fp <- args[6]
+last_leg_graph_fp <- args[7]
+last_leg_backend <- args[8]
+last_leg_cch_fp <- args[9]
+first_modal_shift <- args[10]
+last_modal_shift <- args[11]
+osm_parkings_fp <- args[12]
+parameters <- args[13]
+output_fp <- args[14]
 
 first_modal_shift <- fromJSON(first_modal_shift)
 last_modal_shift <- fromJSON(last_modal_shift)
@@ -113,14 +121,14 @@ if (osm_parkings_fp == "") {
 # graphs and the public transport shortcuts (because the router can only go from
 # layer 1 to 2 through layer 3, but cannot go back)
 
-# Load cpprouting graphs and vertices
-hash <- strsplit(basename(first_leg_graph_fp), "-")[[1]][1]
-start_graph <- read_cppr_contracted_graph(dirname(first_leg_graph_fp), hash)
-start_verts <- as.data.table(read_parquet(file.path(dirname(dirname(first_leg_graph_fp)), paste0(hash, "-vertices.parquet"))))
+# Load the routing graph selected by Python for each PT road leg.
+start_routing <- read_cppr_path_routing_graph(first_leg_graph_fp, first_leg_backend, first_leg_cch_fp)
+start_graph <- start_routing$search_graph
+start_verts <- start_routing$vertices
 
-hash <- strsplit(basename(last_leg_graph_fp), "-")[[1]][1]
-last_graph <- read_cppr_contracted_graph(dirname(last_leg_graph_fp), hash)
-last_verts <- as.data.table(read_parquet(file.path(dirname(dirname(last_leg_graph_fp)), paste0(hash, "-vertices.parquet"))))
+last_routing <- read_cppr_path_routing_graph(last_leg_graph_fp, last_leg_backend, last_leg_cch_fp)
+last_graph <- last_routing$search_graph
+last_verts <- last_routing$vertices
 
 hash <- strsplit(basename(pt_graph_fp), "-")[[1]][1]
 mid_graph <- read_cppr_graph(dirname(pt_graph_fp), hash)
@@ -238,21 +246,18 @@ first_leg <- first_leg[from != to]
 first_leg <- unique(first_leg[, list(from, to)])
 
 
-# Compute the time and distance 
-first_leg$time <- get_distance_pair(
-  start_graph,
-  from = first_leg$from,
-  to = first_leg$to
-)
-
-first_leg <- first_leg[time < first_modal_shift$max_travel_time*3600.0]
-
-first_leg$distance <- get_distance_pair(
-  start_graph,
+# Compute distance along the same shortest-time path used by the selected
+# routing backend.
+first_leg_values <- get_path_values_pair(
+  start_routing$routing_graph,
   from = first_leg$from,
   to = first_leg$to,
-  aggregate_aux = TRUE
+  values = data.frame(distance = start_routing$distance_values)
 )
+
+first_leg$time <- first_leg_values$cost
+first_leg$distance <- first_leg_values$distance
+first_leg <- first_leg[time < first_modal_shift$max_travel_time*3600.0]
 
 first_leg[, from := paste0("s1-", from)]
 first_leg[, to := paste0("s2-", to)]
@@ -282,20 +287,16 @@ last_leg <- merge(last_leg, pt_last_verts[, list(j = 1:.N, to = vertex_id)], by 
 last_leg <- last_leg[from != to]
 last_leg <- unique(last_leg[, list(from, to)])
 
-last_leg$time <- get_distance_pair(
-  last_graph,
-  from = last_leg$from,
-  to = last_leg$to
-)
-
-last_leg <- last_leg[time < last_modal_shift$max_travel_time*3600.0]
-
-last_leg$distance <- get_distance_pair(
-  last_graph,
+last_leg_values <- get_path_values_pair(
+  last_routing$routing_graph,
   from = last_leg$from,
   to = last_leg$to,
-  aggregate_aux = TRUE
+  values = data.frame(distance = last_routing$distance_values)
 )
+
+last_leg$time <- last_leg_values$cost
+last_leg$distance <- last_leg_values$distance
+last_leg <- last_leg[time < last_modal_shift$max_travel_time*3600.0]
 
 last_leg[, from := paste0("l1-", from)]
 last_leg[, to := paste0("l2-", to)]

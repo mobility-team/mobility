@@ -14,6 +14,7 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.spatial.transport_zones import TransportZones
+from mobility.transport.graphs.core.graph_cache_cleanup import graph_cache_paths
 from mobility.transport.modes.core.defaults import (
     DEFAULT_LONG_RANGE_MOTORIZED_MAX_BEELINE_DISTANCE_KM,
 )
@@ -79,6 +80,9 @@ class PublicTransportGraph(FileAsset):
     def get_cached_asset(self) -> pd.DataFrame:
         logging.debug("Graph already prepared. Reusing the file : " + str(self.cache_path))
         return self.cache_path
+
+    def _cache_paths_to_remove(self):
+        return graph_cache_paths(self.cache_path, self.hash_path)
 
     def create_and_get_asset(self) -> pd.DataFrame:
         

@@ -5,6 +5,7 @@ from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.graphs.simplified.simplified_path_graph import SimplifiedPathGraph
 from mobility.transport.graphs.modified.modified_path_graph import ModifiedPathGraph
 from mobility.transport.graphs.congested.congested_path_graph import CongestedPathGraph
+from mobility.transport.graphs.cch.cch_path_graph import CCHPathGraph
 from mobility.transport.graphs.contracted.contracted_path_graph import ContractedPathGraph
 from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityParameters
 from mobility.transport.graphs.modified.modifiers.speed_modifier import SpeedModifier
@@ -38,21 +39,24 @@ class PathGraph:
             speed_modifiers
         )
 
-        self.congested = CongestedPathGraph(
-            self.modified,
-            transport_zones,
-            congestion,
-            congestion_flows_scaling_factor,
-            target_max_vehicles_per_od_endpoint,
-            congestion_assignment_max_iterations,
-            congestion_assignment_max_gap,
-            congestion_assignment_retained_volume_share
-        )
-        
-        self.contracted = ContractedPathGraph(
-            self.congested
-        )
-        
+        self.contracted = ContractedPathGraph(self.modified)
 
-        
+        # Only congestion-sensitive modes need the CCH topology and congested
+        # graph. Keeping these inactive assets out of non-congested modes avoids
+        # preparing a walk CCH graph just because it appears in the cache DAG.
+        self.cch = None
+        self.congested = None
+        if congestion:
+            self.cch = CCHPathGraph(self.modified)
+            self.congested = CongestedPathGraph(
+                self.modified,
+                self.cch,
+                transport_zones,
+                congestion,
+                congestion_flows_scaling_factor,
+                target_max_vehicles_per_od_endpoint,
+                congestion_assignment_max_iterations,
+                congestion_assignment_max_gap,
+                congestion_assignment_retained_volume_share
+            )
         
