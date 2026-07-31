@@ -24,10 +24,13 @@ def run_rust_mode_sequence_search(
         modes_by_name=modes_by_name,
         mode_name_by_id=mode_name_by_id,
     )
+    cost_columns = ["origin", "destination", "mode_id", "cost"]
+    if "utility_profile_id" in leg_mode_costs.columns:
+        cost_columns.insert(0, "utility_profile_id")
     rust_cost_rows = (
         leg_mode_costs
         .rename({"from": "origin", "to": "destination"})
-        .select(["origin", "destination", "mode_id", "cost"])
+        .select(cost_columns)
     )
     return search_mode_sequences(
         location_chain_steps=unique_destination_chains,

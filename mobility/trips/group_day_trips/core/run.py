@@ -263,6 +263,7 @@ class Run(FileAsset):
                 sensitivity_case=sensitivity_case,
                 transport_zones=population.transport_zones,
                 transport_costs=resolved_transport_costs,
+                population_segments=population.population_segments,
                 parameters=parameters,
             )
             mode_sequences = ModeSequences(
@@ -272,6 +273,7 @@ class Run(FileAsset):
                 previous_mode_sequences=previous_mode_sequences,
                 destination_sequences=destination_sequences,
                 transport_costs=resolved_transport_costs,
+                population_segments=population.population_segments,
                 working_folder=base_folder,
                 parameters=parameters,
             )

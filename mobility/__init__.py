@@ -42,6 +42,7 @@ from .trips.group_day_trips import (
     BehaviorChangeScope,
     GroupDayTripsActivitySequenceParameters,
     GroupDayTripsBehaviorChangeParameters,
+    GroupDayTripsDemandGroupParameters,
     GroupDayTripsDestinationSequenceParameters,
     GroupDayTripsModeSequenceParameters,
     GroupDayTripsOutputParameters,
@@ -74,7 +75,12 @@ from .transport.modes.public_transport import (
     GTFSSources,
 )
 from .transport.modes.core import IntermodalTransfer, ModeRegistry
-from .runtime.parameter_values import DEFAULT_SCENARIO, ParameterValue, SensitivityValue
+from .runtime.parameter_values import (
+    DEFAULT_SCENARIO,
+    ParameterValue,
+    SensitivityValue,
+)
+from .runtime.population_segments import PopulationSegment
 from .runtime.project_cache import ProjectCache
 from .runtime.scenarios import Scenario, Scenarios
 

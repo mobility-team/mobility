@@ -97,6 +97,36 @@ def test_build_location_chains_fails_when_destination_sequence_id_has_multiple_l
         build_location_chains(destination_steps)
 
 
+def test_same_destination_sequence_can_have_one_chain_per_utility_profile():
+    destination_steps = pl.DataFrame(
+        {
+            "demand_group_id": [1, 1, 2, 2],
+            "demand_subgroup_id": [0, 0, 0, 0],
+            "utility_profile_id": [0, 0, 1, 1],
+            "activity_seq_id": [10, 10, 10, 10],
+            "time_seq_id": [20, 20, 20, 20],
+            "dest_seq_id": [30, 30, 30, 30],
+            "seq_step_index": [1, 2, 1, 2],
+            "from": [100, 200, 300, 400],
+        }
+    )
+
+    _, unique_chains = build_location_chains(destination_steps)
+
+    assert unique_chains.sort("utility_profile_id").to_dicts() == [
+        {
+            "utility_profile_id": 0,
+            "dest_seq_id": 30,
+            "locations": [100, 200],
+        },
+        {
+            "utility_profile_id": 1,
+            "dest_seq_id": 30,
+            "locations": [300, 400],
+        },
+    ]
+
+
 def test_run_python_mode_sequence_search_subprocess_serializes_inputs_for_worker(monkeypatch, tmp_path):
     parameters = _mode_sequence_parameters(k_mode_sequences=7)
     unique_destination_chains = pl.DataFrame({"dest_seq_id": [1], "locations": [[101, 202, 303]]})
@@ -286,6 +316,72 @@ def test_run_rust_mode_sequence_search_transforms_inputs_for_package(monkeypatch
         "return_mode_id": [None, 2, None],
     }
     assert captured["k_sequences"] == 7
+
+
+def test_run_rust_mode_sequence_search_keeps_profiles_in_one_package_call(monkeypatch):
+    captured = {}
+    expected = pl.DataFrame(
+        {
+            "utility_profile_id": [0, 1],
+            "dest_seq_id": [1, 1],
+            "mode_seq_index": [0, 0],
+            "seq_step_index": [1, 1],
+            "location": [2, 2],
+            "mode_index": [0, 1],
+        }
+    )
+
+    def fake_search_mode_sequences(**kwargs):
+        captured.update(kwargs)
+        return expected
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "mobility_mode_sequence_search",
+        SimpleNamespace(search_mode_sequences=fake_search_mode_sequences),
+    )
+
+    result = run_rust_mode_sequence_search(
+        unique_destination_chains=pl.DataFrame(
+            {
+                "utility_profile_id": [0, 1],
+                "dest_seq_id": [1, 1],
+                "locations": [[1, 2], [1, 2]],
+            }
+        ),
+        leg_mode_costs=pl.DataFrame(
+            {
+                "utility_profile_id": [0, 1],
+                "from": [1, 1],
+                "to": [2, 2],
+                "mode_id": [0, 1],
+                "cost": [1.0, 2.0],
+            }
+        ),
+        needs_vehicle_by_id={0: False, 1: False},
+        return_mode_id_by_id={0: None, 1: None},
+        is_return_mode_by_id={0: False, 1: False},
+        modes_by_name={
+            "walk": {
+                "vehicle": None,
+                "multimodal": False,
+                "is_return_mode": False,
+                "return_mode": None,
+            },
+            "bike": {
+                "vehicle": None,
+                "multimodal": False,
+                "is_return_mode": False,
+                "return_mode": None,
+            },
+        },
+        mode_name_by_id={0: "walk", 1: "bike"},
+        k_mode_sequences=3,
+    )
+
+    assert result.equals(expected)
+    assert captured["location_chain_steps"]["utility_profile_id"].to_list() == [0, 1]
+    assert captured["leg_mode_costs"]["utility_profile_id"].to_list() == [0, 1]
 
 
 def test_python_and_rust_mode_sequence_backends_match_on_same_inputs(tmp_path):

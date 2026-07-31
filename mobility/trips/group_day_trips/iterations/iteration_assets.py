@@ -587,6 +587,8 @@ class IterationTransportCostsAsset(FileAsset):
             n_iter_per_cost_update=n_iter_per_cost_update,
         )
         self.modes = self.transport_costs.modes
+        self._profile_costs_cache = None
+        self._profile_costs_cache_key = None
         inputs = {
             "version": 2,
             "is_weekday": is_weekday,
@@ -655,6 +657,34 @@ class IterationTransportCostsAsset(FileAsset):
         )
         costs = costs.with_columns((pl.col("prob") * pl.col("cost")).alias("cost"))
         return costs.group_by(["from", "to"]).agg(pl.col("cost").sum())
+
+    def get_utility_profiles(self, demand_groups, population_segments):
+        """Delegate compact utility-profile construction to transport costs."""
+        return self.transport_costs.get_utility_profiles(
+            demand_groups,
+            population_segments,
+        )
+
+    def get_profile_costs_by_od_and_mode(self, profiles, metrics):
+        """Return profile-specific costs with this iteration's congestion state."""
+        cache_key = tuple(
+            (profile_id, tuple(asset.inputs_hash for asset in assets))
+            for profile_id, assets in sorted(profiles.items())
+        )
+        if self._profile_costs_cache_key != cache_key:
+            effective_transport_costs = self.transport_costs.asset_for_road_flows(
+                self.congestion_flows.get()
+            )
+            self._profile_costs_cache = (
+                effective_transport_costs.get_profile_costs_by_od_and_mode(
+                    profiles,
+                    ["cost", "distance", "time"],
+                )
+            )
+            self._profile_costs_cache_key = cache_key
+        return self._profile_costs_cache.select(
+            ["from", "to", "mode", "utility_profile_id"] + list(metrics)
+        )
 
 
 class IterationStateAsset(FileAsset):

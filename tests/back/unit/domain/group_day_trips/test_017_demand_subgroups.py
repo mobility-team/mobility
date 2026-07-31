@@ -9,9 +9,11 @@ from mobility.trips.group_day_trips.iterations.iteration_assets import (
     _state_cache_paths,
     _write_run_state,
 )
+from mobility.runtime.population_segments import PopulationSegment
 from mobility.trips.group_day_trips.plans.candidate_plan_steps import CandidatePlanStepsAsset
 from mobility.trips.group_day_trips.plans.demand_subgroups import (
     demand_unit_hash,
+    split_demand_groups,
     split_large_demand_groups,
 )
 
@@ -105,6 +107,86 @@ def test_split_large_demand_groups_owns_subgroup_creation():
     with pytest.raises(ValueError, match="owns subgroup creation"):
         split_large_demand_groups(
             demand_groups,
+            max_persons_per_demand_subgroup=None,
+        )
+
+
+def test_population_share_is_split_before_maximum_subgroup_size():
+    demand_groups = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "csp": ["8a"],
+            "home_zone_id": [30],
+            "n_persons": [100.0],
+        },
+        schema={
+            "demand_group_id": pl.UInt32,
+            "csp": pl.String,
+            "home_zone_id": pl.Int32,
+            "n_persons": pl.Float64,
+        },
+    )
+
+    result = split_demand_groups(
+        demand_groups,
+        population_segments=[
+            PopulationSegment(name="pupils", csp="8a"),
+            PopulationSegment(
+                name="localist_pupils",
+                csp="8a",
+                share=0.3,
+            ),
+        ],
+        max_persons_per_demand_subgroup=25,
+    )
+
+    assert result.select(
+        "demand_subgroup_id", "n_persons", "population_segments"
+    ).to_dicts() == [
+        {
+            "demand_subgroup_id": 0,
+            "n_persons": 15.0,
+            "population_segments": ["pupils", "localist_pupils"],
+        },
+        {
+            "demand_subgroup_id": 1,
+            "n_persons": 15.0,
+            "population_segments": ["pupils", "localist_pupils"],
+        },
+        {
+            "demand_subgroup_id": 2,
+            "n_persons": 23.333333333333332,
+            "population_segments": ["pupils"],
+        },
+        {
+            "demand_subgroup_id": 3,
+            "n_persons": 23.333333333333332,
+            "population_segments": ["pupils"],
+        },
+        {
+            "demand_subgroup_id": 4,
+            "n_persons": 23.333333333333332,
+            "population_segments": ["pupils"],
+        },
+    ]
+    assert result["n_persons"].sum() == pytest.approx(100.0)
+
+
+def test_population_segment_rejects_unavailable_selector_column():
+    demand_groups = pl.DataFrame(
+        {
+            "demand_group_id": [1],
+            "csp": ["8a"],
+            "n_persons": [10.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="home_zone_id"):
+        split_demand_groups(
+            demand_groups,
+            population_segments=[
+                PopulationSegment(name="zone_30", home_zone_id=30)
+            ],
             max_persons_per_demand_subgroup=None,
         )
 

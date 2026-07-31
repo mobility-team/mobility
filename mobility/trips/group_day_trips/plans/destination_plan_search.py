@@ -19,6 +19,7 @@ def sample_destination_plans(
     demand_groups: pl.DataFrame,
     destination_saturation: pl.DataFrame,
     mode_costs: pl.DataFrame,
+    profile_assignments: pl.DataFrame | None = None,
     transport_zones: Any,
     activities: list[Any],
     resolved_activity_parameters: dict[str, Any],
@@ -36,7 +37,15 @@ def sample_destination_plans(
         for activity_id, activity_name in enumerate(activity_names)
     }
 
-    od_costs = _prepare_od_costs(mode_costs, logit_scale)
+    if profile_assignments is None:
+        profile_assignments = demand_groups.select(DEMAND_UNIT_COLS).with_columns(
+            utility_profile_id=pl.lit(0, dtype=pl.UInt32)
+        )
+        if "utility_profile_id" not in mode_costs.columns:
+            mode_costs = mode_costs.with_columns(
+                utility_profile_id=pl.lit(0, dtype=pl.UInt32)
+            )
+
     destination_inputs = _prepare_destination_inputs(
         destination_saturation=destination_saturation,
         transport_zones=transport_zones,
@@ -51,10 +60,13 @@ def sample_destination_plans(
         resolved_activity_parameters=resolved_activity_parameters,
         activity_ids=activity_ids,
         min_activity_time_constant=min_activity_time_constant,
+        profile_assignments=profile_assignments,
     )
 
+    # Search all profiles together. Rust selects the matching OD costs for each
+    # context and schedules every context in one shared thread pool.
     search = DestinationPlanSearch(
-        od_costs=od_costs,
+        od_costs=_prepare_od_costs(mode_costs, logit_scale),
         destination_inputs=destination_inputs,
     )
     plans, report = search.top_k(
@@ -67,12 +79,12 @@ def sample_destination_plans(
         top_k=top_k,
         skip_contexts_without_plan=True,
     )
-    if report["contexts_without_plan"] > 0:
+    missing_contexts = report["contexts_without_plan"]
+    if missing_contexts > 0:
         logging.warning(
             "Destination plan search did not find a complete plan for %s unique contexts.",
-            report["contexts_without_plan"],
+            missing_contexts,
         )
-
     # Expand deduplicated search contexts back to each demand unit, then restore
     # the Mobility destination-sequence columns expected by mode search.
     return (
@@ -100,36 +112,39 @@ def sample_destination_plans(
 def _prepare_od_costs(mode_costs: pl.DataFrame, logit_scale: float) -> pl.DataFrame:
     """Average cost and time across modes with the destination-choice logit scale."""
     mode_costs = mode_costs.lazy().select(
+        pl.col("utility_profile_id").cast(pl.UInt32),
         pl.col("from").cast(pl.UInt32).alias("origin"),
         pl.col("to").cast(pl.UInt32).alias("destination"),
         pl.col("cost").cast(pl.Float64),
         pl.col("time").cast(pl.Float64),
     )
-    minimum_costs = mode_costs.group_by(["origin", "destination"]).agg(
+    od_columns = ["utility_profile_id", "origin", "destination"]
+    minimum_costs = mode_costs.group_by(od_columns).agg(
         minimum_cost=pl.col("cost").min()
     )
     return (
-        mode_costs.join(minimum_costs, on=["origin", "destination"])
+        mode_costs.join(minimum_costs, on=od_columns)
         .with_columns(
             mode_weight=(
                 -pl.lit(logit_scale)
                 * (pl.col("cost") - pl.col("minimum_cost"))
             ).exp()
         )
-        .group_by(["origin", "destination"])
+        .group_by(od_columns)
         .agg(
             weighted_cost=(pl.col("mode_weight") * pl.col("cost")).sum(),
             weighted_time=(pl.col("mode_weight") * pl.col("time")).sum(),
             total_weight=pl.col("mode_weight").sum(),
         )
         .select(
+            "utility_profile_id",
             "origin",
             "destination",
             cost=pl.col("weighted_cost") / pl.col("total_weight"),
             time=pl.col("weighted_time") / pl.col("total_weight"),
         )
         .collect(engine="streaming")
-        .sort(["origin", "destination"])
+        .sort(["utility_profile_id", "origin", "destination"])
     )
 
 
@@ -228,14 +243,19 @@ def _prepare_contexts(
     resolved_activity_parameters: dict[str, Any],
     activity_ids: dict[str, int],
     min_activity_time_constant: float,
+    profile_assignments: pl.DataFrame,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Prepare and deduplicate complete activity-plan contexts."""
-    demand_groups = demand_groups.select(
+    demand_groups = demand_groups.join(
+        profile_assignments,
+        on=DEMAND_UNIT_COLS,
+    ).select(
         RAW_CONTEXT_COLUMNS[:2]
         + [
             pl.col("home_zone_id").cast(pl.UInt32),
             pl.col("country").cast(pl.String),
             pl.col("csp").cast(pl.String),
+            "utility_profile_id",
         ]
     )
     activity_durations = activity_durations.select(
@@ -347,7 +367,7 @@ def _prepare_contexts(
         source_steps.with_columns(
             step_hash=pl.struct(step_value_columns).hash(seed=17)
         )
-        .group_by(RAW_CONTEXT_COLUMNS + ["home_zone_id"])
+        .group_by(RAW_CONTEXT_COLUMNS + ["home_zone_id", "utility_profile_id"])
         .agg(
             sequence_hash=pl.col("step_hash")
             .sort_by("layer")
@@ -356,7 +376,11 @@ def _prepare_contexts(
         )
         .with_columns(
             profile_key=pl.concat_str(
-                [pl.col("home_zone_id").cast(pl.String), "sequence_hash"],
+                [
+                    pl.col("home_zone_id").cast(pl.String),
+                    pl.col("utility_profile_id").cast(pl.String),
+                    "sequence_hash",
+                ],
                 separator="|",
             )
         )
@@ -399,6 +423,7 @@ def _prepare_contexts(
         .select(
             "context_id",
             pl.col("home_zone_id").alias("initial_zone"),
+            "utility_profile_id",
         )
         .unique()
         .sort("context_id")

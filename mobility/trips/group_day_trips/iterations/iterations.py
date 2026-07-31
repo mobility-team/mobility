@@ -55,6 +55,7 @@ class Iteration:
         destination_saturation: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
         costs: pl.DataFrame | None = None,
+        population_segments: list[Any] | None = None,
         parameters: Any = None,
         seed: int | None = None,
     ) -> DestinationSequences:
@@ -72,6 +73,7 @@ class Iteration:
             destination_saturation=destination_saturation,
             demand_groups=demand_groups,
             costs=costs,
+            population_segments=population_segments,
             parameters=parameters,
             seed=seed,
         )
@@ -105,6 +107,7 @@ class Iteration:
         *,
         destination_sequences: DestinationSequences,
         transport_costs: Any = None,
+        population_segments: list[Any] | None = None,
         parameters: Any = None,
     ) -> ModeSequences:
         """Return the mode-sequences asset for this iteration."""
@@ -114,6 +117,7 @@ class Iteration:
             base_folder=self.iterations.folder_paths["modes"],
             destination_sequences=destination_sequences,
             transport_costs=transport_costs,
+            population_segments=population_segments,
             working_folder=self.iterations.base_folder,
             parameters=parameters,
         )

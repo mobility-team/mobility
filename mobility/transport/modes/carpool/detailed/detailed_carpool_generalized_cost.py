@@ -3,11 +3,13 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from typing import Annotated
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.parameter_values import PopulationSegmentValue
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.costs.parameters.cost_of_time_parameters import CostOfTimeParameters
+
 
 class DetailedCarpoolGeneralizedCost(InMemoryAsset):
     
@@ -109,8 +111,14 @@ class DetailedCarpoolGeneralizedCostParameters(BaseModel):
 
     number_persons: Annotated[int, Field(default=2, ge=1)]
 
-    car_cost_of_time: Annotated[CostOfTimeParameters, Field(default_factory=CostOfTimeParameters)]
-    carpooling_cost_of_time: Annotated[CostOfTimeParameters, Field(default_factory=CostOfTimeParameters)]
+    car_cost_of_time: Annotated[
+        CostOfTimeParameters | PopulationSegmentValue,
+        Field(default_factory=CostOfTimeParameters),
+    ]
+    carpooling_cost_of_time: Annotated[
+        CostOfTimeParameters | PopulationSegmentValue,
+        Field(default_factory=CostOfTimeParameters),
+    ]
 
     cost_of_time_od_coeffs: Annotated[list[dict[str, list[str] | float]], Field(
         default_factory=lambda: [{
@@ -120,11 +128,26 @@ class DetailedCarpoolGeneralizedCostParameters(BaseModel):
         }]
     )]
 
-    car_cost_of_distance: Annotated[float, Field(default=0.1, ge=0.0)]
-    carpooling_cost_of_distance: Annotated[float, Field(default=0.05, ge=0.0)]
+    car_cost_of_distance: Annotated[
+        float | PopulationSegmentValue, Field(default=0.1)
+    ]
+    carpooling_cost_of_distance: Annotated[
+        float | PopulationSegmentValue, Field(default=0.05)
+    ]
 
-    car_cost_constant: Annotated[float, Field(default=0.0)]
-    carpooling_cost_constant: Annotated[float, Field(default=0.0)]
+    car_cost_constant: Annotated[float | PopulationSegmentValue, Field(default=0.0)]
+    carpooling_cost_constant: Annotated[
+        float | PopulationSegmentValue, Field(default=0.0)
+    ]
+
+    @field_validator("car_cost_of_distance", "carpooling_cost_of_distance")
+    @classmethod
+    def validate_non_negative_distance_cost(
+        cls, value: float | PopulationSegmentValue
+    ) -> float | PopulationSegmentValue:
+        if isinstance(value, (int, float)) and value < 0.0:
+            raise ValueError("Distance costs must be non-negative.")
+        return value
 
     revenue_distance_local_admin_units_ids: Annotated[list[str], Field(default_factory=list)]
     revenue_distance_r0: Annotated[float, Field(default=1.5, ge=0.0)]

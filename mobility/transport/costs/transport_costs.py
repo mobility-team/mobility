@@ -6,8 +6,14 @@ import pathlib
 
 import polars as pl
 
-from mobility.runtime.parameter_values import SensitivityCase
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.parameter_values import SensitivityCase
+from mobility.runtime.population_segments import (
+    PopulationSegment,
+    population_segment_defaults,
+    resolve_population_segment_values,
+)
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.costs.road_flow_manager import RoadFlowManager
 from mobility.transport.costs.travel_costs_asset import TravelCostsBase
@@ -133,6 +139,12 @@ class TransportCosts(FileAsset):
 
         for mode in modes:
             generalized_cost = mode.inputs["generalized_cost"]
+            generalized_cost = self._resolved_generalized_cost(
+                generalized_cost,
+                memberships=set(),
+                population_segments=[],
+                use_defaults=True,
+            )
             gc = pl.DataFrame(
                 generalized_cost.get(
                     ["cost", "distance", "time"],
@@ -158,6 +170,148 @@ class TransportCosts(FileAsset):
             pl.col("from").cast(pl.Int32),
             pl.col("to").cast(pl.Int32),
         )
+
+    def get_utility_profiles(
+        self,
+        demand_groups: pl.DataFrame,
+        population_segments: list[PopulationSegment],
+    ) -> tuple[pl.DataFrame, dict[int, list[InMemoryAsset]]]:
+        """Assign compact generalized-cost profiles to demand subgroups.
+
+        Demand subgroups with identical resolved parameters share one profile.
+        The returned table preserves the demand-unit columns and adds
+        ``utility_profile_id``.
+        """
+        required = {
+            "demand_group_id",
+            "demand_subgroup_id",
+            "population_segments",
+        }
+        missing = sorted(required - set(demand_groups.columns))
+        if missing:
+            raise ValueError(
+                "Utility profiles need demand-group columns: " + ", ".join(missing)
+            )
+
+        profile_ids: dict[tuple[str, ...], int] = {}
+        profile_id_by_memberships: dict[tuple[str, ...], int] = {}
+        profiles: dict[int, list[InMemoryAsset]] = {}
+        assignments = []
+        rows = demand_groups.select(sorted(required)).iter_rows(named=True)
+        for row in rows:
+            memberships_key = tuple(sorted(set(row["population_segments"] or [])))
+            profile_id = profile_id_by_memberships.get(memberships_key)
+            if profile_id is None:
+                resolved_assets = [
+                    self._resolved_generalized_cost(
+                        mode.inputs["generalized_cost"],
+                        memberships=set(memberships_key),
+                        population_segments=population_segments,
+                    )
+                    for mode in self.modes
+                ]
+                profile_key = tuple(asset.inputs_hash for asset in resolved_assets)
+                profile_id = profile_ids.get(profile_key)
+                if profile_id is None:
+                    profile_id = len(profile_ids)
+                    profile_ids[profile_key] = profile_id
+                    profiles[profile_id] = resolved_assets
+                profile_id_by_memberships[memberships_key] = profile_id
+            assignments.append(
+                {
+                    "demand_group_id": row["demand_group_id"],
+                    "demand_subgroup_id": row["demand_subgroup_id"],
+                    "utility_profile_id": profile_id,
+                }
+            )
+
+        assignment_schema = {
+            "demand_group_id": pl.UInt32,
+            "demand_subgroup_id": pl.UInt32,
+            "utility_profile_id": pl.UInt32,
+        }
+        return pl.DataFrame(assignments, schema=assignment_schema), profiles
+
+    def get_profile_costs_by_od_and_mode(
+        self,
+        profiles: dict[int, list[InMemoryAsset]],
+        metrics: list[str],
+    ) -> pl.DataFrame:
+        """Compute OD-by-mode costs once for every distinct utility profile."""
+        profile_costs = []
+        default_generalized_costs = [
+            self._resolved_generalized_cost(
+                mode.inputs["generalized_cost"],
+                memberships=set(),
+                population_segments=[],
+                use_defaults=True,
+            )
+            for mode in self.modes
+        ]
+        default_costs = self.get_costs_by_od_and_mode(
+            metrics,
+            detail_distances=False,
+        )
+
+        # Cache by generalized-cost asset, not by population profile. Profiles
+        # that inherit one mode's default coefficients reuse its existing OD
+        # rows, and profiles with the same override compute that mode only once.
+        costs_by_generalized_cost = {
+            generalized_cost.inputs_hash: default_costs
+            .filter(pl.col("mode") == mode.inputs["parameters"].name)
+            .drop("mode")
+            for mode, generalized_cost in zip(
+                self.modes,
+                default_generalized_costs,
+            )
+        }
+        for profile_id, generalized_costs in profiles.items():
+            for mode, generalized_cost in zip(self.modes, generalized_costs):
+                costs = costs_by_generalized_cost.get(generalized_cost.inputs_hash)
+                if costs is None:
+                    costs = pl.DataFrame(
+                        generalized_cost.get(
+                            list(metrics),
+                            congestion=self.inputs["congestion"],
+                            detail_distances=False,
+                            road_flow_asset=self.inputs["road_flow_asset"],
+                        )
+                    )
+                    costs_by_generalized_cost[generalized_cost.inputs_hash] = costs
+                profile_costs.append(
+                    costs.with_columns(
+                        utility_profile_id=pl.lit(profile_id, dtype=pl.UInt32),
+                        mode=pl.lit(mode.inputs["parameters"].name),
+                    )
+                )
+        return pl.concat(profile_costs, how="diagonal")
+
+    @staticmethod
+    def _resolved_generalized_cost(
+        generalized_cost: InMemoryAsset,
+        *,
+        memberships: set[str],
+        population_segments: list[PopulationSegment],
+        use_defaults: bool = False,
+    ) -> InMemoryAsset:
+        inputs = (
+            population_segment_defaults(generalized_cost.inputs)
+            if use_defaults
+            else resolve_population_segment_values(
+                generalized_cost.inputs,
+                memberships=memberships,
+                segments=population_segments,
+            )
+        )
+        if inputs == generalized_cost.inputs:
+            return generalized_cost
+        clone = generalized_cost.__class__.__new__(generalized_cost.__class__)
+        clone.__dict__ = dict(generalized_cost.__dict__)
+        clone.inputs = inputs
+        clone.inputs_hash = clone.compute_inputs_hash()
+        for name, value in inputs.items():
+            setattr(clone, name, value)
+        return clone
 
     def _ghg_emissions_per_trip_expr(self, columns: list[str], modes) -> pl.Expr:
         """Compute per-trip GHG emissions from detailed distance columns."""

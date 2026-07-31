@@ -72,6 +72,7 @@ class DestinationSequences(FileAsset):
         activity_durations: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
         costs: pl.DataFrame | None = None,
+        population_segments: list[Any] | None = None,
         parameters: Any = None,
         seed: int | None = None,
     ) -> None:
@@ -104,10 +105,11 @@ class DestinationSequences(FileAsset):
         self.activity_durations = activity_durations
         self.demand_groups = demand_groups
         self.costs = costs
+        self.population_segments = population_segments or []
         self.parameters = parameters
         self.seed = seed
         inputs = {
-            "version": 11,
+            "version": 12,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -120,6 +122,7 @@ class DestinationSequences(FileAsset):
             "resolved_activity_parameters": self.resolved_activity_parameters,
             "transport_zones": transport_zones,
             "transport_costs": transport_costs,
+            "population_segments": self.population_segments,
             "destination_sequence_parameters": (
                 parameters.destination_sequences if parameters is not None else None
             ),
@@ -390,14 +393,25 @@ class DestinationSequences(FileAsset):
                 raise ValueError(
                     "Cannot use destination plan search without transport costs."
                 )
+            profile_assignments, utility_profiles = (
+                self.transport_costs.get_utility_profiles(
+                    demand_groups,
+                    self.population_segments,
+                )
+            )
+            profile_mode_costs = (
+                self.transport_costs.get_profile_costs_by_od_and_mode(
+                    utility_profiles,
+                    ["cost", "time"],
+                )
+            )
             complete_activity_sequences = sample_destination_plans(
                 activity_sequences=activity_sequences,
                 activity_durations=self.activity_durations,
                 demand_groups=demand_groups,
                 destination_saturation=destination_saturation,
-                mode_costs=self.transport_costs.get_costs_by_od_and_mode(
-                    ["cost", "time"]
-                ),
+                mode_costs=profile_mode_costs,
+                profile_assignments=profile_assignments,
                 transport_zones=transport_zones,
                 activities=activities,
                 resolved_activity_parameters=self.resolved_activity_parameters,

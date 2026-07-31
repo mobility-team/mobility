@@ -120,3 +120,85 @@ step-by-step sampler.
 This search chooses and ranks complete destination chains together. It returns
 the best chains found by a bounded search; it does not prove that no better
 chain was omitted.
+
+## Vary Mode Costs Between Population Segments
+
+Define population segments once on the population, then refer to
+their names from generalized-cost parameters. A segment can select on
+`country`, `csp`, `home_zone_id`, `city_category`, and `n_cars`.
+
+```python
+population = mobility.Population(
+    transport_zones,
+    sample_size=1_000,
+    population_segments=[
+        mobility.PopulationSegment(
+            name="pupils",
+            csp="8a",
+        ),
+        mobility.PopulationSegment(
+            name="localist_pupils",
+            csp="8a",
+            share=0.30,
+        ),
+        mobility.PopulationSegment(
+            name="zone_30_pupils",
+            csp="8a",
+            home_zone_id=30,
+        ),
+    ],
+)
+
+parameters = mobility.GroupDayTripsParameters(
+    demand_groups=mobility.GroupDayTripsDemandGroupParameters(
+        max_persons_per_demand_subgroup=50,
+    ),
+    destination_sequences=mobility.GroupDayTripsDestinationSequenceParameters(
+        use_destination_plan_search=True,
+    ),
+)
+
+pupil_value_of_time = mobility.ParameterValue.by_population_segment(
+    default=mobility.ParameterValue.by_iteration({1: 20.0, 5: 24.0}),
+    segment_values={
+        "localist_pupils": mobility.ParameterValue.by_scenario(
+            default=10.0,
+            school_policy=8.0,
+        ),
+        "zone_30_pupils": 6.0,
+    },
+)
+
+car = mobility.CarMode(
+    transport_zones,
+    generalized_cost_parameters=mobility.GeneralizedCostParameters(
+        cost_constant=0.0,
+        cost_of_time=mobility.CostOfTimeParameters(
+            intercept=pupil_value_of_time,
+            max_value=pupil_value_of_time,
+        ),
+        cost_of_distance=0.1,
+    ),
+)
+```
+
+The most specific matching segment value is used. In this example,
+`zone_30_pupils` takes precedence over `localist_pupils` for pupils living in
+zone 30. Mobility raises an error when two matching values are equally
+specific and neither selector contains the other.
+
+`share=0.30` creates a 30% subgroup and a 70% complement in every matching
+demand group. The share split happens before
+`max_persons_per_demand_subgroup`, so both parts can then be split further to
+respect the size limit. Population weights are preserved.
+
+Scenario and iteration values are resolved inside each segment. A segment
+value replaces the default value: it does not inherit the default iteration
+curve. Define an iteration curve explicitly inside the segment value when the
+segment should also change over time.
+
+Mobility deduplicates identical coefficient combinations into utility
+profiles. The same profile is used to rank destination plans, search mode
+sequences, and compute final plan utility. Segment shares do not start separate
+model runs: Mobility resolves each distinct segment-membership combination once
+and searches all resulting profiles together.

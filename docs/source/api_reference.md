@@ -338,6 +338,10 @@ mobility.ParameterValue.by_scenario_and_iteration(
 
 See [scenarios](scenarios.md).
 
+Use `ParameterValue.by_population_segment(...)` when named population
+segments need different values. The default and segment values can themselves
+vary by scenario or iteration. See [run parameters](run_parameters.md).
+
 ## Network Modifiers
 
 Network modifiers describe project-specific changes to road-network assumptions:
@@ -393,7 +397,9 @@ Main parameter objects:
 - `mobility.GroupDayTripsBehaviorChangeParameters`
 - `mobility.GroupDayTripsDestinationSequenceParameters`
 - `mobility.GroupDayTripsModeSequenceParameters`
+- `mobility.GroupDayTripsDemandGroupParameters`
 - `mobility.GroupDayTripsPlanUpdateParameters`
+- `mobility.PopulationSegment`
 - `mobility.BehaviorChangePhase`
 - `mobility.BehaviorChangeScope`
 

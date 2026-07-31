@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import mobility.population.population as population_module
+from mobility import PopulationSegment
 
 
 def test_init_sets_inputs_and_hashed_cache_paths(project_dir, fake_inputs_hash, fake_transport_zones):
@@ -29,3 +30,18 @@ def test_init_sets_inputs_and_hashed_cache_paths(project_dir, fake_inputs_hash, 
 
     assert population_groups_cache_path.name.startswith(f"{fake_inputs_hash}-")
     assert population_groups_cache_path.name.endswith("population_groups.parquet")
+
+
+def test_population_owns_population_segments(
+    project_dir,
+    fake_transport_zones,
+):
+    pupils = PopulationSegment(name="pupils", csp="8a")
+
+    population = population_module.Population(
+        transport_zones=fake_transport_zones,
+        sample_size=10,
+        population_segments=[pupils],
+    )
+
+    assert population.population_segments == [pupils]

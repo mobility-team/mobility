@@ -64,21 +64,24 @@ class ModeSequences(FileAsset):
         previous_mode_sequences: FileAsset | None = None,
         destination_sequences: FileAsset,
         transport_costs: Any,
+        population_segments: list[Any] | None = None,
         working_folder: pathlib.Path,
         parameters: Any,
     ) -> None:
         self.previous_mode_sequences = previous_mode_sequences
         self.destination_sequences = destination_sequences
         self.transport_costs = transport_costs
+        self.population_segments = population_segments or []
         self.working_folder = working_folder
         self.parameters = parameters
         inputs = {
-            "version": 5,
+            "version": 6,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "previous_mode_sequences": previous_mode_sequences,
             "destination_sequences": destination_sequences,
             "transport_costs": transport_costs,
+            "population_segments": self.population_segments,
             "mode_sequence_parameters": (
                 parameters.mode_sequences if parameters is not None else None
             ),
@@ -106,6 +109,7 @@ class ModeSequences(FileAsset):
         get_group_day_trips_progress().iteration_step(self.iteration, "mode sequences")
         working_folder = self.working_folder
         destination_steps = self.destination_sequences.get_cached_asset()
+        demand_groups = getattr(self.destination_sequences, "demand_groups", None)
 
         log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:destination_chains",
@@ -114,6 +118,24 @@ class ModeSequences(FileAsset):
 
         use_rust_search = self.parameters.mode_sequences.use_rust_mode_sequence_search
 
+        if demand_groups is None:
+            profile_assignments = destination_steps.select(
+                ["demand_group_id", "demand_subgroup_id"]
+            ).unique().with_columns(
+                utility_profile_id=pl.lit(0, dtype=pl.UInt32)
+            )
+            utility_profiles = None
+        else:
+            profile_assignments, utility_profiles = (
+                self.transport_costs.get_utility_profiles(
+                    demand_groups,
+                    self.population_segments,
+                )
+            )
+        destination_steps = destination_steps.join(
+            profile_assignments,
+            on=["demand_group_id", "demand_subgroup_id"],
+        )
         trip_chains, unique_destination_chains = build_location_chains(destination_steps)
 
         log_memory_checkpoint(
@@ -131,7 +153,20 @@ class ModeSequences(FileAsset):
             unique_destination_chains=unique_destination_chains,
         )
 
-        search_inputs = build_search_inputs(self.transport_costs)
+        if utility_profiles is None:
+            profile_costs = self.transport_costs.get_costs_by_od_and_mode(
+                ["cost"],
+                detail_distances=False,
+            ).with_columns(utility_profile_id=pl.lit(0, dtype=pl.UInt32))
+        else:
+            profile_costs = self.transport_costs.get_profile_costs_by_od_and_mode(
+                utility_profiles,
+                ["cost"],
+            )
+        search_inputs = build_search_inputs(
+            self.transport_costs,
+            leg_mode_costs=profile_costs,
+        )
 
         if use_rust_search:
             search_rows = run_rust_mode_sequence_search(
@@ -145,15 +180,33 @@ class ModeSequences(FileAsset):
                 k_mode_sequences=self.parameters.mode_sequences.k_mode_sequences,
             )
         else:
-            search_rows = run_python_mode_sequence_search(
-                iteration=self.iteration,
-                parameters=self.parameters,
-                working_folder=working_folder,
-                unique_destination_chains=unique_destination_chains,
-                leg_mode_costs=search_inputs.leg_mode_costs,
-                modes_by_name=search_inputs.modes_by_name,
-                is_return_mode_by_id=search_inputs.is_return_mode_by_id,
-            )
+            # The legacy Python backend still receives one profile at a time.
+            # Production Rust search batches all profiles above.
+            profile_results = []
+            for profile_id in unique_destination_chains[
+                "utility_profile_id"
+            ].unique().sort():
+                profile_chains = unique_destination_chains.filter(
+                    pl.col("utility_profile_id") == profile_id
+                ).drop("utility_profile_id")
+                profile_leg_costs = search_inputs.leg_mode_costs.filter(
+                    pl.col("utility_profile_id") == profile_id
+                ).drop("utility_profile_id")
+                profile_rows = run_python_mode_sequence_search(
+                    iteration=self.iteration,
+                    parameters=self.parameters,
+                    working_folder=working_folder,
+                    unique_destination_chains=profile_chains,
+                    leg_mode_costs=profile_leg_costs,
+                    modes_by_name=search_inputs.modes_by_name,
+                    is_return_mode_by_id=search_inputs.is_return_mode_by_id,
+                )
+                profile_results.append(
+                    profile_rows.with_columns(
+                        utility_profile_id=pl.lit(profile_id, dtype=pl.UInt32)
+                    )
+                )
+            search_rows = pl.concat(profile_results)
 
         search_rows = assemble_mode_sequence_rows(
             trip_chains=trip_chains,

@@ -4,7 +4,11 @@ import numpy as np
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
+from mobility.runtime.parameter_values import (
+    ParameterValue,
+    PopulationSegmentValue,
+    SensitivityValue,
+)
 
 
 class CostOfTimeParameters(BaseModel):
@@ -12,10 +16,22 @@ class CostOfTimeParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    intercept: Annotated[float | ParameterValue | SensitivityValue, Field(default=20.0)]
-    breaks: Annotated[list[float] | ParameterValue | SensitivityValue, Field(default_factory=lambda: [0.0, 10000000.0])]
-    slopes: Annotated[list[float] | ParameterValue | SensitivityValue, Field(default_factory=lambda: [0.0])]
-    max_value: Annotated[float | ParameterValue | SensitivityValue, Field(default=20.0)]
+    intercept: Annotated[
+        float | ParameterValue | SensitivityValue | PopulationSegmentValue,
+        Field(default=20.0),
+    ]
+    breaks: Annotated[
+        list[float] | ParameterValue | SensitivityValue | PopulationSegmentValue,
+        Field(default_factory=lambda: [0.0, 10000000.0]),
+    ]
+    slopes: Annotated[
+        list[float] | ParameterValue | SensitivityValue | PopulationSegmentValue,
+        Field(default_factory=lambda: [0.0]),
+    ]
+    max_value: Annotated[
+        float | ParameterValue | SensitivityValue | PopulationSegmentValue,
+        Field(default=20.0),
+    ]
 
     country_coefficients: Annotated[dict[str, float], Field(default_factory=dict)]
 
@@ -29,7 +45,8 @@ class CostOfTimeParameters(BaseModel):
         Raises:
             ValueError: If slope count does not match break count minus one.
         """
-        if isinstance(self.breaks, (ParameterValue, SensitivityValue)) or isinstance(self.slopes, (ParameterValue, SensitivityValue)):
+        unresolved_types = (ParameterValue, SensitivityValue, PopulationSegmentValue)
+        if isinstance(self.breaks, unresolved_types) or isinstance(self.slopes, unresolved_types):
             return self
 
         if len(self.slopes) != len(self.breaks) - 1:
