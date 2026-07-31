@@ -20,6 +20,7 @@ from mobility.activities.activity import resolve_activity_parameters
 from mobility.runtime.parameter_values import SensitivityCase
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from .demand_subgroups import DEMAND_UNIT_COLS, DEMAND_UNIT_SCHEMA, demand_unit_hash
+from .destination_plan_search import sample_destination_plans
 
 
 class DestinationSequences(FileAsset):
@@ -68,6 +69,7 @@ class DestinationSequences(FileAsset):
         current_plans: pl.DataFrame | None = None,
         current_plan_steps: pl.DataFrame | None = None,
         destination_saturation: pl.DataFrame | None = None,
+        activity_durations: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
         costs: pl.DataFrame | None = None,
         parameters: Any = None,
@@ -99,12 +101,13 @@ class DestinationSequences(FileAsset):
         self.current_plans = current_plans
         self.current_plan_steps = current_plan_steps
         self.destination_saturation = destination_saturation
+        self.activity_durations = activity_durations
         self.demand_groups = demand_groups
         self.costs = costs
         self.parameters = parameters
         self.seed = seed
         inputs = {
-            "version": 10,
+            "version": 11,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -122,6 +125,11 @@ class DestinationSequences(FileAsset):
             ),
             "plan_update_shadow_price_flag": (
                 parameters.plan_update.use_destination_shadow_prices
+                if parameters is not None
+                else None
+            ),
+            "plan_update_transition_logit_scale": (
+                parameters.plan_update.transition_logit_scale
                 if parameters is not None
                 else None
             ),
@@ -181,6 +189,8 @@ class DestinationSequences(FileAsset):
             self.destination_saturation = state.destination_saturation
         if self.demand_groups is None:
             self.demand_groups = state.demand_groups
+        if self.activity_durations is None:
+            self.activity_durations = state.activity_dur
         if self.costs is None and self.transport_costs is not None:
             self.costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
         elif self.costs is None:
@@ -346,18 +356,6 @@ class DestinationSequences(FileAsset):
         seed: int,
     ) -> pl.DataFrame:
         """Compute destination sequences for one iteration."""
-        utility_inputs = self._get_destination_probability_inputs(
-            destination_saturation,
-            costs,
-            parameters.destination_sequences.cost_uncertainty_sd,
-        )
-        destination_probability = self._get_destination_probability(
-            utility_inputs,
-            activities,
-            self.resolved_activity_parameters,
-            parameters.destination_sequences.dest_prob_cutoff,
-        )
-        cost_views = self._spatialization_cost_views(costs)
         activity_sequences = (
             activity_sequences
             .filter(pl.col("activity_seq_id") != 0)
@@ -383,25 +381,69 @@ class DestinationSequences(FileAsset):
             )
         )
         source_activity_sequences = activity_sequences
-        anchor_spatialized_sequences = self._spatialize_anchor_activities(
-            source_activity_sequences,
-            destination_probability,
-            parameters.destination_sequences.alpha,
-            seed,
-            cost_views,
-        )
-        spatialized_activity_sequences = self._spatialize_other_activities(
-            anchor_spatialized_sequences,
-            destination_probability,
-            costs,
-            parameters.destination_sequences.alpha,
-            seed,
-            cost_views,
-        )
-        complete_activity_sequences = self._drop_incomplete_destination_draws(
-            activity_sequences=spatialized_activity_sequences,
-            iteration=self.iteration,
-        )
+        if parameters.destination_sequences.use_destination_plan_search:
+            if self.activity_durations is None:
+                raise ValueError(
+                    "Cannot use destination plan search without activity durations."
+                )
+            if self.transport_costs is None:
+                raise ValueError(
+                    "Cannot use destination plan search without transport costs."
+                )
+            complete_activity_sequences = sample_destination_plans(
+                activity_sequences=activity_sequences,
+                activity_durations=self.activity_durations,
+                demand_groups=demand_groups,
+                destination_saturation=destination_saturation,
+                mode_costs=self.transport_costs.get_costs_by_od_and_mode(
+                    ["cost", "time"]
+                ),
+                transport_zones=transport_zones,
+                activities=activities,
+                resolved_activity_parameters=self.resolved_activity_parameters,
+                min_activity_time_constant=(
+                    parameters.plan_update.min_activity_time_constant
+                ),
+                logit_scale=parameters.plan_update.transition_logit_scale,
+                update_plan_timings=(
+                    parameters.plan_update.update_plan_timings_from_modeled_travel_times
+                ),
+                use_shadow_prices=parameters.plan_update.use_destination_shadow_prices,
+                exploration_seed=seed,
+                top_k=parameters.destination_sequences.k_destination_sequences,
+            )
+        else:
+            utility_inputs = self._get_destination_probability_inputs(
+                destination_saturation,
+                costs,
+                parameters.destination_sequences.cost_uncertainty_sd,
+            )
+            destination_probability = self._get_destination_probability(
+                utility_inputs,
+                activities,
+                self.resolved_activity_parameters,
+                parameters.destination_sequences.dest_prob_cutoff,
+            )
+            cost_views = self._spatialization_cost_views(costs)
+            anchor_spatialized_sequences = self._spatialize_anchor_activities(
+                source_activity_sequences,
+                destination_probability,
+                parameters.destination_sequences.alpha,
+                seed,
+                cost_views,
+            )
+            spatialized_activity_sequences = self._spatialize_other_activities(
+                anchor_spatialized_sequences,
+                destination_probability,
+                costs,
+                parameters.destination_sequences.alpha,
+                seed,
+                cost_views,
+            )
+            complete_activity_sequences = self._drop_incomplete_destination_draws(
+                activity_sequences=spatialized_activity_sequences,
+                iteration=self.iteration,
+            )
 
         destination_sequences = (
             complete_activity_sequences

@@ -93,3 +93,30 @@ parameters_report = weekday_run.parameters_dataframe()
 ```
 
 This helps you explain later how a result was produced, which parameters changed, and which assumptions were held constant.
+
+## Try Complete Destination-Plan Search
+
+The existing step-by-step destination sampler remains the default. To try the
+bounded Rust search, enable it explicitly:
+
+```python
+from mobility import (
+    GroupDayTripsDestinationSequenceParameters,
+    GroupDayTripsParameters,
+)
+
+parameters = GroupDayTripsParameters(
+    destination_sequences=GroupDayTripsDestinationSequenceParameters(
+        use_destination_plan_search=True,
+    )
+)
+```
+
+The search uses `plan_update.transition_logit_scale` when ranking complete
+destination plans. The same scale is then used when choosing between plans.
+The destination-sequence `alpha` parameter only applies to the legacy
+step-by-step sampler.
+
+This search chooses and ranks complete destination chains together. It returns
+the best chains found by a bounded search; it does not prove that no better
+chain was omitted.
