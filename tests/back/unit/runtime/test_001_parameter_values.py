@@ -6,6 +6,10 @@ from mobility.runtime.parameter_values import (
     SensitivityValue,
     resolve_parameter_values,
 )
+from mobility.runtime.population_segments import (
+    PopulationSegment,
+    resolve_population_segment_values,
+)
 
 
 def test_parameter_value_accepts_scenario_mapping_with_non_identifier_names():
@@ -143,3 +147,106 @@ def test_sensitivity_value_inside_scenario_iteration_value():
         iteration=5,
         sensitivity_case=case,
     ) == pytest.approx(0.144)
+
+
+def test_population_segment_value_composes_with_iteration_values():
+    value = ParameterValue.by_population_segment(
+        default=ParameterValue.by_iteration({1: 1.0, 5: 1.2}),
+        segment_values={
+            "localist_pupils": ParameterValue.by_scenario(
+                default=2.0,
+                school_policy=2.5,
+            )
+        },
+    )
+    resolved = resolve_parameter_values(
+        value,
+        scenario="school_policy",
+        iteration=5,
+    )
+
+    assert resolve_population_segment_values(
+        resolved,
+        memberships=set(),
+        segments=[
+            PopulationSegment(name="localist_pupils", csp="8a", share=0.3)
+        ],
+    ) == 1.2
+    assert resolve_population_segment_values(
+        resolved,
+        memberships={"localist_pupils"},
+        segments=[
+            PopulationSegment(name="localist_pupils", csp="8a", share=0.3)
+        ],
+    ) == 2.5
+
+
+def test_most_specific_population_segment_value_wins():
+    segments = [
+        PopulationSegment(name="pupils", csp=["8a", "8b"]),
+        PopulationSegment(name="csp_8a", csp="8a"),
+        PopulationSegment(name="zone_30_pupils", csp="8a", home_zone_id=30),
+    ]
+    value = ParameterValue.by_population_segment(
+        default=1.0,
+        segment_values={
+            "pupils": 2.0,
+            "csp_8a": 3.0,
+            "zone_30_pupils": 4.0,
+        },
+    )
+
+    assert resolve_population_segment_values(
+        value,
+        memberships={segment.name for segment in segments},
+        segments=segments,
+    ) == 4.0
+
+
+def test_incomparable_population_segment_values_are_rejected():
+    segments = [
+        PopulationSegment(name="pupils", csp="8a"),
+        PopulationSegment(name="zone_30", home_zone_id=30),
+    ]
+    value = ParameterValue.by_population_segment(
+        default=1.0,
+        segment_values={"pupils": 2.0, "zone_30": 3.0},
+    )
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        resolve_population_segment_values(
+            value,
+            memberships={"pupils", "zone_30"},
+            segments=segments,
+        )
+
+
+def test_population_segment_value_rejects_unknown_segment_name():
+    value = ParameterValue.by_population_segment(
+        default=1.0,
+        segment_values={"missing": 2.0},
+    )
+
+    with pytest.raises(ValueError, match="undefined population segments: missing"):
+        resolve_population_segment_values(
+            value,
+            memberships=set(),
+            segments=[PopulationSegment(name="pupils", csp="8a")],
+        )
+
+
+def test_partial_share_value_is_more_specific_than_its_full_segment():
+    segments = [
+        PopulationSegment(name="pupils", csp="8a"),
+        PopulationSegment(name="localist_pupils", csp="8a", share=0.3),
+    ]
+    value = ParameterValue.by_population_segment(
+        default=1.0,
+        segment_values={"pupils": 2.0, "localist_pupils": 3.0},
+    )
+
+    assert resolve_population_segment_values(
+        value,
+        memberships={"pupils", "localist_pupils"},
+        segments=segments,
+    ) == 3.0

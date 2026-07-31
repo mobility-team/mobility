@@ -32,8 +32,8 @@ dependencies = [
   "kaleido>=1.2,<2",
   "pydantic>=2.12,<3",
   "tenacity>=9,<10",
-  "mobility-mode-sequence-search==0.1.0",
-  "mobility-destination-sequence-sampler==0.1.0",
+  "mobility-mode-sequence-search==0.1.1",
+  "mobility-destination-sequence-sampler==0.1.1",
 ]
 
 requires-python = ">=3.11"

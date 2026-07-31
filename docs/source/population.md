@@ -30,6 +30,45 @@ Typical computational use:
 
 There is no universal sample size. The useful size depends on the territory, the indicators you report, and how much variability you can accept.
 
+### Population segments
+
+Population segments let mode-cost assumptions vary for selected people without
+running a separate model for each group. Define each segment on the population:
+
+```python
+population = mobility.Population(
+    transport_zones,
+    sample_size=1_000,
+    population_segments=[
+        mobility.PopulationSegment(name="pupils", csp="8a"),
+        mobility.PopulationSegment(
+            name="localist_pupils",
+            csp="8a",
+            share=0.30,
+        ),
+    ],
+)
+```
+
+A segment can select people by `country`, `csp`, `home_zone_id`,
+`city_category`, or `n_cars`. Several selectors can be combined. Here every
+pupil belongs to `pupils`, while 30% also belong to `localist_pupils`; the
+remaining 70% retain the default value.
+
+Use `ParameterValue.by_population_segment(...)` on a mode's cost constant,
+cost of time, or cost of distance. Segment values may also vary by scenario or
+iteration. When several segment values match, Mobility uses the most specific
+selector and reports ambiguous definitions as errors.
+
+Segment shares are represented as weighted demand subgroups. They are split
+before `max_persons_per_demand_subgroup` is applied, and their weights still
+sum to the original population. Mobility deduplicates identical coefficient
+combinations and searches all distinct profiles together. Enable complete
+destination-plan search when the segment-specific costs should also affect
+destination ranking.
+
+See [run parameters](run_parameters.md) for a complete example.
+
 ## Surveys
 
 For a French study area, use the EMP survey:

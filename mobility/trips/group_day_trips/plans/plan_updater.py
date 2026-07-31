@@ -240,6 +240,8 @@ class PlanUpdater:
         return self.compute_plan_steps_candidates_utility(
             candidates=aggregated_candidates,
             transport_costs=transport_costs,
+            demand_groups=demand_groups,
+            population_segments=destination_sequences.population_segments,
             destination_saturation=destination_saturation,
             activity_dur=activity_dur,
             transport_zones=transport_zones,
@@ -254,6 +256,8 @@ class PlanUpdater:
         *,
         candidates: pl.LazyFrame,
         transport_costs,
+        demand_groups: pl.DataFrame | None = None,
+        population_segments=None,
         destination_saturation: pl.DataFrame,
         activity_dur: pl.DataFrame,
         transport_zones,
@@ -264,10 +268,24 @@ class PlanUpdater:
     ) -> pl.LazyFrame:
         """Score plan-step candidates under current costs and destination saturation."""
 
-        cost_by_od_and_modes = transport_costs.get_costs_by_od_and_mode(
-            ["cost", "distance", "time"],
-            detail_distances=False,
-        ).with_columns(
+        if demand_groups is None:
+            profile_assignments = None
+            cost_by_od_and_modes = transport_costs.get_costs_by_od_and_mode(
+                ["cost", "distance", "time"],
+                detail_distances=False,
+            )
+            cost_join_columns = ["from", "to", "mode"]
+        else:
+            profile_assignments, utility_profiles = transport_costs.get_utility_profiles(
+                demand_groups,
+                population_segments or [],
+            )
+            cost_by_od_and_modes = transport_costs.get_profile_costs_by_od_and_mode(
+                utility_profiles,
+                ["cost", "distance", "time"],
+            )
+            cost_join_columns = ["utility_profile_id", "from", "to", "mode"]
+        cost_by_od_and_modes = cost_by_od_and_modes.with_columns(
             mode=pl.col("mode").cast(
                 pl.Enum(get_mode_values(transport_costs.modes, "stay_home"))
             )
@@ -342,14 +360,21 @@ class PlanUpdater:
             "activity_utility_scale",
         ]
 
+        candidate_cost_inputs = candidates
+        if profile_assignments is not None:
+            candidate_cost_inputs = candidate_cost_inputs.join(
+                profile_assignments.lazy(),
+                on=DEMAND_UNIT_COLS,
+            )
+
         scored_candidates = (
-            candidates
+            candidate_cost_inputs
             .with_columns(
                 activity=pl.col("activity").cast(pl.Enum(activity_dur["activity"].dtype.categories))
             )
             .join(
                 cost_by_od_and_modes.lazy(),
-                on=["from", "to", "mode"],
+                on=cost_join_columns,
                 how="left" if allow_missing_costs_for_current_plans else "inner",
             )
             .join(activity_dur.lazy(), on=["country", "csp", "activity"])

@@ -7,7 +7,7 @@ import pathlib
 import numpy as np
 import pandas as pd
 import shortuuid
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Annotated
 
 from mobility.countries import normalize_country_codes
@@ -15,6 +15,10 @@ from mobility.population.census_localized_individuals import CensusLocalizedIndi
 from mobility.population.city_legal_population import CityLegalPopulation
 from mobility.population.countries import available_population_groups
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.population_segments import (
+    PopulationSegment,
+    validate_population_segments,
+)
 from mobility.spatial.admin_units import FrenchAdminUnits
 
 
@@ -26,12 +30,16 @@ class Population(FileAsset):
         transport_zones,
         sample_size: int | None = None,
         switzerland_census: CensusLocalizedIndividuals = None,
+        population_segments: list[PopulationSegment] | None = None,
         parameters: "PopulationParameters" | None = None,
     ):
         parameters = self.prepare_parameters(
             parameters=parameters,
             parameters_cls=PopulationParameters,
-            explicit_args={"sample_size": sample_size},
+            explicit_args={
+                "sample_size": sample_size,
+                "population_segments": population_segments,
+            },
             required_fields=["sample_size"],
             owner_name="Population",
         )
@@ -46,6 +54,11 @@ class Population(FileAsset):
             "population_groups": pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "population_groups.parquet",
         }
         super().__init__(inputs, cache_path)
+
+    @property
+    def population_segments(self) -> list[PopulationSegment]:
+        """Return the named segments defined for this population."""
+        return self.parameters.population_segments
 
     def get_cached_asset(self) -> pd.DataFrame:
         logging.info("Population already prepared. Reusing the files : " + str(self.cache_path))
@@ -189,3 +202,19 @@ class PopulationParameters(BaseModel):
             description="Number of inhabitants to sample within the selected transport zones.",
         ),
     ]
+    population_segments: Annotated[
+        list[PopulationSegment],
+        Field(
+            default_factory=list,
+            title="Population segments",
+            description=(
+                "Named population subsets that can receive specific model "
+                "parameter values."
+            ),
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def validate_segments(self) -> "PopulationParameters":
+        validate_population_segments(self.population_segments)
+        return self

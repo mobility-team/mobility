@@ -11,6 +11,7 @@ from mobility.trips.group_day_trips import (
 )
 from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
 from mobility.trips.group_day_trips.plans.destination_plan_search import (
+    _prepare_od_costs,
     sample_destination_plans,
 )
 from mobility.trips.group_day_trips.plans.demand_subgroups import demand_unit_hash
@@ -35,6 +36,25 @@ def test_destination_plan_search_does_not_use_legacy_alpha():
     )
 
     assert parameters.alpha == 0.0
+
+
+def test_destination_cost_aggregation_keeps_utility_profiles():
+    costs = pl.DataFrame(
+        {
+            "utility_profile_id": [0, 0, 1, 1],
+            "from": [1, 1, 1, 1],
+            "to": [2, 2, 2, 2],
+            "cost": [1.0, 3.0, 5.0, 1.0],
+            "time": [1.0, 3.0, 5.0, 1.0],
+        }
+    )
+
+    result = _prepare_od_costs(costs, logit_scale=1.0).sort(
+        "utility_profile_id"
+    )
+
+    assert result["utility_profile_id"].to_list() == [0, 1]
+    assert result["cost"][0] != result["cost"][1]
 
 
 def test_plan_choice_logit_scale_is_part_of_destination_cache_key(tmp_path):

@@ -270,6 +270,23 @@ class ParameterValue(BaseModel):
             }
         )
 
+    @classmethod
+    def by_population_segment(
+        cls,
+        *,
+        default: Any,
+        segment_values: dict[str, Any],
+    ) -> "PopulationSegmentValue":
+        """Return a default value with replacements for named segments.
+
+        Each value may itself vary by scenario or iteration. A segment value
+        replaces the default value entirely.
+        """
+        return PopulationSegmentValue(
+            default=default,
+            segment_values=segment_values,
+        )
+
     @model_validator(mode="after")
     def validate_values(self) -> "ParameterValue":
         """Validate scenario names and iteration points."""
@@ -391,6 +408,25 @@ class ParameterValue(BaseModel):
         if isinstance(value, (list, dict, set)):
             return deepcopy(value)
         return value
+
+
+class PopulationSegmentValue(BaseModel):
+    """A default parameter value plus replacements for named segments."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    default: Any
+    segment_values: dict[str, Any]
+
+    @model_validator(mode="after")
+    def validate_segment_values(self) -> "PopulationSegmentValue":
+        if not self.segment_values:
+            raise ValueError(
+                "ParameterValue.by_population_segment needs at least one segment value."
+            )
+        if any(not name for name in self.segment_values):
+            raise ValueError("Population segment names should not be empty.")
+        return self
 
 
 def _contains_parameter_value(value: Any) -> bool:

@@ -10,6 +10,7 @@ from .parameter_values import (
     collect_sensitivity_values,
     resolve_parameter_values,
 )
+from .population_segments import PopulationSegment
 from .scenarios import (
     Scenario,
     ScenarioParameterChange,
@@ -21,6 +22,7 @@ __all__ = [
     "DEFAULT_SCENARIO",
     "DEFAULT_SENSITIVITY_CASE",
     "ParameterValue",
+    "PopulationSegment",
     "SensitivityCase",
     "SensitivityValue",
     "Scenario",

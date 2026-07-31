@@ -11,8 +11,11 @@ def assemble_mode_sequence_rows(
 ) -> pl.DataFrame:
     """Join search results back to grouped trips and map mode ids back to mode names."""
     return (
-        trip_chains.select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"])
-        .join(search_rows, on="dest_seq_id")
+        trip_chains.select(
+            DEMAND_UNIT_COLS
+            + ["utility_profile_id", "activity_seq_id", "time_seq_id", "dest_seq_id"]
+        )
+        .join(search_rows, on=["utility_profile_id", "dest_seq_id"])
         .with_columns(mode=pl.col("mode_index").replace_strict(mode_name_by_id))
     )
 

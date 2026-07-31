@@ -5,7 +5,7 @@ import polars as pl
 from mobility.activities.activity import ActivityParameters
 from mobility.surveys import SurveyPlanAssets
 from mobility.transport.modes.core.mode_values import get_mode_values
-from .demand_subgroups import DEMAND_UNIT_COLS, split_large_demand_groups
+from .demand_subgroups import DEMAND_UNIT_COLS, split_demand_groups
 from .plan_ids import add_plan_id
 
 
@@ -101,8 +101,9 @@ class PlanInitializer:
             .sort(["home_zone_id", "country", "city_category", "csp", "n_cars"])
             .with_row_index("demand_group_id")
         )
-        demand_groups = split_large_demand_groups(
+        demand_groups = split_demand_groups(
             demand_groups,
+            population_segments=population.population_segments,
             max_persons_per_demand_subgroup=parameters.demand_groups.max_persons_per_demand_subgroup,
         )
 

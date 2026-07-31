@@ -11,18 +11,28 @@ from .models import ModeSearchInputs
 
 def build_location_chains(destination_steps: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Build grouped trip chains and one unique location chain per destination sequence."""
+    if "utility_profile_id" not in destination_steps.columns:
+        destination_steps = destination_steps.with_columns(
+            utility_profile_id=pl.lit(0, dtype=pl.UInt32)
+        )
     trip_chains = (
         destination_steps
-        .group_by(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"])
+        .group_by(
+            DEMAND_UNIT_COLS
+            + ["utility_profile_id", "activity_seq_id", "time_seq_id", "dest_seq_id"]
+        )
         .agg(locations=pl.col("from").sort_by("seq_step_index"))
-        .sort(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"])
+        .sort(
+            DEMAND_UNIT_COLS
+            + ["utility_profile_id", "activity_seq_id", "time_seq_id", "dest_seq_id"]
+        )
     )
     _validate_location_chains(trip_chains)
     unique_destination_chains = (
         trip_chains
-        .group_by(["dest_seq_id"])
+        .group_by(["utility_profile_id", "dest_seq_id"])
         .agg(pl.col("locations").first())
-        .sort("dest_seq_id")
+        .sort(["utility_profile_id", "dest_seq_id"])
     )
     return trip_chains, unique_destination_chains
 
@@ -43,7 +53,7 @@ def _validate_location_chains(trip_chains: pl.DataFrame) -> None:
 
     conflicting_destination_sequences = (
         with_location_key
-        .group_by("dest_seq_id")
+        .group_by(["utility_profile_id", "dest_seq_id"])
         .agg(n_location_chains=pl.col("location_key").n_unique())
         .filter(pl.col("n_location_chains") > 1)
     )
@@ -63,7 +73,11 @@ def _validate_location_chains(trip_chains: pl.DataFrame) -> None:
         )
 
 
-def build_search_inputs(transport_costs: Any) -> ModeSearchInputs:
+def build_search_inputs(
+    transport_costs: Any,
+    *,
+    leg_mode_costs: pl.DataFrame | None = None,
+) -> ModeSearchInputs:
     """Build normalized inputs shared by the Rust and Python search backends."""
     modes_by_name = modes_list_to_dict(transport_costs.modes)
     mode_enum_values = get_mode_values(transport_costs.modes, "stay_home")
@@ -83,11 +97,13 @@ def build_search_inputs(transport_costs: Any) -> ModeSearchInputs:
         mode_id_by_name[name]: props["vehicle"] is not None
         for name, props in modes_by_name.items()
     }
-    leg_mode_costs = (
-        transport_costs.get_costs_by_od_and_mode(
+    if leg_mode_costs is None:
+        leg_mode_costs = transport_costs.get_costs_by_od_and_mode(
             ["cost"],
             detail_distances=False,
         )
+    leg_mode_costs = (
+        leg_mode_costs
         .with_columns(
             mode_id=pl.col("mode").replace_strict(mode_id_by_name, return_dtype=pl.UInt16()),
             cost=pl.col("cost").mul(1e6).cast(pl.Float64),
