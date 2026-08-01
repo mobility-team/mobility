@@ -542,3 +542,50 @@ class SwissGTFS(GTFSDataSource):
             return dt.datetime.strptime(date_text, "%Y%m%d").date()
         except ValueError:
             return None
+
+
+class GermanGTFS(GTFSDataSource):
+    """German GTFS metada from gtfs.de"""
+
+    country = "de"
+    provider = "gtfs.de"
+    feed_page_url = "https://download.gtfs.de/germany/free/latest.zip"
+
+
+
+    def insert_data(self, connection: sqlite3.Connection, gtfs_sources) -> None:
+        """Insert the german national GTFS selected for the GTFS reference date."""
+        logging.info("Fetching German GTFS metadata.")
+
+        dataset_id = "latest_free"
+        resource_id = "latest_free"
+        gtfs_file_date = dt.date(2026, 6, 23)
+        gtfs_file_age_days = self.gtfs_file_age_days(gtfs_file_date)
+        status = self.select_source_status(True, gtfs_file_age_days)
+
+        coverage_geometry = self.derive_coverage_from_gtfs_url(
+            dataset_id=dataset_id,
+            resource_id=resource_id,
+            download_url=self.feed_page_url,
+            gtfs_file_date=gtfs_file_date,
+            status=status,
+        )
+        if coverage_geometry is None:
+            raise ValueError(
+                "Could not build German GTFS coverage from stops.txt for "
+                f"{self.feed_page_url}."
+            )
+
+        gtfs_sources.insert_gtfs_file(
+            connection,
+            country=self.country,
+            provider=self.provider,
+            dataset_id=dataset_id,
+            resource_id=resource_id,
+            title="Germany Full",
+            download_url=self.feed_page_url,
+            gtfs_file_date=gtfs_file_date,
+            gtfs_file_age_days=gtfs_file_age_days,
+            status=status,
+            coverage_geometry=coverage_geometry,
+        )

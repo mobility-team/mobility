@@ -128,3 +128,53 @@ class SwissTopoBoundariesDataset(FileAsset):
 
         self.cache_path.write_text(str(self.gpkg_path), encoding="utf-8")
         return self.gpkg_path
+
+
+class BKGBoundariesDataset(FileAsset):
+    """Downloaded and extracted bkg boundaries dataset."""
+
+    archive_name = "swissboundaries3d_2024-01_2056_5728.gpkg.zip" # TODO
+    gpkg_name = "DE_VG250.gpkg"
+    url = (
+        "https://data.geo.admin.ch/ch.swisstopo.swissboundaries3d/" # TODO
+        f"swissboundaries3d_2024-01/{archive_name}"
+    )
+
+    def __init__(self):
+        inputs = {
+            "url": self.url,
+            "archive_name": self.archive_name,
+            "gpkg_name": self.gpkg_name,
+        }
+        cache_path = (
+            pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"])
+            / "bkg"
+            / "bkg_boundaries_dataset.ready"
+        )
+        super().__init__(inputs, cache_path)
+
+    @property
+    def archive_path(self) -> pathlib.Path:
+        return pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "germany" / self.archive_name
+
+    @property
+    def gpkg_path(self) -> pathlib.Path:
+        return self.archive_path.parent / self.gpkg_name
+
+    def get_cached_asset(self) -> pathlib.Path:
+        logging.info("bkg boundaries already downloaded. Reusing %s.", self.gpkg_path)
+        return self.gpkg_path
+
+    def assets_missing(self) -> bool:
+        """Return True when the marker or extracted bkg file is missing."""
+        return super().assets_missing() or not self.gpkg_path.exists()
+
+    def create_and_get_asset(self) -> pathlib.Path:
+        logging.info("Downloading and extracting bkg boundaries.")
+        # download_file(self.url, self.archive_path)
+
+        # with zipfile.ZipFile(self.archive_path, "r") as archive:
+        #     archive.extractall(self.archive_path.parent)
+
+        self.cache_path.write_text(str(self.gpkg_path), encoding="utf-8")
+        return self.gpkg_path
