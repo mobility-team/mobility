@@ -3,6 +3,7 @@ from mobility.runtime.parameter_values import ParameterValue
 from mobility.transport.costs.parameters.generalized_cost_parameters import (
     GeneralizedCostParameters,
 )
+from mobility.transport.costs.path.path_generalized_cost import PathGeneralizedCost
 from mobility.transport.modes.core.transport_mode import TransportMode
 from mobility.transport.modes.public_transport import public_transport as pt_module
 
@@ -56,11 +57,10 @@ def test_public_transport_for_iteration_resolves_walk_leg_parameters(monkeypatch
         cost_of_distance=walk_distance_cost,
     )
     walk_travel_costs = InMemoryAsset({"parameters": {}})
-    walk_generalized_cost = InMemoryAsset(
-        {
-            "travel_costs": walk_travel_costs,
-            "parameters": walk_parameters,
-        }
+    walk_generalized_cost = PathGeneralizedCost(
+        travel_costs=walk_travel_costs,
+        parameters=walk_parameters,
+        mode_name="walk",
     )
     walk_mode = TransportMode(
         name="walk",

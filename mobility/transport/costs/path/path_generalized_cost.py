@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pandas as pd
 
-from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.transport.costs.generalized_cost import GeneralizedCost
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 
-class PathGeneralizedCost(InMemoryAsset):
+class PathGeneralizedCost(GeneralizedCost):
     
     def __init__(self, travel_costs, parameters, mode_name):
         inputs = {
@@ -14,6 +14,14 @@ class PathGeneralizedCost(InMemoryAsset):
             "mode_name": mode_name
         }
         super().__init__(inputs)
+
+    def _from_resolved_inputs(self, inputs: dict) -> "PathGeneralizedCost":
+        """Create a path generalized cost from resolved inputs."""
+        return PathGeneralizedCost(
+            travel_costs=inputs["travel_costs"],
+            parameters=inputs["parameters"],
+            mode_name=inputs["mode_name"],
+        )
         
         
     def get(
