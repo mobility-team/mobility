@@ -351,7 +351,18 @@ Network modifiers describe project-specific changes to road-network assumptions:
 - `mobility.NewRoadModifier`
 - `mobility.RoadLaneNumberModifier`
 
-Use them only when the scenario changes the road network or speed assumptions. Document the geometry, speed, capacity, or lane-number assumption with the scenario.
+Their geometry, speed, capacity, lane-number, border-penalty, and extract-date
+arguments accept `mobility.ParameterValue`. Mobility resolves these values for
+each scenario and iteration before preparing the corresponding road graph. See
+[scenarios](scenarios.md) for an example.
+
+Each modifier also accepts a pre-built parameter model when a project keeps its
+configuration separate from mode construction:
+
+- `mobility.BorderCrossingSpeedModifierParameters`
+- `mobility.LimitedSpeedZonesModifierParameters`
+- `mobility.NewRoadModifierParameters`
+- `mobility.RoadLaneNumberModifierParameters`
 
 ## Group-Day-Trip Model
 

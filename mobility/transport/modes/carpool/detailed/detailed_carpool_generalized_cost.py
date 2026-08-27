@@ -5,13 +5,13 @@ import numpy as np
 from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.parameter_values import PopulationSegmentValue
+from mobility.transport.costs.generalized_cost import GeneralizedCost
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.costs.parameters.cost_of_time_parameters import CostOfTimeParameters
 
 
-class DetailedCarpoolGeneralizedCost(InMemoryAsset):
+class DetailedCarpoolGeneralizedCost(GeneralizedCost):
     
     def __init__(self, travel_costs, parameters):
         inputs = {
@@ -19,6 +19,16 @@ class DetailedCarpoolGeneralizedCost(InMemoryAsset):
             "parameters": parameters
         }
         super().__init__(inputs)
+
+    def _from_resolved_inputs(
+        self,
+        inputs: dict,
+    ) -> "DetailedCarpoolGeneralizedCost":
+        """Create a detailed carpool generalized cost from resolved inputs."""
+        return DetailedCarpoolGeneralizedCost(
+            travel_costs=inputs["travel_costs"],
+            parameters=inputs["parameters"],
+        )
         
         
     def get(
