@@ -10,7 +10,7 @@ args <- commandArgs(trailingOnly = TRUE)
 
 package_path <- args[1]
 tz_file_path <- args[2]
-gtfs_file_path <-args[3]
+gtfs_table_paths <- fromJSON(args[3])
 parameters <- args[4]
 output_file_path <- args[5]
 
@@ -23,9 +23,8 @@ parameters <- fromJSON(parameters)
 info(logger, "Loading GTFS schedules and stops...")
 
 # Read the dated timetable written by the Python GTFS asset.
-manifest <- fromJSON(gtfs_file_path)
-router <- lapply(manifest$tables, function(path) {
-  as.data.table(read_parquet(file.path(dirname(gtfs_file_path), path)))
+router <- lapply(gtfs_table_paths, function(path) {
+  as.data.table(read_parquet(path))
 })
 
 # Prepare travel time between consecutive stops, and wait times between the 

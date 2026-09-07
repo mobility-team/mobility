@@ -113,13 +113,14 @@ class PublicTransportGraph(FileAsset):
         """
 
         logging.info("Computing public transport travel costs...")
+        timetable_paths = gtfs_router.get()
         
         script = RScriptRunner(resources.files('mobility.transport.modes.public_transport').joinpath('prepare_public_transport_graph.R'))
         
         script.run(
             args=[
                 str(transport_zones.cache_path),
-                str(gtfs_router.get()),
+                json.dumps({name: str(path) for name, path in timetable_paths.items() if name != "stops_and_lines"}),
                 json.dumps(parameters.model_dump(mode="json")),
                 str(self.cache_path)
             ]

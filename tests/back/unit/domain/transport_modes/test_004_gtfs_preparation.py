@@ -161,7 +161,7 @@ def test_one_stop_feed_is_discarded(tmp_path, feed_files, zones, route_types):
     assert len(tables["trips"]) == 1
 
 
-def test_asset_writes_manifest_and_invalidates_changed_manual_feed(
+def test_asset_writes_preparation_tables_and_invalidates_changed_manual_feed(
     tmp_path, feed_files, zones, monkeypatch
 ):
     monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
@@ -170,11 +170,31 @@ def test_asset_writes_manifest_and_invalidates_changed_manual_feed(
     monkeypatch.setattr(zone_asset, "get", lambda: zones)
     asset = GTFSRouter(zone_asset, None, additional_gtfs_files=[path])
     asset.prepare_gtfs_router(zone_asset, [path])
-    manifest = json.loads(asset.get_cached_asset().read_text())
-    assert manifest["selected_date"] == "2026-09-08"
-    assert manifest["version"] == asset.inputs["version"]
+    paths = asset.get_cached_asset()
+    assert paths == asset.cache_path
+    assert set(paths) == {"agency", "routes", "stops", "trips", "stop_times", "transfers", "stops_and_lines"}
+    summary = gpd.read_file(paths["stops_and_lines"], layer="summary")
+    assert summary.selected_date.tolist() == ["2026-09-08"]
+    assert summary.version.tolist() == [asset.inputs["version"]]
+    sources = gpd.read_file(paths["stops_and_lines"], layer="sources")
+    assert sources.path.tolist() == [str(path)]
+    assert sources.selected_trips.tolist() == [1]
+    tuesdays = gpd.read_file(paths["stops_and_lines"], layer="tuesdays")
+    assert tuesdays.stop_visits.tolist() == [2, 2]
     assert not asset.assets_missing()
     assert len(pd.read_parquet(asset.cache_path["stop_times"])) == 2
+    gpkg_path = paths["stops_and_lines"]
+    stops = gpd.read_file(gpkg_path, layer="stops")
+    lines = gpd.read_file(gpkg_path, layer="lines")
+    assert stops.stop_visits.sum() == 2
+    assert stops.selected_date.unique().tolist() == ["2026-09-08"]
+    assert lines[["from_stop_id", "to_stop_id"]].values.tolist() == [["1-a", "1-b"]]
+    assert lines.trip_count.tolist() == [1]
+    assert lines.agency_name.tolist() == ["Test"]
+    assert list(lines.geometry.iloc[0].coords) == [(-1.68, 48.11), (-1.6799, 48.11)]
+    assert stops.crs.to_epsg() == lines.crs.to_epsg() == 4326
+    gpkg_path.unlink()
+    assert asset.assets_missing()
     asset.cache_path["trips"].unlink()
     assert asset.assets_missing()
     feed_files["calendar"] = feed_files["calendar"].replace(
@@ -183,6 +203,40 @@ def test_asset_writes_manifest_and_invalidates_changed_manual_feed(
     write_feed(path, feed_files)
     changed = GTFSRouter(zone_asset, None, additional_gtfs_files=[path])
     assert changed.inputs_hash != asset.inputs_hash
+
+
+def test_stops_and_lines_counts_selected_journeys_and_keeps_both_directions(
+    tmp_path: Path,
+    feed_files: dict[str, str],
+    zones: gpd.GeoDataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Map each line segment once, counting only journeys on the selected day."""
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    feed_files["trips"] += "r,s,t2\nr,s,reverse\nr,later,late\n"
+    feed_files["calendar"] += "later,0,1,0,0,0,0,0,20260922,20260922\n"
+    feed_files["stop_times"] += (
+        "t2,09:00:00,09:00:00,a,1\nt2,09:10:00,09:10:00,b,2\n"
+        "reverse,10:00:00,10:00:00,b,1\nreverse,10:10:00,10:10:00,a,2\n"
+        "late,08:00:00,08:00:00,a,1\nlate,08:10:00,08:10:00,b,2\n"
+    )
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    zone_asset = InMemoryAsset({"zones": "fixture"})
+    monkeypatch.setattr(zone_asset, "get", lambda: zones)
+    asset = GTFSRouter(zone_asset, None, additional_gtfs_files=[path])
+
+    # Writing again replaces the map rather than appending duplicate features.
+    for _ in range(2):
+        asset.prepare_gtfs_router(zone_asset, [path])
+        stops = gpd.read_file(asset.cache_path["stops_and_lines"], layer="stops")
+        lines = gpd.read_file(asset.cache_path["stops_and_lines"], layer="lines")
+        assert stops.stop_visits.tolist() == [3, 3]
+        assert stops.line_count.tolist() == [1, 1]
+        assert lines.set_index(["from_stop_id", "to_stop_id"]).trip_count.to_dict() == {
+            ("1-a", "1-b"): 2,
+            ("1-b", "1-a"): 1,
+        }
+        assert lines.selected_date.unique().tolist() == ["2026-09-08"]
 
 
 def test_version_changes_invalidate_timetable_graph_and_downstream_assets(
@@ -212,7 +266,7 @@ def test_version_changes_invalidate_timetable_graph_and_downstream_assets(
 
     graph = graph_module.PublicTransportGraph(zones, parameters)
     assert graph.inputs["version"] == "3"
-    assert graph.gtfs_router.inputs["version"] == "3"
+    assert graph.gtfs_router.inputs["version"] == "5"
     assert graph.cache_path != old_graph.cache_path
     assert graph.gtfs_router.cache_path != old_graph.gtfs_router.cache_path
     assert (
@@ -256,35 +310,42 @@ def test_r_graph_reads_parquet_and_respects_direction(
             "from_stop_id,to_stop_id,transfer_type,min_transfer_time,from_route_id\na,b,3,,\na,b,2,600,r\n"
         )
     if case.startswith("transfer_"):
-        # Arrive on line r at 08:00. The 08:03 departure on line q is too
-        # early; the next departure tests waiting, an exact connection, or
-        # a total transfer time above the model's 20-minute limit.
-        minute = {
-            "transfer_wait": 10,
-            "transfer_exact": 5,
-            "transfer_over_limit": 21,
-            "transfer_same_stop": 10,
-        }[case]
-        minimum = 1020 if case == "transfer_over_limit" else 300
+        # Arrive on line r at stop a at 08:00. Line q departs at 08:03
+        # and again at the time below, taking ten minutes to reach stop c.
+        boarding_stop = "a" if case == "transfer_same_stop" else "b"
+        minimum_connection_seconds = 5 * 60
+        if case == "transfer_wait":
+            # Ready at 08:05: miss 08:03 and wait until 08:10.
+            second_departure, second_arrival = "08:10:00", "08:20:00"
+            expected_transfer_seconds = 10 * 60
+        elif case == "transfer_exact":
+            # The second departure leaves exactly when the passenger is ready.
+            second_departure, second_arrival = "08:05:00", "08:15:00"
+            expected_transfer_seconds = 5 * 60
+        elif case == "transfer_over_limit":
+            # Ready at 08:17, but the next departure makes the total 21 minutes.
+            second_departure, second_arrival = "08:21:00", "08:31:00"
+            minimum_connection_seconds = 17 * 60
+        else:
+            # At the same stop, the default 31 seconds lets us catch 08:03.
+            second_departure, second_arrival = "08:10:00", "08:20:00"
+            expected_transfer_seconds = 3 * 60
         feed_files["stops"] += "c,C,48.11,-1.677\n"
         feed_files["routes"] += "q,a,Connecting line,3\n"
         feed_files["trips"] = "route_id,service_id,trip_id\nr,s,t\nq,s,q1\nq,s,q2\n"
         feed_files["stop_times"] = (
             "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
             "t,07:50:00,07:50:00,b,1\nt,08:00:00,08:00:00,a,2\n"
-            "q1,08:03:00,08:03:00,b,1\nq1,08:13:00,08:13:00,c,2\n"
-            f"q2,08:{minute:02d}:00,08:{minute:02d}:00,b,1\n"
-            f"q2,08:{minute + 10:02d}:00,08:{minute + 10:02d}:00,c,2\n"
+            f"q1,08:03:00,08:03:00,{boarding_stop},1\n"
+            "q1,08:13:00,08:13:00,c,2\n"
+            f"q2,{second_departure},{second_departure},{boarding_stop},1\n"
+            f"q2,{second_arrival},{second_arrival},c,2\n"
         )
         feed_files["transfers"] = (
-            "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n" f"a,b,2,{minimum}\n"
+            "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n"
+            f"a,b,2,{minimum_connection_seconds}\n"
         )
         if case == "transfer_same_stop":
-            feed_files["stop_times"] = (
-                feed_files["stop_times"]
-                .replace("08:03:00,08:03:00,b,1", "08:03:00,08:03:00,a,1")
-                .replace("08:10:00,08:10:00,b,1", "08:10:00,08:10:00,a,1")
-            )
             del feed_files["transfers"]
     if case == "restriction_outside_period":
         feed_files["trips"] += "r,s,later\n"
@@ -296,9 +357,7 @@ def test_r_graph_reads_parquet_and_respects_direction(
     ).prepare()
     for name, table in tables.items():
         table.to_parquet(tmp_path / f"{name}.parquet", index=False)
-    metadata["tables"] = {name: f"{name}.parquet" for name in tables}
-    manifest = tmp_path / "router.json"
-    manifest.write_text(json.dumps(metadata))
+    table_paths = {name: str(tmp_path / f"{name}.parquet") for name in tables}
     script_path = resources.files("mobility.transport.modes.public_transport").joinpath(
         "prepare_public_transport_graph.R"
     )
@@ -314,23 +373,18 @@ stopifnot(all(stops_routes[stop_index %in% exit_times$from, gtfs_stop_id] == "1-
 stopifnot(nrow(transfers) == 1)
 """
     elif case.startswith("transfer_"):
-        script += """
+        script += f"""
 origin <- stops_routes[gtfs_stop_id == "1-a" & route_id == "1-r" & stop_type == "arrival", stop_index]
-destination <- stops_routes[gtfs_stop_id == "1-b" & route_id == "1-q" & stop_type == "departure", stop_index]
+destination <- stops_routes[gtfs_stop_id == "1-{boarding_stop}" & route_id == "1-q" & stop_type == "departure", stop_index]
 connection <- transfer_times[from %in% origin & to %in% destination]
 """
         if case == "transfer_over_limit":
             script += "stopifnot(nrow(connection) == 0)\n"
         else:
-            if case == "transfer_same_stop":
-                script = script.replace(
-                    'gtfs_stop_id == "1-b" & route_id == "1-q"',
-                    'gtfs_stop_id == "1-a" & route_id == "1-q"',
-                )
-                minute = 3
             script += (
-                f"stopifnot(nrow(connection) == 1, connection$time == {minute * 60}, "
-                f"connection$perceived_time == {minute * 120})\n"
+                f"stopifnot(nrow(connection) == 1, "
+                f"connection$time == {expected_transfer_seconds}, "
+                f"connection$perceived_time == {expected_transfer_seconds * 2})\n"
             )
     else:
         script += """
@@ -354,7 +408,7 @@ connection <- transfers[from %in% origin & to %in% destination]
             str(test_script),
             str(resources.files("mobility")),
             "unused",
-            str(manifest),
+            json.dumps(table_paths),
             json.dumps(
                 {
                     "start_time_min": 7,

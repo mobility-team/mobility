@@ -142,7 +142,9 @@ Rules for stops or explicitly named lines absent from the selected timetable hav
 
 ## Boarding, Alighting And Vehicle Information
 
-Boarding means getting on a vehicle; alighting means getting off. These permissions are separate from the transfer rules. Mobility preserves the GTFS fields `pickup_type` and `drop_off_type`. Only value 0 allows the action in the model. Values 1, 2 and 3 prevent it, including services that require a booking or an arrangement with the driver. The stop visit still counts when choosing the Tuesday. The graph uses permissions from journeys within the modelled time window; a later unrestricted journey does not make a restricted morning stop usable.
+Boarding means getting on a vehicle; alighting means getting off. These permissions are separate from the transfer rules. Mobility preserves the GTFS fields `pickup_type` and `drop_off_type`. For each stop visit, value 0 permits the action; values 1, 2 and 3 restrict it, including services that require a booking or an arrangement with the driver. Restricted stop visits still count when choosing the Tuesday.
+
+The graph combines journeys by line and stop to calculate average travel costs. It allows boarding at a line's stop if at least one journey permits boarding there within the modelled time window. It applies the same rule separately to alighting. For example, if boarding is forbidden at 08:10 but allowed at 08:30 on the same line, that stop remains available for boarding in an 08:00–09:00 modelled period. This average-cost graph does not enforce every individual journey's restriction. A journey outside the modelled period cannot make the stop available within it.
 
 Mobility assigns each route a mode, such as bus or tram, and a default vehicle capacity from its route-type table. These capacities are assumptions, rather than counts of seats or standing places in the operator's actual vehicles. An unrecognised route type currently receives the bus label and a capacity of 50 passengers.
 
@@ -150,17 +152,59 @@ If a route has no short name, Mobility uses `route_long_name` if that column exi
 
 This preparation covers services with listed stops and timetables.
 
-## Saved Timetable And Summary
+## Saved Timetable, Stops And Lines
 
-Mobility saves six tables: agencies, routes, stops, trips, stop times and transfers. They are stored in Parquet format, which can be read with `pandas.read_parquet`. A JSON summary file whose name ends in `gtfs_router.json` links to those tables and records:
+Mobility saves six tables: agencies, routes, stops, trips, stop times and transfers. They are stored in Parquet format, which can be read with `pandas.read_parquet`. A GeoPackage whose name ends in `gtfs_stops_and_lines.gpkg` contains the stops and lines, plus three tables describing preparation:
 
-- the selected date and stop-visit totals for candidate Tuesdays;
-- each source file, whether it was used or skipped, and a code calculated from its contents to identify identical files;
-- the number of trips from each prepared feed running on the selected day;
-- counts of removed invalid trips and trips with estimated intermediate times for each prepared feed;
-- the frequency and interpolation assumptions.
+- **`summary`** records the selected date, preparation version and the date-selection, frequency and interpolation assumptions.
+- **`sources`** records each source file, whether it was used or skipped, a code calculated from its contents to identify identical files, and counts of selected trips, removed invalid trips and trips with estimated times.
+- **`tuesdays`** records the stop-visit total for each candidate Tuesday.
 
 The removed-trip and estimated-time counts refer to the original vehicle trips, before repeated departures are created and a Tuesday is chosen. The selected-trip count refers to the final timetable. For a file skipped because none of its trips could be used, the summary records that outcome without the detailed counts.
+
+Open the GeoPackage in QGIS to inspect the merged timetable for the selected Tuesday:
+
+- **`stops`** contains every retained stop, its coordinates, number of stop visits and number of lines serving it.
+- **`lines`** contains one directed segment per line and pair of consecutive stops, with the line and operator information and the number of vehicle journeys using that segment. Opposite directions and different branches remain separate.
+
+Both layers record the selected date and describe the whole day's service, including restricted stop visits. The line geometry connects retained stops with straight segments; it does not follow roads or tracks and does not use `shapes.txt`. These layers show the prepared timetable, before the graph applies the modelled time window and boarding or transfer restrictions.
+
+This standalone example prepares a timetable and a map of its stops and lines in a project folder. It needs no population, transport modes or simulation. The municipality and date below are example inputs; replace them with those for your study. The first run downloads the required geographical data and available archived GTFS files:
+
+```python
+import mobility
+from mobility.transport.modes.public_transport.gtfs.gtfs_router import GTFSRouter
+
+mobility.set_params(project_data_folder_path="my-project", r_packages=False)
+# Example study area: within 50 km of Rennes, France.
+zones = mobility.TransportZones("fr-35238", radius=50.0, backend="python")
+sources = mobility.GTFSSources(
+    gtfs_reference_date="2026-07-24",
+    gtfs_sources_folder="my-project/inputs/gtfs_sources",
+    countries=["fr"],
+    transport_zones=zones,
+)
+router = GTFSRouter(transport_zones=zones, gtfs_sources=sources)
+
+# Prepare the timetable and its map if they are not already saved.
+paths = router.get()
+gpkg_path = paths["stops_and_lines"]
+print(gpkg_path)
+```
+
+Open the printed path in QGIS, or read the layers in Python:
+
+```python
+import geopandas as gpd
+
+stops = gpd.read_file(gpkg_path, layer="stops")
+lines = gpd.read_file(gpkg_path, layer="lines")
+summary = gpd.read_file(gpkg_path, layer="summary")
+sources = gpd.read_file(gpkg_path, layer="sources")
+tuesdays = gpd.read_file(gpkg_path, layer="tuesdays")
+```
+
+Change the municipality code, radius and reference date to inspect another study area. This example prepares official source timetables only. To include a custom timetable, pass `additional_gtfs_files=["path/to/your-feed.zip"]` when creating `GTFSRouter`. Calling `router.get()` prepares the timetable and map without building the travel-cost graph.
 
 Mobility reuses saved results when the inputs are unchanged. After editing an additional GTFS file, rerun the Python code that creates your `PublicTransportMode`, so Mobility detects the new contents.
 

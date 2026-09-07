@@ -1,12 +1,16 @@
 import hashlib
-import json
 import logging
 import os
 import pathlib
 from importlib import resources
+from typing import Any
 
 import gtfs_kit
+import geopandas as gpd
+import numpy as np
 import pandas as pd
+import pyogrio
+from shapely import linestrings
 
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
@@ -24,7 +28,7 @@ class GTFSRouter(FileAsset):
 
     Original operating dates are preserved. The earliest Tuesday with the most
     stop visits is selected after spatial filtering and calendar exceptions.
-    get() returns the JSON summary path, which lists the saved tables and sources.
+    get() returns the paths of the timetable tables and GeoPackage of stops and lines.
     Path calculations use the public-transport graph built from these tables.
     """
 
@@ -32,12 +36,18 @@ class GTFSRouter(FileAsset):
         self,
         transport_zones: TransportZones,
         gtfs_sources: GTFSSources | None,
-        additional_gtfs_files: list[str | pathlib.Path] | str | pathlib.Path | None = None,
+        additional_gtfs_files: (
+            ParameterValue | SensitivityValue | list[str | pathlib.Path] | str | pathlib.Path | None
+        ) = None,
         expected_agencies: list[str] | None = None,
     ) -> None:
         """Reuse saved timetables only when sources and additional files are unchanged."""
         additional_hashes = {}
-        if additional_gtfs_files is not None:
+        # Modes are first defined for all scenarios. Read file contents only after
+        # for_iteration() has selected the additional timetables for one iteration.
+        if additional_gtfs_files is not None and not isinstance(
+            additional_gtfs_files, (ParameterValue, SensitivityValue)
+        ):
             for path in self.normalize_additional_gtfs_files(additional_gtfs_files):
                 digest = hashlib.sha256()
                 with open(path, "rb") as stream:
@@ -45,7 +55,7 @@ class GTFSRouter(FileAsset):
                         digest.update(chunk)
                 additional_hashes[path] = digest.hexdigest()
         inputs = {
-            "version": "3",
+            "version": "5",
             "transport_zones": transport_zones,
             "gtfs_sources": gtfs_sources,
             "additional_gtfs_files": additional_gtfs_files,
@@ -58,15 +68,15 @@ class GTFSRouter(FileAsset):
             name: folder / f"gtfs_{name}.parquet"
             for name in ("agency", "routes", "stops", "trips", "stop_times", "transfers")
         }
-        cache_path["manifest"] = folder / "gtfs_router.json"
+        cache_path["stops_and_lines"] = folder / "gtfs_stops_and_lines.gpkg"
 
         super().__init__(inputs, cache_path)
 
-    def get_cached_asset(self) -> pathlib.Path:
-        """Return the summary file linking the prepared timetable tables."""
-        return self.cache_path["manifest"]
+    def get_cached_asset(self) -> dict[str, pathlib.Path]:
+        """Return the paths of all prepared timetable outputs."""
+        return self.cache_path
 
-    def create_and_get_asset(self) -> pathlib.Path:
+    def create_and_get_asset(self) -> dict[str, pathlib.Path]:
         """Download the selected sources and cache the prepared timetable."""
 
         logging.info("Downloading GTFS files for stops within the transport zones...")
@@ -87,7 +97,7 @@ class GTFSRouter(FileAsset):
         transport_zones: TransportZones,
         gtfs_files: list[str | pathlib.Path],
     ) -> None:
-        """Save the selected timetable, then its summary of dates and sources."""
+        """Save the selected timetable and a GeoPackage with stops, lines and preparation information."""
         tables, metadata = GTFSTimetable(
             gtfs_files,
             transport_zones.get(),
@@ -102,10 +112,9 @@ class GTFSRouter(FileAsset):
         if missing:
             raise ValueError(f"Expected agencies have no selected service: {missing}")
 
-        # Write the summary last so interrupted preparation cannot leave a summary
-        # referring to a mixture of new and old timetable tables.
-        manifest = self.cache_path["manifest"]
-        manifest.unlink(missing_ok=True)
+        # Write the GeoPackage last. Its absence marks interrupted preparation
+        # as incomplete even when some Parquet tables have already been replaced.
+        self.cache_path["stops_and_lines"].unlink(missing_ok=True)
         for name, table in tables.items():
             path = self.cache_path[name]
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,10 +122,67 @@ class GTFSRouter(FileAsset):
             table.to_parquet(temporary, index=False)
             temporary.replace(path)
         metadata["version"] = self.inputs["version"]
-        metadata["tables"] = {name: self.cache_path[name].name for name in tables}
-        temporary = manifest.with_suffix(".json.part")
-        temporary.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-        temporary.replace(manifest)
+        self.write_stops_and_lines(tables, metadata)
+
+    def write_stops_and_lines(
+        self, tables: dict[str, pd.DataFrame], metadata: dict[str, Any]
+    ) -> None:
+        """Save the selected day's map, source details and preparation assumptions.
+
+        Lines connect consecutive retained stops with straight segments. They do
+        not describe the actual road or track geometry supplied in shapes.txt.
+        """
+        # Count the full day's visits at each stop, including restricted visits.
+        visits = tables["stop_times"].merge(
+            tables["trips"][["trip_id", "route_id"]], on="trip_id"
+        )
+        counts = visits.groupby("stop_id").agg(
+            stop_visits=("trip_id", "size"), line_count=("route_id", "nunique")
+        )
+        stops = tables["stops"].merge(counts, on="stop_id")
+        stops["selected_date"] = metadata["selected_date"]
+        stops = gpd.GeoDataFrame(
+            stops, geometry=gpd.points_from_xy(stops.stop_lon, stops.stop_lat), crs=4326
+        )
+
+        # Keep separate directions and branches of each line without drawing
+        # the same segment again for every departure.
+        visits = visits.sort_values(["trip_id", "stop_sequence"])
+        visits["from_stop_id"] = visits.groupby("trip_id").stop_id.shift()
+        segments = visits.dropna(subset=["from_stop_id"]).rename(
+            columns={"stop_id": "to_stop_id"}
+        )
+        segments = segments.loc[segments.from_stop_id.ne(segments.to_stop_id)]
+        segments = segments.groupby(["route_id", "from_stop_id", "to_stop_id"], as_index=False).agg(
+            trip_count=("trip_id", "nunique")
+        )
+        routes = tables["routes"].merge(
+            tables["agency"][["agency_id", "agency_name"]], on="agency_id"
+        )
+        segments = segments.merge(routes, on="route_id")
+        coordinates = stops.set_index("stop_id")[["stop_lon", "stop_lat"]]
+        origins = coordinates.loc[segments.from_stop_id].to_numpy()
+        destinations = coordinates.loc[segments.to_stop_id].to_numpy()
+        geometry = linestrings(np.stack([origins, destinations], axis=1))
+        segments["selected_date"] = metadata["selected_date"]
+        lines = gpd.GeoDataFrame(segments, geometry=geometry, crs=4326)
+
+        # Keep maps, source details and date selection together in one file.
+        path = self.cache_path["stops_and_lines"]
+        temporary = path.with_name(path.stem + ".part.gpkg")
+        temporary.unlink(missing_ok=True)
+        stops.to_file(temporary, layer="stops", driver="GPKG", index=False)
+        lines.to_file(temporary, layer="lines", driver="GPKG", index=False)
+        for name in ("sources", "tuesdays"):
+            pyogrio.write_dataframe(
+                pd.DataFrame(metadata[name]), temporary, layer=name, driver="GPKG"
+            )
+        summary = {
+            key: value for key, value in metadata.items() if key not in ("sources", "tuesdays")
+        }
+        pyogrio.write_dataframe(pd.DataFrame([summary]), temporary, layer="summary", driver="GPKG")
+        temporary.replace(path)
+        logging.info("Saved GTFS stops and lines to %s", path)
 
     @staticmethod
     def normalize_additional_gtfs_files(
@@ -127,7 +193,7 @@ class GTFSRouter(FileAsset):
             raise ValueError(
                 "additional_gtfs_files still contains scenario or iteration values. "
                 "Resolve the public transport mode with for_iteration(...) before "
-                "building the GTFS router."
+                "preparing the timetable."
             )
 
         if isinstance(additional_gtfs_files, (str, pathlib.Path)):
