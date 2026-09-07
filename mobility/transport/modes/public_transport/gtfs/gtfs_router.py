@@ -2,34 +2,27 @@ import gtfs_kit
 import os
 import pathlib
 import logging
+import json
+import hashlib
 import pandas as pd
 
 from importlib import resources
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
 from mobility.spatial.transport_zones import TransportZones
-from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 
 from mobility.transport.modes.public_transport.gtfs.gtfs_sources import GTFSSources
 
 from .gtfs_data import GTFSData
+from .prepare_gtfs import prepare_gtfs
 
 class GTFSRouter(FileAsset):
     """
-    Creates a GTFS router for the given transport zones and saves it in .rds format.
-    Currently works for France and Switzerland.
-    
-    Uses the GTFS sources file to select GTFS files intersecting
-    the transport zones, downloads the selected GTFS files with GTFSData,
-    checks that expected agencies are present when requested, and creates the
-    GTFS router using the R script prepare_gtfs_router.R.
-    
-    For each GTFS source, this script will only keep stops with the region, add missing route types (by default bus),
-    make IDs unique and remove erroneous calendar dates. 
-    It will then align all GTFS sources on a common start date and merge all GTFS into one.
-    It adds missing transfers between stops using a crow-fly formula, ans with a limit of 200m.
-    It finds the Tuesday with the most services running within the montth with the most services on average.
-    Finally, this global Tuesday-only GTFS is saved.
+    Prepare a Tuesday timetable in Python and cache its tables as Parquet.
+
+    Original operating dates are preserved. The earliest Tuesday with the most
+    stop visits is selected after spatial filtering and calendar exceptions.
+    get() returns the JSON manifest path, which also records source coverage.
     """
     
     def __init__(
@@ -39,77 +32,74 @@ class GTFSRouter(FileAsset):
         additional_gtfs_files: list = None,
         expected_agencies: list = None,
     ):
+        additional_hashes = {}
+        if additional_gtfs_files is not None:
+            for path in self.normalize_additional_gtfs_files(additional_gtfs_files):
+                digest = hashlib.sha256()
+                with open(path, "rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                additional_hashes[path] = digest.hexdigest()
         inputs = {
+            "preparation_version": "python-1",
             "transport_zones": transport_zones,
             "gtfs_sources": gtfs_sources,
             "additional_gtfs_files": additional_gtfs_files,
             "expected_agencies": expected_agencies,
+            "additional_gtfs_hashes": additional_hashes,
         }
         
-        cache_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "gtfs_router.rds"
+        folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
+        cache_path = {name: folder / f"gtfs_{name}.parquet" for name in
+                      ("agency", "routes", "stops", "trips", "stop_times", "transfers")}
+        cache_path["manifest"] = folder / "gtfs_router.json"
 
         super().__init__(inputs, cache_path)
         
     def get_cached_asset(self):
-        return self.cache_path
+        return self.cache_path["manifest"]
     
     def create_and_get_asset(self):
         
         logging.info("Downloading GTFS files for stops within the transport zones...")
         
         transport_zones = self.inputs["transport_zones"]
-        expected_agencies = self.inputs["expected_agencies"]
-        
         gtfs_files = self.get_gtfs_files(transport_zones)
         
         additional_gtfs_files = self.inputs["additional_gtfs_files"]
         if additional_gtfs_files is not None:
             gtfs_files.extend(self.normalize_additional_gtfs_files(additional_gtfs_files))
             
-        if expected_agencies is not None:
-            self.check_expected_agencies(gtfs_files, list(expected_agencies))
-        
         self.prepare_gtfs_router(transport_zones, gtfs_files)
 
-        return self.cache_path
+        return self.get_cached_asset()
     
-    def check_expected_agencies(self, gtfs_files, expected_agencies):
-        logging.debug(gtfs_files)
-        for gtfs_file in gtfs_files:
-            logging.debug("GTFS")
-            agencies = GTFSData.get_agencies_names(gtfs_file)
-            logging.debug(agencies)
-            logging.debug(type(agencies))
-            for expected_agency in expected_agencies:
-                logging.debug(f'Looking for {expected_agency} in {gtfs_file}')
-                if expected_agency.lower() in agencies.lower():
-                    logging.debug(f"{expected_agency} found in {gtfs_file}")
-                    expected_agencies.remove(expected_agency)
-        logging.debug(expected_agencies)
-        if expected_agencies == []:
-            logging.debug("All expected agencies were found")
-            return True
-        else:
-            logging.debug("Some agencies were not found in GTFS files.")
-            logging.debug(expected_agencies)
-            raise IndexError('Missing agencies')
-            
     def prepare_gtfs_router(self, transport_zones, gtfs_files):
-        
-        gtfs_files = ",".join(gtfs_files)
-        
-        script = RScriptRunner(resources.files('mobility.transport.modes.public_transport.gtfs').joinpath('prepare_gtfs_router.R'))
-        
-        script.run(
-            args=[
-                str(transport_zones.cache_path),
-                gtfs_files,
-                str(resources.files('mobility.runtime.resources').joinpath('gtfs/gtfs_route_types.csv')),
-                str(self.cache_path)
-            ]
+        tables, metadata = prepare_gtfs(
+            gtfs_files, transport_zones.get(),
+            resources.files('mobility.runtime.resources').joinpath('gtfs/gtfs_route_types.csv'),
         )
-            
-        return None
+        agencies = tables["agency"].agency_name.str.casefold()
+        missing = [name for name in self.inputs["expected_agencies"] or []
+                   if not agencies.str.contains(name.casefold(), regex=False).any()]
+        if missing:
+            raise ValueError(f"Expected agencies have no selected service: {missing}")
+
+        # Publish the manifest last. A failed rebuild must never leave a complete
+        # cache marker pointing to a mixture of new and old tables.
+        manifest = self.cache_path["manifest"]
+        manifest.unlink(missing_ok=True)
+        for name, table in tables.items():
+            path = self.cache_path[name]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".parquet.part")
+            table.to_parquet(temporary, index=False)
+            temporary.replace(path)
+        metadata["preparation_version"] = self.inputs["preparation_version"]
+        metadata["tables"] = {name: self.cache_path[name].name for name in tables}
+        temporary = manifest.with_suffix(".json.part")
+        temporary.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        temporary.replace(manifest)
 
     @staticmethod
     def normalize_additional_gtfs_files(additional_gtfs_files):

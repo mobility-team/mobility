@@ -109,6 +109,36 @@ Add public transport after the initial mode set runs correctly. Public transport
 
 The current public-transport workflow computes selected-period generalized costs with average waiting and transfer assumptions.
 
+GTFS preparation runs in Python. It preserves each feed's operating dates and
+selects the earliest Tuesday with the most stop visits inside the study area
+and its 10 km buffer. Calendar exceptions are applied before selection. Feeds
+with identical timetable content are included once, and trips with fewer than
+two retained stop visits are removed. If there is no Tuesday service, preparation
+fails instead of substituting trips from other days.
+
+The cached timetable consists of Parquet tables and a `gtfs_router.json` manifest.
+The manifest records the selected date, source fingerprints, duplicate feeds,
+source trip counts on that date, and the scores for other candidate Tuesdays.
+Warnings identify sources with no service on the selected date. The reference
+date selects source archives; it does not force every timetable to operate on
+that date. Manually added scenario feeds must use the intended operating dates.
+Changing a manual feed's content changes the cache key when assets are constructed
+again. Existing RDS timetable caches are not reused.
+
+Repeated departures in `frequencies.txt` are expanded. For `exact_times=0`, evenly
+spaced departures approximate the headway-based service. Blank intermediate
+times are interpolated by stop sequence between timed endpoints; trips with
+missing endpoint times or backwards times are dropped and counted in the manifest.
+
+Boarding, alighting and route-specific transfer restrictions are passed to the
+graph builder. Transfers within 200 m use straight-line walking estimates unless
+an explicit rule overrides them. Trip-specific transfer rules and in-seat transfer
+types 4 and 5 currently raise an error for relevant stops, rather than silently
+becoming unrestricted transfers. Services requiring a booking are not treated as
+ordinary boarding or alighting. The graph still uses average costs and runs in R;
+this migration removes R from timetable preparation, not from all public transport
+routing.
+
 It is usually combined with an access mode and an egress mode. A common first setup is walk, public transport, then walk:
 
 ```python
