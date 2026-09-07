@@ -182,7 +182,17 @@ def test_asset_writes_manifest_and_invalidates_changed_manual_feed(
     assert changed.inputs_hash != asset.inputs_hash
 
 
-@pytest.mark.parametrize("case", ["restricted", "forbidden", "route_override"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "restricted",
+        "forbidden",
+        "route_override",
+        "transfer_wait",
+        "transfer_exact",
+        "transfer_over_limit",
+    ],
+)
 def test_r_graph_reads_parquet_and_respects_direction(
     tmp_path, feed_files, zones, route_types, case
 ):
@@ -203,6 +213,25 @@ def test_r_graph_reads_parquet_and_respects_direction(
     if case == "route_override":
         feed_files["transfers"] = (
             "from_stop_id,to_stop_id,transfer_type,min_transfer_time,from_route_id\na,b,3,,\na,b,2,600,r\n"
+        )
+    if case.startswith("transfer_"):
+        # Arrive on line r at 08:00. The 08:03 departure on line q is too
+        # early; the next departure tests waiting, an exact connection, or
+        # a total transfer time above the model's 20-minute limit.
+        minute = {"transfer_wait": 10, "transfer_exact": 5, "transfer_over_limit": 21}[case]
+        minimum = 1020 if case == "transfer_over_limit" else 300
+        feed_files["stops"] += "c,C,48.11,-1.677\n"
+        feed_files["routes"] += "q,a,Connecting line,3\n"
+        feed_files["trips"] = "route_id,service_id,trip_id\nr,s,t\nq,s,q1\nq,s,q2\n"
+        feed_files["stop_times"] = (
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
+            "t,07:50:00,07:50:00,b,1\nt,08:00:00,08:00:00,a,2\n"
+            "q1,08:03:00,08:03:00,b,1\nq1,08:13:00,08:13:00,c,2\n"
+            f"q2,08:{minute:02d}:00,08:{minute:02d}:00,b,1\n"
+            f"q2,08:{minute + 10:02d}:00,08:{minute + 10:02d}:00,c,2\n"
+        )
+        feed_files["transfers"] = (
+            "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n" f"a,b,2,{minimum}\n"
         )
     tables, metadata = GTFSTimetable(
         [write_feed(tmp_path / "feed.zip", feed_files)], zones, route_types
@@ -226,6 +255,19 @@ stopifnot(all(stops_routes[stop_index %in% access_times$to, gtfs_stop_id] == "1-
 stopifnot(all(stops_routes[stop_index %in% exit_times$from, gtfs_stop_id] == "1-b"))
 stopifnot(nrow(transfers) == 1)
 """
+    elif case.startswith("transfer_"):
+        script += """
+origin <- stops_routes[gtfs_stop_id == "1-a" & route_id == "1-r" & stop_type == "arrival", stop_index]
+destination <- stops_routes[gtfs_stop_id == "1-b" & route_id == "1-q" & stop_type == "departure", stop_index]
+connection <- transfer_times[from %in% origin & to %in% destination]
+"""
+        if case == "transfer_over_limit":
+            script += "stopifnot(nrow(connection) == 0)\n"
+        else:
+            script += (
+                f"stopifnot(nrow(connection) == 1, connection$time == {minute * 60}, "
+                f"connection$perceived_time == {minute * 120})\n"
+            )
     else:
         script += """
 stopifnot(nrow(travel_times) == 2, all(travel_times$time == 600))
@@ -236,7 +278,7 @@ connection <- transfers[from %in% origin & to %in% destination]
         script += (
             "stopifnot(nrow(connection) == 0)\n"
             if case == "forbidden"
-            else "stopifnot(nrow(connection) == 1, connection$transfer_time == 600)\n"
+            else "stopifnot(nrow(connection) == 1, connection$min_transfer_time == 600)\n"
         )
     test_script = tmp_path / "check_graph.R"
     test_script.write_text(script)
@@ -301,12 +343,49 @@ def test_frequency_offsets_use_original_first_stop(tmp_path, feed_files, zones, 
     assert tables["stop_times"].departure_time.min() == 9 * 3600
 
 
-def test_trip_specific_transfer_fails_explicitly(tmp_path, feed_files, zones, route_types):
+@pytest.mark.parametrize(
+    "rule", ["2,60,t", "4,,", "5,,", "9,,", "2,,", "2,-1,", "2,bad,", "2,nan,"]
+)
+def test_unusable_transfer_omits_connection_and_keeps_timetable(
+    tmp_path: Path,
+    feed_files: dict[str, str],
+    zones: gpd.GeoDataFrame,
+    route_types: Path,
+    caplog: pytest.LogCaptureFixture,
+    rule: str,
+) -> None:
+    """An unsupported rule must not abort preparation or restore a walking link."""
     feed_files["transfers"] = (
-        "from_stop_id,to_stop_id,transfer_type,min_transfer_time,from_trip_id\na,b,2,60,t\n"
+        "from_stop_id,to_stop_id,transfer_type,min_transfer_time,from_trip_id\n"
+        f"a,b,2,60,\na,b,{rule}\n"
     )
-    with pytest.raises(ValueError, match="Trip-specific transfer"):
-        GTFSTimetable([write_feed(tmp_path / "feed.zip", feed_files)], zones, route_types).prepare()
+    tables, _ = GTFSTimetable(
+        [write_feed(tmp_path / "feed.zip", feed_files)], zones, route_types
+    ).prepare()
+
+    assert len(tables["trips"]) == 1
+    assert len(tables["stop_times"]) == 2
+    assert tables["transfers"][["from_stop_id", "to_stop_id"]].to_dict("records") == [
+        {"from_stop_id": "1-b", "to_stop_id": "1-a"}
+    ]
+    assert "Omitting all transfers from 1-a to 1-b" in caplog.text
+
+
+def test_unusable_transfer_on_unused_line_does_not_remove_connections(
+    tmp_path: Path,
+    feed_files: dict[str, str],
+    zones: gpd.GeoDataFrame,
+    route_types: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A restriction on a line outside the selected timetable has no effect."""
+    feed_files["transfers"] = "from_stop_id,to_stop_id,transfer_type,from_route_id\na,b,4,unused\n"
+    tables, _ = GTFSTimetable(
+        [write_feed(tmp_path / "feed.zip", feed_files)], zones, route_types
+    ).prepare()
+
+    assert len(tables["transfers"]) == 2
+    assert "Omitting all transfers" not in caplog.text
 
 
 def test_frequency_periods_keep_unique_ids_and_scheduled_trips(

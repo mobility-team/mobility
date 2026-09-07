@@ -266,32 +266,48 @@ class GTFSTimetable:
         rules = rules.loc[
             rules.from_stop_id.isin(transfer_stops) & rules.to_stop_id.isin(transfer_stops)
         ]
+        # Rules for lines absent from the selected day cannot affect its connections.
+        for column in ("from_route_id", "to_route_id"):
+            rules = rules.loc[rules[column].eq("") | rules[column].isin(tables["routes"].route_id)]
         declared_transfers = []
+        excluded_connections = set()
         for row in rules.to_dict("records"):
             origins = transfer_stops[row["from_stop_id"]]
             destinations = transfer_stops[row["to_stop_id"]]
-            if row["from_trip_id"] or row["to_trip_id"]:
-                raise ValueError(
-                    "Trip-specific transfer rules are not yet supported by the public transport graph"
+            try:
+                if row["from_trip_id"] or row["to_trip_id"]:
+                    raise ValueError("a rule for individual vehicle journeys cannot be represented")
+                transfer_type = int(row["transfer_type"] or 0)
+                if transfer_type not in (0, 1, 2, 3):
+                    raise ValueError(f"transfer_type {transfer_type} cannot be represented")
+                minimum = (
+                    float(row["min_transfer_time"]) if row["min_transfer_time"] != "" else None
                 )
-            transfer_type = int(row["transfer_type"] or 0)
-            if transfer_type not in (0, 1, 2, 3):
-                raise ValueError(
-                    f"Transfer type {transfer_type} is not supported by the public transport graph"
+                if transfer_type == 2 and minimum is None:
+                    raise ValueError("the required min_transfer_time is missing")
+                if minimum is not None and (not np.isfinite(minimum) or minimum < 0):
+                    raise ValueError("min_transfer_time must be a finite, nonnegative number")
+            except ValueError as error:
+                # Omit the connection, including added walks and other rules,
+                # instead of replacing an unreadable restriction with permission.
+                logging.warning(
+                    "Omitting all transfers from %s to %s (including station platforms): %s",
+                    row["from_stop_id"],
+                    row["to_stop_id"],
+                    error,
                 )
-            minimum = row["min_transfer_time"]
-            if transfer_type == 2 and minimum == "":
-                raise ValueError("Transfer type 2 requires min_transfer_time")
-            if minimum != "" and float(minimum) < 0:
-                raise ValueError("Negative min_transfer_time")
+                excluded_connections.update(
+                    (origin, destination) for origin in origins for destination in destinations
+                )
+                continue
             from_route, to_route = row["from_route_id"], row["to_route_id"]
             for origin in origins:
                 for destination in destinations:
                     # Recommended connections with no stated minimum still need walking time.
                     left, right = positions[origin], positions[destination]
                     seconds = (
-                        float(minimum)
-                        if minimum != ""
+                        minimum
+                        if minimum is not None
                         else 31 + 1.125 * np.linalg.norm(left - right)
                     )
                     declared_transfers.append(
@@ -305,6 +321,10 @@ class GTFSTimetable:
                             "specificity": int(bool(from_route)) + int(bool(to_route)),
                         }
                     )
-        return pd.concat(
+        transfers = pd.concat(
             [transfers, pd.DataFrame(declared_transfers)], ignore_index=True
         ).drop_duplicates()
+        if excluded_connections:
+            stop_pairs = pd.MultiIndex.from_frame(transfers[["from_stop_id", "to_stop_id"]])
+            transfers = transfers.loc[~stop_pairs.isin(excluded_connections)]
+        return transfers

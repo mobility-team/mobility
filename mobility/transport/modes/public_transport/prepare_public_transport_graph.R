@@ -238,47 +238,36 @@ transfers <- merge(
 transfers <- transfers[(from_route_id == "" | from_route_id == arrival_route_id) &
                        (to_route_id == "" | to_route_id == departure_route_id)]
 transfers <- transfers[, .SD[specificity == max(specificity)], by = list(stop_index_from, stop_index_to)]
-transfers <- transfers[, list(forbidden = any(transfer_type == 3), transfer_time = max(min_transfer_time)),
+transfers <- transfers[, list(forbidden = any(transfer_type == 3), min_transfer_time = max(min_transfer_time)),
                        by = list(from = stop_index_from, to = stop_index_to)]
 transfers <- transfers[forbidden == FALSE]
 
 # For each arrival at a given route/stop, find what route/stops are accessible with a transfer
 arrivals <- stop_times[can_alight == TRUE, list(from = arrival_stop_index, arrival_time)]
 arrivals <- merge(arrivals, transfers, by = "from", allow.cartesian = TRUE)
-arrivals[, arrival_time_plus_transfer := arrival_time + transfer_time]
-arrivals <- arrivals[order(arrival_time_plus_transfer)]
+arrivals[, ready_time := arrival_time + min_transfer_time]
 
-# For each from/to/arrival_time combination, find the next departures
-transfer_times <- arrivals[,
-  list(from, to, arrival_time_plus_transfer_cp = arrival_time_plus_transfer, arrival_time_plus_transfer) 
-][
-  departures[, list(to, departure_time_cp = departure_time, departure_time)],
-  on = list(to, arrival_time_plus_transfer_cp < departure_time_cp),
-  list(from, to, arrival_time_plus_transfer, departure_time),
-  mult = "all",
+# Take the first departure the passenger can reach, including one leaving
+# exactly when they are ready. Count the full time from arrival, so the
+# minimum connection time is included as well as any subsequent waiting.
+transfer_times <- departures[order(departure_time)][
+  unique(arrivals[, list(from, to, arrival_time, ready_time)]),
+  on = list(to, departure_time >= ready_time),
+  list(from = i.from, to = i.to, time = x.departure_time - i.arrival_time),
+  mult = "first",
   nomatch = 0
 ]
 
-transfer_times[, transfer_time := departure_time - arrival_time_plus_transfer]
-
 transfer_times <- transfer_times[,
    list(
-     transfer_time = min(transfer_time)
-   ),
-   by = list(from, to, arrival_time_plus_transfer)
-]
-
-
-transfer_times <- transfer_times[,
-   list(
-     time = mean(transfer_time)
+     time = mean(time)
    ),
    by = list(from, to)
 ]
 
 transfer_times[, perceived_time := time*parameters[["transfer_time_coeff"]]]
 
-# Remove transfers that take more than 20 min
+# Remove connections whose average total transfer time is 20 minutes or more.
 transfer_times <- transfer_times[time < 20.0*60.0]
 
 

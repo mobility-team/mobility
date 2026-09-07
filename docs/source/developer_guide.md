@@ -86,7 +86,7 @@ When changing the quickstart workflow, update both files and the quickstart docu
 
 ## GTFS Preparation Code
 
-The modelling steps and assumptions are described in [GTFS Data Preparation](gtfs-data-preparation). Keep that section up to date when changing how supply is selected or transfers are calculated.
+The modelling steps and assumptions are described in [GTFS Data Preparation](gtfs-data-preparation). Keep that page up to date when changing how supply is selected or transfers are calculated.
 
 Three classes divide the preparation work:
 
@@ -102,6 +102,8 @@ Polars reads the CSV tables and performs large numeric conversions. pandas handl
 
 `GTFSRouter.get()` returns the path of the JSON summary linking the six Parquet tables. The tables are written before the summary so an interrupted write cannot appear complete. The saved result depends on the source inputs, the preparation version and the contents of manually added files. Change `preparation_version` if a change makes previously saved timetables unsuitable for reuse.
 
-The transfer table's `specificity` column records rule priority: -1 for an added walking connection, 0 for a declared rule without route restrictions, 1 when one route is named, and 2 when both routes are named. The R graph calculation applies that priority before calculating transfer costs.
+The transfer table's `specificity` column records rule priority: -1 for an added walking connection, 0 for a declared rule without route restrictions, 1 when one route is named, and 2 when both routes are named. The R graph calculation applies that priority before calculating transfer costs. Unsupported or unusable transfer rules remove the affected directed stop pairs, including added walking connections, with a warning. They do not stop preparation.
+
+The graph finds the first departure at or after the arrival plus minimum connection time. Its transfer cost includes the whole time from arrival to that departure, then averages across arrivals. `PublicTransportGraph` has its own preparation version so cost changes rebuild graphs without rebuilding unchanged GTFS tables.
 
 The small-feed tests in `tests/back/unit/domain/transport_modes/test_004_gtfs_preparation.py` cover calendar selection, frequency departures, time checks, saved outputs and transfer restrictions, including the R graph reader.

@@ -45,7 +45,7 @@ class GTFSRouter(FileAsset):
                         digest.update(chunk)
                 additional_hashes[path] = digest.hexdigest()
         inputs = {
-            "preparation_version": "python-1",
+            "preparation_version": "python-2",
             "transport_zones": transport_zones,
             "gtfs_sources": gtfs_sources,
             "additional_gtfs_files": additional_gtfs_files,
