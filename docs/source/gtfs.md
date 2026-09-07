@@ -104,6 +104,8 @@ minimum connection time in seconds = 31 + 1.125 * straight-line distance in metr
 
 For stops 100 metres apart, this gives 143.5 seconds, or about 2 minutes 24 seconds. The estimate does not follow footpaths or account for barriers such as fences or rivers.
 
+Different lines sharing the same stop can also connect, with the same formula giving a minimum of 31 seconds. Declared rules can replace this default or forbid the connection.
+
 The operator can supply additional information in `transfers.txt`:
 
 | Information in the file | How Mobility uses it |
@@ -140,7 +142,7 @@ Rules for stops or explicitly named lines absent from the selected timetable hav
 
 ## Boarding, Alighting And Vehicle Information
 
-Boarding means getting on a vehicle; alighting means getting off. These permissions are separate from the transfer rules. Mobility preserves the GTFS fields `pickup_type` and `drop_off_type`. Only value 0 allows the action in the model. Values 1, 2 and 3 prevent it, including services that require a booking or an arrangement with the driver. The stop visit still counts when choosing the Tuesday.
+Boarding means getting on a vehicle; alighting means getting off. These permissions are separate from the transfer rules. Mobility preserves the GTFS fields `pickup_type` and `drop_off_type`. Only value 0 allows the action in the model. Values 1, 2 and 3 prevent it, including services that require a booking or an arrangement with the driver. The stop visit still counts when choosing the Tuesday. The graph uses permissions from journeys within the modelled time window; a later unrestricted journey does not make a restricted morning stop usable.
 
 Mobility assigns each route a mode, such as bus or tram, and a default vehicle capacity from its route-type table. These capacities are assumptions, rather than counts of seats or standing places in the operator's actual vehicles. An unrecognised route type currently receives the bus label and a capacity of 50 passengers.
 

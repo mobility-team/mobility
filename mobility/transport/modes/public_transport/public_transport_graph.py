@@ -67,8 +67,7 @@ class PublicTransportGraph(FileAsset):
         )
 
         inputs = {
-            # Rebuild graphs that previously omitted minimum connection times.
-            "preparation_version": "2",
+            "version": "3",
             "transport_zones": transport_zones,
             "gtfs_router": gtfs_router,
             "parameters": parameters

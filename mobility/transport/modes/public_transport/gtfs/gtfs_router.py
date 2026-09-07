@@ -45,7 +45,7 @@ class GTFSRouter(FileAsset):
                         digest.update(chunk)
                 additional_hashes[path] = digest.hexdigest()
         inputs = {
-            "preparation_version": "python-2",
+            "version": "3",
             "transport_zones": transport_zones,
             "gtfs_sources": gtfs_sources,
             "additional_gtfs_files": additional_gtfs_files,
@@ -112,7 +112,7 @@ class GTFSRouter(FileAsset):
             temporary = path.with_suffix(".parquet.part")
             table.to_parquet(temporary, index=False)
             temporary.replace(path)
-        metadata["preparation_version"] = self.inputs["preparation_version"]
+        metadata["version"] = self.inputs["version"]
         metadata["tables"] = {name: self.cache_path[name].name for name in tables}
         temporary = manifest.with_suffix(".json.part")
         temporary.write_text(json.dumps(metadata, indent=2), encoding="utf-8")

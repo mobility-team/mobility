@@ -100,7 +100,7 @@ Keep preparation methods with the class responsible for the modelling step. GTFS
 
 Polars reads the CSV tables and performs large numeric conversions. pandas handles the combined timetable, and GeoPandas handles spatial operations. Each ZIP file is extracted and checked for identical contents in one pass; temporary extracted files are removed after reading it.
 
-`GTFSRouter.get()` returns the path of the JSON summary linking the six Parquet tables. The tables are written before the summary so an interrupted write cannot appear complete. The saved result depends on the source inputs, the preparation version and the contents of manually added files. Change `preparation_version` if a change makes previously saved timetables unsuitable for reuse.
+`GTFSRouter.get()` returns the path of the JSON summary linking the six Parquet tables. The tables are written before the summary so an interrupted write cannot appear complete. The saved result depends on the source inputs, the version and the contents of manually added files. Change the `version` input if a change makes previously saved timetables unsuitable for reuse.
 
 The transfer table's `specificity` column records rule priority: -1 for an added walking connection, 0 for a declared rule without route restrictions, 1 when one route is named, and 2 when both routes are named. The R graph calculation applies that priority before calculating transfer costs. Unsupported or unusable transfer rules remove the affected directed stop pairs, including added walking connections, with a warning. They do not stop preparation.
 

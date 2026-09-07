@@ -8,13 +8,6 @@ library(dbscan)
 
 args <- commandArgs(trailingOnly = TRUE)
 
-# args <- c(
-#   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\test-09\\e90a8308da40d062e66d1021c5094d4d-transport_zones.gpkg',
-#   'D:\\test-09\\0a8bd50eb6f9cc645144a17944c656b6-gtfs_router.json',
-#   '{"start_time_min": 6.5, "start_time_max": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "transfer_time_coeff": 2.0, "no_show_perceived_prob": 0.2, "target_time": 8.0, "max_wait_time_at_destination": 0.25, "max_perceived_time": 2.0, "additional_gtfs_files": [], "expected_agencies": null}', 'D:\\test-09\\public_transport_graph\\simplified\\bf997a1f492f20fc672523ec61eed7f5-public-transport-graph'
-# )
-
 package_path <- args[1]
 tz_file_path <- args[2]
 gtfs_file_path <-args[3]
@@ -71,7 +64,11 @@ stops_routes <- unique(stops_routes)
 
 # Keep onboard travel through restricted stops, but only allow ordinary
 # boarding/alighting where the selected timetable explicitly permits it.
-permissions <- merge(router$stop_times, router$trips[, list(trip_id, route_id)], by = "trip_id")
+permissions <- merge(
+  router$stop_times[departure_time > parameters$start_time_min*3600 &
+                    departure_time < parameters$start_time_max*3600],
+  router$trips[, list(trip_id, route_id)], by = "trip_id"
+)
 permissions <- permissions[, list(can_board = any(pickup_type == 0), can_alight = any(drop_off_type == 0)),
                            by = list(route_id, gtfs_stop_id = stop_id)]
 
@@ -177,10 +174,6 @@ departures <- merge(
   stops_routes[stop_type == "departure", list(route_id, stop_id = gtfs_stop_id, to = stop_index)],
   by = c("route_id", "stop_id")
 )
-
-# Remove abnormal travel times (negative and very low, inf to 10 s)
-# stop_times[, n_abnormal := sum(travel_time < 10.0), by = trip_id]
-# stop_times <- stop_times[!(n_abnormal > 0.0)]
 
 info(logger, "Computing average travel times between stops...")
 

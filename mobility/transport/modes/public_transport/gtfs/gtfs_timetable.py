@@ -222,6 +222,14 @@ class GTFSTimetable:
         coordinates = np.column_stack([points.x, points.y])
         pairs = cKDTree(coordinates).query_pairs(200, output_type="ndarray")
         pairs = np.concatenate([pairs, pairs[:, ::-1]], axis=0)
+        # Different lines can share one stop. Include these connections before
+        # applying declared rules, so same-stop prohibitions still take priority.
+        visits = tables["stop_times"][["trip_id", "stop_id"]].merge(
+            tables["trips"][["trip_id", "route_id"]], on="trip_id"
+        )
+        lines_per_stop = visits.groupby("stop_id").route_id.nunique()
+        shared_stops = np.flatnonzero(active.stop_id.isin(lines_per_stop[lines_per_stop > 1].index))
+        pairs = np.concatenate([pairs, np.column_stack([shared_stops, shared_stops])], axis=0)
         distance = np.linalg.norm(coordinates[pairs[:, 0]] - coordinates[pairs[:, 1]], axis=1)
         ids = active.stop_id.to_numpy()
         positions = dict(zip(ids, coordinates))

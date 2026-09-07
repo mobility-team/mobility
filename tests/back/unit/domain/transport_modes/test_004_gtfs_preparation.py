@@ -12,6 +12,8 @@ import pandas as pd
 import pytest
 from shapely.geometry import box
 
+import mobility.transport.modes.public_transport.public_transport_graph as graph_module
+from mobility.runtime.assets.file_asset import FileAsset
 from mobility.transport.modes.public_transport.gtfs.gtfs_timetable import GTFSTimetable
 from mobility.transport.modes.public_transport.gtfs.gtfs_router import GTFSRouter
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
@@ -170,6 +172,7 @@ def test_asset_writes_manifest_and_invalidates_changed_manual_feed(
     asset.prepare_gtfs_router(zone_asset, [path])
     manifest = json.loads(asset.get_cached_asset().read_text())
     assert manifest["selected_date"] == "2026-09-08"
+    assert manifest["version"] == asset.inputs["version"]
     assert not asset.assets_missing()
     assert len(pd.read_parquet(asset.cache_path["stop_times"])) == 2
     asset.cache_path["trips"].unlink()
@@ -182,15 +185,53 @@ def test_asset_writes_manifest_and_invalidates_changed_manual_feed(
     assert changed.inputs_hash != asset.inputs_hash
 
 
+def test_version_changes_invalidate_timetable_graph_and_downstream_assets(
+    tmp_path: Path, feed_files: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Older saved results must not hide timetable or graph corrections."""
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    zones = InMemoryAsset({"zones": "fixture"})
+    zones.countries = ["fr"]
+    parameters = graph_module.PublicTransportRoutingParameters(
+        gtfs_reference_date="2026-09-01",
+        gtfs_sources_folder=str(tmp_path),
+        additional_gtfs_files=[str(write_feed(tmp_path / "feed.zip", feed_files))],
+    )
+    file_asset_init = FileAsset.__init__
+    monkeypatch.setattr(graph_module, "GTFSSources", lambda **kwargs: None)
+
+    def use_previous_version(self, inputs, cache_path):
+        previous_inputs = dict(inputs)
+        previous_inputs.pop("version")
+        previous_inputs["preparation_version"] = "python-2" if isinstance(self, GTFSRouter) else "2"
+        file_asset_init(self, previous_inputs, cache_path)
+
+    with monkeypatch.context() as previous:
+        previous.setattr(FileAsset, "__init__", use_previous_version)
+        old_graph = graph_module.PublicTransportGraph(zones, parameters)
+
+    graph = graph_module.PublicTransportGraph(zones, parameters)
+    assert graph.inputs["version"] == "3"
+    assert graph.gtfs_router.inputs["version"] == "3"
+    assert graph.cache_path != old_graph.cache_path
+    assert graph.gtfs_router.cache_path != old_graph.gtfs_router.cache_path
+    assert (
+        InMemoryAsset({"graph": graph}).inputs_hash
+        != InMemoryAsset({"graph": old_graph}).inputs_hash
+    )
+
+
 @pytest.mark.parametrize(
     "case",
     [
         "restricted",
+        "restriction_outside_period",
         "forbidden",
         "route_override",
         "transfer_wait",
         "transfer_exact",
         "transfer_over_limit",
+        "transfer_same_stop",
     ],
 )
 def test_r_graph_reads_parquet_and_respects_direction(
@@ -204,7 +245,7 @@ def test_r_graph_reads_parquet_and_respects_direction(
     feed_files["stop_times"] = (
         "trip_id,arrival_time,departure_time,stop_id,stop_sequence,pickup_type,drop_off_type\nt,08:00:00,08:00:00,a,1,0,1\nt,08:10:00,08:10:00,b,2,1,0\n"
     )
-    if case != "restricted":
+    if case not in ("restricted", "restriction_outside_period"):
         # Both stops have arrival and departure nodes, so the prohibition must
         # actually remove a possible transfer rather than an unused endpoint.
         feed_files["stop_times"] = (
@@ -218,7 +259,12 @@ def test_r_graph_reads_parquet_and_respects_direction(
         # Arrive on line r at 08:00. The 08:03 departure on line q is too
         # early; the next departure tests waiting, an exact connection, or
         # a total transfer time above the model's 20-minute limit.
-        minute = {"transfer_wait": 10, "transfer_exact": 5, "transfer_over_limit": 21}[case]
+        minute = {
+            "transfer_wait": 10,
+            "transfer_exact": 5,
+            "transfer_over_limit": 21,
+            "transfer_same_stop": 10,
+        }[case]
         minimum = 1020 if case == "transfer_over_limit" else 300
         feed_files["stops"] += "c,C,48.11,-1.677\n"
         feed_files["routes"] += "q,a,Connecting line,3\n"
@@ -233,6 +279,18 @@ def test_r_graph_reads_parquet_and_respects_direction(
         feed_files["transfers"] = (
             "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n" f"a,b,2,{minimum}\n"
         )
+        if case == "transfer_same_stop":
+            feed_files["stop_times"] = (
+                feed_files["stop_times"]
+                .replace("08:03:00,08:03:00,b,1", "08:03:00,08:03:00,a,1")
+                .replace("08:10:00,08:10:00,b,1", "08:10:00,08:10:00,a,1")
+            )
+            del feed_files["transfers"]
+    if case == "restriction_outside_period":
+        feed_files["trips"] += "r,s,later\n"
+        feed_files[
+            "stop_times"
+        ] += "later,11:00:00,11:00:00,a,1,0,0\nlater,11:10:00,11:10:00,b,2,0,0\n"
     tables, metadata = GTFSTimetable(
         [write_feed(tmp_path / "feed.zip", feed_files)], zones, route_types
     ).prepare()
@@ -245,7 +303,7 @@ def test_r_graph_reads_parquet_and_respects_direction(
         "prepare_public_transport_graph.R"
     )
     script = script_path.read_text()
-    if case == "restricted":
+    if case in ("restricted", "restriction_outside_period"):
         script += """
 stopifnot(nrow(travel_times) == 1)
 origin <- stops_routes[stop_index == travel_times$from, gtfs_stop_id]
@@ -264,6 +322,12 @@ connection <- transfer_times[from %in% origin & to %in% destination]
         if case == "transfer_over_limit":
             script += "stopifnot(nrow(connection) == 0)\n"
         else:
+            if case == "transfer_same_stop":
+                script = script.replace(
+                    'gtfs_stop_id == "1-b" & route_id == "1-q"',
+                    'gtfs_stop_id == "1-a" & route_id == "1-q"',
+                )
+                minute = 3
             script += (
                 f"stopifnot(nrow(connection) == 1, connection$time == {minute * 60}, "
                 f"connection$perceived_time == {minute * 120})\n"
