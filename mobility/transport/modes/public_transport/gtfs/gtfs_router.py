@@ -1,12 +1,13 @@
-import gtfs_kit
+import hashlib
+import json
+import logging
 import os
 import pathlib
-import logging
-import json
-import hashlib
+from importlib import resources
+
+import gtfs_kit
 import pandas as pd
 
-from importlib import resources
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
 from mobility.spatial.transport_zones import TransportZones
@@ -14,7 +15,8 @@ from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.modes.public_transport.gtfs.gtfs_sources import GTFSSources
 
 from .gtfs_data import GTFSData
-from .prepare_gtfs import prepare_gtfs
+from .gtfs_timetable import GTFSTimetable
+
 
 class GTFSRouter(FileAsset):
     """
@@ -24,14 +26,15 @@ class GTFSRouter(FileAsset):
     stop visits is selected after spatial filtering and calendar exceptions.
     get() returns the JSON manifest path, which also records source coverage.
     """
-    
+
     def __init__(
         self,
         transport_zones: TransportZones,
-        gtfs_sources: GTFSSources,
-        additional_gtfs_files: list = None,
-        expected_agencies: list = None,
-    ):
+        gtfs_sources: GTFSSources | None,
+        additional_gtfs_files: list[str | pathlib.Path] | str | pathlib.Path | None = None,
+        expected_agencies: list[str] | None = None,
+    ) -> None:
+        """Track source assets and manual feed contents in the cache identity."""
         additional_hashes = {}
         if additional_gtfs_files is not None:
             for path in self.normalize_additional_gtfs_files(additional_gtfs_files):
@@ -48,40 +51,53 @@ class GTFSRouter(FileAsset):
             "expected_agencies": expected_agencies,
             "additional_gtfs_hashes": additional_hashes,
         }
-        
+
         folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
-        cache_path = {name: folder / f"gtfs_{name}.parquet" for name in
-                      ("agency", "routes", "stops", "trips", "stop_times", "transfers")}
+        cache_path = {
+            name: folder / f"gtfs_{name}.parquet"
+            for name in ("agency", "routes", "stops", "trips", "stop_times", "transfers")
+        }
         cache_path["manifest"] = folder / "gtfs_router.json"
 
         super().__init__(inputs, cache_path)
-        
-    def get_cached_asset(self):
+
+    def get_cached_asset(self) -> pathlib.Path:
+        """Return the manifest used by the public transport graph reader."""
         return self.cache_path["manifest"]
-    
-    def create_and_get_asset(self):
-        
+
+    def create_and_get_asset(self) -> pathlib.Path:
+        """Download the selected sources and cache the prepared timetable."""
+
         logging.info("Downloading GTFS files for stops within the transport zones...")
-        
+
         transport_zones = self.inputs["transport_zones"]
         gtfs_files = self.get_gtfs_files(transport_zones)
-        
+
         additional_gtfs_files = self.inputs["additional_gtfs_files"]
         if additional_gtfs_files is not None:
             gtfs_files.extend(self.normalize_additional_gtfs_files(additional_gtfs_files))
-            
+
         self.prepare_gtfs_router(transport_zones, gtfs_files)
 
         return self.get_cached_asset()
-    
-    def prepare_gtfs_router(self, transport_zones, gtfs_files):
-        tables, metadata = prepare_gtfs(
-            gtfs_files, transport_zones.get(),
-            resources.files('mobility.runtime.resources').joinpath('gtfs/gtfs_route_types.csv'),
-        )
+
+    def prepare_gtfs_router(
+        self,
+        transport_zones: TransportZones,
+        gtfs_files: list[str | pathlib.Path],
+    ) -> None:
+        """Prepare the selected day and publish its tables before its manifest."""
+        tables, metadata = GTFSTimetable(
+            gtfs_files,
+            transport_zones.get(),
+            resources.files("mobility.runtime.resources").joinpath("gtfs/gtfs_route_types.csv"),
+        ).prepare()
         agencies = tables["agency"].agency_name.str.casefold()
-        missing = [name for name in self.inputs["expected_agencies"] or []
-                   if not agencies.str.contains(name.casefold(), regex=False).any()]
+        missing = [
+            name
+            for name in self.inputs["expected_agencies"] or []
+            if not agencies.str.contains(name.casefold(), regex=False).any()
+        ]
         if missing:
             raise ValueError(f"Expected agencies have no selected service: {missing}")
 
@@ -102,7 +118,9 @@ class GTFSRouter(FileAsset):
         temporary.replace(manifest)
 
     @staticmethod
-    def normalize_additional_gtfs_files(additional_gtfs_files):
+    def normalize_additional_gtfs_files(
+        additional_gtfs_files: list[str | pathlib.Path] | str | pathlib.Path,
+    ) -> list[str]:
         """Return additional GTFS paths after checking they are resolved."""
         if isinstance(additional_gtfs_files, (ParameterValue, SensitivityValue)):
             raise ValueError(
@@ -123,9 +141,9 @@ class GTFSRouter(FileAsset):
                 )
             paths.append(str(path))
         return paths
-    
-    
-    def get_gtfs_files(self, transport_zones):
+
+    def get_gtfs_files(self, transport_zones: TransportZones) -> list[str]:
+        """Download usable source archives intersecting the transport zones."""
         transport_zones = transport_zones.get()
         gtfs_sources = self.inputs["gtfs_sources"]
         gtfs_sources.get()
@@ -133,10 +151,10 @@ class GTFSRouter(FileAsset):
 
         gtfs_files = GTFSData.download_gtfs_files(selected_sources.to_dict("records"))
         gtfs_files = [str(path) for path, file_ok in gtfs_files if file_ok]
-            
+
         return gtfs_files
-    
-    def audit_gtfs(self):
+
+    def audit_gtfs(self) -> None:
         """
         Used to audit and verify GTFS files.
         For each GTFS in the defined Transport Zones, the function :
@@ -331,7 +349,3 @@ class GTFSRouter(FileAsset):
 
                 # Print some info
                 logging.info(f"GTFS stops and shapes exported as GeoPackage in file {output_path}")
-
-
-            
-        

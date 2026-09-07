@@ -109,7 +109,13 @@ Add public transport after the initial mode set runs correctly. Public transport
 
 The current public-transport workflow computes selected-period generalized costs with average waiting and transfer assumptions.
 
-GTFS preparation runs in Python. It preserves each feed's operating dates and
+GTFS preparation runs in Python. `GTFSRouter` manages the FileAsset cache,
+`GTFSFeed` reads and validates one archive, and `GTFSTimetable` combines feeds,
+selects the service date and prepares transfers. Polars reads CSV files and
+filters large stop-time tables before conversion to pandas; GeoPandas handles
+the spatial operations. Temporary extracted files are removed after each feed.
+
+Preparation preserves each feed's operating dates and
 selects the earliest Tuesday with the most stop visits inside the study area
 and its 10 km buffer. Calendar exceptions are applied before selection. Feeds
 with identical timetable content are included once, and trips with fewer than
