@@ -160,7 +160,13 @@ class GTFSFeed:
 
     def clean_stop_times(self, times: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
         """Parse times, interpolate internal blanks and discard invalid trips."""
-        times["stop_sequence"] = pd.to_numeric(times.stop_sequence, errors="raise")
+        # Parse numeric columns in Polars before pandas sorts and groups trips.
+        # Invalid values become NaN and are rejected by the checks below.
+        times["stop_sequence"] = (
+            pl.from_pandas(times.stop_sequence).cast(pl.Float64, strict=False).to_numpy()
+        )
+        if times.stop_sequence.isna().any():
+            raise ValueError("Invalid stop_sequence")
         times = times.sort_values(["trip_id", "stop_sequence"])
         if times.duplicated(["trip_id", "stop_sequence"]).any():
             raise ValueError("Duplicate stop_sequence within a trip")
@@ -169,7 +175,13 @@ class GTFSFeed:
         for col in ("pickup_type", "drop_off_type"):
             if col not in times:
                 times[col] = 0
-            times[col] = pd.to_numeric(times[col].replace("", "0"), errors="raise")
+            else:
+                times[col] = (
+                    pl.from_pandas(times[col])
+                    .replace("", "0")
+                    .cast(pl.Float64, strict=False)
+                    .to_numpy()
+                )
             if not times[col].isin([0, 1, 2, 3]).all():
                 raise ValueError(f"Invalid {col}")
 
@@ -354,7 +366,7 @@ class GTFSFeed:
             else exceptions
         )
         declared = set(calendar.get("service_id", [])) | set(exceptions.get("service_id", []))
-        if not set(trips.service_id).issubset(declared):
+        if not set(trips.service_id.unique()).issubset(declared):
             raise ValueError("Trips reference services without a calendar")
 
         return agency, routes, calendar, exceptions

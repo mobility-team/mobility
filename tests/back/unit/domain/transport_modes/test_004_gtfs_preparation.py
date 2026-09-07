@@ -5,6 +5,7 @@ import zipfile
 import shutil
 import subprocess
 from importlib import resources
+from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
@@ -351,3 +352,56 @@ def test_frequency_periods_outside_area_leave_local_schedule(
 
     assert tables["trips"].trip_id.tolist() == ["1-t"]
     assert len(tables["stop_times"]) == 2
+
+
+def test_station_transfer_rules_apply_to_active_platforms(
+    tmp_path: Path, feed_files: dict[str, str], zones: gpd.GeoDataFrame, route_types: Path
+) -> None:
+    """Station rules survive filtering while unrelated transfer rules are ignored."""
+    feed_files["stops"] = (
+        "stop_id,stop_name,stop_lat,stop_lon,parent_station\n"
+        "a,A,48.11,-1.68,station\nb,B,48.11,-1.6799,\n"
+        "station,Station,48.11,-1.68,\noutside,Outside,47.0,-1.0,\n"
+    )
+    feed_files["transfers"] = (
+        "from_stop_id,to_stop_id,transfer_type,from_trip_id\n" "station,b,3,\noutside,b,4,unused\n"
+    )
+    tables, _ = GTFSTimetable(
+        [write_feed(tmp_path / "feed.zip", feed_files)], zones, route_types
+    ).prepare()
+
+    explicit = tables["transfers"].query("specificity >= 0")
+    assert explicit[["from_stop_id", "to_stop_id", "transfer_type"]].to_dict("records") == [
+        {"from_stop_id": "1-a", "to_stop_id": "1-b", "transfer_type": 3}
+    ]
+    assert set(tables["stops"].stop_id) == {"1-a", "1-b"}
+
+
+@pytest.mark.parametrize(
+    "column,value", [("stop_sequence", "bad"), ("pickup_type", "4"), ("drop_off_type", "bad")]
+)
+def test_invalid_numeric_stop_fields_are_rejected(
+    tmp_path: Path,
+    feed_files: dict[str, str],
+    zones: gpd.GeoDataFrame,
+    route_types: Path,
+    column: str,
+    value: str,
+) -> None:
+    """Faster numeric parsing must retain timetable validation."""
+    times = pd.DataFrame(
+        {
+            "trip_id": ["t", "t"],
+            "arrival_time": ["08:00:00", "08:10:00"],
+            "departure_time": ["08:00:00", "08:10:00"],
+            "stop_id": ["a", "b"],
+            "stop_sequence": ["1", "2"],
+            "pickup_type": ["", "0"],
+            "drop_off_type": ["0", ""],
+        }
+    )
+    times.loc[0, column] = value
+    feed_files["stop_times"] = times.to_csv(index=False)
+
+    with pytest.raises(ValueError, match=column):
+        GTFSTimetable([write_feed(tmp_path / "feed.zip", feed_files)], zones, route_types).prepare()

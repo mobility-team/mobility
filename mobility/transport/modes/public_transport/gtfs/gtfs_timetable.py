@@ -238,15 +238,33 @@ class GTFSTimetable:
         # A station rule applies to its platforms rather than to an unused station node.
         children = {stop: [stop] for stop in active.stop_id}
         if "parent_station" in active:
-            for parent, group in active.loc[active.parent_station.ne("")].groupby("parent_station"):
-                children[parent] = group.stop_id.tolist()
-        explicit = []
-        for row in tables["transfers"].to_dict("records"):
-            origins, destinations = children.get(row.get("from_stop_id"), []), children.get(
-                row.get("to_stop_id"), []
+            platforms = active.loc[active.parent_station.ne("")]
+            for parent, stop_ids in platforms.groupby("parent_station").stop_id:
+                children[parent] = stop_ids.tolist()
+
+        # Discard rules outside the selected timetable before creating Python
+        # records. National feeds can contain many unrelated transfer rules.
+        rules = (
+            tables["transfers"]
+            .reindex(
+                columns=[
+                    "from_stop_id",
+                    "to_stop_id",
+                    "transfer_type",
+                    "min_transfer_time",
+                    "from_route_id",
+                    "to_route_id",
+                    "from_trip_id",
+                    "to_trip_id",
+                ]
             )
-            if not origins or not destinations:
-                continue
+            .fillna("")
+        )
+        rules = rules.loc[rules.from_stop_id.isin(children) & rules.to_stop_id.isin(children)]
+        explicit = []
+        for row in rules.to_dict("records"):
+            origins = children[row["from_stop_id"]]
+            destinations = children[row["to_stop_id"]]
             if row.get("from_trip_id", "") or row.get("to_trip_id", ""):
                 raise ValueError(
                     "Trip-specific transfer rules are not yet supported by the public transport graph"
