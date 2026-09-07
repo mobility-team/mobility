@@ -31,12 +31,11 @@ class GTFSTimetable:
         self.transport_zones = transport_zones
         self.route_types_path = route_types_path
         self.tables: dict[str, pd.DataFrame] = {}
-        self.sources: list[dict[str, Any]] = []
 
     def prepare(self) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
         """Return the selected tables and metadata describing their coverage."""
-        self.tables, self.sources = self.read_feeds()
-        tables, sources = self.tables, self.sources
+        self.tables, sources = self.read_feeds()
+        tables = self.tables
         date, services, scores = self.select_tuesday()
         trips = tables["trips"]
         tables["trips"] = trips.loc[trips.service_id.isin(services)].copy()
@@ -141,7 +140,7 @@ class GTFSTimetable:
                                 table[column].eq(""), prefix + table[column]
                             )
                 feeds.append(feed)
-            except (ValueError, KeyError, zipfile.BadZipFile) as error:
+            except (ValueError, zipfile.BadZipFile) as error:
                 raise ValueError(f"Cannot prepare GTFS {path}: {error}") from error
 
         if not feeds:
@@ -213,7 +212,7 @@ class GTFSTimetable:
         """Keep explicit prohibitions and route rules alongside walking links."""
         tables = self.tables
         stops = tables["stops"]
-        active = stops.loc[stops.stop_id.isin(tables["stop_times"].stop_id.unique())].copy()
+        active = stops.loc[stops.stop_id.isin(tables["stop_times"].stop_id.unique())]
         points = gpd.GeoSeries(gpd.points_from_xy(active.stop_lon, active.stop_lat), crs=4326)
         points = points.to_crs(points.estimate_utm_crs())
         coordinates = np.column_stack([points.x, points.y])
@@ -244,42 +243,39 @@ class GTFSTimetable:
 
         # Discard rules outside the selected timetable before creating Python
         # records. National feeds can contain many unrelated transfer rules.
-        rules = (
-            tables["transfers"]
-            .reindex(
-                columns=[
-                    "from_stop_id",
-                    "to_stop_id",
-                    "transfer_type",
-                    "min_transfer_time",
-                    "from_route_id",
-                    "to_route_id",
-                    "from_trip_id",
-                    "to_trip_id",
-                ]
-            )
-            .fillna("")
+        rules = tables["transfers"].reindex(
+            columns=[
+                "from_stop_id",
+                "to_stop_id",
+                "transfer_type",
+                "min_transfer_time",
+                "from_route_id",
+                "to_route_id",
+                "from_trip_id",
+                "to_trip_id",
+            ],
+            fill_value="",
         )
         rules = rules.loc[rules.from_stop_id.isin(children) & rules.to_stop_id.isin(children)]
         explicit = []
         for row in rules.to_dict("records"):
             origins = children[row["from_stop_id"]]
             destinations = children[row["to_stop_id"]]
-            if row.get("from_trip_id", "") or row.get("to_trip_id", ""):
+            if row["from_trip_id"] or row["to_trip_id"]:
                 raise ValueError(
                     "Trip-specific transfer rules are not yet supported by the public transport graph"
                 )
-            kind = int(row.get("transfer_type", "") or 0)
+            kind = int(row["transfer_type"] or 0)
             if kind not in (0, 1, 2, 3):
                 raise ValueError(
                     f"Transfer type {kind} is not supported by the public transport graph"
                 )
-            minimum = row.get("min_transfer_time", "")
+            minimum = row["min_transfer_time"]
             if kind == 2 and minimum == "":
                 raise ValueError("Transfer type 2 requires min_transfer_time")
             if minimum != "" and float(minimum) < 0:
                 raise ValueError("Negative min_transfer_time")
-            from_route, to_route = row.get("from_route_id", ""), row.get("to_route_id", "")
+            from_route, to_route = row["from_route_id"], row["to_route_id"]
             for origin in origins:
                 for destination in destinations:
                     # Recommended connections with no stated minimum still need walking time.

@@ -175,13 +175,14 @@ class GTFSFeed:
         for col in ("pickup_type", "drop_off_type"):
             if col not in times:
                 times[col] = 0
-            else:
-                times[col] = (
-                    pl.from_pandas(times[col])
-                    .replace("", "0")
-                    .cast(pl.Float64, strict=False)
-                    .to_numpy()
-                )
+                continue
+
+            times[col] = (
+                pl.from_pandas(times[col])
+                .replace("", "0")
+                .cast(pl.Float64, strict=False)
+                .to_numpy()
+            )
             if not times[col].isin([0, 1, 2, 3]).all():
                 raise ValueError(f"Invalid {col}")
 
@@ -195,7 +196,7 @@ class GTFSFeed:
         for trip_id in missing_trips:
             group = groups.get_group(trip_id)
             for col in ("arrival_time", "departure_time"):
-                values = group[col].copy()
+                values = group[col]
                 if pd.isna(values.iloc[0]) or pd.isna(values.iloc[-1]):
                     invalid_trips.add(trip_id)
                     continue
