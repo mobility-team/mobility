@@ -1,4 +1,4 @@
-"""Merge local GTFS feeds into a dated timetable for the router asset."""
+"""Combine GTFS feeds into one dated timetable for the study area."""
 
 import logging
 import tempfile
@@ -15,10 +15,10 @@ from .gtfs_feed import GTFSFeed
 
 
 class GTFSTimetable:
-    """Prepare local tables, select a Tuesday and resolve walking connections.
+    """Combine local vehicle trips, select a Tuesday and prepare transfers.
 
-    This class owns the in-memory preparation. GTFSRouter owns source selection
-    and persistent cache files; GTFSFeed owns reading and validating one archive.
+    GTFSFeed reads each source timetable. This class combines their service
+    calendars and stop visits; GTFSRouter selects sources and saves the result.
     """
 
     def __init__(
@@ -33,14 +33,14 @@ class GTFSTimetable:
         self.tables: dict[str, pd.DataFrame] = {}
 
     def prepare(self) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
-        """Return the selected tables and metadata describing their coverage."""
+        """Return the selected timetable and a summary of dates and source coverage."""
         self.tables, sources = self.read_feeds()
         tables = self.tables
-        date, services, scores = self.select_tuesday()
+        date, services, tuesday_counts = self.select_tuesday()
         trips = tables["trips"]
         tables["trips"] = trips.loc[trips.service_id.isin(services)].copy()
 
-        # Prune related tables in dependency order, keeping only selected trips.
+        # Keep stop visits, routes and agencies used by the selected vehicle trips.
         for name, key, parent in (
             ("stop_times", "trip_id", "trips"),
             ("routes", "route_id", "trips"),
@@ -49,7 +49,7 @@ class GTFSTimetable:
             table = tables[name]
             tables[name] = table.loc[table[key].isin(tables[parent][key].unique())].copy()
 
-        # Keep parent station records while resolving station-level transfer rules.
+        # Keep station records until their transfer rules have been applied to platforms.
         tables["transfers"] = self.prepare_transfers()
         stops = tables["stops"]
         tables["stops"] = stops.loc[
@@ -81,7 +81,7 @@ class GTFSTimetable:
             "selection": "maximum stop visits; earliest tie",
             "date_alignment": False,
             "sources": sources,
-            "tuesdays": scores,
+            "tuesdays": tuesday_counts,
             "frequency_assumption": "regular departures also approximate exact_times=0",
             "interpolation": "linear by stop_sequence between timed endpoints",
         }
@@ -153,7 +153,11 @@ class GTFSTimetable:
         return tables, sources
 
     def select_tuesday(self) -> tuple[pd.Timestamp, set[str], list[dict[str, Any]]]:
-        """Choose the earliest Tuesday with the most stop visits on its real date."""
+        """Choose the earliest Tuesday with the most scheduled stop visits.
+
+        Count the whole service day, including visits with boarding restrictions.
+        Apply calendar additions and cancellations before comparing dates.
+        """
         tables = self.tables
         calendar, exceptions = (
             tables["calendar"].copy(),
@@ -181,16 +185,16 @@ class GTFSTimetable:
             if not exceptions.exception_type.isin([1, 2]).all():
                 raise ValueError("Invalid calendar exception_type")
             candidates.update(exceptions.loc[exceptions.date.dt.dayofweek.eq(1), "date"])
-        supply = tables["stop_times"].merge(
+        stop_visits = tables["stop_times"].merge(
             tables["trips"][["trip_id", "service_id"]], on="trip_id"
         )
-        weights = supply.groupby("service_id").size()
-        best, best_services, best_count = None, set(), 0
-        scores = []
+        visits_by_service = stop_visits.groupby("service_id").size()
+        selected_date, selected_services, most_visits = None, set(), 0
+        tuesday_counts = []
         for date in sorted(candidates):
-            active = set()
+            active_services = set()
             if not calendar.empty:
-                active.update(
+                active_services.update(
                     calendar.loc[
                         calendar.start_date.le(date) & calendar.end_date.ge(date),
                         "service_id",
@@ -198,18 +202,18 @@ class GTFSTimetable:
                 )
             if not exceptions.empty:
                 day = exceptions.loc[exceptions.date.eq(date)]
-                active.update(day.loc[day.exception_type.eq(1), "service_id"])
-                active.difference_update(day.loc[day.exception_type.eq(2), "service_id"])
-            count = int(weights.reindex(list(active), fill_value=0).sum())
-            scores.append({"date": date.strftime("%Y-%m-%d"), "stop_visits": count})
-            if count > best_count:
-                best, best_services, best_count = date, active, count
-        if best is None:
+                active_services.update(day.loc[day.exception_type.eq(1), "service_id"])
+                active_services.difference_update(day.loc[day.exception_type.eq(2), "service_id"])
+            count = int(visits_by_service.reindex(list(active_services), fill_value=0).sum())
+            tuesday_counts.append({"date": date.strftime("%Y-%m-%d"), "stop_visits": count})
+            if count > most_visits:
+                selected_date, selected_services, most_visits = date, active_services, count
+        if selected_date is None:
             raise ValueError("No active Tuesday service in the study area")
-        return best, best_services, scores
+        return selected_date, selected_services, tuesday_counts
 
     def prepare_transfers(self) -> pd.DataFrame:
-        """Keep explicit prohibitions and route rules alongside walking links."""
+        """Prepare walking times and declared transfer rules between retained stops."""
         tables = self.tables
         stops = tables["stops"]
         active = stops.loc[stops.stop_id.isin(tables["stop_times"].stop_id.unique())]
@@ -221,6 +225,9 @@ class GTFSTimetable:
         distance = np.linalg.norm(coordinates[pairs[:, 0]] - coordinates[pairs[:, 1]], axis=1)
         ids = active.stop_id.to_numpy()
         positions = dict(zip(ids, coordinates))
+
+        # Rule priority: added walks (-1), declared stop rules (0),
+        # rules naming one route (1), or both connecting routes (2).
         transfers = pd.DataFrame(
             {
                 "from_stop_id": ids[pairs[:, 0]],
@@ -233,13 +240,13 @@ class GTFSTimetable:
             }
         )
 
-        # Explicit rules override generated walking links, including prohibitions.
-        # A station rule applies to its platforms rather than to an unused station node.
-        children = {stop: [stop] for stop in active.stop_id}
+        # Declared transfer rules take priority over added walking connections.
+        # A station rule applies to its platforms, where vehicles actually stop.
+        transfer_stops = {stop: [stop] for stop in active.stop_id}
         if "parent_station" in active:
             platforms = active.loc[active.parent_station.ne("")]
             for parent, stop_ids in platforms.groupby("parent_station").stop_id:
-                children[parent] = stop_ids.tolist()
+                transfer_stops[parent] = stop_ids.tolist()
 
         # Discard rules outside the selected timetable before creating Python
         # records. National feeds can contain many unrelated transfer rules.
@@ -256,22 +263,24 @@ class GTFSTimetable:
             ],
             fill_value="",
         )
-        rules = rules.loc[rules.from_stop_id.isin(children) & rules.to_stop_id.isin(children)]
-        explicit = []
+        rules = rules.loc[
+            rules.from_stop_id.isin(transfer_stops) & rules.to_stop_id.isin(transfer_stops)
+        ]
+        declared_transfers = []
         for row in rules.to_dict("records"):
-            origins = children[row["from_stop_id"]]
-            destinations = children[row["to_stop_id"]]
+            origins = transfer_stops[row["from_stop_id"]]
+            destinations = transfer_stops[row["to_stop_id"]]
             if row["from_trip_id"] or row["to_trip_id"]:
                 raise ValueError(
                     "Trip-specific transfer rules are not yet supported by the public transport graph"
                 )
-            kind = int(row["transfer_type"] or 0)
-            if kind not in (0, 1, 2, 3):
+            transfer_type = int(row["transfer_type"] or 0)
+            if transfer_type not in (0, 1, 2, 3):
                 raise ValueError(
-                    f"Transfer type {kind} is not supported by the public transport graph"
+                    f"Transfer type {transfer_type} is not supported by the public transport graph"
                 )
             minimum = row["min_transfer_time"]
-            if kind == 2 and minimum == "":
+            if transfer_type == 2 and minimum == "":
                 raise ValueError("Transfer type 2 requires min_transfer_time")
             if minimum != "" and float(minimum) < 0:
                 raise ValueError("Negative min_transfer_time")
@@ -285,15 +294,17 @@ class GTFSTimetable:
                         if minimum != ""
                         else 31 + 1.125 * np.linalg.norm(left - right)
                     )
-                    explicit.append(
+                    declared_transfers.append(
                         {
                             "from_stop_id": origin,
                             "to_stop_id": destination,
                             "min_transfer_time": seconds,
-                            "transfer_type": kind,
+                            "transfer_type": transfer_type,
                             "from_route_id": from_route,
                             "to_route_id": to_route,
                             "specificity": int(bool(from_route)) + int(bool(to_route)),
                         }
                     )
-        return pd.concat([transfers, pd.DataFrame(explicit)], ignore_index=True).drop_duplicates()
+        return pd.concat(
+            [transfers, pd.DataFrame(declared_transfers)], ignore_index=True
+        ).drop_duplicates()

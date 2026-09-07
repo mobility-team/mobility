@@ -20,11 +20,12 @@ from .gtfs_timetable import GTFSTimetable
 
 class GTFSRouter(FileAsset):
     """
-    Prepare a Tuesday timetable in Python and cache its tables as Parquet.
+    Prepare and save a Tuesday timetable for public-transport calculations.
 
     Original operating dates are preserved. The earliest Tuesday with the most
     stop visits is selected after spatial filtering and calendar exceptions.
-    get() returns the JSON manifest path, which also records source coverage.
+    get() returns the JSON summary path, which lists the saved tables and sources.
+    Path calculations use the public-transport graph built from these tables.
     """
 
     def __init__(
@@ -34,7 +35,7 @@ class GTFSRouter(FileAsset):
         additional_gtfs_files: list[str | pathlib.Path] | str | pathlib.Path | None = None,
         expected_agencies: list[str] | None = None,
     ) -> None:
-        """Track source assets and manual feed contents in the cache identity."""
+        """Reuse saved timetables only when sources and additional files are unchanged."""
         additional_hashes = {}
         if additional_gtfs_files is not None:
             for path in self.normalize_additional_gtfs_files(additional_gtfs_files):
@@ -62,7 +63,7 @@ class GTFSRouter(FileAsset):
         super().__init__(inputs, cache_path)
 
     def get_cached_asset(self) -> pathlib.Path:
-        """Return the manifest used by the public transport graph reader."""
+        """Return the summary file linking the prepared timetable tables."""
         return self.cache_path["manifest"]
 
     def create_and_get_asset(self) -> pathlib.Path:
@@ -86,7 +87,7 @@ class GTFSRouter(FileAsset):
         transport_zones: TransportZones,
         gtfs_files: list[str | pathlib.Path],
     ) -> None:
-        """Prepare the selected day and publish its tables before its manifest."""
+        """Save the selected timetable, then its summary of dates and sources."""
         tables, metadata = GTFSTimetable(
             gtfs_files,
             transport_zones.get(),
@@ -101,8 +102,8 @@ class GTFSRouter(FileAsset):
         if missing:
             raise ValueError(f"Expected agencies have no selected service: {missing}")
 
-        # Publish the manifest last. A failed rebuild must never leave a complete
-        # cache marker pointing to a mixture of new and old tables.
+        # Write the summary last so interrupted preparation cannot leave a summary
+        # referring to a mixture of new and old timetable tables.
         manifest = self.cache_path["manifest"]
         manifest.unlink(missing_ok=True)
         for name, table in tables.items():

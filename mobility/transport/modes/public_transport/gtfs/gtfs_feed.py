@@ -13,11 +13,11 @@ from shapely.geometry.base import BaseGeometry
 
 
 class GTFSFeed:
-    """A source archive and its temporary extracted timetable tables.
+    """One GTFS ZIP file containing routes, vehicle trips and service calendars.
 
     Extraction and hashing share a single ZIP pass. Polars filters the large
     stop-time file before it is converted to pandas for timetable validation.
-    The caller owns the temporary directory and removes it after read().
+    GTFSTimetable supplies the temporary folder and removes it after reading.
     """
 
     table_names = (
@@ -38,7 +38,7 @@ class GTFSFeed:
         self.diagnostics: dict[str, int] = {}
 
     def read(self, boundary: BaseGeometry) -> dict[str, pd.DataFrame] | None:
-        """Return local tables, or None when there are no usable trips."""
+        """Return trips with two local stop visits, or None if none can be retained."""
         stops = self.read_table("stops", ("stop_id", "stop_lat", "stop_lon"))
         stops["stop_lon"] = pd.to_numeric(stops.stop_lon, errors="coerce")
         stops["stop_lat"] = pd.to_numeric(stops.stop_lat, errors="coerce")
@@ -85,7 +85,7 @@ class GTFSFeed:
         )
 
     def extract(self) -> str:
-        """Extract known tables safely and return their content fingerprint."""
+        """Extract the timetable tables and return a checksum of their contents."""
         digest = hashlib.sha256()
 
         with zipfile.ZipFile(self.path) as archive:
@@ -159,7 +159,7 @@ class GTFSFeed:
         )
 
     def clean_stop_times(self, times: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
-        """Parse times, interpolate internal blanks and discard invalid trips."""
+        """Estimate missing intermediate times and remove trips with unusable times."""
         # Parse numeric columns in Polars before pandas sorts and groups trips.
         # Invalid values become NaN and are rejected by the checks below.
         times["stop_sequence"] = (
@@ -215,7 +215,7 @@ class GTFSFeed:
         )
         if invalid_trips:
             logging.warning(
-                "Dropping %s trips with missing endpoint times or backwards times from %s",
+                "Removing %s vehicle trips with missing first/last times or times out of order from %s",
                 len(invalid_trips),
                 self.path,
             )
@@ -247,7 +247,10 @@ class GTFSFeed:
         times: pd.DataFrame,
         starts: pd.Series,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """Expand frequency templates with one departure list and two joins."""
+        """Create vehicle departures at the intervals specified in frequencies.txt.
+
+        Each departure retains the original trip's travel and stopping times.
+        """
         frequencies = self.read_table("frequencies")
         if frequencies.empty:
             return trips, times
@@ -291,7 +294,7 @@ class GTFSFeed:
         sequence = departures.groupby("trip_id", sort=False).cumcount().astype(str)
         departures["new_trip_id"] = departures.trip_id + ":frequency:" + sequence
         if departures.new_trip_id.isin(trips.trip_id.unique()).any():
-            raise ValueError("Frequency trip ID collision")
+            raise ValueError("Generated frequency trip_id already exists in trips.txt")
         departures["offset"] = departures.pop("departure") - departures.trip_id.map(starts)
 
         # Reuse the departure list for both tables. Only stop times need a time
@@ -313,8 +316,8 @@ class GTFSFeed:
         stops: pd.DataFrame,
         trips: pd.DataFrame,
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """Validate and prune agencies, routes and service calendars."""
-        # Keep related tables consistent before merging different feed IDs.
+        """Check agencies, routes and calendars, keeping those used by retained trips."""
+        # Each retained trip needs a known route, operator and operating calendar.
         routes = self.read_table("routes", ("route_id", "route_type"))
         routes = routes.loc[routes.route_id.isin(trips.route_id.unique())].copy()
         if not trips.route_id.isin(routes.route_id).all():

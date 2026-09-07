@@ -109,41 +109,7 @@ Add public transport after the initial mode set runs correctly. Public transport
 
 The current public-transport workflow computes selected-period generalized costs with average waiting and transfer assumptions.
 
-GTFS preparation runs in Python. `GTFSRouter` manages the FileAsset cache,
-`GTFSFeed` reads and validates one archive, and `GTFSTimetable` combines feeds,
-selects the service date and prepares transfers. Polars reads CSV files and
-filters large stop-time tables before conversion to pandas; GeoPandas handles
-the spatial operations. Temporary extracted files are removed after each feed.
-
-Preparation preserves each feed's operating dates and
-selects the earliest Tuesday with the most stop visits inside the study area
-and its 10 km buffer. Calendar exceptions are applied before selection. Feeds
-with identical timetable content are included once, and trips with fewer than
-two retained stop visits are removed. If there is no Tuesday service, preparation
-fails instead of substituting trips from other days.
-
-The cached timetable consists of Parquet tables and a `gtfs_router.json` manifest.
-The manifest records the selected date, source fingerprints, duplicate feeds,
-source trip counts on that date, and the scores for other candidate Tuesdays.
-Warnings identify sources with no service on the selected date. The reference
-date selects source archives; it does not force every timetable to operate on
-that date. Manually added scenario feeds must use the intended operating dates.
-Changing a manual feed's content changes the cache key when assets are constructed
-again. Existing RDS timetable caches are not reused.
-
-Repeated departures in `frequencies.txt` are expanded. For `exact_times=0`, evenly
-spaced departures approximate the headway-based service. Blank intermediate
-times are interpolated by stop sequence between timed endpoints; trips with
-missing endpoint times or backwards times are dropped and counted in the manifest.
-
-Boarding, alighting and route-specific transfer restrictions are passed to the
-graph builder. Transfers within 200 m use straight-line walking estimates unless
-an explicit rule overrides them. Trip-specific transfer rules and in-seat transfer
-types 4 and 5 currently raise an error for relevant stops, rather than silently
-becoming unrestricted transfers. Services requiring a booking are not treated as
-ordinary boarding or alighting. The graph still uses average costs and runs in R;
-this migration removes R from timetable preparation, not from all public transport
-routing.
+Mobility prepares one dated timetable from the selected GTFS files, then uses it to calculate public-transport costs. The [GTFS preparation steps](gtfs-data-preparation) below describe how that day is chosen and which service assumptions are made.
 
 It is usually combined with an access mode and an egress mode. A common first setup is walk, public transport, then walk:
 
@@ -169,6 +135,7 @@ walk_pt = mobility.PublicTransportMode(
 
 Project scenarios can add extra GTFS files. Use this to represent a defined service assumption, such as a new line, a changed frequency, or a temporary service change.
 
+(gtfs-data-preparation)=
 ### GTFS Data Preparation
 
 GTFS feeds describe stops, calendars, service times, routes, and public-transport modes such as bus, tram, train, and metro.
@@ -187,11 +154,81 @@ routing_parameters = mobility.PublicTransportRoutingParameters(
 )
 ```
 
-For project use, operator feeds are filtered to keep lines with at least one stop in the study transport zones. The feeds use a common date and are merged into one feed. Missing transfers are added between stops within 200 metres, with transfer time estimated from straight-line distance.
+#### Timetable Terms
 
-The current public-transport preparation selects a Tuesday service day from the GTFS calendars, using the Tuesday with the most services in the month with the highest average service. Treat this selected service day as a modelling assumption and record the GTFS versions and dates used by the run.
+A **feed** is one operator or data provider's GTFS ZIP file. A **route** usually represents a public-transport line. A **trip** (`trip_id`) is one vehicle journey along a sequence of stops; it is not a passenger journey. A **service calendar** (`service_id`) gives the operating dates shared by one or more trips.
 
-For project documentation, record which GTFS feeds and dates were used. Public-transport results are hard to interpret later when service calendar traceability is missing.
+A **stop visit** is one trip calling at one stop: one row in `stop_times.txt`. Ten trips calling at five stops each represent 50 stop visits. Repeated calls at the same stop count separately. This measures scheduled supply, not passenger numbers or the number of distinct stops.
+
+#### Keep Trips Serving The Study Area
+
+Mobility keeps stops within the transport zones and a surrounding 10 km area. A trip must have at least two stop visits in this area to be retained. These are visits, so they need not be at two different stops. Stops with missing or invalid coordinates are removed.
+
+The complete stop sequence of a retained trip is used to check and estimate its times. Stops outside the area are then removed from the prepared timetable. This preserves the original first departure time when generating frequency-based departures.
+
+Feeds with identical contents in the timetable tables used by preparation are included once. Different feeds from the same operator remain separate, even if some trips overlap. Mobility adds a feed number to identifiers such as `trip_id` and `service_id`, so identifiers from different feeds cannot be confused.
+
+#### Check And Prepare Times
+
+Arrival and departure times are converted to seconds from the start of the GTFS service day. Times beyond midnight, such as `25:10:00`, remain part of that service day. Times are not converted between the time zones of different feeds.
+
+Blank times between known first and last times are estimated by linear interpolation using `stop_sequence`. This assumes time increases in proportion to the sequence numbers, rather than distance travelled. For example, a missing time at sequence 2 between 08:00 at sequence 1 and 08:10 at sequence 3 becomes 08:05.
+
+A whole trip is removed if an arrival or departure time is missing at either end of its original sequence, if it departs before arriving at a stop, or if it reaches the next stop before leaving the previous one. A warning reports removed trips. Invalid time formats, duplicate stop sequence numbers, broken references between tables, and invalid calendar values raise errors that must be resolved in the input data.
+
+For `frequencies.txt`, Mobility creates departures from `start_time`, separated by `headway_secs`, strictly before `end_time`. Each departure keeps the original trip's travel and stopping times. Frequency periods for the same trip must not overlap. For `exact_times=0` or an omitted `exact_times`, evenly spaced departures are an approximation: the source specifies a headway rather than exact departure times. A warning identifies this assumption.
+
+#### Choose One Tuesday
+
+Mobility applies the weekly calendars in `calendar.txt` and the additions and cancellations in `calendar_dates.txt` on their actual dates. A feed may use dated exceptions without a weekly calendar. Dates are never shifted to make feeds overlap.
+
+After spatial filtering, time checks and frequency expansion, Mobility counts the stop visits on each candidate Tuesday across all retained feeds. It chooses the Tuesday with the largest total, taking the earliest date when totals are equal. It does not select a month first or count service calendar identifiers.
+
+The count covers the whole service day, before the routing time window and boarding restrictions are applied. The selected day is therefore a measure of the greatest scheduled supply under these rules; it is not necessarily a typical day, the best morning peak, or the Tuesday closest to `gtfs_reference_date`.
+
+The reference date chooses source archives; their operating calendars determine the selected service day. A feed with no service on that Tuesday contributes no trips and produces a warning. If no Tuesday has usable service, preparation stops with an error. Additional scenario feeds must contain the intended operating dates. Two successive feeds from one operator only contribute together where their real operating dates overlap.
+
+Mobility then retains trips running on that date and their routes, agencies, stop visits and stops. If `expected_agencies` is set, each supplied name must match an agency with retained service, ignoring case and allowing part of a name.
+
+#### Prepare Transfers And Service Information
+
+Mobility adds walking connections in both directions between different retained stops within 200 metres. The assumed time is:
+
+```text
+transfer time in seconds = 31 + 1.125 × straight-line distance in metres
+```
+
+These connections do not follow footpaths or account for barriers. Declared transfers in `transfers.txt` can connect stops farther apart. A declared minimum time is used when present; otherwise the same distance formula is used. A station-level rule is applied to its retained platforms.
+
+The following rules are carried into the public-transport graph:
+
+- Declared rules take priority over added walking connections.
+- A rule naming both connecting routes takes priority over one naming a single route, which takes priority over a rule applying to all routes.
+- Among equally applicable rules, a prohibition prevents the transfer; otherwise the largest minimum time is used.
+- Transfer type 1 does not cause the model to hold a connecting vehicle. It is handled with the available timetable and minimum walking time.
+- Trip-specific rules and transfer types 4 and 5 (remaining in the same vehicle, or prohibiting that continuation) are unsupported and raise an error when their stops are used on the selected day.
+
+Pickup and drop-off restrictions are preserved. The graph allows ordinary boarding and alighting only where the corresponding value is 0. Values 1, 2 and 3 do not permit that action in the model; booking or driver-arranged boarding is not simulated. These restrictions do not remove the stop visit from the Tuesday selection count.
+
+Route types are assigned a transport-mode label and a default vehicle capacity from Mobility's route-type table. These are modelling defaults, not fleet observations. An unrecognised route type currently receives the bus label and a capacity of 50 passengers. A missing route short name uses `route_long_name` if that column exists, otherwise `route_id`.
+
+This preparation covers fixed-stop timetables. Station pathways and accessibility restrictions are not used to calculate these transfer connections.
+
+#### Check The Prepared Timetable
+
+Mobility saves six tables: agencies, routes, stops, trips, stop times and transfers. They are stored in Parquet format, which can be read with `pandas.read_parquet`. A JSON summary file whose name ends in `gtfs_router.json` links to those tables and records:
+
+- the selected date and stop-visit totals for candidate Tuesdays;
+- each source file, a content checksum used to detect identical feeds, and whether it was retained or skipped;
+- the number of trips from each prepared feed running on the selected day;
+- counts of removed invalid trips and trips with estimated intermediate times for each prepared feed;
+- the frequency and interpolation assumptions.
+
+These preparation counts describe trips before frequency expansion and date selection; the selected trip counts describe the resulting timetable. A feed discarded entirely because it has no usable trips is recorded as skipped, without those detailed preparation counts.
+
+Record the source files, operating dates, selected Tuesday and warnings with the study. Check that important operators and the intended scenario service are represented. Identical feed detection does not remove overlapping trips from different feed versions.
+
+Saved results are reused when their inputs are unchanged. If an additional GTFS file is edited, construct the public-transport objects again so Mobility detects the change. Old RDS timetables from the earlier preparation are not reused. Timetable preparation runs in Python; the following graph calculation still uses R and average travel, waiting and transfer costs.
 
 ### Public-Transport Graph
 

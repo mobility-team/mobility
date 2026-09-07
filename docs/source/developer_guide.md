@@ -83,3 +83,25 @@ The user quickstart is `examples/quickstart-fr.py`.
 The CI quickstart is `examples/quickstart-fr-ci.py`.
 
 When changing the quickstart workflow, update both files and the quickstart documentation.
+
+## GTFS Preparation Code
+
+The modelling steps and assumptions are described in [GTFS Data Preparation](gtfs-data-preparation). Keep that section up to date when changing how supply is selected or transfers are calculated.
+
+Three classes divide the preparation work:
+
+| Class | Responsibility |
+| --- | --- |
+| `GTFSFeed` | Read one ZIP file, retain local trips, check times and create frequency-based departures. |
+| `GTFSTimetable` | Combine feeds, choose the service date and prepare transfers. |
+| `GTFSRouter` | Select source files and save or reuse the prepared timetable through `FileAsset`. Despite its existing name, this class does not calculate paths. |
+
+Keep preparation methods with the class responsible for the modelling step. GTFS column names such as `trip_id` and `service_id` stay unchanged so contributors can compare the code with input files.
+
+Polars reads the CSV tables and performs large numeric conversions. pandas handles the combined timetable, and GeoPandas handles spatial operations. Each ZIP file is extracted and checked for identical contents in one pass; temporary extracted files are removed after reading it.
+
+`GTFSRouter.get()` returns the path of the JSON summary linking the six Parquet tables. The tables are written before the summary so an interrupted write cannot appear complete. The saved result depends on the source inputs, the preparation version and the contents of manually added files. Change `preparation_version` if a change makes previously saved timetables unsuitable for reuse.
+
+The transfer table's `specificity` column records rule priority: -1 for an added walking connection, 0 for a declared rule without route restrictions, 1 when one route is named, and 2 when both routes are named. The R graph calculation applies that priority before calculating transfer costs.
+
+The small-feed tests in `tests/back/unit/domain/transport_modes/test_004_gtfs_preparation.py` cover calendar selection, frequency departures, time checks, saved outputs and transfer restrictions, including the R graph reader.

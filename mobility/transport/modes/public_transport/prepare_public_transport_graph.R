@@ -11,7 +11,7 @@ args <- commandArgs(trailingOnly = TRUE)
 # args <- c(
 #   'D:\\dev\\mobility_oss\\mobility',
 #   'D:\\test-09\\e90a8308da40d062e66d1021c5094d4d-transport_zones.gpkg',
-#   'D:\\test-09\\0a8bd50eb6f9cc645144a17944c656b6-gtfs_router.rds',
+#   'D:\\test-09\\0a8bd50eb6f9cc645144a17944c656b6-gtfs_router.json',
 #   '{"start_time_min": 6.5, "start_time_max": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "transfer_time_coeff": 2.0, "no_show_perceived_prob": 0.2, "target_time": 8.0, "max_wait_time_at_destination": 0.25, "max_perceived_time": 2.0, "additional_gtfs_files": [], "expected_agencies": null}', 'D:\\test-09\\public_transport_graph\\simplified\\bf997a1f492f20fc672523ec61eed7f5-public-transport-graph'
 # )
 
