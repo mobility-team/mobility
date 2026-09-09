@@ -39,7 +39,11 @@ class GTFSFeed:
 
     def read(self, boundary: BaseGeometry) -> dict[str, pd.DataFrame] | None:
         """Return trips with two local stop visits, or None if none can be retained."""
-        stops = self.read_table("stops", ("stop_id", "stop_lat", "stop_lon"))
+        stops = self.read_table(
+            "stops",
+            ("stop_id", "stop_lat", "stop_lon"),
+            columns=("stop_id", "stop_lat", "stop_lon", "stop_name", "parent_station"),
+        )
         stops["stop_lon"] = pd.to_numeric(stops.stop_lon, errors="coerce")
         stops["stop_lat"] = pd.to_numeric(stops.stop_lat, errors="coerce")
         stops = stops.dropna(subset=["stop_lon", "stop_lat"])
@@ -48,7 +52,11 @@ class GTFSFeed:
         if stops.empty:
             return None
 
-        trips = self.read_table("trips", ("trip_id", "route_id", "service_id"))
+        trips = self.read_table(
+            "trips",
+            ("trip_id", "route_id", "service_id"),
+            columns=("trip_id", "route_id", "service_id"),
+        )
         if trips.trip_id.duplicated().any():
             raise ValueError("Duplicate trip_id in trips.txt")
 
@@ -71,7 +79,19 @@ class GTFSFeed:
 
         agency, routes, calendar, exceptions = self.read_related_tables(stops, trips)
 
-        transfers = self.read_table("transfers")
+        transfers = self.read_table(
+            "transfers",
+            columns=(
+                "from_stop_id",
+                "to_stop_id",
+                "transfer_type",
+                "min_transfer_time",
+                "from_route_id",
+                "to_route_id",
+                "from_trip_id",
+                "to_trip_id",
+            ),
+        )
         self.diagnostics = diagnostics
         return dict(
             agency=agency,
@@ -105,16 +125,28 @@ class GTFSFeed:
 
         return digest.hexdigest()
 
-    def read_table(self, name: str, required: tuple[str, ...] = ()) -> pd.DataFrame:
-        """Read a small table without changing identifiers such as '001'."""
+    def read_table(
+        self,
+        name: str,
+        required: tuple[str, ...] = (),
+        *,
+        columns: tuple[str, ...],
+    ) -> pd.DataFrame:
+        """Read selected table columns while retaining identifiers such as '001'."""
         path = self.folder / (name + ".txt")
         if not path.exists():
             if required:
                 raise ValueError(f"Missing {path.name}")
             return pd.DataFrame()
 
+        # Read only fields used by the preparation code. Optional fields are
+        # selected when present, so valid GTFS variants remain supported.
+        with path.open("r", encoding="utf-8-sig") as source:
+            available = tuple(source.readline().rstrip("\r\n").split(","))
+        selected = [column for column in columns if column in available] or None
         table = pl.read_csv(
             path,
+            columns=selected,
             infer_schema=False,
             missing_utf8_is_empty_string=True,
         ).to_pandas()
@@ -251,7 +283,10 @@ class GTFSFeed:
 
         Each departure retains the original trip's travel and stopping times.
         """
-        frequencies = self.read_table("frequencies")
+        frequencies = self.read_table(
+            "frequencies",
+            columns=("trip_id", "start_time", "end_time", "headway_secs", "exact_times"),
+        )
         if frequencies.empty:
             return trips, times
 
@@ -318,11 +353,25 @@ class GTFSFeed:
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """Check agencies, routes and calendars, keeping those used by retained trips."""
         # Each retained trip needs a known route, operator and operating calendar.
-        routes = self.read_table("routes", ("route_id", "route_type"))
+        routes = self.read_table(
+            "routes",
+            ("route_id", "route_type"),
+            columns=(
+                "route_id",
+                "route_type",
+                "agency_id",
+                "route_short_name",
+                "route_long_name",
+            ),
+        )
         routes = routes.loc[routes.route_id.isin(trips.route_id.unique())].copy()
         if not trips.route_id.isin(routes.route_id).all():
             raise ValueError("trips.txt references unknown routes")
-        agency = self.read_table("agency", ("agency_name",))
+        agency = self.read_table(
+            "agency",
+            ("agency_name",),
+            columns=("agency_name", "agency_id"),
+        )
         if "agency_id" not in agency:
             if len(agency) != 1:
                 raise ValueError("Multiple agencies require agency_id")
@@ -349,8 +398,14 @@ class GTFSFeed:
         routes["route_type"] = pd.to_numeric(routes.route_type, errors="raise")
 
         # Services may be declared by a weekly calendar, dated exceptions, or both.
-        calendar = self.read_table("calendar")
-        exceptions = self.read_table("calendar_dates")
+        calendar = self.read_table(
+            "calendar",
+            columns=("service_id", "tuesday", "start_date", "end_date"),
+        )
+        exceptions = self.read_table(
+            "calendar_dates",
+            columns=("service_id", "date", "exception_type"),
+        )
         for name, frame, required in (
             ("calendar", calendar, {"service_id", "tuesday", "start_date", "end_date"}),
             ("calendar_dates", exceptions, {"service_id", "date", "exception_type"}),

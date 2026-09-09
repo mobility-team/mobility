@@ -61,6 +61,25 @@ def test_dates_only_and_long_route_name(tmp_path, feed_files, zones, route_types
     assert len(tables["stop_times"]) == 2
 
 
+def test_trips_ignore_unused_columns_with_unquoted_commas(
+    tmp_path, feed_files, zones, route_types
+):
+    """Trip preparation skips an unused shape value with an unquoted comma."""
+    feed_files["trips"] = (
+        "route_id,service_id,trip_id,trip_headsign,trip_short_name,direction_id,"
+        "block_id,wheelchair_accessible,bikes_allowed,shape_id\n"
+        "r,s,t,Test trip,0,0,,0,0,TRANSURBAIN:2720$T3 - A12:Clos Nord,.$23\n"
+    )
+
+    tables, _ = GTFSTimetable(
+        [write_feed(tmp_path / "feed.zip", feed_files)], zones, route_types
+    ).prepare()
+
+    assert tables["trips"]["trip_id"].tolist() == ["1-t"]
+    assert tables["trips"]["route_id"].tolist() == ["1-r"]
+    assert "shape_id" not in tables["trips"]
+
+
 @pytest.mark.parametrize("cancelled", [True, False])
 def test_no_tuesday_does_not_restore_trips(tmp_path, feed_files, zones, route_types, cancelled):
     if cancelled:
