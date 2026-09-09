@@ -83,3 +83,27 @@ The user quickstart is `examples/quickstart-fr.py`.
 The CI quickstart is `examples/quickstart-fr-ci.py`.
 
 When changing the quickstart workflow, update both files and the quickstart documentation.
+
+## GTFS Preparation Code
+
+The modelling steps and assumptions are described in [GTFS Data Preparation](gtfs-data-preparation). Keep that page up to date when changing how supply is selected or transfers are calculated.
+
+Three classes divide the preparation work:
+
+| Class | Responsibility |
+| --- | --- |
+| `GTFSFeed` | Read one ZIP file, retain local trips, check times and create frequency-based departures. |
+| `GTFSTimetable` | Combine feeds, choose the service date and prepare transfers. |
+| `GTFSRouter` | Select source files and save or reuse the prepared timetable through `FileAsset`. Despite its existing name, this class does not calculate paths. |
+
+Keep preparation methods with the class responsible for the modelling step. GTFS column names such as `trip_id` and `service_id` stay unchanged so contributors can compare the code with input files.
+
+Polars reads the CSV tables and performs large numeric conversions. pandas handles the combined timetable, and GeoPandas handles spatial operations. Each ZIP file is extracted and checked for identical contents in one pass; temporary extracted files are removed after reading it.
+
+`GTFSRouter.get()` returns the FileAsset's dictionary of output paths: six Parquet tables and the GeoPackage under `stops_and_lines`. The graph reader receives the Parquet paths as a serialized argument, without an intermediate file. The GeoPackage contains stop and line layers plus ordinary `summary`, `sources` and `tuesdays` tables. It is written last, so interrupted preparation leaves a missing output and is retried. All outputs belong to the FileAsset. The saved result depends on the source inputs, the version and the contents of manually added files. Change the `version` input if a change makes previously saved timetables unsuitable for reuse.
+
+The transfer table's `specificity` column records rule priority: -1 for an added walking connection, 0 for a declared rule without route restrictions, 1 when one route is named, and 2 when both routes are named. The R graph calculation applies that priority before calculating transfer costs. Unsupported or unusable transfer rules remove the affected directed stop pairs, including added walking connections, with a warning. They do not stop preparation.
+
+The graph finds the first departure at or after the arrival plus minimum connection time. Its transfer cost includes the whole time from arrival to that departure, then averages across arrivals. `PublicTransportGraph` has its own preparation version so cost changes rebuild graphs without rebuilding unchanged GTFS tables.
+
+The small-feed tests in `tests/back/unit/domain/transport_modes/test_004_gtfs_preparation.py` cover calendar selection, frequency departures, time checks, saved outputs and transfer restrictions, including the R graph reader.

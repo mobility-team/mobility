@@ -109,6 +109,8 @@ Add public transport after the initial mode set runs correctly. Public transport
 
 The current public-transport workflow computes selected-period generalized costs with average waiting and transfer assumptions.
 
+Mobility prepares one dated timetable from the selected GTFS files, then uses it to calculate public-transport costs. The [GTFS preparation page](gtfs-data-preparation) describes how that day is chosen and which service assumptions are made.
+
 It is usually combined with an access mode and an egress mode. A common first setup is walk, public transport, then walk:
 
 ```python
@@ -133,30 +135,6 @@ walk_pt = mobility.PublicTransportMode(
 
 Project scenarios can add extra GTFS files. Use this to represent a defined service assumption, such as a new line, a changed frequency, or a temporary service change.
 
-### GTFS Data Preparation
-
-GTFS feeds describe stops, calendars, service times, routes, and public-transport modes such as bus, tram, train, and metro.
-
-Mobility can select official GTFS files for the countries covered by the study area. The modeler must provide a `gtfs_reference_date` and a project folder for the GTFS sources file. Mobility then builds a small SQLite file listing the GTFS sources selected for that date and study area. This file can be kept with the project inputs so another user can run with the same source catalog.
-
-For France, Mobility first uses the `covered_area` metadata from transport.data.gouv.fr to skip GTFS datasets that are clearly outside the study area. This is only a first filter. Mobility still checks the operator coverage geometry before selecting a GTFS file for the run. Other countries can use the same pattern with their own GTFS source table.
-
-By default, Mobility only uses reproducible archived GTFS files. If an intersecting source has no archived file, or if its latest archived file is too old, Mobility warns and skips it. If no usable public transport source remains for the study area, the run fails. Live GTFS URLs can be enabled explicitly with `use_live_gtfs=True`, but this makes results depend on the provider state at download time.
-
-```python
-routing_parameters = mobility.PublicTransportRoutingParameters(
-    gtfs_reference_date="2026-01-01",
-    gtfs_sources_folder="inputs/gtfs_sources",
-    max_gtfs_file_age_days=30,
-)
-```
-
-For project use, operator feeds are filtered to keep lines with at least one stop in the study transport zones. The feeds use a common date and are merged into one feed. Missing transfers are added between stops within 200 metres, with transfer time estimated from straight-line distance.
-
-The current public-transport preparation selects a Tuesday service day from the GTFS calendars, using the Tuesday with the most services in the month with the highest average service. Treat this selected service day as a modelling assumption and record the GTFS versions and dates used by the run.
-
-For project documentation, record which GTFS feeds and dates were used. Public-transport results are hard to interpret later when service calendar traceability is missing.
-
 ### Public-Transport Graph
 
 Mobility converts the public-transport offer into a graph that can be combined with access and egress graphs such as walking, cycling, or driving.
@@ -167,7 +145,7 @@ The graph preparation includes:
 - computing average travel times between two stops on the same line,
 - computing waiting times between arrivals and departures of the same line at a stop,
 - computing average minimum transfer times to other accessible services,
-- discarding transfers longer than 20 minutes,
+- discarding connections whose average total transfer time is 20 minutes or more,
 - estimating initial waiting time from average headway,
 - estimating perceived waiting time from headway and missed-service risk,
 - computing the difference between the target arrival time and possible actual arrival times,
@@ -184,39 +162,9 @@ The public-transport travel time can include:
 
 A maximum travel time filters out paths with too many transfers or too much detour.
 
-### Create A Small Scenario GTFS Feed
+### Scenario Timetables
 
-For a light scenario, you can create an additional GTFS feed directly in Python. This can represent a provisional service assumption before preparing a full operator-style feed.
-
-```python
-import mobility
-
-builder = mobility.GTFSBuilder(
-    agency_id="test_agency",
-    agency_name="Test Agency",
-    route_id="test_line",
-    route_short_name="T1",
-    route_type="bus",
-    service_id="test_service",
-)
-
-builder.add_stops(
-    {
-        "first_stop": [6.151086, 46.209558],
-        "second_stop": [6.192774, 46.253015],
-    }
-)
-builder.add_line(
-    [("first_stop", "second_stop", 27 * 60)],
-    start_time=6 * 3600,
-    end_time=9 * 3600,
-    period=15 * 60,
-)
-
-gtfs_path = builder.write_project_zip("test_line.zip")
-```
-
-Then pass `gtfs_path` through `PublicTransportRoutingParameters(additional_gtfs_files=[gtfs_path])` when you configure public transport routing.
+Additional GTFS files can represent a new line or a changed timetable. See [Create A Small Scenario GTFS Feed](gtfs-scenario-timetable) for a Python example using `GTFSBuilder`.
 
 ## Congestion
 

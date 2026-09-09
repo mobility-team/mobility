@@ -47,6 +47,7 @@ activities
 add_country
 current_countries
 modes
+gtfs
 scenarios
 run_parameters
 results
