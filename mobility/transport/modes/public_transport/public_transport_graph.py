@@ -20,6 +20,7 @@ from mobility.transport.modes.core.defaults import (
 )
 from .gtfs.gtfs_router import GTFSRouter
 from .gtfs.gtfs_sources import GTFSSources
+from .custom_gtfs import CustomGTFS
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
 from mobility.transport.modes.core.transport_mode import TransportMode
 from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
@@ -57,6 +58,9 @@ class PublicTransportGraph(FileAsset):
             use_live_gtfs=parameters.use_live_gtfs,
             max_gtfs_file_age_days=parameters.max_gtfs_file_age_days,
             transport_zones=transport_zones,
+            excluded_gtfs_sources=parameters.excluded_gtfs_sources,
+            gtfs_service_start_date=parameters.gtfs_service_start_date,
+            gtfs_service_end_date=parameters.gtfs_service_end_date,
         )
 
         gtfs_router = GTFSRouter(
@@ -66,11 +70,16 @@ class PublicTransportGraph(FileAsset):
             expected_agencies=parameters.expected_agencies,
         )
 
+        # R needs routing settings; source assets stay in the router.
+        settings = PublicTransportRoutingSettings(**{
+            name: getattr(parameters, name)
+            for name in PublicTransportRoutingSettings.model_fields
+        })
         inputs = {
             "version": "3",
             "transport_zones": transport_zones,
             "gtfs_router": gtfs_router,
-            "parameters": parameters
+            "parameters": settings
         }
 
         file_name = "public_transport_graph/simplified/public-transport-graph"
@@ -100,7 +109,7 @@ class PublicTransportGraph(FileAsset):
             self,
             transport_zones: TransportZones,
             gtfs_router: GTFSRouter,
-            parameters: "PublicTransportRoutingParameters"
+            parameters: "PublicTransportRoutingSettings"
         ) -> pd.DataFrame:
         """
         Calculates travel costs for public transport between transport zones using the R script prepare_public_transport_graph.R
@@ -108,7 +117,7 @@ class PublicTransportGraph(FileAsset):
         Args:
             transport_zones (gpd.GeoDataFrame): GeoDataFrame containing transport zone geometries.
             gtfs_router : GTFSRouter object containing data about public transport routes and schedules.
-            parameters: PublicTransportRoutingParameters
+            parameters: PublicTransportRoutingSettings
 
         """
 
@@ -141,7 +150,7 @@ class PublicTransportGraph(FileAsset):
         return countries
 
 
-class PublicTransportRoutingParameters(BaseModel):
+class PublicTransportRoutingSettings(BaseModel):
     """
     Routing parameters for public transport.
 
@@ -169,30 +178,57 @@ class PublicTransportRoutingParameters(BaseModel):
         float,
         Field(default=DEFAULT_LONG_RANGE_MOTORIZED_MAX_BEELINE_DISTANCE_KM, gt=0.0),
     ]
+
+    @model_validator(mode="after")
+    def validate_time_window(self) -> "PublicTransportRoutingSettings":
+        if self.start_time_max < self.start_time_min:
+            raise ValueError("start_time_max should be greater than or equal to start_time_min.")
+        return self
+
+
+class PublicTransportRoutingParameters(PublicTransportRoutingSettings):
+    """Public configuration combining timetable sources and routing settings."""
+
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
     additional_gtfs_files: Annotated[
-        ParameterValue | SensitivityValue | list[str] | None,
+        ParameterValue | SensitivityValue
+        | list[str | pathlib.Path | CustomGTFS]
+        | str | pathlib.Path | CustomGTFS | None,
         Field(default=None),
     ]
     expected_agencies: Annotated[list[str] | None, Field(default=None)]
+    excluded_gtfs_sources: Annotated[
+        list[str],
+        Field(default_factory=list, description="Feeds deliberately omitted, as provider:resource_id."),
+    ]
     gtfs_reference_date: Annotated[
         str | None,
         Field(
             default=None,
             description=(
-                "Date used to select GTFS source files, in YYYY-MM-DD format."
+                "Latest archive publication date to accept, in YYYY-MM-DD format."
             ),
         ),
     ]
     max_gtfs_file_age_days: Annotated[
-        int,
+        int | None,
         Field(
-            default=30,
+            default=None,
             ge=0,
             description=(
                 "Maximum accepted age, in days, of an archived GTFS file "
-                "relative to gtfs_reference_date."
+                "relative to gtfs_reference_date. None disables this limit."
             ),
         ),
+    ]
+    gtfs_service_start_date: Annotated[
+        str | None,
+        Field(default=None, description="First service date to consider (YYYY-MM-DD). Set both service dates together."),
+    ]
+    gtfs_service_end_date: Annotated[
+        str | None,
+        Field(default=None, description="Last service date to consider, inclusive (YYYY-MM-DD)."),
     ]
     gtfs_sources_folder: Annotated[
         pathlib.Path | None,
@@ -215,9 +251,7 @@ class PublicTransportRoutingParameters(BaseModel):
     ]
 
     @model_validator(mode="after")
-    def validate_time_window(self) -> "PublicTransportRoutingParameters":
-        if self.start_time_max < self.start_time_min:
-            raise ValueError("start_time_max should be greater than or equal to start_time_min.")
+    def validate_sources(self) -> "PublicTransportRoutingParameters":
         if self.additional_gtfs_files == []:
             self.additional_gtfs_files = None
         if self.gtfs_reference_date is None:
@@ -226,6 +260,7 @@ class PublicTransportRoutingParameters(BaseModel):
                 "(YYYY-MM-DD) to select reproducible GTFS inputs."
             )
         GTFSSources.parse_reference_date(self.gtfs_reference_date)
+        GTFSSources.resolve_service_window(self.gtfs_reference_date, self.gtfs_service_start_date, self.gtfs_service_end_date)
         if self.gtfs_sources_folder is None:
             raise ValueError(
                 "Public transport routing requires `gtfs_sources_folder`, for example "

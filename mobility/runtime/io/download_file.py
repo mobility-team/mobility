@@ -68,6 +68,8 @@ def download_file(url, path, max_retries=3, timeout=(10, 120), raise_on_error=Tr
                 stream=True,
                 allowed_status_codes={401, 404},
             )
+            if raise_on_error and response.status_code in {401, 404}:
+                response.raise_for_status()
             if response.status_code == 404:
                 logging.error(f"Error 404: The resource at {url} was not found.")
                 return

@@ -1,9 +1,11 @@
 import csv
 import zipfile
+from unittest.mock import Mock
 
 import pytest
 
 import mobility
+from mobility.transport.modes.public_transport.gtfs.gtfs_router import GTFSRouter
 
 
 def _read_table(gtfs_zip, table_name):
@@ -22,6 +24,62 @@ def _base_builder():
         route_type="bus",
         service_id="test_service",
     )
+
+
+def test_custom_gtfs_reuses_zip_and_snapshots_builder(tmp_path, monkeypatch):
+    """Repeated setup reuses the ZIP, while later builder edits make a new asset."""
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    builder = _base_builder()
+    builder.add_stops({"A": [2.0, 48.0], "B": [2.1, 48.1]})
+    builder.add_line([("A", "B", 60.0)], start_time=0, end_time=600, period=300)
+    first = builder.build_asset()
+    repeated = builder.build_asset()
+    assert first.inputs_hash == repeated.inputs_hash
+    assert not first.cache_path.exists()
+    path = first.get()
+    original_trips = _read_table(path, "trips.txt")
+
+    generate = Mock(side_effect=AssertionError("An unchanged feed should reuse its ZIP"))
+    monkeypatch.setattr(repeated, "create_and_get_asset", generate)
+    assert repeated.get() == path
+
+    builder.add_line([("A", "B", 60.0)], start_time=1200, end_time=1800, period=150)
+    changed = builder.build_asset()
+    assert changed.inputs_hash != first.inputs_hash
+    assert len(first.inputs["feed"].lines) == 1
+    assert len(_read_table(changed.get(), "trips.txt")) > len(original_trips)
+
+
+def test_custom_gtfs_is_router_dependency(tmp_path, monkeypatch):
+    """The resolver generates the ZIP before the router needs its path."""
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    builder = _base_builder()
+    builder.add_stops({"A": [2.0, 48.0], "B": [2.1, 48.1]})
+    builder.add_line([("A", "B", 60.0)], start_time=0, end_time=600, period=300)
+    custom = builder.build_asset()
+    router = GTFSRouter("test-zones", None, additional_gtfs_files=[custom])
+    repeated = GTFSRouter("test-zones", None, additional_gtfs_files=[builder.build_asset()])
+    assert router.inputs_hash == repeated.inputs_hash
+    assert router.inputs["additional_gtfs_hashes"] == {}
+    assert not custom.cache_path.exists()
+
+    external = builder.write_zip(tmp_path / "external.zip")
+    mixed = GTFSRouter("test-zones", None, additional_gtfs_files=[custom, external])
+    assert list(mixed.inputs["additional_gtfs_hashes"]) == [str(external)]
+
+    def prepare_router(zones, paths):
+        assert custom.cache_path.exists()
+        assert paths == [str(custom.cache_path), str(external)]
+        for output in mixed.cache_path.values():
+            output.write_bytes(b"prepared timetable")
+
+    monkeypatch.setattr(mixed, "get_gtfs_files", lambda zones: [])
+    monkeypatch.setattr(mixed, "prepare_gtfs_router", prepare_router)
+    mixed.get()
+
+    prepare = Mock(side_effect=AssertionError("An unchanged router should reuse its outputs"))
+    monkeypatch.setattr(mixed, "create_and_get_asset", prepare)
+    mixed.get()
 
 
 def test_002_gtfs_builder_writes_bidirectional_feed_with_deterministic_trip_ids(tmp_path):
@@ -266,3 +324,34 @@ def test_002_gtfs_line_from_segments_reports_malformed_first_segment():
             end_time=0.0,
             period=600.0,
         )
+
+
+def test_generated_zip_is_reproducible_when_stop_insertion_order_changes(tmp_path):
+    archives = []
+    for index, stops in enumerate((
+        {"A": [2.0, 48.0], "B": [2.1, 48.1]},
+        {"B": [2.1, 48.1], "A": [2.0, 48.0]},
+    )):
+        builder = _base_builder()
+        builder.add_stops(stops)
+        builder.add_line([("A", "B", 60)], start_time=0, end_time=600, period=300)
+        archives.append(builder.write_zip(tmp_path / f"feed-{index}.zip"))
+
+    assert archives[0].read_bytes() == archives[1].read_bytes()
+    with zipfile.ZipFile(archives[0]) as archive:
+        assert all(entry.date_time == (1980, 1, 1, 0, 0, 0) for entry in archive.infolist())
+
+
+@pytest.mark.parametrize("field,value", [
+    ("start_time", -1),
+    ("start_time", float("nan")),
+    ("end_time", float("inf")),
+    ("period", float("nan")),
+    ("segment_travel_times", [float("inf")]),
+])
+def test_generated_line_rejects_invalid_times(field, value):
+    values = dict(stop_ids=["A", "B"], segment_travel_times=[60],
+                  start_time=0, end_time=600, period=300)
+    values[field] = value
+    with pytest.raises(ValueError, match="finite|zero or more"):
+        mobility.GTFSLineSpec(**values).validate()

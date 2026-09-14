@@ -16,6 +16,8 @@ import mobility.transport.modes.public_transport.public_transport_graph as graph
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.transport.modes.public_transport.gtfs.gtfs_timetable import GTFSTimetable
 from mobility.transport.modes.public_transport.gtfs.gtfs_router import GTFSRouter
+from mobility.transport.modes.public_transport.gtfs.gtfs_feed import GTFSFeed
+from mobility.transport.modes.public_transport.gtfs.gtfs_data import GTFSData
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 
 
@@ -50,6 +52,59 @@ def route_types():
     return resources.files("mobility.runtime.resources").joinpath("gtfs/gtfs_route_types.csv")
 
 
+def test_feed_in_subfolder_matches_root_feed(tmp_path, feed_files, zones, route_types):
+    """A provider's enclosing folder must not change the prepared timetable."""
+    root = write_feed(tmp_path / "root.zip", feed_files)
+    nested = write_feed(tmp_path / "nested.zip", {f"gtfs st malo hiver/{name}": text for name, text in feed_files.items()})
+    data = GTFSData("fixture", "dataset", "feed", "https://example/feed.zip", "2023-08-23", "archived", "unused")
+    data.cache_path["zip"] = nested
+    data.validate_file()
+    expected, _ = GTFSTimetable([root], zones, route_types).prepare()
+    actual, _ = GTFSTimetable([nested], zones, route_types).prepare()
+    for table in expected:
+        pd.testing.assert_frame_equal(actual[table], expected[table])
+
+
+@pytest.mark.parametrize("duplicate", [True, False])
+def test_tables_in_multiple_folders_are_rejected(tmp_path, feed_files, duplicate):
+    files = {f"first/{name}": text for name, text in feed_files.items()}
+    files["second/stops"] = feed_files["stops"]
+    if not duplicate:
+        del files["first/stops"]
+    path = write_feed(tmp_path / "ambiguous.zip", files)
+    with zipfile.ZipFile(path) as archive, pytest.raises(ValueError, match="multiple"):
+        GTFSFeed.table_paths(archive)
+
+
+def test_padded_csv_lines_match_unpadded_feed(tmp_path, feed_files, zones, route_types):
+    """Trailing spaces in headers and values do not change service or identifiers."""
+    padded = {name: "\n".join(line + " " * 100 for line in text.splitlines()) + "\n"
+              for name, text in feed_files.items()}
+    padded["calendar_dates"] = "service_id,date,exception_type    \n"
+    expected, _ = GTFSTimetable([write_feed(tmp_path / "plain.zip", feed_files)], zones, route_types).prepare()
+    actual, _ = GTFSTimetable([write_feed(tmp_path / "padded.zip", padded)], zones, route_types).prepare()
+    for table in expected:
+        pd.testing.assert_frame_equal(actual[table], expected[table])
+
+
+@pytest.mark.parametrize("conflict_date", ["20260216", "20260908"])
+def test_calendar_conflicts_only_fail_inside_study_window(tmp_path, feed_files, zones, route_types, conflict_date):
+    feed_files["calendar_dates"] = (
+        "service_id,date,exception_type\n"
+        f"s,{conflict_date},1\ns,{conflict_date},2\n"
+        "s,20260915,1\ns,20260915,1\n"
+    )
+    timetable = GTFSTimetable([write_feed(tmp_path / "feed.zip", feed_files)], zones, route_types,
+                             "2026-09-01", "2026-09-28")
+    if conflict_date == "20260908":
+        with pytest.raises(ValueError, match="both added and cancelled on 2026-09-08"):
+            timetable.prepare()
+    else:
+        tables, metadata = timetable.prepare()
+        assert metadata["selected_date"] == "2026-09-08"
+        assert len(tables["trips"]) == 1
+
+
 def test_dates_only_and_long_route_name(tmp_path, feed_files, zones, route_types):
     del feed_files["calendar"]
     feed_files["calendar_dates"] = "service_id,date,exception_type\ns,20260908,1\n"
@@ -58,6 +113,98 @@ def test_dates_only_and_long_route_name(tmp_path, feed_files, zones, route_types
     ).prepare()
     assert metadata["selected_date"] == "2026-09-08"
     assert tables["routes"].route_short_name.tolist() == ["Test route"]
+
+
+def test_service_window_excludes_expired_feeds_downstream(tmp_path, feed_files, zones, route_types):
+    old = {**feed_files, "calendar": feed_files["calendar"].replace("20260908,20260915", "20250701,20260703")}
+    tables, metadata = GTFSTimetable(
+        [write_feed(tmp_path / "old.zip", old), write_feed(tmp_path / "current.zip", feed_files)],
+        zones, route_types, "2026-09-01", "2026-09-28",
+    ).prepare()
+    assert metadata["selected_date"] == "2026-09-08"
+    assert metadata["sources"][0]["status"] == "no_service_in_window"
+    assert metadata["sources"][0]["selected_trips"] == 0
+    assert len(tables["trips"]) == 1
+    assert all("2026-09-01" <= row["date"] <= "2026-09-28" for row in metadata["tuesdays"])
+
+
+@pytest.mark.parametrize("expired", [True, False])
+def test_expired_feed_is_skipped_before_invalid_stops_are_read(
+    tmp_path, feed_files, zones, route_types, monkeypatch, expired,
+):
+    """Broken stops in an expired feed cannot block a current study."""
+    other = dict(feed_files)
+    other["stops"] += "a,Duplicate A,48.11,-1.68\n"
+    if expired:
+        other["calendar"] = other["calendar"].replace("20260908,20260915", "20250701,20260703")
+    paths = [write_feed(tmp_path / "other.zip", other), write_feed(tmp_path / "current.zip", feed_files)]
+    read_paths = []
+    opened_tables = []
+    original_read = GTFSFeed.read
+    original_open = zipfile.ZipFile.open
+
+    def open_table(archive, name, *args, **kwargs):
+        if Path(archive.filename) == paths[0]:
+            opened_tables.append(name)
+        return original_open(archive, name, *args, **kwargs)
+
+    def read(reader, *args):
+        read_paths.append(reader.path)
+        return original_read(reader, *args)
+
+    monkeypatch.setattr(GTFSFeed, "read", read)
+    monkeypatch.setattr(zipfile.ZipFile, "open", open_table)
+    timetable = GTFSTimetable(paths, zones, route_types, "2026-09-01", "2026-09-28")
+    if expired:
+        _, metadata = timetable.prepare()
+        assert read_paths == [paths[1]]
+        assert opened_tables == ["calendar.txt"]
+        assert metadata["sources"][0]["status"] == "no_service_in_window"
+    else:
+        with pytest.raises(ValueError, match="duplicate stop_id"):
+            timetable.prepare()
+
+
+def test_weekend_service_and_cancelled_tuesdays_are_reported(tmp_path, feed_files, zones, route_types):
+    other = {**feed_files,
+             "calendar": feed_files["calendar"].replace("s,0,1,0,0,0,0,0", "s,0,1,0,0,0,0,1"),
+             "calendar_dates": "service_id,date,exception_type\ns,20260908,2\ns,20260915,2\n"}
+    _, metadata = GTFSTimetable(
+        [write_feed(tmp_path / "sunday.zip", other), write_feed(tmp_path / "current.zip", feed_files)],
+        zones, route_types, "2026-09-01", "2026-09-28",
+    ).prepare()
+    assert metadata["sources"][0]["status"] == "no_tuesday_service"
+    assert metadata["sources"][0]["active_service_dates"] == "2026-09-13"
+
+
+def test_disjoint_tuesdays_produce_a_coverage_report(tmp_path, feed_files, zones, route_types):
+    first = {**feed_files, "calendar": feed_files["calendar"].replace("20260908,20260915", "20260908,20260908")}
+    second = {**feed_files, "calendar": feed_files["calendar"].replace("20260908,20260915", "20260915,20260915")}
+    _, metadata = GTFSTimetable(
+        [write_feed(tmp_path / "first.zip", first), write_feed(tmp_path / "second.zip", second)],
+        zones, route_types, "2026-09-01", "2026-09-28",
+    ).prepare()
+    assert metadata["selected_date"] == "2026-09-08"
+    assert metadata["common_tuesday_available"] is False
+    assert metadata["sources"][1]["status"] == "no_service_on_selected_date"
+
+
+def test_possible_overlapping_replacements_are_reported(tmp_path, feed_files, zones, route_types):
+    second = {**feed_files, "calendar": feed_files["calendar"].replace("20260915", "20260922")}
+    _, metadata = GTFSTimetable(
+        [write_feed(tmp_path / "first.zip", feed_files), write_feed(tmp_path / "second.zip", second)],
+        zones, route_types, "2026-09-01", "2026-09-28",
+    ).prepare()
+    assert metadata["overlapping_trip_ids"] == 2
+    assert [source["overlapping_trip_ids"] for source in metadata["sources"]] == [1, 1]
+
+
+def test_historical_window_uses_historical_service_dates(tmp_path, feed_files, zones, route_types):
+    historical = {**feed_files, "calendar": feed_files["calendar"].replace("20260908,20260915", "20250901,20250930")}
+    tables, metadata = GTFSTimetable(
+        [write_feed(tmp_path / "past.zip", historical)], zones, route_types, "2025-09-01", "2025-09-28",
+    ).prepare()
+    assert metadata["selected_date"] == "2025-09-02"
     assert len(tables["stop_times"]) == 2
 
 
@@ -285,7 +432,7 @@ def test_version_changes_invalidate_timetable_graph_and_downstream_assets(
 
     graph = graph_module.PublicTransportGraph(zones, parameters)
     assert graph.inputs["version"] == "3"
-    assert graph.gtfs_router.inputs["version"] == "5"
+    assert graph.gtfs_router.inputs["version"] == "7"
     assert graph.cache_path != old_graph.cache_path
     assert graph.gtfs_router.cache_path != old_graph.gtfs_router.cache_path
     assert (

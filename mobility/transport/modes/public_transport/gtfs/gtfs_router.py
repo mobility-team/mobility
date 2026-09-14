@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import os
 import pathlib
@@ -16,10 +15,11 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
 from mobility.spatial.transport_zones import TransportZones
 
-from mobility.transport.modes.public_transport.gtfs.gtfs_sources import GTFSSources
+from mobility.transport.modes.public_transport.gtfs.gtfs_sources import GTFSSources, GTFSSourceSelection
 
 from .gtfs_data import GTFSData
 from .gtfs_timetable import GTFSTimetable
+from ..custom_gtfs import CustomGTFS
 
 
 class GTFSRouter(FileAsset):
@@ -37,27 +37,50 @@ class GTFSRouter(FileAsset):
         transport_zones: TransportZones,
         gtfs_sources: GTFSSources | None,
         additional_gtfs_files: (
-            ParameterValue | SensitivityValue | list[str | pathlib.Path] | str | pathlib.Path | None
+            ParameterValue | SensitivityValue
+            | list[str | pathlib.Path | CustomGTFS]
+            | str | pathlib.Path | CustomGTFS | None
         ) = None,
         expected_agencies: list[str] | None = None,
     ) -> None:
         """Reuse saved timetables only when sources and additional files are unchanged."""
         additional_hashes = {}
+        gtfs_data = []
+        sources_hash = None
+        if gtfs_sources is not None:
+            # Resolve the frozen inputs before naming any downstream cache files.
+            sources_path = gtfs_sources.get()
+            sources_hash = GTFSData.file_sha256(sources_path)
+            selected_sources = GTFSSourceSelection(gtfs_sources, transport_zones, sources_hash).get()
+            gtfs_data = [
+                GTFSData(
+                    provider=source["provider"],
+                    dataset_id=source["dataset_id"],
+                    resource_id=source["resource_id"],
+                    download_url=source["download_url"],
+                    gtfs_file_date=source["gtfs_file_date"],
+                    source_status=source["status"],
+                    sources_created_at_utc=source["sources_created_at_utc"],
+                    sha256=source["sha256"],
+                )
+                for source in selected_sources.to_dict("records")
+            ]
         # Modes are first defined for all scenarios. Read file contents only after
         # for_iteration() has selected the additional timetables for one iteration.
         if additional_gtfs_files is not None and not isinstance(
             additional_gtfs_files, (ParameterValue, SensitivityValue)
         ):
             for path in self.normalize_additional_gtfs_files(additional_gtfs_files):
-                digest = hashlib.sha256()
-                with open(path, "rb") as stream:
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                additional_hashes[path] = digest.hexdigest()
+                # Generated feeds are already identified by their service inputs.
+                if isinstance(path, CustomGTFS):
+                    continue
+                additional_hashes[path] = GTFSData.file_sha256(path)
         inputs = {
-            "version": "5",
+            "version": "7",
             "transport_zones": transport_zones,
             "gtfs_sources": gtfs_sources,
+            "gtfs_sources_sha256": sources_hash,
+            "gtfs_data": gtfs_data,
             "additional_gtfs_files": additional_gtfs_files,
             "expected_agencies": expected_agencies,
             "additional_gtfs_hashes": additional_hashes,
@@ -79,14 +102,18 @@ class GTFSRouter(FileAsset):
     def create_and_get_asset(self) -> dict[str, pathlib.Path]:
         """Download the selected sources and cache the prepared timetable."""
 
-        logging.info("Downloading GTFS files for stops within the transport zones...")
+        logging.info("Loading selected GTFS files from cache or their frozen URLs...")
 
         transport_zones = self.inputs["transport_zones"]
         gtfs_files = self.get_gtfs_files(transport_zones)
 
         additional_gtfs_files = self.inputs["additional_gtfs_files"]
         if additional_gtfs_files is not None:
-            gtfs_files.extend(self.normalize_additional_gtfs_files(additional_gtfs_files))
+            # Keep assets in inputs for dependency resolution; resolve paths only here.
+            gtfs_files.extend(
+                str(source.get()) if isinstance(source, CustomGTFS) else source
+                for source in self.normalize_additional_gtfs_files(additional_gtfs_files)
+            )
 
         self.prepare_gtfs_router(transport_zones, gtfs_files)
 
@@ -102,7 +129,17 @@ class GTFSRouter(FileAsset):
             gtfs_files,
             transport_zones.get(),
             resources.files("mobility.runtime.resources").joinpath("gtfs/gtfs_route_types.csv"),
+            service_start_date=self.gtfs_sources.gtfs_service_start_date if self.gtfs_sources else None,
+            service_end_date=self.gtfs_sources.gtfs_service_end_date if self.gtfs_sources else None,
         ).prepare()
+        source_assets = {str(asset.cache_path["zip"]): asset for asset in self.gtfs_data}
+        for source in metadata["sources"]:
+            asset = source_assets.get(source["path"])
+            if asset is not None:
+                source.update(source_id=f"{asset.provider}:{asset.resource_id}",
+                              download_url=asset.download_url, archive_date=asset.gtfs_file_date,
+                              archive_sha256=asset.inputs.get("sha256"))
+        metadata["gtfs_sources_sha256"] = self.gtfs_sources_sha256 or ""
         agencies = tables["agency"].agency_name.str.casefold()
         missing = [
             name
@@ -186,9 +223,9 @@ class GTFSRouter(FileAsset):
 
     @staticmethod
     def normalize_additional_gtfs_files(
-        additional_gtfs_files: list[str | pathlib.Path] | str | pathlib.Path,
-    ) -> list[str]:
-        """Return additional GTFS paths after checking they are resolved."""
+        additional_gtfs_files: list[str | pathlib.Path | CustomGTFS] | str | pathlib.Path | CustomGTFS,
+    ) -> list[str | CustomGTFS]:
+        """Return paths and assets after checking scenario values are resolved."""
         if isinstance(additional_gtfs_files, (ParameterValue, SensitivityValue)):
             raise ValueError(
                 "additional_gtfs_files still contains scenario or iteration values. "
@@ -196,30 +233,22 @@ class GTFSRouter(FileAsset):
                 "preparing the timetable."
             )
 
-        if isinstance(additional_gtfs_files, (str, pathlib.Path)):
-            return [str(additional_gtfs_files)]
+        if isinstance(additional_gtfs_files, (str, pathlib.Path, CustomGTFS)):
+            additional_gtfs_files = [additional_gtfs_files]
 
         paths = []
         for path in additional_gtfs_files:
-            if not isinstance(path, (str, pathlib.Path)):
+            if not isinstance(path, (str, pathlib.Path, CustomGTFS)):
                 raise ValueError(
-                    "additional_gtfs_files should contain only file paths. "
+                    "additional_gtfs_files should contain only file paths or CustomGTFS assets. "
                     f"Got {type(path).__name__}: {path!r}."
                 )
-            paths.append(str(path))
+            paths.append(path if isinstance(path, CustomGTFS) else str(path))
         return paths
 
     def get_gtfs_files(self, transport_zones: TransportZones) -> list[str]:
         """Download usable source archives intersecting the transport zones."""
-        transport_zones = transport_zones.get()
-        gtfs_sources = self.inputs["gtfs_sources"]
-        gtfs_sources.get()
-        selected_sources = gtfs_sources.get_gtfs_resources_for_area(transport_zones)
-
-        gtfs_files = GTFSData.download_gtfs_files(selected_sources.to_dict("records"))
-        gtfs_files = [str(path) for path, file_ok in gtfs_files if file_ok]
-
-        return gtfs_files
+        return [str(source.get()["zip"]) for source in self.inputs["gtfs_data"]]
 
     def audit_gtfs(self) -> None:
         """
