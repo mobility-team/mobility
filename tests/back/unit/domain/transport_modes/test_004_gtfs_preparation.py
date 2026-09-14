@@ -52,6 +52,14 @@ def route_types():
     return resources.files("mobility.runtime.resources").joinpath("gtfs/gtfs_route_types.csv")
 
 
+def test_quoted_csv_header_with_bom_keeps_stop_ids(tmp_path, feed_files, zones, route_types):
+    expected, _ = GTFSTimetable([write_feed(tmp_path / "plain.zip", feed_files)], zones, route_types).prepare()
+    feed_files["stops"] = '\ufeff' + feed_files["stops"].replace("stop_id,", '"stop_id",', 1)
+    actual, _ = GTFSTimetable([write_feed(tmp_path / "quoted.zip", feed_files)], zones, route_types).prepare()
+    for name in expected:
+        pd.testing.assert_frame_equal(actual[name], expected[name])
+
+
 def test_feed_in_subfolder_matches_root_feed(tmp_path, feed_files, zones, route_types):
     """A provider's enclosing folder must not change the prepared timetable."""
     root = write_feed(tmp_path / "root.zip", feed_files)

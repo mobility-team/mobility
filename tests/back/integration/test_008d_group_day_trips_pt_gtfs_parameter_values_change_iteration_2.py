@@ -131,6 +131,8 @@ def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files
         routing_parameters=mobility.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-01-01",
             gtfs_sources_folder=gtfs_sources_folder,
+            # This resource has no archive before the test's reference date.
+            excluded_gtfs_sources=["transport_data_gouv:83830"],
             additional_gtfs_files=additional_gtfs_files,
             max_traveltime=10.0,
             max_perceived_time=10.0,

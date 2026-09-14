@@ -1,5 +1,6 @@
 """Read and validate one GTFS feed before merging it with other feeds."""
 
+import csv
 import hashlib
 import logging
 import zipfile
@@ -161,7 +162,7 @@ class GTFSFeed:
         # Read only fields used by the preparation code. Optional fields are
         # selected when present, so valid GTFS variants remain supported.
         with path.open("r", encoding="utf-8-sig") as source:
-            available = tuple(source.readline().rstrip("\r\n").split(","))
+            available = next(csv.reader(source), [])
         selected = [column for column in available if column.strip() in columns] or None
         table = pl.read_csv(
             path,
