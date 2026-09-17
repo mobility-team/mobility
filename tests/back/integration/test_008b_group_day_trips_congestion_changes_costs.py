@@ -44,6 +44,8 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data, gtfs_sources_f
         routing_parameters=mobility.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-01-01",
             gtfs_sources_folder=gtfs_sources_folder,
+            # This resource has no archive before the test's reference date.
+            excluded_gtfs_sources=["transport_data_gouv:83830"],
         ),
     )
 
@@ -90,6 +92,8 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data, gtfs_sources_f
         routing_parameters=mobility.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-01-01",
             gtfs_sources_folder=gtfs_sources_folder,
+            # This resource has no archive before the test's reference date.
+            excluded_gtfs_sources=["transport_data_gouv:83830"],
         ),
     )
 

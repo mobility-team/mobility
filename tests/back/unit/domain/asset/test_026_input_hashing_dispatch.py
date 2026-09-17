@@ -1,18 +1,65 @@
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
 from shapely.geometry import Point
 
-from mobility.runtime.assets.input_hashing import hash_inputs, normalize_for_hash
+from mobility.runtime.assets.input_hashing import hash_inputs, normalize_for_hash, to_stable_json_bytes
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.parameter_values import ParameterValue
+from mobility.trips.group_day_trips.core.parameters import GroupDayTripsParameters
+
+
+def test_dependency_hash_is_stable_when_disk_cache_needs_repair(tmp_path):
+    """Cache validation can fail without changing the identity of the inputs."""
+    class File(FileAsset):
+        def create_and_get_asset(self):
+            self.cache_path.write_text("output")
+            return self.cache_path
+
+        def get_cached_asset(self):
+            return self.cache_path
+
+    child = File({"value": 1}, tmp_path / "child.txt")
+    child.cache_path.write_text("output")
+    parent_hash = hash_inputs({"child": child})
+    assert normalize_for_hash(child) == {"__asset__": child.get_cached_hash()}
+    assert not child.is_update_needed()
+
+    child.hash_path.write_text("outdated")
+    assert child.is_update_needed()
+    assert hash_inputs({"child": child}) == parent_hash
+    child.hash_path.unlink()
+    assert child.is_update_needed()
+    assert hash_inputs({"child": child}) == parent_hash
 
 
 class _Params(BaseModel):
     label: str
     count: int
+
+
+class _DisplayParams(BaseModel):
+    """Existing field serializers remain part of parameter hash compatibility."""
+
+    count: int
+
+    @field_serializer("count")
+    def display_count(self, value):
+        return "hidden"
+
+
+class _NestedParams(BaseModel):
+    """Cover Python types that the existing JSON representation flattens."""
+
+    child: _Params
+    path: Path
+    values: tuple[int, int]
 
 
 @dataclass
@@ -60,3 +107,36 @@ def test_normalize_for_hash_hashes_pandas_and_geopandas_frames():
 def test_normalize_for_hash_raises_for_unsupported_objects():
     with pytest.raises(TypeError, match="Unsupported input type"):
         normalize_for_hash(object())
+
+
+def test_parameter_asset_hashes_follow_inputs():
+    """Equivalent nested assets share a hash; changing their inputs changes it."""
+    first = ParameterValue.by_scenario_and_iteration(
+        default=None, serm={5: [InMemoryAsset({"period": 300})]}
+    )
+    repeated = ParameterValue.by_scenario_and_iteration(
+        default=None, serm={5: [InMemoryAsset({"period": 300})]}
+    )
+    changed = ParameterValue.by_scenario_and_iteration(
+        default=None, serm={5: [InMemoryAsset({"period": 150})]}
+    )
+    assert hash_inputs({"parameters": first}) == hash_inputs({"parameters": repeated})
+    assert hash_inputs({"parameters": first}) != hash_inputs({"parameters": changed})
+
+
+@pytest.mark.parametrize("parameters", [
+    _NestedParams(child=_Params(label="x", count=2), path=Path("inputs/feed.zip"), values=(1, 2)),
+    _DisplayParams(count=1),
+    ParameterValue.by_scenario_and_iteration(default=None, serm={1: [], 5: ["feed.zip"]}),
+    GroupDayTripsParameters(),
+])
+def test_parameter_hashes_match_existing_json_strategy(parameters):
+    """Existing nested and simulation parameters keep their full cache hashes."""
+    # Reconstruct the previous hash representation, without the new fallback.
+    old_model = {
+        "__pydantic__": type(parameters).__qualname__,
+        "value": normalize_for_hash(parameters.model_dump(mode="json")),
+    }
+    old_inputs = {"__dict__": [["parameters", old_model]]}
+    expected = hashlib.md5(to_stable_json_bytes(old_inputs)).hexdigest()
+    assert hash_inputs({"parameters": parameters}) == expected

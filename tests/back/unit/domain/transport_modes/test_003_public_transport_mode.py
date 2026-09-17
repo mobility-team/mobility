@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -9,17 +10,21 @@ from mobility.transport.costs.parameters.generalized_cost_parameters import (
 )
 from mobility.transport.modes.core.transport_mode import TransportMode
 from mobility.transport.modes.public_transport import public_transport as pt_module
+from mobility.transport.modes.public_transport import public_transport_graph as graph_module
+from mobility.transport.modes.public_transport.gtfs_builder import GTFSBuilder
 
 
+@pytest.mark.parametrize("generated", [False, True])
 def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, generated: bool
 ) -> None:
     """Define a future service before selecting the iteration that introduces it."""
     monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     zones = InMemoryAsset({"zones": "Rennes"})
     zones.countries = ["fr"]
 
-    # Only the walking network is replaced; build the real public transport assets.
+    # Source discovery is outside the scenario-resolution behavior tested here.
+    monkeypatch.setattr(graph_module, "GTFSSources", Mock(wraps=graph_module.GTFSSources, return_value=None))
     walk_costs = InMemoryAsset({"parameters": {}})
     walk_costs.active_routing_graph = InMemoryAsset({"network": "walk"})
     walk_costs.active_routing_backend = "dodgr"
@@ -33,6 +38,10 @@ def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
 
     # The future file need not exist while the scenarios are being defined.
     extra_feed = tmp_path / "serm.zip"
+    builder = GTFSBuilder("serm", "SERM", "r", "R", "train", "s")
+    builder.add_stops({"a": [-1.68, 48.11], "b": [-1.67, 48.11]})
+    builder.add_line([("a", "b", 60)], start_time=0, end_time=600, period=300)
+    additional_source = builder.build_asset() if generated else str(extra_feed)
     mode = pt_module.PublicTransportMode(
         transport_zones=zones,
         first_leg_mode=walk,
@@ -41,7 +50,7 @@ def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
             gtfs_reference_date="2026-07-24",
             gtfs_sources_folder=tmp_path / "sources",
             additional_gtfs_files=ParameterValue.by_scenario_and_iteration(
-                default=None, serm={1: [], 5: [str(extra_feed)]}
+                default=None, serm={1: [], 5: [additional_source]}
             ),
         ),
     )
@@ -52,19 +61,50 @@ def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
         resolved = mode.for_iteration(iteration, scenario=scenario)
         graph = resolved.travel_costs.intermodal_graph.public_transport_graph
         graphs[scenario, iteration] = graph
-        expected = [str(extra_feed)] if scenario == "serm" and iteration >= 5 else None
-        assert graph.gtfs_router.inputs["additional_gtfs_files"] == expected
-        assert bool(graph.gtfs_router.inputs["additional_gtfs_hashes"]) == bool(expected)
+        settings = graph.inputs["parameters"]
+        assert "additional_gtfs_files" not in type(settings).model_fields
+        assert "gtfs_reference_date" not in type(settings).model_fields
+        assert resolved.travel_costs.inputs["parameters"] is settings
+        assert resolved.travel_costs.intermodal_graph.inputs["parameters"] is settings
+        assert settings.model_dump(mode="json")["wait_time_coeff"] == 2.0
+        expected = [additional_source] if scenario == "serm" and iteration >= 5 else None
+        sources = graph.gtfs_router.inputs["additional_gtfs_files"]
+        if generated and expected:
+            # Parameter resolution may copy assets; their input identity is retained.
+            assert [source.inputs_hash for source in sources] == [additional_source.inputs_hash]
+        else:
+            assert sources == expected
+        assert bool(graph.gtfs_router.inputs["additional_gtfs_hashes"]) == (bool(expected) and not generated)
 
     assert graphs["default", 5].cache_path == graphs["serm", 4].cache_path
     assert graphs["serm", 5].cache_path == graphs["serm", 6].cache_path
     assert graphs["serm", 4].cache_path != graphs["serm", 5].cache_path
 
-    # Editing the added timetable must also invalidate the resolved graph.
-    extra_feed.write_bytes(b"revised timetable")
+    if generated:
+        # Recreating an unchanged service must reuse the graph.
+        parameters = mode.routing_parameters
+        parameters.additional_gtfs_files = ParameterValue.by_scenario_and_iteration(
+            default=None, serm={1: [], 5: [builder.build_asset()]}
+        )
+        repeated = mode.for_iteration(5, scenario="serm")
+        repeated_graph = repeated.travel_costs.intermodal_graph.public_transport_graph
+        assert repeated_graph.cache_path == graphs["serm", 5].cache_path
+        assert not additional_source.cache_path.exists()
+
+        builder.add_line([("a", "b", 60)], start_time=1200, end_time=1800, period=150)
+        parameters.additional_gtfs_files = ParameterValue.by_scenario_and_iteration(
+            default=None, serm={1: [], 5: [builder.build_asset()]}
+        )
+    else:
+        extra_feed.write_bytes(b"revised timetable")
+
+    # Only the scenario using the changed service gets a new graph hash.
     revised = mode.for_iteration(5, scenario="serm")
     revised_graph = revised.travel_costs.intermodal_graph.public_transport_graph
     assert revised_graph.cache_path != graphs["serm", 5].cache_path
+    default = mode.for_iteration(5, scenario="default")
+    default_graph = default.travel_costs.intermodal_graph.public_transport_graph
+    assert default_graph.cache_path == graphs["default", 5].cache_path
 
 
 def _fake_public_transport_travel_costs(**inputs):

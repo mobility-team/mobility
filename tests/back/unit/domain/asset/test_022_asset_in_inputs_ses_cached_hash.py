@@ -1,19 +1,16 @@
 from pathlib import Path
 from mobility.runtime.assets.asset import Asset
 
-def test_asset_in_inputs_uses_child_cached_hash(tmp_path):
+def test_asset_in_inputs_uses_child_input_hash(tmp_path):
     class ChildAsset(Asset):
         def __init__(self, child_hash_value: str):
-            # use real init with simple inputs so it runs compute_inputs_hash, but we override get_cached_hash
-            super().__init__({"note": "child"})
-            self._child_hash_value = child_hash_value
+            super().__init__({"child_value": child_hash_value})
 
         def get(self):
             return None
 
-        # this is what compute_inputs_hash() will call when it sees an Asset in inputs
         def get_cached_hash(self):
-            return self._child_hash_value
+            raise AssertionError("Hashing inputs must not read the disk cache")
 
     class ParentAsset(Asset):
         def get(self):
@@ -22,13 +19,10 @@ def test_asset_in_inputs_uses_child_cached_hash(tmp_path):
     child_a = ChildAsset("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
     child_b = ChildAsset("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 
-    # Parent includes a child Asset directly in its inputs (triggers the Asset branch)
     parent_with_a = ParentAsset({"child": child_a, "p": 1})
     parent_with_a_again = ParentAsset({"child": child_a, "p": 1})
     parent_with_b = ParentAsset({"child": child_b, "p": 1})
 
-    # Same child -> same hash
     assert parent_with_a.inputs_hash == parent_with_a_again.inputs_hash
 
-    # Different child hash -> different parent hash
     assert parent_with_a.inputs_hash != parent_with_b.inputs_hash

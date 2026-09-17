@@ -1,3 +1,4 @@
+from .custom_gtfs import CustomGTFS
 from .public_transport_graph import PublicTransportRoutingParameters
 from .public_transport import (
     PublicTransportMode,
@@ -20,6 +21,7 @@ __all__ = [
     "build_project_gtfs_zip",
     "build_gtfs_zip",
     "GTFSBuilder",
+    "CustomGTFS",
     "GTFSFeedSpec",
     "GTFSLineSpec",
     "GTFSStopSpec",

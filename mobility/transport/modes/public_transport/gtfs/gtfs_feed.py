@@ -1,9 +1,10 @@
 """Read and validate one GTFS feed before merging it with other feeds."""
 
+import csv
 import hashlib
 import logging
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import geopandas as gpd
 import numpy as np
@@ -37,7 +38,7 @@ class GTFSFeed:
         self.folder = folder
         self.diagnostics: dict[str, int] = {}
 
-    def read(self, boundary: BaseGeometry) -> dict[str, pd.DataFrame] | None:
+    def read(self, boundary: BaseGeometry, calendar: pd.DataFrame, exceptions: pd.DataFrame) -> dict[str, pd.DataFrame] | None:
         """Return trips with two local stop visits, or None if none can be retained."""
         stops = self.read_table(
             "stops",
@@ -77,7 +78,7 @@ class GTFSFeed:
 
         trips, times = self.expand_frequencies(trips, times, starts)
 
-        agency, routes, calendar, exceptions = self.read_related_tables(stops, trips)
+        agency, routes, calendar, exceptions = self.read_related_tables(stops, trips, calendar, exceptions)
 
         transfers = self.read_table(
             "transfers",
@@ -104,19 +105,20 @@ class GTFSFeed:
             transfers=transfers,
         )
 
-    def extract(self) -> str:
-        """Extract the timetable tables and return a checksum of their contents."""
+    def extract(self, table_names: tuple[str, ...] | None = None) -> str:
+        """Extract requested tables and return a checksum of their contents."""
         digest = hashlib.sha256()
 
         with zipfile.ZipFile(self.path) as archive:
-            for name in sorted(self.table_names):
+            paths = self.table_paths(archive)
+            for name in sorted(self.table_names if table_names is None else table_names):
                 filename = name + ".txt"
-                if filename not in archive.namelist():
+                if filename not in paths:
                     continue
 
                 digest.update(filename.encode())
                 with (
-                    archive.open(filename) as source,
+                    archive.open(paths[filename]) as source,
                     (self.folder / filename).open("wb") as target,
                 ):
                     for chunk in iter(lambda: source.read(1024 * 1024), b""):
@@ -124,6 +126,24 @@ class GTFSFeed:
                         target.write(chunk)
 
         return digest.hexdigest()
+
+    @classmethod
+    def table_paths(cls, archive: zipfile.ZipFile) -> dict[str, str]:
+        """Locate one feed's tables, at the ZIP root or inside a shared folder."""
+        paths = {}
+        folders = set()
+        filenames = {name + ".txt" for name in cls.table_names}
+        for member in archive.infolist():
+            path = PurePosixPath(member.filename)
+            if member.is_dir() or path.name not in filenames:
+                continue
+            if path.name in paths:
+                raise ValueError(f"multiple copies of {path.name} in the ZIP")
+            paths[path.name] = member.filename
+            folders.add(path.parent)
+        if len(folders) > 1:
+            raise ValueError("GTFS tables are spread across multiple folders in the ZIP")
+        return paths
 
     def read_table(
         self,
@@ -142,14 +162,17 @@ class GTFSFeed:
         # Read only fields used by the preparation code. Optional fields are
         # selected when present, so valid GTFS variants remain supported.
         with path.open("r", encoding="utf-8-sig") as source:
-            available = tuple(source.readline().rstrip("\r\n").split(","))
-        selected = [column for column in columns if column in available] or None
+            available = next(csv.reader(source), [])
+        selected = [column for column in available if column.strip() in columns] or None
         table = pl.read_csv(
             path,
             columns=selected,
             infer_schema=False,
             missing_utf8_is_empty_string=True,
-        ).to_pandas()
+        )
+        # Some publishers pad CSV lines, including the final header and value.
+        table = table.rename({name: name.strip() for name in table.columns})
+        table = table.with_columns(pl.all().str.strip_chars_end()).to_pandas()
         missing = set(required) - set(table.columns)
         if missing:
             raise ValueError(f"{path.name} is missing columns: {sorted(missing)}")
@@ -164,6 +187,8 @@ class GTFSFeed:
             missing_utf8_is_empty_string=True,
         )
         columns = scan.collect_schema().names()
+        scan = scan.rename({name: name.strip() for name in columns})
+        columns = [name.strip() for name in columns]
         required = {
             "trip_id",
             "stop_id",
@@ -173,6 +198,10 @@ class GTFSFeed:
         }
         if not required.issubset(columns):
             raise ValueError("Invalid stop_times.txt columns")
+        needed = required | {"pickup_type", "drop_off_type", "timepoint", "shape_dist_traveled"}
+        scan = scan.select([column for column in columns if column in needed]).with_columns(
+            pl.all().str.strip_chars_end()
+        )
 
         # Keep the original endpoints for interpolation and frequency offsets.
         local_trips = (
@@ -182,10 +211,8 @@ class GTFSFeed:
             .filter(pl.col("len") >= 2)
             .select("trip_id")
         )
-        needed = required | {"pickup_type", "drop_off_type", "timepoint", "shape_dist_traveled"}
         return (
-            scan.select([column for column in columns if column in needed])
-            .join(local_trips, on="trip_id", how="semi")
+            scan.join(local_trips, on="trip_id", how="semi")
             .collect()
             .to_pandas()
         )
@@ -346,10 +373,54 @@ class GTFSFeed:
 
         return expanded_tables[0], expanded_tables[1]
 
+    def read_calendars(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Read service calendars once, before preparing stops and trips."""
+        # Services may be declared by a weekly calendar, dated exceptions, or both.
+        calendar_columns = ("service_id", "monday", "tuesday", "wednesday", "thursday", "friday",
+                            "saturday", "sunday", "start_date", "end_date")
+        calendar = self.read_table("calendar", columns=calendar_columns)
+        exceptions = self.read_table(
+            "calendar_dates",
+            columns=("service_id", "date", "exception_type"),
+        )
+        for name, frame, required in (
+            ("calendar", calendar, set(calendar_columns)),
+            ("calendar_dates", exceptions, {"service_id", "date", "exception_type"}),
+        ):
+            if not frame.empty and not required.issubset(frame.columns):
+                raise ValueError(f"Invalid {name}.txt columns")
+        if calendar.empty and exceptions.empty:
+            raise ValueError("No service calendar")
+        weekdays = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+        if not calendar.empty:
+            for column in ("start_date", "end_date"):
+                calendar[column] = pd.to_datetime(calendar[column], format="%Y%m%d", errors="raise")
+                if calendar[column].isna().any():
+                    raise ValueError(f"Missing calendar {column}")
+            if (calendar.end_date < calendar.start_date).any():
+                raise ValueError("Calendar end date precedes start date")
+            if calendar.service_id.duplicated().any():
+                raise ValueError("Duplicate service_id in calendar.txt")
+            for weekday in weekdays:
+                calendar[weekday] = pd.to_numeric(calendar[weekday], errors="raise")
+                if not calendar[weekday].isin([0, 1]).all():
+                    raise ValueError(f"Invalid calendar {weekday} flag")
+        if not exceptions.empty:
+            exceptions["date"] = pd.to_datetime(exceptions.date, format="%Y%m%d", errors="raise")
+            if exceptions.date.isna().any():
+                raise ValueError("Missing calendar exception date")
+            exceptions["exception_type"] = pd.to_numeric(exceptions.exception_type, errors="raise")
+            if not exceptions.exception_type.isin([1, 2]).all():
+                raise ValueError("Invalid calendar exception_type")
+            exceptions = exceptions.drop_duplicates()
+        return calendar, exceptions
+
     def read_related_tables(
         self,
         stops: pd.DataFrame,
         trips: pd.DataFrame,
+        calendar: pd.DataFrame,
+        exceptions: pd.DataFrame,
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """Check agencies, routes and calendars, keeping those used by retained trips."""
         # Each retained trip needs a known route, operator and operating calendar.
@@ -397,23 +468,6 @@ class GTFSFeed:
         )
         routes["route_type"] = pd.to_numeric(routes.route_type, errors="raise")
 
-        # Services may be declared by a weekly calendar, dated exceptions, or both.
-        calendar = self.read_table(
-            "calendar",
-            columns=("service_id", "tuesday", "start_date", "end_date"),
-        )
-        exceptions = self.read_table(
-            "calendar_dates",
-            columns=("service_id", "date", "exception_type"),
-        )
-        for name, frame, required in (
-            ("calendar", calendar, {"service_id", "tuesday", "start_date", "end_date"}),
-            ("calendar_dates", exceptions, {"service_id", "date", "exception_type"}),
-        ):
-            if not frame.empty and not required.issubset(frame.columns):
-                raise ValueError(f"Invalid {name}.txt columns")
-        if calendar.empty and exceptions.empty:
-            raise ValueError("No service calendar")
         calendar = (
             calendar.loc[calendar.service_id.isin(trips.service_id.unique())].copy()
             if not calendar.empty

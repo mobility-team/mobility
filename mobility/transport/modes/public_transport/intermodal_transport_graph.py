@@ -11,7 +11,9 @@ from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.graphs.core.graph_cache_cleanup import graph_cache_paths
 from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
-from mobility.transport.modes.public_transport.public_transport_graph import PublicTransportGraph, PublicTransportRoutingParameters
+from mobility.transport.modes.public_transport.public_transport_graph import (
+    PublicTransportGraph, PublicTransportRoutingParameters, PublicTransportRoutingSettings,
+)
 from mobility.spatial.osm import OSMData
 
 class IntermodalTransportGraph(FileAsset):
@@ -47,7 +49,7 @@ class IntermodalTransportGraph(FileAsset):
             "last_leg_cch_graph": last_leg_travel_costs.active_cch_graph,
             "first_modal_transfer": first_modal_transfer,
             "last_modal_transfer": last_modal_transfer,
-            "parameters": parameters
+            "parameters": public_transport_graph.inputs["parameters"]
         }
 
         # Parking supply is only relevant when access to PT starts by car.
@@ -96,7 +98,7 @@ class IntermodalTransportGraph(FileAsset):
             last_leg_cch_graph,
             first_modal_transfer: IntermodalTransfer,
             last_modal_transfer: IntermodalTransfer,
-            parameters: PublicTransportRoutingParameters,
+            parameters: PublicTransportRoutingSettings,
             osm_parkings: OSMData = None
         ) -> pd.DataFrame:
         """Build the routable intermodal PT graph on disk."""
