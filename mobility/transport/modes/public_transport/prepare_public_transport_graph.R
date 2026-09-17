@@ -1,5 +1,5 @@
 library(log4r)
-library(gtfsrouter)
+library(arrow)
 library(data.table)
 library(sf)
 library(jsonlite)
@@ -8,16 +8,9 @@ library(dbscan)
 
 args <- commandArgs(trailingOnly = TRUE)
 
-# args <- c(
-#   'D:\\dev\\mobility_oss\\mobility',
-#   'D:\\test-09\\e90a8308da40d062e66d1021c5094d4d-transport_zones.gpkg',
-#   'D:\\test-09\\0a8bd50eb6f9cc645144a17944c656b6-gtfs_router.rds',
-#   '{"start_time_min": 6.5, "start_time_max": 8.0, "max_traveltime": 1.0, "wait_time_coeff": 2.0, "transfer_time_coeff": 2.0, "no_show_perceived_prob": 0.2, "target_time": 8.0, "max_wait_time_at_destination": 0.25, "max_perceived_time": 2.0, "additional_gtfs_files": [], "expected_agencies": null}', 'D:\\test-09\\public_transport_graph\\simplified\\bf997a1f492f20fc672523ec61eed7f5-public-transport-graph'
-# )
-
 package_path <- args[1]
 tz_file_path <- args[2]
-gtfs_file_path <-args[3]
+gtfs_table_paths <- fromJSON(args[3])
 parameters <- args[4]
 output_file_path <- args[5]
 
@@ -29,8 +22,10 @@ parameters <- fromJSON(parameters)
 
 info(logger, "Loading GTFS schedules and stops...")
 
-# Load the gtfsrouter object prepared by prepare_gtfs_router.R
-router <- readRDS(gtfs_file_path)
+# Read the dated timetable written by the Python GTFS asset.
+router <- lapply(gtfs_table_paths, function(path) {
+  as.data.table(read_parquet(path))
+})
 
 # Prepare travel time between consecutive stops, and wait times between the 
 # arrival and the departure of the vehicle at each stop
@@ -42,7 +37,7 @@ stop_times[, previous_departure_time := shift(departure_time, type = "lag", n = 
 
 stop_times <- stop_times[!is.na(previous_stop_id)]
 
-setnames(stop_times, c("stop_id", "previous_stop_id"), c("from_stop_id", "to_stop_id"))
+setnames(stop_times, c("previous_stop_id", "stop_id"), c("from_stop_id", "to_stop_id"))
 
 stop_times <- stop_times[from_stop_id != to_stop_id]
 stop_times <- stop_times[departure_time > parameters$start_time_min*3600 & departure_time < parameters$start_time_max*3600]
@@ -66,12 +61,23 @@ stops_routes <- rbindlist(
 
 stops_routes <- unique(stops_routes)
 
+# Keep onboard travel through restricted stops, but only allow ordinary
+# boarding/alighting where the selected timetable explicitly permits it.
+permissions <- merge(
+  router$stop_times[departure_time > parameters$start_time_min*3600 &
+                    departure_time < parameters$start_time_max*3600],
+  router$trips[, list(trip_id, route_id)], by = "trip_id"
+)
+permissions <- permissions[, list(can_board = any(pickup_type == 0), can_alight = any(drop_off_type == 0)),
+                           by = list(route_id, gtfs_stop_id = stop_id)]
+
 stops_routes <- rbindlist(
   list(
     stops_routes[, list(stop_type = "arrival", gtfs_stop_id, route_id)],
     stops_routes[, list(stop_type = "departure", gtfs_stop_id, route_id)]
   )
 )
+stops_routes <- merge(stops_routes, permissions, by = c("route_id", "gtfs_stop_id"))
 
 stops_routes[, stop_index := as.numeric(factor(paste(stop_type, route_id, gtfs_stop_id)))]
 
@@ -141,7 +147,9 @@ stop_times <- stop_times[, list(
   departure_time,
   travel_time,
   wait_time,
-  vehicle_capacity
+  vehicle_capacity,
+  can_board = pickup_type == 0,
+  can_alight = drop_off_type == 0
 )]
 
 stop_times <- unique(stop_times)
@@ -152,9 +160,19 @@ stops_routes <- stops_routes[
   stop_index %in% stop_times$next_dep_stop_index
 ]
 
-# Remove abnormal travel times (negative and very low, inf to 10 s)
-# stop_times[, n_abnormal := sum(travel_time < 10.0), by = trip_id]
-# stop_times <- stop_times[!(n_abnormal > 0.0)]
+# Departure events must include each trip's first stop. The segment table above
+# starts at the second stop and cannot supply all boarding or transfer times.
+departures <- merge(
+  router$stop_times[pickup_type == 0 & departure_time > parameters$start_time_min*3600 &
+                    departure_time < parameters$start_time_max*3600,
+                    list(trip_id, stop_id, departure_time)],
+  router$trips[, list(trip_id, route_id)], by = "trip_id"
+)
+departures <- merge(
+  departures,
+  stops_routes[stop_type == "departure", list(route_id, stop_id = gtfs_stop_id, to = stop_index)],
+  by = c("route_id", "stop_id")
+)
 
 info(logger, "Computing average travel times between stops...")
 
@@ -191,8 +209,8 @@ info(logger, "Computing average transfer times between services and stops...")
 
 # Prepare transfers between stops
 transfers <- merge(
-  router$transfers[, list(from_stop_id, to_stop_id, time = min_transfer_time)],
-  stops_routes[stop_type == "arrival", list(gtfs_stop_id, stop_index)],
+  router$transfers,
+  stops_routes[stop_type == "arrival" & can_alight, list(gtfs_stop_id, stop_index, arrival_route_id = route_id)],
   by.x = "from_stop_id",
   by.y = "gtfs_stop_id",
   allow.cartesian = TRUE
@@ -200,52 +218,48 @@ transfers <- merge(
 
 transfers <- merge(
   transfers,
-  stops_routes[stop_type == "departure", list(gtfs_stop_id, stop_index)],
+  stops_routes[stop_type == "departure" & can_board, list(gtfs_stop_id, stop_index, departure_route_id = route_id)],
   by.x = "to_stop_id",
   by.y = "gtfs_stop_id",
   suffixes = c("_from", "_to"),
   allow.cartesian = TRUE
 )
 
-transfers <- transfers[, list(from = stop_index_from, to = stop_index_to, transfer_time = time)]
+# Apply the most specific matching rule before removing forbidden connections.
+# Generated walking links have specificity -1 and cannot override explicit rules.
+transfers <- transfers[(from_route_id == "" | from_route_id == arrival_route_id) &
+                       (to_route_id == "" | to_route_id == departure_route_id)]
+transfers <- transfers[, .SD[specificity == max(specificity)], by = list(stop_index_from, stop_index_to)]
+transfers <- transfers[, list(forbidden = any(transfer_type == 3), min_transfer_time = max(min_transfer_time)),
+                       by = list(from = stop_index_from, to = stop_index_to)]
+transfers <- transfers[forbidden == FALSE]
 
 # For each arrival at a given route/stop, find what route/stops are accessible with a transfer
-arrivals <- stop_times[, list(from = arrival_stop_index, arrival_time)]
+arrivals <- stop_times[can_alight == TRUE, list(from = arrival_stop_index, arrival_time)]
 arrivals <- merge(arrivals, transfers, by = "from", allow.cartesian = TRUE)
-arrivals[, arrival_time_plus_transfer := arrival_time + transfer_time]
-arrivals <- arrivals[order(arrival_time_plus_transfer)]
+arrivals[, ready_time := arrival_time + min_transfer_time]
 
-# For each from/to/arrival_time combination, find the next departures
-transfer_times <- arrivals[,
-  list(from, to, arrival_time_plus_transfer_cp = arrival_time_plus_transfer, arrival_time_plus_transfer) 
-][
-  stop_times[, list(to = next_dep_stop_index, departure_time_cp = departure_time, departure_time)],
-  on = list(to, arrival_time_plus_transfer_cp < departure_time_cp),
-  list(from, to, arrival_time_plus_transfer, departure_time),
-  mult = "all",
+# Take the first departure the passenger can reach, including one leaving
+# exactly when they are ready. Count the full time from arrival, so the
+# minimum connection time is included as well as any subsequent waiting.
+transfer_times <- departures[order(departure_time)][
+  unique(arrivals[, list(from, to, arrival_time, ready_time)]),
+  on = list(to, departure_time >= ready_time),
+  list(from = i.from, to = i.to, time = x.departure_time - i.arrival_time),
+  mult = "first",
   nomatch = 0
 ]
 
-transfer_times[, transfer_time := departure_time - arrival_time_plus_transfer]
-
 transfer_times <- transfer_times[,
    list(
-     transfer_time = min(transfer_time)
-   ),
-   by = list(from, to, arrival_time_plus_transfer)
-]
-
-
-transfer_times <- transfer_times[,
-   list(
-     time = mean(transfer_time)
+     time = mean(time)
    ),
    by = list(from, to)
 ]
 
 transfer_times[, perceived_time := time*parameters[["transfer_time_coeff"]]]
 
-# Remove transfers that take more than 20 min
+# Remove connections whose average total transfer time is 20 minutes or more.
 transfer_times <- transfer_times[time < 20.0*60.0]
 
 
@@ -254,12 +268,10 @@ transfer_times <- transfer_times[time < 20.0*60.0]
 # for the public transport network.
 info(logger, "Adding virtual access and exit nodes to all stops and services accessible at each location...")
 
-headway_times <- stop_times[order(arrival_time)][, list(headway = diff(arrival_time)), by = list(prev_dep_stop_index, next_dep_stop_index)]
-
-headway_times <- headway_times[, list(average_headway = mean(headway)), by = list(to = next_dep_stop_index)]
+headway_times <- departures[order(departure_time)][, list(average_headway = mean(diff(departure_time))), by = to]
 
 access_times <- stops_routes[
-  stop_type == "departure",
+  stop_type == "departure" & can_board & stop_index %in% departures$to,
   list(
     from = access_stop_group_index,
     to = stop_index
@@ -292,7 +304,7 @@ access_times[, perceived_time := ifelse(
 
 
 exit_times <- stops_routes[
-  stop_type == "arrival",
+  stop_type == "arrival" & can_alight,
   list(
     from = stop_index,
     to = exit_stop_group_index,
