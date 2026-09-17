@@ -10,6 +10,10 @@ from mobility.transport.graphs.core.path_graph import PathGraph
 from mobility.transport.costs.travel_costs_asset import TravelCostsBase
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.parameter_values import (
+    SensitivityCase,
+    resolve_parameter_values,
+)
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.costs.parameters.path_routing_parameters import PathRoutingParameters
@@ -194,6 +198,9 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
             "contracted_path_graph": contracted_path_graph,
             "routing_parameters": routing_parameters,
             "osm_capacity_parameters": osm_capacity_parameters,
+            "congestion": bool(congestion),
+            "congestion_flows_scaling_factor": congestion_flows_scaling_factor,
+            "speed_modifiers": list(speed_modifiers),
             "target_max_vehicles_per_od_endpoint": target_max_vehicles_per_od_endpoint,
             "congestion_assignment_max_iterations": congestion_assignment_max_iterations,
             "congestion_assignment_max_gap": congestion_assignment_max_gap,
@@ -201,6 +208,64 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
             "default_congestion": self.default_congestion,
         }
         super().__init__(inputs)
+
+    def for_iteration(
+        self,
+        iteration: int,
+        scenario: str | None = None,
+        sensitivity_case: SensitivityCase | None = None,
+    ) -> "PathTravelCosts":
+        """Return the path-cost variant selected for one iteration."""
+        routing_parameters = self.inputs["routing_parameters"]
+        resolved_routing_parameters = resolve_parameter_values(
+            routing_parameters,
+            scenario=scenario,
+            iteration=iteration,
+            sensitivity_case=sensitivity_case,
+        )
+
+        speed_modifiers = self.inputs["speed_modifiers"]
+        resolved_speed_modifiers = [
+            modifier.for_iteration(
+                iteration,
+                scenario=scenario,
+                sensitivity_case=sensitivity_case,
+            )
+            for modifier in speed_modifiers
+        ]
+
+        if (
+            resolved_routing_parameters == routing_parameters
+            and resolved_speed_modifiers == speed_modifiers
+        ):
+            return self
+
+        # Routing inputs define every graph below the simplified OSM graph.
+        # Constructing a variant aligns every downstream asset hash with the
+        # selected iteration. The files remain lazy and are only built on get().
+        return PathTravelCosts(
+            mode_name=self.inputs["mode_name"],
+            transport_zones=self.inputs["transport_zones"],
+            routing_parameters=resolved_routing_parameters,
+            osm_capacity_parameters=self.inputs["osm_capacity_parameters"],
+            congestion=self.inputs["congestion"],
+            congestion_flows_scaling_factor=self.inputs[
+                "congestion_flows_scaling_factor"
+            ],
+            target_max_vehicles_per_od_endpoint=self.inputs[
+                "target_max_vehicles_per_od_endpoint"
+            ],
+            congestion_assignment_max_iterations=self.inputs[
+                "congestion_assignment_max_iterations"
+            ],
+            congestion_assignment_max_gap=self.inputs[
+                "congestion_assignment_max_gap"
+            ],
+            congestion_assignment_retained_volume_share=self.inputs[
+                "congestion_assignment_retained_volume_share"
+            ],
+            speed_modifiers=resolved_speed_modifiers,
+        )
 
     @property
     def freeflow_costs(self):

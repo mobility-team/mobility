@@ -59,6 +59,31 @@ In this example:
 
 This pattern is useful when a scenario assumption should appear after a few warm-up iterations. Remember that the model still replans during those warm-up iterations unless the run parameters restrict behaviour-change phases.
 
+Road speed modifiers use the same pattern. For example, this changes a speed
+limit from iteration 5 in one scenario:
+
+```python
+speed_zone = mobility.LimitedSpeedZonesModifier(
+    zones_geometry_file_path="inputs/speed-zones.gpkg",
+    max_speed=mobility.ParameterValue.by_scenario_and_iteration(
+        default=50.0,
+        safer_streets={
+            1: 50.0,
+            5: 30.0,
+        },
+    ),
+)
+
+car = mobility.CarMode(
+    transport_zones,
+    speed_modifiers=[speed_zone],
+)
+```
+
+All speed-modifier settings can vary this way, including GIS file paths. When
+a selected value changes, Mobility prepares a matching modified road graph and
+reuses it for later runs with the same inputs.
+
 ## Complete Small Scenario Example
 
 This example declares a reference and a car-cost scenario, changes car distance cost from iteration 5, runs both scenarios, then compares final distance by mode.

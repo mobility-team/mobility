@@ -1,7 +1,9 @@
 from typing import Annotated, List
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
-from mobility.runtime.parameter_values import SensitivityCase, resolve_parameter_values
+from mobility.runtime.parameter_values import SensitivityCase
+from mobility.transport.costs.generalized_cost import GeneralizedCost
+from mobility.transport.costs.travel_costs_asset import TravelCostsBase
 from pydantic import BaseModel, ConfigDict, Field
 
 class TransportMode(InMemoryAsset):
@@ -100,38 +102,69 @@ class TransportMode(InMemoryAsset):
         when they need to rebuild child modes or other derived assets.
         """
         generalized_cost = self.inputs.get("generalized_cost")
-        if not isinstance(generalized_cost, InMemoryAsset):
+        if not isinstance(generalized_cost, GeneralizedCost):
             return self
 
-        # Keep routing assets untouched here. They often own derived table
-        # assets, so modes that vary routing should rebuild themselves.
-        resolved_gc_inputs = resolve_parameter_values(
-            generalized_cost.inputs,
+        travel_costs = self.inputs.get("travel_costs")
+        if isinstance(travel_costs, TravelCostsBase):
+            resolved_travel_costs = travel_costs.for_iteration(
+                iteration,
+                scenario=scenario,
+                sensitivity_case=sensitivity_case,
+            )
+        else:
+            resolved_travel_costs = travel_costs
+
+        resolved_generalized_cost = generalized_cost.for_iteration(
+            iteration,
+            travel_costs=resolved_travel_costs,
             scenario=scenario,
-            iteration=iteration,
             sensitivity_case=sensitivity_case,
         )
-        if resolved_gc_inputs == generalized_cost.inputs:
+        if (
+            resolved_generalized_cost is generalized_cost
+            and resolved_travel_costs is travel_costs
+        ):
             return self
 
-        resolved_generalized_cost = self._copy_in_memory_asset(
-            generalized_cost,
-            resolved_gc_inputs,
+        return TransportModeVariant(
+            source_mode=self,
+            travel_costs=resolved_travel_costs,
+            generalized_cost=resolved_generalized_cost,
         )
-        resolved_inputs = dict(self.inputs)
-        resolved_inputs["generalized_cost"] = resolved_generalized_cost
-        return self._copy_in_memory_asset(self, resolved_inputs)
 
-    @staticmethod
-    def _copy_in_memory_asset(asset: InMemoryAsset, inputs: dict):
-        """Copy an in-memory asset with new inputs and a matching input hash."""
-        clone = asset.__class__.__new__(asset.__class__)
-        clone.__dict__ = dict(asset.__dict__)
-        clone.inputs = inputs
-        clone.inputs_hash = clone.compute_inputs_hash()
-        for name, value in inputs.items():
-            setattr(clone, name, value)
-        return clone
+
+class TransportModeVariant(TransportMode):
+    """Concrete mode assets selected for one scenario and iteration."""
+
+    def __init__(
+        self,
+        *,
+        source_mode: TransportMode,
+        travel_costs,
+        generalized_cost: GeneralizedCost,
+    ) -> None:
+        """Create a mode variant without copying state from the source mode."""
+        self.source_mode = source_mode
+        parameters = source_mode.inputs["parameters"]
+        super().__init__(
+            name=parameters.name,
+            travel_costs=travel_costs,
+            generalized_cost=generalized_cost,
+            ghg_intensity=parameters.ghg_intensity,
+            congestion=parameters.congestion,
+            vehicle=parameters.vehicle,
+            multimodal=parameters.multimodal,
+            return_mode=parameters.return_mode,
+            survey_ids=parameters.survey_ids,
+            parameters=parameters,
+            parameters_cls=parameters.__class__,
+        )
+
+    def build_congestion_flows(self, od_flows_by_mode):
+        """Use the source mode's road-flow conversion for this variant."""
+        return self.source_mode.build_congestion_flows(od_flows_by_mode)
+
 
 class TransportModeParameters(BaseModel):
     """Common parameters for transport mode definitions."""
