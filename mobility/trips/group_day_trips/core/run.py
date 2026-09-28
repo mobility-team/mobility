@@ -485,7 +485,7 @@ class Run(FileAsset):
 
 
     def _build_transitions(self) -> pl.DataFrame | pl.LazyFrame:
-        """Combine persisted per-iteration transition events into the final table."""
+        """Scan persisted events without loading all iterations into memory."""
         get_group_day_trips_progress().step("Building final transition table")
         if self.parameters.outputs.cache_iteration_events is False:
             return pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA)
@@ -502,7 +502,7 @@ class Run(FileAsset):
             )
 
         transitions = [
-            read_cached_parquet(
+            scan_cached_parquet(
                 path,
                 table_name="transition_events",
                 required_schema=TRANSITION_EVENT_SCHEMA,
@@ -518,7 +518,7 @@ class Run(FileAsset):
         plan_steps: pl.DataFrame,
         opportunities: pl.DataFrame,
         costs: pl.DataFrame,
-        transitions: pl.DataFrame,
+        transitions: pl.DataFrame | pl.LazyFrame,
         demand_groups: pl.DataFrame,
         iteration_metrics: pl.DataFrame,
     ) -> None:
@@ -527,7 +527,10 @@ class Run(FileAsset):
         plan_steps.write_parquet(self.cache_path["plan_steps"])
         opportunities.write_parquet(self.cache_path["opportunities"])
         costs.write_parquet(self.cache_path["costs"])
-        transitions.write_parquet(self.cache_path["transitions"])
+        if isinstance(transitions, pl.LazyFrame):
+            transitions.sink_parquet(self.cache_path["transitions"])
+        else:
+            transitions.write_parquet(self.cache_path["transitions"])
         demand_groups.write_parquet(self.cache_path["demand_groups"])
         iteration_metrics.write_parquet(self.cache_path["iteration_metrics"])
 
