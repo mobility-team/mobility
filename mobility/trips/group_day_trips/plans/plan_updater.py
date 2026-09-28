@@ -148,6 +148,7 @@ class PlanUpdater:
             iteration,
             plan_probability_pruning_retained_share=parameters.plan_update.plan_probability_pruning_retained_share,
             plan_probability_pruning_min_iteration=parameters.plan_update.plan_probability_pruning_min_iteration,
+            behavior_change_scope=parameters.behavior_change.scope_at(iteration),
         )
         log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:after_apply_transitions",
@@ -815,6 +816,7 @@ class PlanUpdater:
         *,
         plan_probability_pruning_retained_share: float = 1.0,
         plan_probability_pruning_min_iteration: int = 2,
+        behavior_change_scope: BehaviorChangeScope = BehaviorChangeScope.FULL_REPLANNING,
     ) -> tuple[pl.DataFrame, pl.LazyFrame]:
         """Apply transition probabilities and emit transition events."""
         plan_cols = PLAN_KEY_COLS
@@ -841,6 +843,7 @@ class PlanUpdater:
             retained_share=plan_probability_pruning_retained_share,
             min_iteration=plan_probability_pruning_min_iteration,
             iteration=iteration,
+            behavior_change_scope=behavior_change_scope,
         )
         transitions = self.attach_previous_target_utility(current_plans, transitions)
 
@@ -878,14 +881,20 @@ class PlanUpdater:
         retained_share: float,
         min_iteration: int,
         iteration: int,
+        behavior_change_scope: BehaviorChangeScope = BehaviorChangeScope.FULL_REPLANNING,
     ) -> pl.LazyFrame:
-        """Merge low-mass target plans into the largest retained plan per demand group."""
-        if retained_share >= 1.0 or iteration < min_iteration:
+        """Merge low-mass targets without changing choices fixed by the current phase."""
+        if (
+            retained_share >= 1.0
+            or iteration < min_iteration
+            or behavior_change_scope == BehaviorChangeScope.NO_TRANSITIONS
+        ):
             return transitions
 
         target_map = self.build_low_probability_target_map(
             transitions,
             retained_share=retained_share,
+            behavior_change_scope=behavior_change_scope,
         )
         if target_map is None:
             return transitions
@@ -935,8 +944,21 @@ class PlanUpdater:
         transitions: pl.LazyFrame,
         *,
         retained_share: float,
+        behavior_change_scope: BehaviorChangeScope = BehaviorChangeScope.FULL_REPLANNING,
     ) -> pl.DataFrame | None:
         """Build a raw-target to retained-target map from transition mass."""
+        if behavior_change_scope == BehaviorChangeScope.NO_TRANSITIONS:
+            return None
+
+        # Pruning redirects people just like an ordinary transition. Only merge
+        # targets with the same choices that the behavior phase keeps fixed.
+        pruning_groups = DEMAND_UNIT_COLS + ["is_stay_home_target"]
+        if behavior_change_scope in (
+            BehaviorChangeScope.DESTINATION_REPLANNING, BehaviorChangeScope.MODE_REPLANNING,
+        ):
+            pruning_groups += ["activity_seq_id_trans", "time_seq_id_trans"]
+        if behavior_change_scope == BehaviorChangeScope.MODE_REPLANNING:
+            pruning_groups += ["dest_seq_id_trans"]
         target_cols = [
             "plan_id_trans",
             "demand_group_id",
@@ -973,9 +995,9 @@ class PlanUpdater:
                 descending=[False, False, False, True, False, False, False, False],
             )
             .with_columns(
-                group_n_persons=pl.col("n_persons").sum().over(DEMAND_UNIT_COLS + ["is_stay_home_target"]),
-                cumulative_n_persons=pl.col("n_persons").cum_sum().over(DEMAND_UNIT_COLS + ["is_stay_home_target"]),
-                group_rank=pl.col("n_persons").cum_count().over(DEMAND_UNIT_COLS + ["is_stay_home_target"]),
+                group_n_persons=pl.col("n_persons").sum().over(pruning_groups),
+                cumulative_n_persons=pl.col("n_persons").cum_sum().over(pruning_groups),
+                group_rank=pl.col("n_persons").cum_count().over(pruning_groups),
             )
             .with_columns(
                 previous_cumulative_share=(
@@ -992,13 +1014,10 @@ class PlanUpdater:
             .filter(pl.col("is_retained"))
             .filter(
                 pl.col("group_rank")
-                == pl.col("group_rank").min().over(DEMAND_UNIT_COLS + ["is_stay_home_target"])
+                == pl.col("group_rank").min().over(pruning_groups)
             )
             .select(
-                [
-                    "demand_group_id",
-                    "demand_subgroup_id",
-                    "is_stay_home_target",
+                pruning_groups + [
                     pl.col("plan_id_trans").alias("fallback_plan_id_trans"),
                     pl.col("activity_seq_id_trans").alias("fallback_activity_seq_id_trans"),
                     pl.col("time_seq_id_trans").alias("fallback_time_seq_id_trans"),
@@ -1010,7 +1029,7 @@ class PlanUpdater:
         )
         mapping = (
             ranked
-            .join(fallback_targets, on=DEMAND_UNIT_COLS + ["is_stay_home_target"], how="left")
+            .join(fallback_targets, on=pruning_groups, how="left")
             .with_columns(
                 plan_id_trans_final=pl.when(pl.col("is_retained"))
                 .then(pl.col("plan_id_trans"))

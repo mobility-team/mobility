@@ -725,7 +725,7 @@ class IterationStateAsset(FileAsset):
         self.cache_iteration_events = cache_iteration_events
         self.updater = PlanUpdater()
         inputs = {
-            "version": 4,
+            "version": 5,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
