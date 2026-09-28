@@ -30,6 +30,10 @@ def build_trip_count_distribution(
 
     candidate_columns = [
         "country",
+        # Survey respondents with identical schedules are still separate days.
+        "survey_name",
+        "individual_id",
+        "day_id",
         "demand_group_id",
         "home_zone_id",
         "city_category",

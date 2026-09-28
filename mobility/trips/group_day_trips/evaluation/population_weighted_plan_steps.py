@@ -37,21 +37,17 @@ def _get_demand_groups(population: Any) -> pl.DataFrame:
 def _weight_reference_observations(observations: pl.DataFrame) -> pl.DataFrame:
     """Normalize original respondent-day weights within each source segment."""
     segment_keys = ["survey_name", "country", "city_category", "csp", "n_cars"]
+    if "is_weekday" in observations.columns:
+        segment_keys.append("is_weekday")
     day_keys = [*segment_keys, "individual_id", "day_id"]
     # Count each respondent-day weight once, then apply it to every trip step.
-    day_weights = (
+    day_probabilities = (
         observations.group_by(day_keys)
         .agg(day_weight=pl.col("pondki").first())
-        .group_by(segment_keys)
-        .agg(segment_weight=pl.col("day_weight").sum())
+        .with_columns(p_reference=pl.col("day_weight") / pl.col("day_weight").sum().over(segment_keys))
+        .select(*day_keys, "p_reference")
     )
-    return (
-        observations
-        .with_columns(day_weight=pl.col("pondki").first().over(day_keys))
-        .join(day_weights, on=segment_keys)
-        .with_columns(p_plan=pl.col("day_weight") / pl.col("segment_weight"))
-        .drop(["day_weight", "segment_weight"])
-    )
+    return observations.join(day_probabilities, on=day_keys)
 
 
 class PopulationWeightedPlanSteps(FileAsset):
@@ -217,7 +213,7 @@ class PopulationWeightedSurveyReferenceSteps(FileAsset):
         )
         super().__init__(
             {
-                "version": 1,
+                "version": 2,
                 "population": population,
                 "reference_plan_assets": self.reference_plan_assets,
                 "is_weekday": is_weekday,
@@ -273,11 +269,12 @@ class PopulationWeightedSurveyReferenceSteps(FileAsset):
                 on=["country", "city_category", "csp", "n_cars"],
                 how="inner",
             )
-            .with_columns(n_persons=pl.col("n_persons") * pl.col("p_plan"))
+            .with_columns(n_persons=pl.col("n_persons") * pl.col("p_reference"))
             .select(
                 [
                     "country",
                     "survey_name",
+                    "p_reference",
                     "home_zone_id",
                     "city_category",
                     "csp",

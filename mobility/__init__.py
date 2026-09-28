@@ -18,6 +18,7 @@ from .transport.costs.parameters import (
 
 from .population import Population
 from .surveys.france import EMPMobilitySurvey
+from .surveys.programme_pooling import ProgrammePoolingParameters
 from .activities import (
     Activity,
     ActivityParameters,

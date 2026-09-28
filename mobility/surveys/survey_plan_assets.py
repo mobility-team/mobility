@@ -10,6 +10,7 @@ from .survey_plan_steps import MobilitySurveyPlanSteps
 from .survey_plans import MobilitySurveyPlans
 from .survey_plan_summaries import MobilitySurveyPlanSummaries
 from .survey_reference_plan_steps import MobilitySurveyReferencePlanSteps
+from .programme_pooling import build_donors, pool_programmes, ProgrammePoolingParameters
 
 
 class SurveyPlanAssets(InMemoryAsset):
@@ -129,16 +130,60 @@ class SurveyPlanAssets(InMemoryAsset):
         """Return merged plan-level survey probabilities."""
         return self._get_merged_asset_table("plans")
 
+    def get_programme_assignments(
+        self, targets: pl.DataFrame, settings: ProgrammePoolingParameters,
+    ) -> pl.DataFrame:
+        """Return French EMP donor assignments for the requested demand segments.
+
+        Reference steps and original model priors have no pooling dependency.
+        The returned day table preserves donor provenance before schedules are
+        compacted for the model's existing programme sampler. Legacy sampling
+        includes repaired diaries and cannot be described by this donor table.
+        """
+        if not settings.enabled:
+            raise ValueError("Enable programme pooling to inspect donor assignments; disabled runs use legacy survey plans.")
+        tables = []
+        for assets in self.get_reference_plan_assets_by_survey():
+            parameters = assets["survey"].inputs["parameters"]
+            if parameters.survey_name != "fr-EMP-2019":
+                continue
+            donors = build_donors(assets["plan_steps"].get(), parameters.survey_name)
+            assignments = pool_programmes(
+                donors, targets.filter(pl.col("country") == parameters.country), settings,
+            ).with_columns(country=pl.lit(parameters.country), survey_name=pl.lit(parameters.survey_name))
+            tables.append(assignments)
+        return self._concat_frames(tables)
+
+    def get_sampling_plans(
+        self, targets: pl.DataFrame, settings: ProgrammePoolingParameters,
+    ) -> pl.DataFrame:
+        """Use pooled probabilities for EMP and existing probabilities elsewhere."""
+        original = self.get_plans()
+        if not settings.enabled:
+            return original
+        assignments = self.get_programme_assignments(targets, settings)
+        if "p_sampling" not in assignments.columns:
+            return original
+        keys = ["survey_name", "country", "activity_seq_id", "time_seq_id",
+                "is_weekday", "city_category", "csp", "n_cars"]
+        # The existing sampler calls its probability p_plan. Only sampling mass
+        # is combined for matching schedules; reference observations stay separate.
+        pooled = assignments.filter(pl.col("p_sampling") > 0).group_by(keys).agg(p_plan=pl.col("p_sampling").sum())
+        return pl.concat([
+            original.filter(pl.col("survey_name") != "fr-EMP-2019"),
+            pooled.select(original.columns),
+        ], how="vertical_relaxed")
+
     def get_mean_activity_durations(self) -> pl.DataFrame:
-        """Return merged mean activity-duration summaries."""
+        """Return unpooled model duration priors, not reference observations."""
         return self._get_merged_summary_table("mean_activity_durations")
 
     def get_mean_home_night_durations(self) -> pl.DataFrame:
-        """Return merged mean home-night-duration summaries."""
+        """Return unpooled model home-night priors, not reference observations."""
         return self._get_merged_summary_table("mean_home_night_durations")
 
     def get_activity_demand_per_pers(self) -> pl.DataFrame:
-        """Return merged per-person activity-demand summaries."""
+        """Return unpooled model opportunity priors, not reference observations."""
         return self._get_merged_summary_table("activity_demand_per_pers")
 
     def get(self) -> dict[str, pl.DataFrame]:

@@ -25,7 +25,7 @@ class MobilitySurveyReferencePlanSteps(FileAsset):
         cache_path = pathlib.Path(plan_steps.cache_path).with_name(
             "group_day_trip_reference_steps.parquet"
         )
-        super().__init__({"version": 1, "plan_steps": plan_steps}, cache_path)
+        super().__init__({"version": 2, "plan_steps": plan_steps}, cache_path)
 
     def get_cached_asset(self) -> pl.DataFrame:
         """Read the respondent-day survey steps."""
