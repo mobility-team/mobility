@@ -152,3 +152,52 @@ def test_survey_plan_steps_truncate_to_ten_trips_then_force_last_trip_home():
     assert short_day["seq_step_index"].to_list() == [1, 2]
     assert short_day["activity"].to_list() == ["work", "home"]
     assert short_day["step_count"].to_list() == [2, 2]
+
+
+def test_survey_plan_steps_does_not_pool_travel_time_across_respondent_days():
+    survey = _StubSurvey(
+        {
+            "days_trip": pd.DataFrame(
+                {
+                    "day_id": [10, 20],
+                    "day_of_week": [1, 1],
+                    "pondki": [1.0, 1.0],
+                    "city_category": ["urban", "urban"],
+                    "csp": ["A", "A"],
+                    "n_cars": [1, 1],
+                }
+            ),
+            "short_trips": pd.DataFrame(
+                {
+                    "day_id": [10, 10, 20, 20],
+                    "individual_id": [1, 1, 2, 2],
+                    "daily_trip_index": [1, 2, 1, 2],
+                    "departure_time": [1 * 3600, 12 * 3600, 1 * 3600, 12 * 3600],
+                    "arrival_time": [7.5 * 3600, 18.5 * 3600, 7.5 * 3600, 18.5 * 3600],
+                    "motive": ["1", "2", "1", "2"],
+                    "mode_id": ["car"] * 4,
+                    "distance": [10.0] * 4,
+                }
+            ),
+        }
+    )
+    activities = [
+        _make_activity("work", ["1"]),
+        _make_activity("home", ["2"]),
+    ]
+    modes = [_make_mode("car", ["car"])]
+
+    plan_steps = MobilitySurveyPlanSteps(
+        survey=survey,
+        activities=activities,
+        modes=modes,
+    )._prepare_survey_plans()
+
+    assert plan_steps["day_id"].unique().sort().to_list() == [10, 20]
+    assert (
+        plan_steps.group_by("day_id")
+        .agg(day_travel_time=pl.col("travel_time").sum())
+        .sort("day_id")["day_travel_time"]
+        .to_list()
+        == [13.0, 13.0]
+    )

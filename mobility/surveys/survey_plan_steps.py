@@ -76,7 +76,7 @@ class MobilitySurveyPlanSteps(FileAsset):
         )
         cache_path = folder_path / "group_day_trip_plan_steps.parquet"
         inputs = {
-            "version": 3.3,
+            "version": 3.4,
             "survey": survey,
             # Survey plans only use activity/mode survey-code mappings, anchor
             # flags, and the canonical mode enum. Future utility parameters do
@@ -238,16 +238,17 @@ class MobilitySurveyPlanSteps(FileAsset):
             )
         )
 
-        sequences_sup_24 = (
-            plans.group_by(["is_weekday", "city_category", "csp", "n_cars", "activity_seq", "mode_seq"])
-            .agg(sequence_duration=pl.col("travel_time").sum())
-            .filter(pl.col("sequence_duration") > 24.0)
-            .drop("sequence_duration")
+        # Apply the full-day limit to each respondent day before pooling plans.
+        days_sup_24 = (
+            plans.group_by(["day_id", "individual_id"])
+            .agg(day_travel_time=pl.col("travel_time").sum())
+            .filter(pl.col("day_travel_time") > 24.0)
+            .select(["day_id", "individual_id"])
         )
 
         plans = plans.join(
-            sequences_sup_24,
-            on=["is_weekday", "city_category", "csp", "n_cars", "activity_seq", "mode_seq"],
+            days_sup_24,
+            on=["day_id", "individual_id"],
             how="anti",
         )
         return plans.drop("day_of_week")
