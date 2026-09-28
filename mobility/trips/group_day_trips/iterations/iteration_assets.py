@@ -725,7 +725,7 @@ class IterationStateAsset(FileAsset):
         self.cache_iteration_events = cache_iteration_events
         self.updater = PlanUpdater()
         inputs = {
-            "version": 4,
+            "version": 5,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -763,6 +763,12 @@ class IterationStateAsset(FileAsset):
         )
         if cache_iteration_events:
             self.cache_path["transition_events"] = self.transition_events_asset.cache_path
+
+    def assets_missing(self) -> bool:
+        """An iteration is incomplete when its event parquet was interrupted."""
+        return super().assets_missing() or (
+            self.cache_iteration_events and self.transition_events_asset.assets_missing()
+        )
 
     def get_cached_asset(self) -> RunState:
         """Return the cached state after this iteration."""
@@ -831,8 +837,7 @@ class IterationStateAsset(FileAsset):
         _write_run_state(self.cache_path, state, seeds["rng_state_after_sampling"])
 
         if transition_events is not None and self.cache_iteration_events:
-            self.transition_events_asset.transition_events = transition_events
-            self.transition_events_asset.get()
+            self.transition_events_asset.save(transition_events)
 
         logging.debug("Group-day-trips iteration %s is ready.", str(self.iteration))
         get_group_day_trips_progress().finish_iteration(self.iteration)

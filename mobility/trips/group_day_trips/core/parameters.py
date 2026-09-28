@@ -521,7 +521,10 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
             gt=0.0,
             le=1.0,
             title="Current-plan retained probability share",
-            description="Share of transition probability kept as separate target plans.",
+            description=(
+                "Share of transition probability kept as separate target plans within choices "
+                "allowed by the behavior phase. No plans are merged in no-transitions phases."
+            ),
         ),
     ]
     plan_probability_pruning_min_iteration: Annotated[

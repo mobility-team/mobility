@@ -1250,6 +1250,69 @@ def test_get_transition_probabilities_transition_distance_friction_penalizes_far
     assert float(tau_far) > 0.0
 
 
+@pytest.mark.parametrize(
+    "scope, fixed_choices, retained_plans_per_subgroup",
+    [
+        (BehaviorChangeScope.NO_TRANSITIONS,
+         ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"], 8),
+        (BehaviorChangeScope.MODE_REPLANNING,
+         ["activity_seq_id", "time_seq_id", "dest_seq_id"], 4),
+        (BehaviorChangeScope.DESTINATION_REPLANNING,
+         ["activity_seq_id", "time_seq_id"], 4),
+        (BehaviorChangeScope.FULL_REPLANNING, [], 3),
+    ],
+)
+def test_probability_pruning_preserves_phase_choices_and_subgroup_mass(
+    tmp_path, scope, fixed_choices, retained_plans_per_subgroup,
+):
+    # Each small plan can merge into a larger plan, but only if the phase
+    # permits changing the choices that differ between them.
+    keys = pl.DataFrame({
+        "demand_group_id": [1] * 16,
+        "demand_subgroup_id": [0] * 8 + [1] * 8,
+        "activity_seq_id": [10, 10, 10, 10, 10, 10, 11, 11] * 2,
+        "time_seq_id": [100, 100, 100, 100, 101, 101, 102, 102] * 2,
+        "dest_seq_id": [1000, 1000, 1001, 1001, 1002, 1002, 1003, 1003] * 2,
+        "mode_seq_id": list(range(10000, 10008)) * 2,
+    }).with_columns(pl.all().cast(pl.UInt32))
+    keys = _with_plan_id(keys, tmp_path=tmp_path, name=f"phase_pruning_{scope.value}")
+    masses = [60.0, 0.5, 25.0, 0.25, 10.0, 0.15, 4.0, 0.1]
+    current = keys.with_columns(
+        n_persons=pl.Series(masses + [mass * 2 for mass in masses]), utility=pl.lit(1.0),
+    )
+    choices = ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]
+    probabilities = keys.select(
+        ["demand_group_id", "demand_subgroup_id"] + choices
+        + [pl.col(column).alias(f"{column}_trans") for column in ["plan_id"] + choices]
+        + [pl.lit(1.0).alias(column) for column in [
+            "utility_prev_from", "utility_from_updated", "utility_trans",
+            "q_transition", "adjustment_factor", "p_transition",
+        ]] + [pl.lit(0.0).alias("tau_transition")]
+    )
+    after, events = PlanUpdater().apply_transitions(
+        current, probabilities, iteration=2,
+        plan_probability_pruning_retained_share=0.95,
+        behavior_change_scope=scope,
+    )
+    events = events.collect()
+    assert after.height == retained_plans_per_subgroup * 2
+
+    # Keep population in every fixed-choice group, including rare activities
+    # and schedules. The second subgroup must not lose mass to the first.
+    group_columns = ["demand_group_id", "demand_subgroup_id"] + fixed_choices
+    before_totals = current.group_by(group_columns).agg(pl.col("n_persons").sum()).sort(group_columns)
+    after_totals = after.group_by(group_columns).agg(pl.col("n_persons").sum()).sort(group_columns)
+    assert before_totals.select(group_columns).equals(after_totals.select(group_columns))
+    assert before_totals["n_persons"].to_list() == pytest.approx(after_totals["n_persons"].to_list())
+    assert events["n_persons_moved"].sum() == pytest.approx(300.0)
+    if fixed_choices:
+        assert events.filter(pl.any_horizontal([
+            pl.col(column) != pl.col(f"{column}_trans") for column in fixed_choices
+        ])).is_empty()
+    if scope == BehaviorChangeScope.NO_TRANSITIONS:
+        assert events["is_self_transition"].all()
+
+
 def test_apply_transitions_prunes_low_probability_targets_consistently(tmp_path):
     updater = PlanUpdater()
     plan_keys = pl.DataFrame(

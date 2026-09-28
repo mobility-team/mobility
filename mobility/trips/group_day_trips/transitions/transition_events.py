@@ -176,10 +176,34 @@ class TransitionEventsAsset(FileAsset):
             required_schema=TRANSITION_EVENT_SCHEMA,
         )
 
+    def assets_missing(self) -> bool:
+        """Treat interrupted parquet writes as missing iteration events."""
+        try:
+            if self.cache_path.stat().st_size < 12:
+                return True
+            with self.cache_path.open("rb") as stream:
+                if stream.read(4) != b"PAR1":
+                    return True
+                stream.seek(-4, 2)
+                return stream.read(4) != b"PAR1"
+        except OSError:
+            return True
+
+    def save(self, transition_events: pl.LazyFrame) -> None:
+        """Persist events, then release the query and its in-memory source tables."""
+        self.transition_events = transition_events
+        try:
+            self.get()
+        finally:
+            # The run retains each iteration asset. Keeping the query here
+            # would also retain candidate plans from every completed iteration.
+            self.transition_events = None
+
     def create_and_get_asset(self) -> pathlib.Path:
         if self.transition_events is None:
             raise ValueError("Cannot save transition events without a lazy query.")
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.cache_path.unlink(missing_ok=True)
-        self.transition_events.sink_parquet(self.cache_path)
+        temporary = self.cache_path.with_suffix(".parquet.part")
+        self.transition_events.sink_parquet(temporary)
+        temporary.replace(self.cache_path)
         return self.cache_path
