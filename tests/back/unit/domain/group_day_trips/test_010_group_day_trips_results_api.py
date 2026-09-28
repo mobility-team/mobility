@@ -1063,6 +1063,15 @@ def test_metric_projection_accepts_plan_steps_without_demand_group_id(tmp_path):
     assert metric["trip_count_share"].to_list() == pytest.approx([1.0, 1.0])
 
 
+def test_results_expose_unsupported_survey_demand_mass(tmp_path):
+    """Check the results API returns the reference asset's unsupported demand mass."""
+    results = _results(tmp_path)
+    reference_steps = results.survey_reference_plan_steps
+    reference_steps.unsupported_demand_mass = 25.0
+
+    assert results.unsupported_survey_demand_mass == 25.0
+
+
 def test_metrics_can_include_survey_reference(tmp_path, monkeypatch):
     """Check supported quantities can opt into external references."""
     results = _results(tmp_path)

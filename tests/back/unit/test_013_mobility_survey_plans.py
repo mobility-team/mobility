@@ -3,12 +3,13 @@ from dataclasses import dataclass
 import pandas as pd
 import polars as pl
 from mobility.runtime.assets.asset import Asset
-from mobility.surveys import MobilitySurveyPlans, MobilitySurveyPlanSteps
+from mobility.surveys import MobilitySurveyPlans, MobilitySurveyPlanSteps, SurveyPlanAssets
 from mobility.trips.group_day_trips.evaluation.trip_pattern_distribution import (
     build_trip_pattern_distribution,
 )
 from mobility.trips.group_day_trips.evaluation.population_weighted_plan_steps import (
     _weight_reference_observations,
+    PopulationWeightedSurveyReferenceSteps,
 )
 
 @dataclass
@@ -52,6 +53,31 @@ class _StubSurvey(Asset):
 
     def is_update_needed(self):
         return False
+
+
+class _StubStudyArea:
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self.frame = frame
+
+    def get(self) -> pd.DataFrame:
+        return self.frame
+
+
+class _StubPopulation(Asset):
+    def __init__(self, population_groups_path: str, study_area: pd.DataFrame) -> None:
+        self.population_groups_path = population_groups_path
+        self.transport_zones = type(
+            "StubTransportZones",
+            (),
+            {"study_area": _StubStudyArea(study_area)},
+        )()
+        super().__init__({"version": 1, "population_groups_path": population_groups_path})
+
+    def get(self):
+        return {"population_groups": self.population_groups_path}
+
+    def get_cached_hash(self):
+        return self.inputs_hash
 def _make_activity(name: str, survey_ids: list[str]):
     asset = _HashableStubAsset(name=name, survey_ids=survey_ids, is_anchor=(name == "home"))
     asset.name = name
@@ -211,6 +237,7 @@ def test_survey_plan_steps_does_not_pool_travel_time_across_respondent_days():
 
 def test_reference_mode_share_keeps_original_weights_for_identical_timed_plans(tmp_path, monkeypatch):
     monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path / "project"))
     survey = _StubSurvey(
         {
             "days_trip": pd.DataFrame(
@@ -237,10 +264,12 @@ def test_reference_mode_share_keeps_original_weights_for_identical_timed_plans(t
             ),
         }
     )
+    activities = [_make_activity("work", ["9.91"]), _make_activity("home", ["1.1"])]
+    modes = [_make_mode("car", ["car"]), _make_mode("train", ["train"])]
     plan_steps_asset = MobilitySurveyPlanSteps(
         survey=survey,
-        activities=[_make_activity("work", ["9.91"]), _make_activity("home", ["1.1"])],
-        modes=[_make_mode("car", ["car"]), _make_mode("train", ["train"])],
+        activities=activities,
+        modes=modes,
     )
 
     sampling_steps = plan_steps_asset.create_and_get_asset()
@@ -275,3 +304,48 @@ def test_reference_mode_share_keeps_original_weights_for_identical_timed_plans(t
         )
     )
     assert [round(value, 6) for value in reference_patterns["probability"]] == [0.6, 0.4]
+
+    population_groups_path = tmp_path / "population_groups.parquet"
+    pl.DataFrame(
+        {
+            "local_admin_unit_id": ["lau1", "lau1"],
+            "transport_zone_id": [101, 102],
+            "socio_pro_category": ["A", "B"],
+            "weight": [100.0, 40.0],
+            "n_cars": [1, 1],
+        }
+    ).write_parquet(population_groups_path)
+    population = _StubPopulation(
+        str(population_groups_path),
+        pd.DataFrame(
+            {
+                "local_admin_unit_id": ["lau1"],
+                "country": ["fr"],
+                "urban_unit_category": ["urban"],
+                "geometry": [None],
+            }
+        ),
+    )
+    survey_plan_assets = SurveyPlanAssets(
+        surveys=[survey],
+        activities=activities,
+        modes=modes,
+    )
+    weighted_reference = PopulationWeightedSurveyReferenceSteps(
+        population=population,
+        survey_plan_assets=survey_plan_assets,
+        is_weekday=True,
+    )
+
+    assert weighted_reference.assets_missing()
+    population_weighted_steps = weighted_reference.get().collect()
+    assert not weighted_reference.assets_missing()
+    assert weighted_reference.unsupported_demand_mass == 40.0
+    expanded_mode_weights = (
+        population_weighted_steps
+        .group_by("mode")
+        .agg(weight=pl.col("n_persons").sum())
+        .with_columns(share=pl.col("weight") / pl.col("weight").sum())
+        .sort("mode")
+    )
+    assert [round(value, 6) for value in expanded_mode_weights["share"]] == [0.6, 0.4]
