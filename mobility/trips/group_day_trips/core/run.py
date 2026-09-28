@@ -16,7 +16,10 @@ from ..iterations import (
     IterationStateAsset,
 )
 from ..iterations.iteration_assets import CURRENT_PLAN_STEPS_SCHEMA
-from ..evaluation.population_weighted_plan_steps import PopulationWeightedPlanSteps
+from ..evaluation.population_weighted_plan_steps import (
+    PopulationWeightedPlanSteps,
+    PopulationWeightedSurveyReferenceSteps,
+)
 from ..evaluation.calibration_plan_steps import (
     ObservedCalibrationPlanSteps,
     PopulationWeightedCalibrationPlanSteps,
@@ -58,6 +61,7 @@ class ExpectedDiagnosticsInputs:
     """Shared survey-derived reference inputs used by run diagnostics."""
 
     population_weighted_plan_steps: PopulationWeightedPlanSteps
+    survey_reference_plan_steps: PopulationWeightedSurveyReferenceSteps
     calibration_plan_steps: PopulationWeightedCalibrationPlanSteps
     trip_pattern_distribution: PopulationWeightedTripPatternDistribution
 
@@ -366,17 +370,23 @@ class Run(FileAsset):
             survey_plan_assets=self.survey_plan_assets,
             is_weekday=self.is_weekday,
         )
+        survey_reference_plan_steps = PopulationWeightedSurveyReferenceSteps(
+            population=self.population,
+            survey_plan_assets=self.survey_plan_assets,
+            is_weekday=self.is_weekday,
+        )
         expected_calibration_plan_steps = PopulationWeightedCalibrationPlanSteps(
             population_weighted_plan_steps=population_weighted_plan_steps,
             is_weekday=self.is_weekday,
         )
         expected_trip_pattern_distribution = PopulationWeightedTripPatternDistribution(
-            population_weighted_plan_steps=population_weighted_plan_steps,
+            survey_reference_plan_steps=survey_reference_plan_steps,
             surveys=self.surveys,
             is_weekday=self.is_weekday,
         )
         self._expected_diagnostics_inputs = ExpectedDiagnosticsInputs(
             population_weighted_plan_steps=population_weighted_plan_steps,
+            survey_reference_plan_steps=survey_reference_plan_steps,
             calibration_plan_steps=expected_calibration_plan_steps,
             trip_pattern_distribution=expected_trip_pattern_distribution,
         )

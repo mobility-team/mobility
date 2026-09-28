@@ -41,6 +41,7 @@ def build_trip_pattern_distribution(
     available_columns = set(plan_steps.collect_schema().names())
     candidate_columns = [
         "country",
+        "survey_name",
         "demand_group_id",
         "demand_subgroup_id",
         "home_zone_id",
@@ -50,6 +51,8 @@ def build_trip_pattern_distribution(
         "time_seq_id",
         "dest_seq_id",
         "mode_seq_id",
+        "individual_id",
+        "day_id",
     ]
     plan_key_cols = [col for col in candidate_columns if col in available_columns]
     required_columns = {"activity_seq_id", "time_seq_id", "seq_step_index", "activity", "distance", "mode", "n_persons"}
@@ -172,7 +175,7 @@ def build_trip_pattern_distribution(
 class PopulationWeightedTripPatternDistribution(FileAsset):
     """Persist the expected survey-weighted trip-pattern distribution."""
 
-    def __init__(self, *, population_weighted_plan_steps: FileAsset, surveys, is_weekday: bool) -> None:
+    def __init__(self, *, survey_reference_plan_steps: FileAsset, surveys, is_weekday: bool) -> None:
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
         cache_path = (
             project_folder
@@ -180,12 +183,12 @@ class PopulationWeightedTripPatternDistribution(FileAsset):
             / f"expected_trip_pattern_distribution_{'weekday' if is_weekday else 'weekend'}.parquet"
         )
         inputs = {
-            "version": 2,
-            "population_weighted_plan_steps": population_weighted_plan_steps,
+            "version": 3,
+            "survey_reference_plan_steps": survey_reference_plan_steps,
             "surveys": surveys,
             "is_weekday": is_weekday,
         }
-        self.population_weighted_plan_steps = population_weighted_plan_steps
+        self.survey_reference_plan_steps = survey_reference_plan_steps
         self.surveys = surveys
         self.is_weekday = is_weekday
         super().__init__(inputs, cache_path)
@@ -195,7 +198,7 @@ class PopulationWeightedTripPatternDistribution(FileAsset):
 
     def create_and_get_asset(self) -> pl.LazyFrame:
         distribution = build_trip_pattern_distribution(
-            self.population_weighted_plan_steps.get(),
+            self.survey_reference_plan_steps.get(),
             immobility_probabilities=get_survey_immobility_probabilities(
                 self.surveys,
                 is_weekday=self.is_weekday,

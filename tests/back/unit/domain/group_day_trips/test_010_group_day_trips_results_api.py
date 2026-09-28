@@ -84,7 +84,10 @@ class _FakeRun(FileAsset):
 
     def _get_expected_diagnostics_inputs(self):
         """Return the fake survey reference asset expected by new diagnostics."""
-        return SimpleNamespace(population_weighted_plan_steps=self._reference_plan_steps)
+        return SimpleNamespace(
+            population_weighted_plan_steps=self._reference_plan_steps,
+            survey_reference_plan_steps=self._reference_plan_steps,
+        )
 
     def iteration_table(self, table_name: str, iteration: int):
         """Return one fake saved iteration table."""
@@ -1058,6 +1061,15 @@ def test_metric_projection_accepts_plan_steps_without_demand_group_id(tmp_path):
 
     assert metric["home_zone_id"].to_list() == ["z1", "z2"]
     assert metric["trip_count_share"].to_list() == pytest.approx([1.0, 1.0])
+
+
+def test_results_expose_unsupported_survey_demand_mass(tmp_path):
+    """Check the results API returns the reference asset's unsupported demand mass."""
+    results = _results(tmp_path)
+    reference_steps = results.survey_reference_plan_steps
+    reference_steps.unsupported_demand_mass = 25.0
+
+    assert results.unsupported_survey_demand_mass == 25.0
 
 
 def test_metrics_can_include_survey_reference(tmp_path, monkeypatch):

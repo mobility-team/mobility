@@ -15,7 +15,7 @@ class MobilitySurveyPlans(FileAsset):
     """Persist plan-level survey metadata and sampling probabilities.
 
     This asset collapses the step-level survey representation to one row
-    per survey plan. It is the canonical place for plan-level probability
+    per survey plan. It is the single source for plan-level probability
     mass and the segment keys used later to join survey plans to demand
     groups in the grouped day-trips model.
     """

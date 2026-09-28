@@ -9,6 +9,7 @@ from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from .survey_plan_steps import MobilitySurveyPlanSteps
 from .survey_plans import MobilitySurveyPlans
 from .survey_plan_summaries import MobilitySurveyPlanSummaries
+from .survey_reference_plan_steps import MobilitySurveyReferencePlanSteps
 
 
 class SurveyPlanAssets(InMemoryAsset):
@@ -27,6 +28,7 @@ class SurveyPlanAssets(InMemoryAsset):
         self._mean_activity_durations = None
         self._mean_home_night_durations = None
         self._activity_demand_per_pers = None
+        self._reference_assets = None
         per_survey_assets = []
         for survey in surveys:
             plan_steps = MobilitySurveyPlanSteps(
@@ -108,6 +110,20 @@ class SurveyPlanAssets(InMemoryAsset):
     def get_plan_steps(self) -> pl.DataFrame:
         """Return merged step-level survey plans."""
         return self._get_merged_asset_table("plan_steps")
+
+    def get_reference_plan_assets_by_survey(self) -> list[dict[str, Any]]:
+        """Return reference-step assets paired with their source surveys."""
+        if self._reference_assets is None:
+            # Keep these out of the wrapper inputs: they feed reference metrics,
+            # while its existing inputs define the compact plans used for sampling.
+            self._reference_assets = [
+                {
+                    "survey": assets["survey"],
+                    "plan_steps": MobilitySurveyReferencePlanSteps(plan_steps=assets["plan_steps"]),
+                }
+                for assets in self._get_per_survey_assets()
+            ]
+        return self._reference_assets
 
     def get_plans(self) -> pl.DataFrame:
         """Return merged plan-level survey probabilities."""

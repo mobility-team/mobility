@@ -12,10 +12,15 @@ from .survey_sequence_index import add_index
 
 
 class MobilitySurveyPlanSteps(FileAsset):
-    """Persist canonical step-level survey plans for one mobility survey.
+    """Persist compact step-level survey plans for programme sampling.
 
     This asset converts raw survey trip diaries into the day-plan steps used by
     the grouped day-trips model.
+
+    Days with the same ordered activities and timings are represented by one
+    plan per weekday/weekend type and demand segment. Mode and distance are not
+    part of this match, so the retained mode and distance describe one example
+    day; use MobilitySurveyReferencePlanSteps for survey reference metrics.
 
     The business logic is:
     - keep only day records that can be interpreted as a coherent within-day
@@ -92,7 +97,7 @@ class MobilitySurveyPlanSteps(FileAsset):
         """Read the cached step table from disk.
 
         Returns:
-            A canonical step-level survey-plan table keyed by activity
+            A compact step-level survey-plan table keyed by activity
             and time sequence ids.
         """
         return pl.read_parquet(self.cache_path)
@@ -253,19 +258,14 @@ class MobilitySurveyPlanSteps(FileAsset):
         )
         return plans.drop("day_of_week")
 
-    def create_and_get_asset(self) -> pl.DataFrame:
-        """Build and cache the canonical survey plan-step table.
+    def _add_sequence_ids(self, raw_steps: pl.DataFrame) -> pl.DataFrame:
+        """Attach shared activity and timing IDs used to group matching plans.
 
-        Returns:
-            A normalized step-level table containing survey provenance,
-            segment keys, stable sequence ids, timing fields, and
-            per-person durations.
+        Timing identity uses each step's index, activity, and departure,
+        arrival, and next-departure times rounded to whole seconds. Mode and
+        distance are intentionally excluded so those differences do not split
+        plans used for programme sampling.
         """
-        raw_steps = self._prepare_survey_plans()
-        anchors = {activity.name: activity.is_anchor for activity in self.activities}
-        mode_values = get_mode_values(self.modes, "other")
-        sequence_index_folder = self._get_sequence_index_folder()
-
         plan_keys = (
             raw_steps
             .with_columns(
@@ -289,6 +289,7 @@ class MobilitySurveyPlanSteps(FileAsset):
                 time_key=pl.col("step_time_key").sort_by("seq_step_index").str.join("||"),
             )
         )
+        sequence_index_folder = self._get_sequence_index_folder()
         plan_keys = add_index(
             plan_keys,
             col="activity_key",
@@ -301,13 +302,59 @@ class MobilitySurveyPlanSteps(FileAsset):
             index_col_name="time_seq_id",
             index_folder=sequence_index_folder,
         ).drop(["activity_key", "time_key"])
+        return raw_steps.join(plan_keys, on=["individual_id", "day_id"])
 
-        canonicalized_steps = (
-            raw_steps
-            .join(plan_keys, on=["individual_id", "day_id"])
+    def get_reference_observations(self) -> pl.DataFrame:
+        """Return eligible respondent-day steps before sequence deduplication."""
+        raw_steps = self._prepare_survey_plans()
+        anchors = {activity.name: activity.is_anchor for activity in self.activities}
+        return (
+            self._add_sequence_ids(raw_steps)
+            .with_columns(
+                is_anchor=pl.col("activity").cast(pl.Utf8).replace_strict(anchors),
+                duration_per_pers=(
+                    pl.col("next_departure_time") - pl.col("arrival_time")
+                ).clip(0.0, 24.0),
+            )
+            .select(
+                [
+                    "day_id",
+                    "individual_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "is_weekday",
+                    "city_category",
+                    "csp",
+                    "n_cars",
+                    "seq_step_index",
+                    "activity",
+                    "mode",
+                    "is_anchor",
+                    "departure_time",
+                    "arrival_time",
+                    "next_departure_time",
+                    "travel_time",
+                    "distance",
+                    "duration_per_pers",
+                    "pondki",
+                ]
+            )
         )
-        canonical_plan_weights = (
-            canonicalized_steps
+
+    def create_and_get_asset(self) -> pl.DataFrame:
+        """Build and cache the compact survey plan-step table.
+
+        Returns:
+            A normalized step-level table containing survey provenance,
+            segment keys, stable sequence ids, timing fields, and
+            per-person durations.
+        """
+        raw_steps = self._prepare_survey_plans()
+        anchors = {activity.name: activity.is_anchor for activity in self.activities}
+        mode_values = get_mode_values(self.modes, "other")
+        steps_with_sequence_ids = self._add_sequence_ids(raw_steps)
+        plan_weights_by_group = (
+            steps_with_sequence_ids
             .group_by(
                 [
                     "individual_id",
@@ -335,7 +382,7 @@ class MobilitySurveyPlanSteps(FileAsset):
         )
 
         plan_steps = (
-            canonicalized_steps
+            steps_with_sequence_ids
             .with_columns(
                 is_anchor=pl.col("activity").cast(pl.Utf8).replace_strict(anchors),
                 duration_per_pers=(pl.col("next_departure_time") - pl.col("arrival_time")).clip(0.0, 24.0),
@@ -374,7 +421,7 @@ class MobilitySurveyPlanSteps(FileAsset):
                 keep="first",
             )
             .join(
-                canonical_plan_weights,
+                plan_weights_by_group,
                 on=[
                     "activity_seq_id",
                     "time_seq_id",
