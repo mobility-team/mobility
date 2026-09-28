@@ -30,10 +30,8 @@ class MobilitySurveyPlanSteps(FileAsset):
     - drop one-trip days, because they are often overnight boundary cases and
       do not provide a usable same-day chain for destination and mode-sequence
       modelling
-    - cap very long daily chains, because the downstream mode sequence model
-    struggles with long chains
-    - treat the final activity of a valid day chain as `home`, so each
-      retained sequence represents a full daily activity pattern
+    - cap very long daily chains and treat their final
+      activity as `home`, to fit the downstream mode sequence model
     - map survey-specific motive and mode codes onto the model's common
       activity and mode definitions, so different surveys can be used together
     - assign stable sequence identifiers so identical daily patterns can be
@@ -175,10 +173,46 @@ class MobilitySurveyPlanSteps(FileAsset):
             .rename({"daily_trip_index": "seq_step_index"})
         )
 
-    def _prepare_survey_plans(self) -> pl.DataFrame:
-        """Build cleaned step-level survey plans from raw survey tables."""
+    def _get_complete_emp_days(self, short_trips: pl.DataFrame, activity_mapping: dict[str, str]) -> pl.DataFrame:
+        """Find complete home-to-home days without repairing their original steps."""
+        day_keys = ["individual_id", "day_id"]
+        home_codes = [code for code, activity in activity_mapping.items() if activity == "home"]
+        return (
+            short_trips.sort([*day_keys, "daily_trip_index"])
+            .with_columns(previous_arrival=pl.col("arrival_time").shift().over(day_keys))
+            .group_by(day_keys).agg(
+                n_steps=pl.len(),
+                consecutive_steps=(
+                    (pl.col("daily_trip_index").min() == 1)
+                    & (pl.col("daily_trip_index").max() == pl.len())
+                    & (pl.col("daily_trip_index").n_unique() == pl.len())
+                ),
+                starts_home=pl.col("previous_motive").first().cast(pl.String).is_in(home_codes),
+                ends_home=pl.col("motive").last().cast(pl.String).is_in(home_codes),
+                valid_times=(
+                    pl.col("departure_time").is_finite()
+                    & pl.col("arrival_time").is_finite()
+                    & (pl.col("departure_time") >= 0)
+                    & (pl.col("arrival_time") >= pl.col("departure_time"))
+                    & (pl.col("arrival_time") < 24 * 3600)
+                    & (pl.col("departure_time") >= pl.col("previous_arrival")).fill_null(True)
+                ).fill_null(False).all(),
+            ).filter(
+                pl.col("n_steps").is_between(2, 10) & pl.col("consecutive_steps")
+                & pl.col("starts_home") & pl.col("ends_home") & pl.col("valid_times")
+            ).select(day_keys)
+        )
+
+    def _prepare_survey_plans(self, *, complete_emp_days: bool = False) -> pl.DataFrame:
+        """Prepare legacy plans, or complete EMP days for donors and reference."""
         activity_mapping, mode_mapping = self._get_survey_plan_mappings()
         days_trips, short_trips = self._get_raw_tables()
+        if complete_emp_days and self.survey.inputs["parameters"].survey_name == "fr-EMP-2019":
+            # Only donors and reference use this fixed eligibility rule. Compact
+            # sampling plans and model priors keep their legacy preparation.
+            eligible = self._get_complete_emp_days(short_trips, activity_mapping)
+            short_trips = short_trips.join(eligible, on=["individual_id", "day_id"])
+            days_trips = days_trips.filter(pl.col("pondki").is_finite() & (pl.col("pondki") > 0))
         incomplete_sequences = self._get_incomplete_sequences(short_trips)
         short_trips_fixed_times = self._fix_trip_times(short_trips)
 
@@ -306,7 +340,7 @@ class MobilitySurveyPlanSteps(FileAsset):
 
     def get_reference_observations(self) -> pl.DataFrame:
         """Return eligible respondent-day steps before sequence deduplication."""
-        raw_steps = self._prepare_survey_plans()
+        raw_steps = self._prepare_survey_plans(complete_emp_days=True)
         anchors = {activity.name: activity.is_anchor for activity in self.activities}
         return (
             self._add_sequence_ids(raw_steps)

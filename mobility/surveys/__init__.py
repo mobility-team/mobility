@@ -5,3 +5,4 @@ from .survey_plans import MobilitySurveyPlans
 from .survey_plan_steps import MobilitySurveyPlanSteps
 from .survey_plan_summaries import MobilitySurveyPlanSummaries
 from .selection import select_surveys_for_population
+from .programme_pooling import ProgrammePoolingParameters

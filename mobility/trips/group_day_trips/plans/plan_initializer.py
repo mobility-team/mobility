@@ -60,7 +60,12 @@ class PlanInitializer:
                 "duration_per_pers",
             ]
         )
-        survey_plans = survey_plan_assets.get_plans().select(
+        target_segments = demand_groups.select(
+            "country", "city_category", "csp", "n_cars"
+        ).unique().with_columns(is_weekday=pl.lit(is_weekday))
+        survey_plans = survey_plan_assets.get_sampling_plans(
+            target_segments, parameters.programme_pooling,
+        ).select(
             [
                 "country",
                 "activity_seq_id",

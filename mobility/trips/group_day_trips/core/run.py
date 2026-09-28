@@ -17,7 +17,6 @@ from ..iterations import (
 )
 from ..iterations.iteration_assets import CURRENT_PLAN_STEPS_SCHEMA
 from ..evaluation.population_weighted_plan_steps import (
-    PopulationWeightedPlanSteps,
     PopulationWeightedSurveyReferenceSteps,
 )
 from ..evaluation.calibration_plan_steps import (
@@ -60,7 +59,6 @@ from mobility.transport.modes.core.transport_mode import TransportMode
 class ExpectedDiagnosticsInputs:
     """Shared survey-derived reference inputs used by run diagnostics."""
 
-    population_weighted_plan_steps: PopulationWeightedPlanSteps
     survey_reference_plan_steps: PopulationWeightedSurveyReferenceSteps
     calibration_plan_steps: PopulationWeightedCalibrationPlanSteps
     trip_pattern_distribution: PopulationWeightedTripPatternDistribution
@@ -92,7 +90,7 @@ class Run(FileAsset):
             else sensitivity_case.case_id
         )
         run_context_inputs = {
-            "version": 18,
+            "version": 19,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -365,18 +363,13 @@ class Run(FileAsset):
         if self._expected_diagnostics_inputs is not None:
             return self._expected_diagnostics_inputs
 
-        population_weighted_plan_steps = PopulationWeightedPlanSteps(
-            population=self.population,
-            survey_plan_assets=self.survey_plan_assets,
-            is_weekday=self.is_weekday,
-        )
         survey_reference_plan_steps = PopulationWeightedSurveyReferenceSteps(
             population=self.population,
             survey_plan_assets=self.survey_plan_assets,
             is_weekday=self.is_weekday,
         )
         expected_calibration_plan_steps = PopulationWeightedCalibrationPlanSteps(
-            population_weighted_plan_steps=population_weighted_plan_steps,
+            population_weighted_plan_steps=survey_reference_plan_steps,
             is_weekday=self.is_weekday,
         )
         expected_trip_pattern_distribution = PopulationWeightedTripPatternDistribution(
@@ -385,7 +378,6 @@ class Run(FileAsset):
             is_weekday=self.is_weekday,
         )
         self._expected_diagnostics_inputs = ExpectedDiagnosticsInputs(
-            population_weighted_plan_steps=population_weighted_plan_steps,
             survey_reference_plan_steps=survey_reference_plan_steps,
             calibration_plan_steps=expected_calibration_plan_steps,
             trip_pattern_distribution=expected_trip_pattern_distribution,
@@ -398,7 +390,7 @@ class Run(FileAsset):
         return IterationMetricsBuilder(
             model_loss=ModelLoss(expected_plan_steps=expected_inputs.calibration_plan_steps),
             model_trip_count_loss=ModelTripCountLoss(
-                expected_plan_steps=expected_inputs.population_weighted_plan_steps.get(),
+                expected_plan_steps=expected_inputs.survey_reference_plan_steps.get(),
                 surveys=self.surveys,
                 is_weekday=self.is_weekday,
             ),
@@ -616,7 +608,7 @@ class Run(FileAsset):
             plan_steps=cached["plan_steps"],
             opportunities=cached["opportunities"],
             costs=cached["costs"],
-            population_weighted_plan_steps=expected_inputs.population_weighted_plan_steps.get(),
+            population_weighted_plan_steps=expected_inputs.survey_reference_plan_steps.get(),
             expected_calibration_plan_steps=expected_inputs.calibration_plan_steps,
             observed_calibration_plan_steps=observed_calibration_plan_steps,
             iteration_metrics=iteration_metrics,

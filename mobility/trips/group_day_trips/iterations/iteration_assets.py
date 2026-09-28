@@ -224,6 +224,7 @@ class InitialIterationStateAsset(FileAsset):
             "mode_values": get_mode_values(modes, "stay_home"),
             "run_seed": parameters.run.seed,
             "demand_group_parameters": parameters.demand_groups,
+            "programme_pooling": parameters.programme_pooling,
             "min_activity_time_constant": parameters.plan_update.min_activity_time_constant,
             "initial_transport_costs": initial_transport_costs,
         }

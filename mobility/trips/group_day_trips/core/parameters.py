@@ -4,6 +4,7 @@ from enum import Enum
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from mobility.surveys.programme_pooling import ProgrammePoolingParameters
 
 
 class BehaviorChangeScope(str, Enum):
@@ -539,6 +540,8 @@ class GroupDayTripsParameters(BaseModel):
     """Root settings for the grouped day-trips model."""
 
     model_config = ConfigDict(extra="forbid")
+
+    programme_pooling: ProgrammePoolingParameters = Field(default_factory=ProgrammePoolingParameters)
 
     run: Annotated[
         GroupDayTripsRunParameters,

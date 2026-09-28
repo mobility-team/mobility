@@ -2,8 +2,10 @@ from dataclasses import dataclass
 
 import pandas as pd
 import polars as pl
+from polars.testing import assert_frame_equal
 from mobility.runtime.assets.asset import Asset
 from mobility.surveys import MobilitySurveyPlans, MobilitySurveyPlanSteps, SurveyPlanAssets
+from mobility.surveys.programme_pooling import ProgrammePoolingParameters
 from mobility.trips.group_day_trips.evaluation.trip_pattern_distribution import (
     build_trip_pattern_distribution,
 )
@@ -38,9 +40,9 @@ class _HashableStubAsset(Asset):
 
 
 class _StubSurvey(Asset):
-    def __init__(self, cached):
+    def __init__(self, cached, survey_name="stub-survey"):
         self._cached = cached
-        super().__init__({"parameters": _SurveyParams(survey_name="stub-survey", country="fr")})
+        super().__init__({"parameters": _SurveyParams(survey_name=survey_name, country="fr")})
 
     def get(self):
         return self._cached
@@ -281,7 +283,7 @@ def test_reference_mode_share_keeps_original_weights_for_identical_timed_plans(t
     mode_shares = (
         weighted_steps
         .group_by("mode")
-        .agg(weight=pl.col("p_plan").sum())
+        .agg(weight=pl.col("p_reference").sum())
         .with_columns(share=pl.col("weight") / pl.col("weight").sum())
         .sort("mode")
     )
@@ -349,3 +351,91 @@ def test_reference_mode_share_keeps_original_weights_for_identical_timed_plans(t
         .sort("mode")
     )
     assert [round(value, 6) for value in expanded_mode_weights["share"]] == [0.6, 0.4]
+
+
+def test_emp_donors_exclude_whole_incomplete_days_without_repair(tmp_path, monkeypatch):
+    """Only the original valid home-to-home day survives all donor checks."""
+    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+    rows = []
+    for day in range(1, 8):
+        count = 11 if day == 5 else 2
+        for index in range(1, count + 1):
+            rows.append({
+                "day_id": day, "individual_id": day,
+                "daily_trip_index": 1 if day == 7 else index,
+                "departure_time": index * 3600.0,
+                "arrival_time": (index + 0.5) * 3600.0 if day != 3 else 0.0,
+                "previous_motive": "home" if index == 1 and day != 6 else "work",
+                "motive": "home" if index == count and day != 2 else "work",
+                "mode_id": "walk", "distance": 1.0,
+            })
+    survey = _StubSurvey({
+        "days_trip": pd.DataFrame({
+            "day_id": list(range(1, 8)), "day_of_week": [1] * 7,
+            "pondki": [1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0],
+            "city_category": ["R"] * 7, "csp": ["fr-3"] * 7, "n_cars": ["1"] * 7,
+        }),
+        "short_trips": pd.DataFrame(rows),
+    }, survey_name="fr-EMP-2019")
+    asset = MobilitySurveyPlanSteps(
+        survey=survey, activities=[_make_activity("home", ["home"]), _make_activity("work", ["work"])],
+        modes=[_make_mode("walk", ["walk"])],
+    )
+    steps = asset.get_reference_observations().sort("seq_step_index")
+    assert steps["day_id"].unique().to_list() == [1]
+    assert steps["departure_time"].to_list() == [1.0, 2.0]
+    assert steps["arrival_time"].to_list() == [1.5, 2.5]
+
+
+def test_disabled_emp_pooling_keeps_legacy_programmes_and_priors(tmp_path, monkeypatch):
+    """Keep repaired diaries for default sampling, but never borrow them."""
+    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+    rows = []
+    for day, trip_count in [(1, 2), (2, 2), (3, 12)]:
+        for index in range(1, trip_count + 1):
+            rows.append({
+                "day_id": day, "individual_id": day, "daily_trip_index": index,
+                "departure_time": (index + day - 1) * 3600.0,
+                "arrival_time": (index + day - 0.5) * 3600.0,
+                "previous_motive": "home" if index == 1 else "work",
+                "motive": "home" if index == trip_count and day != 2 else "work",
+                "mode_id": "walk", "distance": 1.0,
+            })
+    data = {
+        "days_trip": pd.DataFrame({
+            "day_id": [1, 2, 3], "day_of_week": [1] * 3, "pondki": [1.0, 2.0, 3.0],
+            "city_category": ["R"] * 3, "csp": ["fr-3"] * 3, "n_cars": ["1"] * 3,
+        }),
+        "short_trips": pd.DataFrame(rows),
+    }
+    activities = [_make_activity("home", ["home"]), _make_activity("work", ["work"])]
+    modes = [_make_mode("walk", ["walk"])]
+    # The non-EMP stub exercises unchanged legacy preparation on the same data.
+    legacy = SurveyPlanAssets(surveys=[_StubSurvey(data)], activities=activities, modes=modes)
+    emp = SurveyPlanAssets(
+        surveys=[_StubSurvey(data, survey_name="fr-EMP-2019")], activities=activities, modes=modes,
+    )
+    targets = pl.DataFrame({
+        "country": ["fr"], "is_weekday": [True], "city_category": ["R"], "csp": ["fr-3"], "n_cars": ["1"],
+    })
+    sampled = emp.get_sampling_plans(targets, ProgrammePoolingParameters())
+    assert_frame_equal(sampled.drop("survey_name"), legacy.get_plans().drop("survey_name"), check_exact=True)
+    assert sampled.height == 3
+    assert sampled.sort("p_plan")["p_plan"].to_list() == [1 / 6, 2 / 6, 3 / 6]
+    assert emp.get_plan_steps().group_by("time_seq_id").len()["len"].sort().to_list() == [2, 2, 10]
+
+    # The complete-day reference and enabled pooling use only the first day.
+    reference_asset = emp.get_reference_plan_assets_by_survey()[0]["plan_steps"]
+    reference = reference_asset.get().sort("seq_step_index")
+    assert reference["day_id"].unique().to_list() == [1]
+    pooled = emp.get_sampling_plans(targets, ProgrammePoolingParameters(enabled=True))
+    assert pooled.height == 1
+    assert pooled["time_seq_id"][0] == reference["time_seq_id"][0]
+    assert pooled["p_plan"][0] == 1.0
+    assert_frame_equal(reference_asset.get().sort("seq_step_index"), reference, check_exact=True)
+
+    # Pooling never replaces legacy duration or opportunity priors.
+    for getter in ["get_mean_activity_durations", "get_mean_home_night_durations", "get_activity_demand_per_pers"]:
+        expected = getattr(legacy, getter)()
+        actual = getattr(emp, getter)()
+        assert_frame_equal(actual.sort(actual.columns), expected.sort(expected.columns), check_exact=True)
