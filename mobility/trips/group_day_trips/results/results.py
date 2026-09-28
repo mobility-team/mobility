@@ -142,11 +142,16 @@ class GroupDayTripsResults:
     def survey_reference_plan_steps(self):
         """Return the survey-weighted plan-step asset for this result scope."""
         try:
-            return self.first_run._get_expected_diagnostics_inputs().population_weighted_plan_steps
+            return self.first_run._get_expected_diagnostics_inputs().survey_reference_plan_steps
         except AttributeError as exc:
             raise TypeError(
                 "Survey diagnostics need runs that expose population-weighted survey plan steps."
             ) from exc
+
+    @property
+    def unsupported_survey_demand_mass(self) -> float:
+        """Return demand weight in segments with no supporting survey observations."""
+        return self.survey_reference_plan_steps.unsupported_demand_mass
 
     @property
     def transport_zones(self):

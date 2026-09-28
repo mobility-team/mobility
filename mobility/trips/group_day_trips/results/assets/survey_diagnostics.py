@@ -54,7 +54,7 @@ class SurveyReferenceComparison(FileAsset):
             / "survey_reference_comparison.parquet"
         )
         inputs = {
-            "version": 3,
+            "version": 4,
             "plan_steps": plan_steps,
             "reference_plan_steps": reference_plan_steps,
             "transport_zones": transport_zones,
@@ -263,7 +263,7 @@ class SurveyReferenceMarginal(FileAsset):
             / f"survey_reference_{marginal_part}.parquet"
         )
         inputs = {
-            "version": 3,
+            "version": 4,
             "comparison": comparison,
             "marginal_columns": tuple(self.marginal_columns),
         }

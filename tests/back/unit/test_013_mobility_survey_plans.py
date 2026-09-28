@@ -4,6 +4,12 @@ import pandas as pd
 import polars as pl
 from mobility.runtime.assets.asset import Asset
 from mobility.surveys import MobilitySurveyPlans, MobilitySurveyPlanSteps
+from mobility.trips.group_day_trips.evaluation.trip_pattern_distribution import (
+    build_trip_pattern_distribution,
+)
+from mobility.trips.group_day_trips.evaluation.population_weighted_plan_steps import (
+    _weight_reference_observations,
+)
 
 @dataclass
 class _SurveyParams:
@@ -201,3 +207,71 @@ def test_survey_plan_steps_does_not_pool_travel_time_across_respondent_days():
         .to_list()
         == [13.0, 13.0]
     )
+
+
+def test_reference_mode_share_keeps_original_weights_for_identical_timed_plans(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+    survey = _StubSurvey(
+        {
+            "days_trip": pd.DataFrame(
+                {
+                    "day_id": [10, 20],
+                    "day_of_week": [1, 1],
+                    "pondki": [6.0, 4.0],
+                    "city_category": ["urban", "urban"],
+                    "csp": ["A", "A"],
+                    "n_cars": [1, 1],
+                }
+            ),
+            "short_trips": pd.DataFrame(
+                {
+                    "day_id": [10, 10, 20, 20],
+                    "individual_id": [1, 1, 2, 2],
+                    "daily_trip_index": [1, 2, 1, 2],
+                    "departure_time": [8 * 3600, 17 * 3600, 8 * 3600, 17 * 3600],
+                    "arrival_time": [9 * 3600, 18 * 3600, 9 * 3600, 18 * 3600],
+                    "motive": ["9.91", "1.1", "9.91", "1.1"],
+                    "mode_id": ["car", "car", "train", "train"],
+                    "distance": [10.0, 10.0, 10.0, 10.0],
+                }
+            ),
+        }
+    )
+    plan_steps_asset = MobilitySurveyPlanSteps(
+        survey=survey,
+        activities=[_make_activity("work", ["9.91"]), _make_activity("home", ["1.1"])],
+        modes=[_make_mode("car", ["car"]), _make_mode("train", ["train"])],
+    )
+
+    sampling_steps = plan_steps_asset.create_and_get_asset()
+    reference_steps = plan_steps_asset.get_reference_observations().with_columns(
+        survey_name=pl.lit("test"),
+        country=pl.lit("fr"),
+    )
+    weighted_steps = _weight_reference_observations(reference_steps)
+    mode_shares = (
+        weighted_steps
+        .group_by("mode")
+        .agg(weight=pl.col("p_plan").sum())
+        .with_columns(share=pl.col("weight") / pl.col("weight").sum())
+        .sort("mode")
+    )
+
+    assert reference_steps.select("activity_seq_id", "time_seq_id").n_unique() == 1
+    first_trip_mode = (
+        sampling_steps
+        .filter(pl.col("seq_step_index") == 1)["mode"]
+        .cast(pl.String)
+        .to_list()
+    )
+    assert first_trip_mode == ["car"]
+    assert sampling_steps["plan_weight_mass"].unique().to_list() == [10.0]
+    assert mode_shares.select("mode").to_series().to_list() == ["car", "train"]
+    assert [round(value, 6) for value in mode_shares["share"]] == [0.6, 0.4]
+    reference_patterns = build_trip_pattern_distribution(
+        reference_steps.lazy().with_columns(
+            n_persons=pl.col("pondki"),
+            activity_seq_id=pl.lit(1),
+        )
+    )
+    assert [round(value, 6) for value in reference_patterns["probability"]] == [0.6, 0.4]

@@ -84,7 +84,10 @@ class _FakeRun(FileAsset):
 
     def _get_expected_diagnostics_inputs(self):
         """Return the fake survey reference asset expected by new diagnostics."""
-        return SimpleNamespace(population_weighted_plan_steps=self._reference_plan_steps)
+        return SimpleNamespace(
+            population_weighted_plan_steps=self._reference_plan_steps,
+            survey_reference_plan_steps=self._reference_plan_steps,
+        )
 
     def iteration_table(self, table_name: str, iteration: int):
         """Return one fake saved iteration table."""
