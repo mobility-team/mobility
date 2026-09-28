@@ -643,25 +643,32 @@ class PlanUpdater:
             & (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
         )
 
-        utility_filter = pl.lit(True)
-        if math.isfinite(utility_pruning_delta):
-            utility_filter = (
-                is_self_transition
-                | (pl.col("utility_trans") >= pl.col("max_utility_trans") - utility_pruning_delta)
-            )
-        gain_filter = (
-            is_self_transition
-            | (pl.col("utility_trans") >= pl.col("utility") + min_transition_utility_gain)
-        )
+        # Every origin in a scope has the same target set. Prune that small
+        # table before expanding origin-target pairs, while retaining all self pairs.
+        scope_cols = list(DEMAND_UNIT_COLS)
+        if behavior_change_scope != BehaviorChangeScope.FULL_REPLANNING:
+            scope_cols += ["activity_seq_id", "time_seq_id"]
+        if behavior_change_scope in (BehaviorChangeScope.MODE_REPLANNING, BehaviorChangeScope.NO_TRANSITIONS):
+            scope_cols += ["dest_seq_id"]
+        if behavior_change_scope == BehaviorChangeScope.NO_TRANSITIONS:
+            scope_cols += ["mode_seq_id"]
 
-        return (
+        targets = possible_plan_utility_for_transitions
+        if math.isfinite(utility_pruning_delta):
+            targets = targets.filter(
+                pl.col("utility") >= pl.col("utility").max().over(scope_cols) - utility_pruning_delta
+            )
+        targets = targets.collect(engine="streaming").lazy()
+        origins = (
             current_plans_for_transitions
             .select(plan_cols + ["utility"])
             .rename({"utility": "utility_prev_from"})
             .join(possible_plan_utility_for_transitions, on=plan_cols)
             .rename({"plan_id": "plan_id_from"})
-            .join_where(
-                possible_plan_utility_for_transitions,
+        )
+        non_self = (
+            origins.join_where(
+                targets,
                 (
                     (pl.col("demand_group_id") == pl.col("demand_group_id_trans"))
                     & (pl.col("demand_subgroup_id") == pl.col("demand_subgroup_id_trans"))
@@ -671,12 +678,17 @@ class PlanUpdater:
             )
             .drop("demand_group_id_trans", "demand_subgroup_id_trans")
             .rename({"plan_id": "plan_id_trans"})
-            .with_columns(
-                max_utility_trans=pl.col("utility_trans").max().over(plan_cols),
+            .filter(
+                ~is_self_transition
+                & (pl.col("utility_trans") >= pl.col("utility") + min_transition_utility_gain)
             )
-            .filter(utility_filter & gain_filter)
-            .drop(["max_utility_trans"])
         )
+        self_pairs = origins.with_columns(
+            pl.col("plan_id_from").alias("plan_id_trans"),
+            pl.col("utility").alias("utility_trans"),
+            *[pl.col(col).alias(col + "_trans") for col in plan_cols if col not in DEMAND_UNIT_COLS],
+        ).select(non_self.collect_schema().names())
+        return pl.concat([non_self, self_pairs])
 
     def attach_transition_distances(
         self,

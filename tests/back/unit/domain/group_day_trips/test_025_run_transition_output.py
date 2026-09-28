@@ -7,6 +7,7 @@ import pytest
 from mobility.trips.group_day_trips.core.run import Run
 from mobility.trips.group_day_trips.transitions.transition_schema import TRANSITION_EVENT_SCHEMA
 from mobility.trips.group_day_trips.transitions.transition_events import TransitionEventsAsset
+from mobility.trips.group_day_trips.iterations.iteration_assets import IterationStateAsset
 
 
 def test_final_transition_output_streams_all_events_in_iteration_order(tmp_path, monkeypatch):
@@ -78,8 +79,24 @@ def test_saved_event_asset_releases_query_on_write_and_cache_read(tmp_path):
 def test_failed_event_write_also_releases_query(tmp_path, monkeypatch):
     asset = TransitionEventsAsset(run_key="test", is_weekday=True, iteration=1, base_folder=tmp_path)
     def failed_write(*args, **kwargs):
+        args[1].write_bytes(b"PAR1partial")
         raise OSError("No space left")
     monkeypatch.setattr(pl.LazyFrame, "sink_parquet", failed_write)
     with pytest.raises(OSError, match="No space left"):
         asset.save(pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA).lazy())
     assert asset.transition_events is None
+    assert not asset.cache_path.exists()
+
+
+@pytest.mark.parametrize("content", [b"", b"PAR1truncated payload"])
+def test_incomplete_events_invalidate_the_iteration(tmp_path, content):
+    events = TransitionEventsAsset(run_key="test", is_weekday=True, iteration=1, base_folder=tmp_path)
+    events.cache_path.write_bytes(content)
+    state = object.__new__(IterationStateAsset)
+    state.cache_path = {"transition_events": events.cache_path}
+    state.cache_iteration_events = True
+    state.transition_events_asset = events
+    assert state.assets_missing()
+    assert events.is_update_needed()
+    events.save(pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA).lazy())
+    assert not state.assets_missing()

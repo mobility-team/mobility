@@ -764,6 +764,12 @@ class IterationStateAsset(FileAsset):
         if cache_iteration_events:
             self.cache_path["transition_events"] = self.transition_events_asset.cache_path
 
+    def assets_missing(self) -> bool:
+        """An iteration is incomplete when its event parquet was interrupted."""
+        return super().assets_missing() or (
+            self.cache_iteration_events and self.transition_events_asset.assets_missing()
+        )
+
     def get_cached_asset(self) -> RunState:
         """Return the cached state after this iteration."""
         return _read_run_state(self.cache_path, start_iteration=self.iteration + 1)

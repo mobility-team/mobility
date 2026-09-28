@@ -527,10 +527,13 @@ class Run(FileAsset):
         plan_steps.write_parquet(self.cache_path["plan_steps"])
         opportunities.write_parquet(self.cache_path["opportunities"])
         costs.write_parquet(self.cache_path["costs"])
+        transition_path = self.cache_path["transitions"]
+        temporary = transition_path.with_suffix(".parquet.part")
         if isinstance(transitions, pl.LazyFrame):
-            transitions.sink_parquet(self.cache_path["transitions"])
+            transitions.sink_parquet(temporary)
         else:
-            transitions.write_parquet(self.cache_path["transitions"])
+            transitions.write_parquet(temporary)
+        temporary.replace(transition_path)
         demand_groups.write_parquet(self.cache_path["demand_groups"])
         iteration_metrics.write_parquet(self.cache_path["iteration_metrics"])
 
