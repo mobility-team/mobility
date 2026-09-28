@@ -176,6 +176,16 @@ class TransitionEventsAsset(FileAsset):
             required_schema=TRANSITION_EVENT_SCHEMA,
         )
 
+    def save(self, transition_events: pl.LazyFrame) -> None:
+        """Persist events, then release the query and its in-memory source tables."""
+        self.transition_events = transition_events
+        try:
+            self.get()
+        finally:
+            # The run retains each iteration asset. Keeping the query here
+            # would also retain candidate plans from every completed iteration.
+            self.transition_events = None
+
     def create_and_get_asset(self) -> pathlib.Path:
         if self.transition_events is None:
             raise ValueError("Cannot save transition events without a lazy query.")

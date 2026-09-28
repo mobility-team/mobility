@@ -831,8 +831,7 @@ class IterationStateAsset(FileAsset):
         _write_run_state(self.cache_path, state, seeds["rng_state_after_sampling"])
 
         if transition_events is not None and self.cache_iteration_events:
-            self.transition_events_asset.transition_events = transition_events
-            self.transition_events_asset.get()
+            self.transition_events_asset.save(transition_events)
 
         logging.debug("Group-day-trips iteration %s is ready.", str(self.iteration))
         get_group_day_trips_progress().finish_iteration(self.iteration)

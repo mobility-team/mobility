@@ -6,6 +6,7 @@ import pytest
 
 from mobility.trips.group_day_trips.core.run import Run
 from mobility.trips.group_day_trips.transitions.transition_schema import TRANSITION_EVENT_SCHEMA
+from mobility.trips.group_day_trips.transitions.transition_events import TransitionEventsAsset
 
 
 def test_final_transition_output_streams_all_events_in_iteration_order(tmp_path, monkeypatch):
@@ -63,3 +64,22 @@ def test_disabled_transition_output_retains_empty_schema():
     table = Run._build_transitions(run)
     assert table.schema == TRANSITION_EVENT_SCHEMA
     assert table.height == 0
+
+
+def test_saved_event_asset_releases_query_on_write_and_cache_read(tmp_path):
+    table = pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA)
+    asset = TransitionEventsAsset(run_key="test", is_weekday=True, iteration=1, base_folder=tmp_path)
+    for _ in range(2):
+        asset.save(table.lazy())
+        assert asset.transition_events is None
+        assert_frame_equal(pl.read_parquet(asset.cache_path), table)
+
+
+def test_failed_event_write_also_releases_query(tmp_path, monkeypatch):
+    asset = TransitionEventsAsset(run_key="test", is_weekday=True, iteration=1, base_folder=tmp_path)
+    def failed_write(*args, **kwargs):
+        raise OSError("No space left")
+    monkeypatch.setattr(pl.LazyFrame, "sink_parquet", failed_write)
+    with pytest.raises(OSError, match="No space left"):
+        asset.save(pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA).lazy())
+    assert asset.transition_events is None
