@@ -44,6 +44,8 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data, gtf
             routing_parameters=mobility.PublicTransportRoutingParameters(
                 gtfs_reference_date="2026-01-01",
                 gtfs_sources_folder=gtfs_sources_folder,
+                # This resource has no archive before the test's reference date.
+                excluded_gtfs_sources=["transport_data_gouv:83830"],
             ),
         )
         return [car_mode, walk_mode, bicycle_mode, public_transport_mode]

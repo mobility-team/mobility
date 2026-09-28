@@ -12,7 +12,9 @@ from mobility.transport.costs.travel_costs_asset import TravelCostsBase
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.spatial.transport_zones import TransportZones
-from mobility.transport.modes.public_transport.public_transport_graph import PublicTransportRoutingParameters
+from mobility.transport.modes.public_transport.public_transport_graph import (
+    PublicTransportRoutingParameters, PublicTransportRoutingSettings,
+)
 from mobility.transport.modes.public_transport.intermodal_transport_graph import IntermodalTransportGraph
 from mobility.transport.modes.core.modal_transfer import IntermodalTransfer
 
@@ -68,7 +70,7 @@ class PublicTransportTravelCosts(TravelCostsBase, FileAsset):
             "transport_zones": transport_zones,
             "first_modal_transfer": first_modal_transfer,
             "last_modal_transfer": last_modal_transfer,
-            "parameters": parameters
+            "parameters": intermodal_graph.inputs["parameters"]
         }
 
         file_name = (
@@ -111,7 +113,7 @@ class PublicTransportTravelCosts(TravelCostsBase, FileAsset):
             intermodal_graph: IntermodalTransportGraph,
             first_modal_transfer: IntermodalTransfer,
             last_modal_transfer: IntermodalTransfer,
-            parameters: PublicTransportRoutingParameters
+            parameters: PublicTransportRoutingSettings
         ) -> pd.DataFrame:
         """Run the PT routing pipeline and return the resulting OD costs."""
 

@@ -66,6 +66,7 @@ from .transport.modes.public_transport import (
     build_project_gtfs_zip,
     build_gtfs_zip,
     GTFSBuilder,
+    CustomGTFS,
     GTFSFeedSpec,
     GTFSLineSpec,
     GTFSStopSpec,

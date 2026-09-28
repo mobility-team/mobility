@@ -3,14 +3,13 @@ from mobility.runtime.assets.asset import Asset
 def test_mixed_list_inputs_serialize_assets_and_scalars():
     class ChildAsset(Asset):
         def __init__(self, child_hash_value: str):
-            super().__init__({"kind": "child"})
-            self._child_hash_value = child_hash_value
+            super().__init__({"child_value": child_hash_value})
 
         def get(self):
             return None
 
         def get_cached_hash(self):
-            return self._child_hash_value
+            raise AssertionError("Hashing inputs must not read the disk cache")
 
     class ParentAsset(Asset):
         def get(self):

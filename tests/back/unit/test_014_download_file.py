@@ -57,7 +57,7 @@ def test_download_file_returns_without_writing_on_404(monkeypatch, tmp_path):
     monkeypatch.setattr(download_file_module, "request_url", lambda *args, **kwargs: response)
 
     path = tmp_path / "file.txt"
-    result = download_file("https://example.com/file.txt", path)
+    result = download_file("https://example.com/file.txt", path, raise_on_error=False)
 
     assert result == path
     assert path.exists() is False
@@ -71,12 +71,24 @@ def test_download_file_returns_without_writing_on_401(monkeypatch, tmp_path):
     monkeypatch.setattr(download_file_module, "request_url", lambda *args, **kwargs: response)
 
     path = tmp_path / "file.txt"
-    result = download_file("https://example.com/file.txt", path)
+    result = download_file("https://example.com/file.txt", path, raise_on_error=False)
 
     assert result == path
     assert path.exists() is False
     assert (tmp_path / "file.txt.part").exists() is False
     assert response.closed is True
+
+
+@pytest.mark.parametrize("status", [401, 404])
+def test_download_file_raises_for_unavailable_files(monkeypatch, tmp_path, status):
+    response = requests.Response()
+    response._content_consumed = True
+    response.status_code = status
+    response._content = b""
+    monkeypatch.setattr(download_file_module, "request_url", lambda *args, **kwargs: response)
+    with pytest.raises(requests.HTTPError):
+        download_file("https://example.com/feed.zip", tmp_path / "feed.zip", max_retries=0)
+    assert not (tmp_path / "feed.zip").exists()
 
 
 def test_download_file_removes_partial_file_when_request_fails(monkeypatch, tmp_path):

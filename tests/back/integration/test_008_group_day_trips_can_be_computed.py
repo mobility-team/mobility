@@ -44,6 +44,8 @@ def test_008_group_day_trips_can_be_computed(test_data, gtfs_sources_folder):
         routing_parameters=mobility.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-01-01",
             gtfs_sources_folder=gtfs_sources_folder,
+            # This resource has no archive before the test's reference date.
+            excluded_gtfs_sources=["transport_data_gouv:83830"],
         ),
     )
 

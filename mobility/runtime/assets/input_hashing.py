@@ -27,7 +27,8 @@ def to_stable_json_key(value: Any) -> str:
 
 
 def normalize_asset_for_hash(value: "Asset") -> dict[str, str]:
-    return {"__asset__": value.get_cached_hash()}
+    # Dependency identity comes from its inputs; disk hashes validate cached outputs.
+    return {"__asset__": value.inputs_hash}
 
 
 def normalize_sequence_for_hash(value: list[Any] | tuple[Any, ...]) -> dict[str, list[Any]]:
@@ -79,7 +80,9 @@ def normalize_dataframe_for_hash(value: pd.DataFrame) -> dict[str, str]:
 def normalize_pydantic_for_hash(value: BaseModel) -> dict[str, Any]:
     return {
         "__pydantic__": value.__class__.__qualname__,
-        "value": normalize_for_hash(value.model_dump(mode="json")),
+        # Preserve the existing JSON representation for ordinary parameters.
+        # Nested assets use the same input-hash handler as direct dependencies.
+        "value": normalize_for_hash(value.model_dump(mode="json", fallback=normalize_for_hash)),
     }
 
 

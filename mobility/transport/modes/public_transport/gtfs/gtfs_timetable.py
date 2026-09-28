@@ -1,6 +1,7 @@
 """Combine GTFS feeds into one dated timetable for the study area."""
 
 import logging
+import datetime as dt
 import tempfile
 import zipfile
 from pathlib import Path
@@ -26,10 +27,14 @@ class GTFSTimetable:
         paths: list[str | Path],
         transport_zones: gpd.GeoDataFrame,
         route_types_path: str | Path,
+        service_start_date: str | None = None,
+        service_end_date: str | None = None,
     ) -> None:
         self.paths = paths
         self.transport_zones = transport_zones
         self.route_types_path = route_types_path
+        self.service_start = dt.date.fromisoformat(service_start_date) if service_start_date else None
+        self.service_end = dt.date.fromisoformat(service_end_date) if service_end_date else None
         self.tables: dict[str, pd.DataFrame] = {}
 
     def prepare(self) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
@@ -39,6 +44,20 @@ class GTFSTimetable:
         date, services, tuesday_counts = self.select_tuesday()
         trips = tables["trips"]
         tables["trips"] = trips.loc[trips.service_id.isin(services)].copy()
+        # Shared IDs can indicate overlapping replacements. Do not guess which
+        # operator feed to remove: it may also contain complementary lines.
+        identities = tables["trips"].merge(tables["routes"], on="route_id").merge(tables["agency"], on="agency_id")
+        identities["source"] = identities.trip_id.str.split("-", n=1).str[0]
+        identities["original_trip_id"] = identities.trip_id.str.split("-", n=1).str[1]
+        identities["original_route_id"] = identities.route_id.str.split("-", n=1).str[1]
+        keys = ["agency_name", "original_route_id", "original_trip_id"]
+        shared = identities.groupby(keys)["source"].transform("nunique").gt(1)
+        overlapping = identities.loc[shared]
+        if not overlapping.empty:
+            logging.warning(
+                "%s selected GTFS trips share operator, route and trip IDs across feeds. "
+                "Review overlapping_trip_ids in the source report before using the result.", len(overlapping),
+            )
 
         # Keep stop visits, routes and agencies used by the selected vehicle trips.
         for name, key, parent in (
@@ -70,16 +89,32 @@ class GTFSTimetable:
             if "feed_id" in source:
                 prefix = source["feed_id"] + "-"
                 source["selected_trips"] = int(tables["trips"].trip_id.str.startswith(prefix).sum())
+                source["overlapping_trip_ids"] = int(overlapping.trip_id.str.startswith(prefix).sum())
+                active_dates = self.service_dates_by_source.get(source["feed_id"], [])
+                source["active_service_dates"] = ",".join(day.strftime("%Y-%m-%d") for day in active_dates)
                 if not source["selected_trips"]:
+                    source["status"] = (
+                        "no_service_in_window" if not active_dates else
+                        "no_tuesday_service" if not any(day.weekday() == 1 for day in active_dates) else
+                        "no_service_on_selected_date"
+                    )
                     logging.warning(
                         "GTFS %s has no service on selected Tuesday %s",
                         source["path"],
                         date.date(),
                     )
+        feed_count = sum(any(day.weekday() == 1 for day in dates) for dates in self.service_dates_by_source.values())
+        common_tuesday = any(row["feeds_with_service"] == feed_count for row in tuesday_counts)
+        if not common_tuesday:
+            logging.warning("No Tuesday in the study window has service from every retained GTFS feed; inspect the source report.")
         metadata = {
             "selected_date": date.strftime("%Y-%m-%d"),
+            "service_start_date": self.service_start.isoformat() if self.service_start else "unbounded",
+            "service_end_date": self.service_end.isoformat() if self.service_end else "unbounded",
             "selection": "maximum stop visits; earliest tie",
             "date_alignment": False,
+            "common_tuesday_available": common_tuesday,
+            "overlapping_trip_ids": len(overlapping),
             "sources": sources,
             "tuesdays": tuesday_counts,
             "frequency_assumption": "regular departures also approximate exact_times=0",
@@ -95,23 +130,43 @@ class GTFSTimetable:
         boundary = self.transport_zones.to_crs(3035).geometry.union_all().buffer(10_000)
         boundary = gpd.GeoSeries([boundary], crs=3035).to_crs(4326).iloc[0]
         feeds, sources, seen = [], [], set()
+        self.services_by_date = {}
+        self.service_dates_by_source = {}
 
         for path in self.paths:
-            logging.info("Preparing GTFS %s", path)
+            logging.info("Checking GTFS %s", path)
             try:
-                # Hash while extracting. Temporary files allow Polars to scan
-                # local trips without decompressing the ZIP on each pass.
+                # Check the small calendars before extracting the larger trip tables.
                 with tempfile.TemporaryDirectory(prefix="mobility-gtfs-") as directory:
                     reader = GTFSFeed(path, Path(directory))
-                    fingerprint = reader.extract()
-                    source = {"path": str(path), "sha256": fingerprint}
+                    reader.extract(("calendar", "calendar_dates"))
+                    source = {"path": str(path), "sha256": None}
                     sources.append(source)
+
+                    calendar, exceptions = reader.read_calendars()
+                    services_by_date = self.get_service_dates(calendar, exceptions)
+                    active_dates = [date for date, services in services_by_date.items() if services]
+                    if not any(date.weekday() == 1 for date in active_dates):
+                        source.update(
+                            status="no_service_in_window" if not active_dates else "no_tuesday_service",
+                            selected_trips=0,
+                            active_service_dates=",".join(date.strftime("%Y-%m-%d") for date in active_dates),
+                        )
+                        logging.info(
+                            "Skipping GTFS %s: %s", path,
+                            "no service in the study window" if not active_dates else
+                            "no Tuesday service in the study window",
+                        )
+                        continue
+
+                    logging.info("Preparing GTFS %s", path)
+                    fingerprint = reader.extract()
+                    source["sha256"] = fingerprint
                     if fingerprint in seen:
                         source["status"] = "duplicate"
                         continue
                     seen.add(fingerprint)
-
-                    feed = reader.read(boundary)
+                    feed = reader.read(boundary, calendar, exceptions)
                     if feed is None:
                         source["status"] = "no usable trips in area"
                         continue
@@ -120,6 +175,11 @@ class GTFSTimetable:
                 source["status"] = "prepared"
                 source["feed_id"] = str(len(feeds) + 1)
                 prefix = source["feed_id"] + "-"
+                retained_services = set(feed["trips"].service_id)
+                for date, services in services_by_date.items():
+                    self.services_by_date.setdefault(date, set()).update(
+                        prefix + service for service in services & retained_services
+                    )
                 for table in feed.values():
                     for column in table.columns:
                         if column in (
@@ -144,13 +204,57 @@ class GTFSTimetable:
                 raise ValueError(f"Cannot prepare GTFS {path}: {error}") from error
 
         if not feeds:
-            raise ValueError("No GTFS trips with two visits in the study area")
+            raise ValueError("No active Tuesday service with two visits in the study area in the requested window")
 
         tables = {
             name: pd.concat([feed[name] for feed in feeds], ignore_index=True).fillna("")
             for name in feeds[0]
         }
         return tables, sources
+
+    def get_service_dates(self, calendar: pd.DataFrame, exceptions: pd.DataFrame) -> dict:
+        """Apply weekly service and exceptions within the requested window."""
+        calendar, exceptions = calendar.copy(), exceptions.copy()
+        if not exceptions.empty:
+            if self.service_start:
+                exceptions = exceptions.loc[exceptions.date.ge(pd.Timestamp(self.service_start))]
+            if self.service_end:
+                exceptions = exceptions.loc[exceptions.date.le(pd.Timestamp(self.service_end))]
+            conflicts = exceptions.loc[exceptions.duplicated(["service_id", "date"], keep=False)]
+            if not conflicts.empty:
+                row = conflicts.iloc[0]
+                raise ValueError(
+                    f"Service {row.service_id!r} is both added and cancelled on {row.date:%Y-%m-%d}. "
+                    "The feed contains conflicting calendar exceptions in the study window."
+                )
+        weekdays = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+        bounds = []
+        if not calendar.empty:
+            bounds.extend([calendar.start_date.min(), calendar.end_date.max()])
+        if not exceptions.empty:
+            bounds.extend([exceptions.date.min(), exceptions.date.max()])
+        if not bounds:
+            return {}
+        if (
+            self.service_start and max(bounds).date() < self.service_start
+            or self.service_end and min(bounds).date() > self.service_end
+        ):
+            return {}
+        candidates = pd.date_range(self.service_start or min(bounds), self.service_end or max(bounds))
+        services_by_date = {}
+        for date in candidates:
+            active_services = set()
+            if not calendar.empty:
+                active_services.update(calendar.loc[
+                    calendar.start_date.le(date) & calendar.end_date.ge(date)
+                    & calendar[weekdays[date.weekday()]].eq(1), "service_id",
+                ])
+            if not exceptions.empty:
+                day = exceptions.loc[exceptions.date.eq(date)]
+                active_services.update(day.loc[day.exception_type.eq(1), "service_id"])
+                active_services.difference_update(day.loc[day.exception_type.eq(2), "service_id"])
+            services_by_date[date] = active_services
+        return services_by_date
 
     def select_tuesday(self) -> tuple[pd.Timestamp, set[str], list[dict[str, Any]]]:
         """Choose the earliest Tuesday with the most scheduled stop visits.
@@ -159,55 +263,22 @@ class GTFSTimetable:
         Apply calendar additions and cancellations before comparing dates.
         """
         tables = self.tables
-        calendar, exceptions = (
-            tables["calendar"].copy(),
-            tables["calendar_dates"].copy(),
-        )
-        candidates = set()
-        if not calendar.empty:
-            for col in ("start_date", "end_date"):
-                calendar[col] = pd.to_datetime(calendar[col], format="%Y%m%d", errors="raise")
-            calendar["tuesday"] = pd.to_numeric(calendar.tuesday, errors="raise")
-            if not calendar.tuesday.isin([0, 1]).all():
-                raise ValueError("Invalid calendar tuesday flag")
-            if (calendar.end_date < calendar.start_date).any():
-                raise ValueError("Calendar end date precedes start date")
-            calendar = calendar.loc[calendar.tuesday.eq(1)]
-            if not calendar.empty:
-                candidates.update(
-                    pd.date_range(calendar.start_date.min(), calendar.end_date.max(), freq="W-TUE")
-                )
-        if not exceptions.empty:
-            exceptions["date"] = pd.to_datetime(exceptions.date, format="%Y%m%d", errors="raise")
-            exceptions["exception_type"] = pd.to_numeric(exceptions.exception_type, errors="raise")
-            if exceptions.duplicated(["service_id", "date"]).any():
-                raise ValueError("Duplicate calendar exception for the same service and date")
-            if not exceptions.exception_type.isin([1, 2]).all():
-                raise ValueError("Invalid calendar exception_type")
-            candidates.update(exceptions.loc[exceptions.date.dt.dayofweek.eq(1), "date"])
         stop_visits = tables["stop_times"].merge(
             tables["trips"][["trip_id", "service_id"]], on="trip_id"
         )
         visits_by_service = stop_visits.groupby("service_id").size()
         selected_date, selected_services, most_visits = None, set(), 0
         tuesday_counts = []
-        for date in sorted(candidates):
-            active_services = set()
-            if not calendar.empty:
-                active_services.update(
-                    calendar.loc[
-                        calendar.start_date.le(date) & calendar.end_date.ge(date),
-                        "service_id",
-                    ]
-                )
-            if not exceptions.empty:
-                day = exceptions.loc[exceptions.date.eq(date)]
-                active_services.update(day.loc[day.exception_type.eq(1), "service_id"])
-                active_services.difference_update(day.loc[day.exception_type.eq(2), "service_id"])
+        for date, active_services in sorted(self.services_by_date.items()):
+            for source_id in {service.split("-", 1)[0] for service in active_services}:
+                self.service_dates_by_source.setdefault(source_id, []).append(date)
+            if date.weekday() != 1:
+                continue
             count = int(visits_by_service.reindex(list(active_services), fill_value=0).sum())
-            tuesday_counts.append({"date": date.strftime("%Y-%m-%d"), "stop_visits": count})
+            tuesday_counts.append({"date": date.strftime("%Y-%m-%d"), "stop_visits": count,
+                                   "feeds_with_service": len({service.split("-", 1)[0] for service in active_services})})
             if count > most_visits:
-                selected_date, selected_services, most_visits = date, active_services, count
+                selected_date, selected_services, most_visits = pd.Timestamp(date), active_services, count
         if selected_date is None:
             raise ValueError("No active Tuesday service in the study area")
         return selected_date, selected_services, tuesday_counts

@@ -1,5 +1,9 @@
 import datetime as dt
+import json
 import sqlite3
+import zipfile
+
+import pandas as pd
 from importlib import import_module
 
 import geopandas as gpd
@@ -18,7 +22,7 @@ from mobility.transport.modes.public_transport.gtfs.gtfs_source_providers import
     FrenchGTFS,
     SwissGTFS,
 )
-from mobility.transport.modes.public_transport.gtfs.gtfs_sources import GTFSSources
+from mobility.transport.modes.public_transport.gtfs.gtfs_sources import GTFSSources, GTFSSourceSelection
 from mobility.transport.modes.public_transport.public_transport_graph import (
     PublicTransportGraph,
     PublicTransportRoutingParameters,
@@ -31,6 +35,22 @@ gtfs_source_providers_module = import_module(
 gtfs_data_module = import_module(
     "mobility.transport.modes.public_transport.gtfs.gtfs_data"
 )
+
+
+@pytest.mark.parametrize("folder", ["", "network/"])
+def test_coverage_reads_stops_inside_gtfs_folder(tmp_path, monkeypatch, folder):
+    archive_path = tmp_path / "feed.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(folder + "stops.txt", "stop_lon,stop_lat\n2,48\n3,49\n")
+    monkeypatch.setattr(GTFSData, "get", lambda self: {"zip": archive_path})
+    provider = FrenchGTFS(dt.date(2026, 9, 1), "2026-09-01T00:00:00Z")
+
+    coverage = provider.derive_coverage_from_gtfs_url(
+        dataset_id="dataset", resource_id="resource", download_url="https://example.com/feed.zip",
+        gtfs_file_date="2026-09-01", status="archived",
+    )
+
+    assert coverage.bounds == (2.0, 48.0, 3.0, 49.0)
 
 
 class _FakeHTTPResponse:
@@ -68,10 +88,14 @@ def test_003_public_transport_routing_parameters_validate_reference_date_format(
         )
 
 
-def test_003_gtfs_router_tracks_sources_as_input(tmp_path):
+def test_003_gtfs_router_tracks_sources_as_input(tmp_path, monkeypatch):
     transport_zones = TransportZones(local_admin_unit_id="fr-87085", radius=10.0)
     sources = GTFSSources("2025-01-01", tmp_path / "gtfs_sources", ["fr"])
 
+    snapshot = tmp_path / "snapshot.sqlite"
+    snapshot.write_bytes(b"frozen test inputs")
+    monkeypatch.setattr(sources, "get", lambda: snapshot)
+    monkeypatch.setattr(GTFSSourceSelection, "get", lambda self: pd.DataFrame())
     router = GTFSRouter(transport_zones=transport_zones, gtfs_sources=sources)
 
     assert router.inputs["gtfs_sources"] is sources
@@ -129,6 +153,7 @@ def test_003_gtfs_sources_create_missing_file_in_user_folder(tmp_path, monkeypat
                 gtfs_file_date="2025-01-01",
                 gtfs_file_age_days=0,
                 status="archived",
+            sha256="0" * 64,
                 coverage_geometry=box(0.0, 0.0, 1.0, 1.0),
             )
 
@@ -140,6 +165,16 @@ def test_003_gtfs_sources_create_missing_file_in_user_folder(tmp_path, monkeypat
 
     sources = GTFSSources("2025-01-01", folder, ["fr"])
 
+    archive = tmp_path / "feed.zip"
+    with zipfile.ZipFile(archive, "w") as feed:
+        for name in ("agency", "stops", "routes", "trips", "stop_times", "calendar"):
+            feed.writestr(name + ".txt", "fixture")
+    metadata = tmp_path / "feed.json"
+    metadata.write_text(json.dumps({"sha256": GTFSData.file_sha256(archive),
+                                    "service_start_date": None, "service_end_date": None}))
+    monkeypatch.setattr(GTFSData, "download_gtfs_files", lambda rows: [
+        {"zip": archive, "metadata": metadata} for row in rows
+    ])
     assert sources.get() == sources.cache_path
     assert sources.cache_path.parent == folder
     assert sources.cache_path.exists()
@@ -182,6 +217,13 @@ def test_003_gtfs_sources_use_existing_file_without_provider_calls(tmp_path, mon
         sources.create_schema(connection)
         sources.insert_metadata(connection, "2025-01-01T00:00:00Z")
 
+    with sqlite3.connect(sources.cache_path) as connection:
+        sources.insert_gtfs_file(
+            connection, country="fr", provider="fake", dataset_id="dataset", resource_id="resource",
+            title="Fixture", download_url="https://example.com/feed.zip", gtfs_file_date="2025-01-01",
+            gtfs_file_age_days=0, status="archived", coverage_geometry=box(0, 0, 1, 1), sha256="0" * 64,
+        )
+
     monkeypatch.setattr(
         "mobility.transport.modes.public_transport.gtfs.gtfs_sources.available_gtfs_sources",
         lambda: {"fr": ProviderThatShouldNotRun},
@@ -190,7 +232,7 @@ def test_003_gtfs_sources_use_existing_file_without_provider_calls(tmp_path, mon
     assert sources.get() == sources.cache_path
 
 
-def test_003_gtfs_sources_rebuild_invalid_existing_file(tmp_path, monkeypatch):
+def test_003_gtfs_sources_preserve_invalid_existing_file(tmp_path, monkeypatch):
     class FakeFrenchGTFS:
         def __init__(
             self,
@@ -213,38 +255,16 @@ def test_003_gtfs_sources_rebuild_invalid_existing_file(tmp_path, monkeypatch):
                 gtfs_file_date="2025-01-01",
                 gtfs_file_age_days=0,
                 status="archived",
+            sha256="0" * 64,
                 coverage_geometry=box(0.0, 0.0, 1.0, 1.0),
             )
 
     sources = GTFSSources("2025-01-01", tmp_path / "gtfs_sources", ["fr"])
-    connection = sqlite3.connect(sources.cache_path)
-    try:
-        sources.create_schema(connection)
-        connection.execute(
-            """
-            INSERT INTO metadata (
-                schema_version,
-                gtfs_reference_date,
-                countries,
-                use_live_gtfs,
-                max_gtfs_file_age_days,
-                sources_created_at_utc
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            ("1", "2025-01-02", "fr", 0, 30, "2025-01-01T00:00:00Z"),
-        )
-        connection.commit()
-    finally:
-        connection.close()
-
-    monkeypatch.setattr(
-        "mobility.transport.modes.public_transport.gtfs.gtfs_sources.available_gtfs_sources",
-        lambda: {"fr": FakeFrenchGTFS},
-    )
-
-    assert sources.get() == sources.cache_path
-    assert sources.validate_metadata()["gtfs_reference_date"] == "2025-01-01"
+    sources.cache_path.write_bytes(b"corrupt SQLite")
+    before = sources.cache_path.read_bytes()
+    with pytest.raises(ValueError, match="Invalid or incompatible"):
+        sources.get()
+    assert sources.cache_path.read_bytes() == before
 
 
 def test_003_gtfs_sources_failed_build_does_not_leave_final_sqlite(tmp_path, monkeypatch):
@@ -270,6 +290,7 @@ def test_003_gtfs_sources_failed_build_does_not_leave_final_sqlite(tmp_path, mon
                 gtfs_file_date="2025-01-01",
                 gtfs_file_age_days=0,
                 status="archived",
+            sha256="0" * 64,
                 coverage_geometry=box(0.0, 0.0, 1.0, 1.0),
             )
             raise RuntimeError("download blocked")
@@ -305,6 +326,7 @@ def test_003_gtfs_sources_select_with_bbox_then_exact_intersection(tmp_path):
             gtfs_file_date="2025-01-01",
             gtfs_file_age_days=0,
             status="archived",
+            sha256="0" * 64,
             coverage_geometry=box(0.0, 0.0, 2.0, 2.0),
         )
         sources.insert_gtfs_file(
@@ -318,6 +340,7 @@ def test_003_gtfs_sources_select_with_bbox_then_exact_intersection(tmp_path):
             gtfs_file_date="2025-01-01",
             gtfs_file_age_days=0,
             status="archived",
+            sha256="0" * 64,
             coverage_geometry=box(0.0, 0.0, 2.0, 2.0),
         )
 
@@ -338,6 +361,7 @@ def test_003_gtfs_sources_select_with_bbox_then_exact_intersection(tmp_path):
             gtfs_file_date="2025-01-01",
             gtfs_file_age_days=0,
             status="archived",
+            sha256="0" * 64,
             coverage_geometry=polygon_with_hole,
         )
 
@@ -382,11 +406,11 @@ def test_003_gtfs_sources_fail_when_only_missing_archive_intersects_area(tmp_pat
         crs=4326,
     )
 
-    with pytest.raises(ValueError, match="none can be used after"):
+    with pytest.raises(ValueError, match="excluded_gtfs_sources"):
         sources.get_gtfs_resources_for_area(transport_zones)
 
 
-def test_003_gtfs_sources_skip_missing_archive_when_archived_source_exists(tmp_path, caplog):
+def test_003_gtfs_sources_fail_on_missing_archive_even_when_another_source_exists(tmp_path, caplog):
     sources = GTFSSources("2025-01-01", tmp_path / "gtfs_sources", ["fr"])
 
     with sqlite3.connect(sources.cache_path) as connection:
@@ -416,6 +440,7 @@ def test_003_gtfs_sources_skip_missing_archive_when_archived_source_exists(tmp_p
             gtfs_file_date="2025-01-01",
             gtfs_file_age_days=0,
             status="archived",
+            sha256="0" * 64,
             coverage_geometry=box(0.0, 0.0, 2.0, 2.0),
         )
 
@@ -425,12 +450,8 @@ def test_003_gtfs_sources_skip_missing_archive_when_archived_source_exists(tmp_p
         crs=4326,
     )
 
-    with caplog.at_level("WARNING"):
-        selected = sources.get_gtfs_resources_for_area(transport_zones)
-
-    assert selected["resource_id"].tolist() == ["resource-archived"]
-    assert "Skipped GTFS sources" in caplog.text
-    assert "resource-live" in caplog.text
+    with pytest.raises(ValueError, match="transport_data_gouv:resource-live"):
+        sources.get_gtfs_resources_for_area(transport_zones)
 
 
 def test_003_gtfs_sources_fail_when_no_source_intersects_area(tmp_path):
@@ -450,6 +471,7 @@ def test_003_gtfs_sources_fail_when_no_source_intersects_area(tmp_path):
             gtfs_file_date="2025-01-01",
             gtfs_file_age_days=0,
             status="archived",
+            sha256="0" * 64,
             coverage_geometry=box(10.0, 10.0, 11.0, 11.0),
         )
 
@@ -494,11 +516,11 @@ def test_003_gtfs_sources_fail_when_only_stale_archive_intersects_area(tmp_path)
         crs=4326,
     )
 
-    with pytest.raises(ValueError, match="none can be used after"):
+    with pytest.raises(ValueError, match="excluded_gtfs_sources"):
         sources.get_gtfs_resources_for_area(transport_zones)
 
 
-def test_003_gtfs_sources_skip_stale_archive_when_archived_source_exists(tmp_path, caplog):
+def test_003_gtfs_sources_fail_on_stale_archive_even_when_another_source_exists(tmp_path, caplog):
     sources = GTFSSources(
         "2025-02-15",
         tmp_path / "gtfs_sources",
@@ -533,6 +555,7 @@ def test_003_gtfs_sources_skip_stale_archive_when_archived_source_exists(tmp_pat
             gtfs_file_date="2025-02-10",
             gtfs_file_age_days=5,
             status="archived",
+            sha256="0" * 64,
             coverage_geometry=box(0.0, 0.0, 2.0, 2.0),
         )
 
@@ -542,12 +565,8 @@ def test_003_gtfs_sources_skip_stale_archive_when_archived_source_exists(tmp_pat
         crs=4326,
     )
 
-    with caplog.at_level("WARNING"):
-        selected = sources.get_gtfs_resources_for_area(transport_zones)
-
-    assert selected["resource_id"].tolist() == ["resource-archived"]
-    assert "older than max_gtfs_file_age_days=30" in caplog.text
-    assert "resource-stale" in caplog.text
+    with pytest.raises(ValueError, match="transport_data_gouv:resource-stale"):
+        sources.get_gtfs_resources_for_area(transport_zones)
 
 
 def test_003_gtfs_sources_error_links_to_provider_dataset_pages():
@@ -562,9 +581,7 @@ def test_003_gtfs_sources_error_links_to_provider_dataset_pages():
     )
 
     assert french_url == "https://transport.data.gouv.fr/datasets/dataset-fr"
-    assert swiss_url == (
-        "https://data.opentransportdata.swiss/en/dataset/timetable-2026-gtfs2020"
-    )
+    assert swiss_url == SwissGTFS.archive_page_url
     assert swiss_archive_url == "https://archive.opentransportdata.swiss/timetable_gtfs_archive.htm"
 
 
@@ -603,18 +620,18 @@ def test_003_gtfs_data_downloads_selected_sources_in_parallel(monkeypatch):
     }
     downloaded_pairs = []
 
-    def fake_download_files(url_path_pairs, **kwargs):
-        downloaded_pairs.extend(url_path_pairs)
-        return [path for _url, path in url_path_pairs]
+    def fake_download_file(url, path, **kwargs):
+        downloaded_pairs.append((url, path))
+        return path
 
-    monkeypatch.setattr(gtfs_data_module, "download_files", fake_download_files)
+    monkeypatch.setattr(gtfs_data_module, "download_file", fake_download_file)
     monkeypatch.setattr(GTFSData, "is_update_needed", lambda self: True)
-    monkeypatch.setattr(GTFSData, "is_gtfs_file_ok", lambda self, path: True)
+    monkeypatch.setattr(GTFSData, "validate_file", lambda self: None)
+    monkeypatch.setattr(GTFSData, "write_metadata", lambda self, checksum=None: None)
 
     gtfs_files = GTFSData.download_gtfs_files([source])
 
-    assert downloaded_pairs == [(source["download_url"], gtfs_files[0][0])]
-    assert gtfs_files[0][1] is True
+    assert downloaded_pairs == [(source["download_url"], gtfs_files[0]["zip"])]
 
 
 def test_003_archived_gtfs_data_cache_identity_ignores_sources_timestamp():
@@ -695,6 +712,8 @@ def test_003_swiss_gtfs_insert_data_computes_file_age(monkeypatch):
     provider = SwissGTFS(dt.date(2026, 6, 10), "2026-06-10T00:00:00Z")
 
     class FakeSources:
+        inputs = {}
+        area_geometry = None
         inserted = None
 
         def insert_gtfs_file(self, connection, **kwargs):
@@ -703,7 +722,7 @@ def test_003_swiss_gtfs_insert_data_computes_file_age(monkeypatch):
     monkeypatch.setattr(
         provider,
         "select_gtfs_resource",
-        lambda: {
+        lambda year: {
             "dataset_id": "timetable-2026-gtfs2020",
             "resource_id": "GTFS_FP2026_20260603",
             "title": "GTFS_FP2026_20260603.zip",
@@ -728,7 +747,7 @@ def test_003_swiss_gtfs_insert_data_computes_file_age(monkeypatch):
 def test_003_swiss_gtfs_uses_archive_listing_for_old_reference_dates(monkeypatch):
     requested_urls = []
 
-    def fake_request_url(url):
+    def fake_request_url(url, **kwargs):
         requested_urls.append(url)
         return _FakeHTTPResponse(
             """
@@ -742,7 +761,10 @@ def test_003_swiss_gtfs_uses_archive_listing_for_old_reference_dates(monkeypatch
     provider = SwissGTFS(dt.date(2025, 1, 10), "2025-01-10T00:00:00Z")
     resource = provider.select_gtfs_resource()
 
-    assert requested_urls == ["https://archive.opentransportdata.swiss/timetable_gtfs.php"]
+    assert requested_urls == [
+        "https://data.opentransportdata.swiss/en/dataset/timetable-2025-gtfs2020",
+        "https://archive.opentransportdata.swiss/timetable_gtfs.php",
+    ]
     assert resource["gtfs_file_date"] == "2025-01-01"
     assert resource["dataset_id"] == "timetable-2025-gtfs2020"
 
@@ -904,6 +926,8 @@ def test_003_transport_data_gouv_insert_data_fetches_metadata_in_catalog_order(m
         return responses
 
     class FakeSources:
+        inputs = {}
+        area_geometry = None
         def __init__(self):
             self.inserted_rows = []
 
@@ -912,6 +936,7 @@ def test_003_transport_data_gouv_insert_data_fetches_metadata_in_catalog_order(m
 
     monkeypatch.setattr(gtfs_source_providers_module, "request_url", fake_request_url)
     monkeypatch.setattr(gtfs_source_providers_module, "request_urls", fake_request_urls)
+    monkeypatch.setattr(FrenchGTFS, "fetch_history", lambda self, dataset: dataset.get("history", []))
 
     sources = FakeSources()
     provider = FrenchGTFS(dt.date(2025, 1, 15), "2025-01-15T00:00:00Z")
@@ -1070,6 +1095,8 @@ def test_003_transport_data_gouv_insert_data_prefilters_catalog_with_covered_are
         return responses
 
     class FakeSources:
+        inputs = {}
+        area_geometry = None
         def __init__(self):
             self.inserted_rows = []
 
@@ -1078,6 +1105,7 @@ def test_003_transport_data_gouv_insert_data_prefilters_catalog_with_covered_are
 
     monkeypatch.setattr(gtfs_source_providers_module, "request_url", fake_request_url)
     monkeypatch.setattr(gtfs_source_providers_module, "request_urls", fake_request_urls)
+    monkeypatch.setattr(FrenchGTFS, "fetch_history", lambda self, dataset: dataset.get("history", []))
 
     provider = FrenchGTFS(
         dt.date(2025, 1, 15),
@@ -1115,6 +1143,8 @@ def test_003_transport_data_gouv_resource_marks_stale_archive():
     coverage = box(0.0, 0.0, 1.0, 1.0)
 
     class FakeSources:
+        inputs = {}
+        area_geometry = None
         inserted = None
 
         def insert_gtfs_file(self, connection, **kwargs):
@@ -1186,6 +1216,7 @@ def test_003_gtfs_sources_can_use_a_new_country_source_class(tmp_path, monkeypat
                 gtfs_file_date="2025-01-01",
                 gtfs_file_age_days=0,
                 status="archived",
+            sha256="0" * 64,
                 coverage_geometry=box(0.0, 0.0, 1.0, 1.0),
             )
 

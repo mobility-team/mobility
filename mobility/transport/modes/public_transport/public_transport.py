@@ -97,9 +97,8 @@ class PublicTransportMode(TransportMode):
             last_modal_transfer=last_intermodal_transfer,
         )
 
-        # Keep the original leg modes on the mode instance so `for_iteration`
-        # can rebuild a PT mode with the same leg definitions but different
-        # routing parameters.
+        # Keep the full configuration for scenario and iteration resolution.
+        self.routing_parameters = routing_parameters
         self.first_leg_mode = first_leg_mode
         self.last_leg_mode = last_leg_mode
 
@@ -168,7 +167,7 @@ class PublicTransportMode(TransportMode):
     ) -> "PublicTransportMode":
         """Return a PT mode with all leg parameters resolved for one iteration."""
         
-        routing_parameters = self.inputs["travel_costs"].inputs["parameters"]
+        routing_parameters = self.routing_parameters
         resolved_routing_parameters = resolve_parameter_values(
             routing_parameters,
             scenario=scenario,
