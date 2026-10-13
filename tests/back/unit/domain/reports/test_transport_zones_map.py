@@ -625,21 +625,20 @@ def test_population_density_map_writes_expected_svg(monkeypatch, tmp_path):
 
 
 def test_opportunity_density_map_uses_run_opportunity_capacity(tmp_path):
-    opportunities_path = tmp_path / "opportunities.parquet"
-    pl.DataFrame(
-        {
-            "to": [1, 2, 2],
-            "activity": ["work", "work", "leisure"],
-            "opportunity_capacity": [10.0, 30.0, 1000.0],
-        }
-    ).write_parquet(opportunities_path)
-
     class ActivityLike:
         name = "work"
         has_opportunities = True
 
     class RunLike:
-        cache_path = {"opportunities": opportunities_path}
+        def table(self, name):
+            assert name == "opportunities"
+            return pl.DataFrame(
+                {
+                    "to": [1, 2, 2],
+                    "activity": ["work", "work", "leisure"],
+                    "opportunity_capacity": [10.0, 30.0, 1000.0],
+                }
+            )
 
     fig = opportunity_density_map(_zones(), ActivityLike(), RunLike(), labels=False)
 
@@ -648,75 +647,62 @@ def test_opportunity_density_map_uses_run_opportunity_capacity(tmp_path):
     assert fig.layout.legend.title.text == "Opportunity hours/km2"
 
 
-def test_opportunity_density_map_runs_model_when_opportunities_are_missing(tmp_path):
-    opportunities_path = tmp_path / "opportunities.parquet"
-
+def test_opportunity_density_map_requests_opportunities_from_run(tmp_path):
     class ActivityLike:
         name = "work"
         has_opportunities = True
 
     class RunLike:
-        cache_path = {"opportunities": opportunities_path}
         calls = 0
 
-        def get(self):
+        def table(self, name):
+            assert name == "opportunities"
             self.calls += 1
-            pl.DataFrame(
+            return pl.DataFrame(
                 {
                     "to": [1],
                     "activity": ["work"],
                     "opportunity_capacity": [10.0],
                 }
-            ).write_parquet(opportunities_path)
+            )
 
     run = RunLike()
 
     opportunity_density_map(_zones(), ActivityLike(), run, labels=False)
 
     assert run.calls == 1
-    assert opportunities_path.exists()
 
 
-def test_opportunity_density_map_rejects_missing_run_cache_path():
+def test_opportunity_density_map_rejects_run_without_table_method():
     class ActivityLike:
         name = "work"
         has_opportunities = True
 
-    with pytest.raises(TypeError, match="cache_path"):
+    with pytest.raises(TypeError, match="table"):
         opportunity_density_map(_zones(), ActivityLike(), object(), labels=False)
 
 
 def test_model_opportunity_density_requires_capacity_column(tmp_path):
-    opportunities_path = tmp_path / "opportunities.parquet"
-    pl.DataFrame(
-        {
-            "to": [1],
-            "activity": ["work"],
-            "n_opp": [10.0],
-        }
-    ).write_parquet(opportunities_path)
-
     class ActivityLike:
         name = "work"
         has_opportunities = True
 
     class RunLike:
-        cache_path = {"opportunities": opportunities_path}
+        def table(self, name):
+            assert name == "opportunities"
+            return pl.DataFrame(
+                {
+                    "to": [1],
+                    "activity": ["work"],
+                    "n_opp": [10.0],
+                }
+            )
 
     with pytest.raises(ValueError, match="opportunity_capacity"):
         opportunity_density_map(_zones(), ActivityLike(), RunLike(), labels=False)
 
 
 def test_opportunity_density_map_writes_expected_svg(monkeypatch, tmp_path):
-    opportunities_path = tmp_path / "opportunities.parquet"
-    pl.DataFrame(
-        {
-            "to": [1],
-            "activity": ["work"],
-            "opportunity_capacity": [25.0],
-        }
-    ).write_parquet(opportunities_path)
-
     class TransportZonesLike:
         inputs_hash = "abc123"
 
@@ -728,7 +714,15 @@ def test_opportunity_density_map_writes_expected_svg(monkeypatch, tmp_path):
         has_opportunities = True
 
     class RunLike:
-        cache_path = {"opportunities": opportunities_path}
+        def table(self, name):
+            assert name == "opportunities"
+            return pl.DataFrame(
+                {
+                    "to": [1],
+                    "activity": ["work"],
+                    "opportunity_capacity": [25.0],
+                }
+            )
 
     monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
 
@@ -754,14 +748,6 @@ def test_opportunity_density_map_rejects_activity_without_opportunities():
 
 def test_labels_are_the_same_across_report_maps(monkeypatch, tmp_path):
     population_groups_path = tmp_path / "population_groups.parquet"
-    opportunities_path = tmp_path / "opportunities.parquet"
-    pl.DataFrame(
-        {
-            "to": [1, 2],
-            "activity": ["work", "work"],
-            "opportunity_capacity": [25.0, 75.0],
-        }
-    ).write_parquet(opportunities_path)
 
     class PopulationLike:
         def get(self):
@@ -772,7 +758,15 @@ def test_labels_are_the_same_across_report_maps(monkeypatch, tmp_path):
         has_opportunities = True
 
     class RunLike:
-        cache_path = {"opportunities": opportunities_path}
+        def table(self, name):
+            assert name == "opportunities"
+            return pl.DataFrame(
+                {
+                    "to": [1, 2],
+                    "activity": ["work", "work"],
+                    "opportunity_capacity": [25.0, 75.0],
+                }
+            )
 
     monkeypatch.setattr(
         pd,

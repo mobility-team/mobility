@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import logging
-import os
-import pathlib
 
 import polars as pl
 
-from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.parameter_values import SensitivityCase
 from mobility.runtime.population_segments import (
@@ -19,8 +16,12 @@ from mobility.transport.costs.road_flow_manager import RoadFlowManager
 from mobility.transport.costs.travel_costs_asset import TravelCostsBase
 
 
-class TransportCosts(FileAsset):
+class TransportCosts(InMemoryAsset):
     """Canonical multimodal transport-cost asset for one run state."""
+
+    # The planner keeps this table in memory or spills it to run-local disk only
+    # when another scenario or output still needs it.
+    is_execution_scoped_cost_asset = True
 
     def __init__(
         self,
@@ -45,12 +46,7 @@ class TransportCosts(FileAsset):
         inputs["congestion"] = bool(congestion)
         inputs["road_flow_asset"] = road_flow_asset
 
-        cache_path = (
-            pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
-            / "transport_costs"
-            / "transport_costs.parquet"
-        )
-        super().__init__(inputs, cache_path)
+        super().__init__(inputs)
 
     def for_iteration(
         self,
@@ -110,25 +106,13 @@ class TransportCosts(FileAsset):
             road_flow_asset=road_flow_asset,
         )
 
-    def get_cached_asset(self) -> pl.DataFrame:
-        """Return the persisted canonical full-detail cost table.
-
-        Returns:
-            The cached multimodal cost table for this asset variant.
-        """
-        logging.debug("Transport costs already prepared. Reusing the file : %s", str(self.cache_path))
-        return pl.read_parquet(self.cache_path)
-
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Build and persist the canonical full-detail cost table.
+        """Build the canonical full-detail cost table in memory.
 
         Returns:
-            The newly built multimodal cost table for this asset variant.
+            The multimodal cost table for this asset variant.
         """
-        costs = self._build_full_detail_costs()
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        costs.write_parquet(self.cache_path)
-        return costs
+        return self._build_full_detail_costs()
 
     def _build_full_detail_costs(self) -> pl.DataFrame:
         """Build the canonical OD-by-mode cost table."""
@@ -354,7 +338,7 @@ class TransportCosts(FileAsset):
             An OD-by-mode table with the requested metrics.
         """
         metrics = list(metrics)
-        costs = FileAsset.get(self)
+        costs = InMemoryAsset.get(self)
 
         dist_cols = [col for col in costs.columns if col.endswith("_distance")]
         selected_metrics = [metric for metric in metrics if metric != "ghg_emissions"]
@@ -404,7 +388,7 @@ class TransportCosts(FileAsset):
         Returns:
             An OD-by-mode probability table.
         """
-        costs = FileAsset.get(self)
+        costs = InMemoryAsset.get(self)
 
         prob = (
             costs

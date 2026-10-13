@@ -163,7 +163,7 @@ trip_count = results.metrics.trip_count(
     by_variable="mode",
     iterations="last",
     output="table",
-)
+).get()
 ```
 
 Start with tables so units, totals, and grouping columns are explicit. Then use plots and maps to inspect spatial patterns, modal patterns, and scenario gaps.

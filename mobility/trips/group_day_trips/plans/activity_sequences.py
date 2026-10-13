@@ -1,17 +1,16 @@
-import pathlib
 from typing import Any
 
 import polars as pl
 
-from mobility.runtime.assets.cache_schema import read_cached_parquet
-from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.asset import Asset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from .demand_subgroups import DEMAND_UNIT_COLS, DEMAND_UNIT_SCHEMA, demand_unit_hash
 
 
-class ActivitySequences(FileAsset):
-    """Persist admitted timed activity-sequence seeds for one iteration."""
+class ActivitySequences(InMemoryAsset):
+    """Build admitted timed activity-sequence seeds for one iteration."""
 
     REQUIRED_SCHEMA = {
         **DEMAND_UNIT_SCHEMA,
@@ -39,9 +38,8 @@ class ActivitySequences(FileAsset):
         *,
         is_weekday: bool,
         iteration: int,
-        base_folder: pathlib.Path,
-        previous_state: FileAsset | None = None,
-        seed_asset: FileAsset | None = None,
+        previous_state: Asset | None = None,
+        seed_asset: Asset | None = None,
         current_plans: pl.DataFrame | None = None,
         survey_plans: pl.DataFrame | None = None,
         survey_plan_steps: pl.DataFrame | None = None,
@@ -73,41 +71,36 @@ class ActivitySequences(FileAsset):
             ),
             "seed": seed,
         }
-        cache_path = pathlib.Path(base_folder) / f"activity_sequences_{iteration}.parquet"
-        super().__init__(inputs, cache_path)
-
-    def get_cached_asset(self) -> pl.DataFrame:
-        """Return cached admitted activity-sequence rows for one iteration."""
-        return read_cached_parquet(
-            self.cache_path,
-            table_name="activity_sequences",
-            required_schema=self.REQUIRED_SCHEMA,
-        )
+        super().__init__(inputs)
 
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Compute and persist admitted activity-sequence rows for one iteration."""
-        get_group_day_trips_progress().iteration_step(self.iteration, "activity sequences")
-        self._load_missing_runtime_inputs_from_previous_state()
-        if self.seed is None and self.seed_asset is not None:
-            self.seed = self.seed_asset.get()["activity_sequences"]
+        """Compute admitted activity-sequence rows for one iteration."""
+        try:
+            get_group_day_trips_progress().iteration_step(self.iteration, "activity sequences")
+            self._load_missing_runtime_inputs_from_previous_state()
+            if self.seed is None and self.seed_asset is not None:
+                self.seed = self.seed_asset.get()["activity_sequences"]
 
-        if self.current_plans is None:
-            raise ValueError("Cannot build activity sequences without current plans.")
-        if self.survey_plans is None:
-            raise ValueError("Cannot build activity sequences without survey plans.")
-        if self.survey_plan_steps is None:
-            raise ValueError("Cannot build activity sequences without survey plan steps.")
-        if self.demand_groups is None:
-            raise ValueError("Cannot build activity sequences without demand groups.")
-        if self.parameters is None:
-            raise ValueError("Cannot build activity sequences without parameters.")
-        if self.seed is None:
-            raise ValueError("Cannot build activity sequences without a seed.")
+            if self.current_plans is None:
+                raise ValueError("Cannot build activity sequences without current plans.")
+            if self.survey_plans is None:
+                raise ValueError("Cannot build activity sequences without survey plans.")
+            if self.survey_plan_steps is None:
+                raise ValueError("Cannot build activity sequences without survey plan steps.")
+            if self.demand_groups is None:
+                raise ValueError("Cannot build activity sequences without demand groups.")
+            if self.parameters is None:
+                raise ValueError("Cannot build activity sequences without parameters.")
+            if self.seed is None:
+                raise ValueError("Cannot build activity sequences without a seed.")
 
-        activity_sequences = self._build_activity_sequences_for_scope()
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        activity_sequences.write_parquet(self.cache_path)
-        return self.get_cached_asset()
+            return self._build_activity_sequences_for_scope()
+        finally:
+            if self.previous_state is not None:
+                self.current_plans = None
+                self.survey_plans = None
+                self.survey_plan_steps = None
+                self.demand_groups = None
 
     def _load_missing_runtime_inputs_from_previous_state(self) -> None:
         """Fill runtime dataframes from the cached state produced by the previous iteration."""

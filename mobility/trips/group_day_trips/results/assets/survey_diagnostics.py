@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import os
-import pathlib
-
 import polars as pl
 
-from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.asset import Asset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.trips.group_day_trips.evaluation.calibration_plan_steps import (
     distance_bin_expr,
     time_bin_expr,
@@ -32,41 +30,30 @@ def _with_string_dimensions(table: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame 
     return table.with_columns(expressions)
 
 
-class SurveyReferenceComparison(FileAsset):
-    """Persist the joint model-vs-survey comparison table."""
+class SurveyReferenceComparison(InMemoryAsset):
+    """Build the joint model-vs-survey comparison table in memory."""
 
     def __init__(
         self,
         *,
-        plan_steps: FileAsset,
-        reference_plan_steps: FileAsset,
-        transport_zones: FileAsset,
+        plan_steps: Asset,
+        reference_plan_steps: Asset,
+        transport_zones: Asset,
     ) -> None:
         self.plan_steps = plan_steps
         self.reference_plan_steps = reference_plan_steps
         self.transport_zones = transport_zones
 
-        project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
-        cache_path = (
-            project_folder
-            / "group_day_trips"
-            / "results"
-            / "survey_reference_comparison.parquet"
-        )
         inputs = {
-            "version": 4,
+            "version": 5,
             "plan_steps": plan_steps,
             "reference_plan_steps": reference_plan_steps,
             "transport_zones": transport_zones,
         }
-        super().__init__(inputs, cache_path)
-
-    def get_cached_asset(self) -> pl.LazyFrame:
-        """Return the cached joint comparison as a lazy parquet scan."""
-        return _with_string_dimensions(pl.scan_parquet(self.cache_path))
+        super().__init__(inputs)
 
     def create_and_get_asset(self) -> pl.LazyFrame:
-        """Build and cache the joint comparison table."""
+        """Build the joint comparison table for the requested run scope."""
         plan_steps = self._model_plan_steps()
         reference_plan_steps = self._reference_plan_steps()
 
@@ -113,9 +100,7 @@ class SurveyReferenceComparison(FileAsset):
             )
         )
 
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        comparison.collect(engine="streaming").write_parquet(self.cache_path)
-        return self.get_cached_asset()
+        return _with_string_dimensions(comparison)
 
     def _model_plan_steps(self) -> pl.LazyFrame:
         """Return model plan steps with country and calibration bins."""
@@ -242,39 +227,27 @@ class SurveyReferenceComparison(FileAsset):
         )
 
 
-class SurveyReferenceMarginal(FileAsset):
-    """Persist one marginal view of the survey reference comparison."""
+class SurveyReferenceMarginal(InMemoryAsset):
+    """Build one marginal view of the survey reference comparison."""
 
     def __init__(
         self,
         *,
-        comparison: FileAsset,
+        comparison: Asset,
         marginal_columns: list[str],
     ) -> None:
         self.comparison = comparison
         self.marginal_columns = list(marginal_columns)
 
-        project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
-        marginal_part = "overall" if not self.marginal_columns else "-".join(self.marginal_columns)
-        cache_path = (
-            project_folder
-            / "group_day_trips"
-            / "results"
-            / f"survey_reference_{marginal_part}.parquet"
-        )
         inputs = {
-            "version": 4,
+            "version": 5,
             "comparison": comparison,
             "marginal_columns": tuple(self.marginal_columns),
         }
-        super().__init__(inputs, cache_path)
-
-    def get_cached_asset(self) -> pl.DataFrame:
-        """Return the cached marginal comparison."""
-        return _with_string_dimensions(pl.read_parquet(self.cache_path))
+        super().__init__(inputs)
 
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Build and cache the marginal comparison."""
+        """Build the marginal comparison for the requested metric."""
         comparison = self.comparison.get()
         group_columns = ["country"] + list(self.marginal_columns)
         for column in self.marginal_columns:
@@ -317,6 +290,4 @@ class SurveyReferenceMarginal(FileAsset):
             .collect(engine="streaming")
         )
 
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        marginal.write_parquet(self.cache_path)
         return marginal

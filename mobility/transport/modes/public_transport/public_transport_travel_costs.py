@@ -141,7 +141,7 @@ class PublicTransportTravelCosts(TravelCostsBase, FileAsset):
         """Refresh the PT asset after one of its dependencies changed."""
         
         self.inputs["intermodal_graph"].update()
-        self.create_and_get_asset()
+        self.get()
 
     def asset_for_road_flows(self, road_flow_asset):
         """Return a PT variant rebound to congestion-aware leg travel costs."""

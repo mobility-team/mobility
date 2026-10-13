@@ -22,8 +22,8 @@ class GroupDayTripsResultTables:
         return self._table("demand_groups", iterations=iterations).get()
 
     def costs(self, *, iterations: IterationSelector = "last") -> pl.LazyFrame:
-        """Return final transport costs with scenario, day type, and replication columns."""
-        return self._table("costs", iterations=iterations).get()
+        """Return persisted transport costs with scenario and run scope columns."""
+        return self.results.metrics.travel_costs(iterations=iterations).get()
 
     def transitions(self, *, iterations: IterationSelector = "last") -> pl.LazyFrame:
         """Return transition events with scenario, day type, and replication columns."""

@@ -125,22 +125,18 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data, gtfs_sources_f
         ),
     )
 
-    baseline_result = baseline.run("weekday").get()
+    baseline_run = baseline.run("weekday")
     congested_run = congested.run("weekday")
-    congested_result = congested_run.get()
 
-    baseline_plan_steps = baseline_result["plan_steps"].collect()
-    congested_plan_steps = congested_result["plan_steps"].collect()
-    baseline_costs = baseline_result["costs"].collect()
-    congested_costs = congested_result["costs"].collect()
-    road_flow_asset = congested_run.iteration_transport_cost_assets[1].congestion_flows.get()
+    baseline_plan_steps = baseline_run.table("plan_steps")
+    congested_plan_steps = congested_run.table("plan_steps")
+    baseline_costs = baseline_run.table("costs")
+    congested_costs = congested_run.table("costs")
 
     assert baseline_plan_steps.height > 0
     assert congested_plan_steps.height > 0
     assert baseline_costs.height > 0
     assert congested_costs.height > 0
-    assert road_flow_asset is not None
-    assert road_flow_asset.cache_path.exists()
 
     joined_costs = baseline_costs.join(
         congested_costs.select(["from", "to", "mode", "cost"]).rename({"cost": "cost_congested"}),

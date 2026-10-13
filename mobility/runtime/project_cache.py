@@ -241,12 +241,25 @@ def active_project_ref_version() -> str | None:
 
 def record_file_asset_use(asset: Any) -> None:
     """Record one FileAsset in the project cache registry."""
+    if getattr(asset, "is_execution_scoped_cost_asset", False):
+        return
+
     project_folder = os.environ.get("MOBILITY_PROJECT_DATA_FOLDER")
     if not project_folder:
         return
 
     registry = _registry_for_project_folder(pathlib.Path(project_folder))
     registry.record_asset(asset, version_id=active_project_ref_version())
+
+
+def forget_file_asset_use(asset: Any) -> None:
+    """Forget registry rows for a FileAsset whose cache files were removed."""
+    project_folder = os.environ.get("MOBILITY_PROJECT_DATA_FOLDER")
+    if not project_folder:
+        return
+
+    registry = _registry_for_project_folder(pathlib.Path(project_folder))
+    registry.forget_asset(asset)
 
 
 def format_bytes(size_bytes: int) -> str:
@@ -373,6 +386,20 @@ class ProjectCacheRegistry:
                     "DELETE FROM untracked_project_files WHERE path=?",
                     (str(resolved),),
                 )
+
+    def forget_asset(self, asset: Any) -> None:
+        """Remove registry rows for outputs that no longer exist."""
+        paths = []
+        for _, path in _asset_paths(asset):
+            resolved = pathlib.Path(path).resolve()
+            if _is_inside(resolved, self.project_folder):
+                paths.append((str(resolved),))
+        if not paths:
+            return
+
+        with self._connect() as con:
+            con.executemany("DELETE FROM ref_assets WHERE path=?", paths)
+            con.executemany("DELETE FROM asset_cache_entries WHERE path=?", paths)
 
     def _mark_version_latest(self, con: sqlite3.Connection, version_id: str) -> None:
         row = con.execute(

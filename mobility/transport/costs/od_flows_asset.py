@@ -1,15 +1,16 @@
-import os
 import pathlib
 import pandas as pd
 import logging
 from typing import Any
 
 import polars as pl
-from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.asset import Asset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.resolver import get_current_asset_resolver
 
 
-class VehicleODFlowsAsset(FileAsset):
-    """Persist road vehicle OD flows for congestion assignment.
+class VehicleODFlowsAsset(InMemoryAsset):
+    """Build transient road vehicle OD flows for congestion assignment.
 
     This intentionally stores only what the congestion builder needs:
     ["from","to","vehicle_volume"].
@@ -21,7 +22,7 @@ class VehicleODFlowsAsset(FileAsset):
     def __init__(
         self,
         *,
-        person_od_flows_by_mode: FileAsset,
+        person_od_flows_by_mode: Asset,
         road_flow_parameters: list[dict[str, Any]],
     ):
         inputs = {
@@ -38,17 +39,16 @@ class VehicleODFlowsAsset(FileAsset):
                 )
             ],
         }
-        folder_path = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
-        cache_path = folder_path / "od_flows" / "vehicle_od_flows_road.parquet"
-
         self.person_od_flows_by_mode = person_od_flows_by_mode
         self.road_flow_parameters = inputs["road_flow_parameters"]
-        super().__init__(inputs, cache_path)
+        super().__init__(inputs)
 
-    def get_cached_asset(self) -> pd.DataFrame:
-        return pd.read_parquet(self.cache_path)
-
-    def create_and_get_asset(self) -> pd.DataFrame:
+    def create_and_get_asset(self) -> pathlib.Path:
+        """Build flows and place the R input table in this run's temp folder."""
+        resolver = get_current_asset_resolver()
+        if resolver is None:
+            raise RuntimeError("Vehicle OD flows need an active asset resolution context.")
+        self.cache_path = resolver.temporary_asset_path(self, suffix=".parquet")
         person_flows = self.person_od_flows_by_mode.get()
         if person_flows is None:
             person_flows = pl.DataFrame(
@@ -59,8 +59,6 @@ class VehicleODFlowsAsset(FileAsset):
                     "flow_volume": pl.Float64,
                 }
             )
-
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
 
         vehicle_flows = []
         for parameters in self.road_flow_parameters:
@@ -87,6 +85,6 @@ class VehicleODFlowsAsset(FileAsset):
             df = pd.DataFrame(columns=["from", "to", "vehicle_volume"])
 
         df.to_parquet(self.cache_path, index=False)
-        logging.debug("Road vehicle OD flows are ready: %s", str(self.cache_path))
+        logging.debug("Transient road vehicle OD flows are ready.")
 
-        return df
+        return self.cache_path

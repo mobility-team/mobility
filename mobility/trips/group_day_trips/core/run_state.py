@@ -19,3 +19,6 @@ class RunState:
     costs: pl.DataFrame
     start_iteration: int
     current_plan_steps: pl.DataFrame | None = None
+    rng_state: object | None = None
+    destination_sequence_index: pl.DataFrame | None = None
+    mode_sequence_index: pl.DataFrame | None = None

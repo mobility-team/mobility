@@ -11,7 +11,12 @@ from mobility.runtime.assets.resolver import (
     get_current_asset_resolver,
 )
 
-from .assets.final_state_metrics import Immobility, TripCountByDemandGroup
+from .assets.final_state_metrics import (
+    Immobility,
+    SurveyImmobilityReference,
+    TripCountByDemandGroup,
+)
+from .assets.metric import Metric
 from .assets.person_metrics import (
     DEMAND_GROUP_COLUMNS,
     RESULT_COLUMNS,
@@ -22,7 +27,7 @@ from .assets.person_metrics import (
     filter_plan_steps_to_inner_zone_residents,
     with_analysis_dimensions,
 )
-from .assets.scoped_tables import ScopedRunTable
+from .assets.scoped_tables import ScopedRunTable, release_scoped_run_tables
 from .assets.survey_diagnostics import SurveyReferenceComparison, SurveyReferenceMarginal
 from .assets.survey_time_diagnostics import ActivityDurationDistribution, ActivityTimeSeries
 from .assets.trip_metrics import TripCountMetric
@@ -37,6 +42,7 @@ from .plots import (
     select_scenarios,
     validate_output,
 )
+from .execution_plan import ResultExecutionPlan
 
 ZoneDimension = Literal["home_zone", "origin_zone", "destination_zone"]
 ZoneDimensions = ZoneDimension | list[ZoneDimension] | tuple[ZoneDimension, ...]
@@ -97,6 +103,7 @@ class GroupDayTripsResultMetrics:
     def __init__(self, results) -> None:
         self.results = results
         self._transport_zone_maps = None
+        self._pending_metrics: list[Metric] = []
 
     def _table(
         self,
@@ -112,6 +119,92 @@ class GroupDayTripsResultMetrics:
             iterations=iterations,
             columns=columns,
         )
+
+    def _tables_by_iteration(
+        self,
+        table_name: str,
+        *,
+        iterations: IterationSelector,
+    ) -> list[ScopedRunTable]:
+        """Declare one root per requested iteration, or the final output root."""
+        selected_iterations = self.results.selected_iterations(iterations)
+        if selected_iterations == [self.results.last_iteration]:
+            return [self._table(table_name, iterations="last")]
+        return [
+            self._table(table_name, iterations=iteration)
+            for iteration in selected_iterations
+        ]
+
+    @staticmethod
+    def _planned_outputs(dependencies) -> tuple:
+        """Return concrete run outputs covered by the declared table roots."""
+        outputs = []
+        for dependency in dependencies:
+            for run_outputs in getattr(dependency, "run_output_assets", ()):
+                outputs.extend(run_outputs)
+        return tuple(outputs)
+
+    def _metric_asset(
+        self,
+        *,
+        name: str,
+        dependencies,
+        planned_outputs=(),
+        query: dict,
+        compute,
+        compute_iteration=None,
+        stream_result: bool = False,
+    ) -> Metric:
+        """Declare one persisted result and its iteration-level calculation."""
+        selected_iterations = self.results.selected_iterations(
+            query.get("iterations", "last")
+        )
+        normalized_query = dict(query)
+        if "iterations" in normalized_query:
+            normalized_query["iterations"] = tuple(selected_iterations)
+        metric = Metric(
+            name=name,
+            dependencies=dependencies,
+            planned_outputs=planned_outputs,
+            query=normalized_query,
+            compute=compute,
+            selected_iterations=selected_iterations,
+            compute_iteration=compute_iteration,
+            stream_result=stream_result,
+        )
+        metric.execution_plan = self._get_metric
+        self._pending_metrics.append(metric)
+        return metric
+
+    def _get_metric(self, requested: Metric, args: tuple, kwargs: dict):
+        """Execute the metrics declared so far through one shared resolver."""
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            return self._execute_pending_metrics(requested, resolver, args, kwargs)
+        with asset_resolution_context() as resolver:
+            return self._execute_pending_metrics(requested, resolver, args, kwargs)
+
+    def _execute_pending_metrics(
+        self,
+        requested: Metric,
+        resolver,
+        args: tuple,
+        kwargs: dict,
+    ):
+        """Run all declared results in one iteration-major execution plan."""
+        pending = list(self._pending_metrics)
+        if all(metric is not requested for metric in pending):
+            pending.append(requested)
+        try:
+            plan = ResultExecutionPlan(
+                metrics=pending,
+                resolver=resolver,
+            )
+            requested_value = plan.execute(requested, args, kwargs)
+            self._pending_metrics.clear()
+            return requested_value
+        finally:
+            resolver.release_transient_values()
 
     def metric(
         self,
@@ -138,10 +231,26 @@ class GroupDayTripsResultMetrics:
         min_share: float | None = None,
         max_line_width: float = 8.0,
         min_line_width: float = 0.1,
-    ) -> pl.DataFrame:
-        """Return one simple trip metric, optionally split and normalized."""
+    ) -> Metric | pl.DataFrame:
+        """Declare one metric asset, or render it directly when plotting."""
+        validate_output(output)
+        metric_query = {
+            "name": name,
+            "by_zone": by_zone,
+            "by_variable": by_variable,
+            "normalize_by": normalize_by,
+            "normalize_scope": normalize_scope,
+            "reference": reference,
+            "reference_view": reference_view,
+            "inner_zone_residents_only": inner_zone_residents_only,
+            "iterations": iterations,
+            "home_zone_ids": home_zone_ids,
+            "csp": csp,
+            "modes": modes,
+            "scenarios": scenarios,
+        }
         with asset_resolution_context(get_current_asset_resolver()):
-            return self._metric(
+            compute = lambda: self._metric(
                 name,
                 by_zone=by_zone,
                 by_variable=by_variable,
@@ -154,17 +263,195 @@ class GroupDayTripsResultMetrics:
                 home_zone_ids=home_zone_ids,
                 csp=csp,
                 modes=modes,
-                output=output,
                 scenarios=scenarios,
+            )
+
+            def compute_iteration(iteration: int) -> pl.DataFrame:
+                return self._metric(
+                    name,
+                    by_zone=by_zone,
+                    by_variable=by_variable,
+                    normalize_by=normalize_by,
+                    normalize_scope=normalize_scope,
+                    reference=reference,
+                    reference_view=reference_view,
+                    inner_zone_residents_only=inner_zone_residents_only,
+                    iterations=iteration,
+                    home_zone_ids=home_zone_ids,
+                    csp=csp,
+                    modes=modes,
+                    scenarios=scenarios,
+                )
+
+            group_columns = self._zone_columns(by_zone)
+            if by_variable is not None:
+                group_columns.append(self._variable_column(by_variable))
+            needs_demand_groups = (
+                normalize_by == "person_count"
+                or inner_zone_residents_only
+                or home_zone_ids is not None
+                or csp is not None
+                or any(column in DEMAND_GROUP_COLUMNS for column in group_columns)
+            )
+            dependencies = [self._table("plan_steps", iterations=iterations)]
+            if needs_demand_groups:
+                dependencies.append(
+                    self._table("demand_groups", iterations=iterations)
+                )
+            if not self.results.uses_last_iteration(iterations):
+                dependencies.append(self._table("costs", iterations=iterations))
+            if self._reference_kind(reference) == "external":
+                dependencies.append(self.results.survey_reference_plan_steps)
+            if inner_zone_residents_only or self._reference_kind(reference) == "external":
+                dependencies.append(self.results.transport_zones)
+            metric = self._metric_asset(
+                name=name,
+                dependencies=dependencies,
+                planned_outputs=self._planned_outputs(dependencies),
+                query=metric_query,
+                compute=compute,
+                compute_iteration=compute_iteration,
+            )
+            if output == "plot":
+                return self._plot_metric_table(
+                    metric.get(),
+                    name=name,
+                    by_zone=by_zone,
+                    by_variable=by_variable,
+                    normalize_by=normalize_by,
+                    reference=reference,
+                    reference_view=reference_view,
+                    scenarios=scenarios,
+                    width=width,
+                    height=height,
+                    labels=labels,
+                    n_largest=n_largest,
+                    min_value=min_value,
+                    min_share=min_share,
+                    max_line_width=max_line_width,
+                    min_line_width=min_line_width,
+                )
+            return metric
+
+    def _plot_metric_table(
+        self,
+        values: pl.DataFrame,
+        *,
+        name: MetricName,
+        by_zone: ZoneDimensions | None,
+        by_variable: VariableDimension | None,
+        normalize_by: NormalizeBy | None,
+        normalize_scope: NormalizeScope | None,
+        reference: MetricReference,
+        reference_view: ReferenceView,
+        scenarios: str | list[str] | tuple[str, ...] | None,
+        width: int,
+        height: int,
+        labels: bool,
+        n_largest: int | None,
+        min_value: float | None,
+        min_share: float | None,
+        max_line_width: float,
+        min_line_width: float,
+    ):
+        """Render a computed metric table without retaining run state."""
+        spec = METRIC_SPECS[name]
+        metric_column = self._metric_column(spec.quantity, normalize_by)
+        zone_columns = self._zone_columns(by_zone)
+        zone_column = zone_columns[0] if len(zone_columns) == 1 else None
+        variable_column = self._variable_column(by_variable) if by_variable is not None else None
+        group_columns = zone_columns + ([variable_column] if variable_column is not None else [])
+        reference_kind = self._reference_kind(reference)
+        plot_metric_column = (
+            "gap"
+            if reference_kind != "none" and reference_view == "gap"
+            else metric_column
+        )
+        plot_title = self._plot_title(
+            spec.quantity,
+            by_zone=by_zone,
+            by_variable=by_variable,
+            normalize_by=normalize_by,
+            reference_kind=reference_kind,
+            reference_view=reference_view,
+        )
+        if "iteration" in values.columns and values["iteration"].n_unique() > 1:
+            return plot_metric_over_iterations(
+                values,
+                metric=plot_metric_column,
+                title=plot_title,
+                dimension_columns=group_columns + (
+                    ["series"] if "series" in values.columns else []
+                ),
+                scenario_titles=self.results.scenario_titles,
+                width=width,
+                height=height,
+            )
+        if by_zone is None and by_variable is None:
+            raise ValueError('output="plot" needs `by_zone` or `by_variable`.')
+        if len(zone_columns) > 1:
+            if by_variable is not None:
+                raise ValueError("OD flow plots do not support `by_variable` yet.")
+            if zone_columns != ["origin_zone_id", "destination_zone_id"]:
+                raise ValueError(
+                    'output="plot" with multiple zone dimensions only supports '
+                    'by_zone=["origin_zone", "destination_zone"].'
+                )
+            return plot_metric_flows_by_zone(
+                self._maps(),
+                values,
+                metric=plot_metric_column,
+                origin_column="origin_zone_id",
+                destination_column="destination_zone_id",
+                title=plot_title,
+                scenario_titles=self.results.scenario_titles,
                 width=width,
                 height=height,
                 labels=labels,
-                n_largest=n_largest,
+                n_largest=100 if n_largest is None else n_largest,
                 min_value=min_value,
                 min_share=min_share,
                 max_line_width=max_line_width,
                 min_line_width=min_line_width,
             )
+        if zone_column is not None and by_variable is not None:
+            return plot_metric_grid_by_zone(
+                self._maps(),
+                values,
+                metric=plot_metric_column,
+                zone_column=zone_column,
+                variable_column=variable_column,
+                title=plot_title,
+                scenario_titles=self.results.scenario_titles,
+                diverging_center=0.0 if plot_metric_column == "gap" else None,
+                width=width,
+                height=height,
+                labels=labels,
+            )
+        if zone_column is not None:
+            return plot_metric_by_zone(
+                self._maps(),
+                values,
+                metric=plot_metric_column,
+                zone_column=zone_column,
+                title=plot_title,
+                scenario_titles=self.results.scenario_titles,
+                diverging_center=0.0 if plot_metric_column == "gap" else None,
+                width=width,
+                height=height,
+                labels=labels,
+            )
+        return plot_metric_by_dimension(
+            values,
+            dimension=variable_column,
+            metric=plot_metric_column,
+            yaxis_title=plot_metric_column.replace("_", " "),
+            title=plot_title,
+            scenarios=None if reference_kind != "none" else scenarios,
+            scenario_titles=self.results.scenario_titles,
+            width=width,
+            height=height,
+        )
 
     def _metric(
         self,
@@ -181,16 +468,7 @@ class GroupDayTripsResultMetrics:
         home_zone_ids: DemandGroupSelector,
         csp: DemandGroupSelector,
         modes: DemandGroupSelector,
-        output: MetricOutput,
         scenarios: str | list[str] | tuple[str, ...] | None,
-        width: int,
-        height: int,
-        labels: bool,
-        n_largest: int | None,
-        min_value: float | None,
-        min_share: float | None,
-        max_line_width: float,
-        min_line_width: float,
     ) -> pl.DataFrame:
         """Compute one simple trip metric inside the caller's asset resolver."""
         if name not in METRIC_SPECS:
@@ -215,35 +493,59 @@ class GroupDayTripsResultMetrics:
             home_zone_ids=home_zone_ids,
             csp=csp,
             modes=modes,
-            output=output,
             scenarios=scenarios,
-            width=width,
-            height=height,
-            labels=labels,
-            n_largest=n_largest,
-            min_value=min_value,
-            min_share=min_share,
-            max_line_width=max_line_width,
-            min_line_width=min_line_width,
         )
 
-    def trip_count(self, **kwargs) -> pl.DataFrame:
+    def trip_count(self, **kwargs) -> Metric | pl.DataFrame:
         """Return trip counts, optionally split and normalized."""
         return self.metric("trip_count", **kwargs)
 
-    def travel_distance(self, **kwargs) -> pl.DataFrame:
+    def travel_distance(self, **kwargs) -> Metric | pl.DataFrame:
         """Return travelled distance, optionally split and normalized."""
         return self.metric("travel_distance", **kwargs)
 
-    def travel_time(self, **kwargs) -> pl.DataFrame:
+    def travel_time(self, **kwargs) -> Metric | pl.DataFrame:
         """Return travelled time, optionally split and normalized."""
         return self.metric("travel_time", **kwargs)
 
-    def cost(self, **kwargs) -> pl.DataFrame:
+    def cost(self, **kwargs) -> Metric | pl.DataFrame:
         """Return travelled cost, optionally split and normalized."""
         return self.metric("cost", **kwargs)
 
-    def ghg_emissions(self, **kwargs) -> pl.DataFrame:
+    def travel_costs(
+        self,
+        *,
+        iterations: IterationSelector = "last",
+    ) -> Metric:
+        """Declare the detailed OD-by-mode travel-cost table to persist."""
+        selected_iterations = self.results.selected_iterations(iterations)
+        uses_final_costs = selected_iterations == [self.results.last_iteration]
+        costs = self._table(
+            "costs",
+            iterations="last" if uses_final_costs else iterations,
+        )
+
+        def compute_iteration(iteration: int) -> pl.LazyFrame:
+            return self._table(
+                "costs",
+                iterations=(
+                    "last"
+                    if uses_final_costs
+                    else iteration
+                ),
+            ).get()
+
+        return self._metric_asset(
+            name="travel_costs",
+            dependencies=[costs],
+            planned_outputs=self._planned_outputs([costs]),
+            query={"iterations": iterations},
+            compute=costs.get,
+            compute_iteration=compute_iteration,
+            stream_result=True,
+        )
+
+    def ghg_emissions(self, **kwargs) -> Metric | pl.DataFrame:
         """Return greenhouse gas emissions, optionally split and normalized."""
         return self.metric("ghg_emissions", **kwargs)
 
@@ -252,30 +554,88 @@ class GroupDayTripsResultMetrics:
         *,
         reference: MetricReference = None,
         iterations: IterationSelector = "last",
-    ) -> pl.DataFrame:
-        """Return model immobility by country and socio-professional category."""
+    ) -> Metric:
+        """Declare immobility by country and socio-professional category."""
         reference_kind = self._reference_kind(reference)
         if reference_kind == "scenario":
             raise ValueError("Scenario references are not available for immobility yet.")
         if reference_kind == "external" and not self.results.uses_last_iteration(iterations):
             raise ValueError("External references are only available for iterations='last' for now.")
-        return Immobility(
-            plan_steps=self._table("plan_steps", iterations=iterations),
-            demand_groups=self._table("demand_groups", iterations=iterations),
+        plan_steps = self._tables_by_iteration("plan_steps", iterations=iterations)
+        demand_groups = self._tables_by_iteration("demand_groups", iterations=iterations)
+        survey_immobility = (
+            SurveyImmobilityReference(
+                surveys=self.results.surveys,
+                is_weekday=self.results.is_weekday,
+            )
+            if reference_kind == "external"
+            else None
+        )
+        calculation = Immobility(
+            plan_steps=plan_steps,
+            demand_groups=demand_groups,
             transport_zones=self.results.transport_zones,
-            survey_immobility=self._survey_immobility() if reference_kind == "external" else None,
-        ).get()
+            survey_immobility=survey_immobility,
+        )
+
+        def compute_iteration(iteration: int) -> pl.DataFrame:
+            iteration_calculation = Immobility(
+                plan_steps=self._tables_by_iteration(
+                    "plan_steps",
+                    iterations=iteration,
+                ),
+                demand_groups=self._tables_by_iteration(
+                    "demand_groups",
+                    iterations=iteration,
+                ),
+                transport_zones=self.results.transport_zones,
+                survey_immobility=survey_immobility,
+            )
+            return iteration_calculation.get()
+
+        return self._metric_asset(
+            name="immobility",
+            dependencies=[calculation],
+            planned_outputs=self._planned_outputs(plan_steps + demand_groups),
+            query={"reference": reference, "iterations": iterations},
+            compute=calculation.get,
+            compute_iteration=compute_iteration,
+        )
 
     def trip_count_by_demand_group(
         self,
         *,
         iterations: IterationSelector = "last",
-    ) -> pl.DataFrame:
-        """Return trip count and trips per person by demand group."""
-        return TripCountByDemandGroup(
-            plan_steps=self._table("plan_steps", iterations=iterations),
-            demand_groups=self._table("demand_groups", iterations=iterations),
-        ).get()
+    ) -> Metric:
+        """Declare trip count and trips per person by demand group."""
+        plan_steps = self._tables_by_iteration("plan_steps", iterations=iterations)
+        demand_groups = self._tables_by_iteration("demand_groups", iterations=iterations)
+        calculation = TripCountByDemandGroup(
+            plan_steps=plan_steps,
+            demand_groups=demand_groups,
+        )
+
+        def compute_iteration(iteration: int) -> pl.DataFrame:
+            iteration_calculation = TripCountByDemandGroup(
+                plan_steps=self._tables_by_iteration(
+                    "plan_steps",
+                    iterations=iteration,
+                ),
+                demand_groups=self._tables_by_iteration(
+                    "demand_groups",
+                    iterations=iteration,
+                ),
+            )
+            return iteration_calculation.get()
+
+        return self._metric_asset(
+            name="trip_count_by_demand_group",
+            dependencies=[calculation],
+            planned_outputs=self._planned_outputs(plan_steps + demand_groups),
+            query={"iterations": iterations},
+            compute=calculation.get,
+            compute_iteration=compute_iteration,
+        )
 
     def activity_duration_distribution(
         self,
@@ -286,8 +646,8 @@ class GroupDayTripsResultMetrics:
         output: MetricOutput = "table",
         width: int = 900,
         height: int = 520,
-    ) -> pl.DataFrame:
-        """Return model activity duration distributions."""
+    ) -> Metric | pl.DataFrame:
+        """Declare activity duration distributions or render them as a plot."""
         validate_output(output)
         reference_kind = self._reference_kind(reference)
         if reference_kind == "scenario":
@@ -299,23 +659,56 @@ class GroupDayTripsResultMetrics:
                 'output="plot" currently supports only one iteration. '
                 'Use iterations="last" or one iteration number, or use output="table".'
             )
-        values = ActivityDurationDistribution(
-            plan_steps=self._table("plan_steps", iterations=iterations),
+        plan_steps = self._tables_by_iteration("plan_steps", iterations=iterations)
+        calculation = ActivityDurationDistribution(
+            plan_steps=plan_steps,
             reference_plan_steps=self.results.survey_reference_plan_steps if reference_kind == "external" else None,
             scenarios=self.results.scenarios,
             day_type=self.results.day_type,
             iterations=self.results.selected_iterations(iterations),
             replications=self.results.replications,
             bin_width_minutes=bin_width_minutes,
-        ).get()
+        )
+
+        def compute_iteration(iteration: int) -> pl.DataFrame:
+            iteration_calculation = ActivityDurationDistribution(
+                plan_steps=self._tables_by_iteration(
+                    "plan_steps",
+                    iterations=iteration,
+                ),
+                reference_plan_steps=(
+                    self.results.survey_reference_plan_steps
+                    if reference_kind == "external"
+                    else None
+                ),
+                scenarios=self.results.scenarios,
+                day_type=self.results.day_type,
+                iterations=[iteration],
+                replications=self.results.replications,
+                bin_width_minutes=bin_width_minutes,
+            )
+            return iteration_calculation.get()
+
+        metric = self._metric_asset(
+            name="activity_duration_distribution",
+            dependencies=[calculation],
+            planned_outputs=self._planned_outputs(plan_steps),
+            query={
+                "reference": reference,
+                "iterations": iterations,
+                "bin_width_minutes": bin_width_minutes,
+            },
+            compute=calculation.get,
+            compute_iteration=compute_iteration,
+        )
         if output == "plot":
             return plot_activity_duration_distribution(
-                values,
+                metric.get(),
                 scenario_titles=self.results.scenario_titles,
                 width=width,
                 height=height,
             )
-        return values
+        return metric
 
     def activity_time_series(
         self,
@@ -326,8 +719,8 @@ class GroupDayTripsResultMetrics:
         output: MetricOutput = "table",
         width: int = 980,
         height: int = 560,
-    ) -> pl.DataFrame:
-        """Return model average occupancy by activity and time bin."""
+    ) -> Metric | pl.DataFrame:
+        """Declare average activity occupancy or render it as a plot."""
         validate_output(output)
         reference_kind = self._reference_kind(reference)
         if reference_kind == "scenario":
@@ -339,24 +732,62 @@ class GroupDayTripsResultMetrics:
                 'output="plot" currently supports only one iteration. '
                 'Use iterations="last" or one iteration number, or use output="table".'
             )
-        values = ActivityTimeSeries(
-            plan_steps=self._table("plan_steps", iterations=iterations),
-            demand_groups=self._table("demand_groups", iterations=iterations),
+        plan_steps = self._tables_by_iteration("plan_steps", iterations=iterations)
+        demand_groups = self._tables_by_iteration("demand_groups", iterations=iterations)
+        calculation = ActivityTimeSeries(
+            plan_steps=plan_steps,
+            demand_groups=demand_groups,
             reference_plan_steps=self.results.survey_reference_plan_steps if reference_kind == "external" else None,
             scenarios=self.results.scenarios,
             day_type=self.results.day_type,
             iterations=self.results.selected_iterations(iterations),
             replications=self.results.replications,
             interval_minutes=interval_minutes,
-        ).get()
+        )
+
+        def compute_iteration(iteration: int) -> pl.DataFrame:
+            iteration_calculation = ActivityTimeSeries(
+                plan_steps=self._tables_by_iteration(
+                    "plan_steps",
+                    iterations=iteration,
+                ),
+                demand_groups=self._tables_by_iteration(
+                    "demand_groups",
+                    iterations=iteration,
+                ),
+                reference_plan_steps=(
+                    self.results.survey_reference_plan_steps
+                    if reference_kind == "external"
+                    else None
+                ),
+                scenarios=self.results.scenarios,
+                day_type=self.results.day_type,
+                iterations=[iteration],
+                replications=self.results.replications,
+                interval_minutes=interval_minutes,
+            )
+            return iteration_calculation.get()
+
+        metric = self._metric_asset(
+            name="activity_time_series",
+            dependencies=[calculation],
+            planned_outputs=self._planned_outputs(plan_steps + demand_groups),
+            query={
+                "reference": reference,
+                "iterations": iterations,
+                "interval_minutes": interval_minutes,
+            },
+            compute=calculation.get,
+            compute_iteration=compute_iteration,
+        )
         if output == "plot":
             return plot_activity_time_series(
-                values,
+                metric.get(),
                 scenario_titles=self.results.scenario_titles,
                 width=width,
                 height=height,
             )
-        return values
+        return metric
 
     def opportunity_occupation(
         self,
@@ -369,17 +800,47 @@ class GroupDayTripsResultMetrics:
         width: int = 760,
         height: int = 460,
         labels: bool = True,
-    ) -> pl.DataFrame:
-        """Return opportunity occupation by destination zone and activity."""
+    ) -> Metric | pl.DataFrame:
+        """Declare opportunity occupation or render it as a plot."""
         validate_output(output)
-        values = self._opportunity_occupation(
-            inner_zone_residents_only=inner_zone_residents_only,
-            iterations=iterations,
+        opportunities = self._table("opportunities")
+        plan_steps = self._tables_by_iteration("plan_steps", iterations=iterations)
+
+        def compute() -> pl.DataFrame:
+            values = self._opportunity_occupation(
+                inner_zone_residents_only=inner_zone_residents_only,
+                iterations=iterations,
+            )
+            values = self._filter_scenarios(values, scenarios=scenarios)
+            if activity is not None:
+                values = values.filter(pl.col("activity") == activity)
+            return values
+
+        def compute_iteration(iteration: int) -> pl.DataFrame:
+            values = self._opportunity_occupation(
+                inner_zone_residents_only=inner_zone_residents_only,
+                iterations=iteration,
+            )
+            values = self._filter_scenarios(values, scenarios=scenarios)
+            if activity is not None:
+                values = values.filter(pl.col("activity") == activity)
+            return values
+
+        metric = self._metric_asset(
+            name="opportunity_occupation",
+            dependencies=[opportunities, *plan_steps, self.results.transport_zones],
+            planned_outputs=self._planned_outputs([opportunities, *plan_steps]),
+            query={
+                "activity": activity,
+                "inner_zone_residents_only": inner_zone_residents_only,
+                "iterations": iterations,
+                "scenarios": scenarios,
+            },
+            compute=compute,
+            compute_iteration=compute_iteration,
         )
-        values = self._filter_scenarios(values, scenarios=scenarios)
-        if activity is not None:
-            values = values.filter(pl.col("activity") == activity)
         if output == "plot":
+            values = metric.get()
             if activity is not None:
                 return plot_metric_by_zone(
                     self._maps(),
@@ -404,7 +865,7 @@ class GroupDayTripsResultMetrics:
                 height=height,
                 labels=labels,
             )
-        return values
+        return metric
 
     def _metric_values(
         self,
@@ -423,19 +884,39 @@ class GroupDayTripsResultMetrics:
         home_zone_ids: DemandGroupSelector,
         csp: DemandGroupSelector,
         modes: DemandGroupSelector,
-        output: MetricOutput,
         scenarios: str | list[str] | tuple[str, ...] | None,
-        width: int,
-        height: int,
-        labels: bool,
-        n_largest: int | None,
-        min_value: float | None,
-        min_share: float | None,
-        max_line_width: float,
-        min_line_width: float,
     ) -> pl.DataFrame:
         """Return one compact metric query."""
-        validate_output(output)
+        if self.results.has_multiple_iterations(iterations):
+            query = {
+                "quantity": quantity,
+                "quantity_column": quantity_column,
+                "indicator": indicator,
+                "by_zone": by_zone,
+                "by_variable": by_variable,
+                "normalize_by": normalize_by,
+                "normalize_scope": normalize_scope,
+                "reference": reference,
+                "reference_view": reference_view,
+                "inner_zone_residents_only": inner_zone_residents_only,
+                "home_zone_ids": home_zone_ids,
+                "csp": csp,
+                "modes": modes,
+                "scenarios": scenarios,
+            }
+            per_iteration_values = []
+            for iteration in self.results.selected_iterations(iterations):
+                try:
+                    per_iteration_values.append(
+                        self._metric_values(
+                            **query,
+                            iterations=iteration,
+                        )
+                    )
+                finally:
+                    release_scoped_run_tables(iteration)
+            return pl.concat(per_iteration_values, how="diagonal_relaxed")
+
         self._validate_grouping(by_zone=by_zone, by_variable=by_variable)
         self._validate_normalization(
             normalize_by=normalize_by,
@@ -483,14 +964,14 @@ class GroupDayTripsResultMetrics:
                     values,
                     normalize_scope=normalize_scope,
                     zone_column=zone_column,
-                group_columns=group_columns,
-                value_column="trip_count",
-                output_column=metric_column,
-                inner_zone_residents_only=inner_zone_residents_only,
-                iterations=iterations,
-                home_zone_ids=home_zone_ids,
-                csp=csp,
-            )
+                    group_columns=group_columns,
+                    value_column="trip_count",
+                    output_column=metric_column,
+                    inner_zone_residents_only=inner_zone_residents_only,
+                    iterations=iterations,
+                    home_zone_ids=home_zone_ids,
+                    csp=csp,
+                )
             elif normalize_by == "metric_total":
                 values = self._with_metric_total_share(
                     values,
@@ -638,97 +1119,6 @@ class GroupDayTripsResultMetrics:
                 )
         else:
             values = self._filter_scenarios(values, scenarios=scenarios)
-        if output == "plot":
-            plot_metric_column = (
-                "gap"
-                if reference_kind != "none" and reference_view == "gap"
-                else metric_column
-            )
-            plot_title = self._plot_title(
-                quantity,
-                by_zone=by_zone,
-                by_variable=by_variable,
-                normalize_by=normalize_by,
-                reference_kind=reference_kind,
-                reference_view=reference_view,
-            )
-            if "iteration" in values.columns and values["iteration"].n_unique() > 1:
-                return plot_metric_over_iterations(
-                    values,
-                    metric=plot_metric_column,
-                    title=plot_title,
-                    dimension_columns=group_columns + (
-                        ["series"] if "series" in values.columns else []
-                    ),
-                    scenario_titles=self.results.scenario_titles,
-                    width=width,
-                    height=height,
-                )
-            if by_zone is None and by_variable is None:
-                raise ValueError('output="plot" needs `by_zone` or `by_variable`.')
-            if len(zone_columns) > 1:
-                if by_variable is not None:
-                    raise ValueError("OD flow plots do not support `by_variable` yet.")
-                if zone_columns != ["origin_zone_id", "destination_zone_id"]:
-                    raise ValueError(
-                        'output="plot" with multiple zone dimensions only supports '
-                        'by_zone=["origin_zone", "destination_zone"].'
-                    )
-                return plot_metric_flows_by_zone(
-                    self._maps(),
-                    values,
-                    metric=plot_metric_column,
-                    origin_column="origin_zone_id",
-                    destination_column="destination_zone_id",
-                    title=plot_title,
-                    scenario_titles=self.results.scenario_titles,
-                    width=width,
-                    height=height,
-                    labels=labels,
-                    n_largest=100 if n_largest is None else n_largest,
-                    min_value=min_value,
-                    min_share=min_share,
-                    max_line_width=max_line_width,
-                    min_line_width=min_line_width,
-                )
-            if zone_column is not None and by_variable is not None:
-                return plot_metric_grid_by_zone(
-                    self._maps(),
-                    values,
-                    metric=plot_metric_column,
-                    zone_column=zone_column,
-                    variable_column=variable_column,
-                    title=plot_title,
-                    scenario_titles=self.results.scenario_titles,
-                    diverging_center=0.0 if plot_metric_column == "gap" else None,
-                    width=width,
-                    height=height,
-                    labels=labels,
-                )
-            if zone_column is not None:
-                return plot_metric_by_zone(
-                    self._maps(),
-                    values,
-                    metric=plot_metric_column,
-                    zone_column=zone_column,
-                    title=plot_title,
-                    scenario_titles=self.results.scenario_titles,
-                    diverging_center=0.0 if plot_metric_column == "gap" else None,
-                    width=width,
-                    height=height,
-                    labels=labels,
-                )
-            return plot_metric_by_dimension(
-                values,
-                dimension=variable_column,
-                metric=plot_metric_column,
-                yaxis_title=plot_metric_column.replace("_", " "),
-                title=plot_title,
-                scenarios=None if reference_kind != "none" else scenarios,
-                scenario_titles=self.results.scenario_titles,
-                width=width,
-                height=height,
-            )
         return values
 
     def _opportunity_occupation(
@@ -737,9 +1127,39 @@ class GroupDayTripsResultMetrics:
         inner_zone_residents_only: bool,
         iterations: IterationSelector,
     ) -> pl.DataFrame:
-        """Return opportunity occupation aggregated over selected replications."""
-        opportunities = self._table("opportunities", iterations=iterations).get()
-        plan_steps = self._table("plan_steps", iterations=iterations).get()
+        """Return opportunity occupation by selected iteration and replication."""
+        opportunities = self._table("opportunities").get()
+        plan_steps_assets = self._tables_by_iteration(
+            "plan_steps",
+            iterations=iterations,
+        )
+        values = []
+        for iteration, plan_steps_asset in zip(
+            self.results.selected_iterations(iterations),
+            plan_steps_assets,
+        ):
+            try:
+                values.append(
+                    self._opportunity_occupation_iteration(
+                        opportunities=opportunities,
+                        plan_steps=plan_steps_asset.get(),
+                        iteration=iteration,
+                        inner_zone_residents_only=inner_zone_residents_only,
+                    )
+                )
+            finally:
+                release_scoped_run_tables(iteration)
+        return pl.concat(values, how="vertical_relaxed")
+
+    def _opportunity_occupation_iteration(
+        self,
+        *,
+        opportunities: pl.LazyFrame,
+        plan_steps: pl.LazyFrame,
+        iteration: int,
+        inner_zone_residents_only: bool,
+    ) -> pl.DataFrame:
+        """Aggregate one iteration before loading another run state."""
         if inner_zone_residents_only:
             plan_steps = filter_plan_steps_to_inner_zone_residents(
                 plan_steps,
@@ -774,6 +1194,7 @@ class GroupDayTripsResultMetrics:
             opportunities
             .select(SCOPE_COLUMNS + ["to", "activity", "opportunity_capacity"])
             .with_columns(
+                pl.lit(iteration, dtype=pl.Int32).alias("iteration"),
                 pl.col("to").cast(pl.String),
                 pl.col("activity").cast(pl.String),
                 pl.col("opportunity_capacity").cast(pl.Float64),
@@ -2238,27 +2659,6 @@ class GroupDayTripsResultMetrics:
             .group_by(RESULT_COLUMNS + extra_columns)
             .agg(n_persons=pl.col("n_persons").mean())
             .collect(engine="streaming")
-        )
-
-    def _survey_immobility(self) -> pl.DataFrame:
-        """Return survey immobility probabilities by country and CSP."""
-        column_name = "immobility_weekday" if self.results.is_weekday else "immobility_weekend"
-        survey_tables = [
-            pl.DataFrame(survey.get()["p_immobility"].reset_index()).with_columns(
-                country=pl.lit(survey.inputs["parameters"].country, dtype=pl.String)
-            )
-            for survey in self.results.surveys
-        ]
-        if not survey_tables:
-            raise ValueError("Immobility needs at least one survey with immobility probabilities.")
-        return (
-            pl.concat(survey_tables, how="vertical_relaxed")
-            .with_columns(
-                country=pl.col("country").cast(pl.String),
-                csp=pl.col("csp").cast(pl.String),
-                p_immobility_ref=pl.col(column_name).cast(pl.Float64),
-            )
-            .select(["country", "csp", "p_immobility_ref"])
         )
 
     def _trip_count(

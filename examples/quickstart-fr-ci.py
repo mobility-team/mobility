@@ -38,7 +38,7 @@ def run_quickstart_ci():
 
     # You can get weekday plan steps to inspect them
     weekday_run = population_trips.run("weekday")
-    weekday_plan_steps = weekday_run.get()["plan_steps"].collect()
+    weekday_plan_steps = weekday_run.table("plan_steps")
 
     # Use population_trips.results(...) as the main entry point for indicators.
     weekday_results = population_trips.results("weekday")
@@ -46,7 +46,7 @@ def run_quickstart_ci():
         by_variable="mode",
         iterations="last",
         output="table",
-    )
+    ).get()
     
     # CI does not create plots, but the user quickstart plots OD flows with
     # weekday_results.metrics.trip_count(by_zone=["origin_zone", "destination_zone"]).

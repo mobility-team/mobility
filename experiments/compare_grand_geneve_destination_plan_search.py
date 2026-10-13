@@ -73,14 +73,6 @@ def parse_args() -> argparse.Namespace:
             "destination-plan-search."
         ),
     )
-    parser.add_argument(
-        "--rebuild-variant-chain",
-        action="store_true",
-        help=(
-            "Rebuild destination sequences, mode sequences, plan updates, and "
-            "final outputs while retaining their already-cached upstream inputs."
-        ),
-    )
     return parser.parse_args()
 
 
@@ -188,17 +180,20 @@ def run_variant(
     output_folder: pathlib.Path,
 ) -> dict[str, Any]:
     run = variant.run(day_type="weekday", scenario="default")
-    cached_before = all(path.exists() for path in run.cache_path.values())
+    checkpoint_reused = any(
+        state.resume_checkpoint_loader is not None
+        for state in run.iteration_state_assets
+    )
 
     print(f"\nRunning {name} (use_destination_plan_search={enabled})")
-    if cached_before:
-        print("  Final outputs are already cached; runtime is a cache-hit time.")
+    if checkpoint_reused:
+        print("  A saved iteration checkpoint will be reused.")
 
     started = time.perf_counter()
-    outputs = run.get()
+    plan_steps = run.table("plan_steps")
     seconds = time.perf_counter() - started
 
-    summaries = summarize_plan_steps(outputs["plan_steps"])
+    summaries = summarize_plan_steps(plan_steps.lazy())
     variant_folder = output_folder / name
     variant_folder.mkdir(parents=True, exist_ok=True)
     for summary_name, table in summaries.items():
@@ -207,22 +202,12 @@ def run_variant(
     result = {
         "use_destination_plan_search": enabled,
         "seconds": seconds,
-        "cached_before": cached_before,
+        "checkpoint_reused": checkpoint_reused,
         "run_inputs_hash": run.inputs_hash,
         "overall": summaries["overall"].row(0, named=True),
     }
     print(f"  Completed in {seconds:.3f} s")
     return result
-
-
-def remove_variant_chain(variant: Any) -> None:
-    """Remove outputs downstream of destination sampling for a fair rerun."""
-    run = variant.run(day_type="weekday", scenario="default")
-    run.remove()
-    for state in run.iteration_state_assets:
-        state.remove()
-        state.mode_sequences.remove()
-        state.destination_sequences.remove()
 
 
 def write_comparison(output_folder: pathlib.Path) -> None:
@@ -322,10 +307,6 @@ def main() -> None:
         name: with_destination_plan_search(setup, enabled)
         for name, enabled in VARIANTS.items()
     }
-    if args.rebuild_variant_chain:
-        for variant in variants.values():
-            remove_variant_chain(variant)
-
     results = {
         name: run_variant(
             name,
@@ -340,7 +321,7 @@ def main() -> None:
     legacy_seconds = results["legacy"]["seconds"]
     search_seconds = results["destination_plan_search"]["seconds"]
     timings_are_comparable = not any(
-        result["cached_before"] for result in results.values()
+        result["checkpoint_reused"] for result in results.values()
     )
     report = {
         "execution_order": order,
