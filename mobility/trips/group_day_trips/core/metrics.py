@@ -4389,7 +4389,11 @@ class RunMetrics:
 
     def _resolve_comparison_run(self, compare_with: Any) -> Any:
         """Return the day-type run used as the reference scenario."""
-        if hasattr(compare_with, "run") and hasattr(compare_with.run, "table_asset"):
+        if hasattr(compare_with, "first_run"):
+            reference_run = compare_with.first_run
+        elif hasattr(compare_with, "run") and callable(
+            getattr(compare_with.run, "table", None)
+        ):
             reference_run = compare_with.run
         elif callable(getattr(compare_with, "run", None)):
             day_type = "weekday" if self.results.is_weekday else "weekend"
@@ -4397,7 +4401,7 @@ class RunMetrics:
         else:
             reference_run = compare_with
 
-        if not hasattr(reference_run, "table_asset"):
+        if not callable(getattr(reference_run, "table", None)):
             raise TypeError(
                 "compare_with should be a group-day-trips run, results object, "
                 "or PopulationGroupDayTrips setup."

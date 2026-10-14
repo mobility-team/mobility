@@ -49,6 +49,10 @@ class _FrameAsset:
         return self.frame.lazy() if self.lazy else self.frame
 
 
+def _unused_run_table(*_args, **_kwargs):
+    raise AssertionError("This run fixture only needs the table interface.")
+
+
 def _make_transport_zones():
     return SimpleNamespace(
         get=lambda: pd.DataFrame(
@@ -959,7 +963,7 @@ def test_modal_share_delta_evolution_by_iteration_compares_two_scenarios(monkeyp
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1050,7 +1054,7 @@ def test_modal_share_delta_evolution_by_iteration_can_plot_and_save_svg(monkeypa
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1138,7 +1142,7 @@ def test_car_modal_share_delta_by_iteration_uses_saved_home_zone_states(monkeypa
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1268,7 +1272,7 @@ def test_modal_share_by_iteration_plots_one_scenario(monkeypatch, tmp_path):
         }
     )
     run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -1396,7 +1400,7 @@ def test_plot_metric_by_iteration_plots_average_distance(monkeypatch, tmp_path):
         }
     )
     run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -1550,7 +1554,7 @@ def test_car_modal_share_delta_by_iteration_plots_with_transport_zone_maps(
         }
     )
     run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -1651,7 +1655,7 @@ def test_plot_delta_by_iteration_can_compare_mean_utility(monkeypatch, tmp_path)
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1739,7 +1743,7 @@ def test_plot_delta_by_iteration_can_compare_ghg_emissions(monkeypatch, tmp_path
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1857,7 +1861,7 @@ def test_plot_delta_by_iteration_can_compare_relative_ghg_emissions(monkeypatch,
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1950,7 +1954,7 @@ def test_plot_delta_by_iteration_can_compare_relative_ghg_emissions(monkeypatch,
 
 def test_plot_delta_by_iteration_rejects_relative_modal_share(tmp_path):
     run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -2014,7 +2018,7 @@ def test_plot_delta_by_iteration_plots_with_transport_zone_maps(monkeypatch, tmp
             return FakeFigure()
 
     run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -2102,7 +2106,7 @@ def test_plot_delta_by_iteration_can_auto_cap_outliers(monkeypatch, tmp_path):
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -2194,7 +2198,7 @@ def test_plot_delta_by_iteration_can_average_paired_seed_deltas(monkeypatch, tmp
 
     def run(name):
         return SimpleNamespace(
-            table_asset=True,
+            table=_unused_run_table,
             inputs_hash=name,
             is_weekday=True,
             cache_path={"plan_steps": tmp_path / name / "plan_steps.parquet"},
@@ -2309,7 +2313,7 @@ def test_modal_share_delta_gifs_by_iteration_writes_one_gif_per_mode(monkeypatch
         population=SimpleNamespace(name="population"),
     )
     reference_run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -2412,7 +2416,7 @@ def test_modal_share_delta_gif_global_delta_uses_inner_zone_scope(monkeypatch, t
         population=None,
     )
     reference_run = SimpleNamespace(
-        table_asset=True,
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -2765,8 +2769,10 @@ def test_metric_per_person_compare_with_and_plot_delta(tmp_path, monkeypatch):
             return pl.read_parquet(self.path)
 
     class _ComparisonRun:
-        table_asset = True
         is_weekday = True
+
+        def table(self, table_name):
+            return self._table_asset(table_name).get()
 
         def _table_asset(self, table_name):
             paths = {

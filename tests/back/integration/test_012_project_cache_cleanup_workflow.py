@@ -84,7 +84,7 @@ population_trips = mobility.PopulationGroupDayTrips(
     ),
 )
 
-plan_steps = population_trips.run("weekday", scenario=SCENARIO_NAME).get()["plan_steps"].collect()
+plan_steps = population_trips.run("weekday", scenario=SCENARIO_NAME).table("plan_steps")
 with open(RESULT_FILE, "w", encoding="utf-8") as file:
     file.write(str(plan_steps.height))
 """,
