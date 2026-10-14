@@ -16,7 +16,7 @@ class _TextFileAsset(FileAsset):
 
 def test_file_asset_remove_deletes_marker_and_input_hash(tmp_path):
     asset = _TextFileAsset(tmp_path)
-    asset.create_and_get_asset()
+    asset.get()
 
     assert asset.cache_path.exists()
     assert asset.hash_path.exists()

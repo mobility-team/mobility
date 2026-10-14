@@ -58,7 +58,7 @@ class ScopedRunTable(InMemoryAsset):
         self.columns = None if columns is None else tuple(dict.fromkeys(columns))
         self.iterations = results._validate_iterations(iterations)
         self.selected_iterations = results.selected_iterations(iterations)
-        self.uses_last_iteration = self.iterations == "last"
+        self.uses_last_iteration = self.selected_iterations == [results.last_iteration]
         self.run_output_assets = []
         for run_context in self.run_contexts:
             if self.table_name == "iteration_metrics":

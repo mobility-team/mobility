@@ -271,10 +271,10 @@ def asset_cache_status(asset: Asset) -> str:
     if not is_file_asset(asset):
         return "not_file_asset"
 
-    if asset.inputs_changed():
-        return "stale"
     if asset.assets_missing():
         return "missing"
+    if asset.inputs_changed():
+        return "stale"
     return "cached"
 
 

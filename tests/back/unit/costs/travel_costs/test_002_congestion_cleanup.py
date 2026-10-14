@@ -213,6 +213,7 @@ def test_public_transport_remove_congestion_artifacts_is_noop_when_variant_is_se
 def _make_path_travel_costs():
     asset = object.__new__(PathTravelCosts)
     asset.inputs = {"mode_name": "car"}
+    asset.inputs_hash = "path-travel-costs"
     return asset
 
 
@@ -420,7 +421,9 @@ def test_path_get_uses_road_flow_variant_when_requested():
     asset = _make_path_travel_costs()
     variant = _CostTable("road-flow-costs")
     asset._handles_congestion = lambda: True
-    asset.asset_for_road_flows = lambda road_flow_asset: variant
+    asset.asset_for_road_flows = lambda road_flow_asset: type(
+        "PathVariant", (), {"congested_costs": variant}
+    )()
 
     assert asset.get(congestion=True, road_flow_asset=object()) == "road-flow-costs"
 

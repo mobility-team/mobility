@@ -18,6 +18,7 @@ from mobility.spatial.switzerland import SwissLocalAdminUnitsCategories
 def test_001_admin_express_dataset_requires_expected_extracted_files(tmp_path, monkeypatch):
     monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
     dataset = AdminExpressDataset()
+    dataset.cache_path.parent.mkdir(parents=True, exist_ok=True)
     dataset.cache_path.write_text("ready", encoding="utf-8")
     dataset.extracted_path.mkdir(parents=True)
 
@@ -64,7 +65,7 @@ def test_001_french_admin_units_prepare_communes_with_parent_codes(tmp_path, mon
 
     monkeypatch.setattr("mobility.spatial.admin_units.gpd.read_file", fake_read_file)
 
-    admin_units = FrenchAdminUnits(level="commune").create_and_get_asset()
+    admin_units = FrenchAdminUnits(level="commune").get()
 
     assert set(admin_units["admin_id"]) == {"fr-75101", "fr-33063"}
 
@@ -205,7 +206,7 @@ def test_001_swiss_local_admin_unit_categories_use_bfs_type_codes(tmp_path, monk
     monkeypatch.setattr("mobility.spatial.switzerland.download_file", fake_download_file)
     monkeypatch.setattr("mobility.spatial.switzerland.pd.read_excel", fake_read_excel)
 
-    categories = SwissLocalAdminUnitsCategories().create_and_get_asset()
+    categories = SwissLocalAdminUnitsCategories().get()
 
     assert categories["urban_unit_category"].tolist() == [
         "C",

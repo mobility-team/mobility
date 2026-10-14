@@ -366,7 +366,7 @@ def test_candidate_memory_ignores_persisted_stay_home_rows():
         def __init__(self, df):
             self._df = df
 
-        def get_cached_asset(self):
+        def get(self):
             return self._df
 
     destination_sequences = _StubAsset(
@@ -523,7 +523,7 @@ def test_candidate_memory_prunes_old_inactive_plans_after_warmup():
         def __init__(self, df):
             self._df = df
 
-        def get_cached_asset(self):
+        def get(self):
             return self._df
 
     destination_sequences = _StubAsset(
@@ -646,7 +646,7 @@ def test_candidate_memory_keeps_regenerated_inactive_plans_after_warmup():
         def __init__(self, df):
             self._df = df
 
-        def get_cached_asset(self):
+        def get(self):
             return self._df
 
     destination_sequences = _StubAsset(

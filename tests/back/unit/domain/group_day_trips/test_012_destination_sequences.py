@@ -1,4 +1,3 @@
-from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -15,13 +14,6 @@ from mobility.trips.group_day_trips.plans.destination_plan_search import (
     sample_destination_plans,
 )
 from mobility.trips.group_day_trips.plans.demand_subgroups import demand_unit_hash
-
-
-def _make_local_tmp_path(tmp_path: Path, name: str) -> Path:
-    path = tmp_path / "group_day_trips" / name
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
 
 def test_destination_plan_search_flag_is_disabled_by_default():
     parameters = GroupDayTripsDestinationSequenceParameters()
@@ -69,7 +61,6 @@ def test_plan_choice_logit_scale_is_part_of_destination_cache_key(tmp_path):
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=1,
-        base_folder=_make_local_tmp_path(tmp_path, "plan_choice_logit_scale"),
         activities=[],
         resolved_activity_parameters={},
         parameters=parameters,
@@ -191,7 +182,6 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=3,
-        base_folder=_make_local_tmp_path(tmp_path, "active_destination_sequences"),
         current_plans=pl.DataFrame(
             {
                 "demand_group_id": [1],
@@ -293,7 +283,6 @@ def test_refresh_active_mode_alternatives_appends_active_destination_sequences(t
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=5,
-        base_folder=_make_local_tmp_path(tmp_path, "refresh_active_destinations"),
         current_plans=pl.DataFrame(
             {
                 "demand_group_id": [1],
@@ -397,7 +386,6 @@ def test_refresh_active_mode_alternatives_keeps_distinct_subgroup_steps(tmp_path
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=5,
-        base_folder=_make_local_tmp_path(tmp_path, "refresh_active_destinations_subgroups"),
         current_plans=pl.DataFrame(
             {
                 "demand_group_id": [1, 1],
@@ -478,7 +466,6 @@ def test_refresh_active_mode_alternatives_default_keeps_sampled_destinations_onl
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=5,
-        base_folder=_make_local_tmp_path(tmp_path, "refresh_active_destinations_default"),
         current_plans=pl.DataFrame(),
         current_plan_steps=pl.DataFrame(),
         activities=[],
@@ -515,7 +502,6 @@ def test_destination_probability_inputs_use_cost_and_sink_even_without_destinati
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=1,
-        base_folder=_make_local_tmp_path(tmp_path, "destination_utilities_default_zero"),
         activities=[],
         transport_zones=None,
         destination_saturation=pl.DataFrame(),
@@ -566,7 +552,6 @@ def test_destination_probability_inputs_use_shadow_attraction_when_enabled(tmp_p
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=1,
-        base_folder=_make_local_tmp_path(tmp_path, "destination_shadow_inputs"),
         activities=[],
         transport_zones=None,
         destination_saturation=pl.DataFrame(),
@@ -616,7 +601,6 @@ def test_spatialize_sequence_step_uses_sequence_cost_to_reweight_non_anchor_cand
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=1,
-        base_folder=_make_local_tmp_path(tmp_path, "non_anchor_sequence_cost_weighting"),
         activities=[],
         transport_zones=None,
         destination_saturation=pl.DataFrame(),
@@ -764,7 +748,6 @@ def test_spatialize_anchor_activities_samples_from_current_anchor_location(tmp_p
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=1,
-        base_folder=_make_local_tmp_path(tmp_path, "anchor_current_location"),
         activities=[],
         transport_zones=None,
         destination_saturation=pl.DataFrame(),
@@ -861,7 +844,6 @@ def test_spatialize_anchor_activities_uses_sequence_cost_to_reweight_candidates(
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=1,
-        base_folder=_make_local_tmp_path(tmp_path, "anchor_sequence_cost_weighting"),
         activities=[],
         transport_zones=None,
         destination_saturation=pl.DataFrame(),
@@ -999,7 +981,6 @@ def test_spatialize_sequence_step_drops_anchor_without_leg_cost(tmp_path):
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=1,
-        base_folder=_make_local_tmp_path(tmp_path, "missing_anchor_leg_cost"),
         activities=[],
         transport_zones=None,
         destination_saturation=pl.DataFrame(),
@@ -1141,7 +1122,6 @@ def test_reuse_current_destination_sequences_reuses_current_plan_steps(tmp_path)
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=4,
-        base_folder=_make_local_tmp_path(tmp_path, "reuse_current_destination_sequences"),
         current_plans=pl.DataFrame(
             {
                 "demand_group_id": [1],

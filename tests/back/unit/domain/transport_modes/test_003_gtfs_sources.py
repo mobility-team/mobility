@@ -213,6 +213,7 @@ def test_003_gtfs_sources_use_existing_file_without_provider_calls(tmp_path, mon
             raise AssertionError("Existing GTFS sources should be read-only.")
 
     sources = GTFSSources("2025-01-01", tmp_path / "gtfs_sources", ["fr"])
+    sources.cache_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(sources.cache_path) as connection:
         sources.create_schema(connection)
         sources.insert_metadata(connection, "2025-01-01T00:00:00Z")
@@ -260,6 +261,7 @@ def test_003_gtfs_sources_preserve_invalid_existing_file(tmp_path, monkeypatch):
             )
 
     sources = GTFSSources("2025-01-01", tmp_path / "gtfs_sources", ["fr"])
+    sources.cache_path.parent.mkdir(parents=True, exist_ok=True)
     sources.cache_path.write_bytes(b"corrupt SQLite")
     before = sources.cache_path.read_bytes()
     with pytest.raises(ValueError, match="Invalid or incompatible"):
@@ -310,6 +312,7 @@ def test_003_gtfs_sources_failed_build_does_not_leave_final_sqlite(tmp_path, mon
 
 def test_003_gtfs_sources_select_with_bbox_then_exact_intersection(tmp_path):
     sources = GTFSSources("2025-01-01", tmp_path / "gtfs_sources", ["fr"])
+    sources.cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     with sqlite3.connect(sources.cache_path) as connection:
         sources.create_schema(connection)
@@ -382,6 +385,7 @@ def test_003_gtfs_sources_select_with_bbox_then_exact_intersection(tmp_path):
 
 def test_003_gtfs_sources_fail_when_only_missing_archive_intersects_area(tmp_path):
     sources = GTFSSources("2025-01-01", tmp_path / "gtfs_sources", ["fr"])
+    sources.cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     with sqlite3.connect(sources.cache_path) as connection:
         sources.create_schema(connection)
@@ -412,6 +416,7 @@ def test_003_gtfs_sources_fail_when_only_missing_archive_intersects_area(tmp_pat
 
 def test_003_gtfs_sources_fail_on_missing_archive_even_when_another_source_exists(tmp_path, caplog):
     sources = GTFSSources("2025-01-01", tmp_path / "gtfs_sources", ["fr"])
+    sources.cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     with sqlite3.connect(sources.cache_path) as connection:
         sources.create_schema(connection)
@@ -456,6 +461,7 @@ def test_003_gtfs_sources_fail_on_missing_archive_even_when_another_source_exist
 
 def test_003_gtfs_sources_fail_when_no_source_intersects_area(tmp_path):
     sources = GTFSSources("2025-01-01", tmp_path / "gtfs_sources", ["fr"])
+    sources.cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     with sqlite3.connect(sources.cache_path) as connection:
         sources.create_schema(connection)
@@ -492,6 +498,7 @@ def test_003_gtfs_sources_fail_when_only_stale_archive_intersects_area(tmp_path)
         ["fr"],
         max_gtfs_file_age_days=30,
     )
+    sources.cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     with sqlite3.connect(sources.cache_path) as connection:
         sources.create_schema(connection)
@@ -527,6 +534,7 @@ def test_003_gtfs_sources_fail_on_stale_archive_even_when_another_source_exists(
         ["fr"],
         max_gtfs_file_age_days=30,
     )
+    sources.cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     with sqlite3.connect(sources.cache_path) as connection:
         sources.create_schema(connection)

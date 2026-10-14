@@ -103,7 +103,7 @@ class GroupDayTripsResults:
 
     def uses_last_iteration(self, iterations: IterationSelector = "last") -> bool:
         """Return whether a result query uses normal final run outputs."""
-        return self._validate_iterations(iterations) == "last"
+        return self.selected_iterations(iterations) == [self.last_iteration]
 
     def selected_iterations(self, iterations: IterationSelector = "last") -> list[int]:
         """Return concrete iteration numbers for one result query."""

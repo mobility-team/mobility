@@ -16,6 +16,7 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.graph import build_asset_graph
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.assets.resolver import AssetResolver
+from mobility.surveys.mobility_survey import MobilitySurveyParameters
 from mobility.trips.group_day_trips.core.group_day_trips import PopulationGroupDayTrips
 from mobility.trips.group_day_trips.core.run import Run
 from mobility.trips.group_day_trips.results import GroupDayTripsResults
@@ -192,6 +193,28 @@ class _FakeTransportZones(FileAsset):
         return self.frame
 
 
+class _FakeSurvey(InMemoryAsset):
+    """Small survey asset with the immobility values used by result tests."""
+
+    def __init__(self):
+        self.parameters = MobilitySurveyParameters(
+            survey_name="test-survey",
+            country="fr",
+        )
+        super().__init__({"parameters": self.parameters})
+
+    def create_and_get_asset(self):
+        return {
+            "p_immobility": pd.DataFrame(
+                {
+                    "immobility_weekday": [0.2, 0.1],
+                    "immobility_weekend": [0.3, 0.2],
+                },
+                index=pd.Index(["worker", "retired"], name="csp"),
+            )
+        }
+
+
 def _run_factory(base_folder: Path):
     transport_zones = _FakeTransportZones(base_folder=base_folder)
     reference_plan_steps = _FakeLazyFrameAsset(
@@ -214,15 +237,7 @@ def _run_factory(base_folder: Path):
             }
         ),
     )
-    survey = SimpleNamespace(
-        inputs={"parameters": SimpleNamespace(country="fr")},
-        get=lambda: {
-            "p_immobility": pd.DataFrame(
-                {"immobility_weekday": [0.2, 0.1], "immobility_weekend": [0.3, 0.2]},
-                index=pd.Index(["worker", "retired"], name="csp"),
-            )
-        },
-    )
+    survey = _FakeSurvey()
 
     def run(
         day_type: str,
@@ -1000,10 +1015,9 @@ def test_scoped_run_table_does_not_depend_on_full_run_asset(tmp_path):
     assert not any(isinstance(asset, _FakeRun) for asset in graph.nodes)
 
 
-def test_run_iteration_table_scans_cached_plan_steps_without_state_load(tmp_path):
-    """Check all-iteration results do not load the full saved iteration state."""
-    plan_steps_path = tmp_path / "current_plan_steps.parquet"
-    pl.DataFrame(
+def test_run_iteration_table_returns_the_selected_iteration_steps(tmp_path):
+    """Check iteration tables expose the step data from the matching run state."""
+    plan_steps = pl.DataFrame(
         {
             "demand_group_id": [1],
             "demand_subgroup_id": [0],
@@ -1024,16 +1038,14 @@ def test_run_iteration_table_scans_cached_plan_steps_without_state_load(tmp_path
             "seq_step_index": pl.UInt8,
             "n_persons": pl.Float64,
         },
-    ).write_parquet(plan_steps_path)
+    )
 
-    class CachedStateAsset:
-        cache_path = {"current_plan_steps": plan_steps_path}
-
+    class IterationStateAsset:
         def get(self):
-            raise AssertionError("Run.iteration_table should scan cached plan steps directly.")
+            return SimpleNamespace(current_plan_steps=plan_steps)
 
     run = object.__new__(Run)
-    run.iteration_state_assets = [CachedStateAsset()]
+    run.iteration_state_assets = [IterationStateAsset()]
 
     table = run.iteration_table("plan_steps", 1).collect()
 

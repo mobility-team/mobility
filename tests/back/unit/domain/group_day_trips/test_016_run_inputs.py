@@ -128,7 +128,6 @@ def test_initial_state_inputs_keep_full_modes_out_of_dependencies(tmp_path, monk
 
     initial_state = iteration_assets.InitialIterationStateAsset(
         is_weekday=True,
-        base_folder=tmp_path,
         population=_MemoryAsset("population"),
         survey_plan_assets=_MemoryAsset("survey-plan-assets"),
         activities=[

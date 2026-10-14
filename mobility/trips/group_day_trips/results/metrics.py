@@ -234,6 +234,27 @@ class GroupDayTripsResultMetrics:
     ) -> Metric | pl.DataFrame:
         """Declare one metric asset, or render it directly when plotting."""
         validate_output(output)
+        spec = METRIC_SPECS.get(name)
+        if spec is None:
+            raise ValueError(
+                "Unknown metric name. Expected one of: "
+                + ", ".join(sorted(METRIC_SPECS))
+                + "."
+            )
+        self._validate_metric_arguments(
+            quantity=spec.quantity,
+            indicator=spec.indicator,
+            by_zone=by_zone,
+            by_variable=by_variable,
+            normalize_by=normalize_by,
+            normalize_scope=normalize_scope,
+            reference=reference,
+            reference_view=reference_view,
+            iterations=iterations,
+            home_zone_ids=home_zone_ids,
+            csp=csp,
+            modes=modes,
+        )
         metric_query = {
             "name": name,
             "by_zone": by_zone,
@@ -319,6 +340,7 @@ class GroupDayTripsResultMetrics:
                     by_zone=by_zone,
                     by_variable=by_variable,
                     normalize_by=normalize_by,
+                    normalize_scope=normalize_scope,
                     reference=reference,
                     reference_view=reference_view,
                     scenarios=scenarios,
@@ -495,6 +517,61 @@ class GroupDayTripsResultMetrics:
             modes=modes,
             scenarios=scenarios,
         )
+
+    def _validate_metric_arguments(
+        self,
+        *,
+        quantity: str,
+        indicator: str | None,
+        by_zone: ZoneDimensions | None,
+        by_variable: VariableDimension | None,
+        normalize_by: NormalizeBy | None,
+        normalize_scope: NormalizeScope | None,
+        reference: MetricReference,
+        reference_view: ReferenceView,
+        iterations: IterationSelector,
+        home_zone_ids: DemandGroupSelector,
+        csp: DemandGroupSelector,
+        modes: DemandGroupSelector,
+    ) -> None:
+        """Reject unsupported metric requests before creating an asset."""
+        self._validate_grouping(by_zone=by_zone, by_variable=by_variable)
+        self._validate_normalization(
+            normalize_by=normalize_by,
+            normalize_scope=normalize_scope,
+            by_zone=by_zone,
+            by_variable=by_variable,
+        )
+        self._validate_demand_group_filters(
+            home_zone_ids=home_zone_ids,
+            csp=csp,
+            modes=modes,
+        )
+        reference_kind = self._reference_kind(reference)
+        self._validate_reference_view(reference_view, reference_kind=reference_kind)
+        if reference_kind == "external" and self._has_metric_filter(
+            home_zone_ids=home_zone_ids,
+            csp=csp,
+            modes=modes,
+        ):
+            raise ValueError("External references are not available with metric filters.")
+        if reference_kind == "external" and indicator is None:
+            raise ValueError(f"No reference is available for {quantity}.")
+        if reference_kind == "external" and not self.results.uses_last_iteration(iterations):
+            raise ValueError(
+                "External references are only available for iterations='last' for now."
+            )
+        if reference_kind == "external" and by_zone is not None:
+            raise ValueError("External references are not available by zone.")
+        if (
+            reference_kind == "external"
+            and by_variable not in REFERENCE_DIMENSIONS
+            and by_variable is not None
+        ):
+            raise ValueError(
+                "External references are available by mode, activity, distance_bin, "
+                f"or time_bin. Received by_variable={by_variable!r}."
+            )
 
     def trip_count(self, **kwargs) -> Metric | pl.DataFrame:
         """Return trip counts, optionally split and normalized."""
@@ -917,29 +994,21 @@ class GroupDayTripsResultMetrics:
                     release_scoped_run_tables(iteration)
             return pl.concat(per_iteration_values, how="diagonal_relaxed")
 
-        self._validate_grouping(by_zone=by_zone, by_variable=by_variable)
-        self._validate_normalization(
-            normalize_by=normalize_by,
-            normalize_scope=normalize_scope,
+        self._validate_metric_arguments(
+            quantity=quantity,
+            indicator=indicator,
             by_zone=by_zone,
             by_variable=by_variable,
+            normalize_by=normalize_by,
+            normalize_scope=normalize_scope,
+            reference=reference,
+            reference_view=reference_view,
+            iterations=iterations,
+            home_zone_ids=home_zone_ids,
+            csp=csp,
+            modes=modes,
         )
-        self._validate_demand_group_filters(home_zone_ids=home_zone_ids, csp=csp, modes=modes)
         reference_kind = self._reference_kind(reference)
-        self._validate_reference_view(reference_view, reference_kind=reference_kind)
-        if reference_kind == "external" and self._has_metric_filter(home_zone_ids=home_zone_ids, csp=csp, modes=modes):
-            raise ValueError("External references are not available with metric filters.")
-        if reference_kind == "external" and indicator is None:
-            raise ValueError(f"No reference is available for {quantity}.")
-        if reference_kind == "external" and not self.results.uses_last_iteration(iterations):
-            raise ValueError("External references are only available for iterations='last' for now.")
-        if reference_kind == "external" and by_zone is not None:
-            raise ValueError("External references are not available by zone.")
-        if reference_kind == "external" and by_variable not in REFERENCE_DIMENSIONS and by_variable is not None:
-            raise ValueError(
-                "External references are available by mode, activity, distance_bin, "
-                f"or time_bin. Received by_variable={by_variable!r}."
-            )
         metric_column = self._metric_column(quantity, normalize_by)
         zone_columns = self._zone_columns(by_zone)
         zone_column = zone_columns[0] if len(zone_columns) == 1 else None
