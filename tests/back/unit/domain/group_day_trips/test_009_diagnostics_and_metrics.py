@@ -1268,6 +1268,7 @@ def test_modal_share_by_iteration_plots_one_scenario(monkeypatch, tmp_path):
         }
     )
     run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -1395,6 +1396,7 @@ def test_plot_metric_by_iteration_plots_average_distance(monkeypatch, tmp_path):
         }
     )
     run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -1548,6 +1550,7 @@ def test_car_modal_share_delta_by_iteration_plots_with_transport_zone_maps(
         }
     )
     run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -1947,6 +1950,7 @@ def test_plot_delta_by_iteration_can_compare_relative_ghg_emissions(monkeypatch,
 
 def test_plot_delta_by_iteration_rejects_relative_modal_share(tmp_path):
     run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -2010,6 +2014,7 @@ def test_plot_delta_by_iteration_plots_with_transport_zone_maps(monkeypatch, tmp
             return FakeFigure()
 
     run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -2189,6 +2194,7 @@ def test_plot_delta_by_iteration_can_average_paired_seed_deltas(monkeypatch, tmp
 
     def run(name):
         return SimpleNamespace(
+            table_asset=True,
             inputs_hash=name,
             is_weekday=True,
             cache_path={"plan_steps": tmp_path / name / "plan_steps.parquet"},

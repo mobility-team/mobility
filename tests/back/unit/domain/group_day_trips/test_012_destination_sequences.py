@@ -177,7 +177,7 @@ def test_sample_active_destination_sequences_keeps_only_active_activity_sequence
     class _StubAsset(InMemoryAsset):
         def __init__(self, df):
             self._df = df
-            super().__init__({"frame": df})
+            super().__init__({"name": "activity-sequences"})
 
         def create_and_get_asset(self):
             return self._df
