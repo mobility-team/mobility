@@ -212,7 +212,7 @@ def test_group_day_trips_wrapper_forwards_opt_in_iteration_checkpoints(monkeypat
     monkeypatch.setattr(PopulationGroupDayTrips, "_validate_modes", lambda self, modes: None)
     monkeypatch.setattr(PopulationGroupDayTrips, "_validate_activities", lambda self, activities: None)
     monkeypatch.setattr(PopulationGroupDayTrips, "_validate_surveys", lambda self, surveys: None)
-    monkeypatch.setattr(group_day_trips_module, "Run", _FakeRunWithIterationMetrics)
+    monkeypatch.setattr(group_day_trips_module, "Run", _FakeRun)
     monkeypatch.setattr(group_day_trips_module, "TransportCosts", lambda modes: SimpleNamespace(modes=modes))
     monkeypatch.setattr(group_day_trips_module, "SurveyPlanAssets", _FakeSurveyPlanAssets)
 
