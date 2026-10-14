@@ -32,6 +32,7 @@ class _Removable:
 class _CostTable:
     def __init__(self, value):
         self.value = value
+        self.inputs_hash = value
         self.get_calls = 0
 
     def get(self):

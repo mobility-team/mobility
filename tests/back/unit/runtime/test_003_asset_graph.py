@@ -311,7 +311,7 @@ def test_asset_graph_cytoscape_elements_can_be_filtered(tmp_path):
         children=[missing, cached],
         cache_folder=tmp_path,
     )
-    cached.create_and_get_asset()
+    cached.get()
 
     graph = build_asset_graph(parent)
     elements = asset_graph_cytoscape_elements(graph)

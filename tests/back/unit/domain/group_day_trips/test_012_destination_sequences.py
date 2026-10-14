@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pandas as pd
 import polars as pl
 
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.trips.group_day_trips import (
     GroupDayTripsDestinationSequenceParameters,
     GroupDayTripsParameters,
@@ -14,6 +15,7 @@ from mobility.trips.group_day_trips.plans.destination_plan_search import (
     sample_destination_plans,
 )
 from mobility.trips.group_day_trips.plans.demand_subgroups import demand_unit_hash
+
 
 def test_destination_plan_search_flag_is_disabled_by_default():
     parameters = GroupDayTripsDestinationSequenceParameters()
@@ -171,12 +173,13 @@ def test_destination_plan_search_returns_mobility_sequence_rows():
     ]
 
 
-def test_sample_active_destination_sequences_keeps_only_active_activity_sequences(tmp_path):
-    class _StubAsset:
+def test_sample_active_destination_sequences_keeps_only_active_activity_sequences():
+    class _StubAsset(InMemoryAsset):
         def __init__(self, df):
             self._df = df
+            super().__init__({"frame": df})
 
-        def get_cached_asset(self):
+        def create_and_get_asset(self):
             return self._df
 
     destination_sequences = DestinationSequences(

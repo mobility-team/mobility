@@ -959,6 +959,7 @@ def test_modal_share_delta_evolution_by_iteration_compares_two_scenarios(monkeyp
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1049,6 +1050,7 @@ def test_modal_share_delta_evolution_by_iteration_can_plot_and_save_svg(monkeypa
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1136,6 +1138,7 @@ def test_car_modal_share_delta_by_iteration_uses_saved_home_zone_states(monkeypa
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1645,6 +1648,7 @@ def test_plot_delta_by_iteration_can_compare_mean_utility(monkeypatch, tmp_path)
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1732,6 +1736,7 @@ def test_plot_delta_by_iteration_can_compare_ghg_emissions(monkeypatch, tmp_path
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1849,6 +1854,7 @@ def test_plot_delta_by_iteration_can_compare_relative_ghg_emissions(monkeypatch,
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -2091,6 +2097,7 @@ def test_plot_delta_by_iteration_can_auto_cap_outliers(monkeypatch, tmp_path):
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -2296,6 +2303,7 @@ def test_modal_share_delta_gifs_by_iteration_writes_one_gif_per_mode(monkeypatch
         population=SimpleNamespace(name="population"),
     )
     reference_run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -2398,6 +2406,7 @@ def test_modal_share_delta_gif_global_delta_uses_inner_zone_scope(monkeypatch, t
         population=None,
     )
     reference_run = SimpleNamespace(
+        table_asset=True,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},

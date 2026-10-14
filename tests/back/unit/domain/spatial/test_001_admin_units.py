@@ -65,7 +65,9 @@ def test_001_french_admin_units_prepare_communes_with_parent_codes(tmp_path, mon
 
     monkeypatch.setattr("mobility.spatial.admin_units.gpd.read_file", fake_read_file)
 
-    admin_units = FrenchAdminUnits(level="commune").get()
+    admin_units_asset = FrenchAdminUnits(level="commune")
+    admin_units_asset.cache_path.parent.mkdir(parents=True, exist_ok=True)
+    admin_units = admin_units_asset.create_and_get_asset()
 
     assert set(admin_units["admin_id"]) == {"fr-75101", "fr-33063"}
 
