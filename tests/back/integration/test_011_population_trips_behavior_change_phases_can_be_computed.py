@@ -105,33 +105,33 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
 
     mode_replanning_dest_keys = (
         destination_sequences_2
-        .select(["demand_group_id", "activity_seq_id", "dest_seq_id"])
+        .select(["home_zone_id", "activity_seq_id", "dest_seq_id"])
         .unique()
     )
     initial_dest_keys = (
         destination_sequences_1
-        .select(["demand_group_id", "activity_seq_id", "dest_seq_id"])
+        .select(["home_zone_id", "activity_seq_id", "dest_seq_id"])
         .unique()
     )
     destination_replanning_activity_keys = (
         destination_sequences_3
-        .select(["demand_group_id", "activity_seq_id"])
+        .select(["home_zone_id", "activity_seq_id"])
         .unique()
     )
     mode_replanning_activity_keys = (
         destination_sequences_2
-        .select(["demand_group_id", "activity_seq_id"])
+        .select(["home_zone_id", "activity_seq_id"])
         .unique()
     )
 
     new_dest_keys_in_mode_replanning = mode_replanning_dest_keys.join(
         initial_dest_keys,
-        on=["demand_group_id", "activity_seq_id", "dest_seq_id"],
+        on=["home_zone_id", "activity_seq_id", "dest_seq_id"],
         how="anti",
     )
     new_activity_keys_in_destination_replanning = destination_replanning_activity_keys.join(
         mode_replanning_activity_keys,
-        on=["demand_group_id", "activity_seq_id"],
+        on=["home_zone_id", "activity_seq_id"],
         how="anti",
     )
 
