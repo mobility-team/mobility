@@ -43,8 +43,7 @@ def test_trace_diagnostics_do_not_collect_inputs_when_trace_is_disabled(caplog):
 def test_log_destination_sequence_diagnostics_reports_one_step_sequences(caplog):
     source_activity_sequences = pl.DataFrame(
         {
-            "demand_group_id": [1, 1, 2],
-            "demand_subgroup_id": [0, 0, 0],
+            "home_zone_id": [1, 1, 2],
             "activity_seq_id": [10, 10, 20],
             "time_seq_id": [100, 100, 200],
             "seq_step_index": [0, 1, 0],
@@ -53,8 +52,7 @@ def test_log_destination_sequence_diagnostics_reports_one_step_sequences(caplog)
     )
     destination_sequences = pl.DataFrame(
         {
-            "demand_group_id": [1, 1, 2],
-            "demand_subgroup_id": [0, 0, 0],
+            "home_zone_id": [1, 1, 2],
             "activity_seq_id": [10, 10, 20],
             "time_seq_id": [100, 100, 200],
             "dest_seq_id": [1000, 1000, 2000],
@@ -81,8 +79,7 @@ def test_log_destination_sequence_diagnostics_reports_one_step_sequences(caplog)
 def test_log_destination_sequence_diagnostics_skips_warning_for_complete_sequences(caplog):
     destination_sequences = pl.DataFrame(
         {
-            "demand_group_id": [1, 1],
-            "demand_subgroup_id": [0, 0],
+            "home_zone_id": [1, 1],
             "activity_seq_id": [10, 10],
             "time_seq_id": [100, 100],
             "dest_seq_id": [1000, 1000],
@@ -283,8 +280,8 @@ def test_log_step_dropout_diagnostics_can_trace_costs_without_transport_zones(ca
 def test_log_location_chain_diagnostics_reports_invalid_unique_chains(caplog):
     destination_steps = pl.DataFrame(
         {
-            "demand_group_id": [1, 1, 2],
-            "demand_subgroup_id": [0, 0, 0],
+            "home_zone_id": [1, 1, 2],
+            "utility_profile_id": [0, 0, 0],
             "activity_seq_id": [10, 10, 20],
             "time_seq_id": [100, 100, 200],
             "dest_seq_id": [1000, 1000, 2000],
@@ -295,8 +292,8 @@ def test_log_location_chain_diagnostics_reports_invalid_unique_chains(caplog):
     )
     trip_chains = pl.DataFrame(
         {
-            "demand_group_id": [1, 2],
-            "demand_subgroup_id": [0, 0],
+            "home_zone_id": [1, 2],
+            "utility_profile_id": [0, 0],
             "activity_seq_id": [10, 20],
             "time_seq_id": [100, 200],
             "dest_seq_id": [1000, 2000],

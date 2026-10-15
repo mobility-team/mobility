@@ -46,6 +46,8 @@ parameters = mobility.GroupDayTripsParameters(
 
 `simulate_weekend=False` means that only weekday runs are enabled. Set it to `True` if the study needs weekend results.
 
+During full replanning, Mobility samples three survey schedules per home zone by default. Schedules are drawn with replacement from those compatible with the activity sets of groups in that zone. The default `activity_support_threshold=0.02` includes an activity in a CSP's allowed set when at least 2% of its survey-weighted schedules include it. Extra weighted draws cover activity profiles missed by the initial sample. Set `k_activity_sequences=None` to use every eligible schedule.
+
 ## Behaviour Change Phases
 
 Behaviour change phases describe which plans can change during each part of the run.
@@ -94,33 +96,6 @@ parameters_report = weekday_run.parameters_dataframe()
 
 This helps you explain later how a result was produced, which parameters changed, and which assumptions were held constant.
 
-## Try Complete Destination-Plan Search
-
-The existing step-by-step destination sampler remains the default. To try the
-bounded Rust search, enable it explicitly:
-
-```python
-from mobility import (
-    GroupDayTripsDestinationSequenceParameters,
-    GroupDayTripsParameters,
-)
-
-parameters = GroupDayTripsParameters(
-    destination_sequences=GroupDayTripsDestinationSequenceParameters(
-        use_destination_plan_search=True,
-    )
-)
-```
-
-The search uses `plan_update.transition_logit_scale` when ranking complete
-destination plans. The same scale is then used when choosing between plans.
-The destination-sequence `alpha` parameter only applies to the legacy
-step-by-step sampler.
-
-This search chooses and ranks complete destination chains together. It returns
-the best chains found by a bounded search; it does not prove that no better
-chain was omitted.
-
 ## Vary Mode Costs Between Population Segments
 
 Define population segments once on the population, then refer to
@@ -152,9 +127,6 @@ population = mobility.Population(
 parameters = mobility.GroupDayTripsParameters(
     demand_groups=mobility.GroupDayTripsDemandGroupParameters(
         max_persons_per_demand_subgroup=50,
-    ),
-    destination_sequences=mobility.GroupDayTripsDestinationSequenceParameters(
-        use_destination_plan_search=True,
     ),
 )
 
@@ -198,7 +170,8 @@ curve. Define an iteration curve explicitly inside the segment value when the
 segment should also change over time.
 
 Mobility deduplicates identical coefficient combinations into utility
-profiles. The same profile is used to rank destination plans, search mode
-sequences, and compute final plan utility. Segment shares do not start separate
-model runs: Mobility resolves each distinct segment-membership combination once
-and searches all resulting profiles together.
+profiles. The same profile is used to search mode sequences and compute final
+plan utility. Destination sequences are sampled once per schedule and home
+zone. Segment shares do not start separate model runs: Mobility resolves each
+distinct segment-membership combination once and searches all resulting
+profiles together.

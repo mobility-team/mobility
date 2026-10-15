@@ -13,7 +13,7 @@ from mobility.runtime.assets.resolver import (
 )
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
-from mobility.trips.group_day_trips.plans.plan_ids import PLAN_STEP_KEY_SCHEMA
+from mobility.trips.group_day_trips.plans.demand_subgroups import DEMAND_UNIT_COLS
 
 from ..stable_key_index import StableKeyIndex
 from .assemble import (
@@ -28,20 +28,10 @@ from .search_rust import run_rust_mode_sequence_search
 
 
 class ModeSequences(InMemoryAsset):
-    """Build candidate mode sequences for one PopulationGroupDayTrips iteration.
+    """Generate mode candidates by home zone and utility profile.
 
-    This asset takes already-spatialized destination chains and enriches them with
-    feasible travel mode sequences. For each unique destination sequence, it runs
-    the configured mode-sequence search backend, then joins the resulting long-form
-    mode choices back onto every matching demand-group/activity/time chain.
-
-    The returned output is a row-per-step table keyed by:
-    - `demand_group_id`
-    - `activity_seq_id`
-    - `time_seq_id`
-    - `dest_seq_id`
-    - `mode_seq_id`
-    - `seq_step_index`
+    Destination chains are shared by home zone. Search runs for each utility
+    profile present in that zone; complete plans are attached to demand units later.
 
     Each `mode_seq_id` is a stable sequence index derived from the ordered
     step-level mode choices. This allows downstream plan-update code to treat a
@@ -58,7 +48,13 @@ class ModeSequences(InMemoryAsset):
     """
 
     REQUIRED_SCHEMA = {
-        **PLAN_STEP_KEY_SCHEMA,
+        "home_zone_id": pl.Int32,
+        "utility_profile_id": pl.UInt32,
+        "activity_seq_id": pl.UInt32,
+        "time_seq_id": pl.UInt32,
+        "dest_seq_id": pl.UInt32,
+        "mode_seq_id": pl.UInt32,
+        "seq_step_index": pl.UInt8,
     }
 
     def __init__(
@@ -80,7 +76,7 @@ class ModeSequences(InMemoryAsset):
         self.parameters = parameters
         self.sequence_index: pl.DataFrame | None = None
         inputs = {
-            "version": 6,
+            "version": 8,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "previous_state": previous_state,
@@ -145,18 +141,36 @@ class ModeSequences(InMemoryAsset):
             else None
         )
         demand_groups = getattr(self.destination_sequences, "demand_groups", None)
+        if demand_groups is None and self.destination_sequences.previous_state is not None:
+            demand_groups = self.destination_sequences.previous_state.get().demand_groups
 
         log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:destination_chains",
             destination_chains=destination_steps,
         )
 
+        if destination_steps.height == 0:
+            empty_keys = pl.DataFrame(schema={"mode_sequence_key": pl.String})
+            _, self.sequence_index = StableKeyIndex(
+                key_cols=["mode_sequence_key"],
+                index_col="mode_seq_id",
+                first_new_id=1,
+            ).extend(
+                empty_keys,
+                previous_index=self.previous_sequence_index,
+            )
+            return pl.DataFrame(
+                schema={
+                    **self.REQUIRED_SCHEMA,
+                    "mode": pl.String,
+                    "iteration": pl.UInt16,
+                }
+            )
+
         use_rust_search = self.parameters.mode_sequences.use_rust_mode_sequence_search
 
         if demand_groups is None:
-            profile_assignments = destination_steps.select(
-                ["demand_group_id", "demand_subgroup_id"]
-            ).unique().with_columns(
+            zone_profiles = destination_steps.select("home_zone_id").unique().with_columns(
                 utility_profile_id=pl.lit(0, dtype=pl.UInt32)
             )
             utility_profiles = None
@@ -167,9 +181,19 @@ class ModeSequences(InMemoryAsset):
                     self.population_segments,
                 )
             )
+            zone_profiles = (
+                profile_assignments
+                .join(
+                    demand_groups.select(DEMAND_UNIT_COLS + ["home_zone_id"]),
+                    on=DEMAND_UNIT_COLS,
+                )
+                .select(["home_zone_id", "utility_profile_id"])
+                .unique()
+            )
         destination_steps = destination_steps.join(
-            profile_assignments,
-            on=["demand_group_id", "demand_subgroup_id"],
+            zone_profiles,
+            on="home_zone_id",
+            how="inner",
         )
         trip_chains, unique_destination_chains = build_location_chains(destination_steps)
 

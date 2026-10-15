@@ -134,7 +134,7 @@ def test_survey_plan_assets_return_weighted_step_level_plans():
     assert plan_steps["mode"].to_list() == ["car", "walk"]
     assert plan_steps["plan_weight_mass"].to_list() == [4.0, 4.0]
     assert plans["p_plan"].to_list() == [1.0]
-    assert "plan_weight_mass" not in plans.columns
+    assert plans["plan_weight_mass"].to_list() == [4.0]
 
 
 def test_survey_plan_steps_truncate_to_ten_trips_then_force_last_trip_home():

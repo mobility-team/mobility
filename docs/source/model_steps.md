@@ -20,19 +20,19 @@ Mobility prepares:
 - observed mobility patterns from surveys,
 - transport costs between zones for each mode.
 
-More concretely, Mobility first generates activity-motive sequences for residents of each transport zone. These sequences depend on the resident profile, including socio-professional category, household car ownership, household size, and urban setting. Mobility also estimates the activity-time needs attached to each step of the sequence.
+More concretely, Mobility derives each demand group's allowed activity set from survey-weighted participation by socio-professional category (CSP), with a country-level fallback when no CSP activity passes the support threshold. It pools compatible survey schedules by home zone, then associates a schedule with a demand group when all its non-home activities are allowed. Activity durations are estimated separately for each group.
 
 At the same time, Mobility computes available opportunities by motive and by zone. Raw opportunity proxies, such as jobs or shops, are normalized within each activity and converted into `opportunity_capacity`. In this model, an opportunity is available activity time. Work opportunities are the amount of work activity that can be assigned to a destination.
 
 ## First Plans
 
-For each population group, Mobility builds daily activity plans.
+Mobility builds a shared set of daily plan candidates and then attaches compatible candidates to demand groups.
 
 The model combines:
 
-- the activity sequence,
-- possible destinations,
-- possible mode sequences,
+- survey-weighted activity schedules sampled for a home zone,
+- one sampled destination sequence for each schedule and home zone,
+- candidate mode sequences searched for each home zone and utility profile,
 - travel costs,
 - available opportunities.
 
@@ -122,12 +122,14 @@ The loop can be read in this order:
 
 1. Compute generalized transport costs for each motive, origin, and destination. The first iteration starts without congestion.
 2. Compute destination-choice probabilities from the motive, trip origin, home zone, and generalized costs.
-3. Sample a destination sequence for each activity sequence, home zone, and socio-professional category.
-4. Search candidate mode sequences for the resulting trip sequence. The number of candidates is controlled by `GroupDayTripsModeSequenceParameters.k_mode_sequences`, which defaults to 3.
-5. Compute flows by origin-destination pair and by mode, then refresh generalized costs. Congestion can be applied at this step when the mode and parameters allow it.
-6. Select the share of people whose plan should change. This depends on destination opportunity saturation, possible comparative improvements, and a random change share.
-7. Update the remaining opportunities at destinations.
-8. Repeat the procedure for the people whose plans are still open to change.
+3. Sample activity schedules with replacement from the schedules supported by demand groups in each home zone. A weighted extra draw covers any activity profile missed by the initial sample.
+4. Sample one destination sequence for each schedule and home zone.
+5. Search candidate mode sequences for each home zone and utility profile. The number of candidates is controlled by `GroupDayTripsModeSequenceParameters.k_mode_sequences`, which defaults to 3.
+6. Attach the surviving candidates to demand groups whose activity set and utility profile match, then compute plan utilities and transition probabilities for each group.
+7. Compute flows by origin-destination pair and by mode, then refresh generalized costs. Congestion can be applied at this step when the mode and parameters allow it.
+8. Select the share of people whose plan should change. This depends on destination opportunity saturation, possible comparative improvements, and a random change share.
+9. Update the remaining opportunities at destinations.
+10. Repeat the procedure for the people whose plans are still open to change.
 
 This iterative structure is why model outputs should be read with diagnostics. A scenario comparison is easier to interpret when the iteration metrics show that the model has behaved consistently for the study question.
 

@@ -122,7 +122,7 @@ class InitialIterationStateAsset(InMemoryAsset):
             sensitivity_case=sensitivity_case,
         )
         inputs = {
-            "version": 5,
+            "version": 6,
             "is_weekday": is_weekday,
             "sensitivity_case": sensitivity_case,
             "population": population,
@@ -148,6 +148,7 @@ class InitialIterationStateAsset(InMemoryAsset):
             "mode_values": get_mode_values(modes, "stay_home"),
             "run_seed": parameters.run.seed,
             "demand_group_parameters": parameters.demand_groups,
+            "activity_support_threshold": parameters.activity_sequences.activity_support_threshold,
             "min_activity_time_constant": parameters.plan_update.min_activity_time_constant,
             "initial_transport_costs": initial_transport_costs,
         }
@@ -663,7 +664,7 @@ class IterationStateAsset(Asset):
         self._loaded_checkpoint = False
         self._checkpoint_saved = False
         inputs = {
-            "version": 7,
+            "version": 8,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,

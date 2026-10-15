@@ -7,6 +7,7 @@ from mobility.surveys import SurveyPlanAssets
 from mobility.transport.modes.core.mode_values import get_mode_values
 from .demand_subgroups import DEMAND_UNIT_COLS, split_demand_groups
 from .plan_ids import add_plan_id
+from .activity_profiles import get_activity_supports
 
 
 class PlanInitializer:
@@ -69,6 +70,7 @@ class PlanInitializer:
                 "csp",
                 "n_cars",
                 "is_weekday",
+                "plan_weight_mass",
                 "p_plan",
             ]
         )
@@ -110,24 +112,28 @@ class PlanInitializer:
         survey_plans = (
             survey_plans
             .filter(pl.col("is_weekday") == is_weekday)
-            .drop("is_weekday")
             .group_by(
                 [
                     "country",
                     "city_category",
                     "csp",
                     "n_cars",
+                    "is_weekday",
                     "activity_seq_id",
                     "time_seq_id",
                 ]
             )
-            .agg(p_plan=pl.col("p_plan").sum())
+            .agg(
+                plan_weight_mass=pl.col("plan_weight_mass").sum(),
+                p_plan=pl.col("p_plan").sum(),
+            )
             .sort(
                 [
                     "country",
                     "city_category",
                     "csp",
                     "n_cars",
+                    "is_weekday",
                     "activity_seq_id",
                     "time_seq_id",
                 ]
@@ -137,6 +143,23 @@ class PlanInitializer:
             survey_plan_steps
             .unique(subset=["activity_seq_id", "time_seq_id", "seq_step_index"], keep="first")
             .sort(["activity_seq_id", "time_seq_id", "seq_step_index"])
+        )
+
+        activity_supports, country_supports = get_activity_supports(
+            survey_plans=survey_plans,
+            survey_plan_steps=survey_plan_steps,
+            threshold=parameters.activity_sequences.activity_support_threshold,
+        )
+        demand_groups = (
+            demand_groups
+            .join(activity_supports, on=["country", "csp"], how="left")
+            .join(country_supports, on="country", how="left", suffix="_country")
+            .with_columns(
+                allowed_activities=pl.coalesce(
+                    [pl.col("allowed_activities"), pl.col("allowed_activities_country")]
+                )
+            )
+            .drop("allowed_activities_country")
         )
 
         return survey_plans, survey_plan_steps, demand_groups

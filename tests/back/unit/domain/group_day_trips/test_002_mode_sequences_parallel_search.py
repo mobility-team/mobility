@@ -48,6 +48,8 @@ def _mode_sequence_parameters(
 def test_build_location_chains_fails_on_one_location_chain():
     destination_steps = pl.DataFrame(
         {
+            "home_zone_id": [100],
+            "utility_profile_id": [0],
             "demand_group_id": [1],
             "demand_subgroup_id": [0],
             "activity_seq_id": [10],
@@ -57,6 +59,8 @@ def test_build_location_chains_fails_on_one_location_chain():
             "from": [100],
         },
         schema={
+            "home_zone_id": pl.Int32,
+            "utility_profile_id": pl.UInt32,
             "demand_group_id": pl.UInt32,
             "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
@@ -74,6 +78,8 @@ def test_build_location_chains_fails_on_one_location_chain():
 def test_build_location_chains_fails_when_destination_sequence_id_has_multiple_location_chains():
     destination_steps = pl.DataFrame(
         {
+            "home_zone_id": [100, 100, 300, 300],
+            "utility_profile_id": [0, 0, 0, 0],
             "demand_group_id": [1, 1, 2, 2],
             "demand_subgroup_id": [0, 0, 0, 0],
             "activity_seq_id": [10, 10, 10, 10],
@@ -83,6 +89,8 @@ def test_build_location_chains_fails_when_destination_sequence_id_has_multiple_l
             "from": [100, 200, 300, 400],
         },
         schema={
+            "home_zone_id": pl.Int32,
+            "utility_profile_id": pl.UInt32,
             "demand_group_id": pl.UInt32,
             "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
@@ -100,6 +108,7 @@ def test_build_location_chains_fails_when_destination_sequence_id_has_multiple_l
 def test_same_destination_sequence_can_have_one_chain_per_utility_profile():
     destination_steps = pl.DataFrame(
         {
+            "home_zone_id": [100, 100, 100, 100],
             "demand_group_id": [1, 1, 2, 2],
             "demand_subgroup_id": [0, 0, 0, 0],
             "utility_profile_id": [0, 0, 1, 1],

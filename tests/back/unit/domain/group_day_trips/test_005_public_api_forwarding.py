@@ -112,7 +112,6 @@ def test_group_day_trips_wrapper_uses_explicit_nested_parameters(monkeypatch):
             ),
             activity_sequences=GroupDayTripsActivitySequenceParameters(k_activity_sequences=5),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
-                k_destination_sequences=6,
                 refresh_active_mode_alternatives=True,
             ),
             mode_sequences=GroupDayTripsModeSequenceParameters(use_rust_mode_sequence_search=True),
@@ -139,7 +138,6 @@ def test_group_day_trips_wrapper_uses_explicit_nested_parameters(monkeypatch):
 
     assert parameters.run.n_iterations == 4
     assert parameters.activity_sequences.k_activity_sequences == 5
-    assert parameters.destination_sequences.k_destination_sequences == 6
     assert parameters.plan_update.n_warmup_iterations == 2
     assert parameters.plan_update.max_inactive_age == 3
     assert parameters.destination_sequences.refresh_active_mode_alternatives is True
