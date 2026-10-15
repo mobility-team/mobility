@@ -165,7 +165,7 @@ class GroupDayTripsSensitivityAnalysis:
             name,
             output="table",
             **kwargs,
-        )
+        ).get()
         zone_columns = GroupDayTripsResultMetrics._zone_columns(by_zone)
         zone_column = zone_columns[0] if len(zone_columns) == 1 else None
         variable_column = (

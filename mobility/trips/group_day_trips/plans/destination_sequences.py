@@ -1,11 +1,17 @@
 import logging
 import pathlib
+import shutil
 from typing import Any
 
 import polars as pl
 from scipy.stats import norm
 
-from mobility.runtime.assets.cache_schema import read_cached_parquet
+from mobility.runtime.assets.asset import Asset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.resolver import (
+    asset_resolution_context,
+    get_current_asset_resolver,
+)
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from .debug_logs import (
     log_destination_sequence_diagnostics,
@@ -15,7 +21,6 @@ from .debug_logs import (
     log_step_dropout_diagnostics,
 )
 from .stable_key_index import StableKeyIndex
-from mobility.runtime.assets.file_asset import FileAsset
 from mobility.activities.activity import resolve_activity_parameters
 from mobility.runtime.parameter_values import SensitivityCase
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
@@ -23,8 +28,8 @@ from .demand_subgroups import DEMAND_UNIT_COLS, DEMAND_UNIT_SCHEMA, demand_unit_
 from .destination_plan_search import sample_destination_plans
 
 
-class DestinationSequences(FileAsset):
-    """Persist destination sequences produced for one PopulationGroupDayTrips iteration."""
+class DestinationSequences(InMemoryAsset):
+    """Build destination sequences for one PopulationGroupDayTrips iteration."""
 
     OUTPUT_SCHEMA = {
         "demand_group_id": pl.UInt32,
@@ -55,11 +60,9 @@ class DestinationSequences(FileAsset):
         *,
         is_weekday: bool,
         iteration: int,
-        base_folder: pathlib.Path,
-        previous_state: FileAsset | None = None,
-        previous_destination_sequences: FileAsset | None = None,
-        seed_asset: FileAsset | None = None,
-        activity_sequences: FileAsset | None = None,
+        previous_state: Asset | None = None,
+        seed_asset: Asset | None = None,
+        activity_sequences: Asset | None = None,
         activities: list[Any] | None = None,
         resolved_activity_parameters: dict[str, Any] | None = None,
         scenario: str | None = None,
@@ -77,7 +80,7 @@ class DestinationSequences(FileAsset):
         seed: int | None = None,
     ) -> None:
         self.previous_state = previous_state
-        self.previous_destination_sequences = previous_destination_sequences
+        self.previous_sequence_index: pl.DataFrame | None = None
         self.seed_asset = seed_asset
         self.activity_sequences = activity_sequences
         self.activities = activities
@@ -108,14 +111,14 @@ class DestinationSequences(FileAsset):
         self.population_segments = population_segments or []
         self.parameters = parameters
         self.seed = seed
+        self.sequence_index: pl.DataFrame | None = None
         inputs = {
             "version": 12,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
-            "activity_sequences_asset": activity_sequences if isinstance(activity_sequences, FileAsset) else None,
+            "activity_sequences_asset": activity_sequences,
             "previous_state": previous_state,
-            "previous_destination_sequences": previous_destination_sequences,
             "seed_asset": seed_asset,
             # Destination choice only needs the resolved activity/scenario values
             # and the current cost table. Run does not need to know these details.
@@ -143,40 +146,71 @@ class DestinationSequences(FileAsset):
             ),
             "seed": seed,
         }
-        cache_path = {
-            "sequences": pathlib.Path(base_folder) / f"destination_sequences_{iteration}.parquet",
-            "index": pathlib.Path(base_folder) / f"destination_sequence_index_{iteration}.parquet",
-        }
-        super().__init__(inputs, cache_path)
-
-
-    def get_cached_asset(self) -> pl.DataFrame:
-        """Return cached destination sequences for one iteration."""
-        return read_cached_parquet(
-            self.cache_path["sequences"],
-            table_name="destination_sequences",
-            required_schema=self.REQUIRED_SCHEMA,
-        )
+        super().__init__(inputs)
 
 
     def get_index(self) -> pl.DataFrame:
-        """Return the destination-sequence index cached with this iteration."""
-        return pl.read_parquet(self.cache_path["index"])
+        """Return the destination-sequence index built with this iteration."""
+        self.get()
+        if self.sequence_index is None:
+            raise RuntimeError("Destination sequences have no sequence index.")
+        return self.sequence_index
+
+    def get(self, *args, **kwargs) -> pl.DataFrame:
+        """Return destination sequences and spill their stable index together."""
+        resolver = get_current_asset_resolver()
+        if resolver is None:
+            with asset_resolution_context() as resolver:
+                return self._get_with_resolver(resolver, *args, **kwargs)
+        return self._get_with_resolver(resolver, *args, **kwargs)
+
+    def _get_with_resolver(self, resolver, *args, **kwargs) -> pl.DataFrame:
+        return resolver.get_in_memory_asset(
+            self,
+            lambda: self.create_and_get_asset(*args, **kwargs),
+            spill_to_disk=self._spill_sequences,
+            load_from_disk=self._load_spilled_sequences,
+        )
+
+    def _spill_sequences(self, sequences: pl.DataFrame, path: pathlib.Path) -> None:
+        """Spill sampled rows and their stable index as one transient asset."""
+        if path.exists():
+            shutil.rmtree(path)
+        path.mkdir(parents=True)
+        sequences.write_parquet(path / "sequences.parquet")
+        if self.sequence_index is not None:
+            self.sequence_index.write_parquet(path / "sequence_index.parquet")
+
+    def _load_spilled_sequences(self, path: pathlib.Path) -> pl.DataFrame:
+        """Restore sampled rows and the matching stable index."""
+        index_path = path / "sequence_index.parquet"
+        self.sequence_index = (
+            pl.read_parquet(index_path)
+            if index_path.exists()
+            else None
+        )
+        return pl.read_parquet(path / "sequences.parquet")
 
 
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Compute and persist destination sequences for one iteration."""
-        get_group_day_trips_progress().iteration_step(self.iteration, "destination sequences")
-        self._load_missing_runtime_inputs_from_previous_state()
-        if self.seed is None and self.seed_asset is not None:
-            self.seed = self.seed_asset.get()["destination_sequences"]
+        """Compute destination sequences for one iteration."""
+        try:
+            get_group_day_trips_progress().iteration_step(self.iteration, "destination sequences")
+            self._load_missing_runtime_inputs_from_previous_state()
+            if self.seed is None and self.seed_asset is not None:
+                self.seed = self.seed_asset.get()["destination_sequences"]
 
-        scope = self.parameters.behavior_change.scope_at(self.iteration)
-        destination_sequences = self._build_destination_sequences_for_scope(scope)
-
-        self.cache_path["sequences"].parent.mkdir(parents=True, exist_ok=True)
-        destination_sequences.write_parquet(self.cache_path["sequences"])
-        return self.get_cached_asset()
+            scope = self.parameters.behavior_change.scope_at(self.iteration)
+            return self._build_destination_sequences_for_scope(scope)
+        finally:
+            if self.previous_state is not None:
+                self.current_plans = None
+                self.current_plan_steps = None
+                self.destination_saturation = None
+                self.activity_durations = None
+                self.demand_groups = None
+                self.costs = None
+                self.previous_sequence_index = None
 
     def _load_missing_runtime_inputs_from_previous_state(self) -> None:
         """Fill runtime dataframes from the cached state produced by the previous iteration."""
@@ -184,6 +218,7 @@ class DestinationSequences(FileAsset):
             return
 
         state = self.previous_state.get()
+        self.previous_sequence_index = state.destination_sequence_index
         if self.current_plans is None:
             self.current_plans = state.current_plans
         if self.current_plan_steps is None:
@@ -222,7 +257,7 @@ class DestinationSequences(FileAsset):
             self.activities,
             self.transport_zones,
             self.destination_saturation,
-            self.activity_sequences.get_cached_asset(),
+            self.activity_sequences.get(),
             self.demand_groups,
             self.costs,
             self.parameters,
@@ -231,7 +266,7 @@ class DestinationSequences(FileAsset):
 
     def _sample_active_destination_sequences(self) -> pl.DataFrame:
         """Sample destination sequences for currently active activity sequences only."""
-        filtered_sequences = self.activity_sequences.get_cached_asset()
+        filtered_sequences = self.activity_sequences.get()
         if filtered_sequences.height == 0:
             self._cache_empty_destination_sequence_index()
             return self._empty_destination_sequences()
@@ -335,16 +370,17 @@ class DestinationSequences(FileAsset):
         return pl.DataFrame(schema=self.OUTPUT_SCHEMA)
 
     def _cache_empty_destination_sequence_index(self) -> None:
-        """Write a carried-forward destination index when no new sequence is sampled."""
+        """Carry forward the destination index when no sequence is sampled."""
         empty_keys = pl.DataFrame(schema={"destination_sequence_key": pl.String})
-        StableKeyIndex(
+        _, self.sequence_index = StableKeyIndex(
             key_cols=["destination_sequence_key"],
             index_col="dest_seq_id",
             first_new_id=1,
-        ).extend_and_cache(
+        ).extend(
             empty_keys,
-            previous_asset=self.previous_destination_sequences,
-            index_path=self.cache_path["index"],
+            previous_index=(
+                self.previous_sequence_index
+            ),
         )
 
     def run(
@@ -472,14 +508,15 @@ class DestinationSequences(FileAsset):
             .agg(dest_draw_id=pl.col("dest_draw_id").min())
             .sort(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"])
         )
-        destination_sequences, _ = StableKeyIndex(
+        destination_sequences, self.sequence_index = StableKeyIndex(
             key_cols=["destination_sequence_key"],
             index_col="dest_seq_id",
             first_new_id=1,
-        ).extend_and_cache(
+        ).extend(
             destination_sequences,
-            previous_asset=self.previous_destination_sequences,
-            index_path=self.cache_path["index"],
+            previous_index=(
+                self.previous_sequence_index
+            ),
         )
         destination_sequences = (
             complete_activity_sequences

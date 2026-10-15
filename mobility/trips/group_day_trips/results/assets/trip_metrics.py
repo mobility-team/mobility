@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import os
-import pathlib
-
 import polars as pl
 
-from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.asset import Asset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 
 from .person_metrics import (
     DEMAND_GROUP_COLUMNS,
@@ -19,14 +17,14 @@ from .person_metrics import (
 )
 
 
-class TripCountMetric(FileAsset):
-    """Persist weighted trip counts across selected replications."""
+class TripCountMetric(InMemoryAsset):
+    """Compute weighted trip counts across selected replications."""
 
     def __init__(
         self,
         *,
-        plan_steps: FileAsset,
-        demand_groups: FileAsset,
+        plan_steps: Asset,
+        demand_groups: Asset,
         transport_zones,
         output_column: str,
         group_columns: list[str],
@@ -41,17 +39,8 @@ class TripCountMetric(FileAsset):
         self.per_person = per_person
         self.inner_zone_residents_only = inner_zone_residents_only
 
-        project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
-        group_part = "all" if not self.group_columns else "-".join(self.group_columns)
-        scope_part = "inner-zone-residents" if inner_zone_residents_only else "all-residents"
-        cache_path = (
-            project_folder
-            / "group_day_trips"
-            / "results"
-            / f"{output_column}_by_{group_part}_{scope_part}.parquet"
-        )
         inputs = {
-            "version": 4,
+            "version": 5,
             "plan_steps": plan_steps,
             "demand_groups": demand_groups,
             "transport_zones": transport_zones,
@@ -60,14 +49,10 @@ class TripCountMetric(FileAsset):
             "per_person": per_person,
             "inner_zone_residents_only": inner_zone_residents_only,
         }
-        super().__init__(inputs, cache_path)
-
-    def get_cached_asset(self) -> pl.DataFrame:
-        """Return the cached metric table."""
-        return pl.read_parquet(self.cache_path)
+        super().__init__(inputs)
 
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Build and cache the trip-count table."""
+        """Build the trip-count table."""
         needed_demand_columns = [
             column
             for column in self.group_columns
@@ -124,8 +109,6 @@ class TripCountMetric(FileAsset):
             .collect(engine="streaming")
         )
 
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        metric.write_parquet(self.cache_path)
         return metric
 
     def _divide_by_population(self, trips: pl.LazyFrame) -> pl.LazyFrame:

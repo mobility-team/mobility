@@ -55,6 +55,7 @@ def _build_group_day_trips(test_data, gtfs_sources_folder):
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
             outputs=GroupDayTripsOutputParameters(
                 cache_iteration_events=True,
+                checkpoint_each_iteration=True,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
                 dest_prob_cutoff=0.9,
@@ -74,37 +75,37 @@ def _build_group_day_trips(test_data, gtfs_sources_folder):
     ],
     scope="session",
 )
-def test_008e_group_day_trips_reuses_cached_iteration_state(test_data, gtfs_sources_folder):
+def test_008e_group_day_trips_resumes_from_saved_iteration_checkpoint(test_data, gtfs_sources_folder):
     pop_trips = _build_group_day_trips(test_data, gtfs_sources_folder)
     run = pop_trips.run("weekday")
     run.remove()
 
-    first_result = run.get()
-    first_plan_steps = first_result["plan_steps"].collect()
-    first_transitions = first_result["transitions"].collect()
-    first_iteration_metrics = first_result["iteration_metrics"].collect()
-    final_state_path = run.final_iteration_state.cache_path["current_plans"]
+    run.get()
+    first_plan_steps = run.table("plan_steps")
+    first_transitions = run.table("transitions")
+    first_iteration_metrics = run.table("iteration_metrics")
+    final_state_path = run.iterations.iteration(2).checkpoint_assets()[
+        "current_plans"
+    ].cache_path
     final_state_mtime = final_state_path.stat().st_mtime
 
     assert first_plan_steps.height > 0
     assert first_transitions.height > 0
     assert first_iteration_metrics["iteration"].to_list() == [1, 2]
 
-    # Remove only the final run outputs. The content-addressed iteration state
-    # cache stays in place, so the next identical run can skip the iteration loop
-    # and rebuild only the final output tables.
-    for path in run.cache_path.values():
-        path.unlink(missing_ok=True)
-
+    # Checkpointing is opt-in. The next identical run resumes from these saved
+    # states while rebuilding its transient result tables in memory.
     rerun = _build_group_day_trips(test_data, gtfs_sources_folder).run("weekday")
     assert rerun.final_iteration_state.inputs_hash == run.final_iteration_state.inputs_hash
 
-    result = rerun.get()
-    plan_steps = result["plan_steps"].collect()
-    transitions = result["transitions"].collect()
-    iteration_metrics = result["iteration_metrics"].collect()
+    rerun.get()
+    plan_steps = rerun.table("plan_steps")
+    transitions = rerun.table("transitions")
+    iteration_metrics = rerun.table("iteration_metrics")
 
-    assert rerun.final_iteration_state.cache_path["current_plans"].stat().st_mtime == final_state_mtime
+    assert rerun.iterations.iteration(2).checkpoint_assets()[
+        "current_plans"
+    ].cache_path.stat().st_mtime == final_state_mtime
     assert plan_steps.height > 0
     assert transitions.height > 0
     assert iteration_metrics.height == 2

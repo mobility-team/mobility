@@ -13,6 +13,7 @@ from mobility.trips.group_day_trips.core.parameters import (
     GroupDayTripsBehaviorChangeParameters,
     GroupDayTripsDestinationSequenceParameters,
     GroupDayTripsModeSequenceParameters,
+    GroupDayTripsOutputParameters,
     GroupDayTripsParameters,
     GroupDayTripsPeriodParameters,
     GroupDayTripsPlanUpdateParameters,
@@ -163,8 +164,8 @@ def test_group_day_trips_wrapper_uses_explicit_nested_parameters(monkeypatch):
     assert weekend_run.enabled is False
     assert weekday_run.replication == 2
     assert weekend_run.replication == 2
-    assert "iteration_metrics" not in weekday_run.cache_path
-    assert "iteration_metrics" not in weekend_run.cache_path
+    assert weekday_run.parameters.outputs.checkpoint_each_iteration is False
+    assert weekend_run.parameters.outputs.checkpoint_each_iteration is False
 
 
 def test_group_day_trips_wrapper_raises_when_population_country_has_no_matching_survey(monkeypatch):
@@ -207,16 +208,11 @@ def test_group_day_trips_wrapper_warns_when_some_surveys_will_not_be_used(monkey
     assert [survey.inputs["parameters"].country for survey in weekday_run.survey_plan_assets.surveys] == ["fr"]
 
 
-def test_group_day_trips_wrapper_exposes_iteration_metrics_when_child_runs_provide_them(monkeypatch):
-    class _FakeRunWithIterationMetrics(_FakeRun):
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
-            self.cache_path["iteration_metrics"] = self.cache_path["plan_steps"].with_name("iteration_metrics.parquet")
-
+def test_group_day_trips_wrapper_forwards_opt_in_iteration_checkpoints(monkeypatch):
     monkeypatch.setattr(PopulationGroupDayTrips, "_validate_modes", lambda self, modes: None)
     monkeypatch.setattr(PopulationGroupDayTrips, "_validate_activities", lambda self, activities: None)
     monkeypatch.setattr(PopulationGroupDayTrips, "_validate_surveys", lambda self, surveys: None)
-    monkeypatch.setattr(group_day_trips_module, "Run", _FakeRunWithIterationMetrics)
+    monkeypatch.setattr(group_day_trips_module, "Run", _FakeRun)
     monkeypatch.setattr(group_day_trips_module, "TransportCosts", lambda modes: SimpleNamespace(modes=modes))
     monkeypatch.setattr(group_day_trips_module, "SurveyPlanAssets", _FakeSurveyPlanAssets)
 
@@ -227,14 +223,15 @@ def test_group_day_trips_wrapper_exposes_iteration_metrics_when_child_runs_provi
         surveys=[_FakeSurvey("fr")],
         parameters=GroupDayTripsParameters(
             periods=GroupDayTripsPeriodParameters(simulate_weekend=True),
+            outputs=GroupDayTripsOutputParameters(checkpoint_each_iteration=True),
         ),
     )
 
     weekday_run = wrapper.run("weekday")
     weekend_run = wrapper.run("weekend")
 
-    assert "iteration_metrics" in weekday_run.cache_path
-    assert "iteration_metrics" in weekend_run.cache_path
+    assert weekday_run.parameters.outputs.checkpoint_each_iteration is True
+    assert weekend_run.parameters.outputs.checkpoint_each_iteration is True
 
 
 def test_parameters_seed_for_replication_uses_default_run_index_seeds():

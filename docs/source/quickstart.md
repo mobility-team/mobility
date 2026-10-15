@@ -70,7 +70,7 @@ population_trips = mobility.PopulationGroupDayTrips(
 
 # Run the weekday model.
 weekday_run = population_trips.run("weekday")
-weekday_plan_steps = weekday_run.get()["plan_steps"].collect()
+weekday_plan_steps = weekday_run.table("plan_steps")
 
 # Use population_trips.results(...) as the main entry point for indicators.
 weekday_results = population_trips.results("weekday")
@@ -78,7 +78,7 @@ trip_count_by_mode = weekday_results.metrics.trip_count(
     by_variable="mode",
     iterations="last",
     output="table",
-)
+).get()
 
 # Plot origin-destination flows between transport zones.
 od_flow_plot = weekday_results.metrics.trip_count(
@@ -154,13 +154,13 @@ weekday_run = population_trips.run("weekday")
 ### Read Outputs
 
 ```python
-weekday_plan_steps = weekday_run.get()["plan_steps"].collect()
+weekday_plan_steps = weekday_run.table("plan_steps")
 weekday_results = population_trips.results("weekday")
 trip_count_by_mode = weekday_results.metrics.trip_count(
     by_variable="mode",
     iterations="last",
     output="table",
-)
+).get()
 parameters_report = weekday_run.parameters_dataframe()
 ```
 

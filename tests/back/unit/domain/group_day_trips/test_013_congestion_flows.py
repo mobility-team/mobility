@@ -1,5 +1,3 @@
-import json
-
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.trips.group_day_trips.iterations.iteration_assets import CongestionFlowsAsset
 
@@ -103,19 +101,14 @@ def test_congestion_flows_reuses_previous_flows_when_refresh_is_not_due(tmp_path
     congestion_flows = CongestionFlowsAsset(
         is_weekday=True,
         iteration=3,
-        base_folder=tmp_path,
         previous_state=previous_state,
         transport_costs=transport_costs,
         n_iter_per_cost_update=2,
     )
 
     road_flow_asset = congestion_flows.get()
-    metadata = json.loads(congestion_flows.cache_path.read_text(encoding="utf-8"))
 
     assert road_flow_asset is previous_road_flow_asset
     assert congestion_flows.person_od_flows_by_mode is None
     assert transport_costs.build_calls == 0
     assert previous_congestion_flows.get_calls == 1
-    assert metadata["has_road_flow_asset"] is True
-    assert metadata["source"] == "previous"
-    assert congestion_flows.get_cached_asset() is previous_road_flow_asset

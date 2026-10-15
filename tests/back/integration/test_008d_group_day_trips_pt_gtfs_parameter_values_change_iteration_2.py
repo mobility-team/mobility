@@ -246,12 +246,9 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_parame
 
     static_run = static.run("weekday")
     dynamic_run = dynamic.run("weekday")
-    static_result = static_run.get()
-    dynamic_result = dynamic_run.get()
-
-    static_costs = static_result["costs"].collect()
-    dynamic_costs = dynamic_result["costs"].collect()
-    dynamic_transitions = dynamic_result["transitions"].collect()
+    static_costs = static_run.table("costs")
+    dynamic_costs = dynamic_run.table("costs")
+    dynamic_transitions = dynamic_run.table("transitions")
 
     pt_mode_name = "walk/public_transport/walk"
     static_pt_mode = next(

@@ -71,15 +71,14 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
     )
 
     weekday_run = pop_trips.run("weekday")
-    result = weekday_run.get()
-    weekday_plan_steps = result["plan_steps"].collect()
-    weekday_transitions = result["transitions"].collect()
-    destination_sequences_1 = weekday_run.iteration_state_assets[0].destination_sequences.get_cached_asset()
-    destination_sequences_2 = weekday_run.iteration_state_assets[1].destination_sequences.get_cached_asset()
-    destination_sequences_3 = weekday_run.iteration_state_assets[2].destination_sequences.get_cached_asset()
+    weekday_plan_steps = weekday_run.table("plan_steps")
+    weekday_transitions = weekday_run.table("transitions")
+    destination_sequences_1 = weekday_run.iteration_state_assets[0].destination_sequences.get()
+    destination_sequences_2 = weekday_run.iteration_state_assets[1].destination_sequences.get()
+    destination_sequences_3 = weekday_run.iteration_state_assets[2].destination_sequences.get()
     destination_sequence_index_3 = weekday_run.iteration_state_assets[2].destination_sequences.get_index()
     mode_sequence_index_3 = weekday_run.iteration_state_assets[2].mode_sequences.get_index()
-    plan_id_index_3 = weekday_run.final_iteration_state.get_cached_asset().plan_id_index
+    plan_id_index_3 = weekday_run.final_iteration_state.get().plan_id_index
 
     assert weekday_plan_steps.height > 0
     assert weekday_transitions.height > 0

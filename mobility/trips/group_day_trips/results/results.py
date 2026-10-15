@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
+from mobility.runtime.assets.graph import asset_graph_key
+from mobility.runtime.assets.resolver import (
+    asset_resolution_context,
+    get_current_asset_resolver,
+)
 from mobility.runtime.parameter_values import DEFAULT_SCENARIO, SensitivityCase
 from mobility.runtime.scenarios import Scenarios
 
+from .assets.metric import Metric
+from .assets.scoped_tables import ScopedRunTable
 from .diagnostics import GroupDayTripsResultDiagnostics
+from .execution_plan import ResultExecutionPlan
 from .metrics import GroupDayTripsResultMetrics
 from .tables import GroupDayTripsResultTables
 
@@ -68,6 +76,37 @@ class GroupDayTripsResults:
         self.metrics = GroupDayTripsResultMetrics(self)
         self.diagnostics = GroupDayTripsResultDiagnostics(self)
 
+    def get_all(self, **requests: Metric | ScopedRunTable) -> dict[str, Any]:
+        """Resolve named metric and table requests in one execution plan."""
+        if not requests:
+            return {}
+
+        for name, request in requests.items():
+            if not isinstance(request, (Metric, ScopedRunTable)):
+                raise TypeError(
+                    f"Request {name!r} should be a Metric or ScopedRunTable, "
+                    f"received {request.__class__.__name__}."
+                )
+            if request.results is not self:
+                raise ValueError(
+                    f"Request {name!r} belongs to a different "
+                    "GroupDayTripsResults object."
+                )
+
+        with asset_resolution_context(get_current_asset_resolver()) as resolver:
+            try:
+                values_by_request = ResultExecutionPlan(
+                    requests=list(requests.values()),
+                    resolver=resolver,
+                ).execute()
+            finally:
+                resolver.release_transient_values()
+
+        return {
+            name: values_by_request[asset_graph_key(request)]
+            for name, request in requests.items()
+        }
+
     @property
     def run_contexts(self) -> list[ResultRun]:
         """Return the concrete runs included in this result set."""
@@ -103,7 +142,7 @@ class GroupDayTripsResults:
 
     def uses_last_iteration(self, iterations: IterationSelector = "last") -> bool:
         """Return whether a result query uses normal final run outputs."""
-        return self._validate_iterations(iterations) == "last"
+        return self.selected_iterations(iterations) == [self.last_iteration]
 
     def selected_iterations(self, iterations: IterationSelector = "last") -> list[int]:
         """Return concrete iteration numbers for one result query."""

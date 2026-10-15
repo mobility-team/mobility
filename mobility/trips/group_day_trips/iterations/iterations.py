@@ -19,6 +19,7 @@ from .iteration_assets import (
     PlanIdIndexAsset,
     RemainingOpportunitiesAsset,
     RngStateAsset,
+    SequenceIndexAsset,
 )
 from ..transitions.transition_events import TransitionEventsAsset
 
@@ -33,6 +34,8 @@ class IterationState:
     plan_id_index: pl.DataFrame
     destination_saturation: pl.DataFrame
     rng_state: object
+    destination_sequence_index: pl.DataFrame
+    mode_sequence_index: pl.DataFrame
 
 
 class Iteration:
@@ -63,7 +66,6 @@ class Iteration:
         return DestinationSequences(
             is_weekday=self.iterations.is_weekday,
             iteration=self.iteration,
-            base_folder=self.iterations.folder_paths["destination-sequences"],
             activity_sequences=activity_sequences,
             activities=activities,
             resolved_activity_parameters=resolved_activity_parameters,
@@ -92,7 +94,6 @@ class Iteration:
         return ActivitySequences(
             is_weekday=self.iterations.is_weekday,
             iteration=self.iteration,
-            base_folder=self.iterations.folder_paths["activity-sequences"],
             current_plans=current_plans,
             survey_plans=survey_plans,
             survey_plan_steps=survey_plan_steps,
@@ -114,89 +115,122 @@ class Iteration:
         return ModeSequences(
             is_weekday=self.iterations.is_weekday,
             iteration=self.iteration,
-            base_folder=self.iterations.folder_paths["modes"],
             destination_sequences=destination_sequences,
             transport_costs=transport_costs,
             population_segments=population_segments,
-            working_folder=self.iterations.base_folder,
             parameters=parameters,
         )
 
 
     def load_state(self) -> IterationState:
         """Load the saved run state for this completed iteration."""
-        iteration_state_folder = self.iterations.folder_paths["iteration-state"]
-        current_plan_steps_asset = CurrentPlanStepsAsset(
-            run_key=self.iterations.run_inputs_hash,
-            is_weekday=self.iterations.is_weekday,
-            iteration=self.iteration,
-            base_folder=iteration_state_folder,
-        )
-        candidate_plan_steps_asset = CandidatePlanStepsAsset(
-            run_key=self.iterations.run_inputs_hash,
-            is_weekday=self.iterations.is_weekday,
-            iteration=self.iteration,
-            base_folder=iteration_state_folder,
-        )
-        plan_id_index_asset = PlanIdIndexAsset(
-            run_key=self.iterations.run_inputs_hash,
-            is_weekday=self.iterations.is_weekday,
-            iteration=self.iteration,
-            base_folder=iteration_state_folder,
-        )
-        if current_plan_steps_asset.cache_path.exists() is False:
+        checkpoint_assets = self.checkpoint_assets()
+        missing_assets = [
+            name
+            for name, asset in checkpoint_assets.items()
+            if not asset.cache_path.exists()
+        ]
+        if missing_assets:
             raise RuntimeError(
                 "Saved PopulationGroupDayTrips iteration state is incomplete. "
-                f"Missing current_plan_steps for run_inputs_hash={self.iterations.run_inputs_hash}, "
-                f"is_weekday={self.iterations.is_weekday}, iteration={self.iteration}. "
-                "This cache was likely created with an older code version. "
-                "Clear the saved iteration artifacts and rerun from scratch."
-            )
-        if candidate_plan_steps_asset.cache_path.exists() is False:
-            raise RuntimeError(
-                "Saved PopulationGroupDayTrips iteration state is incomplete. "
-                f"Missing candidate_plan_steps for run_inputs_hash={self.iterations.run_inputs_hash}, "
-                f"is_weekday={self.iterations.is_weekday}, iteration={self.iteration}. "
-                "This cache was likely created with an older code version. "
-                "Clear the saved iteration artifacts and rerun from scratch."
-            )
-        if plan_id_index_asset.cache_path.exists() is False:
-            raise RuntimeError(
-                "Saved PopulationGroupDayTrips iteration state is incomplete. "
-                f"Missing plan_id_index for run_inputs_hash={self.iterations.run_inputs_hash}, "
+                f"Missing {', '.join(missing_assets)} for run_inputs_hash={self.iterations.run_inputs_hash}, "
                 f"is_weekday={self.iterations.is_weekday}, iteration={self.iteration}. "
                 "This cache was likely created with an older code version. "
                 "Clear the saved iteration artifacts and rerun from scratch."
             )
 
         return IterationState(
-            current_plans=CurrentPlansAsset(
-                run_key=self.iterations.run_inputs_hash,
-                is_weekday=self.iterations.is_weekday,
-                iteration=self.iteration,
-                base_folder=iteration_state_folder,
-            ).get(),
-            current_plan_steps=current_plan_steps_asset.get(),
-            candidate_plan_steps=candidate_plan_steps_asset.get(),
-            plan_id_index=plan_id_index_asset.get(),
-            destination_saturation=RemainingOpportunitiesAsset(
-                run_key=self.iterations.run_inputs_hash,
-                is_weekday=self.iterations.is_weekday,
-                iteration=self.iteration,
-                base_folder=iteration_state_folder,
-            ).get(),
-            rng_state=RngStateAsset(
-                run_key=self.iterations.run_inputs_hash,
-                is_weekday=self.iterations.is_weekday,
-                iteration=self.iteration,
-                base_folder=iteration_state_folder,
-            ).get(),
+            current_plans=checkpoint_assets["current_plans"].get(),
+            current_plan_steps=checkpoint_assets["current_plan_steps"].get(),
+            candidate_plan_steps=checkpoint_assets["candidate_plan_steps"].get(),
+            plan_id_index=checkpoint_assets["plan_id_index"].get(),
+            destination_saturation=checkpoint_assets["destination_saturation"].get(),
+            rng_state=checkpoint_assets["rng_state"].get(),
+            destination_sequence_index=checkpoint_assets[
+                "destination_sequence_index"
+            ].get(),
+            mode_sequence_index=checkpoint_assets["mode_sequence_index"].get(),
         )
+
+    def checkpoint_assets(self) -> dict[str, Any]:
+        """Return the small file assets that make this iteration resumable."""
+        iteration_state_folder = self.iterations.folder_paths["iteration-state"]
+        run_key = self.iterations.run_inputs_hash
+        is_weekday = self.iterations.is_weekday
+        iteration = self.iteration
+        base_folder = iteration_state_folder
+        return {
+            "current_plans": CurrentPlansAsset(
+                run_key=run_key,
+                is_weekday=is_weekday,
+                iteration=iteration,
+                base_folder=base_folder,
+            ),
+            "current_plan_steps": CurrentPlanStepsAsset(
+                run_key=run_key,
+                is_weekday=is_weekday,
+                iteration=iteration,
+                base_folder=base_folder,
+            ),
+            "candidate_plan_steps": CandidatePlanStepsAsset(
+                run_key=run_key,
+                is_weekday=is_weekday,
+                iteration=iteration,
+                base_folder=base_folder,
+            ),
+            "plan_id_index": PlanIdIndexAsset(
+                run_key=run_key,
+                is_weekday=is_weekday,
+                iteration=iteration,
+                base_folder=base_folder,
+            ),
+            "destination_saturation": RemainingOpportunitiesAsset(
+                run_key=run_key,
+                is_weekday=is_weekday,
+                iteration=iteration,
+                base_folder=base_folder,
+            ),
+            "destination_sequence_index": SequenceIndexAsset(
+                run_key=run_key,
+                is_weekday=is_weekday,
+                iteration=iteration,
+                sequence_name="destination_sequence_index",
+                base_folder=base_folder,
+            ),
+            "mode_sequence_index": SequenceIndexAsset(
+                run_key=run_key,
+                is_weekday=is_weekday,
+                iteration=iteration,
+                sequence_name="mode_sequence_index",
+                base_folder=base_folder,
+            ),
+            "rng_state": RngStateAsset(
+                run_key=run_key,
+                is_weekday=is_weekday,
+                iteration=iteration,
+                base_folder=base_folder,
+            ),
+            "completion_marker": IterationCompleteAsset(
+                run_key=run_key,
+                is_weekday=is_weekday,
+                iteration=iteration,
+                base_folder=base_folder,
+            ),
+        }
 
 
     def save_state(self, state: RunState, rng_state: object) -> None:
         """Persist the run state for this completed iteration."""
         iteration_state_folder = self.iterations.folder_paths["iteration-state"]
+        completion_asset = IterationCompleteAsset(
+            run_key=self.iterations.run_inputs_hash,
+            is_weekday=self.iterations.is_weekday,
+            iteration=self.iteration,
+            base_folder=iteration_state_folder,
+        )
+        # A failed rewrite must not leave an older completion marker that
+        # makes a partial checkpoint look ready to resume.
+        completion_asset.remove()
         try:
             CurrentPlansAsset(
                 run_key=self.iterations.run_inputs_hash,
@@ -204,48 +238,59 @@ class Iteration:
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
                 current_plans=state.current_plans,
-            ).create_and_get_asset()
+            ).get()
             CurrentPlanStepsAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
                 current_plan_steps=state.current_plan_steps,
-            ).create_and_get_asset()
+            ).get()
             CandidatePlanStepsAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
                 candidate_plan_steps=state.candidate_plan_steps,
-            ).create_and_get_asset()
+            ).get()
             PlanIdIndexAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
                 plan_id_index=state.plan_id_index,
-            ).create_and_get_asset()
+            ).get()
             RemainingOpportunitiesAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
                 destination_saturation=state.destination_saturation,
-            ).create_and_get_asset()
+            ).get()
+            SequenceIndexAsset(
+                run_key=self.iterations.run_inputs_hash,
+                is_weekday=self.iterations.is_weekday,
+                iteration=self.iteration,
+                sequence_name="destination_sequence_index",
+                base_folder=iteration_state_folder,
+                sequence_index=state.destination_sequence_index,
+            ).get()
+            SequenceIndexAsset(
+                run_key=self.iterations.run_inputs_hash,
+                is_weekday=self.iterations.is_weekday,
+                iteration=self.iteration,
+                sequence_name="mode_sequence_index",
+                base_folder=iteration_state_folder,
+                sequence_index=state.mode_sequence_index,
+            ).get()
             RngStateAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
                 rng_state=rng_state,
-            ).create_and_get_asset()
-            IterationCompleteAsset(
-                run_key=self.iterations.run_inputs_hash,
-                is_weekday=self.iterations.is_weekday,
-                iteration=self.iteration,
-                base_folder=iteration_state_folder,
-            ).create_and_get_asset()
+            ).get()
+            completion_asset.get()
         except Exception as exc:
             raise RuntimeError(
                 "Failed to save PopulationGroupDayTrips iteration state for "
@@ -263,7 +308,7 @@ class Iteration:
             iteration=self.iteration,
             base_folder=self.iterations.folder_paths["transitions"],
             transition_events=transition_events,
-        ).create_and_get_asset()
+        ).get()
 
 
 class Iterations:
@@ -315,6 +360,16 @@ class Iterations:
         )
         return resume_iteration
 
+    def has_complete_checkpoints(self, n_iterations: int) -> bool:
+        """Check that every requested iteration has a complete restart point."""
+        return all(
+            all(
+                asset.cache_path.exists()
+                for asset in self.iteration(iteration).checkpoint_assets().values()
+            )
+            for iteration in range(1, n_iterations + 1)
+        )
+
 
     def iteration(self, iteration: int) -> Iteration:
         """Return the persisted object for one iteration."""
@@ -324,14 +379,13 @@ class Iterations:
     def discard_future_iterations(self, *, iteration: int) -> None:
         """Delete per-iteration artifacts strictly after the given iteration."""
         artifact_patterns = {
-            "activity-sequences": ["activity_sequences_*.parquet"],
-            "destination-sequences": ["destination_sequences_*.parquet"],
-            "modes": ["mode_sequences_*.parquet"],
             "transitions": ["*transition_events_*.parquet"],
             "iteration-state": [
                 "*current_plans_*.parquet",
                 "*current_plan_steps_*.parquet",
                 "*plan_id_index_*.parquet",
+                "*destination_sequence_index_*.parquet",
+                "*mode_sequence_index_*.parquet",
                 "*remaining_opportunities_*.parquet",
                 "*rng_state_*.pkl",
                 "*iteration_complete_*.json",
@@ -366,9 +420,6 @@ class Iterations:
     def _build_folder_paths(self) -> dict[str, pathlib.Path]:
         """Return stable folders used for content-addressed iteration artifacts."""
         folder_names = [
-            "activity-sequences",
-            "destination-sequences",
-            "modes",
             "transitions",
             "iteration-state",
         ]

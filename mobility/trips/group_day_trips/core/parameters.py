@@ -188,7 +188,7 @@ class GroupDayTripsPeriodParameters(BaseModel):
 
 
 class GroupDayTripsOutputParameters(BaseModel):
-    """Settings for optional cached outputs from the iteration loop."""
+    """Settings for optional saved outputs from the iteration loop."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -199,8 +199,20 @@ class GroupDayTripsOutputParameters(BaseModel):
             title="Cache iteration events",
             description=(
                 "Whether to cache detailed transition events for each model "
-                "iteration and include them in the final transitions output. "
-                "Core iteration state is always cached."
+                "iteration and include them in the final transitions output."
+            ),
+        ),
+    ]
+    checkpoint_each_iteration: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Save iteration checkpoints",
+            description=(
+                "Whether to save the minimal changing state after each iteration "
+                "so a later run can resume from the latest completed iteration. "
+                "When disabled, intermediate run states stay in memory and are "
+                "not saved as restart points."
             ),
         ),
     ]

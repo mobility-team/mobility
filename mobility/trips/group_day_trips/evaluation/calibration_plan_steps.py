@@ -120,7 +120,7 @@ class ObservedCalibrationPlanSteps(FileAsset):
 
     def create_and_get_asset(self) -> pl.LazyFrame:
         standardized = to_calibration_plan_steps(
-            self.run.get_cached_asset()["plan_steps"]
+            self.run._table_asset("plan_steps").get().lazy()
         ).collect(engine="streaming")
         standardized.write_parquet(self.cache_path)
         return self.get_cached_asset()

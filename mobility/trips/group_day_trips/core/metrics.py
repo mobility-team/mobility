@@ -6,6 +6,7 @@ import math
 import os
 import re
 import tempfile
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -20,8 +21,11 @@ from plotly.subplots import make_subplots
 
 from mobility.reports import TransportZoneMaps
 from mobility.reports.theme import MOBILITY_COLORS, apply_report_layout
+from mobility.runtime.assets.resolver import (
+    asset_resolution_context,
+    get_current_asset_resolver,
+)
 
-from ..iterations import Iterations
 from ..evaluation.car_traffic_evaluation import CarTrafficEvaluation
 from ..evaluation.public_transport_network_evaluation import (
     PublicTransportNetworkEvaluation,
@@ -31,6 +35,16 @@ from ..evaluation.travel_costs_evaluation import TravelCostsEvaluation
 
 if TYPE_CHECKING:
     from .results import RunResults
+
+
+def _with_iteration_resolver(method):
+    """Share transient iteration states for one iteration-analysis request."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with asset_resolution_context(get_current_asset_resolver()):
+            return method(self, *args, **kwargs)
+
+    return wrapped
 
 
 class RunMetrics:
@@ -1509,12 +1523,7 @@ class RunMetrics:
         if compare_with is not None:
             comparison = self._resolve_run_context(compare_with, include_costs=True)
             reference_run = comparison["run"]
-            plan_steps_path = reference_run.cache_path.get("plan_steps")
-            if plan_steps_path is None:
-                raise TypeError("compare_with run needs `cache_path['plan_steps']`.")
-            if Path(plan_steps_path).exists() is False and callable(getattr(reference_run, "get", None)):
-                reference_run.get()
-            plan_steps_comp = pl.scan_parquet(plan_steps_path)
+            plan_steps_comp = reference_run._table_asset("plan_steps").get().lazy()
             costs_comp = comparison["costs"]
             demand_groups_comp = comparison["demand_groups"]
             if isinstance(costs_comp, pl.DataFrame):
@@ -1606,6 +1615,7 @@ class RunMetrics:
     def cost_per_person(self, *args, **kwargs):
         return self.metric_per_person("cost", *args, **kwargs)
 
+    @_with_iteration_resolver
     def modal_share_evolution_by_iteration(
         self,
         iterations: list[int] | range | None = None,
@@ -1665,6 +1675,7 @@ class RunMetrics:
             return evolution, fig
         return evolution
 
+    @_with_iteration_resolver
     def modal_share_delta_evolution_by_iteration(
         self,
         compare_with: Any,
@@ -2201,6 +2212,7 @@ class RunMetrics:
         fig.savefig(output_path, format="svg")
         plt.close(fig)
 
+    @_with_iteration_resolver
     def plot_delta_by_iteration(
         self,
         compare_with: Any | None,
@@ -3014,6 +3026,7 @@ class RunMetrics:
             value_label = f"Global average: {global_value:.2f} km/pers."
         return f"Iteration {iteration}\n{scope_label}\n{value_label}"
 
+    @_with_iteration_resolver
     def plot_metric_by_iteration(
         self,
         iteration: int,
@@ -3128,6 +3141,7 @@ class RunMetrics:
             return metric, fig
         return metric
 
+    @_with_iteration_resolver
     def modal_share_by_iteration(
         self,
         iteration: int,
@@ -3310,6 +3324,7 @@ class RunMetrics:
         )
         return paired_delta, float(sum(global_deltas) / len(global_deltas))
 
+    @_with_iteration_resolver
     def modal_share_delta_by_iteration(
         self,
         compare_with: Any,
@@ -3510,6 +3525,7 @@ class RunMetrics:
 
         return modal_share_delta
 
+    @_with_iteration_resolver
     def car_modal_share_delta_by_iteration(
         self,
         compare_with: Any,
@@ -3528,6 +3544,7 @@ class RunMetrics:
             return self._car_modal_share_delta_columns(modal_share_delta), fig
         return self._car_modal_share_delta_columns(result)
 
+    @_with_iteration_resolver
     def modal_share_delta_gifs_by_iteration(
         self,
         compare_with: Any,
@@ -4309,17 +4326,14 @@ class RunMetrics:
         return self._saved_iteration_state(run, iteration).current_plan_steps
 
     def _saved_iteration_state(self, run: Any, iteration: int) -> Any:
-        """Load the full saved state for one run iteration."""
-        if not hasattr(run, "cache_path") or "plan_steps" not in run.cache_path:
-            raise TypeError("Iteration metrics need a group-day-trips run.")
-        if not hasattr(run, "inputs_hash"):
-            raise TypeError("Iteration metrics need a run with an input hash.")
-
-        return Iterations(
-            run_inputs_hash=run.inputs_hash,
-            is_weekday=getattr(run, "is_weekday", self.results.is_weekday),
-            base_folder=Path(run.cache_path["plan_steps"]).parent,
-        ).iteration(iteration).load_state()
+        """Return one iteration state from the run's asset chain."""
+        state_assets = run.iteration_state_assets
+        if iteration < 1 or iteration > len(state_assets):
+            raise ValueError(
+                "iteration should be between 1 and the run's number of iterations. "
+                f"Received {iteration}."
+            )
+        return state_assets[iteration - 1].get()
 
     def _join_home_zone(
         self,
@@ -4375,7 +4389,11 @@ class RunMetrics:
 
     def _resolve_comparison_run(self, compare_with: Any) -> Any:
         """Return the day-type run used as the reference scenario."""
-        if hasattr(compare_with, "run") and hasattr(compare_with.run, "cache_path"):
+        if hasattr(compare_with, "first_run"):
+            reference_run = compare_with.first_run
+        elif hasattr(compare_with, "run") and callable(
+            getattr(compare_with.run, "table", None)
+        ):
             reference_run = compare_with.run
         elif callable(getattr(compare_with, "run", None)):
             day_type = "weekday" if self.results.is_weekday else "weekend"
@@ -4383,7 +4401,7 @@ class RunMetrics:
         else:
             reference_run = compare_with
 
-        if not hasattr(reference_run, "cache_path"):
+        if not callable(getattr(reference_run, "table", None)):
             raise TypeError(
                 "compare_with should be a group-day-trips run, results object, "
                 "or PopulationGroupDayTrips setup."
@@ -4403,15 +4421,7 @@ class RunMetrics:
         if hasattr(compare_with, "demand_groups"):
             return compare_with.demand_groups
 
-        demand_groups_path = reference_run.cache_path.get("demand_groups")
-        if demand_groups_path is None:
-            raise TypeError("compare_with run needs `cache_path['demand_groups']`.")
-        demand_groups_path = Path(demand_groups_path)
-        if demand_groups_path.exists() is False and callable(getattr(reference_run, "get", None)):
-            reference_run.get()
-        if demand_groups_path.exists() is False:
-            raise FileNotFoundError(f"Could not find reference demand groups: {demand_groups_path}.")
-        return pl.scan_parquet(demand_groups_path)
+        return reference_run._table_asset("demand_groups").get().lazy()
 
     def _resolve_comparison_costs(
         self,
@@ -4423,19 +4433,7 @@ class RunMetrics:
         if hasattr(compare_with, "costs"):
             return compare_with.costs
 
-        costs_path = reference_run.cache_path.get("costs")
-        if costs_path is None:
-            prefix = "weekday" if self.results.is_weekday else "weekend"
-            costs_path = reference_run.cache_path.get(f"{prefix}_costs")
-        if costs_path is None:
-            raise TypeError("compare_with run needs `cache_path['costs']`.")
-
-        costs_path = Path(costs_path)
-        if costs_path.exists() is False and callable(getattr(reference_run, "get", None)):
-            reference_run.get()
-        if costs_path.exists() is False:
-            raise FileNotFoundError(f"Could not find reference costs: {costs_path}.")
-        return pl.scan_parquet(costs_path)
+        return reference_run._table_asset("costs").get().lazy()
 
     def _transport_zone_ids(self) -> pl.DataFrame:
         """Return all transport-zone ids from the results geography."""

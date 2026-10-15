@@ -71,6 +71,6 @@ def test_008_group_day_trips_can_be_computed(test_data, gtfs_sources_folder):
         ),
     )
 
-    plan_steps = group_day_trips.run("weekday").get()["plan_steps"].collect()
+    plan_steps = group_day_trips.run("weekday").table("plan_steps")
 
     assert plan_steps.height > 0

@@ -114,9 +114,9 @@ class CandidatePlanStepsAsset(FileAsset):
             )
         )
         return (
-            mode_sequences.get_cached_asset().lazy()
+            mode_sequences.get().lazy()
             .join(
-                destination_sequences.get_cached_asset().lazy(),
+                destination_sequences.get().lazy(),
                 on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "seq_step_index"],
             )
             .join(survey_plan_steps.lazy(), on=["activity_seq_id", "time_seq_id", "seq_step_index"])

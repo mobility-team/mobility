@@ -231,6 +231,8 @@ class ObservedTripPatternDistribution(FileAsset):
         return pl.scan_parquet(self.cache_path)
 
     def create_and_get_asset(self) -> pl.LazyFrame:
-        distribution = build_trip_pattern_distribution(self.run.get_cached_asset()["plan_steps"])
+        distribution = build_trip_pattern_distribution(
+            self.run._table_asset("plan_steps").get().lazy()
+        )
         distribution.write_parquet(self.cache_path)
         return self.get_cached_asset()

@@ -318,6 +318,7 @@ def test_fresh_clone_downloads_pinned_urls_without_discovery(tmp_path, source_ru
     sources = GTFSSources("2026-09-01", tmp_path / "sources", ["fr"])
     sources.get()
     clone = GTFSSources("2026-09-01", tmp_path / "clone", ["fr"])
+    clone.cache_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(sources.cache_path, clone.cache_path)
     monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path / "fresh-downloads"))
     router = GTFSRouter(source_run["zones"], clone)

@@ -49,6 +49,10 @@ class _FrameAsset:
         return self.frame.lazy() if self.lazy else self.frame
 
 
+def _unused_run_table(*_args, **_kwargs):
+    raise AssertionError("This run fixture only needs the table interface.")
+
+
 def _make_transport_zones():
     return SimpleNamespace(
         get=lambda: pd.DataFrame(
@@ -120,6 +124,20 @@ def _make_results_for_metrics() -> RunResults:
         parameters=SimpleNamespace(),
         run=SimpleNamespace(),
     )
+
+
+def _use_fake_iteration_states(monkeypatch, fake_iterations_class):
+    """Feed prepared iteration states to diagnostics calculation tests."""
+
+    def get_state(_metrics, run, iteration):
+        iterations = fake_iterations_class(
+            run_inputs_hash=run.inputs_hash,
+            is_weekday=getattr(run, "is_weekday", True),
+            base_folder=None,
+        )
+        return iterations.iteration(iteration).load_state()
+
+    monkeypatch.setattr(RunMetrics, "_saved_iteration_state", get_state)
 
 
 def test_metrics_aggregate_and_travel_indicators_by_match_reference_when_inputs_match():
@@ -723,10 +741,7 @@ def test_modal_share_evolution_by_iteration_returns_share_table(monkeypatch, tmp
         ),
     )
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
 
     modal_share = results.metrics.modal_share_evolution_by_iteration(
         modes=["walk", "bicycle", "car"],
@@ -782,10 +797,7 @@ def test_modal_share_evolution_by_iteration_groups_public_transport(monkeypatch,
         ),
     )
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
 
     modal_share = results.metrics.modal_share_evolution_by_iteration(
         modes=["walk/public_transport/walk", "car"],
@@ -847,10 +859,7 @@ def test_modal_share_evolution_by_iteration_can_use_inner_zones_only(monkeypatch
         ),
     )
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
 
     modal_share = results.metrics.modal_share_evolution_by_iteration(
         modes=["walk", "car"],
@@ -915,10 +924,7 @@ def test_modal_share_evolution_by_iteration_can_plot_and_save_svg(monkeypatch, t
     def fake_save(modal_share, *, output_path, width, height, chart_type):
         seen["save"] = (modal_share, output_path, width, height, chart_type)
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
     monkeypatch.setattr(results.metrics, "_plot_modal_share_evolution", fake_plot)
     monkeypatch.setattr(results.metrics, "_save_modal_share_evolution_svg", fake_save)
 
@@ -957,6 +963,7 @@ def test_modal_share_delta_evolution_by_iteration_compares_two_scenarios(monkeyp
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1007,10 +1014,7 @@ def test_modal_share_delta_evolution_by_iteration_compares_two_scenarios(monkeyp
         run=current_run,
     )
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
 
     delta = results.metrics.modal_share_delta_evolution_by_iteration(
         SimpleNamespace(run=reference_run, demand_groups=pl.DataFrame().lazy()),
@@ -1050,6 +1054,7 @@ def test_modal_share_delta_evolution_by_iteration_can_plot_and_save_svg(monkeypa
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1094,10 +1099,7 @@ def test_modal_share_delta_evolution_by_iteration_can_plot_and_save_svg(monkeypa
     def fake_save(delta, *, output_path, width, height):
         seen["save"] = (delta, output_path, width, height)
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
     monkeypatch.setattr(results.metrics, "_plot_modal_share_delta_evolution", fake_plot)
     monkeypatch.setattr(results.metrics, "_save_modal_share_delta_evolution_svg", fake_save)
 
@@ -1140,6 +1142,7 @@ def test_car_modal_share_delta_by_iteration_uses_saved_home_zone_states(monkeypa
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1203,10 +1206,7 @@ def test_car_modal_share_delta_by_iteration_uses_saved_home_zone_states(monkeypa
         demand_groups=reference_demand_groups.lazy(),
     )
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
 
     modal_share_delta = results.metrics.car_modal_share_delta_by_iteration(
         reference_results,
@@ -1272,6 +1272,7 @@ def test_modal_share_by_iteration_plots_one_scenario(monkeypatch, tmp_path):
         }
     )
     run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -1312,10 +1313,7 @@ def test_modal_share_by_iteration_plots_one_scenario(monkeypatch, tmp_path):
     )
     seen = {}
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
     monkeypatch.setattr(
         "mobility.trips.group_day_trips.core.metrics.TransportZoneMaps",
         FakeTransportZoneMaps,
@@ -1402,6 +1400,7 @@ def test_plot_metric_by_iteration_plots_average_distance(monkeypatch, tmp_path):
         }
     )
     run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -1433,10 +1432,7 @@ def test_plot_metric_by_iteration_plots_average_distance(monkeypatch, tmp_path):
     )
     seen = {}
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
     monkeypatch.setattr(
         "mobility.trips.group_day_trips.core.metrics.TransportZoneMaps",
         FakeTransportZoneMaps,
@@ -1558,6 +1554,7 @@ def test_car_modal_share_delta_by_iteration_plots_with_transport_zone_maps(
         }
     )
     run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -1589,10 +1586,7 @@ def test_car_modal_share_delta_by_iteration_plots_with_transport_zone_maps(
     )
     seen = {}
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
     monkeypatch.setattr(
         "mobility.trips.group_day_trips.core.metrics.TransportZoneMaps",
         FakeTransportZoneMaps,
@@ -1661,6 +1655,7 @@ def test_plot_delta_by_iteration_can_compare_mean_utility(monkeypatch, tmp_path)
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1712,10 +1707,7 @@ def test_plot_delta_by_iteration_can_compare_mean_utility(monkeypatch, tmp_path)
         run=current_run,
     )
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
 
     delta = results.metrics.plot_delta_by_iteration(
         SimpleNamespace(run=reference_run, demand_groups=reference_demand_groups.lazy()),
@@ -1751,6 +1743,7 @@ def test_plot_delta_by_iteration_can_compare_ghg_emissions(monkeypatch, tmp_path
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1823,10 +1816,7 @@ def test_plot_delta_by_iteration_can_compare_ghg_emissions(monkeypatch, tmp_path
         run=current_run,
     )
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
 
     delta = results.metrics.plot_delta_by_iteration(
         SimpleNamespace(
@@ -1871,6 +1861,7 @@ def test_plot_delta_by_iteration_can_compare_relative_ghg_emissions(monkeypatch,
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -1944,10 +1935,7 @@ def test_plot_delta_by_iteration_can_compare_relative_ghg_emissions(monkeypatch,
         run=current_run,
     )
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
 
     delta = results.metrics.plot_delta_by_iteration(
         SimpleNamespace(
@@ -1966,6 +1954,7 @@ def test_plot_delta_by_iteration_can_compare_relative_ghg_emissions(monkeypatch,
 
 def test_plot_delta_by_iteration_rejects_relative_modal_share(tmp_path):
     run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -2029,6 +2018,7 @@ def test_plot_delta_by_iteration_plots_with_transport_zone_maps(monkeypatch, tmp
             return FakeFigure()
 
     run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="run",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "run" / "plan_steps.parquet"},
@@ -2060,10 +2050,7 @@ def test_plot_delta_by_iteration_plots_with_transport_zone_maps(monkeypatch, tmp
     )
     seen = {}
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
     monkeypatch.setattr(
         "mobility.trips.group_day_trips.core.metrics.TransportZoneMaps",
         FakeTransportZoneMaps,
@@ -2119,6 +2106,7 @@ def test_plot_delta_by_iteration_can_auto_cap_outliers(monkeypatch, tmp_path):
         cache_path={"plan_steps": tmp_path / "current" / "plan_steps.parquet"},
     )
     reference_run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -2165,10 +2153,7 @@ def test_plot_delta_by_iteration_can_auto_cap_outliers(monkeypatch, tmp_path):
     )
     seen = {}
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
     monkeypatch.setattr(
         "mobility.trips.group_day_trips.core.metrics.TransportZoneMaps",
         FakeTransportZoneMaps,
@@ -2213,6 +2198,7 @@ def test_plot_delta_by_iteration_can_average_paired_seed_deltas(monkeypatch, tmp
 
     def run(name):
         return SimpleNamespace(
+            table=_unused_run_table,
             inputs_hash=name,
             is_weekday=True,
             cache_path={"plan_steps": tmp_path / name / "plan_steps.parquet"},
@@ -2277,10 +2263,7 @@ def test_plot_delta_by_iteration_can_average_paired_seed_deltas(monkeypatch, tmp
     )
     seen = {}
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
     monkeypatch.setattr(
         "mobility.trips.group_day_trips.core.metrics.TransportZoneMaps",
         FakeTransportZoneMaps,
@@ -2330,6 +2313,7 @@ def test_modal_share_delta_gifs_by_iteration_writes_one_gif_per_mode(monkeypatch
         population=SimpleNamespace(name="population"),
     )
     reference_run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -2388,10 +2372,7 @@ def test_modal_share_delta_gifs_by_iteration_writes_one_gif_per_mode(monkeypatch
     def fake_write_gif(frame_paths, output_path, duration_ms):
         seen["gifs"].append((frame_paths, output_path, duration_ms))
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
     monkeypatch.setattr(results.metrics, "_save_modal_share_delta_frame", fake_save_frame)
     monkeypatch.setattr(results.metrics, "_write_gif", fake_write_gif)
 
@@ -2435,6 +2416,7 @@ def test_modal_share_delta_gif_global_delta_uses_inner_zone_scope(monkeypatch, t
         population=None,
     )
     reference_run = SimpleNamespace(
+        table=_unused_run_table,
         inputs_hash="reference",
         is_weekday=True,
         cache_path={"plan_steps": tmp_path / "reference" / "plan_steps.parquet"},
@@ -2483,10 +2465,7 @@ def test_modal_share_delta_gif_global_delta_uses_inner_zone_scope(monkeypatch, t
     )
     seen = {"frames": []}
 
-    monkeypatch.setattr(
-        "mobility.trips.group_day_trips.core.metrics.Iterations",
-        FakeIterations,
-    )
+    _use_fake_iteration_states(monkeypatch, FakeIterations)
     monkeypatch.setattr(
         results.metrics,
         "_save_modal_share_delta_frame",
@@ -2782,15 +2761,28 @@ def test_metric_per_person_compare_with_and_plot_delta(tmp_path, monkeypatch):
         }
     ).write_parquet(weekday_costs)
 
-    compare_with = SimpleNamespace(
-        cache_path={
-            "demand_groups": demand_groups_path,
-            "plan_steps": weekday_plan_steps,
-            "weekday_plan_steps": weekday_plan_steps,
-            "weekday_costs": weekday_costs,
-        },
-        get=lambda: "loaded",
-    )
+    class _CachedTable:
+        def __init__(self, path):
+            self.path = path
+
+        def get(self):
+            return pl.read_parquet(self.path)
+
+    class _ComparisonRun:
+        is_weekday = True
+
+        def table(self, table_name):
+            return self._table_asset(table_name).get()
+
+        def _table_asset(self, table_name):
+            paths = {
+                "demand_groups": demand_groups_path,
+                "plan_steps": weekday_plan_steps,
+                "costs": weekday_costs,
+            }
+            return _CachedTable(paths[table_name])
+
+    compare_with = _ComparisonRun()
     seen = {}
 
     def fake_mask_outliers(series):

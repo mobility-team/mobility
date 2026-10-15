@@ -130,8 +130,7 @@ class IntermodalTransportGraph(FileAsset):
 
     def update(self):
         """Refresh the persisted intermodal graph."""
-        
-        self.create_and_get_asset()
+        self.get()
 
     def audit_gtfs(self):
         """Expose GTFS audit information from the PT subgraph."""

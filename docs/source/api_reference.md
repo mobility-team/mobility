@@ -414,6 +414,11 @@ Main parameter objects:
 - `mobility.BehaviorChangePhase`
 - `mobility.BehaviorChangeScope`
 
+Intermediate iteration state stays in memory by default. To save compact
+restart checkpoints after each iteration, set
+`outputs=mobility.GroupDayTripsOutputParameters(checkpoint_each_iteration=True)`.
+These checkpoints are separate from requested result tables.
+
 Common run arguments:
 
 - `n_iterations`: number of model iterations,

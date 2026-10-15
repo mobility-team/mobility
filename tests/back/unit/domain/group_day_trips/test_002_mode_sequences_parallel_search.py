@@ -218,7 +218,6 @@ def test_run_python_mode_sequence_search_serial_backend_filters_return_modes(mon
             k_mode_sequences=4,
             mode_sequence_search_parallel=False,
         ),
-        working_folder=tmp_path,
         unique_destination_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
         leg_mode_costs=pl.DataFrame(
             {
@@ -415,7 +414,6 @@ def test_python_and_rust_mode_sequence_backends_match_on_same_inputs(tmp_path):
             k_mode_sequences=3,
             mode_sequence_search_parallel=False,
         ),
-        working_folder=tmp_path,
         unique_destination_chains=unique_destination_chains,
         leg_mode_costs=leg_mode_costs,
         modes_by_name=modes_by_name,

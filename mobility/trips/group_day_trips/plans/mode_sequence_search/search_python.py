@@ -3,8 +3,8 @@ import logging
 import os
 import pathlib
 import pickle
-import shutil
 import subprocess
+import tempfile
 from collections import defaultdict
 from importlib import resources
 from typing import Any
@@ -23,59 +23,59 @@ def run_python_mode_sequence_search(
     *,
     iteration: int,
     parameters: Any,
-    working_folder: pathlib.Path,
     unique_destination_chains: pl.DataFrame,
     leg_mode_costs: pl.DataFrame,
     modes_by_name: dict[str, Any],
     is_return_mode_by_id: dict[int, bool],
 ) -> pl.DataFrame:
     """Run the Python mode-sequence search backend."""
-    tmp_folder = working_folder / "tmp_results"
-    shutil.rmtree(tmp_folder, ignore_errors=True)
-    os.makedirs(tmp_folder)
+    with tempfile.TemporaryDirectory(prefix="mobility-mode-search-") as temp_folder:
+        working_folder = pathlib.Path(temp_folder)
+        tmp_folder = working_folder / "tmp_results"
+        os.makedirs(tmp_folder)
 
-    cost_by_origin_destination_mode = {
-        (row["from"], row["to"], row["mode_id"]): row["cost"]
-        for row in leg_mode_costs.to_dicts()
-    }
+        cost_by_origin_destination_mode = {
+            (row["from"], row["to"], row["mode_id"]): row["cost"]
+            for row in leg_mode_costs.to_dicts()
+        }
 
-    log_memory_checkpoint(
-        f"mode_sequences:iteration:{iteration}:costs_dict",
-        costs=cost_by_origin_destination_mode,
-    )
-
-    mode_ids_by_leg = defaultdict(list)
-    for origin, destination, mode_id in cost_by_origin_destination_mode.keys():
-        if not is_return_mode_by_id[mode_id]:
-            mode_ids_by_leg[(origin, destination)].append(mode_id)
-
-    log_memory_checkpoint(
-        f"mode_sequences:iteration:{iteration}:leg_modes",
-        leg_modes=mode_ids_by_leg,
-    )
-
-    if parameters.mode_sequences.mode_sequence_search_parallel is False:
-        logging.debug("Finding probable mode sequences for the spatialized trip chains...")
-        compute_subtour_mode_probabilities_serial(
-            parameters.mode_sequences.k_mode_sequences,
-            unique_destination_chains,
-            cost_by_origin_destination_mode,
-            mode_ids_by_leg,
-            modes_by_name,
-            tmp_folder,
-        )
-    else:
-        run_python_mode_sequence_search_subprocess(
-            parameters=parameters,
-            working_folder=working_folder,
-            unique_destination_chains=unique_destination_chains,
-            cost_by_origin_destination_mode=cost_by_origin_destination_mode,
-            mode_ids_by_leg=mode_ids_by_leg,
-            modes_by_name=modes_by_name,
-            tmp_folder=tmp_folder,
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{iteration}:costs_dict",
+            costs=cost_by_origin_destination_mode,
         )
 
-    return pl.read_parquet(tmp_folder)
+        mode_ids_by_leg = defaultdict(list)
+        for origin, destination, mode_id in cost_by_origin_destination_mode.keys():
+            if not is_return_mode_by_id[mode_id]:
+                mode_ids_by_leg[(origin, destination)].append(mode_id)
+
+        log_memory_checkpoint(
+            f"mode_sequences:iteration:{iteration}:leg_modes",
+            leg_modes=mode_ids_by_leg,
+        )
+
+        if parameters.mode_sequences.mode_sequence_search_parallel is False:
+            logging.debug("Finding probable mode sequences for the spatialized trip chains...")
+            compute_subtour_mode_probabilities_serial(
+                parameters.mode_sequences.k_mode_sequences,
+                unique_destination_chains,
+                cost_by_origin_destination_mode,
+                mode_ids_by_leg,
+                modes_by_name,
+                tmp_folder,
+            )
+        else:
+            run_python_mode_sequence_search_subprocess(
+                parameters=parameters,
+                working_folder=working_folder,
+                unique_destination_chains=unique_destination_chains,
+                cost_by_origin_destination_mode=cost_by_origin_destination_mode,
+                mode_ids_by_leg=mode_ids_by_leg,
+                modes_by_name=modes_by_name,
+                tmp_folder=tmp_folder,
+            )
+
+        return pl.read_parquet(tmp_folder)
 
 
 def run_python_mode_sequence_search_subprocess(

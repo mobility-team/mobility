@@ -1,11 +1,11 @@
 import pathlib
-import os
 
 from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.resolver import (
     asset_resolution_context,
     get_current_asset_resolver,
 )
+from mobility.runtime.project_cache import forget_file_asset_use
 from typing import Any
 from abc import abstractmethod
 
@@ -54,10 +54,7 @@ class FileAsset(Asset):
             cache_path = cache_path.parent / filename
             self.cache_path = cache_path.parent / filename
             self.hash_path = cache_path.with_suffix(".inputs-hash")
-            if not cache_path.parent.exists():
-                os.makedirs(cache_path.parent)
             
-        self.update_hash(self.inputs_hash)
     
     @abstractmethod
     def get_cached_asset(self):
@@ -81,9 +78,21 @@ class FileAsset(Asset):
         
         resolver = get_current_asset_resolver()
         if resolver is not None:
+            if getattr(self, "is_execution_scoped_cost_asset", False):
+                return resolver.get_execution_scoped_file_asset(
+                    self,
+                    *args,
+                    **kwargs,
+                )
             return resolver.get(self, *args, **kwargs)
 
         with asset_resolution_context() as resolver:
+            if getattr(self, "is_execution_scoped_cost_asset", False):
+                return resolver.get_execution_scoped_file_asset(
+                    self,
+                    *args,
+                    **kwargs,
+                )
             return resolver.get(self, *args, **kwargs)
         
 
@@ -173,6 +182,7 @@ class FileAsset(Asset):
             path = pathlib.Path(path)
             if path.exists():
                 path.unlink()
+        forget_file_asset_use(self)
 
     def _cache_paths_to_remove(self):
         if isinstance(self.cache_path, dict):

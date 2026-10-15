@@ -14,7 +14,9 @@ from mobility.runtime import Scenario, Scenarios
 from mobility.runtime.parameter_values import SensitivityCase, SensitivityValue
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.graph import build_asset_graph
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.assets.resolver import AssetResolver
+from mobility.surveys.mobility_survey import MobilitySurveyParameters
 from mobility.trips.group_day_trips.core.group_day_trips import PopulationGroupDayTrips
 from mobility.trips.group_day_trips.core.run import Run
 from mobility.trips.group_day_trips.results import GroupDayTripsResults
@@ -74,6 +76,10 @@ class _FakeRun(FileAsset):
             for table_name, path in self.cache_path.items()
         }
 
+    def _table_asset(self, table_name: str, *, iteration: int | None = None):
+        """Return the same transient table interface as a real model run."""
+        return _FakeRunTable(self, table_name, iteration)
+
     def create_and_get_asset(self):
         """Write all fake run tables."""
         for table_name, frame in self.frames.items():
@@ -96,6 +102,43 @@ class _FakeRun(FileAsset):
         if table_name == "costs":
             return self._iteration_costs[iteration].lazy()
         raise ValueError(f"Fake run has no saved iteration table `{table_name}`.")
+
+
+class _FakeRunTable(InMemoryAsset):
+    """Return one in-memory output table for the fake model run."""
+
+    def __init__(
+        self,
+        run: _FakeRun,
+        table_name: str,
+        iteration: int | None,
+    ) -> None:
+        self.run = run
+        self.table_name = table_name
+        self.iteration = iteration
+        super().__init__(
+            {
+                "run_inputs_hash": run.inputs_hash,
+                "table_name": table_name,
+                "iteration": iteration,
+            }
+        )
+
+    def create_and_get_asset(self):
+        """Return the requested fake frame without writing a cache file."""
+        if self.iteration is None:
+            return self.run.frames[self.table_name]
+        if self.table_name == "plan_steps":
+            return self.run._iteration_plan_steps[self.iteration]
+        if self.table_name == "costs":
+            return self.run._iteration_costs[self.iteration]
+        if self.table_name == "iteration_metrics":
+            return self.run.frames[self.table_name].filter(
+                pl.col("iteration") == self.iteration
+            )
+        raise ValueError(
+            f"Fake run has no iteration table `{self.table_name}`."
+        )
 
 
 class _FakeLazyFrameAsset(FileAsset):
@@ -150,6 +193,28 @@ class _FakeTransportZones(FileAsset):
         return self.frame
 
 
+class _FakeSurvey(InMemoryAsset):
+    """Small survey asset with the immobility values used by result tests."""
+
+    def __init__(self):
+        self.parameters = MobilitySurveyParameters(
+            survey_name="test-survey",
+            country="fr",
+        )
+        super().__init__({"parameters": self.parameters})
+
+    def create_and_get_asset(self):
+        return {
+            "p_immobility": pd.DataFrame(
+                {
+                    "immobility_weekday": [0.2, 0.1],
+                    "immobility_weekend": [0.3, 0.2],
+                },
+                index=pd.Index(["worker", "retired"], name="csp"),
+            )
+        }
+
+
 def _run_factory(base_folder: Path):
     transport_zones = _FakeTransportZones(base_folder=base_folder)
     reference_plan_steps = _FakeLazyFrameAsset(
@@ -172,15 +237,7 @@ def _run_factory(base_folder: Path):
             }
         ),
     )
-    survey = SimpleNamespace(
-        inputs={"parameters": SimpleNamespace(country="fr")},
-        get=lambda: {
-            "p_immobility": pd.DataFrame(
-                {"immobility_weekday": [0.2, 0.1], "immobility_weekend": [0.3, 0.2]},
-                index=pd.Index(["worker", "retired"], name="csp"),
-            )
-        },
-    )
+    survey = _FakeSurvey()
 
     def run(
         day_type: str,
@@ -449,8 +506,12 @@ def test_result_tables_add_scope_columns(tmp_path, monkeypatch):
     """Check that raw tables keep run identity columns after concatenation."""
     results = _results(tmp_path)
 
-    plan_steps = results.tables.plan_steps().sort("replication").collect()
-    iteration_metrics = results.diagnostics.iteration_metrics().sort("replication").collect()
+    outputs = results.get_all(
+        plan_steps=results.tables.plan_steps(),
+        iteration_metrics=results.diagnostics.iteration_metrics(),
+    )
+    plan_steps = outputs["plan_steps"].sort("replication").collect()
+    iteration_metrics = outputs["iteration_metrics"].sort("replication").collect()
 
     assert plan_steps["scenario"].to_list() == ["default", "default", "default", "default"]
     assert plan_steps["day_type"].to_list() == ["weekday", "weekday", "weekday", "weekday"]
@@ -460,11 +521,35 @@ def test_result_tables_add_scope_columns(tmp_path, monkeypatch):
     assert iteration_metrics["total_loss"].to_list() == [10.0, 11.0]
 
 
+def test_get_all_shares_run_outputs_between_metrics_and_tables(tmp_path, monkeypatch):
+    """Check a mixed result batch builds each run output only once."""
+    plan_step_builds = []
+    create_and_get_asset = _FakeRunTable.create_and_get_asset
+
+    def record_plan_step_build(table_asset):
+        if table_asset.table_name == "plan_steps":
+            plan_step_builds.append((table_asset.run.name, table_asset.iteration))
+        return create_and_get_asset(table_asset)
+
+    monkeypatch.setattr(_FakeRunTable, "create_and_get_asset", record_plan_step_build)
+    results = _results(tmp_path, replication=0)
+    trip_count = results.metrics.trip_count(by_variable="mode")
+    plan_steps = results.tables.plan_steps()
+
+    assert plan_step_builds == []
+
+    outputs = results.get_all(trip_count=trip_count, plan_steps=plan_steps)
+
+    assert outputs["trip_count"].height == 2
+    assert outputs["plan_steps"].collect().height == 2
+    assert plan_step_builds == [("default-base-weekday-0", None)]
+
+
 def test_result_tables_can_include_multiple_scenarios(tmp_path, monkeypatch):
     """Check that one result set can concatenate several scenarios."""
     results = _results(tmp_path, scenarios=["default", "test"])
 
-    plan_steps = results.tables.plan_steps().collect()
+    plan_steps = results.tables.plan_steps().get().collect()
 
     assert results.scenarios == ["default", "test"]
     assert plan_steps["scenario"].sort().to_list() == [
@@ -485,6 +570,7 @@ def test_result_tables_can_select_saved_iterations(tmp_path, monkeypatch):
 
     plan_steps = (
         results.tables.plan_steps(iterations=[1, 2])
+        .get()
         .sort(["iteration", "mode"])
         .collect()
     )
@@ -507,7 +593,7 @@ def test_trip_count_metrics_keep_selected_iterations(tmp_path, monkeypatch):
     trip_count = results.metrics.trip_count(
         by_variable="mode",
         iterations=[1, 2],
-    ).sort(["iteration", "mode"])
+    ).get().sort(["iteration", "mode"])
 
     assert trip_count["iteration"].to_list() == [1, 1, 2, 2]
     assert trip_count["trip_count"].to_list() == pytest.approx([2.0, 1.0, 2.0, 1.0])
@@ -521,7 +607,7 @@ def test_iteration_trip_count_can_group_by_home_zone_from_demand_groups(tmp_path
         by_zone="home_zone",
         inner_zone_residents_only=True,
         iterations=[1, 2],
-    ).sort(["iteration", "home_zone_id"])
+    ).get().sort(["iteration", "home_zone_id"])
 
     assert trip_count["iteration"].to_list() == [1, 1, 2, 2]
     assert trip_count["home_zone_id"].to_list() == ["z1", "z2", "z1", "z2"]
@@ -535,11 +621,11 @@ def test_iteration_travel_metrics_can_group_by_demand_group_columns(tmp_path, mo
     distance = results.metrics.travel_distance(
         by_zone="home_zone",
         iterations=[1, 2],
-    ).sort(["iteration", "home_zone_id"])
+    ).get().sort(["iteration", "home_zone_id"])
     time = results.metrics.travel_time(
         by_variable="csp",
         iterations=[1, 2],
-    ).sort(["iteration", "csp"])
+    ).get().sort(["iteration", "csp"])
 
     assert distance["home_zone_id"].to_list() == ["z1", "z2", "z1", "z2"]
     assert distance["travel_distance"].to_list() == pytest.approx([10.0, 2.5, 20.0, 5.0])
@@ -554,7 +640,7 @@ def test_iteration_emissions_use_quantity_stored_on_plan_steps(tmp_path, monkeyp
     emissions = results.metrics.ghg_emissions(
         by_variable="mode",
         iterations=[1, 2],
-    ).sort(["iteration", "mode"])
+    ).get().sort(["iteration", "mode"])
 
     assert emissions["iteration"].to_list() == [1, 1, 2, 2]
     assert emissions["mode"].to_list() == ["car", "walk", "car", "walk"]
@@ -573,7 +659,7 @@ def test_iteration_emissions_can_join_saved_iteration_costs(tmp_path, monkeypatc
     emissions = results.metrics.ghg_emissions(
         by_variable="mode",
         iterations=[1, 2],
-    ).sort(["iteration", "mode"])
+    ).get().sort(["iteration", "mode"])
 
     assert emissions["iteration"].to_list() == [1, 1, 2, 2]
     assert emissions["mode"].to_list() == ["car", "walk", "car", "walk"]
@@ -586,10 +672,10 @@ def test_iteration_final_state_metrics_use_demand_group_columns(tmp_path, monkey
 
     immobility = results.metrics.immobility(
         iterations=[1, 2],
-    ).sort(["iteration", "csp"])
+    ).get().sort(["iteration", "csp"])
     demand_group = results.metrics.trip_count_by_demand_group(
         iterations=[1, 2],
-    ).sort(
+    ).get().sort(
         ["iteration", "home_zone_id"]
     )
 
@@ -605,9 +691,9 @@ def test_compact_trip_count_api_handles_absolute_per_person_and_share(tmp_path, 
     """Check trip count normalization is controlled by normalize_by."""
     results = _results(tmp_path)
 
-    absolute = results.metrics.trip_count(by_variable="mode").sort("mode")
-    per_person = results.metrics.trip_count(by_variable="mode", normalize_by="person_count", normalize_scope="study_area").sort("mode")
-    share = results.metrics.trip_count(by_variable="mode", normalize_by="metric_total", normalize_scope="study_area").sort("mode")
+    absolute = results.metrics.trip_count(by_variable="mode").get().sort("mode")
+    per_person = results.metrics.trip_count(by_variable="mode", normalize_by="person_count", normalize_scope="study_area").get().sort("mode")
+    share = results.metrics.trip_count(by_variable="mode", normalize_by="metric_total", normalize_scope="study_area").get().sort("mode")
 
     assert absolute["trip_count"].to_list() == pytest.approx([2.0, 1.0])
     assert per_person["trip_count_per_person"].to_list() == pytest.approx([2.0 / 3.0, 1.0 / 3.0])
@@ -618,8 +704,8 @@ def test_metrics_can_group_by_origin_and_destination_zone(tmp_path, monkeypatch)
     """Check explicit zone dimensions select the matching plan-step zone id."""
     results = _results(tmp_path)
 
-    by_origin = results.metrics.trip_count(by_zone="origin_zone").sort("origin_zone_id")
-    by_destination = results.metrics.trip_count(by_zone="destination_zone").sort("destination_zone_id")
+    by_origin = results.metrics.trip_count(by_zone="origin_zone").get().sort("origin_zone_id")
+    by_destination = results.metrics.trip_count(by_zone="destination_zone").get().sort("destination_zone_id")
 
     assert by_origin["origin_zone_id"].to_list() == ["z1", "z2"]
     assert by_origin["trip_count"].to_list() == pytest.approx([2.0, 1.0])
@@ -633,10 +719,10 @@ def test_metrics_can_group_by_origin_destination_pairs(tmp_path, monkeypatch):
 
     od_trips = results.metrics.trip_count(
         by_zone=["origin_zone", "destination_zone"],
-    ).sort("origin_zone_id")
+    ).get().sort("origin_zone_id")
     od_distance = results.metrics.travel_distance(
         by_zone=["origin_zone", "destination_zone"],
-    ).sort("origin_zone_id")
+    ).get().sort("origin_zone_id")
 
     assert od_trips["origin_zone_id"].to_list() == ["z1", "z2"]
     assert od_trips["destination_zone_id"].to_list() == ["z3", "z4"]
@@ -710,7 +796,7 @@ def test_zone_person_count_normalization_aligns_zone_id_types(tmp_path, monkeypa
         by_zone="home_zone",
         normalize_by="person_count",
         normalize_scope="zone",
-    ).sort("home_zone_id")
+    ).get().sort("home_zone_id")
 
     assert metric["home_zone_id"].to_list() == ["1", "2"]
     assert metric["trip_count_per_person"].to_list() == pytest.approx([1.0, 1.0])
@@ -785,12 +871,12 @@ def test_metrics_can_filter_to_inner_zone_residents(tmp_path, monkeypatch):
     trips = results.metrics.trip_count(
         by_zone=["origin_zone", "destination_zone"],
         inner_zone_residents_only=True,
-    )
+    ).get()
     distance = results.metrics.travel_distance(
         normalize_by="person_count",
         normalize_scope="study_area",
         inner_zone_residents_only=True,
-    )
+    ).get()
 
     assert trips["origin_zone_id"].to_list() == ["z1"]
     assert trips["destination_zone_id"].to_list() == ["z3"]
@@ -802,19 +888,19 @@ def test_compact_travel_distance_api_uses_public_travel_distance_name(tmp_path, 
     """Check travel distance replaces the old distance public name."""
     results = _results(tmp_path)
 
-    by_mode = results.metrics.travel_distance(by_variable="mode", normalize_by="person_count", normalize_scope="study_area").sort("mode")
+    by_mode = results.metrics.travel_distance(by_variable="mode", normalize_by="person_count", normalize_scope="study_area").get().sort("mode")
     by_mode_from_generic_metric = results.metrics.metric(
         "travel_distance",
         by_variable="mode",
         normalize_by="person_count",
         normalize_scope="study_area",
-    ).sort("mode")
+    ).get().sort("mode")
     by_csp = results.metrics.travel_distance(
         by_variable="csp",
         normalize_by="person_count",
         normalize_scope="study_area",
-    ).sort("csp")
-    total = results.metrics.travel_distance()
+    ).get().sort("csp")
+    total = results.metrics.travel_distance().get()
 
     assert "travel_distance_per_person" in by_mode.columns
     assert by_mode["travel_distance_per_person"].to_list() == pytest.approx([10.0, 2.0])
@@ -827,9 +913,9 @@ def test_compact_time_cost_and_emissions_metrics(tmp_path, monkeypatch):
     """Check non-trip quantities use the same compact metric API."""
     results = _results(tmp_path)
 
-    travel_time = results.metrics.travel_time(normalize_by="person_count", normalize_scope="study_area")
-    cost = results.metrics.cost(normalize_by="person_count", normalize_scope="study_area")
-    emissions = results.metrics.ghg_emissions(normalize_by="person_count", normalize_scope="study_area")
+    travel_time = results.metrics.travel_time(normalize_by="person_count", normalize_scope="study_area").get()
+    cost = results.metrics.cost(normalize_by="person_count", normalize_scope="study_area").get()
+    emissions = results.metrics.ghg_emissions(normalize_by="person_count", normalize_scope="study_area").get()
 
     assert travel_time["travel_time_per_person"].to_list() == pytest.approx([3.6 / 3.0])
     assert cost["cost_per_person"].to_list() == pytest.approx([(5.0 / 3.0 + 11.0 / 3.0) / 2.0])
@@ -863,7 +949,7 @@ def test_weighted_metrics_count_zero_trip_groups_in_each_replication(tmp_path, m
         n_replications=2,
     )
 
-    distance = results.metrics.travel_distance(by_zone="home_zone").sort("home_zone_id")
+    distance = results.metrics.travel_distance(by_zone="home_zone").get().sort("home_zone_id")
 
     assert distance["home_zone_id"].to_list() == ["z1", "z2"]
     assert distance["travel_distance"].to_list() == pytest.approx([30.0, 2.5])
@@ -875,20 +961,20 @@ def test_compact_metrics_can_filter_demand_groups(tmp_path, monkeypatch):
     """Check metrics can focus on selected resident home zones or CSPs."""
     results = _results(tmp_path)
 
-    z1_trips = results.metrics.trip_count(by_variable="mode", home_zone_ids="z1").sort("mode")
+    z1_trips = results.metrics.trip_count(by_variable="mode", home_zone_ids="z1").get().sort("mode")
     worker_distance = results.metrics.travel_distance(
         by_variable="mode",
         normalize_by="person_count",
         normalize_scope="study_area",
         csp="worker",
-    ).sort("mode")
+    ).get().sort("mode")
     selected_emissions = results.metrics.ghg_emissions(
         by_variable="mode",
         home_zone_ids=["z1"],
         csp=["worker"],
-    ).sort("mode")
-    walk_trips = results.metrics.trip_count(by_variable="mode", modes="walk").sort("mode")
-    selected_mode_distance = results.metrics.travel_distance(modes=["walk"]).sort("scenario")
+    ).get().sort("mode")
+    walk_trips = results.metrics.trip_count(by_variable="mode", modes="walk").get().sort("mode")
+    selected_mode_distance = results.metrics.travel_distance(modes=["walk"]).get().sort("scenario")
 
     assert z1_trips["mode"].to_list() == ["car"]
     assert z1_trips["trip_count"].to_list() == pytest.approx([2.0])
@@ -958,10 +1044,9 @@ def test_scoped_run_table_does_not_depend_on_full_run_asset(tmp_path):
     assert not any(isinstance(asset, _FakeRun) for asset in graph.nodes)
 
 
-def test_run_iteration_table_scans_cached_plan_steps_without_state_load(tmp_path):
-    """Check all-iteration results do not load the full saved iteration state."""
-    plan_steps_path = tmp_path / "current_plan_steps.parquet"
-    pl.DataFrame(
+def test_run_iteration_table_returns_the_selected_iteration_steps(tmp_path):
+    """Check iteration tables expose the step data from the matching run state."""
+    plan_steps = pl.DataFrame(
         {
             "demand_group_id": [1],
             "demand_subgroup_id": [0],
@@ -982,16 +1067,14 @@ def test_run_iteration_table_scans_cached_plan_steps_without_state_load(tmp_path
             "seq_step_index": pl.UInt8,
             "n_persons": pl.Float64,
         },
-    ).write_parquet(plan_steps_path)
+    )
 
-    class CachedStateAsset:
-        cache_path = {"current_plan_steps": plan_steps_path}
-
+    class IterationStateAsset:
         def get(self):
-            raise AssertionError("Run.iteration_table should scan cached plan steps directly.")
+            return SimpleNamespace(current_plan_steps=plan_steps)
 
     run = object.__new__(Run)
-    run.iteration_state_assets = [CachedStateAsset()]
+    run.iteration_state_assets = [IterationStateAsset()]
 
     table = run.iteration_table("plan_steps", 1).collect()
 
@@ -1057,7 +1140,7 @@ def test_metric_projection_accepts_plan_steps_without_demand_group_id(tmp_path):
         normalize_by="metric_total",
         normalize_scope="zone",
         inner_zone_residents_only=True,
-    ).sort(["home_zone_id", "mode"])
+    ).get().sort(["home_zone_id", "mode"])
 
     assert metric["home_zone_id"].to_list() == ["z1", "z2"]
     assert metric["trip_count_share"].to_list() == pytest.approx([1.0, 1.0])
@@ -1080,31 +1163,31 @@ def test_metrics_can_include_survey_reference(tmp_path, monkeypatch):
         by_variable="mode",
         normalize_by="person_count", normalize_scope="study_area",
         reference="external",
-    ).sort("mode")
+    ).get().sort("mode")
     share = results.metrics.trip_count(
         by_variable="mode",
         normalize_by="metric_total", normalize_scope="study_area",
         reference="external",
-    ).sort("mode")
+    ).get().sort("mode")
     overall = results.metrics.travel_time(
         normalize_by="person_count",
         normalize_scope="study_area",
         reference="external",
-    )
+    ).get()
     trip_count = results.metrics.trip_count(
         normalize_by="person_count",
         normalize_scope="study_area",
         reference="external",
-    )
+    ).get()
     trip_count_values = results.metrics.trip_count(
         by_variable="mode",
         reference="external",
         reference_view="values",
-    ).sort(["series", "mode"])
+    ).get().sort(["series", "mode"])
     trip_count_without_reference = results.metrics.trip_count(
         normalize_by="person_count",
         normalize_scope="study_area",
-    )
+    ).get()
     inner_zone_reference_plot = results.metrics.trip_count(
         by_variable="mode",
         output="plot",
@@ -1222,7 +1305,7 @@ def test_external_reference_person_count_uses_reference_population(tmp_path, mon
         normalize_by="person_count",
         normalize_scope="study_area",
         reference="external",
-    )
+    ).get()
 
     assert trip_count["trip_count_per_person"].to_list() == pytest.approx([1.0])
     assert trip_count["trip_count_per_person_reference"].to_list() == pytest.approx([1.0])
@@ -1235,7 +1318,7 @@ def test_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
     distance = results.metrics.travel_distance(
         by_variable="mode",
         reference=("scenario", "default"),
-    ).sort("mode")
+    ).get().sort("mode")
 
     assert distance["scenario"].to_list() == ["test", "test"]
     assert distance["mode"].to_list() == ["car", "walk"]
@@ -1250,7 +1333,7 @@ def test_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
         by_variable="mode",
         reference=("scenario", "default"),
         reference_view="values",
-    ).sort(["series", "scenario", "mode"])
+    ).get().sort(["series", "scenario", "mode"])
 
     assert distance_values["scenario"].to_list() == ["test", "test", "default", "default"]
     assert distance_values["series"].to_list() == ["model", "model", "reference", "reference"]
@@ -1266,7 +1349,7 @@ def test_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
         by_zone="home_zone",
         inner_zone_residents_only=True,
         reference=("scenario", "default"),
-    ).sort("home_zone_id")
+    ).get().sort("home_zone_id")
 
     assert emissions_by_home_zone["scenario"].to_list() == ["test", "test"]
     assert emissions_by_home_zone["home_zone_id"].to_list() == ["z1", "z2"]
@@ -1314,7 +1397,7 @@ def test_scenario_reference_pairs_replications_within_sensitivity_case(tmp_path,
     distance = results.metrics.travel_distance(
         by_variable="mode",
         reference=("scenario", "default"),
-    ).sort(["sensitivity_case", "mode"])
+    ).get().sort(["sensitivity_case", "mode"])
 
     assert distance["sensitivity_case"].to_list() == [
         "base",
@@ -1357,7 +1440,7 @@ def test_scenario_reference_compares_missing_dimension_rows_to_zero(tmp_path, mo
         by_zone="home_zone",
         by_variable="mode",
         reference=("scenario", "default"),
-    ).sort(["home_zone_id", "mode"])
+    ).get().sort(["home_zone_id", "mode"])
 
     assert trip_count["home_zone_id"].to_list() == ["z1", "z1", "z2"]
     assert trip_count["mode"].to_list() == ["car", "walk/public_transport/walk", "walk"]
@@ -1374,7 +1457,7 @@ def test_iteration_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
         by_variable="mode",
         iterations=[1, 2],
         reference=("scenario", "default"),
-    ).sort(["iteration", "mode"])
+    ).get().sort(["iteration", "mode"])
 
     assert distance["scenario"].to_list() == ["test", "test", "test", "test"]
     assert distance["iteration"].to_list() == [1, 1, 2, 2]
@@ -1402,13 +1485,13 @@ def test_activity_and_bin_dimensions_are_available(tmp_path, monkeypatch):
         by_variable="activity",
         normalize_by="person_count", normalize_scope="study_area",
         reference="external",
-    ).sort("activity")
-    by_distance_bin = results.metrics.trip_count(by_variable="distance_bin").sort("distance_bin")
+    ).get().sort("activity")
+    by_distance_bin = results.metrics.trip_count(by_variable="distance_bin").get().sort("distance_bin")
     by_time_bin = results.metrics.travel_time(
         by_variable="time_bin",
         normalize_by="person_count", normalize_scope="study_area",
         reference="external",
-    )
+    ).get()
 
     assert by_activity["activity"].to_list() == ["shop", "work"]
     assert by_activity["travel_distance_per_person"].to_list() == pytest.approx([2.0, 10.0])
@@ -1420,8 +1503,8 @@ def test_immobility_and_demand_group_metrics_remain_special_methods(tmp_path, mo
     """Check special result products keep their explicit names."""
     results = _results(tmp_path)
 
-    immobility = results.metrics.immobility(reference="external").sort("csp")
-    demand_group = results.metrics.trip_count_by_demand_group().sort("home_zone_id")
+    immobility = results.metrics.immobility(reference="external").get().sort("csp")
+    demand_group = results.metrics.trip_count_by_demand_group().get().sort("home_zone_id")
 
     assert immobility["p_immobility_reference"].to_list() == pytest.approx([0.1, 0.2])
     assert demand_group["n_trips_per_person"].to_list() == pytest.approx([1.0, 1.0])
@@ -1474,7 +1557,7 @@ def test_sparse_dimension_groups_count_missing_seed_as_zero(tmp_path, monkeypatc
         n_replications=2,
     )
 
-    share = results.metrics.trip_count(by_variable="mode", normalize_by="metric_total", normalize_scope="study_area").sort("mode")
+    share = results.metrics.trip_count(by_variable="mode", normalize_by="metric_total", normalize_scope="study_area").get().sort("mode")
 
     assert share["mode"].to_list() == ["car", "walk"]
     assert share["trip_count_share"].to_list() == pytest.approx([5.0 / 6.0, 1.0 / 6.0])
@@ -1484,16 +1567,16 @@ def test_activity_duration_distribution_and_time_series_are_model_only_by_defaul
     """Check time-distribution products can opt into survey rows."""
     results = _results(tmp_path)
 
-    duration = results.metrics.activity_duration_distribution(bin_width_minutes=60)
+    duration = results.metrics.activity_duration_distribution(bin_width_minutes=60).get()
     duration_with_external = results.metrics.activity_duration_distribution(
         reference="external",
         bin_width_minutes=60,
-    )
-    time_series = results.metrics.activity_time_series(interval_minutes=60)
+    ).get()
+    time_series = results.metrics.activity_time_series(interval_minutes=60).get()
     time_series_with_external = results.metrics.activity_time_series(
         reference="external",
         interval_minutes=60,
-    )
+    ).get()
 
     assert {"model"} == set(duration["source"].to_list())
     assert {"model", "survey"} == set(duration_with_external["source"].to_list())
@@ -1530,7 +1613,7 @@ def test_opportunity_occupation_returns_table(tmp_path, monkeypatch):
     """Check opportunity occupation keeps capacities with modeled duration."""
     results = _results(tmp_path)
 
-    occupation = results.metrics.opportunity_occupation().sort("activity")
+    occupation = results.metrics.opportunity_occupation().get().sort("activity")
 
     assert occupation["transport_zone_id"].to_list() == ["z4", "z3"]
     assert occupation["activity"].to_list() == ["shop", "work"]
@@ -1643,7 +1726,7 @@ def test_metric_plots_use_scenario_titles_when_available(tmp_path, monkeypatch):
     """Check plot legends show scenario titles while tables keep scenario names."""
     results = _titled_results(tmp_path)
 
-    table = results.metrics.travel_distance(by_variable="mode")
+    table = results.metrics.travel_distance(by_variable="mode").get()
     fig = results.metrics.travel_distance(by_variable="mode", output="plot")
 
     assert table["scenario"].unique(maintain_order=True).to_list() == ["default", "test"]
@@ -1959,7 +2042,7 @@ def test_single_replication_keeps_multi_seed_schema(tmp_path, monkeypatch):
     """Check that one seed still returns the multi-seed schema."""
     results = _results(tmp_path, replication=0)
 
-    metric = results.metrics.travel_distance(normalize_by="person_count", normalize_scope="study_area")
+    metric = results.metrics.travel_distance(normalize_by="person_count", normalize_scope="study_area").get()
 
     assert metric["travel_distance_per_person"].to_list() == pytest.approx([25.0 / 3.0])
     assert metric["travel_distance_per_person_std"].to_list() == [None]
