@@ -5,8 +5,6 @@ import polars as pl
 
 from mobility.runtime.logging_levels import TRACE_LEVEL, is_trace_enabled
 
-from .demand_subgroups import DEMAND_UNIT_COLS
-
 
 def log_destination_spatialization_step(
     *,
@@ -19,8 +17,12 @@ def log_destination_spatialization_step(
     if not logging.root.isEnabledFor(logging.DEBUG):
         return
 
+    context_columns = ["home_zone_id"]
     unique_draws = sequence_step.select(
-        pl.struct(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"]).n_unique()
+        pl.struct(
+            context_columns
+            + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+        ).n_unique()
     ).item()
     logging.debug(
         "Destination spatialization step %s input rows=%s non_anchor=%s anchor=%s unique_draws=%s",
@@ -107,7 +109,9 @@ def log_destination_sequence_diagnostics(
     if one_step_sequences.height == 0:
         return
 
-    one_step_keys = one_step_sequences.select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"])
+    context_columns = ["home_zone_id"]
+    sequence_columns = context_columns + ["activity_seq_id", "time_seq_id", "dest_seq_id"]
+    one_step_keys = one_step_sequences.select(sequence_columns)
     logging.warning(
         "Destination sequences contain %s one-step sequences at iteration %s. "
         "Sample grouped sequences: %s | Sample raw rows: %s",
@@ -131,15 +135,17 @@ def log_destination_sequence_diagnostics(
 
 def _destination_sequence_lengths(destination_sequences: pl.DataFrame) -> pl.DataFrame:
     """Build one row per destination sequence with ordered locations."""
+    context_columns = ["home_zone_id"]
+    sequence_columns = context_columns + ["activity_seq_id", "time_seq_id", "dest_seq_id"]
     return (
         destination_sequences
-        .group_by(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"])
+        .group_by(sequence_columns)
         .agg(
             step_count=pl.len(),
             from_locations=pl.col("from").sort_by("seq_step_index"),
             to_locations=pl.col("to").sort_by("seq_step_index"),
         )
-        .sort(["step_count", "dest_seq_id"] + DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"])
+        .sort(["step_count", "dest_seq_id"] + context_columns + ["activity_seq_id", "time_seq_id"])
     )
 
 
@@ -153,10 +159,10 @@ def _one_step_sequence_rows(
         destination_sequences
         .join(
             one_step_keys,
-            on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"],
+            on=one_step_keys.columns,
             how="inner",
         )
-        .sort(["dest_seq_id"] + DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "seq_step_index"])
+        .sort(one_step_keys.columns + ["seq_step_index"])
     )
 
 
@@ -169,11 +175,18 @@ def _source_rows_for_sequence_keys(
     return (
         source_activity_sequences
         .join(
-            one_step_keys.select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"]).unique(),
-            on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"],
+            one_step_keys
+            .select(
+                [column for column in one_step_keys.columns if column != "dest_seq_id"]
+            )
+            .unique(),
+            on=[column for column in one_step_keys.columns if column != "dest_seq_id"],
             how="inner",
         )
-        .sort(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "seq_step_index"])
+        .sort(
+            [column for column in one_step_keys.columns if column != "dest_seq_id"]
+            + ["seq_step_index"]
+        )
     )
 
 

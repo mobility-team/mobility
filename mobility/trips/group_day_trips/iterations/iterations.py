@@ -9,6 +9,7 @@ import polars as pl
 
 from ..core.run_state import RunState
 from ..plans.activity_sequences import ActivitySequences
+from ..plans.activity_schedule_pool import ActivitySchedulePoolAsset
 from ..plans.destination_sequences import DestinationSequences
 from ..plans.mode_sequence_search import ModeSequences
 from .iteration_assets import (
@@ -58,7 +59,6 @@ class Iteration:
         destination_saturation: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
         costs: pl.DataFrame | None = None,
-        population_segments: list[Any] | None = None,
         parameters: Any = None,
         seed: int | None = None,
     ) -> DestinationSequences:
@@ -75,7 +75,6 @@ class Iteration:
             destination_saturation=destination_saturation,
             demand_groups=demand_groups,
             costs=costs,
-            population_segments=population_segments,
             parameters=parameters,
             seed=seed,
         )
@@ -83,6 +82,7 @@ class Iteration:
     def activity_sequences(
         self,
         *,
+        activity_schedule_pool: ActivitySchedulePoolAsset | None = None,
         current_plans: pl.DataFrame | None = None,
         survey_plans: pl.DataFrame | None = None,
         survey_plan_steps: pl.DataFrame | None = None,
@@ -94,6 +94,7 @@ class Iteration:
         return ActivitySequences(
             is_weekday=self.iterations.is_weekday,
             iteration=self.iteration,
+            activity_schedule_pool=activity_schedule_pool,
             current_plans=current_plans,
             survey_plans=survey_plans,
             survey_plan_steps=survey_plan_steps,

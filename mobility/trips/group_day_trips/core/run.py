@@ -32,11 +32,12 @@ from ..evaluation.trip_pattern_distribution import (
     PopulationWeightedTripPatternDistribution,
 )
 from ..plans import ActivitySequences, DestinationSequences, ModeSequences
+from ..plans.activity_schedule_pool import ActivitySchedulePoolAsset
 from ..plans.demand_subgroups import DEMAND_UNIT_COLS
 from ..plans.plan_ids import PLAN_KEY_COLS
 from ..transitions.transition_schema import TRANSITION_EVENT_SCHEMA
 from .memory_logging import log_memory_checkpoint
-from .parameters import GroupDayTripsParameters
+from .parameters import BehaviorChangeScope, GroupDayTripsParameters
 from .progress import (
     GroupDayTripsProgressReporter,
     get_group_day_trips_progress,
@@ -266,6 +267,10 @@ class Run(InMemoryAsset):
         """Build the content-addressed state asset chain for the run iterations."""
         state_assets: list[IterationStateAsset] = []
         previous_state: Asset = initial_state
+        activity_schedule_pool = ActivitySchedulePoolAsset(
+            initial_state=initial_state,
+            is_weekday=is_weekday,
+        )
 
         for iteration_index in range(1, parameters.run.n_iterations + 1):
             seeds = IterationSeedsAsset(
@@ -282,11 +287,18 @@ class Run(InMemoryAsset):
                 n_iter_per_cost_update=parameters.run.n_iter_per_cost_update,
             )
             self.iteration_transport_cost_assets.append(resolved_transport_costs)
+            prepared_schedule_pool = (
+                activity_schedule_pool
+                if parameters.behavior_change.scope_at(iteration_index)
+                == BehaviorChangeScope.FULL_REPLANNING
+                else None
+            )
             activity_sequences = ActivitySequences(
                 is_weekday=is_weekday,
                 iteration=iteration_index,
                 previous_state=previous_state,
                 seed_asset=seeds,
+                activity_schedule_pool=prepared_schedule_pool,
                 parameters=parameters,
             )
             destination_sequences = DestinationSequences(
@@ -300,7 +312,6 @@ class Run(InMemoryAsset):
                 sensitivity_case=sensitivity_case,
                 transport_zones=population.transport_zones,
                 transport_costs=resolved_transport_costs,
-                population_segments=population.population_segments,
                 parameters=parameters,
             )
             mode_sequences = ModeSequences(

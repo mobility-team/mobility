@@ -57,9 +57,11 @@ class PlanUpdater:
             transport_costs,
             destination_saturation,
             activity_dur,
+            home_night_dur,
             transport_zones,
             iteration,
             resolved_activity_parameters,
+            arrival_time_rigidity_by_activity,
             parameters.plan_update.min_activity_time_constant,
             destination_sequences,
             mode_sequences,
@@ -212,15 +214,36 @@ class PlanUpdater:
         transport_costs,
         destination_saturation,
         activity_dur,
+        home_night_dur,
         transport_zones,
         iteration: int,
         resolved_activity_parameters: dict[str, Any],
+        arrival_time_rigidity_by_activity: dict[str, float],
         min_activity_time_constant,
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
         parameters: Any,
     ):
         """Enumerate candidate plan steps and compute per-step utilities."""
+        profile_assignments, utility_profiles = transport_costs.get_utility_profiles(
+            demand_groups,
+            mode_sequences.population_segments,
+        )
+        candidate_pruner = lambda context_steps: self._prune_shared_candidate_contexts(
+            candidates=context_steps,
+            transport_costs=transport_costs,
+            utility_profiles=utility_profiles,
+            destination_saturation=destination_saturation,
+            activity_dur=activity_dur,
+            home_night_dur=home_night_dur,
+            transport_zones=transport_zones,
+            resolved_activity_parameters=resolved_activity_parameters,
+            min_activity_time_constant=min_activity_time_constant,
+            parameters=parameters,
+            iteration=iteration,
+            arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
+        )
+
         aggregated_candidates = CandidatePlanStepsAsset.build_candidate_memory(
             destination_sequences=destination_sequences,
             mode_sequences=mode_sequences,
@@ -231,6 +254,8 @@ class PlanUpdater:
             current_iteration=iteration,
             n_warmup_iterations=parameters.plan_update.n_warmup_iterations,
             max_inactive_age=parameters.plan_update.max_inactive_age,
+            profile_assignments=profile_assignments,
+            candidate_pruner=candidate_pruner,
         )
         log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:candidate_memory",
@@ -241,7 +266,7 @@ class PlanUpdater:
             candidates=aggregated_candidates,
             transport_costs=transport_costs,
             demand_groups=demand_groups,
-            population_segments=destination_sequences.population_segments,
+            population_segments=mode_sequences.population_segments,
             destination_saturation=destination_saturation,
             activity_dur=activity_dur,
             transport_zones=transport_zones,
@@ -251,6 +276,157 @@ class PlanUpdater:
             use_destination_shadow_prices=parameters.plan_update.use_destination_shadow_prices,
         )
 
+    def _prune_shared_candidate_contexts(
+        self,
+        *,
+        candidates: pl.LazyFrame,
+        transport_costs,
+        utility_profiles,
+        destination_saturation: pl.DataFrame,
+        activity_dur: pl.DataFrame,
+        home_night_dur: pl.DataFrame,
+        transport_zones,
+        resolved_activity_parameters: dict[str, Any],
+        min_activity_time_constant: float,
+        parameters: Any,
+        iteration: int,
+        arrival_time_rigidity_by_activity: dict[str, float],
+    ) -> pl.DataFrame:
+        """Apply the existing transition utility window before demand-unit expansion."""
+        scope = parameters.behavior_change.scope_at(iteration)
+        if scope == BehaviorChangeScope.NO_TRANSITIONS:
+            return candidates.select(
+                [
+                    "_score_context_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "dest_seq_id",
+                    "mode_seq_id",
+                ]
+            ).unique().collect(engine="streaming")
+
+        candidate_steps = candidates.with_columns(
+            first_seen_iteration=pl.lit(0, dtype=pl.UInt16),
+            last_seen_iteration=pl.lit(0, dtype=pl.UInt16),
+            last_active_iteration=pl.lit(None, dtype=pl.UInt16),
+        )
+        if "iteration" not in candidate_steps.collect_schema().names():
+            candidate_steps = candidate_steps.with_columns(
+                iteration=pl.lit(0, dtype=pl.UInt16)
+            )
+
+        scored_steps = self.compute_plan_steps_candidates_utility(
+            candidates=candidate_steps,
+            transport_costs=transport_costs,
+            utility_profiles=utility_profiles,
+            destination_saturation=destination_saturation,
+            activity_dur=activity_dur,
+            transport_zones=transport_zones,
+            resolved_activity_parameters=resolved_activity_parameters,
+            min_activity_time_constant=min_activity_time_constant,
+            allow_missing_costs_for_current_plans=False,
+            use_destination_shadow_prices=parameters.plan_update.use_destination_shadow_prices,
+        )
+        scored_steps = self.schedule_updater.update_plan_timings(
+            scored_steps,
+            arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
+            enabled=parameters.plan_update.update_plan_timings_from_modeled_travel_times,
+        )
+        candidate_utilities = (
+            scored_steps
+            .with_columns(
+                utility=(
+                    pl.col("activity_utility_scale")
+                    * (pl.col("duration_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
+                    - pl.col("cost")
+                )
+            )
+            .filter(pl.col("mode_seq_id") != 0)
+            .group_by(
+                DEMAND_UNIT_COLS
+                + [
+                    "country",
+                    "csp",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "dest_seq_id",
+                    "mode_seq_id",
+                ]
+            )
+            .agg(
+                utility=pl.col("utility").sum(),
+                home_night_per_pers=(
+                    24.0
+                    - pl.col("duration_per_pers").sum()
+                    - pl.col("time").fill_null(0.0).sum()
+                ).clip(0.0),
+            )
+            .join(home_night_dur.lazy(), on=["country", "csp"])
+            .with_columns(
+                min_activity_time=(
+                    pl.col("mean_home_night_per_pers")
+                    * math.exp(-min_activity_time_constant)
+                ),
+            )
+            .with_columns(
+                utility=(
+                    pl.col("utility")
+                    + resolved_activity_parameters["home"].value_of_time_stay_home
+                    * pl.col("mean_home_night_per_pers")
+                    * (
+                        pl.col("home_night_per_pers")
+                        / pl.col("min_activity_time")
+                    ).log().clip(0.0)
+                )
+            )
+        )
+
+        window_columns = list(DEMAND_UNIT_COLS)
+        if scope == BehaviorChangeScope.DESTINATION_REPLANNING:
+            window_columns += ["activity_seq_id", "time_seq_id"]
+        elif scope == BehaviorChangeScope.MODE_REPLANNING:
+            window_columns += ["activity_seq_id", "time_seq_id", "dest_seq_id"]
+        delta = self._scale_utility_pruning_delta(
+            parameters.plan_update.transition_utility_pruning_delta,
+            parameters.plan_update.transition_logit_scale,
+        )
+        if not math.isfinite(delta):
+            return candidates.select(
+                [
+                    "_score_context_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "dest_seq_id",
+                    "mode_seq_id",
+                ]
+            ).unique().collect(engine="streaming")
+
+        retained = (
+            candidate_utilities
+            .with_columns(max_utility=pl.col("utility").max().over(window_columns))
+            .filter(pl.col("utility") >= pl.col("max_utility") - delta)
+            .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"])
+            .unique()
+        )
+        context_ids = candidates.select(
+            ["_score_context_id"] + DEMAND_UNIT_COLS
+        ).unique()
+        return (
+            retained
+            .join(context_ids, on=DEMAND_UNIT_COLS, how="inner")
+            .select(
+                [
+                    "_score_context_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "dest_seq_id",
+                    "mode_seq_id",
+                ]
+            )
+            .unique()
+            .collect(engine="streaming")
+        )
+
     def compute_plan_steps_candidates_utility(
         self,
         *,
@@ -258,6 +434,7 @@ class PlanUpdater:
         transport_costs,
         demand_groups: pl.DataFrame | None = None,
         population_segments=None,
+        utility_profiles=None,
         destination_saturation: pl.DataFrame,
         activity_dur: pl.DataFrame,
         transport_zones,
@@ -268,7 +445,14 @@ class PlanUpdater:
     ) -> pl.LazyFrame:
         """Score plan-step candidates under current costs and destination saturation."""
 
-        if demand_groups is None:
+        if utility_profiles is not None:
+            profile_assignments = None
+            cost_by_od_and_modes = transport_costs.get_profile_costs_by_od_and_mode(
+                utility_profiles,
+                ["cost", "distance", "time"],
+            )
+            cost_join_columns = ["utility_profile_id", "from", "to", "mode"]
+        elif demand_groups is None:
             profile_assignments = None
             cost_by_od_and_modes = transport_costs.get_costs_by_od_and_mode(
                 ["cost", "distance", "time"],

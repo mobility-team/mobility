@@ -1,6 +1,6 @@
-import logging
 import pathlib
 import shutil
+import logging
 from typing import Any
 
 import polars as pl
@@ -8,10 +8,7 @@ from scipy.stats import norm
 
 from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
-from mobility.runtime.assets.resolver import (
-    asset_resolution_context,
-    get_current_asset_resolver,
-)
+from mobility.runtime.assets.resolver import asset_resolution_context, get_current_asset_resolver
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from .debug_logs import (
     log_destination_sequence_diagnostics,
@@ -24,16 +21,14 @@ from .stable_key_index import StableKeyIndex
 from mobility.activities.activity import resolve_activity_parameters
 from mobility.runtime.parameter_values import SensitivityCase
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
-from .demand_subgroups import DEMAND_UNIT_COLS, DEMAND_UNIT_SCHEMA, demand_unit_hash
-from .destination_plan_search import sample_destination_plans
+from .demand_subgroups import DEMAND_UNIT_COLS
 
 
 class DestinationSequences(InMemoryAsset):
-    """Build destination sequences for one PopulationGroupDayTrips iteration."""
+    """Build sequential destination alternatives shared by home-zone schedule."""
 
     OUTPUT_SCHEMA = {
-        "demand_group_id": pl.UInt32,
-        "demand_subgroup_id": pl.UInt32,
+        "home_zone_id": pl.Int32,
         "activity_seq_id": pl.UInt32,
         "time_seq_id": pl.UInt32,
         "dest_seq_id": pl.UInt32,
@@ -45,15 +40,14 @@ class DestinationSequences(InMemoryAsset):
         "next_departure_time": pl.Float32,
         "iteration": pl.UInt16,
     }
+    OUTPUT_COLUMNS = list(OUTPUT_SCHEMA)
     REQUIRED_SCHEMA = {
-        **DEMAND_UNIT_SCHEMA,
+        "home_zone_id": pl.Int32,
         "activity_seq_id": pl.UInt32,
         "time_seq_id": pl.UInt32,
         "dest_seq_id": pl.UInt32,
         "seq_step_index": pl.UInt8,
     }
-
-    OUTPUT_COLUMNS = list(OUTPUT_SCHEMA)
 
     def __init__(
         self,
@@ -72,10 +66,8 @@ class DestinationSequences(InMemoryAsset):
         current_plans: pl.DataFrame | None = None,
         current_plan_steps: pl.DataFrame | None = None,
         destination_saturation: pl.DataFrame | None = None,
-        activity_durations: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
         costs: pl.DataFrame | None = None,
-        population_segments: list[Any] | None = None,
         parameters: Any = None,
         seed: int | None = None,
     ) -> None:
@@ -105,15 +97,13 @@ class DestinationSequences(InMemoryAsset):
         self.current_plans = current_plans
         self.current_plan_steps = current_plan_steps
         self.destination_saturation = destination_saturation
-        self.activity_durations = activity_durations
         self.demand_groups = demand_groups
         self.costs = costs
-        self.population_segments = population_segments or []
         self.parameters = parameters
         self.seed = seed
-        self.sequence_index: pl.DataFrame | None = None
+        self.spatialization_context_columns = ["home_zone_id"]
         inputs = {
-            "version": 12,
+            "version": 15,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -125,17 +115,11 @@ class DestinationSequences(InMemoryAsset):
             "resolved_activity_parameters": self.resolved_activity_parameters,
             "transport_zones": transport_zones,
             "transport_costs": transport_costs,
-            "population_segments": self.population_segments,
             "destination_sequence_parameters": (
                 parameters.destination_sequences if parameters is not None else None
             ),
             "plan_update_shadow_price_flag": (
                 parameters.plan_update.use_destination_shadow_prices
-                if parameters is not None
-                else None
-            ),
-            "plan_update_transition_logit_scale": (
-                parameters.plan_update.transition_logit_scale
                 if parameters is not None
                 else None
             ),
@@ -146,6 +130,7 @@ class DestinationSequences(InMemoryAsset):
             ),
             "seed": seed,
         }
+        self.sequence_index: pl.DataFrame | None = None
         super().__init__(inputs)
 
 
@@ -156,6 +141,7 @@ class DestinationSequences(InMemoryAsset):
             raise RuntimeError("Destination sequences have no sequence index.")
         return self.sequence_index
 
+
     def get(self, *args, **kwargs) -> pl.DataFrame:
         """Return destination sequences and spill their stable index together."""
         resolver = get_current_asset_resolver()
@@ -163,6 +149,7 @@ class DestinationSequences(InMemoryAsset):
             with asset_resolution_context() as resolver:
                 return self._get_with_resolver(resolver, *args, **kwargs)
         return self._get_with_resolver(resolver, *args, **kwargs)
+
 
     def _get_with_resolver(self, resolver, *args, **kwargs) -> pl.DataFrame:
         return resolver.get_in_memory_asset(
@@ -172,8 +159,9 @@ class DestinationSequences(InMemoryAsset):
             load_from_disk=self._load_spilled_sequences,
         )
 
+
     def _spill_sequences(self, sequences: pl.DataFrame, path: pathlib.Path) -> None:
-        """Spill sampled rows and their stable index as one transient asset."""
+        """Spill sampled rows and their stable index together."""
         if path.exists():
             shutil.rmtree(path)
         path.mkdir(parents=True)
@@ -181,14 +169,11 @@ class DestinationSequences(InMemoryAsset):
         if self.sequence_index is not None:
             self.sequence_index.write_parquet(path / "sequence_index.parquet")
 
+
     def _load_spilled_sequences(self, path: pathlib.Path) -> pl.DataFrame:
-        """Restore sampled rows and the matching stable index."""
+        """Restore sampled rows and their matching stable index."""
         index_path = path / "sequence_index.parquet"
-        self.sequence_index = (
-            pl.read_parquet(index_path)
-            if index_path.exists()
-            else None
-        )
+        self.sequence_index = pl.read_parquet(index_path) if index_path.exists() else None
         return pl.read_parquet(path / "sequences.parquet")
 
 
@@ -207,7 +192,6 @@ class DestinationSequences(InMemoryAsset):
                 self.current_plans = None
                 self.current_plan_steps = None
                 self.destination_saturation = None
-                self.activity_durations = None
                 self.demand_groups = None
                 self.costs = None
                 self.previous_sequence_index = None
@@ -227,8 +211,6 @@ class DestinationSequences(InMemoryAsset):
             self.destination_saturation = state.destination_saturation
         if self.demand_groups is None:
             self.demand_groups = state.demand_groups
-        if self.activity_durations is None:
-            self.activity_durations = state.activity_dur
         if self.costs is None and self.transport_costs is not None:
             self.costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
         elif self.costs is None:
@@ -258,7 +240,6 @@ class DestinationSequences(InMemoryAsset):
             self.transport_zones,
             self.destination_saturation,
             self.activity_sequences.get(),
-            self.demand_groups,
             self.costs,
             self.parameters,
             self.seed,
@@ -276,7 +257,6 @@ class DestinationSequences(InMemoryAsset):
             self.transport_zones,
             self.destination_saturation,
             filtered_sequences,
-            self.demand_groups,
             self.costs,
             self.parameters,
             self.seed,
@@ -291,21 +271,34 @@ class DestinationSequences(InMemoryAsset):
         if active_dest_sequences.height == 0:
             return self._empty_destination_sequences()
 
+        unit_home_zones = self.demand_groups.select(DEMAND_UNIT_COLS + ["home_zone_id"])
+        active_dest_sequences = active_dest_sequences.join(
+            unit_home_zones,
+            on=DEMAND_UNIT_COLS,
+        )
+        current_plan_steps = self.current_plan_steps.lazy().join(
+            unit_home_zones.lazy(),
+            on=DEMAND_UNIT_COLS,
+            how="inner",
+        )
+        active_dest_sequences = (
+            active_dest_sequences
+            .select(["home_zone_id", "activity_seq_id", "time_seq_id", "dest_seq_id"])
+            .unique()
+        )
+        reuse_keys = ["home_zone_id", "activity_seq_id", "time_seq_id", "dest_seq_id"]
+
         reused = (
-            self.current_plan_steps.lazy()
+            current_plan_steps
             .join(
                 active_dest_sequences.lazy(),
-                on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"],
+                on=reuse_keys,
                 how="inner",
             )
             .with_columns(iteration=pl.lit(self.iteration).cast(pl.UInt16()))
             .select(
-                [
-                    "demand_group_id",
-                    "demand_subgroup_id",
-                    "activity_seq_id",
-                    "time_seq_id",
-                    "dest_seq_id",
+                reuse_keys
+                + [
                     "seq_step_index",
                     "from",
                     "to",
@@ -316,7 +309,7 @@ class DestinationSequences(InMemoryAsset):
                 ]
             )
             .unique(
-                subset=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "seq_step_index"],
+                subset=reuse_keys + ["seq_step_index"],
                 keep="first",
             )
             .collect(engine="streaming")
@@ -350,7 +343,13 @@ class DestinationSequences(InMemoryAsset):
                 how="vertical_relaxed",
             )
             .unique(
-                subset=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "seq_step_index"],
+                subset=[
+                    "home_zone_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "dest_seq_id",
+                    "seq_step_index",
+                ],
                 keep="first",
                 maintain_order=True,
             )
@@ -378,135 +377,103 @@ class DestinationSequences(InMemoryAsset):
             first_new_id=1,
         ).extend(
             empty_keys,
-            previous_index=(
-                self.previous_sequence_index
-            ),
+            previous_index=self.previous_sequence_index,
         )
-
     def run(
         self,
         activities: list[Any],
         transport_zones: Any,
         destination_saturation: pl.DataFrame,
         activity_sequences: pl.DataFrame,
-        demand_groups: pl.DataFrame,
         costs: pl.DataFrame,
         parameters: Any,
         seed: int,
     ) -> pl.DataFrame:
         """Compute destination sequences for one iteration."""
-        activity_sequences = (
-            activity_sequences
-            .filter(pl.col("activity_seq_id") != 0)
-            .join(
-                demand_groups.select(DEMAND_UNIT_COLS + ["home_zone_id"]),
-                on=DEMAND_UNIT_COLS,
-            )
-            .select(
-                [
-                    "demand_group_id",
-                    "demand_subgroup_id",
-                    "home_zone_id",
-                    "activity_seq_id",
-                    "time_seq_id",
-                    "activity",
-                    "is_anchor",
-                    "seq_step_index",
-                    "step_count",
-                    "departure_time",
-                    "arrival_time",
-                    "next_departure_time",
-                ]
-            )
+        activity_sequences = activity_sequences.filter(pl.col("activity_seq_id") != 0)
+        if activity_sequences.height == 0:
+            self._cache_empty_destination_sequence_index()
+            return self._empty_destination_sequences()
+        activity_sequences = activity_sequences.with_columns(
+            pl.col("activity_draw_id")
+            if "activity_draw_id" in activity_sequences.columns
+            else pl.lit(0, dtype=pl.UInt32).alias("activity_draw_id")
+        ).select(
+            [
+                "home_zone_id",
+                "activity_draw_id",
+                "activity_seq_id",
+                "time_seq_id",
+                "activity",
+                "is_anchor",
+                "seq_step_index",
+                "step_count",
+                "departure_time",
+                "arrival_time",
+                "next_departure_time",
+            ]
         )
         source_activity_sequences = activity_sequences
-        if parameters.destination_sequences.use_destination_plan_search:
-            if self.activity_durations is None:
-                raise ValueError(
-                    "Cannot use destination plan search without activity durations."
-                )
-            if self.transport_costs is None:
-                raise ValueError(
-                    "Cannot use destination plan search without transport costs."
-                )
-            profile_assignments, utility_profiles = (
-                self.transport_costs.get_utility_profiles(
-                    demand_groups,
-                    self.population_segments,
-                )
-            )
-            profile_mode_costs = (
-                self.transport_costs.get_profile_costs_by_od_and_mode(
-                    utility_profiles,
-                    ["cost", "time"],
-                )
-            )
-            complete_activity_sequences = sample_destination_plans(
-                activity_sequences=activity_sequences,
-                activity_durations=self.activity_durations,
-                demand_groups=demand_groups,
-                destination_saturation=destination_saturation,
-                mode_costs=profile_mode_costs,
-                profile_assignments=profile_assignments,
-                transport_zones=transport_zones,
-                activities=activities,
-                resolved_activity_parameters=self.resolved_activity_parameters,
-                min_activity_time_constant=(
-                    parameters.plan_update.min_activity_time_constant
-                ),
-                logit_scale=parameters.plan_update.transition_logit_scale,
-                update_plan_timings=(
-                    parameters.plan_update.update_plan_timings_from_modeled_travel_times
-                ),
-                use_shadow_prices=parameters.plan_update.use_destination_shadow_prices,
-                exploration_seed=seed,
-                top_k=parameters.destination_sequences.k_destination_sequences,
-            )
-        else:
-            utility_inputs = self._get_destination_probability_inputs(
-                destination_saturation,
-                costs,
-                parameters.destination_sequences.cost_uncertainty_sd,
-            )
-            destination_probability = self._get_destination_probability(
-                utility_inputs,
-                activities,
-                self.resolved_activity_parameters,
-                parameters.destination_sequences.dest_prob_cutoff,
-            )
-            cost_views = self._spatialization_cost_views(costs)
-            anchor_spatialized_sequences = self._spatialize_anchor_activities(
-                source_activity_sequences,
-                destination_probability,
-                parameters.destination_sequences.alpha,
-                seed,
-                cost_views,
-            )
-            spatialized_activity_sequences = self._spatialize_other_activities(
-                anchor_spatialized_sequences,
-                destination_probability,
-                costs,
-                parameters.destination_sequences.alpha,
-                seed,
-                cost_views,
-            )
-            complete_activity_sequences = self._drop_incomplete_destination_draws(
-                activity_sequences=spatialized_activity_sequences,
-                iteration=self.iteration,
-            )
+        utility_inputs = self._get_destination_probability_inputs(
+            destination_saturation,
+            costs,
+            parameters.destination_sequences.cost_uncertainty_sd,
+        )
+        destination_probability = self._get_destination_probability(
+            utility_inputs,
+            activities,
+            self.resolved_activity_parameters,
+            parameters.destination_sequences.dest_prob_cutoff,
+        )
+        cost_views = self._spatialization_cost_views(costs)
+        anchor_spatialized_sequences = self._spatialize_anchor_activities(
+            source_activity_sequences,
+            destination_probability,
+            parameters.destination_sequences.alpha,
+            seed,
+            cost_views,
+        )
+        spatialized_activity_sequences = self._spatialize_other_activities(
+            anchor_spatialized_sequences,
+            destination_probability,
+            costs,
+            parameters.destination_sequences.alpha,
+            seed,
+            cost_views,
+        )
+        complete_activity_sequences = self._drop_incomplete_destination_draws(
+            activity_sequences=spatialized_activity_sequences,
+            iteration=self.iteration,
+            sequence_context_columns=self.spatialization_context_columns,
+        )
 
         destination_sequences = (
             complete_activity_sequences
-            .group_by(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"])
+            .group_by(
+                self.spatialization_context_columns
+                + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+            )
             .agg(destination_sequence_key=pl.col("to").sort_by("seq_step_index").cast(pl.Utf8()))
             .with_columns(destination_sequence_key=pl.col("destination_sequence_key").list.join("-"))
-            .sort(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"])
+            .sort(
+                self.spatialization_context_columns
+                + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+            )
         )
         destination_sequences = (
             destination_sequences
-            .group_by(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "destination_sequence_key"])
-            .agg(dest_draw_id=pl.col("dest_draw_id").min())
-            .sort(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"])
+            .group_by(
+                self.spatialization_context_columns
+                + ["activity_seq_id", "time_seq_id", "destination_sequence_key"]
+            )
+            .agg(
+                activity_draw_id=pl.col("activity_draw_id").first(),
+                dest_draw_id=pl.col("dest_draw_id").first(),
+            )
+            .sort(
+                self.spatialization_context_columns
+                + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+            )
         )
         destination_sequences, self.sequence_index = StableKeyIndex(
             key_cols=["destination_sequence_key"],
@@ -514,17 +481,19 @@ class DestinationSequences(InMemoryAsset):
             first_new_id=1,
         ).extend(
             destination_sequences,
-            previous_index=(
-                self.previous_sequence_index
-            ),
+            previous_index=self.previous_sequence_index,
         )
         destination_sequences = (
             complete_activity_sequences
             .join(
-                destination_sequences.select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id", "dest_seq_id"]),
-                on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"],
+                destination_sequences.select(
+                    self.spatialization_context_columns
+                    + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "dest_seq_id"]
+                ),
+                on=self.spatialization_context_columns
+                + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"],
             )
-            .drop(["home_zone_id", "activity", "dest_draw_id"])
+            .drop(["activity", "activity_draw_id", "dest_draw_id"])
             .with_columns(
                 pl.col("seq_step_index").cast(pl.UInt8),
                 pl.col("from").cast(pl.UInt16),
@@ -715,7 +684,8 @@ class DestinationSequences(InMemoryAsset):
         onward_right_on: list[str],
         onward_cost_col: str,
         alpha: float,
-        seed: int,
+        sequence_context_columns: list[str],
+        noise_hash: pl.Expr,
         output_cols: list[str],
     ) -> tuple[pl.LazyFrame, pl.LazyFrame, pl.LazyFrame, pl.LazyFrame]:
         """Sample destinations while checking both legs around the candidate zone."""
@@ -750,10 +720,7 @@ class DestinationSequences(InMemoryAsset):
             )
             .with_columns(
                 noise=(
-                    demand_unit_hash(
-                        ["activity_seq_id", "time_seq_id", "dest_draw_id", "to"],
-                        seed=seed,
-                    )
+                    noise_hash
                     .cast(pl.Float64)
                     .truediv(pl.lit(18446744073709551616.0))
                     .log()
@@ -766,13 +733,18 @@ class DestinationSequences(InMemoryAsset):
             )
             .with_columns(
                 min_score=pl.col("sample_score").min().over(
-                    DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"]
+                    sequence_context_columns
+                    + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
                 )
             )
             .filter(pl.col("sample_score") == pl.col("min_score"))
             .select(output_cols)
         )
         return candidates, candidates_with_origin_costs, candidates_with_costs, sampled
+
+    def _destination_sample_hash(self, extra_columns: list[str], seed: int) -> pl.Expr:
+        """Build a deterministic draw key for a shared home-zone plan."""
+        return pl.struct(self.spatialization_context_columns + extra_columns).hash(seed=seed)
 
 
     def _spatialize_anchor_activities(
@@ -802,10 +774,12 @@ class DestinationSequences(InMemoryAsset):
         anchor zone.
         """
         logging.debug("Spatializing anchor activities...")
-        sequence_key_cols = [
-            "demand_group_id",
-            "demand_subgroup_id",
-            "home_zone_id",
+        if "activity_draw_id" not in sequences.columns:
+            sequences = sequences.with_columns(
+                pl.lit(0, dtype=pl.UInt32).alias("activity_draw_id")
+            )
+        sequence_key_cols = self.spatialization_context_columns + [
+            "activity_draw_id",
             "activity_seq_id",
             "time_seq_id",
             "dest_draw_id",
@@ -823,19 +797,25 @@ class DestinationSequences(InMemoryAsset):
         ]
         destination_probability_lf = destination_probability.lazy()
         destination_draw_ids = pl.DataFrame(
-            {"dest_draw_id": list(range(int(self.parameters.destination_sequences.k_destination_sequences)))},
+            {"dest_draw_id": [0]},
             schema={"dest_draw_id": pl.UInt32},
         )
         sequences = (
             sequences
-            .sort(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "seq_step_index"])
+            .sort(
+                self.spatialization_context_columns
+                + ["activity_draw_id", "activity_seq_id", "time_seq_id", "seq_step_index"]
+            )
             .with_columns(
                 next_anchor_seq_step_index=(
                     pl.when(pl.col("is_anchor"))
                     .then(pl.col("seq_step_index"))
                     .otherwise(pl.lit(None, dtype=pl.UInt8))
                     .backward_fill()
-                    .over(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"])
+                    .over(
+                        self.spatialization_context_columns
+                        + ["activity_draw_id", "activity_seq_id", "time_seq_id"]
+                    )
                 )
             )
         )
@@ -844,7 +824,9 @@ class DestinationSequences(InMemoryAsset):
             sequences
             .filter(pl.col("is_anchor"))
             .join(destination_draw_ids, how="cross")
-            .sort(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "seq_step_index"])
+            .sort(
+                sequence_key_cols + ["seq_step_index"]
+            )
         )
         expanded_non_anchor_steps = (
             sequences
@@ -908,7 +890,11 @@ class DestinationSequences(InMemoryAsset):
                     onward_right_on=["home_return_from", "home_return_to"],
                     onward_cost_col="cost_to_home",
                     alpha=alpha,
-                    seed=seed,
+                    sequence_context_columns=self.spatialization_context_columns,
+                    noise_hash=self._destination_sample_hash(
+                        ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"],
+                        seed,
+                    ),
                     output_cols=anchor_output_cols,
                 )
                 sampled_anchor_steps = sampled_anchor_steps_lf.collect(engine="streaming")
@@ -1023,9 +1009,13 @@ class DestinationSequences(InMemoryAsset):
                 .filter(pl.col("seq_step_index") == seq_step_index)
                 .join(
                     spatialized_step.lazy()
-                    .select(DEMAND_UNIT_COLS + ["home_zone_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"])
+                    .select(
+                        self.spatialization_context_columns
+                        + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"]
+                    )
                     .rename({"to": "from"}),
-                    on=DEMAND_UNIT_COLS + ["home_zone_id", "activity_seq_id", "time_seq_id", "dest_draw_id"],
+                    on=self.spatialization_context_columns
+                    + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"],
                 )
                 .collect(engine="streaming")
             )
@@ -1045,20 +1035,20 @@ class DestinationSequences(InMemoryAsset):
         anchor_count: int,
     ) -> pl.DataFrame:
         """Sample destinations for one step between anchors."""
+        if "activity_draw_id" not in sequence_step.columns:
+            sequence_step = sequence_step.with_columns(
+                pl.lit(0, dtype=pl.UInt32).alias("activity_draw_id")
+            )
         sequence_step_lf = sequence_step.lazy()
         destination_probability_lf = destination_probability.lazy()
-        sequence_key_cols = [
-            "demand_group_id",
-            "demand_subgroup_id",
-            "home_zone_id",
+        sequence_key_cols = self.spatialization_context_columns + [
+            "activity_draw_id",
             "activity_seq_id",
             "time_seq_id",
             "dest_draw_id",
         ]
-        output_cols = [
-            "demand_group_id",
-            "demand_subgroup_id",
-            "home_zone_id",
+        output_cols = self.spatialization_context_columns + [
+            "activity_draw_id",
             "activity_seq_id",
             "time_seq_id",
             "dest_draw_id",
@@ -1092,7 +1082,11 @@ class DestinationSequences(InMemoryAsset):
                 onward_right_on=["anchor_from", "anchor_to_cost"],
                 onward_cost_col="cost_to_anchor",
                 alpha=alpha,
-                seed=seed,
+                sequence_context_columns=self.spatialization_context_columns,
+                noise_hash=self._destination_sample_hash(
+                    ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"],
+                    seed,
+                ),
                 output_cols=output_cols,
             )
             step_frames.append(sampled_non_anchor_steps)
@@ -1127,11 +1121,12 @@ class DestinationSequences(InMemoryAsset):
 
         return pl.concat(step_frames).collect(engine="streaming")
 
-    @staticmethod
     def _drop_incomplete_destination_draws(
+        self,
         *,
         activity_sequences: pl.DataFrame,
         iteration: int,
+        sequence_context_columns: list[str],
     ) -> pl.DataFrame:
         """Drop destination draws that lost one or more steps during spatialization.
 
@@ -1140,7 +1135,16 @@ class DestinationSequences(InMemoryAsset):
         remaining earlier steps, we create a truncated destination sequence that later
         becomes invalid input for mode-sequence search.
         """
-        sequence_key_cols = DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_draw_id"]
+        if "activity_draw_id" not in activity_sequences.columns:
+            activity_sequences = activity_sequences.with_columns(
+                pl.lit(0, dtype=pl.UInt32).alias("activity_draw_id")
+            )
+        sequence_key_cols = sequence_context_columns + [
+            "activity_draw_id",
+            "activity_seq_id",
+            "time_seq_id",
+            "dest_draw_id",
+        ]
         activity_sequences_with_counts = (
             activity_sequences
             .with_columns(

@@ -278,10 +278,26 @@ class GroupDayTripsActivitySequenceParameters(BaseModel):
         Field(
             default=3,
             ge=1,
-            title="Number of activity-sequence seeds",
+            title="Number of schedule draws",
             description=(
-                "Maximum number of timed survey activity-sequence seeds sampled "
-                "without replacement per demand group during full replanning."
+                "Number of timed survey schedule draws per home zone during full "
+                "replanning. Draws are made with replacement from the schedules "
+                "supported by groups in that zone. Extra weighted draws may be "
+                "added to cover activity profiles missed by the initial sample. "
+                "Set to None to keep every eligible schedule."
+            ),
+        ),
+    ]
+    activity_support_threshold: Annotated[
+        float,
+        Field(
+            default=0.02,
+            ge=0.0,
+            le=1.0,
+            title="Activity support threshold",
+            description=(
+                "Minimum survey-weighted share of a CSP that must take part in an "
+                "activity for that activity to be included in its allowed set."
             ),
         ),
     ]
@@ -292,17 +308,6 @@ class GroupDayTripsDestinationSequenceParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    use_destination_plan_search: Annotated[
-        bool,
-        Field(
-            default=False,
-            title="Use destination plan search",
-            description=(
-                "Whether to use the bounded Rust top-k search to choose complete "
-                "destination plans. The default keeps the existing step-by-step sampler."
-            ),
-        ),
-    ]
     alpha: Annotated[
         float,
         Field(
@@ -310,15 +315,6 @@ class GroupDayTripsDestinationSequenceParameters(BaseModel):
             ge=0.0,
             title="Chain cost weighting",
             description="Weight of the chain cost used to penalize intermediate destination options.",
-        ),
-    ]
-    k_destination_sequences: Annotated[
-        int,
-        Field(
-            default=3,
-            ge=1,
-            title="Number of destination sequences",
-            description="Number of destination-chain sequences generated per admitted activity sequence.",
         ),
     ]
     refresh_active_mode_alternatives: Annotated[
@@ -395,10 +391,8 @@ class GroupDayTripsDemandGroupParameters(BaseModel):
             title="Maximum persons per demand subgroup",
             description=(
                 "Optional maximum represented persons per demand subgroup. "
-                "Large demand groups are split into deterministic subgroups "
-                "before activity, destination, and mode sampling, so one "
-                "large group can keep several sampled alternatives instead of "
-                "placing all represented persons on the same sampled plan."
+                "Large groups are split into deterministic subgroups so plan "
+                "choice can allocate their members across the shared candidates."
             ),
         ),
     ]
@@ -486,8 +480,8 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
             ge=0.0,
             title="Plan choice logit scale",
             description=(
-                "Scale applied to plan utilities when ranking destination plans "
-                "and choosing a new plan."
+                "Scale applied to plan utilities when calculating transition "
+                "probabilities and choosing a new plan."
             ),
         ),
     ]

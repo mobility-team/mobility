@@ -4,27 +4,20 @@ import polars as pl
 
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.transport.modes.choice.compute_subtour_mode_probabilities import modes_list_to_dict
-from mobility.trips.group_day_trips.plans.demand_subgroups import DEMAND_UNIT_COLS
-
 from .models import ModeSearchInputs
 
 
 def build_location_chains(destination_steps: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Build grouped trip chains and one unique location chain per destination sequence."""
-    if "utility_profile_id" not in destination_steps.columns:
-        destination_steps = destination_steps.with_columns(
-            utility_profile_id=pl.lit(0, dtype=pl.UInt32)
-        )
+    context_columns = ["home_zone_id", "utility_profile_id"]
     trip_chains = (
         destination_steps
         .group_by(
-            DEMAND_UNIT_COLS
-            + ["utility_profile_id", "activity_seq_id", "time_seq_id", "dest_seq_id"]
+            context_columns + ["activity_seq_id", "time_seq_id", "dest_seq_id"]
         )
         .agg(locations=pl.col("from").sort_by("seq_step_index"))
         .sort(
-            DEMAND_UNIT_COLS
-            + ["utility_profile_id", "activity_seq_id", "time_seq_id", "dest_seq_id"]
+            context_columns + ["activity_seq_id", "time_seq_id", "dest_seq_id"]
         )
     )
     _validate_location_chains(trip_chains)
@@ -62,7 +55,7 @@ def _validate_location_chains(trip_chains: pl.DataFrame) -> None:
         sample_chains = (
             with_location_key
             .filter(pl.col("dest_seq_id").is_in(sample_ids))
-            .sort(["dest_seq_id"] + DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"])
+            .sort(["dest_seq_id", "home_zone_id", "activity_seq_id", "time_seq_id"])
             .head(50)
             .to_dicts()
         )
