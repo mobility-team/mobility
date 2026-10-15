@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import polars as pl
-
+from .assets.metric import Metric
 from .assets.scoped_tables import ScopedRunTable
 
 IterationSelector = str | int | list[int] | range
@@ -13,30 +12,57 @@ class GroupDayTripsResultTables:
     def __init__(self, results) -> None:
         self.results = results
 
-    def plan_steps(self, *, iterations: IterationSelector = "last") -> pl.LazyFrame:
-        """Return final plan steps with scenario, day type, and replication columns."""
-        return self._table("plan_steps", iterations=iterations).get()
+    def plan_steps(
+        self,
+        *,
+        iterations: IterationSelector = "last",
+        columns: list[str] | tuple[str, ...] | None = None,
+    ) -> ScopedRunTable:
+        """Declare scoped plan steps with scenario, day type, and replication columns."""
+        return self._table("plan_steps", iterations=iterations, columns=columns)
 
-    def demand_groups(self, *, iterations: IterationSelector = "last") -> pl.LazyFrame:
-        """Return demand groups with scenario, day type, and replication columns."""
-        return self._table("demand_groups", iterations=iterations).get()
+    def demand_groups(
+        self,
+        *,
+        iterations: IterationSelector = "last",
+        columns: list[str] | tuple[str, ...] | None = None,
+    ) -> ScopedRunTable:
+        """Declare scoped demand groups with scenario and run scope columns."""
+        return self._table("demand_groups", iterations=iterations, columns=columns)
 
-    def costs(self, *, iterations: IterationSelector = "last") -> pl.LazyFrame:
-        """Return persisted transport costs with scenario and run scope columns."""
-        return self.results.metrics.travel_costs(iterations=iterations).get()
+    def costs(self, *, iterations: IterationSelector = "last") -> Metric:
+        """Declare persisted transport costs with scenario and run scope columns."""
+        return self.results.metrics.travel_costs(iterations=iterations)
 
-    def transitions(self, *, iterations: IterationSelector = "last") -> pl.LazyFrame:
-        """Return transition events with scenario, day type, and replication columns."""
-        return self._table("transitions", iterations=iterations).get()
+    def transitions(
+        self,
+        *,
+        iterations: IterationSelector = "last",
+        columns: list[str] | tuple[str, ...] | None = None,
+    ) -> ScopedRunTable:
+        """Declare scoped transition events with scenario and run scope columns."""
+        return self._table("transitions", iterations=iterations, columns=columns)
 
-    def iteration_metrics(self, *, iterations: IterationSelector = "last") -> pl.LazyFrame:
-        """Return per-iteration diagnostics with scenario, day type, and replication columns."""
-        return self._table("iteration_metrics", iterations=iterations).get()
+    def iteration_metrics(
+        self,
+        *,
+        iterations: IterationSelector = "last",
+        columns: list[str] | tuple[str, ...] | None = None,
+    ) -> ScopedRunTable:
+        """Declare scoped per-iteration diagnostics."""
+        return self._table("iteration_metrics", iterations=iterations, columns=columns)
 
-    def _table(self, table_name: str, *, iterations: IterationSelector) -> ScopedRunTable:
-        """Build the cached scoped table asset for one run output."""
+    def _table(
+        self,
+        table_name: str,
+        *,
+        iterations: IterationSelector,
+        columns: list[str] | tuple[str, ...] | None = None,
+    ) -> ScopedRunTable:
+        """Build a deferred scoped table request for one run output."""
         return ScopedRunTable(
             results=self.results,
             table_name=table_name,
             iterations=iterations,
+            columns=columns,
         )

@@ -17,16 +17,28 @@ The returned object gives access to:
 - `results.diagnostics`,
 - `results.tables`.
 
-Results are declared first and computed when you call `.get()`. Declare all the results you expect to use before the first `.get()`; that first call plans their run outputs together, reduces iteration metrics as each state becomes available, and releases state after its last planned use. Requested results are cached, so later calls with the same run inputs and query can load them directly. If no result is requested with `.get()`, no result files are written. Run tables used only as intermediates remain transient.
+Metric and table methods declare deferred requests. Use `results.get_all(...)` when several outputs should share scenario work. It plans those requests together, reduces metric values as each iteration becomes available, and releases run state after its last planned use. A request's `.get()` is convenient when you need only that one output; it runs only that request. Metrics are cached, while raw tables remain transient.
 
-For example, declare both tables before requesting either one so they can share the same run work:
+For example, request a metric and a raw table together:
 
 ```python
-trip_counts = results.metrics.trip_count(by_variable="mode")
-travel_distances = results.metrics.travel_distance(by_variable="mode")
+outputs = results.get_all(
+    trip_counts=results.metrics.trip_count(by_variable="mode"),
+    travel_distances=results.metrics.travel_distance(by_variable="mode"),
+    plan_steps=results.tables.plan_steps(
+        columns=["scenario", "home_zone_id", "activity", "mode", "from", "to"],
+    ),
+)
 
-trip_count_table = trip_counts.get()
-travel_distance_table = travel_distances.get()
+trip_count_table = outputs["trip_counts"]
+travel_distance_table = outputs["travel_distances"]
+plan_steps = outputs["plan_steps"]
+```
+
+Use `.get()` for one output:
+
+```python
+plan_steps = results.tables.plan_steps().get()
 ```
 
 Use `population_trips.run(...)` when you need to execute or inspect one concrete run. Call `run.table("plan_steps")` to get a raw output table as a Polars DataFrame; the table stays transient. Use `population_trips.results(...)` when you want indicators.
@@ -243,7 +255,7 @@ Diagnostics help check whether the model behaves as expected:
 ```python
 diagnostics = results.diagnostics.iteration_metrics(
     iterations="all",
-).collect()
+).get().collect()
 ```
 
 Use diagnostics when a scenario result looks surprising, when the model varies across iterations, or when you need to check that a scenario gap is larger than iteration variation.
