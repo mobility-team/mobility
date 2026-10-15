@@ -42,7 +42,6 @@ from .plots import (
     select_scenarios,
     validate_output,
 )
-from .execution_plan import ResultExecutionPlan
 
 ZoneDimension = Literal["home_zone", "origin_zone", "destination_zone"]
 ZoneDimensions = ZoneDimension | list[ZoneDimension] | tuple[ZoneDimension, ...]
@@ -103,7 +102,6 @@ class GroupDayTripsResultMetrics:
     def __init__(self, results) -> None:
         self.results = results
         self._transport_zone_maps = None
-        self._pending_metrics: list[Metric] = []
 
     def _table(
         self,
@@ -164,6 +162,7 @@ class GroupDayTripsResultMetrics:
             normalized_query["iterations"] = tuple(selected_iterations)
         metric = Metric(
             name=name,
+            results=self.results,
             dependencies=dependencies,
             planned_outputs=planned_outputs,
             query=normalized_query,
@@ -172,39 +171,7 @@ class GroupDayTripsResultMetrics:
             compute_iteration=compute_iteration,
             stream_result=stream_result,
         )
-        metric.execution_plan = self._get_metric
-        self._pending_metrics.append(metric)
         return metric
-
-    def _get_metric(self, requested: Metric, args: tuple, kwargs: dict):
-        """Execute the metrics declared so far through one shared resolver."""
-        resolver = get_current_asset_resolver()
-        if resolver is not None:
-            return self._execute_pending_metrics(requested, resolver, args, kwargs)
-        with asset_resolution_context() as resolver:
-            return self._execute_pending_metrics(requested, resolver, args, kwargs)
-
-    def _execute_pending_metrics(
-        self,
-        requested: Metric,
-        resolver,
-        args: tuple,
-        kwargs: dict,
-    ):
-        """Run all declared results in one iteration-major execution plan."""
-        pending = list(self._pending_metrics)
-        if all(metric is not requested for metric in pending):
-            pending.append(requested)
-        try:
-            plan = ResultExecutionPlan(
-                metrics=pending,
-                resolver=resolver,
-            )
-            requested_value = plan.execute(requested, args, kwargs)
-            self._pending_metrics.clear()
-            return requested_value
-        finally:
-            resolver.release_transient_values()
 
     def metric(
         self,

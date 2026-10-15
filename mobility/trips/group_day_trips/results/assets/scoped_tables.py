@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -15,16 +16,24 @@ if TYPE_CHECKING:
 IterationSelector = str | int | list[int] | range
 
 
-def release_scoped_run_tables(iteration: int) -> None:
+def release_scoped_run_tables(
+    iteration: int,
+    requested_tables: Sequence["ScopedRunTable"] = (),
+) -> None:
     """Release large run tables once one iteration's result has been reduced."""
     resolver = get_current_asset_resolver()
     if resolver is None:
         return
 
-    for asset in tuple(resolver.in_memory_assets.values()):
-        if not isinstance(asset, ScopedRunTable):
-            continue
-        if asset.selected_iterations != [iteration]:
+    scoped_tables = {
+        asset.inputs_hash: asset
+        for asset in tuple(resolver.in_memory_assets.values())
+        if isinstance(asset, ScopedRunTable)
+    }
+    scoped_tables.update({asset.inputs_hash: asset for asset in requested_tables})
+
+    for asset in scoped_tables.values():
+        if iteration not in asset.selected_iterations:
             continue
 
         resolver.release_in_memory_asset(asset)
@@ -32,9 +41,14 @@ def release_scoped_run_tables(iteration: int) -> None:
         # metric. Keep their small table in this resolver until the plan ends.
         if asset.table_name == "demand_groups":
             continue
+        output_index = (
+            0
+            if asset.uses_last_iteration
+            else asset.selected_iterations.index(iteration)
+        )
         for output_assets in asset.run_output_assets:
-            for output_asset in output_assets:
-                resolver.release_in_memory_asset(output_asset)
+            if output_index < len(output_assets):
+                resolver.release_in_memory_asset(output_assets[output_index])
 
 
 class ScopedRunTable(InMemoryAsset):
@@ -111,28 +125,43 @@ class ScopedRunTable(InMemoryAsset):
         }
         super().__init__(inputs)
 
-    def create_and_get_asset(self) -> pl.LazyFrame:
-        """Build the requested scoped table without persisting the raw table."""
-        resolver = get_current_asset_resolver()
-        if resolver is not None:
-            resolver.retain_assets_shared_by_roots(
-                [
-                    asset
-                    for output_assets in self.run_output_assets
-                    for asset in output_assets
-                ]
+    @property
+    def planned_outputs(self) -> tuple:
+        """Return the concrete run output assets used by this table request."""
+        return tuple(
+            asset
+            for output_assets in self.run_output_assets
+            for asset in output_assets
+        )
+
+    def get(self) -> pl.LazyFrame:
+        """Resolve a standalone table through the result planner."""
+        if get_current_asset_resolver() is not None:
+            return super().get()
+        return self.results.get_all(table=self)["table"]
+
+    def compute_iteration(self, iteration: int) -> pl.LazyFrame:
+        """Build this table's scoped rows for one selected iteration."""
+        if iteration not in self.selected_iterations:
+            raise ValueError(
+                f"Iteration {iteration} is not selected for {self.table_name}."
             )
 
-        if not self.uses_last_iteration:
-            return self._create_saved_iteration_asset()
-
-        scoped_tables: list[pl.LazyFrame] = []
+        iteration_index = self.selected_iterations.index(iteration)
+        scoped_tables = []
         for run_context, output_assets in zip(self.run_contexts, self.run_output_assets):
-            table = output_assets[0].get().lazy()
-            if self.table_name == "iteration_metrics":
-                iteration_expr = pl.col("iteration").cast(pl.Int32)
+            if self.table_name == "demand_groups":
+                output_asset = output_assets[0]
             else:
-                iteration_expr = pl.lit(self.results.last_iteration, dtype=pl.Int32)
+                output_index = 0 if self.uses_last_iteration else iteration_index
+                output_asset = output_assets[output_index]
+
+            table = output_asset.get().lazy()
+            iteration_expr = (
+                pl.col("iteration").cast(pl.Int32)
+                if self.table_name == "iteration_metrics"
+                else pl.lit(iteration, dtype=pl.Int32)
+            )
             scoped_tables.append(
                 self._select_columns(
                     table.with_columns(
@@ -147,104 +176,17 @@ class ScopedRunTable(InMemoryAsset):
 
         return pl.concat(scoped_tables, how="vertical_relaxed")
 
-    def _create_saved_iteration_asset(self) -> pl.LazyFrame:
-        """Build a table from the selected transient iteration outputs."""
-        if self.table_name == "plan_steps":
-            scoped_tables = self._iteration_plan_steps()
-        elif self.table_name == "costs":
-            scoped_tables = self._iteration_costs()
-        elif self.table_name == "demand_groups":
-            scoped_tables = self._iteration_demand_groups()
-        elif self.table_name == "iteration_metrics":
-            scoped_tables = self._iteration_metrics()
-        else:
-            raise ValueError(
-                f'iterations={self.iterations!r} is not available for '
-                f"`{self.table_name}` yet. Saved iteration artifacts currently "
-                "support plan_steps, costs, demand_groups, and iteration_metrics."
-            )
+    def create_and_get_asset(self) -> pl.LazyFrame:
+        """Build the requested scoped table without persisting the raw table."""
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            resolver.retain_assets_shared_by_roots(list(self.planned_outputs))
 
+        scoped_tables = [
+            self.compute_iteration(iteration)
+            for iteration in self.selected_iterations
+        ]
         return pl.concat(scoped_tables, how="vertical_relaxed")
-
-    def _iteration_plan_steps(self) -> list[pl.LazyFrame]:
-        """Return selected saved current plan steps with result scope columns."""
-        scoped_tables = []
-        for run_index, run_context in enumerate(self.run_contexts):
-            for iteration_index, iteration in enumerate(self.selected_iterations):
-                current_plan_steps = self.run_output_assets[run_index][
-                    iteration_index
-                ].get().lazy()
-                scoped_tables.append(
-                    self._select_columns(
-                        current_plan_steps.with_columns(
-                            scenario=pl.lit(run_context.scenario, dtype=pl.String),
-                            sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
-                            day_type=pl.lit(run_context.day_type, dtype=pl.String),
-                            replication=pl.lit(run_context.replication, dtype=pl.Int32),
-                            iteration=pl.lit(iteration, dtype=pl.Int32),
-                        )
-                    )
-                )
-        return scoped_tables
-
-    def _iteration_costs(self) -> list[pl.LazyFrame]:
-        """Return selected saved transport costs with result scope columns."""
-        scoped_tables = []
-        for run_index, run_context in enumerate(self.run_contexts):
-            for iteration_index, iteration in enumerate(self.selected_iterations):
-                costs = self.run_output_assets[run_index][
-                    iteration_index
-                ].get().lazy()
-                scoped_tables.append(
-                    self._select_columns(
-                        costs.with_columns(
-                            scenario=pl.lit(run_context.scenario, dtype=pl.String),
-                            sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
-                            day_type=pl.lit(run_context.day_type, dtype=pl.String),
-                            replication=pl.lit(run_context.replication, dtype=pl.Int32),
-                            iteration=pl.lit(iteration, dtype=pl.Int32),
-                        )
-                    )
-                )
-        return scoped_tables
-
-    def _iteration_demand_groups(self) -> list[pl.LazyFrame]:
-        """Return demand groups repeated for each selected iteration."""
-        scoped_tables = []
-        for run_context, output_assets in zip(self.run_contexts, self.run_output_assets):
-            table = output_assets[0].get().lazy()
-            for iteration in self.selected_iterations:
-                scoped_tables.append(
-                    self._select_columns(
-                        table.with_columns(
-                            scenario=pl.lit(run_context.scenario, dtype=pl.String),
-                            sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
-                            day_type=pl.lit(run_context.day_type, dtype=pl.String),
-                            replication=pl.lit(run_context.replication, dtype=pl.Int32),
-                            iteration=pl.lit(iteration, dtype=pl.Int32),
-                        )
-                    )
-                )
-        return scoped_tables
-
-    def _iteration_metrics(self) -> list[pl.LazyFrame]:
-        """Return iteration diagnostics filtered to the selected iterations."""
-        scoped_tables = []
-        for run_context, output_assets in zip(self.run_contexts, self.run_output_assets):
-            for table_asset in output_assets:
-                table = table_asset.get().lazy()
-                scoped_tables.append(
-                    self._select_columns(
-                        table.with_columns(
-                            scenario=pl.lit(run_context.scenario, dtype=pl.String),
-                            sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
-                            day_type=pl.lit(run_context.day_type, dtype=pl.String),
-                            replication=pl.lit(run_context.replication, dtype=pl.Int32),
-                            iteration=pl.col("iteration").cast(pl.Int32),
-                        )
-                    )
-                )
-        return scoped_tables
 
     def _select_columns(self, table: pl.LazyFrame) -> pl.LazyFrame:
         """Return only requested columns when this scoped table is projected."""

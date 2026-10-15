@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import pathlib
 from collections.abc import Callable, Sequence
-from typing import Any
 
 import polars as pl
 
@@ -18,6 +17,7 @@ class Metric(FileAsset):
         self,
         *,
         name: str,
+        results,
         dependencies: Sequence[Asset],
         planned_outputs: Sequence[Asset] = (),
         query: dict,
@@ -27,13 +27,13 @@ class Metric(FileAsset):
         stream_result: bool = False,
     ) -> None:
         self.compute = compute
+        self.results = results
         # Planner metadata controls reuse and lifetime; result identity comes
         # from exact dependencies and the normalized query below.
         self.planned_outputs = tuple(planned_outputs)
         self.selected_iterations = tuple(selected_iterations)
         self.compute_iteration = compute_iteration
         self.stream_result = stream_result
-        self.execution_plan: Callable[["Metric", tuple, dict], Any] | None = None
         self._has_precomputed_value = False
         self._precomputed_value: pl.DataFrame | pl.LazyFrame | None = None
         inputs = {
@@ -46,11 +46,9 @@ class Metric(FileAsset):
         cache_path = project_folder / "group_day_trips" / "metrics" / f"{name}.parquet"
         super().__init__(inputs, cache_path)
 
-    def get(self, *args, **kwargs):
-        """Resolve this metric through its owning query plan when one exists."""
-        if self.execution_plan is not None:
-            return self.execution_plan(self, args, kwargs)
-        return super().get(*args, **kwargs)
+    def get(self):
+        """Resolve this metric as a one-output result batch."""
+        return self.results.get_all(result=self)["result"]
 
     def get_cached_asset(self) -> pl.DataFrame | pl.LazyFrame:
         """Load the metric table previously computed for this exact query."""

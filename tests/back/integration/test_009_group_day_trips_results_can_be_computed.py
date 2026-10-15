@@ -90,7 +90,7 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
     weekday_time_per_person = results.metrics.time_per_person()
     weekday_cost_per_person = results.metrics.cost_per_person()
     grouped_global_metrics = results.metrics.aggregate()
-    iteration_metrics = results.diagnostics.iteration_metrics()
+    iteration_metrics = results.diagnostics.iteration_metrics().get()
     weekday_distance_compare = results.metrics.distance_per_person(compare_with=results)
 
     assert global_metrics.height > 0

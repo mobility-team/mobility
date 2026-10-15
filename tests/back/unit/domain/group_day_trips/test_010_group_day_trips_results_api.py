@@ -506,8 +506,12 @@ def test_result_tables_add_scope_columns(tmp_path, monkeypatch):
     """Check that raw tables keep run identity columns after concatenation."""
     results = _results(tmp_path)
 
-    plan_steps = results.tables.plan_steps().sort("replication").collect()
-    iteration_metrics = results.diagnostics.iteration_metrics().sort("replication").collect()
+    outputs = results.get_all(
+        plan_steps=results.tables.plan_steps(),
+        iteration_metrics=results.diagnostics.iteration_metrics(),
+    )
+    plan_steps = outputs["plan_steps"].sort("replication").collect()
+    iteration_metrics = outputs["iteration_metrics"].sort("replication").collect()
 
     assert plan_steps["scenario"].to_list() == ["default", "default", "default", "default"]
     assert plan_steps["day_type"].to_list() == ["weekday", "weekday", "weekday", "weekday"]
@@ -517,11 +521,35 @@ def test_result_tables_add_scope_columns(tmp_path, monkeypatch):
     assert iteration_metrics["total_loss"].to_list() == [10.0, 11.0]
 
 
+def test_get_all_shares_run_outputs_between_metrics_and_tables(tmp_path, monkeypatch):
+    """Check a mixed result batch builds each run output only once."""
+    plan_step_builds = []
+    create_and_get_asset = _FakeRunTable.create_and_get_asset
+
+    def record_plan_step_build(table_asset):
+        if table_asset.table_name == "plan_steps":
+            plan_step_builds.append((table_asset.run.name, table_asset.iteration))
+        return create_and_get_asset(table_asset)
+
+    monkeypatch.setattr(_FakeRunTable, "create_and_get_asset", record_plan_step_build)
+    results = _results(tmp_path, replication=0)
+    trip_count = results.metrics.trip_count(by_variable="mode")
+    plan_steps = results.tables.plan_steps()
+
+    assert plan_step_builds == []
+
+    outputs = results.get_all(trip_count=trip_count, plan_steps=plan_steps)
+
+    assert outputs["trip_count"].height == 2
+    assert outputs["plan_steps"].collect().height == 2
+    assert plan_step_builds == [("default-base-weekday-0", None)]
+
+
 def test_result_tables_can_include_multiple_scenarios(tmp_path, monkeypatch):
     """Check that one result set can concatenate several scenarios."""
     results = _results(tmp_path, scenarios=["default", "test"])
 
-    plan_steps = results.tables.plan_steps().collect()
+    plan_steps = results.tables.plan_steps().get().collect()
 
     assert results.scenarios == ["default", "test"]
     assert plan_steps["scenario"].sort().to_list() == [
@@ -542,6 +570,7 @@ def test_result_tables_can_select_saved_iterations(tmp_path, monkeypatch):
 
     plan_steps = (
         results.tables.plan_steps(iterations=[1, 2])
+        .get()
         .sort(["iteration", "mode"])
         .collect()
     )
