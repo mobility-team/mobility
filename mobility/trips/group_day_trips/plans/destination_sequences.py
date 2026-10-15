@@ -1121,8 +1121,8 @@ class DestinationSequences(InMemoryAsset):
 
         return pl.concat(step_frames).collect(engine="streaming")
 
+    @staticmethod
     def _drop_incomplete_destination_draws(
-        self,
         *,
         activity_sequences: pl.DataFrame,
         iteration: int,

@@ -7,7 +7,17 @@ from mobility.trips.group_day_trips import (
     GroupDayTripsParameters,
     GroupDayTripsPlanUpdateParameters,
 )
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+
+
+class _StubAsset(InMemoryAsset):
+    def __init__(self, value: pl.DataFrame):
+        super().__init__({"name": "destination-sequence-test-asset"})
+        self.value = value
+
+    def create_and_get_asset(self) -> pl.DataFrame:
+        return self.value
 
 
 def test_destination_alpha_is_part_of_cache_key():
@@ -26,13 +36,6 @@ def test_destination_alpha_is_part_of_cache_key():
 
 
 def test_sample_active_destination_sequences_keeps_only_active_activity_sequences():
-    class _StubAsset:
-        def __init__(self, df):
-            self._df = df
-
-        def get(self):
-            return self._df
-
     destination_sequences = DestinationSequences(
         is_weekday=True,
         iteration=3,
@@ -320,7 +323,7 @@ def test_refresh_active_mode_alternatives_deduplicates_shared_zone_steps():
     assert result.select("home_zone_id", "dest_seq_id").unique().to_dicts() == [
         {"home_zone_id": 1, "dest_seq_id": 30}
     ]
-    assert result.select("to").to_series().to_list() == [200, 100]
+    assert result.sort("seq_step_index").select("to").to_series().to_list() == [200, 100]
 
 
 def test_refresh_active_mode_alternatives_default_keeps_sampled_destinations_only():
@@ -970,6 +973,7 @@ def test_drop_incomplete_destination_draws_removes_partial_draws():
     result = DestinationSequences._drop_incomplete_destination_draws(
         activity_sequences=activity_sequences,
         iteration=4,
+        sequence_context_columns=["home_zone_id"],
     )
 
     assert result.select(["demand_group_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]).unique().to_dicts() == [
@@ -1033,6 +1037,18 @@ def test_reuse_current_destination_sequences_reuses_current_plan_steps():
                 "departure_time": pl.Float64,
                 "arrival_time": pl.Float64,
                 "next_departure_time": pl.Float64,
+            },
+        ),
+        demand_groups=pl.DataFrame(
+            {
+                "demand_group_id": [1],
+                "demand_subgroup_id": [0],
+                "home_zone_id": [21],
+            },
+            schema={
+                "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
+                "home_zone_id": pl.Int32,
             },
         ),
     )
