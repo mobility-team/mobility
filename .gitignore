@@ -233,3 +233,6 @@ certs/
 .gitignore-new
 
 .worktrees/
+
+# data/*[^/germany]*
+data

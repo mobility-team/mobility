@@ -8,12 +8,13 @@ import shapely
 from shapely.ops import unary_union
 
 from mobility.runtime.assets.file_asset import FileAsset
-from mobility.spatial.admin_datasets import AdminExpressDataset, SwissTopoBoundariesDataset
+from mobility.spatial.admin_datasets import AdminExpressDataset, BKGBoundariesDataset, SwissTopoBoundariesDataset
 from mobility.spatial.selected_rows import read_selected_rows
 
 
 FRENCH_ADMIN_LEVELS = {"country", "region", "departement", "epci", "commune"}
 SWISS_ADMIN_LEVELS = {"country", "municipality"}
+GERMAN_ADMIN_LEVELS = {"country", "gemeinde"}
 
 
 def add_bbox_columns(admin_units: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -382,4 +383,77 @@ class SwissAdminUnits(FileAsset):
             },
             geometry=[unary_union(municipalities.geometry)],
             crs=municipalities.crs,
+        )
+
+
+class GermanAdminUnits(FileAsset):
+    """German administrative units prepared from bkg boundaries."""
+
+    def __init__(self, level: str):
+        level = str(level).lower()
+        if level not in GERMAN_ADMIN_LEVELS:
+            raise ValueError(f"Unsupported German admin level: {level}.")
+
+        inputs = {
+            "bkg_boundaries": BKGBoundariesDataset(),
+            "level": level,
+        }
+        cache_path = (
+            pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"])
+            / "bkg"
+            / f"german_admin_units_{level}.parquet"
+        )
+        super().__init__(inputs, cache_path)
+
+    def get_cached_asset(self) -> gpd.GeoDataFrame:
+        logging.info("German %s admin units already prepared. Reusing %s.", self.level, self.cache_path)
+        return gpd.read_parquet(self.cache_path)
+
+    def get_by_ids(self, admin_ids: list[str]) -> gpd.GeoDataFrame:
+        """Return only the requested German admin units."""
+        return read_selected_admin_units(self, admin_ids)
+
+    def get_within_bounds(self, bounds: tuple[float, float, float, float]) -> gpd.GeoDataFrame:
+        """Return German admin units whose bounding boxes touch the bounds."""
+        return read_admin_units_within_bounds(self, bounds)
+
+    def create_and_get_asset(self) -> gpd.GeoDataFrame:
+        logging.info("Preparing German %s admin units.", self.level)
+
+        gemeinden = self.prepare_gemeinden()
+        if self.level == "gemeinde":
+            admin_units = gemeinden
+        else:
+            admin_units = self.prepare_country(gemeinden)
+
+        admin_units = add_bbox_columns(admin_units)
+        admin_units.to_parquet(self.cache_path)
+        return admin_units
+
+    def prepare_gemeinden(self) -> gpd.GeoDataFrame:
+        gpkg_path = self.inputs["bkg_boundaries"].get()
+        gemeinden = gpd.read_file(gpkg_path, layer="vg250_gem")
+        gemeinden = gemeinden[["ARS", "GEN", "geometry"]].copy()
+        gemeinden.columns = ["admin_id", "admin_name", "geometry"]
+        gemeinden["admin_level"] = "gemeinde"
+        gemeinden["country"] = "de"
+        gemeinden["admin_id"] = "de-" + gemeinden["admin_id"].astype(str)
+        gemeinden["geometry"] = shapely.wkb.loads(
+            shapely.wkb.dumps(gemeinden["geometry"], output_dimension=2)
+        )
+        gemeinden = gemeinden.to_crs(3035)
+        return gemeinden[
+            ["admin_level", "admin_id", "admin_name", "country", "geometry"]
+        ]
+
+    def prepare_country(self, gemeinden: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        return gpd.GeoDataFrame(
+            {
+                "admin_level": ["country"],
+                "admin_id": ["de-DE"],
+                "admin_name": ["Deutschland"],
+                "country": ["ch"],
+            },
+            geometry=[unary_union(gemeinden.geometry)],
+            crs=gemeinden.crs,
         )
