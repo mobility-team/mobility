@@ -32,6 +32,10 @@ class _FakeRun:
         self.survey_plan_assets = survey_plan_assets
         self.scenario = scenario
         self.replication = kwargs.get("replication")
+        sensitivity_case = kwargs.get("sensitivity_case")
+        self.sensitivity_case_id = (
+            "base" if sensitivity_case is None else sensitivity_case.case_id
+        )
         # The coordinator identifies each run and checks its restart state.
         context_hash = f"{scenario}-{self.replication}-{is_weekday}"
         self.run_context = SimpleNamespace(inputs_hash=context_hash)

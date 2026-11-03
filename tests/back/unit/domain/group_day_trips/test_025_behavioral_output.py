@@ -87,7 +87,11 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
             "activity_profile_cell_count_by_scenario": {0: 0},
             "covered_activity_profile_cell_count_by_scenario": {0: 0},
             "convergence_by_run_key": {
-                0: SimpleNamespace(flow_changes={0: None}, base_gap_changes={0: 0.0})
+                0: SimpleNamespace(
+                    flow_changes={0: None},
+                    base_gap_changes={0: 0.0},
+                    converged=False,
+                )
             },
         }
 

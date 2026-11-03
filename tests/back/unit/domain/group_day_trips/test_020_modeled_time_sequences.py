@@ -254,7 +254,12 @@ def test_pool_keeps_occupied_timing_when_previous_pool_has_only_survey_timing(mo
     source = ScenarioCandidateSource(
         run_key=1, scenario="default", previous_state=previous, destination_sequences=destinations,
         mode_sequences=modes, iteration=2,
-        run=SimpleNamespace(run_context=SimpleNamespace(inputs_hash="test"), population=SimpleNamespace(population_segments=[])),
+        run=SimpleNamespace(
+            run_context=SimpleNamespace(inputs_hash="test"),
+            population=SimpleNamespace(population_segments=[]),
+            sensitivity_case_id="base",
+            replication=0,
+        ),
     )
     monkeypatch.setattr(CandidatePlanStepsAsset, "build_iteration_candidates", lambda **kwargs: original.head(0).lazy())
     pool = SharedCandidatePoolAsset(
