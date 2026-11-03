@@ -22,3 +22,10 @@ class RunState:
     rng_state: object | None = None
     destination_sequence_index: pl.DataFrame | None = None
     mode_sequence_index: pl.DataFrame | None = None
+    adaptive_search_diagnostics: pl.DataFrame | None = None
+    time_sequence_steps: pl.DataFrame | None = None
+
+    @property
+    def schedule_steps(self) -> pl.DataFrame:
+        """Return survey schedules together with registered modeled timings."""
+        return self.survey_plan_steps if self.time_sequence_steps is None else self.time_sequence_steps

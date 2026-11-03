@@ -46,7 +46,38 @@ parameters = mobility.GroupDayTripsParameters(
 
 `simulate_weekend=False` means that only weekday runs are enabled. Set it to `True` if the study needs weekend results.
 
-During full replanning, Mobility samples three survey schedules per home zone by default. Schedules are drawn with replacement from those compatible with the activity sets of groups in that zone. The default `activity_support_threshold=0.02` includes an activity in a CSP's allowed set when at least 2% of its survey-weighted schedules include it. Extra weighted draws cover activity profiles missed by the initial sample. Set `k_activity_sequences=None` to use every eligible schedule.
+During full replanning, Mobility samples three survey schedules per activity profile in each home zone by default. An activity profile is a set of allowed activities shared by demand groups. Each profile draws with replacement from its compatible schedules, using survey weights. For example, a zone with two profiles makes six draws with the default `k_activity_sequences=3`. Draws can repeat a schedule, so the number of distinct schedules can be smaller. The default `activity_support_threshold=0.02` includes an activity in a CSP's allowed set when at least 2% of its survey-weighted schedules include it. Set `k_activity_sequences=None` to use every eligible schedule.
+
+Destination sampling makes `k_destination_sequences` draws per sampled schedule and utility profile present in the home zone (three by default). A utility profile groups demand units with identical resolved transport-cost parameters, including population-segment overrides. Each profile uses its own expected travel costs across modes to rank destinations and check the legs around each stop. Identical destination chains drawn by several profiles are stored once and shared with compatible demand units. Mode search then evaluates destination chains using each utility profile's costs.
+
+During candidate evaluation, identical plan steps with the same country, CSP, and utility profile share cost and activity-value calculations. Fresh inner-loop allocation shares are calculated once for each identical set of feasible plans and utilities, then multiplied by each demand unit's population. Units with different alternatives or utilities keep separate shares. Behavioral transitions still use each unit's current plan. Scored step queries stay lazy until allocation needs their step details.
+
+## Coordinated Search Limits
+
+Each outer iteration can run up to `adaptive_search.max_inner_iterations`
+candidate-generation and allocation batches (five by default). The scenarios
+share one `adaptive_search.generation_effort_budget` (1,000,000 by default).
+This budget estimates requested mode-sequence alternatives from the activity,
+destination and mode draw counts. Effort is reserved before a batch starts, so
+duplicate or infeasible draws still count toward the limit. If the budget cannot
+cover an initial request for every represented home zone, the run reports the
+required and configured amounts instead of silently skipping zones.
+
+In full replanning, the first batch requests a utility profile in each home
+zone, which gives each allowed-activity profile there a generation attempt.
+Later batches prioritize activity profiles without a feasible non-stay-home
+plan, then missing activity-profile and utility-profile combinations, recent
+allocation changes, differences from the base scenario, and exploration. In
+mode-only or destination-only replanning, coverage targets are limited to
+activity profiles with active plans. The scheduler applies the same effort cap
+across scenarios and stops at the inner-iteration limit, when no remaining
+budget can cover another request, or when there is no generation work left.
+Because requests are reserved as a whole, a small amount of budget can remain
+unused when it is below the next request's effort. The
+`adaptive_search_diagnostics` table reports requested effort, coverage counts,
+and the stop reason for each batch.
+
+To trace simulation time and RAM, set `MOBILITY_SIMULATION_TRACE` to a JSONL output path before running Python. For example, in PowerShell: `$env:MOBILITY_SIMULATION_TRACE='D:/data/mobility/simulation-trace.jsonl'`. Tracing is disabled when this variable is unset. Each coordinated run appends records with a unique run id. Records identify the nested step, scenario, outer iteration, inner batch, wall time, starting/ending RSS, and sampled peak RSS. RAM is sampled every 100 ms for the Python process, including its native threads; child processes are excluded. Short spikes may be missed. Parent times include child steps, so do not add all recorded durations together. RAM changes measure retained process memory, not bytes allocated by that step alone. Cached result reads do not create another run trace.
 
 ## Behaviour Change Phases
 
@@ -171,7 +202,24 @@ segment should also change over time.
 
 Mobility deduplicates identical coefficient combinations into utility
 profiles. The same profile is used to search mode sequences and compute final
-plan utility. Destination sequences are sampled once per schedule and home
-zone. Segment shares do not start separate model runs: Mobility resolves each
-distinct segment-membership combination once and searches all resulting
-profiles together.
+plan utility. Destination sampling also considers these profiles. Plans found
+for one profile are shared with other compatible populations and scenarios.
+Segment shares do not start separate model runs.
+
+During the coordinated inner search, populations with the same home zone,
+country, socio-professional category, allowed activities and utility profile
+share scoring work. Their population weights are added before estimating plan
+shares and OD flows. A mapping retains the original demand-group identities
+for the outer behavioral update.
+
+The inner MNL allocation measures the available candidate pool. It does not
+replace the population's current behavior. Each outer update starts from the
+previous outer allocation and applies the configured transition rules. Main
+trip outputs describe the behavioral allocation after the last outer update.
+The coordinated run then updates transport costs for that allocation without
+another candidate search. To inspect the MNL allocation from the last regular
+inner search, request `results.tables.mnl_od_mode_flows()` in
+`results.get_all(...)`. That diagnostic uses costs fixed at the start of the
+last outer iteration, before the behavioral and final transport-cost updates;
+it is not an estimate at the final costs. It is available for a coordinated
+run's last executed outer iteration.

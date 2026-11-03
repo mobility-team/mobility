@@ -1,3 +1,4 @@
+import logging
 import math
 
 import polars as pl
@@ -30,8 +31,18 @@ class PlanInitializer:
             )
         )
 
+        population_assets = population.get()
+        sampled_population = (
+            pl.scan_parquet(population_assets["individuals"])
+            .select(
+                pl.len().alias("sampled_individuals"),
+                pl.col("transport_zone_id").n_unique().alias("sampled_zones"),
+            )
+            .collect(engine="streaming")
+            .row(0, named=True)
+        )
         demand_groups = (
-            pl.scan_parquet(population.get()["population_groups"])
+            pl.scan_parquet(population_assets["population_groups"])
             .rename(
                 {
                     "socio_pro_category": "csp",
@@ -44,6 +55,25 @@ class PlanInitializer:
             .group_by(["country", "home_zone_id", "city_category", "csp", "n_cars"])
             .agg(pl.col("n_persons").sum())
             .collect(engine="streaming")
+        )
+
+        # Population groups carry the represented population weights used by
+        # the model; the sampled-individual file records the source sample size.
+        grouped_population = demand_groups.select(
+            pl.len().alias("raw_demand_groups"),
+            pl.col("n_persons").sum().alias("represented_people"),
+            pl.col("home_zone_id").n_unique().alias("home_zones"),
+        ).row(0, named=True)
+        logging.info(
+            "Population input | configured_sample_size=%s | sampled_individuals=%d "
+            "in %d zones | raw_demand_groups=%d across %d home zones | "
+            "represented_people=%.3f",
+            population.parameters.sample_size,
+            sampled_population["sampled_individuals"],
+            sampled_population["sampled_zones"],
+            grouped_population["raw_demand_groups"],
+            grouped_population["home_zones"],
+            grouped_population["represented_people"],
         )
 
         countries = demand_groups["country"].unique().sort().to_list()
@@ -107,6 +137,20 @@ class PlanInitializer:
             demand_groups,
             population_segments=population.population_segments,
             max_persons_per_demand_subgroup=parameters.demand_groups.max_persons_per_demand_subgroup,
+        )
+        split_population = demand_groups.select(
+            pl.len().alias("demand_subgroups"),
+            pl.col("demand_group_id").n_unique().alias("demand_groups"),
+            pl.col("n_persons").sum().alias("represented_people"),
+            pl.col("n_persons").max().alias("largest_subgroup"),
+        ).row(0, named=True)
+        logging.info(
+            "Population demand units | demand_groups=%d | demand_subgroups=%d | "
+            "represented_people=%.3f | largest_subgroup=%.3f",
+            split_population["demand_groups"],
+            split_population["demand_subgroups"],
+            split_population["represented_people"],
+            split_population["largest_subgroup"],
         )
 
         survey_plans = (

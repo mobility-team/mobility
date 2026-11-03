@@ -1,8 +1,11 @@
 import logging
 import math
+from dataclasses import dataclass
 from typing import Any
 
 import polars as pl
+
+from mobility.trips.group_day_trips.core.performance_trace import simulation_step, trace_simulation_step
 
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from mobility.transport.modes.core.mode_values import get_mode_values
@@ -12,12 +15,27 @@ from ..transitions.transition_events import (
     build_transition_events_lazy,
 )
 from .candidate_plan_steps import CandidatePlanStepsAsset
+from .scoring_contexts import ScoringContexts
 from .demand_subgroups import DEMAND_UNIT_COLS
 from .plan_distance import PlanDistance
 from .plan_ids import PLAN_KEY_COLS, add_plan_id
 from .plan_schedule_updater import PlanScheduleUpdater
+from .time_sequences import assign_time_sequence_ids
 from .destination_sequences import DestinationSequences
 from .mode_sequence_search import ModeSequences
+
+
+@dataclass(frozen=True)
+class CandidatePlanEvaluation:
+    """Scenario-specific utilities and step details for one shared pool."""
+
+    candidate_plan_steps: pl.DataFrame
+    possible_plan_steps: pl.DataFrame | pl.LazyFrame
+    possible_plan_utility: pl.DataFrame
+    plan_id_index: pl.DataFrame
+    current_plans: pl.DataFrame | None = None
+    time_sequence_steps: pl.DataFrame | None = None
+    scoring_contexts: ScoringContexts | None = None
 
 
 class PlanUpdater:
@@ -26,6 +44,7 @@ class PlanUpdater:
     def __init__(self) -> None:
         self.schedule_updater = PlanScheduleUpdater()
 
+    @trace_simulation_step("behavior update")
     def get_new_plans(
         self,
         current_plans: pl.DataFrame,
@@ -46,80 +65,46 @@ class PlanUpdater:
         transport_zones: Any,
         previous_plan_id_index: pl.DataFrame,
         parameters: Any,
-    ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.LazyFrame | None, pl.DataFrame]:
+        *,
+        shared_candidate_plan_steps: pl.DataFrame | None = None,
+    ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.LazyFrame | None, pl.DataFrame, pl.DataFrame]:
         """Advance one iteration of plan updates."""
-        possible_plan_steps = self.get_possible_plan_steps(
-            current_plans,
-            current_plan_steps,
-            candidate_plan_steps,
-            demand_groups,
-            survey_plan_steps,
-            transport_costs,
-            destination_saturation,
-            activity_dur,
-            home_night_dur,
-            transport_zones,
-            iteration,
-            resolved_activity_parameters,
-            arrival_time_rigidity_by_activity,
-            parameters.plan_update.min_activity_time_constant,
-            destination_sequences,
-            mode_sequences,
-            parameters,
-        )
-        log_memory_checkpoint(
-            f"plan_updater:iteration:{iteration}:possible_plan_steps_lazy",
-            possible_plan_steps=possible_plan_steps,
-        )
-        possible_plan_steps, plan_id_index = add_plan_id(
-            possible_plan_steps,
-            previous_index=previous_plan_id_index,
-        )
-        self._assert_current_plans_covered_by_possible_plan_steps(
-            current_plans,
-            possible_plan_steps,
-            iteration,
-        )
-        candidate_plan_steps = possible_plan_steps.select(
-            CandidatePlanStepsAsset.STRUCTURAL_COLUMNS
-            + CandidatePlanStepsAsset.RETENTION_COLUMNS
-        ).collect(engine="streaming")
-        log_memory_checkpoint(
-            f"plan_updater:iteration:{iteration}:candidate_plan_steps",
+        evaluation = self.evaluate_candidate_pool(
+            current_plans=current_plans,
+            current_plan_steps=current_plan_steps,
             candidate_plan_steps=candidate_plan_steps,
-        )
-        possible_plan_steps = self.schedule_updater.update_plan_timings(
-            possible_plan_steps,
+            shared_candidate_plan_steps=shared_candidate_plan_steps,
+            demand_groups=demand_groups,
+            survey_plan_steps=survey_plan_steps,
+            transport_costs=transport_costs,
+            destination_saturation=destination_saturation,
+            activity_dur=activity_dur,
+            home_night_dur=home_night_dur,
+            stay_home_plan=stay_home_plan,
+            transport_zones=transport_zones,
+            iteration=iteration,
+            resolved_activity_parameters=resolved_activity_parameters,
             arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
-            enabled=parameters.plan_update.update_plan_timings_from_modeled_travel_times,
+            destination_sequences=destination_sequences,
+            mode_sequences=mode_sequences,
+            previous_plan_id_index=previous_plan_id_index,
+            parameters=parameters,
         )
-        possible_plan_steps = (
-            possible_plan_steps
-            .with_columns(
-                utility=(
-                    pl.col("activity_utility_scale")
-                    * (pl.col("duration_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
-                    - pl.col("cost")
-                )
+        candidate_plan_steps = evaluation.candidate_plan_steps
+        possible_plan_steps = evaluation.possible_plan_steps
+        if isinstance(possible_plan_steps, pl.LazyFrame):
+            possible_plan_steps = possible_plan_steps.collect(engine="streaming")
+        possible_plan_utility = (
+            evaluation.possible_plan_utility
+            .join(
+                evaluation.time_sequence_steps.select("time_seq_id", "reference_time_seq_id").unique(),
+                on="time_seq_id", how="left",
             )
-            .drop("activity_utility_scale", "destination_shadow_price")
+            .with_columns(reference_time_seq_id=pl.col("reference_time_seq_id").fill_null(pl.col("time_seq_id")))
+            .lazy()
         )
-        possible_plan_utility, plan_id_index = self.get_possible_plan_utility(
-            possible_plan_steps,
-            home_night_dur,
-            resolved_activity_parameters["home"].value_of_time_stay_home,
-            stay_home_plan,
-            parameters.plan_update.min_activity_time_constant,
-            plan_id_index=plan_id_index,
-        )
-        possible_plan_steps, plan_id_index = self.add_stay_home_plan_steps(
-            possible_plan_steps,
-            stay_home_plan,
-            plan_id_index=plan_id_index,
-        )
-        possible_plan_steps = possible_plan_steps.collect(
-            engine="streaming"
-        )
+        plan_id_index = evaluation.plan_id_index
+        current_plans = evaluation.current_plans
         log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:possible_plan_steps",
             possible_plan_steps=possible_plan_steps,
@@ -172,7 +157,229 @@ class PlanUpdater:
         if current_plans["n_persons"].is_null().any() or current_plans["n_persons"].is_nan().any():
             raise ValueError("Null or NaN values in the n_persons column, something went wrong.")
 
-        return current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index
+        return current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index, evaluation.time_sequence_steps
+
+    @trace_simulation_step("candidate evaluation")
+    def evaluate_candidate_pool(
+        self,
+        *,
+        current_plans: pl.DataFrame,
+        current_plan_steps: pl.DataFrame | None,
+        candidate_plan_steps: pl.DataFrame | None,
+        shared_candidate_plan_steps: pl.DataFrame | None,
+        demand_groups: pl.DataFrame,
+        survey_plan_steps: pl.DataFrame,
+        transport_costs: Any,
+        destination_saturation: pl.DataFrame,
+        activity_dur: pl.DataFrame,
+        home_night_dur: pl.DataFrame,
+        stay_home_plan: pl.DataFrame,
+        transport_zones: Any,
+        iteration: int,
+        resolved_activity_parameters: dict[str, Any],
+        arrival_time_rigidity_by_activity: dict[str, float],
+        destination_sequences: DestinationSequences,
+        mode_sequences: ModeSequences,
+        previous_plan_id_index: pl.DataFrame,
+        parameters: Any,
+        compact_contexts: bool = False,
+    ) -> CandidatePlanEvaluation:
+        """Score all current candidates without changing the behavioral state."""
+        candidate_memory = (
+            shared_candidate_plan_steps
+            if shared_candidate_plan_steps is not None
+            else candidate_plan_steps
+        )
+        if shared_candidate_plan_steps is not None and candidate_plan_steps is not None:
+            # Inner timing updates may have replaced the occupied keys. Preserve
+            # the real outer origins so they can be rescored and remapped here.
+            active_candidates = candidate_plan_steps.lazy().join(
+                current_plans.lazy().select(PLAN_KEY_COLS), on=PLAN_KEY_COLS, how="semi",
+            )
+            candidate_memory = pl.concat(
+                [shared_candidate_plan_steps.lazy(), active_candidates], how="vertical_relaxed",
+            ).unique(subset=CandidatePlanStepsAsset.DEDUPE_COLUMNS, keep="last")
+        scoring_contexts = None
+        if compact_contexts:
+            scoring_contexts = ScoringContexts.build(
+                demand_groups, transport_costs, mode_sequences.population_segments,
+            )
+            candidate_memory = scoring_contexts.collapse_step_rows(candidate_memory)
+            current_plans = scoring_contexts.collapse_allocations(current_plans)
+            stay_home_plan = scoring_contexts.collapse_stay_home(stay_home_plan)
+            demand_groups = scoring_contexts.demand_groups
+            # These are temporary context ids, separate from persistent unit plan ids.
+            previous_plan_id_index = None
+            current_plan_steps = None
+        possible_plan_steps = self.get_possible_plan_steps(
+            current_plans,
+            current_plan_steps,
+            candidate_memory,
+            demand_groups,
+            survey_plan_steps,
+            transport_costs,
+            destination_saturation,
+            activity_dur,
+            home_night_dur,
+            transport_zones,
+            iteration,
+            resolved_activity_parameters,
+            arrival_time_rigidity_by_activity,
+            parameters.plan_update.min_activity_time_constant,
+            destination_sequences,
+            mode_sequences,
+            parameters,
+            shared_candidate_pool=(shared_candidate_plan_steps is not None),
+        )
+        log_memory_checkpoint(
+            f"plan_updater:iteration:{iteration}:possible_plan_steps_lazy",
+            possible_plan_steps=possible_plan_steps,
+        )
+        with simulation_step("materialize scored steps and plan ids"):
+            possible_plan_steps, plan_id_index = add_plan_id(
+                possible_plan_steps,
+                previous_index=previous_plan_id_index,
+            )
+        self._assert_current_plans_covered_by_possible_plan_steps(
+            current_plans,
+            possible_plan_steps,
+            iteration,
+        )
+        possible_plan_steps = self.schedule_updater.update_plan_timings(
+            possible_plan_steps,
+            arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
+            enabled=parameters.plan_update.update_plan_timings_from_modeled_travel_times,
+        )
+
+        # Timing changes create new schedule identities. Remap the current
+        # distribution too, so transition origins still match the scored plans.
+        with simulation_step("materialize and index modeled timings"):
+            timed_steps, time_sequence_steps, time_mapping = assign_time_sequence_ids(
+                possible_plan_steps.drop("plan_id").collect(engine="streaming"), survey_plan_steps
+            )
+            timed_steps, plan_id_index = add_plan_id(timed_steps, previous_index=plan_id_index)
+        current_plans = (
+            current_plans.rename({"time_seq_id": "previous_time_seq_id"})
+            .join(time_mapping, on=["previous_time_seq_id" if col == "time_seq_id" else col for col in PLAN_KEY_COLS], how="left")
+            .with_columns(time_seq_id=pl.col("time_seq_id").fill_null(pl.col("previous_time_seq_id")))
+            .group_by(PLAN_KEY_COLS)
+            .agg(n_persons=pl.col("n_persons").sum(), utility=pl.col("utility").first())
+            .join(plan_id_index, on=PLAN_KEY_COLS, how="left")
+        )
+        candidate_plan_steps = timed_steps.select(
+            CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS
+        ).unique(subset=CandidatePlanStepsAsset.DEDUPE_COLUMNS, keep="first")
+        possible_plan_steps = timed_steps.unique(subset=PLAN_KEY_COLS + ["seq_step_index"], keep="first").lazy()
+        possible_plan_steps = (
+            possible_plan_steps
+            .with_columns(
+                utility=(
+                    pl.col("activity_utility_scale")
+                    * (pl.col("duration_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
+                    - pl.col("cost")
+                )
+            )
+            .drop("activity_utility_scale", "destination_shadow_price")
+        )
+        possible_plan_utility, plan_id_index = self.get_possible_plan_utility(
+            possible_plan_steps,
+            home_night_dur,
+            resolved_activity_parameters["home"].value_of_time_stay_home,
+            stay_home_plan,
+            parameters.plan_update.min_activity_time_constant,
+            plan_id_index=plan_id_index,
+        )
+        possible_plan_steps = possible_plan_steps.drop(
+            "_missing_cost_row",
+            "_invalid_cost_row",
+        )
+        possible_plan_steps, plan_id_index = self.add_stay_home_plan_steps(
+            possible_plan_steps,
+            stay_home_plan,
+            plan_id_index=plan_id_index,
+        )
+        with simulation_step("collect plan utilities"):
+            possible_plan_utility = possible_plan_utility.collect(engine="streaming")
+        return CandidatePlanEvaluation(
+            candidate_plan_steps=candidate_plan_steps,
+            # Inner allocation only needs a narrow step projection after shares
+            # are known. Leave it lazy instead of storing another wide table.
+            possible_plan_steps=possible_plan_steps,
+            possible_plan_utility=possible_plan_utility,
+            plan_id_index=plan_id_index,
+            current_plans=current_plans,
+            time_sequence_steps=time_sequence_steps,
+            scoring_contexts=scoring_contexts,
+        )
+
+    @trace_simulation_step("fresh MNL allocation")
+    def estimate_mnl_allocation(
+        self,
+        evaluation: CandidatePlanEvaluation,
+        demand_groups: pl.DataFrame,
+        *,
+        logit_scale: float,
+    ) -> tuple[pl.DataFrame, pl.DataFrame]:
+        """Estimate fresh feasible-plan MNL shares without changing outer state."""
+        if evaluation.scoring_contexts is not None:
+            demand_groups = evaluation.scoring_contexts.demand_groups
+        with simulation_step("compute and expand shared allocation shares"):
+            plan_columns = [column for column in PLAN_KEY_COLS if column not in DEMAND_UNIT_COLS]
+            feasible = evaluation.possible_plan_utility.lazy().filter(pl.col("is_feasible"))
+            # Shares depend on the complete available choice set, not population
+            # size or current allocation. Never merge units just because their
+            # transport-cost profiles match: they may have different alternatives.
+            unit_choices = feasible.group_by(DEMAND_UNIT_COLS).agg(
+                _choices=pl.struct(plan_columns + ["utility"]).sort_by(plan_columns)
+            ).collect(engine="streaming")
+            choice_contexts = unit_choices.select("_choices").unique().with_row_index("_choice_context_id")
+            context_units = unit_choices.join(choice_contexts, on="_choices").drop("_choices")
+            del unit_choices
+            logging.debug(
+                "Fresh allocation share contexts | demand_units=%d | distinct_choice_sets=%d",
+                context_units.height, choice_contexts.height,
+            )
+            context_choices = choice_contexts.lazy().explode("_choices").unnest("_choices")
+            utility_column = pl.col("utility") * pl.lit(logit_scale, dtype=pl.Float64)
+            probabilities = (
+                context_choices
+                .with_columns(
+                    _choice_utility=utility_column,
+                    _max_choice_utility=utility_column.max().over("_choice_context_id"),
+                )
+                .with_columns(
+                    _choice_weight=(pl.col("_choice_utility") - pl.col("_max_choice_utility")).exp()
+                )
+                .with_columns(
+                    choice_probability=(
+                        pl.col("_choice_weight")
+                        / pl.col("_choice_weight").sum().over("_choice_context_id")
+                    )
+                )
+                .select(["_choice_context_id"] + plan_columns + ["utility", "choice_probability"])
+            )
+            allocation = (
+                probabilities
+                .join(context_units.lazy(), on="_choice_context_id")
+                .join(
+                    feasible.select(["plan_id"] + PLAN_KEY_COLS),
+                    on=PLAN_KEY_COLS,
+                )
+                .join(
+                    demand_groups.select(DEMAND_UNIT_COLS + ["n_persons"]).lazy(),
+                    on=DEMAND_UNIT_COLS,
+                    how="inner",
+                )
+                .with_columns(n_persons=pl.col("n_persons") * pl.col("choice_probability"))
+                .select(["plan_id"] + PLAN_KEY_COLS + ["n_persons", "utility"])
+                .collect(engine="streaming")
+            )
+            del probabilities, context_choices, choice_contexts, context_units, feasible
+        current_plan_steps = self.get_current_plan_steps(
+            allocation,
+            evaluation.possible_plan_steps.lazy(),
+        )
+        return allocation, current_plan_steps
 
     def _assert_current_plans_covered_by_possible_plan_steps(
         self,
@@ -223,40 +430,57 @@ class PlanUpdater:
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
         parameters: Any,
+        *,
+        shared_candidate_pool: bool = False,
     ):
         """Enumerate candidate plan steps and compute per-step utilities."""
         profile_assignments, utility_profiles = transport_costs.get_utility_profiles(
             demand_groups,
             mode_sequences.population_segments,
         )
-        candidate_pruner = lambda context_steps: self._prune_shared_candidate_contexts(
-            candidates=context_steps,
-            transport_costs=transport_costs,
-            utility_profiles=utility_profiles,
-            destination_saturation=destination_saturation,
-            activity_dur=activity_dur,
-            home_night_dur=home_night_dur,
-            transport_zones=transport_zones,
-            resolved_activity_parameters=resolved_activity_parameters,
-            min_activity_time_constant=min_activity_time_constant,
-            parameters=parameters,
-            iteration=iteration,
-            arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
-        )
+        if shared_candidate_pool:
+            if candidate_plan_steps is None:
+                aggregated_candidates = pl.DataFrame(
+                    schema={
+                        **CandidatePlanStepsAsset.REQUIRED_SCHEMA,
+                        "last_active_iteration": pl.UInt16,
+                    }
+                ).lazy()
+            else:
+                # The shared pool has already merged every scenario's batch.
+                # Preserve all of it while evaluating this fixed outer state.
+                aggregated_candidates = candidate_plan_steps.lazy().filter(
+                    pl.col("mode_seq_id") != 0
+                )
+        else:
+            candidate_pruner = lambda context_steps: self._prune_shared_candidate_contexts(
+                candidates=context_steps,
+                transport_costs=transport_costs,
+                utility_profiles=utility_profiles,
+                destination_saturation=destination_saturation,
+                activity_dur=activity_dur,
+                home_night_dur=home_night_dur,
+                transport_zones=transport_zones,
+                resolved_activity_parameters=resolved_activity_parameters,
+                min_activity_time_constant=min_activity_time_constant,
+                parameters=parameters,
+                iteration=iteration,
+                arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
+            )
 
-        aggregated_candidates = CandidatePlanStepsAsset.build_candidate_memory(
-            destination_sequences=destination_sequences,
-            mode_sequences=mode_sequences,
-            survey_plan_steps=survey_plan_steps,
-            demand_groups=demand_groups,
-            current_plans=current_plans,
-            previous_candidate_plan_steps=candidate_plan_steps,
-            current_iteration=iteration,
-            n_warmup_iterations=parameters.plan_update.n_warmup_iterations,
-            max_inactive_age=parameters.plan_update.max_inactive_age,
-            profile_assignments=profile_assignments,
-            candidate_pruner=candidate_pruner,
-        )
+            aggregated_candidates = CandidatePlanStepsAsset.build_candidate_memory(
+                destination_sequences=destination_sequences,
+                mode_sequences=mode_sequences,
+                survey_plan_steps=survey_plan_steps,
+                demand_groups=demand_groups,
+                current_plans=current_plans,
+                previous_candidate_plan_steps=candidate_plan_steps,
+                current_iteration=iteration,
+                n_warmup_iterations=parameters.plan_update.n_warmup_iterations,
+                max_inactive_age=parameters.plan_update.max_inactive_age,
+                profile_assignments=profile_assignments,
+                candidate_pruner=candidate_pruner,
+            )
         log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:candidate_memory",
             aggregated_candidates=aggregated_candidates,
@@ -272,7 +496,9 @@ class PlanUpdater:
             transport_zones=transport_zones,
             resolved_activity_parameters=resolved_activity_parameters,
             min_activity_time_constant=min_activity_time_constant,
-            allow_missing_costs_for_current_plans=(candidate_plan_steps is not None),
+            allow_missing_costs_for_current_plans=(
+                shared_candidate_pool or candidate_plan_steps is not None
+            ),
             use_destination_shadow_prices=parameters.plan_update.use_destination_shadow_prices,
         )
 
@@ -427,6 +653,7 @@ class PlanUpdater:
             .collect(engine="streaming")
         )
 
+    @trace_simulation_step("compact step scoring")
     def compute_plan_steps_candidates_utility(
         self,
         *,
@@ -472,7 +699,8 @@ class PlanUpdater:
         cost_by_od_and_modes = cost_by_od_and_modes.with_columns(
             mode=pl.col("mode").cast(
                 pl.Enum(get_mode_values(transport_costs.modes, "stay_home"))
-            )
+            ),
+            _cost_row_found=pl.lit(True),
         )
         value_of_time = (
             pl.from_dicts(
@@ -534,6 +762,9 @@ class PlanUpdater:
             "last_seen_iteration",
             "last_active_iteration",
             "cost",
+            "is_feasible",
+            "_missing_cost_row",
+            "_invalid_cost_row",
             "distance",
             "time",
             "mean_duration_per_pers",
@@ -544,15 +775,30 @@ class PlanUpdater:
             "activity_utility_scale",
         ]
 
-        candidate_cost_inputs = candidates
+        candidate_cost_inputs = candidates.with_columns(
+            activity=pl.col("activity").cast(activity_dur.schema["activity"])
+        )
         if profile_assignments is not None:
             candidate_cost_inputs = candidate_cost_inputs.join(
                 profile_assignments.lazy(),
                 on=DEMAND_UNIT_COLS,
             )
 
+        # Score each distinct step and utility context before expanding scores
+        # back to demand units. Retention dates and unit ids do not affect utility.
+        metadata_columns = DEMAND_UNIT_COLS + [
+            "iteration", "first_seen_iteration", "last_seen_iteration", "last_active_iteration",
+        ]
+        score_columns = [
+            column for column in CandidatePlanStepsAsset.STRUCTURAL_COLUMNS
+            if column not in metadata_columns
+        ]
+        if "utility_profile_id" in candidate_cost_inputs.collect_schema().names():
+            score_columns.append("utility_profile_id")
+        compact_inputs = candidate_cost_inputs.select(score_columns).unique()
+
         scored_candidates = (
-            candidate_cost_inputs
+            compact_inputs
             .with_columns(
                 activity=pl.col("activity").cast(pl.Enum(activity_dur["activity"].dtype.categories))
             )
@@ -582,7 +828,32 @@ class PlanUpdater:
                 how="left",
             )
             .with_columns(
-                cost=pl.col("cost").fill_null(1e9) if allow_missing_costs_for_current_plans else pl.col("cost"),
+                # A complete plan is usable only when every leg has a finite
+                # cost in this scenario. Keep this flag before filling costs
+                # so missing routing data cannot make an impossible plan look
+                # merely expensive.
+                is_feasible=(
+                    pl.col("cost").is_not_null()
+                    & pl.col("cost").is_finite()
+                ).fill_null(False),
+                _missing_cost_row=pl.col("_cost_row_found").is_null(),
+                _invalid_cost_row=(
+                    pl.col("_cost_row_found").is_not_null()
+                    & ~(
+                        pl.col("cost").is_not_null()
+                        & pl.col("cost").is_finite()
+                    ).fill_null(False)
+                ).fill_null(False),
+                cost=(
+                    pl.when(
+                        pl.col("cost").is_not_null()
+                        & pl.col("cost").is_finite()
+                    )
+                    .then(pl.col("cost"))
+                    .otherwise(1e9)
+                    if allow_missing_costs_for_current_plans
+                    else pl.col("cost")
+                ),
                 distance=pl.col("distance").fill_null(0.0),
                 time=pl.col("time").fill_null(0.0),
                 k_saturation_utility=pl.col("k_saturation_utility").fill_null(1.0),
@@ -606,10 +877,16 @@ class PlanUpdater:
                 )
             )
             .drop(["destination_country", "country_value_coefficient"])
-            .select(possible_plan_step_columns)
+            .select([column for column in possible_plan_step_columns if column not in metadata_columns]
+                    + (["utility_profile_id"] if "utility_profile_id" in score_columns else []))
         )
 
-        return scored_candidates
+        # Materialize the compact scores once. Keeping this entire cost query
+        # lazy would retain all profile OD tables during demand-unit expansion.
+        compact_scores = scored_candidates.collect(engine="streaming")
+        return candidate_cost_inputs.select(score_columns + metadata_columns).join(
+            compact_scores.lazy(), on=score_columns, how="inner", nulls_equal=True,
+        ).select(possible_plan_step_columns)
 
     def get_possible_plan_utility(
         self,
@@ -629,6 +906,9 @@ class PlanUpdater:
             )
             .agg(
                 utility=pl.col("utility").sum(),
+                is_feasible=pl.col("is_feasible").all(),
+                missing_cost_row_count=pl.col("_missing_cost_row").sum(),
+                invalid_cost_row_count=pl.col("_invalid_cost_row").sum(),
                 home_night_per_pers=(
                     24.0 - pl.col("duration_per_pers").sum() - pl.col("time").fill_null(0.0).sum()
                 ).clip(0.0),
@@ -645,7 +925,19 @@ class PlanUpdater:
                 )
             )
             .with_columns(utility=pl.col("utility") + pl.col("utility_stay_home"))
-            .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "mode_seq_id", "dest_seq_id", "utility"])
+            .select(
+                DEMAND_UNIT_COLS
+                + [
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "mode_seq_id",
+                    "dest_seq_id",
+                    "utility",
+                    "is_feasible",
+                    "missing_cost_row_count",
+                    "invalid_cost_row_count",
+                ]
+            )
         )
 
         possible_plan_utility = pl.concat(
@@ -660,9 +952,24 @@ class PlanUpdater:
                         value_of_time_stay_home
                         * pl.col("mean_home_night_per_pers")
                         * (pl.col("mean_home_night_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
-                    )
+                    ),
+                    is_feasible=pl.lit(True),
+                    missing_cost_row_count=pl.lit(0, dtype=pl.UInt32),
+                    invalid_cost_row_count=pl.lit(0, dtype=pl.UInt32),
                 )
-                .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "mode_seq_id", "dest_seq_id", "utility"]),
+                .select(
+                    DEMAND_UNIT_COLS
+                    + [
+                        "activity_seq_id",
+                        "time_seq_id",
+                        "mode_seq_id",
+                        "dest_seq_id",
+                        "utility",
+                        "is_feasible",
+                        "missing_cost_row_count",
+                        "invalid_cost_row_count",
+                    ]
+                ),
             ]
         )
 
@@ -685,6 +992,7 @@ class PlanUpdater:
                 cost=pl.lit(0.0),
                 distance=pl.lit(0.0),
                 time=pl.lit(0.0),
+                is_feasible=pl.lit(True),
                 mean_duration_per_pers=pl.col("duration_per_pers"),
                 value_of_time=pl.lit(0.0),
                 k_saturation_utility=pl.lit(1.0),
@@ -702,6 +1010,7 @@ class PlanUpdater:
             previous_index=plan_id_index,
         )
 
+    @trace_simulation_step("behavior transition probabilities")
     def get_transition_probabilities(
         self,
         current_plans: pl.DataFrame,
@@ -789,26 +1098,44 @@ class PlanUpdater:
         plan_cols = PLAN_KEY_COLS
         current_plans_for_transitions = current_plans.lazy()
         possible_plan_utility_for_transitions = possible_plan_utility
+        has_feasibility = "is_feasible" in possible_plan_utility.collect_schema().names()
+        # Mode and destination replanning keep the survey schedule choice.
+        # Travel-time adjustments can give its alternatives different time ids.
+        timing_constraint_column = (
+            "reference_time_seq_id"
+            if "reference_time_seq_id" in possible_plan_utility.collect_schema().names()
+            else "time_seq_id"
+        )
+        forced_reassignment = (
+            ~pl.col("is_feasible").fill_null(True)
+            if has_feasibility
+            else pl.lit(False)
+        )
+
+        # Keep infeasible current plans as transition origins so they can be
+        # reassigned, but never let them remain valid transition targets.
+        if has_feasibility:
+            possible_plan_utility_for_transitions = (
+                possible_plan_utility_for_transitions
+                .filter(pl.col("is_feasible"))
+            )
 
         if behavior_change_scope not in (
             BehaviorChangeScope.FULL_REPLANNING,
             BehaviorChangeScope.NO_TRANSITIONS,
         ):
             current_plans_for_transitions = current_plans_for_transitions.filter(pl.col("mode_seq_id") != 0)
-            possible_plan_utility_for_transitions = possible_plan_utility_for_transitions.filter(
-                pl.col("mode_seq_id") != 0
-            )
 
         scope_pair_constraint = pl.lit(True)
         if behavior_change_scope == BehaviorChangeScope.DESTINATION_REPLANNING:
             scope_pair_constraint = (
                 (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
-                & (pl.col("time_seq_id") == pl.col("time_seq_id_trans"))
+                & (pl.col(timing_constraint_column) == pl.col(timing_constraint_column + "_trans"))
             )
         elif behavior_change_scope == BehaviorChangeScope.MODE_REPLANNING:
             scope_pair_constraint = (
                 (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
-                & (pl.col("time_seq_id") == pl.col("time_seq_id_trans"))
+                & (pl.col(timing_constraint_column) == pl.col(timing_constraint_column + "_trans"))
                 & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
             )
         elif behavior_change_scope == BehaviorChangeScope.NO_TRANSITIONS:
@@ -818,6 +1145,19 @@ class PlanUpdater:
                 & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
                 & (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
             )
+        if behavior_change_scope not in (
+            BehaviorChangeScope.FULL_REPLANNING,
+            BehaviorChangeScope.NO_TRANSITIONS,
+        ):
+            # Restricted phases normally keep stay-home frozen. A person on
+            # an infeasible plan must still be able to move to stay-home when
+            # no usable non-stay-home alternative exists.
+            scope_pair_constraint = (
+                (scope_pair_constraint & (pl.col("mode_seq_id_trans") != 0))
+                | forced_reassignment
+            )
+        else:
+            scope_pair_constraint = scope_pair_constraint | forced_reassignment
 
         is_self_transition = (
             (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
@@ -829,11 +1169,13 @@ class PlanUpdater:
         utility_filter = pl.lit(True)
         if math.isfinite(utility_pruning_delta):
             utility_filter = (
-                is_self_transition
+                forced_reassignment
+                | is_self_transition
                 | (pl.col("utility_trans") >= pl.col("max_utility_trans") - utility_pruning_delta)
             )
         gain_filter = (
-            is_self_transition
+            forced_reassignment
+            | is_self_transition
             | (pl.col("utility_trans") >= pl.col("utility") + min_transition_utility_gain)
         )
 
@@ -841,7 +1183,7 @@ class PlanUpdater:
             current_plans_for_transitions
             .select(plan_cols + ["utility"])
             .rename({"utility": "utility_prev_from"})
-            .join(possible_plan_utility_for_transitions, on=plan_cols)
+            .join(possible_plan_utility, on=plan_cols)
             .rename({"plan_id": "plan_id_from"})
             .join_where(
                 possible_plan_utility_for_transitions,
@@ -914,6 +1256,12 @@ class PlanUpdater:
         logging.debug("Collecting PopulationGroupDayTrips transition probabilities")
 
         plan_cols = PLAN_KEY_COLS
+        has_feasibility = "is_feasible" in allowed_transitions.collect_schema().names()
+        forced_reassignment = (
+            ~pl.col("is_feasible").fill_null(True)
+            if has_feasibility
+            else pl.lit(False)
+        )
         if "distance" not in allowed_transitions.collect_schema().names():
             allowed_transitions = allowed_transitions.with_columns(
                 distance=pl.lit(0.0, dtype=pl.Float64)
@@ -922,7 +1270,9 @@ class PlanUpdater:
         filtered_transitions = allowed_transitions
         if math.isfinite(transition_distance_threshold):
             filtered_transitions = allowed_transitions.filter(
-                is_self_transition | (pl.col("distance").fill_null(0.0) <= transition_distance_threshold)
+                is_self_transition
+                | forced_reassignment
+                | (pl.col("distance").fill_null(0.0) <= transition_distance_threshold)
             )
 
         friction = pl.lit(transition_distance_friction, dtype=pl.Float64)
@@ -941,7 +1291,11 @@ class PlanUpdater:
         )
 
         q_transition = pl.col("utility_weight") / pl.col("utility_weight").sum().over(plan_cols)
-        revision_probability = pl.lit(transition_revision_probability, dtype=pl.Float64)
+        revision_probability = (
+            pl.when(forced_reassignment)
+            .then(1.0)
+            .otherwise(pl.lit(transition_revision_probability, dtype=pl.Float64))
+        )
 
         transition_probabilities = (
             utility_weighted_transitions
@@ -952,12 +1306,13 @@ class PlanUpdater:
                 adjustment_factor=revision_probability,
             )
             .with_columns(
-                p_transition=pl.when(pl.col("is_self_transition"))
+                p_transition=pl.when(pl.col("is_self_transition") & ~forced_reassignment)
                 .then(1.0 - revision_probability + revision_probability * pl.col("q_transition"))
                 .otherwise(revision_probability * pl.col("q_transition"))
             )
             .select(
                 [
+                    "plan_id_from",
                     "plan_id_trans",
                     "demand_group_id",
                     "demand_subgroup_id",
@@ -984,13 +1339,14 @@ class PlanUpdater:
             "plan_updater:transition_probabilities_collected",
             transition_probabilities=transition_probabilities,
         )
-    
+
         logging.debug(
             "Finished collecting PopulationGroupDayTrips transition probabilities."
         )
 
         return transition_probabilities
 
+    @trace_simulation_step("apply behavior transitions")
     def apply_transitions(
         self,
         current_plans: pl.DataFrame,
@@ -1005,9 +1361,13 @@ class PlanUpdater:
 
         transitions = (
             current_plans.lazy()
+            # Keep the source id even when no transition row matches this plan.
+            .with_columns(plan_id_from=pl.col("plan_id"))
             .join(transition_probabilities.lazy(), on=plan_cols, how="left")
             .with_columns(
-                plan_id_trans=pl.coalesce([pl.col("plan_id_trans"), pl.col("plan_id")]),
+                plan_id_trans=pl.coalesce(
+                    [pl.col("plan_id_trans"), pl.col("plan_id_from")]
+                ),
                 p_transition=pl.col("p_transition").fill_null(1.0),
                 utility_from_updated=pl.col("utility_from_updated").fill_null(pl.col("utility")),
                 utility_trans=pl.coalesce([pl.col("utility_trans"), pl.col("utility")]),
@@ -1271,6 +1631,7 @@ class PlanUpdater:
             how="left",
         )
 
+    @trace_simulation_step("expand allocated plan steps")
     def get_current_plan_steps(self, current_plans, possible_plan_steps):
         """Expand aggregate plans to per-step rows."""
         current_plan_steps = (
@@ -1319,6 +1680,7 @@ class PlanUpdater:
 
         return current_plan_steps.drop("plan_id") if "plan_id" in current_plan_steps.columns else current_plan_steps
 
+    @trace_simulation_step("destination saturation")
     def get_destination_saturation(
         self,
         current_plan_steps,

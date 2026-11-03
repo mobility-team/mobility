@@ -32,6 +32,14 @@ class _FakeRun:
         self.survey_plan_assets = survey_plan_assets
         self.scenario = scenario
         self.replication = kwargs.get("replication")
+        # The coordinator identifies each run and checks its restart state.
+        context_hash = f"{scenario}-{self.replication}-{is_weekday}"
+        self.run_context = SimpleNamespace(inputs_hash=context_hash)
+        self.iterations = SimpleNamespace(
+            run_inputs_hash=context_hash,
+            get_resume_iteration=lambda maximum: None,
+        )
+        self.iteration_state_assets = []
         base = Path("cache") / ("weekday" if is_weekday else "weekend")
         self.cache_path = {
             "plan_steps": base / "plan_steps.parquet",

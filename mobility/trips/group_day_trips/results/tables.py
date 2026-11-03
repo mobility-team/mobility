@@ -52,6 +52,18 @@ class GroupDayTripsResultTables:
         """Declare scoped per-iteration diagnostics."""
         return self._table("iteration_metrics", iterations=iterations, columns=columns)
 
+    def adaptive_search_diagnostics(
+        self,
+        *,
+        columns: list[str] | tuple[str, ...] | None = None,
+    ) -> ScopedRunTable:
+        """Declare inner- and outer-loop convergence diagnostics for each scenario."""
+        return self._table(
+            "adaptive_search_diagnostics",
+            iterations="last",
+            columns=columns,
+        )
+
     def _table(
         self,
         table_name: str,
@@ -66,3 +78,11 @@ class GroupDayTripsResultTables:
             iterations=iterations,
             columns=columns,
         )
+
+    def mnl_od_mode_flows(self) -> ScopedRunTable:
+        """Return the last inner MNL estimate before final behavior and costs update.
+
+        This diagnostic uses costs fixed at the start of the last outer
+        iteration. It is not an estimate at the returned final transport costs.
+        """
+        return self._table("mnl_od_mode_flows", iterations="last")

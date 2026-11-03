@@ -8,6 +8,8 @@ from typing import Any
 
 import polars as pl
 
+from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
+
 from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.cache_schema import read_cached_parquet
 from mobility.runtime.assets.file_asset import FileAsset
@@ -226,6 +228,7 @@ class InitialIterationStateAsset(InMemoryAsset):
         """Return the random generator state held by the initial state."""
         return self.get().rng_state
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> RunState:
         """Build the starting state for the iteration loop."""
         logging.debug("Building initial group-day-trips iteration state...")
@@ -288,16 +291,20 @@ class IterationSeedsAsset(InMemoryAsset):
         *,
         previous_state: Asset,
         iteration: int,
+        batch_index: int = 0,
     ) -> None:
         self.previous_state = previous_state
         self.iteration = iteration
+        self.batch_index = batch_index
         inputs = {
-            "version": 1,
+            "version": 2,
             "previous_state": previous_state,
             "iteration": iteration,
+            "batch_index": batch_index,
         }
         super().__init__(inputs)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> dict[str, object]:
         """Draw the stochastic seeds used by one iteration."""
         logging.debug("Drawing stochastic seeds for iteration %s...", str(self.iteration))
@@ -305,9 +312,13 @@ class IterationSeedsAsset(InMemoryAsset):
         self.previous_state.get()
         rng = random.Random()
         rng.setstate(self.previous_state.get_rng_state())
+        activity_seed = destination_seed = None
+        for _ in range(self.batch_index + 1):
+            activity_seed = rng.getrandbits(64)
+            destination_seed = rng.getrandbits(64)
         seeds = {
-            "activity_sequences": rng.getrandbits(64),
-            "destination_sequences": rng.getrandbits(64),
+            "activity_sequences": activity_seed,
+            "destination_sequences": destination_seed,
             "rng_state_after_sampling": rng.getstate(),
         }
         logging.debug("Stochastic seeds for iteration %s are ready.", str(self.iteration))
@@ -333,6 +344,7 @@ class PersonODFlowsByModeAsset(InMemoryAsset):
         }
         super().__init__(inputs)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         """Aggregate current plan steps into person OD flows by mode."""
         previous = self.previous_state.get()
@@ -440,6 +452,7 @@ class CongestionFlowsAsset(InMemoryAsset):
         previous_transport_costs = previous_state.inputs.get("transport_costs")
         return getattr(previous_transport_costs, "congestion_flows", None)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> VehicleODFlowsAsset | None:
         """Build road vehicle flows from the matching iteration state."""
         road_flow_asset = None
@@ -524,6 +537,7 @@ class IterationTransportCostsAsset(InMemoryAsset):
         }
         super().__init__(inputs)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         """Build the full OD-by-mode transport-cost table for this iteration."""
         logging.debug(
@@ -578,6 +592,7 @@ class IterationTransportCostsAsset(InMemoryAsset):
         available_columns = [column for column in columns if column in costs.columns]
         return costs.select(available_columns)
 
+    @trace_simulation_step("expected OD transport costs")
     def get_costs_by_od(self, metrics: list) -> pl.DataFrame:
         """Aggregate cached costs to the OD-only view used by destination choice."""
         costs = self.get_costs_by_od_and_mode(metrics, detail_distances=False)
@@ -595,6 +610,7 @@ class IterationTransportCostsAsset(InMemoryAsset):
             population_segments,
         )
 
+    @trace_simulation_step("profile transport costs")
     def get_profile_costs_by_od_and_mode(self, profiles, metrics):
         """Return profile-specific costs with this iteration's congestion state."""
         cache_key = tuple(
@@ -663,8 +679,16 @@ class IterationStateAsset(Asset):
         self._rng_state = None
         self._loaded_checkpoint = False
         self._checkpoint_saved = False
+        self.coordinated_candidate_plan_steps: pl.DataFrame | pl.LazyFrame | None = None
+        self.coordinated_current_plans: pl.DataFrame | None = None
+        self.coordinated_current_plan_steps: pl.DataFrame | None = None
+        self.coordinated_plan_id_index: pl.DataFrame | None = None
+        self.coordinated_destination_sequence_index: pl.DataFrame | None = None
+        self.coordinated_mode_sequence_index: pl.DataFrame | None = None
+        self.coordinated_rng_state: object | None = None
+        self.coordinated_time_sequence_steps: pl.DataFrame | None = None
         inputs = {
-            "version": 8,
+            "version": 11,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -739,7 +763,8 @@ class IterationStateAsset(Asset):
         # runs when the current state was restored from a spill or checkpoint.
         active_resolver = get_current_asset_resolver()
         if active_resolver is not None:
-            active_resolver.release_in_memory_asset(self.previous_state)
+            if self.coordinated_candidate_plan_steps is None:
+                active_resolver.release_in_memory_asset(self.previous_state)
             for asset in (
                 self.seeds,
                 self.activity_sequences,
@@ -770,6 +795,7 @@ class IterationStateAsset(Asset):
             "destination_saturation",
             "destination_sequence_index",
             "mode_sequence_index",
+            "time_sequence_steps",
         ]
         metadata = {"none_tables": [], "rng_state": state.rng_state}
         for table_name in table_names:
@@ -796,6 +822,7 @@ class IterationStateAsset(Asset):
             "destination_saturation",
             "destination_sequence_index",
             "mode_sequence_index",
+            "time_sequence_steps",
         ]
         spilled_state = {
             table_name: (
@@ -836,6 +863,7 @@ class IterationStateAsset(Asset):
             rng_state=self._rng_state,
             destination_sequence_index=value("destination_sequence_index"),
             mode_sequence_index=value("mode_sequence_index"),
+            time_sequence_steps=value("time_sequence_steps"),
         )
 
     def get_rng_state(self) -> object:
@@ -849,6 +877,7 @@ class IterationStateAsset(Asset):
             )
         return self._rng_state
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> RunState:
         """Load a saved checkpoint or run one iteration in memory."""
         transition_events = None
@@ -881,9 +910,10 @@ class IterationStateAsset(Asset):
             logging.debug("Starting group-day-trips iteration %s...", str(self.iteration))
             seeds = self.seeds.get()
             logging.debug("Preparing sampled alternatives for iteration %s...", str(self.iteration))
-            self.activity_sequences.get()
-            self.destination_sequences.get()
-            self.mode_sequences.get()
+            if self.coordinated_candidate_plan_steps is None:
+                self.activity_sequences.get()
+                self.destination_sequences.get()
+                self.mode_sequences.get()
 
             logging.debug("Updating plan choices for iteration %s...", str(self.iteration))
             get_group_day_trips_progress().iteration_step(
@@ -892,12 +922,22 @@ class IterationStateAsset(Asset):
             )
             resolved_activity_parameters = self.inputs["resolved_activity_parameters"]
             arrival_time_rigidity_by_activity = self.inputs["arrival_time_rigidity_by_activity"]
-            current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index = self.updater.get_new_plans(
-                previous.current_plans,
-                previous.current_plan_steps,
+            current_plans_before_transition = (
+                previous.current_plans
+                if self.coordinated_current_plans is None
+                else self.coordinated_current_plans
+            )
+            current_plan_steps_before_transition = (
+                previous.current_plan_steps
+                if self.coordinated_current_plan_steps is None
+                else self.coordinated_current_plan_steps
+            )
+            current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index, time_sequence_steps = self.updater.get_new_plans(
+                current_plans_before_transition,
+                current_plan_steps_before_transition,
                 previous.candidate_plan_steps,
                 previous.demand_groups,
-                previous.survey_plan_steps,
+                previous.schedule_steps if self.coordinated_time_sequence_steps is None else self.coordinated_time_sequence_steps,
                 self.transport_costs,
                 previous.destination_saturation,
                 previous.activity_dur,
@@ -909,8 +949,13 @@ class IterationStateAsset(Asset):
                 previous.home_night_dur,
                 previous.stay_home_plan,
                 self.population.transport_zones,
-                previous.plan_id_index,
+                (
+                    previous.plan_id_index
+                    if self.coordinated_plan_id_index is None
+                    else self.coordinated_plan_id_index
+                ),
                 self.parameters,
+                shared_candidate_plan_steps=self.coordinated_candidate_plan_steps,
             )
             costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
             destination_saturation = self.updater.get_destination_saturation(
@@ -929,15 +974,28 @@ class IterationStateAsset(Asset):
                 current_plans=current_plans,
                 candidate_plan_steps=candidate_plan_steps,
                 plan_id_index=plan_id_index,
+                time_sequence_steps=time_sequence_steps,
                 destination_saturation=destination_saturation,
                 costs=costs,
                 start_iteration=self.iteration + 1,
                 current_plan_steps=current_plan_steps,
-                rng_state=seeds["rng_state_after_sampling"],
-                destination_sequence_index=self.destination_sequences.sequence_index,
-                mode_sequence_index=self.mode_sequences.sequence_index,
+                rng_state=(
+                    seeds["rng_state_after_sampling"]
+                    if self.coordinated_rng_state is None
+                    else self.coordinated_rng_state
+                ),
+                destination_sequence_index=(
+                    self.destination_sequences.sequence_index
+                    if self.coordinated_destination_sequence_index is None
+                    else self.coordinated_destination_sequence_index
+                ),
+                mode_sequence_index=(
+                    self.mode_sequences.sequence_index
+                    if self.coordinated_mode_sequence_index is None
+                    else self.coordinated_mode_sequence_index
+                ),
             )
-            self._rng_state = seeds["rng_state_after_sampling"]
+            self._rng_state = state.rng_state
 
         if transition_events is not None and self.cache_iteration_events:
             if self.transition_events_asset is None:
@@ -982,6 +1040,7 @@ class CurrentPlansAsset(FileAsset):
             required_schema=self.REQUIRED_SCHEMA,
         )
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.current_plans is None:
             raise ValueError("Cannot save current plans without a dataframe.")
@@ -1021,6 +1080,7 @@ class CurrentPlanStepsAsset(FileAsset):
             required_schema=self.REQUIRED_SCHEMA,
         )
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.current_plan_steps is None:
             raise ValueError("Cannot save current plan steps without a dataframe.")
@@ -1065,6 +1125,7 @@ class PlanIdIndexAsset(FileAsset):
             required_schema=self.REQUIRED_SCHEMA,
         )
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.plan_id_index is None:
             raise ValueError("Cannot save the plan-id index without a dataframe.")
@@ -1101,6 +1162,7 @@ class SequenceIndexAsset(FileAsset):
     def get_cached_asset(self) -> pl.DataFrame:
         return pl.read_parquet(self.cache_path)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.sequence_index is None:
             raise ValueError(
@@ -1140,6 +1202,7 @@ class RemainingOpportunitiesAsset(FileAsset):
     def get_cached_asset(self) -> pl.DataFrame:
         return pl.read_parquet(self.cache_path)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.destination_saturation is None:
             raise ValueError("Cannot save destination saturation without a dataframe.")
@@ -1174,6 +1237,7 @@ class RngStateAsset(FileAsset):
         with open(self.cache_path, "rb") as file:
             return pickle.load(file)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self):
         if self.rng_state is None:
             raise ValueError("Cannot save RNG state without a value.")
@@ -1210,6 +1274,7 @@ class IterationCompleteAsset(FileAsset):
         with open(self.cache_path, "r", encoding="utf-8") as file:
             return json.load(file)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> dict:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.cache_path, "w", encoding="utf-8") as file:

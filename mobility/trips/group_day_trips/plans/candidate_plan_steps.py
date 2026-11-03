@@ -1,3 +1,4 @@
+import logging
 import pathlib
 from collections.abc import Callable
 
@@ -128,6 +129,7 @@ class CandidatePlanStepsAsset(FileAsset):
             demand_groups=demand_groups,
             profile_assignments=profile_assignments,
             candidate_pruner=candidate_pruner,
+            stage="candidate generation",
         )
 
     @classmethod
@@ -140,6 +142,7 @@ class CandidatePlanStepsAsset(FileAsset):
         demand_groups: pl.DataFrame,
         profile_assignments: pl.DataFrame,
         candidate_pruner: Callable[[pl.LazyFrame], pl.DataFrame] | None,
+        stage: str,
     ) -> pl.LazyFrame:
         """Attach completed shared plans to eligible demand units."""
         if "allowed_activities" not in demand_groups.columns:
@@ -159,6 +162,8 @@ class CandidatePlanStepsAsset(FileAsset):
                 activity_profile_id=pl.col("allowed_activities").list.join("|")
             )
         )
+        input_demand_units = demand_groups.select(DEMAND_UNIT_COLS).unique().height
+        profiled_demand_units = units.select(DEMAND_UNIT_COLS).unique().height
         schedule_activities = get_survey_schedule_activities(survey_plan_steps)
         schedules = (
             destination_rows
@@ -233,6 +238,75 @@ class CandidatePlanStepsAsset(FileAsset):
             )
             .select(["_score_context_id"] + DEMAND_UNIT_COLS)
             .unique()
+        )
+
+        # Count compatible contexts before joining full plan-step rows. These
+        # small key tables show whether coverage is lost at sequence matching,
+        # activity eligibility, or expansion back to population demand units.
+        sequence_contexts = (
+            mode_rows
+            .select(
+                [
+                    "home_zone_id",
+                    "utility_profile_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                ]
+            )
+            .unique()
+            .join(
+                scoring_contexts.select(
+                    [
+                        "home_zone_id",
+                        "utility_profile_id",
+                        "country",
+                        "activity_profile_id",
+                        "_score_context_id",
+                    ]
+                ),
+                on=["home_zone_id", "utility_profile_id"],
+                how="inner",
+            )
+        )
+        eligible_contexts = (
+            sequence_contexts
+            .join(
+                eligible_schedules,
+                on=[
+                    "country",
+                    "activity_profile_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                ],
+                how="inner",
+            )
+            .select("_score_context_id")
+            .unique()
+        )
+        demand_units_with_candidates = (
+            context_to_units
+            .join(eligible_contexts, on="_score_context_id", how="inner")
+            .select(DEMAND_UNIT_COLS)
+            .unique()
+            .height
+        )
+        total_demand_units = profiled_demand_units
+        contexts_with_sequences = sequence_contexts.select("_score_context_id").unique().height
+        contexts_with_eligible_schedules = eligible_contexts.height
+        logging.debug(
+            "Plan attachment contexts | stage=%s | demand_units=%d | "
+            "demand_units_without_utility_profile=%d | scoring_contexts=%d | "
+            "contexts_with_sequences=%d | "
+            "contexts_with_eligible_schedules=%d | demand_units_with_candidates=%d | "
+            "demand_units_without_candidates=%d",
+            stage,
+            input_demand_units,
+            max(0, input_demand_units - profiled_demand_units),
+            scoring_contexts.height,
+            contexts_with_sequences,
+            contexts_with_eligible_schedules,
+            demand_units_with_candidates,
+            max(0, total_demand_units - demand_units_with_candidates),
         )
 
         plan_steps = (

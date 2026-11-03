@@ -7,6 +7,8 @@ from typing import Any
 
 import polars as pl
 
+from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
+
 from ..core.run_state import RunState
 from ..plans.activity_sequences import ActivitySequences
 from ..plans.activity_schedule_pool import ActivitySchedulePoolAsset
@@ -37,6 +39,7 @@ class IterationState:
     rng_state: object
     destination_sequence_index: pl.DataFrame
     mode_sequence_index: pl.DataFrame
+    time_sequence_steps: pl.DataFrame | None = None
 
 
 class Iteration:
@@ -123,6 +126,7 @@ class Iteration:
         )
 
 
+    @trace_simulation_step("checkpoint load_state")
     def load_state(self) -> IterationState:
         """Load the saved run state for this completed iteration."""
         checkpoint_assets = self.checkpoint_assets()
@@ -151,6 +155,7 @@ class Iteration:
                 "destination_sequence_index"
             ].get(),
             mode_sequence_index=checkpoint_assets["mode_sequence_index"].get(),
+            time_sequence_steps=checkpoint_assets["time_sequence_steps"].get(),
         )
 
     def checkpoint_assets(self) -> dict[str, Any]:
@@ -161,6 +166,10 @@ class Iteration:
         iteration = self.iteration
         base_folder = iteration_state_folder
         return {
+            "time_sequence_steps": SequenceIndexAsset(
+                run_key=run_key, is_weekday=is_weekday, iteration=iteration,
+                sequence_name="time_sequence_steps", base_folder=base_folder,
+            ),
             "current_plans": CurrentPlansAsset(
                 run_key=run_key,
                 is_weekday=is_weekday,
@@ -220,6 +229,7 @@ class Iteration:
         }
 
 
+    @trace_simulation_step("checkpoint save_state")
     def save_state(self, state: RunState, rng_state: object) -> None:
         """Persist the run state for this completed iteration."""
         iteration_state_folder = self.iterations.folder_paths["iteration-state"]
@@ -290,6 +300,14 @@ class Iteration:
                 iteration=self.iteration,
                 base_folder=iteration_state_folder,
                 rng_state=rng_state,
+            ).get()
+            SequenceIndexAsset(
+                run_key=self.iterations.run_inputs_hash,
+                is_weekday=self.iterations.is_weekday,
+                iteration=self.iteration,
+                sequence_name="time_sequence_steps",
+                base_folder=iteration_state_folder,
+                sequence_index=state.schedule_steps,
             ).get()
             completion_asset.get()
         except Exception as exc:
@@ -387,6 +405,7 @@ class Iterations:
                 "*plan_id_index_*.parquet",
                 "*destination_sequence_index_*.parquet",
                 "*mode_sequence_index_*.parquet",
+                "*time_sequence_steps_*.parquet",
                 "*remaining_opportunities_*.parquet",
                 "*rng_state_*.pkl",
                 "*iteration_complete_*.json",

@@ -9,7 +9,8 @@ from mobility.trips.group_day_trips.plans.plan_ids import add_plan_id
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 
 
-def test_plan_updater_prepares_destination_country_value_coefficient():
+@pytest.mark.parametrize("unit_count", [1, 3])
+def test_plan_updater_prepares_destination_country_value_coefficient(unit_count):
     updater = PlanUpdater()
     candidates = pl.DataFrame(
         {
@@ -81,6 +82,16 @@ def test_plan_updater_prepares_destination_country_value_coefficient():
         "work": SimpleNamespace(value_of_time=1.0, country_value_coefficients={"fr": 1.0, "ch": 2.0}),
     }
 
+    # Units share plan content and utility inputs, but retain their own memory
+    # dates when compact scores are attached back to the population.
+    base_candidates = candidates.collect()
+    candidates = pl.concat([
+        base_candidates.with_columns(
+            demand_group_id=pl.lit(unit, dtype=pl.Int64),
+            last_seen_iteration=pl.lit(unit, dtype=pl.UInt16),
+        )
+        for unit in range(1, unit_count + 1)
+    ]).lazy()
     result = updater.compute_plan_steps_candidates_utility(
         candidates=candidates,
         transport_costs=_StubTransportCosts(),
@@ -98,6 +109,8 @@ def test_plan_updater_prepares_destination_country_value_coefficient():
     assert coefficients_by_destination[10] == pytest.approx(8.0)
     assert coefficients_by_destination[20] == pytest.approx(16.0)
     assert "last_seen_iteration" in result.columns
+    assert result.height == 2 * unit_count
+    assert result.filter(pl.col("last_seen_iteration") != pl.col("demand_group_id")).is_empty()
 
 
 def test_plan_updater_integrates_shadow_price_in_activity_value_when_enabled():
@@ -252,6 +265,10 @@ def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
                 "duration_per_pers": [8.0],
                 "time": [2.0],
                 "utility": [5.0],
+                # These steps have complete, valid travel costs.
+                "is_feasible": [True],
+                "_missing_cost_row": [False],
+                "_invalid_cost_row": [False],
             }
         ),
         previous_index=None,

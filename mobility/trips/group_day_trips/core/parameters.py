@@ -280,10 +280,9 @@ class GroupDayTripsActivitySequenceParameters(BaseModel):
             ge=1,
             title="Number of schedule draws",
             description=(
-                "Number of timed survey schedule draws per home zone during full "
-                "replanning. Draws are made with replacement from the schedules "
-                "supported by groups in that zone. Extra weighted draws may be "
-                "added to cover activity profiles missed by the initial sample. "
+                "Number of timed survey schedule draws per activity profile in "
+                "each home zone during full replanning. Each profile draws with "
+                "replacement from its compatible schedules, using survey weights. "
                 "Set to None to keep every eligible schedule."
             ),
         ),
@@ -307,6 +306,19 @@ class GroupDayTripsDestinationSequenceParameters(BaseModel):
     """Settings used when sampling destination sequences."""
 
     model_config = ConfigDict(extra="forbid")
+
+    k_destination_sequences: Annotated[
+        int,
+        Field(
+            default=3,
+            ge=1,
+            title="Destination sequences per activity sequence",
+            description=(
+                "Number of destination sequence draws generated for each sampled "
+                "activity sequence and utility profile present in its home zone."
+            ),
+        ),
+    ]
 
     alpha: Annotated[
         float,
@@ -541,6 +553,100 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
     ]
 
 
+class GroupDayTripsAdaptiveSearchParameters(BaseModel):
+    """Convergence tolerances and safety limits for coordinated scenarios."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_inner_iterations: Annotated[
+        int,
+        Field(
+            default=5,
+            ge=1,
+            title="Maximum inner iterations",
+            description="Hard limit on candidate generation and allocation batches per inner loop.",
+        ),
+    ]
+    generation_effort_budget: Annotated[
+        int,
+        Field(
+            default=1_000_000,
+            ge=1,
+            title="Generation effort budget",
+            description=(
+                "Maximum requested mode-sequence alternatives per outer iteration "
+                "across every scenario and inner batch. Repeated and infeasible "
+                "draws still use effort."
+            ),
+        ),
+    ]
+    max_shared_candidates: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            title="Maximum shared candidate pool size",
+            description=(
+                "Optional maximum number of distinct complete plans in the shared "
+                "pool. Plans active in the current allocation are protected, so "
+                "the limit must fit those plans. None keeps every unique plan."
+            ),
+        ),
+    ]
+    inner_flow_tolerance: Annotated[
+        float,
+        Field(
+            default=0.01,
+            gt=0.0,
+            title="Inner OD-mode flow tolerance",
+            description=(
+                "Maximum normalized root-sum-square change in one scenario's "
+                "OD-mode flows for an inner batch to pass."
+            ),
+        ),
+    ]
+    inner_base_gap_tolerance: Annotated[
+        float,
+        Field(
+            default=0.01,
+            gt=0.0,
+            title="Inner scenario-to-base gap tolerance",
+            description=(
+                "Maximum normalized change in a scenario-to-base OD-mode flow "
+                "gap for an inner batch to pass."
+            ),
+        ),
+    ]
+    inner_consecutive_passes: Annotated[
+        int,
+        Field(
+            default=2,
+            ge=1,
+            title="Consecutive passing inner batches",
+            description="Number of consecutive passing batches needed for inner-loop convergence.",
+        ),
+    ]
+    outer_behavior_tolerance: Annotated[
+        float,
+        Field(
+            default=0.01,
+            gt=0.0,
+            title="Outer behavior stability tolerance",
+            description=(
+                "Maximum population-weighted change in scenario plan shares "
+                "between outer iterations."
+            ),
+        ),
+    ]
+    outer_consecutive_passes: Annotated[
+        int,
+        Field(
+            default=2,
+            ge=1,
+            title="Consecutive passing outer iterations",
+            description="Number of consecutive stable outer iterations needed for convergence.",
+        ),
+    ]
 class GroupDayTripsParameters(BaseModel):
     """Root settings for the grouped day-trips model."""
 
@@ -581,6 +687,10 @@ class GroupDayTripsParameters(BaseModel):
     plan_update: Annotated[
         GroupDayTripsPlanUpdateParameters,
         Field(default_factory=GroupDayTripsPlanUpdateParameters),
+    ]
+    adaptive_search: Annotated[
+        GroupDayTripsAdaptiveSearchParameters,
+        Field(default_factory=GroupDayTripsAdaptiveSearchParameters),
     ]
 
     def with_replication(self, replication: int) -> "GroupDayTripsParameters":

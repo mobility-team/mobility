@@ -41,12 +41,14 @@ def release_scoped_run_tables(
         # metric. Keep their small table in this resolver until the plan ends.
         if asset.table_name == "demand_groups":
             continue
-        output_index = (
-            0
-            if asset.uses_last_iteration
-            else asset.selected_iterations.index(iteration)
-        )
-        for output_assets in asset.run_output_assets:
+        for run_index, output_assets in enumerate(asset.run_output_assets):
+            if asset.uses_last_iteration:
+                output_index = 0
+            else:
+                run_iterations = asset.selected_iterations_by_run[run_index]
+                if iteration not in run_iterations:
+                    continue
+                output_index = run_iterations.index(iteration)
             if output_index < len(output_assets):
                 resolver.release_in_memory_asset(output_assets[output_index])
 
@@ -72,16 +74,40 @@ class ScopedRunTable(InMemoryAsset):
         self.columns = None if columns is None else tuple(dict.fromkeys(columns))
         self.iterations = results._validate_iterations(iterations)
         self.selected_iterations = results.selected_iterations(iterations)
-        self.uses_last_iteration = self.selected_iterations == [results.last_iteration]
+        self.uses_last_iteration = results.uses_last_iteration(iterations)
+        self.last_iterations_by_run = [
+            int(run_context.run.parameters.run.n_iterations)
+            for run_context in self.run_contexts
+        ]
+        self.selected_iterations_by_run = []
+        for last_iteration in self.last_iterations_by_run:
+            if self.iterations == "last":
+                run_iterations = [last_iteration]
+            elif self.iterations == "all":
+                run_iterations = list(range(1, last_iteration + 1))
+            else:
+                run_iterations = [
+                    iteration
+                    for iteration in self.iterations
+                    if iteration <= last_iteration
+                ]
+            self.selected_iterations_by_run.append(run_iterations)
+
+        if not any(self.selected_iterations_by_run):
+            raise ValueError(
+                "None of the selected runs completed the requested outer iteration(s): "
+                f"{self.selected_iterations}."
+            )
         self.run_output_assets = []
-        for run_context in self.run_contexts:
+        for run_index, run_context in enumerate(self.run_contexts):
+            run_iterations = self.selected_iterations_by_run[run_index]
             if self.table_name == "iteration_metrics":
                 output_assets = [
                     run_context.run._table_asset(
                         "iteration_metrics",
                         iteration=iteration,
                     )
-                    for iteration in self.selected_iterations
+                    for iteration in run_iterations
                 ]
             elif self.table_name == "demand_groups":
                 output_assets = [run_context.run._table_asset("demand_groups")]
@@ -93,7 +119,7 @@ class ScopedRunTable(InMemoryAsset):
                         self.table_name,
                         iteration=iteration,
                     )
-                    for iteration in self.selected_iterations
+                    for iteration in run_iterations
                 ]
             else:
                 raise ValueError(
@@ -103,9 +129,13 @@ class ScopedRunTable(InMemoryAsset):
             self.run_output_assets.append(output_assets)
 
         inputs = {
-            "version": 6,
+            "version": 8,
             "table_name": table_name,
             "iterations": tuple(self.selected_iterations),
+            "iterations_by_run": tuple(
+                tuple(iterations)
+                for iterations in self.selected_iterations_by_run
+            ),
             "uses_last_iteration": self.uses_last_iteration,
             "columns": self.columns,
             "run_outputs": tuple(
@@ -147,21 +177,48 @@ class ScopedRunTable(InMemoryAsset):
                 f"Iteration {iteration} is not selected for {self.table_name}."
             )
 
-        iteration_index = self.selected_iterations.index(iteration)
         scoped_tables = []
-        for run_context, output_assets in zip(self.run_contexts, self.run_output_assets):
+        for run_index, (run_context, output_assets) in enumerate(
+            zip(self.run_contexts, self.run_output_assets)
+        ):
+            if not self.uses_last_iteration and iteration not in self.selected_iterations_by_run[run_index]:
+                continue
             if self.table_name == "demand_groups":
                 output_asset = output_assets[0]
             else:
-                output_index = 0 if self.uses_last_iteration else iteration_index
+                output_index = (
+                    0
+                    if self.uses_last_iteration
+                    else self.selected_iterations_by_run[run_index].index(iteration)
+                )
                 output_asset = output_assets[output_index]
 
+            # Resolve the actual stopping point only during execution, inside
+            # the planner's shared resolver. Later planned iterations are empty.
+            last_iteration = self.results._last_iteration_for_run(run_context.run)
+            empty_iteration = not self.uses_last_iteration and iteration > last_iteration
+            if output_asset.iteration is not None and (
+                empty_iteration or self.uses_last_iteration
+            ):
+                output_asset = run_context.run._table_asset(
+                    self.table_name, iteration=last_iteration
+                )
             table = output_asset.get().lazy()
-            iteration_expr = (
-                pl.col("iteration").cast(pl.Int32)
-                if self.table_name == "iteration_metrics"
-                else pl.lit(iteration, dtype=pl.Int32)
-            )
+            if empty_iteration:
+                table = table.limit(0)
+            if self.table_name in {"iteration_metrics", "transitions"}:
+                iteration_expr = pl.col("iteration").cast(pl.Int32)
+            elif self.table_name == "adaptive_search_diagnostics":
+                iteration_expr = pl.col("outer_iteration").fill_null(
+                    last_iteration
+                ).cast(pl.Int32)
+            else:
+                output_iteration = (
+                    last_iteration
+                    if self.uses_last_iteration
+                    else iteration
+                )
+                iteration_expr = pl.lit(output_iteration, dtype=pl.Int32)
             scoped_tables.append(
                 self._select_columns(
                     table.with_columns(

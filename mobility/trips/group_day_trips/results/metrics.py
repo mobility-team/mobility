@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Literal
 
@@ -126,7 +127,7 @@ class GroupDayTripsResultMetrics:
     ) -> list[ScopedRunTable]:
         """Declare one root per requested iteration, or the final output root."""
         selected_iterations = self.results.selected_iterations(iterations)
-        if selected_iterations == [self.results.last_iteration]:
+        if self.results.uses_last_iteration(iterations):
             return [self._table(table_name, iterations="last")]
         return [
             self._table(table_name, iterations=iteration)
@@ -264,7 +265,7 @@ class GroupDayTripsResultMetrics:
                     reference=reference,
                     reference_view=reference_view,
                     inner_zone_residents_only=inner_zone_residents_only,
-                    iterations=iteration,
+                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
                     home_zone_ids=home_zone_ids,
                     csp=csp,
                     modes=modes,
@@ -563,7 +564,7 @@ class GroupDayTripsResultMetrics:
     ) -> Metric:
         """Declare the detailed OD-by-mode travel-cost table to persist."""
         selected_iterations = self.results.selected_iterations(iterations)
-        uses_final_costs = selected_iterations == [self.results.last_iteration]
+        uses_final_costs = self.results.uses_last_iteration(iterations)
         costs = self._table(
             "costs",
             iterations="last" if uses_final_costs else iterations,
@@ -626,11 +627,11 @@ class GroupDayTripsResultMetrics:
             iteration_calculation = Immobility(
                 plan_steps=self._tables_by_iteration(
                     "plan_steps",
-                    iterations=iteration,
+                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
                 ),
                 demand_groups=self._tables_by_iteration(
                     "demand_groups",
-                    iterations=iteration,
+                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
                 ),
                 transport_zones=self.results.transport_zones,
                 survey_immobility=survey_immobility,
@@ -663,11 +664,11 @@ class GroupDayTripsResultMetrics:
             iteration_calculation = TripCountByDemandGroup(
                 plan_steps=self._tables_by_iteration(
                     "plan_steps",
-                    iterations=iteration,
+                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
                 ),
                 demand_groups=self._tables_by_iteration(
                     "demand_groups",
-                    iterations=iteration,
+                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
                 ),
             )
             return iteration_calculation.get()
@@ -718,7 +719,7 @@ class GroupDayTripsResultMetrics:
             iteration_calculation = ActivityDurationDistribution(
                 plan_steps=self._tables_by_iteration(
                     "plan_steps",
-                    iterations=iteration,
+                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
                 ),
                 reference_plan_steps=(
                     self.results.survey_reference_plan_steps
@@ -793,11 +794,11 @@ class GroupDayTripsResultMetrics:
             iteration_calculation = ActivityTimeSeries(
                 plan_steps=self._tables_by_iteration(
                     "plan_steps",
-                    iterations=iteration,
+                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
                 ),
                 demand_groups=self._tables_by_iteration(
                     "demand_groups",
-                    iterations=iteration,
+                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
                 ),
                 reference_plan_steps=(
                     self.results.survey_reference_plan_steps
@@ -863,7 +864,7 @@ class GroupDayTripsResultMetrics:
         def compute_iteration(iteration: int) -> pl.DataFrame:
             values = self._opportunity_occupation(
                 inner_zone_residents_only=inner_zone_residents_only,
-                iterations=iteration,
+                iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
             )
             values = self._filter_scenarios(values, scenarios=scenarios)
             if activity is not None:
@@ -2434,6 +2435,32 @@ class GroupDayTripsResultMetrics:
                 csp=csp,
             )
             join_columns = RESULT_COLUMNS
+
+        # Keep the numerator and denominator visible when a normalized result
+        # looks unexpectedly small, without saving another diagnostic table.
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            normalization_summary = (
+                values
+                .group_by(RESULT_COLUMNS)
+                .agg(pl.col(value_column).sum().alias("weighted_value"))
+                .join(
+                    population
+                    .group_by(RESULT_COLUMNS)
+                    .agg(pl.col("n_persons").sum().alias("represented_people")),
+                    on=RESULT_COLUMNS,
+                    how="left",
+                )
+                .sort(RESULT_COLUMNS)
+                .to_dicts()
+            )
+            logging.debug(
+                "Person-normalized result inputs | metric=%s | scope=%s | "
+                "inner_zone_residents_only=%s | scenario_totals=%s",
+                output_column,
+                normalize_scope or "study_area",
+                inner_zone_residents_only,
+                normalization_summary,
+            )
 
         output_columns = RESULT_COLUMNS + list(group_columns)
         return (

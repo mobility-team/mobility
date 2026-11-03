@@ -99,7 +99,7 @@ class Run(InMemoryAsset):
         parameters_for_cache = parameters.model_dump(mode="python")
         parameters_for_cache["outputs"].pop("checkpoint_each_iteration", None)
         run_context_inputs = {
-            "version": 19,
+            "version": 28,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -122,7 +122,7 @@ class Run(InMemoryAsset):
         checkpoint_run_context = {
             **run_context_inputs,
             "parameters": checkpoint_parameters,
-            "checkpoint_version": 2,
+            "checkpoint_version": 5,
         }
         checkpoint_run_hash = hash_inputs(checkpoint_run_context)
         self.run_context = SimpleNamespace(
@@ -145,9 +145,12 @@ class Run(InMemoryAsset):
         self.sensitivity_case = sensitivity_case
         self.sensitivity_case_id = sensitivity_case_id
         self.replication = int(replication)
+        self.coordinated_run_key: int | None = None
 
         self.transport_costs = transport_costs
         self._expected_diagnostics_inputs: ExpectedDiagnosticsInputs | None = None
+        self.coordinated_run_asset = None
+        self.coordinated_final_transport_cost_asset = None
 
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
         group_day_trips_folder = project_folder / "group_day_trips"
@@ -227,7 +230,7 @@ class Run(InMemoryAsset):
         )
 
         inputs = {
-            "version": 21,
+            "version": 23,
             "run_context_hash": run_context_hash,
             "final_iteration_state": self.final_iteration_state,
         }
@@ -235,6 +238,23 @@ class Run(InMemoryAsset):
 
     def get(self, *args, **kwargs) -> RunState:
         """Resolve the final iteration state while reporting run progress."""
+        if self.coordinated_run_asset is not None:
+            self._raise_if_disabled()
+            if is_group_day_trips_progress_active():
+                coordinated = self.coordinated_run_asset.get()
+            else:
+                day_type = "weekday" if self.is_weekday else "weekend"
+                label = (
+                    f"GroupDayTrips {day_type} coordinated runs="
+                    f"{len(self.coordinated_run_asset.run_keys)}"
+                )
+                with GroupDayTripsProgressReporter(
+                    label=label,
+                    total_iterations=self.parameters.run.n_iterations,
+                ):
+                    coordinated = self.coordinated_run_asset.get()
+            return coordinated.final_states_by_run_key[self.coordinated_run_key]
+
         if is_group_day_trips_progress_active():
             return super().get(*args, **kwargs)
 
@@ -312,6 +332,7 @@ class Run(InMemoryAsset):
                 sensitivity_case=sensitivity_case,
                 transport_zones=population.transport_zones,
                 transport_costs=resolved_transport_costs,
+                population_segments=population.population_segments,
                 parameters=parameters,
             )
             mode_sequences = ModeSequences(
@@ -438,9 +459,12 @@ class Run(InMemoryAsset):
         """Build final OD costs for a requested plan-step table."""
         get_group_day_trips_progress().step("Building final cost table")
         final_transport_costs = (
-            self.iteration_transport_cost_assets[-1]
-            if self.iteration_transport_cost_assets
-            else self.initial_iteration_state.initial_transport_costs
+            self.coordinated_final_transport_cost_asset
+            or (
+                self.iteration_transport_cost_assets[-1]
+                if self.iteration_transport_cost_assets
+                else self.initial_iteration_state.initial_transport_costs
+            )
         )
         return final_transport_costs.get_costs_by_od_and_mode(
             ["cost", "distance", "time", "ghg_emissions_per_trip"]
@@ -534,19 +558,26 @@ class Run(InMemoryAsset):
             "transitions",
             "demand_groups",
             "iteration_metrics",
+            "adaptive_search_diagnostics",
+            "mnl_od_mode_flows",
         }
         if table_name not in supported_tables:
             raise ValueError(
                 f"Unknown run output table `{table_name}`. "
                 f"Expected one of {sorted(supported_tables)}."
             )
-        if iteration is not None and (
-            iteration < 1 or iteration > self.parameters.run.n_iterations
-        ):
-            raise ValueError(
-                "iteration should be between 1 and the run's number of iterations. "
-                f"Received {iteration}."
-            )
+        if iteration is not None:
+            if table_name in {"adaptive_search_diagnostics", "mnl_od_mode_flows"}:
+                raise ValueError(
+                    f"{table_name} contains search diagnostics and cannot "
+                    "be selected as one outer iteration."
+                )
+            maximum_iteration = self.parameters.run.n_iterations
+            if iteration < 1 or iteration > maximum_iteration:
+                raise ValueError(
+                    "iteration should be between 1 and the maximum number of outer "
+                    f"iterations ({maximum_iteration}). Received {iteration}."
+                )
         return RunTableAsset(self, table_name=table_name, iteration=iteration)
 
     def _all_tables(self) -> dict[str, pl.LazyFrame]:
@@ -572,7 +603,17 @@ class Run(InMemoryAsset):
                 "Saved iteration tables currently support only `plan_steps` and `costs`. "
                 f"Received `{table_name}`."
             )
-        if iteration < 1 or iteration > len(self.iteration_state_assets):
+        coordinated_states = None
+        if getattr(self, "coordinated_run_asset", None) is not None:
+            coordinated_states = self.coordinated_run_asset.get().states_by_run_key[
+                self.coordinated_run_key
+            ]
+        available_iterations = (
+            len(coordinated_states)
+            if coordinated_states is not None
+            else len(self.iteration_state_assets)
+        )
+        if iteration < 1 or iteration > available_iterations:
             raise ValueError(
                 "iteration should be between 1 and the run's number of iterations. "
                 f"Received {iteration}."
@@ -584,8 +625,11 @@ class Run(InMemoryAsset):
                 ["cost", "distance", "time", "ghg_emissions_per_trip"]
             ).lazy()
 
-        state_asset = self.iteration_state_assets[iteration - 1]
-        state = state_asset.get()
+        state = (
+            coordinated_states[iteration - 1].get()
+            if coordinated_states is not None
+            else self.iteration_state_assets[iteration - 1].get()
+        )
         if state.current_plan_steps is None:
             raise RuntimeError(
                 "PopulationGroupDayTrips iteration state has no current plan steps "
@@ -633,6 +677,9 @@ class Run(InMemoryAsset):
 
     def remove(self) -> None:
         """Remove this run's restart checkpoints without clearing shared assets."""
+        coordinated_run_asset = getattr(self, "coordinated_run_asset", None)
+        if coordinated_run_asset is not None:
+            coordinated_run_asset.remove_checkpoint_manifests()
         for state_asset in self.iteration_state_assets:
             iteration = self.iterations.iteration(state_asset.iteration)
             for checkpoint_asset in iteration.checkpoint_assets().values():
@@ -670,7 +717,9 @@ class RunTableAsset(InMemoryAsset):
         else:
             self.execution_cost_assets = ()
         if iteration is not None:
-            if table_name == "plan_steps":
+            if run.coordinated_run_asset is not None:
+                dependencies = (run.coordinated_run_asset,)
+            elif table_name == "plan_steps":
                 dependencies = (run.iteration_state_assets[iteration - 1],)
             elif table_name == "costs":
                 dependencies = (run.iteration_transport_cost_assets[iteration - 1],)
@@ -680,6 +729,15 @@ class RunTableAsset(InMemoryAsset):
                 raise ValueError(
                     f"Iteration-scoped output `{table_name}` is not supported."
                 )
+        elif run.coordinated_run_asset is not None and table_name in {
+            "plan_steps",
+            "costs",
+            "transitions",
+            "iteration_metrics",
+            "adaptive_search_diagnostics",
+            "mnl_od_mode_flows",
+        }:
+            dependencies = (run.coordinated_run_asset,)
         elif table_name == "iteration_metrics":
             dependencies = tuple(run.iteration_state_assets)
         elif table_name == "transitions":
@@ -708,7 +766,9 @@ class RunTableAsset(InMemoryAsset):
             dependencies = (run.final_iteration_state,)
         super().__init__(
             {
-                "version": 2,
+                "version": 4,
+                # Scenario views share a coordinator but return different rows.
+                "scenario": run.scenario,
                 "dependencies": dependencies,
                 "table_name": table_name,
                 "iteration": iteration,
@@ -724,10 +784,18 @@ class RunTableAsset(InMemoryAsset):
         if self.iteration is not None:
             if self.table_name == "iteration_metrics":
                 builder = self.run._build_iteration_metrics_builder()
-                state_asset = self.run.iteration_state_assets[self.iteration - 1]
-                state = state_asset.get()
+                if self.run.coordinated_run_asset is not None:
+                    state_asset = self.run.coordinated_run_asset.get().states_by_run_key[
+                        self.run.coordinated_run_key
+                    ][self.iteration - 1]
+                    state = state_asset.get()
+                    iteration_number = self.iteration
+                else:
+                    state_asset = self.run.iteration_state_assets[self.iteration - 1]
+                    state = state_asset.get()
+                    iteration_number = state_asset.iteration
                 row = builder.history_row(
-                    iteration=state_asset.iteration,
+                    iteration=iteration_number,
                     current_plans=state.current_plans,
                     current_plan_steps=state.current_plan_steps,
                     destination_saturation=state.destination_saturation,
@@ -768,19 +836,35 @@ class RunTableAsset(InMemoryAsset):
             get_group_day_trips_progress().step("Preparing iteration diagnostics")
             builder = self.run._build_iteration_metrics_builder()
             records = []
-            for state_asset in self.run.iteration_state_assets:
-                iteration_state = state_asset.get()
+            if self.run.coordinated_run_asset is not None:
+                iteration_state_assets = (
+                    self.run.coordinated_run_asset.get().states_by_run_key[
+                        self.run.coordinated_run_key
+                    ]
+                )
+                iteration_states = [state_asset.get() for state_asset in iteration_state_assets]
+            else:
+                iteration_states = [
+                    state_asset.get()
+                    for state_asset in self.run.iteration_state_assets
+                ]
+            for iteration, iteration_state in enumerate(iteration_states, start=1):
                 records.append(
                     builder.history_row(
-                        iteration=state_asset.iteration,
+                        iteration=iteration,
                         current_plans=iteration_state.current_plans,
                         current_plan_steps=iteration_state.current_plan_steps,
                         destination_saturation=iteration_state.destination_saturation,
                     )
                 )
             return IterationMetricsHistory.from_records(records)
+        if self.table_name == "adaptive_search_diagnostics":
+            state = self.run.get()
+            if state.adaptive_search_diagnostics is None:
+                return pl.DataFrame()
+            return state.adaptive_search_diagnostics
         if self.table_name == "plan_steps":
-            final_cost_asset = (
+            configured_final_cost_asset = (
                 self.run.iteration_transport_cost_assets[-1]
                 if self.run.iteration_transport_cost_assets
                 else self.run.initial_iteration_state.initial_transport_costs
@@ -796,23 +880,31 @@ class RunTableAsset(InMemoryAsset):
                 if resolver is not None:
                     resolver.release_in_memory_asset(self.run)
                     resolver.release_in_memory_asset(self.run.final_iteration_state)
-                    resolver.release_in_memory_asset(final_cost_asset)
+                    resolver.release_in_memory_asset(
+                        self.run.coordinated_final_transport_cost_asset
+                        or configured_final_cost_asset
+                    )
                     resolver.consume_execution_cost_root(self)
         if self.table_name == "costs":
-            final_cost_asset = (
+            configured_final_cost_asset = (
                 self.run.iteration_transport_cost_assets[-1]
                 if self.run.iteration_transport_cost_assets
                 else self.run.initial_iteration_state.initial_transport_costs
             )
             try:
+                if self.run.coordinated_run_asset is not None:
+                    self.run.get()
                 return self.run._build_final_costs()
             finally:
                 resolver = get_current_asset_resolver()
                 if resolver is not None:
-                    resolver.release_in_memory_asset(final_cost_asset)
+                    resolver.release_in_memory_asset(
+                        self.run.coordinated_final_transport_cost_asset
+                        or configured_final_cost_asset
+                    )
                     resolver.consume_execution_cost_root(self)
         if self.table_name == "transitions":
-            if self.run.parameters.outputs.cache_iteration_events:
+            if self.run.coordinated_run_asset is not None or self.run.parameters.outputs.cache_iteration_events:
                 try:
                     self.run.get()
                 finally:
@@ -824,4 +916,10 @@ class RunTableAsset(InMemoryAsset):
             return transitions.collect(engine="streaming") if isinstance(
                 transitions, pl.LazyFrame
             ) else transitions
+        if self.table_name == "mnl_od_mode_flows":
+            if self.run.coordinated_run_asset is None:
+                raise ValueError("MNL flow diagnostics require a coordinated simulation.")
+            return self.run.coordinated_run_asset.get().mnl_od_mode_flows_by_run_key[
+                self.run.coordinated_run_key
+            ]
         raise ValueError(f"Unknown run output table `{self.table_name}`.")

@@ -142,7 +142,8 @@ class GroupDayTripsResults:
 
     def uses_last_iteration(self, iterations: IterationSelector = "last") -> bool:
         """Return whether a result query uses normal final run outputs."""
-        return self.selected_iterations(iterations) == [self.last_iteration]
+        parsed_iterations = self._validate_iterations(iterations)
+        return parsed_iterations == "last"
 
     def selected_iterations(self, iterations: IterationSelector = "last") -> list[int]:
         """Return concrete iteration numbers for one result query."""
@@ -155,13 +156,26 @@ class GroupDayTripsResults:
 
     @property
     def last_iteration(self) -> int:
-        """Return the configured last model iteration."""
+        """Return the configured maximum outer iteration count without running the model."""
         try:
-            return int(self.first_run.parameters.run.n_iterations)
+            return max(
+                int(run_context.run.parameters.run.n_iterations)
+                for run_context in self.run_contexts
+            )
         except AttributeError as exc:
             raise TypeError(
                 "Iteration-scoped results need runs with parameters.run.n_iterations."
             ) from exc
+
+    @staticmethod
+    def _last_iteration_for_run(run) -> int:
+        """Return the number of outer states completed by one run context."""
+        coordinated_run_asset = getattr(run, "coordinated_run_asset", None)
+        if coordinated_run_asset is not None:
+            return len(
+                coordinated_run_asset.get().states_by_run_key[run.coordinated_run_key]
+            )
+        return int(run.parameters.run.n_iterations)
 
     def has_multiple_iterations(self, iterations: IterationSelector = "last") -> bool:
         """Return whether one result query contains several iterations."""

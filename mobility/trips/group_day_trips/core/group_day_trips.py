@@ -4,9 +4,13 @@ from mobility.runtime.parameter_values import DEFAULT_SCENARIO, SensitivityCase
 from mobility.runtime.scenarios import Scenarios
 from mobility.transport.costs.transport_costs import TransportCosts
 from ..results import GroupDayTripsResults
-from ..sensitivity import GroupDayTripsSensitivityAnalysis
+from ..sensitivity import (
+    GroupDayTripsSensitivityAnalysis,
+    collect_group_day_trips_sensitivity_cases,
+)
 from .parameters import GroupDayTripsParameters
 from .run import Run
+from .multi_scenario_run import MultiScenarioRunAsset
 from mobility.activities import Activity, HomeActivity, OtherActivity
 from mobility.surveys import SurveyPlanAssets, select_surveys_for_population
 from mobility.surveys.mobility_survey import MobilitySurvey
@@ -25,11 +29,11 @@ class PopulationGroupDayTrips:
     """Top-level setup for grouped day-trip simulations.
 
     This object stores the population, transport modes, activities, surveys,
-    and grouped day-trip parameters. It creates concrete weekday and weekend
-    runs on demand when a day type, scenario, and stochastic replication are
-    selected. Model execution happens through the returned run, for example
-    with `population_trips.run("weekday").get()`. If no scenario is given, the
-    setup uses the package default scenario named `"default"`.
+    and grouped day-trip parameters. The first run request creates one
+    coordinated weekday or weekend run for every configured scenario. Model
+    execution happens through any returned scenario view, for example with
+    `population_trips.run("weekday").get()`. If no scenario is given, the
+    returned view uses the default scenario named `"default"`.
     """
 
     def __init__(
@@ -89,6 +93,7 @@ class PopulationGroupDayTrips:
             parameters=self.parameters,
         )
         self._runs: dict[tuple[str, str, int, DayType], Run] = {}
+        self._coordinated_runs: dict[DayType, MultiScenarioRunAsset] = {}
 
     def run(
         self,
@@ -98,13 +103,13 @@ class PopulationGroupDayTrips:
         sensitivity_case: SensitivityCase | None = None,
         replication: int = 0,
     ) -> Run:
-        """Return one weekday or weekend run.
+        """Return one scenario view of a coordinated weekday or weekend run.
 
-        The run is built on first access, then reused if the same `day_type`,
-        `scenario`, and `replication` are requested again. Omitting `scenario`
-        selects the default scenario named `"default"`. Plain parameter values
-        are shared by all scenarios. Scenario-varying `ParameterValue` objects
-        must define the requested scenario.
+        The first request builds all configured scenarios for the same day type,
+        sensitivity case, and replication. Calling `get()` on any returned view
+        runs that full scenario cohort together. The view selects which
+        scenario's state and outputs are returned. Omitting `scenario` selects
+        the default scenario named `"default"`.
 
         Args:
             day_type: `"weekday"` or `"weekend"`.
@@ -121,8 +126,7 @@ class PopulationGroupDayTrips:
         sensitivity_case_id = "base" if sensitivity_case is None else sensitivity_case.case_id
         self.scenarios.validate_requested([scenario])
         key = (scenario, sensitivity_case_id, replication, day_type)
-        if key not in self._runs:
-            parameters = self.parameters.with_replication(replication)
+        if day_type not in self._coordinated_runs:
             survey_plan_assets = SurveyPlanAssets(
                 surveys=self.surveys,
                 activities=self.activities,
@@ -130,20 +134,47 @@ class PopulationGroupDayTrips:
             )
             transport_costs = TransportCosts(self.modes)
             is_weekday = day_type is DayType.WEEKDAY
-            self._runs[key] = Run(
-                population=self.population,
-                transport_costs=transport_costs,
-                activities=self.activities,
-                modes=self.modes,
-                surveys=self.surveys,
-                survey_plan_assets=survey_plan_assets,
-                parameters=parameters,
-                is_weekday=is_weekday,
-                enabled=is_weekday or parameters.periods.simulate_weekend,
-                scenario=scenario,
-                sensitivity_case=sensitivity_case,
-                replication=replication,
-            )
+            sensitivity_cases = collect_group_day_trips_sensitivity_cases(self)
+            if sensitivity_case not in sensitivity_cases:
+                sensitivity_cases.append(sensitivity_case)
+
+            cohort_runs = {}
+            next_run_key = 0
+            for cohort_case in sensitivity_cases:
+                cohort_case_id = "base" if cohort_case is None else cohort_case.case_id
+                for cohort_replication in range(self.parameters.run.n_replications):
+                    parameters = self.parameters.with_replication(cohort_replication)
+                    for scenario_name in self.scenarios.names:
+                        run_key = (
+                            scenario_name,
+                            cohort_case_id,
+                            cohort_replication,
+                            day_type,
+                        )
+                        if run_key not in self._runs:
+                            self._runs[run_key] = Run(
+                                population=self.population,
+                                transport_costs=transport_costs,
+                                activities=self.activities,
+                                modes=self.modes,
+                                surveys=self.surveys,
+                                survey_plan_assets=survey_plan_assets,
+                                parameters=parameters,
+                                is_weekday=is_weekday,
+                                enabled=is_weekday or parameters.periods.simulate_weekend,
+                                scenario=scenario_name,
+                                sensitivity_case=cohort_case,
+                                replication=cohort_replication,
+                            )
+                        run = self._runs[run_key]
+                        run.coordinated_run_key = next_run_key
+                        cohort_runs[next_run_key] = run
+                        next_run_key += 1
+
+            coordinated_run = MultiScenarioRunAsset(cohort_runs)
+            self._coordinated_runs[day_type] = coordinated_run
+            for cohort_run in cohort_runs.values():
+                cohort_run.coordinated_run_asset = coordinated_run
         return self._runs[key]
 
     def results(
@@ -223,6 +254,7 @@ class PopulationGroupDayTrips:
                         ).remove()
 
         self._runs = {}
+        self._coordinated_runs = {}
 
     def _validate_activities(self, activities: list[Activity] | None) -> None:
         """Check that activity inputs are present and usable."""

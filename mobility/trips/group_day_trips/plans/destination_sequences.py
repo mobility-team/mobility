@@ -4,9 +4,12 @@ import logging
 from typing import Any
 
 import polars as pl
+
+from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
 from scipy.stats import norm
 
 from mobility.runtime.assets.asset import Asset
+from mobility.runtime.assets.graph import asset_graph_key
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.assets.resolver import asset_resolution_context, get_current_asset_resolver
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
@@ -17,7 +20,7 @@ from .debug_logs import (
     log_missing_anchor_destination_samples,
     log_step_dropout_diagnostics,
 )
-from .stable_key_index import StableKeyIndex
+from .stable_key_index import StableKeyIndex, add_ordered_key_hashes
 from mobility.activities.activity import resolve_activity_parameters
 from mobility.runtime.parameter_values import SensitivityCase
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
@@ -57,12 +60,14 @@ class DestinationSequences(InMemoryAsset):
         previous_state: Asset | None = None,
         seed_asset: Asset | None = None,
         activity_sequences: Asset | None = None,
+        generation_requests: pl.DataFrame | None = None,
         activities: list[Any] | None = None,
         resolved_activity_parameters: dict[str, Any] | None = None,
         scenario: str | None = None,
         sensitivity_case: SensitivityCase | None = None,
         transport_zones: Any = None,
         transport_costs: Any = None,
+        population_segments: list[Any] | None = None,
         current_plans: pl.DataFrame | None = None,
         current_plan_steps: pl.DataFrame | None = None,
         destination_saturation: pl.DataFrame | None = None,
@@ -75,6 +80,7 @@ class DestinationSequences(InMemoryAsset):
         self.previous_sequence_index: pl.DataFrame | None = None
         self.seed_asset = seed_asset
         self.activity_sequences = activity_sequences
+        self.generation_requests = generation_requests
         self.activities = activities
         self.resolved_activity_parameters = (
             resolved_activity_parameters
@@ -94,6 +100,7 @@ class DestinationSequences(InMemoryAsset):
         self.sensitivity_case = sensitivity_case
         self.transport_zones = transport_zones
         self.transport_costs = transport_costs
+        self.population_segments = population_segments or []
         self.current_plans = current_plans
         self.current_plan_steps = current_plan_steps
         self.destination_saturation = destination_saturation
@@ -102,12 +109,25 @@ class DestinationSequences(InMemoryAsset):
         self.parameters = parameters
         self.seed = seed
         self.spatialization_context_columns = ["home_zone_id"]
+        generation_request_profile_pairs = (
+            tuple(
+                tuple(row)
+                for row in generation_requests
+                .select("home_zone_id", "utility_profile_id")
+                .unique()
+                .sort("home_zone_id", "utility_profile_id")
+                .iter_rows()
+            )
+            if generation_requests is not None
+            else None
+        )
         inputs = {
-            "version": 15,
+            "version": 18,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
             "activity_sequences_asset": activity_sequences,
+            "generation_request_profile_pairs": generation_request_profile_pairs,
             "previous_state": previous_state,
             "seed_asset": seed_asset,
             # Destination choice only needs the resolved activity/scenario values
@@ -115,6 +135,7 @@ class DestinationSequences(InMemoryAsset):
             "resolved_activity_parameters": self.resolved_activity_parameters,
             "transport_zones": transport_zones,
             "transport_costs": transport_costs,
+            "population_segments": self.population_segments,
             "destination_sequence_parameters": (
                 parameters.destination_sequences if parameters is not None else None
             ),
@@ -152,12 +173,19 @@ class DestinationSequences(InMemoryAsset):
 
 
     def _get_with_resolver(self, resolver, *args, **kwargs) -> pl.DataFrame:
-        return resolver.get_in_memory_asset(
+        sequences = resolver.get_in_memory_asset(
             self,
             lambda: self.create_and_get_asset(*args, **kwargs),
             spill_to_disk=self._spill_sequences,
             load_from_disk=self._load_spilled_sequences,
         )
+        # Equivalent scenario assets can share one cached table in the resolver.
+        # Their sequence index lives on the canonical asset instance, so copy it
+        # onto this instance before callers ask for the matching index.
+        canonical_asset = resolver.in_memory_assets.get(asset_graph_key(self))
+        if canonical_asset is not None and canonical_asset is not self:
+            self.sequence_index = canonical_asset.sequence_index
+        return sequences
 
 
     def _spill_sequences(self, sequences: pl.DataFrame, path: pathlib.Path) -> None:
@@ -177,6 +205,7 @@ class DestinationSequences(InMemoryAsset):
         return pl.read_parquet(path / "sequences.parquet")
 
 
+    @trace_simulation_step("destination sampling")
     def create_and_get_asset(self) -> pl.DataFrame:
         """Compute destination sequences for one iteration."""
         try:
@@ -321,6 +350,12 @@ class DestinationSequences(InMemoryAsset):
                 f"destination sequences at iteration={self.iteration}."
             )
 
+        if self.generation_requests is not None:
+            reused = reused.join(
+                self.generation_requests.select("home_zone_id").unique(),
+                on="home_zone_id",
+                how="semi",
+            )
         return reused
 
     def _with_current_active_destination_sequences(self, sampled_sequences: pl.DataFrame) -> pl.DataFrame:
@@ -370,9 +405,14 @@ class DestinationSequences(InMemoryAsset):
 
     def _cache_empty_destination_sequence_index(self) -> None:
         """Carry forward the destination index when no sequence is sampled."""
-        empty_keys = pl.DataFrame(schema={"destination_sequence_key": pl.String})
+        empty_keys = pl.DataFrame(
+            schema={
+                "destination_sequence_key_1": pl.UInt64,
+                "destination_sequence_key_2": pl.UInt64,
+            }
+        )
         _, self.sequence_index = StableKeyIndex(
-            key_cols=["destination_sequence_key"],
+            key_cols=["destination_sequence_key_1", "destination_sequence_key_2"],
             index_col="dest_seq_id",
             first_new_id=1,
         ).extend(
@@ -380,6 +420,97 @@ class DestinationSequences(InMemoryAsset):
             previous_index=self.previous_sequence_index,
         )
     def run(
+        self,
+        activities: list[Any],
+        transport_zones: Any,
+        destination_saturation: pl.DataFrame,
+        activity_sequences: pl.DataFrame,
+        costs: pl.DataFrame,
+        parameters: Any,
+        seed: int,
+    ) -> pl.DataFrame:
+        """Draw destinations using the costs of each profile present in a zone."""
+        activity_sequences = activity_sequences.filter(pl.col("activity_seq_id") != 0)
+        if self.generation_requests is not None:
+            activity_sequences = activity_sequences.join(
+                self.generation_requests.select("home_zone_id").unique(),
+                on="home_zone_id",
+                how="semi",
+            )
+        if activity_sequences.is_empty():
+            self._cache_empty_destination_sequence_index()
+            return self._empty_destination_sequences()
+        if self.transport_costs is None or self.demand_groups is None:
+            return self._run_for_utility_profile(
+                activities, transport_zones, destination_saturation,
+                activity_sequences, costs, parameters, seed,
+            )
+
+        assignments, profiles = self.transport_costs.get_utility_profiles(
+            self.demand_groups, self.population_segments,
+        )
+        zone_profiles = assignments.join(
+            self.demand_groups.select(DEMAND_UNIT_COLS + ["home_zone_id"]),
+            on=DEMAND_UNIT_COLS,
+        ).select("home_zone_id", "utility_profile_id").unique()
+        if self.generation_requests is not None:
+            requested_profiles = self.generation_requests.select(
+                "home_zone_id", "utility_profile_id"
+            ).unique()
+            zone_profiles = zone_profiles.join(
+                requested_profiles,
+                on=["home_zone_id", "utility_profile_id"],
+                how="semi",
+            )
+        previous_index = self.previous_sequence_index
+        sampled_profiles = []
+        try:
+            # Reuse the growing index between profiles so identical destination
+            # chains share ids. Only one profile's cost table is held at a time.
+            for profile_id in sorted(profiles):
+                profile_sequences = activity_sequences.join(
+                    zone_profiles.filter(pl.col("utility_profile_id") == profile_id)
+                    .select("home_zone_id"),
+                    on="home_zone_id", how="semi",
+                )
+                if profile_sequences.is_empty():
+                    continue
+                mode_costs = self.transport_costs.get_profile_costs_by_od_and_mode(
+                    {profile_id: profiles[profile_id]}, ["cost"],
+                )
+                # Match TransportCosts.get_costs_by_od: expected generalized
+                # cost across modes, with probabilities proportional to exp(-cost).
+                # Subtracting the OD minimum keeps the exponentials well scaled.
+                profile_costs = (
+                    mode_costs.with_columns(
+                        probability=(pl.col("cost").min().over("from", "to") - pl.col("cost")).exp()
+                    )
+                    .with_columns(
+                        weighted_cost=pl.col("cost") * pl.col("probability")
+                        / pl.col("probability").sum().over("from", "to")
+                    )
+                    .group_by("from", "to").agg(cost=pl.col("weighted_cost").sum())
+                )
+                profile_seed = int(pl.Series([profile_id], dtype=pl.UInt32).hash(seed=seed)[0])
+                sampled_profiles.append(self._run_for_utility_profile(
+                    activities, transport_zones, destination_saturation,
+                    profile_sequences, profile_costs, parameters, profile_seed,
+                ))
+                self.previous_sequence_index = self.sequence_index
+                del mode_costs, profile_costs
+            if not sampled_profiles:
+                self._cache_empty_destination_sequence_index()
+                return self._empty_destination_sequences()
+            # Candidate generation shares complete destinations across compatible
+            # demand units. Profiles control the draws, not subsequent eligibility.
+            return pl.concat(sampled_profiles, how="vertical_relaxed").unique().sort(
+                ["home_zone_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "seq_step_index"]
+            )
+        finally:
+            self.previous_sequence_index = previous_index
+
+    @trace_simulation_step("destination sampling per profile")
+    def _run_for_utility_profile(
         self,
         activities: list[Any],
         transport_zones: Any,
@@ -447,24 +578,24 @@ class DestinationSequences(InMemoryAsset):
             sequence_context_columns=self.spatialization_context_columns,
         )
 
-        destination_sequences = (
-            complete_activity_sequences
-            .group_by(
-                self.spatialization_context_columns
-                + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
-            )
-            .agg(destination_sequence_key=pl.col("to").sort_by("seq_step_index").cast(pl.Utf8()))
-            .with_columns(destination_sequence_key=pl.col("destination_sequence_key").list.join("-"))
-            .sort(
-                self.spatialization_context_columns
-                + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
-            )
+        destination_sequences = add_ordered_key_hashes(
+            complete_activity_sequences,
+            group_cols=self.spatialization_context_columns
+            + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"],
+            order_col="seq_step_index",
+            step_content=pl.struct(pl.col("to")),
+            key_prefix="destination_sequence_key",
         )
         destination_sequences = (
             destination_sequences
             .group_by(
                 self.spatialization_context_columns
-                + ["activity_seq_id", "time_seq_id", "destination_sequence_key"]
+                + [
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "destination_sequence_key_1",
+                    "destination_sequence_key_2",
+                ]
             )
             .agg(
                 activity_draw_id=pl.col("activity_draw_id").first(),
@@ -476,7 +607,7 @@ class DestinationSequences(InMemoryAsset):
             )
         )
         destination_sequences, self.sequence_index = StableKeyIndex(
-            key_cols=["destination_sequence_key"],
+            key_cols=["destination_sequence_key_1", "destination_sequence_key_2"],
             index_col="dest_seq_id",
             first_new_id=1,
         ).extend(
@@ -747,6 +878,7 @@ class DestinationSequences(InMemoryAsset):
         return pl.struct(self.spatialization_context_columns + extra_columns).hash(seed=seed)
 
 
+    @trace_simulation_step("anchor destination sampling")
     def _spatialize_anchor_activities(
         self,
         sequences: pl.DataFrame,
@@ -797,7 +929,11 @@ class DestinationSequences(InMemoryAsset):
         ]
         destination_probability_lf = destination_probability.lazy()
         destination_draw_ids = pl.DataFrame(
-            {"dest_draw_id": [0]},
+            {
+                "dest_draw_id": range(
+                    self.parameters.destination_sequences.k_destination_sequences
+                )
+            },
             schema={"dest_draw_id": pl.UInt32},
         )
         sequences = (
@@ -956,6 +1092,7 @@ class DestinationSequences(InMemoryAsset):
         )
 
 
+    @trace_simulation_step("other destination sampling")
     def _spatialize_other_activities(
         self,
         sequences: pl.DataFrame,

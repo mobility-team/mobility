@@ -197,34 +197,7 @@ class GroupDayTripsSensitivityAnalysis:
 
     def _collect_cases(self) -> list[SensitivityCase | None]:
         """Collect unique sensitivity cases from the setup."""
-        sensitivity_values = collect_sensitivity_values(
-            {
-                "modes": self.setup.modes,
-                "activities": self.setup.activities,
-                "parameters": self.setup.parameters,
-            }
-        )
-        by_name: dict[str, SensitivityValue] = {}
-        for value in sensitivity_values:
-            existing = by_name.get(value.name)
-            if existing is None:
-                by_name[value.name] = value
-                continue
-            if (
-                existing.label != value.label
-                or existing.variation_type != value.variation_type
-                or existing.variation_values != value.variation_values
-                or existing.variation_labels != value.variation_labels
-            ):
-                raise ValueError(
-                    "SensitivityValue names should be unique unless all "
-                    f"settings match. Conflicting name: {value.name!r}."
-                )
-
-        cases: list[SensitivityCase | None] = [None]
-        for name in sorted(by_name):
-            cases.extend(by_name[name].cases())
-        return cases
+        return collect_group_day_trips_sensitivity_cases(self.setup)
 
     def _metadata(self) -> pl.DataFrame:
         """Return display metadata for non-base sensitivity cases."""
@@ -354,3 +327,35 @@ class GroupDayTripsSensitivityAnalysis:
             ]
             + [reference_column, "gap", "gap_std", "relative_gap"]
         )
+
+
+def collect_group_day_trips_sensitivity_cases(setup: Any) -> list[SensitivityCase | None]:
+    """Return the unique, deterministic sensitivity cases available in a setup."""
+    sensitivity_values = collect_sensitivity_values(
+        {
+            "modes": setup.modes,
+            "activities": setup.activities,
+            "parameters": setup.parameters,
+        }
+    )
+    by_name: dict[str, SensitivityValue] = {}
+    for value in sensitivity_values:
+        existing = by_name.get(value.name)
+        if existing is None:
+            by_name[value.name] = value
+            continue
+        if (
+            existing.label != value.label
+            or existing.variation_type != value.variation_type
+            or existing.variation_values != value.variation_values
+            or existing.variation_labels != value.variation_labels
+        ):
+            raise ValueError(
+                "SensitivityValue names should be unique unless all "
+                f"settings match. Conflicting name: {value.name!r}."
+            )
+
+    cases: list[SensitivityCase | None] = [None]
+    for name in sorted(by_name):
+        cases.extend(by_name[name].cases())
+    return cases

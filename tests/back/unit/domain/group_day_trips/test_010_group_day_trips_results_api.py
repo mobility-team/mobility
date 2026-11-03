@@ -545,6 +545,17 @@ def test_get_all_shares_run_outputs_between_metrics_and_tables(tmp_path, monkeyp
     assert plan_step_builds == [("default-base-weekday-0", None)]
 
 
+def test_mnl_flow_diagnostic_is_a_separate_final_table(tmp_path):
+    results = _results(tmp_path, replication=0)
+    flows = pl.DataFrame({"from": [1], "to": [2], "mode": ["car"], "n_persons": [25.]})
+    for context in results.run_contexts:
+        context.run.frames["mnl_od_mode_flows"] = flows
+    request = results.tables.mnl_od_mode_flows()
+    assert request.uses_last_iteration
+    actual = results.get_all(mnl=request)["mnl"].collect()
+    assert actual["n_persons"].to_list() == [25.]
+
+
 def test_result_tables_can_include_multiple_scenarios(tmp_path, monkeypatch):
     """Check that one result set can concatenate several scenarios."""
     results = _results(tmp_path, scenarios=["default", "test"])
@@ -584,6 +595,39 @@ def test_results_last_iteration_uses_run_parameters(tmp_path, monkeypatch):
     results = _results(tmp_path, replication=0)
 
     assert results.last_iteration == 2
+
+
+def test_result_declaration_does_not_run_coordinated_simulation(tmp_path):
+    """Let the result planner open its resolver before any simulation starts."""
+    results = _results(tmp_path, replication=0)
+
+    def unexpected_execution():
+        raise AssertionError("Declaring a result must not execute the simulation.")
+
+    results.first_run.coordinated_run_asset = SimpleNamespace(get=unexpected_execution)
+    results.tables.plan_steps(iterations="last")
+    results.tables.plan_steps(iterations="all")
+    results.metrics.trip_count(by_variable="mode")
+
+
+def test_result_tables_use_completed_iterations_after_early_stop(tmp_path):
+    """Label final outputs correctly and omit iterations the run never reached."""
+    results = _results(tmp_path, replication=0)
+    run = results.first_run
+    run.scenario = "default"
+    run.coordinated_run_asset = SimpleNamespace(
+        get=lambda: SimpleNamespace(
+            states_by_run_key={run.coordinated_run_key: [object()]}
+        )
+    )
+
+    tables = results.get_all(
+        final=results.tables.plan_steps(),
+        history=results.tables.plan_steps(iterations="all"),
+    )
+
+    assert tables["final"].collect()["iteration"].unique().to_list() == [1]
+    assert tables["history"].collect()["iteration"].unique().to_list() == [1]
 
 
 def test_trip_count_metrics_keep_selected_iterations(tmp_path, monkeypatch):

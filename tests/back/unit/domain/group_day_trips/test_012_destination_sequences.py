@@ -620,7 +620,7 @@ def test_spatialize_anchor_activities_samples_from_current_anchor_location():
         demand_groups=pl.DataFrame(),
         costs=pl.DataFrame(),
         parameters=GroupDayTripsParameters(
-            destination_sequences=GroupDayTripsDestinationSequenceParameters(),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(k_destination_sequences=1),
         ),
         seed=123,
         resolved_activity_parameters={},
@@ -716,7 +716,7 @@ def test_spatialize_anchor_activities_uses_sequence_cost_to_reweight_candidates(
         demand_groups=pl.DataFrame(),
         costs=pl.DataFrame(),
         parameters=GroupDayTripsParameters(
-            destination_sequences=GroupDayTripsDestinationSequenceParameters(),
+            destination_sequences=GroupDayTripsDestinationSequenceParameters(k_destination_sequences=1),
         ),
         seed=123,
         resolved_activity_parameters={},

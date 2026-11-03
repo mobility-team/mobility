@@ -8,13 +8,6 @@ from .activity_profiles import (
 )
 
 
-POOL_SCHEDULES_SCHEMA = {
-    "country": pl.String,
-    "pool_id": pl.String,
-    "activity_seq_id": pl.UInt32,
-    "time_seq_id": pl.UInt32,
-    "plan_weight_mass": pl.Float64,
-}
 PROFILE_SCHEDULES_SCHEMA = {
     "country": pl.String,
     "activity_profile_id": pl.String,
@@ -26,7 +19,6 @@ ZONE_PROFILES_SCHEMA = {
     "country": pl.String,
     "home_zone_id": pl.Int32,
     "activity_profile_id": pl.String,
-    "pool_id": pl.String,
 }
 
 
@@ -56,42 +48,11 @@ def prepare_activity_schedule_pool(
         .select(["country", "home_zone_id", "activity_profile_id"])
         .unique()
     )
-    zone_pool_ids = (
-        zone_profiles
-        .group_by(["country", "home_zone_id"])
-        .agg(pool_profiles=pl.col("activity_profile_id").unique().sort())
-        .with_columns(pool_id=pl.col("pool_profiles").list.join("||"))
-        .select(["country", "home_zone_id", "pool_id"])
-    )
-    zone_profiles = zone_profiles.join(
-        zone_pool_ids,
-        on=["country", "home_zone_id"],
-        how="inner",
-    )
-
     profile_definitions = (
         demand_units
         .select(["country", "activity_profile_id", "allowed_activities"])
         .unique()
     )
-    # A zone pool accepts schedules supported by any activity profile in that zone.
-    pool_support = (
-        zone_profiles
-        .select(["country", "pool_id", "activity_profile_id"])
-        .unique()
-        .join(
-            profile_definitions,
-            on=["country", "activity_profile_id"],
-            how="inner",
-        )
-        .select(["country", "pool_id", "allowed_activities"])
-        .explode("allowed_activities")
-        .group_by(["country", "pool_id"])
-        .agg(allowed_activities=pl.col("allowed_activities").unique().sort())
-        .with_columns(activity_profile_id=pl.col("pool_id"))
-        .select(["country", "activity_profile_id", "allowed_activities"])
-    )
-
     schedule_activities = get_survey_schedule_activities(survey_plan_steps)
     schedules = (
         survey_plans
@@ -106,20 +67,6 @@ def prepare_activity_schedule_pool(
         .with_columns(country=pl.col("country").cast(pl.String))
     )
 
-    pool_schedules = (
-        get_schedules_by_activity_profile(
-            schedules=schedules,
-            profiles=pool_support,
-        )
-        .rename({"activity_profile_id": "pool_id"})
-        .select(list(POOL_SCHEDULES_SCHEMA))
-        .with_columns(
-            [
-                pl.col(column).cast(dtype)
-                for column, dtype in POOL_SCHEDULES_SCHEMA.items()
-            ]
-        )
-    )
     profile_schedules = (
         get_schedules_by_activity_profile(
             schedules=schedules,
@@ -141,7 +88,6 @@ def prepare_activity_schedule_pool(
     )
 
     return {
-        "pool_schedules": pool_schedules,
         "profile_schedules": profile_schedules,
         "zone_profiles": zone_profiles,
     }
@@ -159,7 +105,7 @@ class ActivitySchedulePoolAsset(InMemoryAsset):
         self.initial_state = initial_state
         self.is_weekday = is_weekday
         inputs = {
-            "version": 1,
+            "version": 2,
             "initial_state": initial_state,
             "is_weekday": is_weekday,
         }

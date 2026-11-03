@@ -3,6 +3,8 @@ from typing import Any
 import numpy as np
 import polars as pl
 
+from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
+
 from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
@@ -51,6 +53,7 @@ class ActivitySequences(InMemoryAsset):
         survey_plans: pl.DataFrame | None = None,
         survey_plan_steps: pl.DataFrame | None = None,
         demand_groups: pl.DataFrame | None = None,
+        generation_requests: pl.DataFrame | None = None,
         parameters: Any = None,
         seed: int | None = None,
     ) -> None:
@@ -62,15 +65,29 @@ class ActivitySequences(InMemoryAsset):
         self.survey_plans = survey_plans
         self.survey_plan_steps = survey_plan_steps
         self.demand_groups = demand_groups
+        self.generation_requests = generation_requests
         self.parameters = parameters
         self.seed = seed
+        generation_request_zone_ids = (
+            tuple(
+                int(zone_id)
+                for zone_id in generation_requests
+                .select("home_zone_id")
+                .unique()
+                .sort("home_zone_id")["home_zone_id"]
+                .to_list()
+            )
+            if generation_requests is not None
+            else None
+        )
         inputs = {
-            "version": 8,
+            "version": 10,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "previous_state": previous_state,
             "seed_asset": seed_asset,
             "activity_schedule_pool": activity_schedule_pool,
+            "generation_request_zone_ids": generation_request_zone_ids,
             "activity_sequence_parameters": (
                 parameters.activity_sequences if parameters is not None else None
             ),
@@ -83,6 +100,7 @@ class ActivitySequences(InMemoryAsset):
         }
         super().__init__(inputs)
 
+    @trace_simulation_step("activity sampling")
     def create_and_get_asset(self) -> pl.DataFrame:
         """Compute admitted activity-sequence rows for one iteration."""
         try:
@@ -123,7 +141,7 @@ class ActivitySequences(InMemoryAsset):
         if self.survey_plans is None:
             self.survey_plans = state.survey_plans
         if self.survey_plan_steps is None:
-            self.survey_plan_steps = state.survey_plan_steps
+            self.survey_plan_steps = state.schedule_steps
         if self.demand_groups is None:
             self.demand_groups = state.demand_groups
 
@@ -144,7 +162,7 @@ class ActivitySequences(InMemoryAsset):
         raise ValueError(f"Unsupported behavior change scope: {scope}")
 
     def _sample_shared_activity_sequences_by_zone(self) -> pl.DataFrame:
-        """Draw one broad schedule sample per home zone before demand-unit attachment."""
+        """Draw K schedules per activity profile and home zone."""
         if self.activity_schedule_pool is None:
             prepared_pool = prepare_activity_schedule_pool(
                 survey_plans=self.survey_plans,
@@ -155,12 +173,17 @@ class ActivitySequences(InMemoryAsset):
         else:
             prepared_pool = self.activity_schedule_pool.get()
 
-        pool_schedules = prepared_pool["pool_schedules"]
         profile_schedules = prepared_pool["profile_schedules"]
-        zone_profiles = prepared_pool["zone_profiles"]
-        zone_pools = zone_profiles.select(
-            ["country", "home_zone_id", "pool_id"]
+        zone_profiles = prepared_pool["zone_profiles"].select(
+            ["country", "home_zone_id", "activity_profile_id"]
         ).unique()
+        if self.generation_requests is not None:
+            requested_zones = self.generation_requests.select("home_zone_id").unique()
+            zone_profiles = zone_profiles.join(
+                requested_zones,
+                on="home_zone_id",
+                how="semi",
+            )
         profiles_without_schedules = zone_profiles.join(
             profile_schedules.select(["country", "activity_profile_id"]).unique(),
             on=["country", "activity_profile_id"],
@@ -171,130 +194,12 @@ class ActivitySequences(InMemoryAsset):
                 "No survey schedule is compatible with one or more activity profiles. "
                 f"Profiles: {profiles_without_schedules.head(10).to_dicts()}"
             )
-        if pool_schedules.height == 0:
-            if zone_profiles.height == 0:
-                return self._empty_activity_sequences()
-            raise ValueError("No survey schedules are eligible for the demand zones.")
-
+        # Each profile gets its own weighted draws. Shared schedules remain
+        # available to every compatible demand unit when plans are attached.
         sampled_schedules = self._sample_schedules_with_replacement(
-            pool_schedules,
-            zone_pools,
+            profile_schedules,
+            zone_profiles,
         )
-        draw_count = self.parameters.activity_sequences.k_activity_sequences
-        if draw_count is not None:
-            sampled_profile_coverage = (
-                sampled_schedules
-                .select(["country", "home_zone_id", "activity_seq_id", "time_seq_id"])
-                .unique()
-                .join(
-                    profile_schedules,
-                    on=["country", "activity_seq_id", "time_seq_id"],
-                    how="inner",
-                )
-                .join(
-                    zone_profiles,
-                    on=["country", "home_zone_id", "activity_profile_id"],
-                    how="inner",
-                )
-                .select(["country", "home_zone_id", "activity_profile_id"])
-                .unique()
-            )
-            missing_profiles = zone_profiles.join(
-                sampled_profile_coverage,
-                on=["country", "home_zone_id", "activity_profile_id"],
-                how="anti",
-            )
-            if missing_profiles.height:
-                profile_schedule_probabilities = profile_schedules.with_columns(
-                    p_plan=pl.col("plan_weight_mass")
-                    / pl.col("plan_weight_mass").sum().over(
-                        ["country", "activity_profile_id"]
-                    )
-                )
-                missing_profile_schedules = (
-                    missing_profiles
-                    .join(
-                        profile_schedule_probabilities,
-                        on=["country", "activity_profile_id"],
-                        how="inner",
-                    )
-                    .with_columns(
-                        context_seed=pl.struct(
-                            ["country", "home_zone_id", "activity_profile_id"]
-                        ).hash(seed=self.seed),
-                    )
-                    .sort(
-                        [
-                            "country",
-                            "home_zone_id",
-                            "activity_profile_id",
-                            "activity_seq_id",
-                            "time_seq_id",
-                        ]
-                    )
-                    .group_by(["country", "home_zone_id", "activity_profile_id"])
-                    .agg(
-                        pl.col("activity_seq_id"),
-                        pl.col("time_seq_id"),
-                        pl.col("p_plan"),
-                        pl.col("context_seed").first(),
-                    )
-                    .sort(["country", "home_zone_id", "activity_profile_id"])
-                )
-                topup_rows = []
-                topup_schedules_by_zone: dict[tuple[Any, Any], set[tuple[int, int]]] = {}
-                topup_counts_by_zone: dict[tuple[Any, Any], int] = {}
-                for row in missing_profile_schedules.iter_rows(named=True):
-                    probabilities = np.asarray(row["p_plan"], dtype=np.float64)
-                    probabilities /= probabilities.sum()
-                    context_hash = int(row["context_seed"])
-                    rng = np.random.default_rng(
-                        np.random.SeedSequence(
-                            [self.seed, context_hash & 0xFFFFFFFF, context_hash >> 32]
-                        )
-                    )
-                    selected_index = int(
-                        rng.choice(len(probabilities), size=1, replace=True, p=probabilities)[0]
-                    )
-                    zone_key = (row["country"], row["home_zone_id"])
-                    schedule_key = (
-                        row["activity_seq_id"][selected_index],
-                        row["time_seq_id"][selected_index],
-                    )
-                    zone_topups = topup_schedules_by_zone.setdefault(zone_key, set())
-                    if schedule_key in zone_topups:
-                        continue
-                    zone_topups.add(schedule_key)
-                    topup_count = topup_counts_by_zone.get(zone_key, 0)
-                    activity_draw_id = draw_count + topup_count
-                    topup_counts_by_zone[zone_key] = topup_count + 1
-                    topup_rows.append(
-                        {
-                            "country": row["country"],
-                            "home_zone_id": row["home_zone_id"],
-                            "activity_seq_id": schedule_key[0],
-                            "time_seq_id": schedule_key[1],
-                            "activity_draw_id": activity_draw_id,
-                        }
-                    )
-                if topup_rows:
-                    topups = pl.DataFrame(topup_rows).with_columns(
-                        country=pl.col("country").cast(sampled_schedules.schema["country"]),
-                        home_zone_id=pl.col("home_zone_id").cast(
-                            sampled_schedules.schema["home_zone_id"]
-                        ),
-                        activity_seq_id=pl.col("activity_seq_id").cast(
-                            sampled_schedules.schema["activity_seq_id"]
-                        ),
-                        time_seq_id=pl.col("time_seq_id").cast(
-                            sampled_schedules.schema["time_seq_id"]
-                        ),
-                        activity_draw_id=pl.col("activity_draw_id").cast(pl.UInt32),
-                    )
-                    sampled_schedules = pl.concat(
-                        [sampled_schedules, topups],
-                        how="vertical_relaxed",
-                    )
         return (
             sampled_schedules
             .join(
@@ -307,43 +212,43 @@ class ActivitySequences(InMemoryAsset):
 
     def _sample_schedules_with_replacement(
         self,
-        pool_schedules: pl.DataFrame,
-        zone_pools: pl.DataFrame,
+        profile_schedules: pl.DataFrame,
+        zone_profiles: pl.DataFrame,
     ) -> pl.DataFrame:
-        """Draw schedule indices in batches from each shared support pool."""
-        pool_cols = ["country", "pool_id"]
-        zone_cols = ["country", "home_zone_id", "pool_id"]
+        """Draw schedules in batches for each activity profile."""
+        profile_cols = ["country", "activity_profile_id"]
+        zone_cols = ["country", "home_zone_id", "activity_profile_id"]
         k = self.parameters.activity_sequences.k_activity_sequences
         if k is None:
             return (
-                zone_pools
-                .join(pool_schedules, on=pool_cols, how="inner")
+                zone_profiles
+                .join(profile_schedules, on=profile_cols, how="inner")
                 .select(["country", "home_zone_id", "activity_seq_id", "time_seq_id"])
                 .unique()
                 .with_columns(activity_draw_id=pl.lit(0, dtype=pl.UInt32))
             )
 
-        grouped_schedules = pool_schedules.sort(
-            pool_cols + ["activity_seq_id", "time_seq_id"]
+        grouped_schedules = profile_schedules.sort(
+            profile_cols + ["activity_seq_id", "time_seq_id"]
         ).with_columns(
             p_plan=pl.col("plan_weight_mass")
-            / pl.col("plan_weight_mass").sum().over(pool_cols),
-            context_seed=pl.struct(pool_cols).hash(seed=self.seed),
-        ).group_by(pool_cols).agg(
+            / pl.col("plan_weight_mass").sum().over(profile_cols),
+            context_seed=pl.struct(profile_cols).hash(seed=self.seed),
+        ).group_by(profile_cols).agg(
             pl.col("activity_seq_id"),
             pl.col("time_seq_id"),
             pl.col("p_plan"),
             pl.col("context_seed").first(),
         )
-        zones_by_pool = (
-            zone_pools
+        zones_by_profile = (
+            zone_profiles
             .sort(zone_cols)
-            .group_by(pool_cols)
+            .group_by(profile_cols)
             .agg(pl.col("home_zone_id"))
         )
         grouped_schedules = grouped_schedules.join(
-            zones_by_pool,
-            on=pool_cols,
+            zones_by_profile,
+            on=profile_cols,
             how="inner",
         )
         sampled_rows = []
@@ -368,6 +273,7 @@ class ActivitySequences(InMemoryAsset):
                         {
                             "country": row["country"],
                             "home_zone_id": home_zone_id,
+                            "activity_profile_id": row["activity_profile_id"],
                             "activity_seq_id": row["activity_seq_id"][schedule_index],
                             "time_seq_id": row["time_seq_id"][schedule_index],
                             "activity_draw_id": draw_id,
@@ -376,23 +282,29 @@ class ActivitySequences(InMemoryAsset):
         if not sampled_rows:
             return pl.DataFrame(
                 schema={
-                    "country": pool_schedules.schema["country"],
-                    "home_zone_id": zone_pools.schema["home_zone_id"],
-                    "activity_seq_id": pool_schedules.schema["activity_seq_id"],
-                    "time_seq_id": pool_schedules.schema["time_seq_id"],
+                    "country": profile_schedules.schema["country"],
+                    "home_zone_id": zone_profiles.schema["home_zone_id"],
+                    "activity_seq_id": profile_schedules.schema["activity_seq_id"],
+                    "time_seq_id": profile_schedules.schema["time_seq_id"],
                     "activity_draw_id": pl.UInt32,
                 }
             )
         sampled = pl.DataFrame(sampled_rows).with_columns(
-            country=pl.col("country").cast(pool_schedules.schema["country"]),
-            home_zone_id=pl.col("home_zone_id").cast(zone_pools.schema["home_zone_id"]),
+            country=pl.col("country").cast(profile_schedules.schema["country"]),
+            home_zone_id=pl.col("home_zone_id").cast(zone_profiles.schema["home_zone_id"]),
             activity_seq_id=pl.col("activity_seq_id").cast(
-                pool_schedules.schema["activity_seq_id"]
+                profile_schedules.schema["activity_seq_id"]
             ),
-            time_seq_id=pl.col("time_seq_id").cast(pool_schedules.schema["time_seq_id"]),
+            time_seq_id=pl.col("time_seq_id").cast(profile_schedules.schema["time_seq_id"]),
             activity_draw_id=pl.col("activity_draw_id").cast(pl.UInt32),
         )
-        return sampled
+        return sampled.sort(
+            ["country", "home_zone_id", "activity_profile_id", "activity_draw_id"]
+        ).with_columns(
+            activity_draw_id=pl.int_range(pl.len(), dtype=pl.UInt32).over(
+                ["country", "home_zone_id"]
+            )
+        ).drop("activity_profile_id")
 
     def _select_active_activity_sequences(self) -> pl.DataFrame:
         """Return the currently occupied non-stay-home activity sequences."""
@@ -407,6 +319,12 @@ class ActivitySequences(InMemoryAsset):
             self.demand_groups.select(DEMAND_UNIT_COLS + ["home_zone_id"]),
             on=DEMAND_UNIT_COLS,
         ).select(["home_zone_id", "activity_seq_id", "time_seq_id"]).unique()
+        if self.generation_requests is not None:
+            active_activity_sequences = active_activity_sequences.join(
+                self.generation_requests.select("home_zone_id").unique(),
+                on="home_zone_id",
+                how="semi",
+            )
         active_activity_sequences = active_activity_sequences.with_columns(
             activity_draw_id=pl.lit(0, dtype=pl.UInt32)
         )
