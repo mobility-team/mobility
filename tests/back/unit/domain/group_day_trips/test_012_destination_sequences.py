@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 
 import polars as pl
+import pytest
+from polars.testing import assert_frame_equal
 
 from mobility.trips.group_day_trips import (
     GroupDayTripsDestinationSequenceParameters,
@@ -18,6 +20,80 @@ class _StubAsset(InMemoryAsset):
 
     def create_and_get_asset(self) -> pl.DataFrame:
         return self.value
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_grouped_destination_choices_match_per_request_races(seed):
+    # Several schedule draws share a distribution, while another has a
+    # different onward anchor. Every draw must keep its own seeded race.
+    steps = pl.DataFrame({
+        "home_zone_id": [1, 1, 1, 1], "from": [1, 1, 1, 1],
+        "activity": ["shopping"] * 4, "anchor_to": [4, 4, 4, 5],
+        "activity_draw_id": [0, 1, 2, 3], "activity_seq_id": [1, 1, 2, 2],
+        "time_seq_id": [1, 1, 2, 2], "dest_draw_id": [0, 0, 1, 0],
+    })
+    # More than eight draws per shared context exercises multiple column batches.
+    steps = pl.concat([
+        steps.with_columns(activity_draw_id=pl.col("activity_draw_id") + 4 * index)
+        for index in range(4)
+    ])
+    # The same draw key can appear in more than one choice context. Its race
+    # must still choose the minimum across all of those contexts.
+    steps = pl.concat([steps, steps.head(1).with_columns(anchor_to=pl.lit(5, dtype=pl.Int64))])
+    probabilities = pl.DataFrame({
+        "from": [1, 1, 1], "activity": ["shopping"] * 3,
+        "to": [2, 3, 6], "p_ij": [0.5, 0.3, 0.2],
+    })
+    origin_costs = pl.DataFrame({
+        "candidate_from": [1, 1, 1], "candidate_to": [2, 3, 6],
+        "cost_to_candidate": [1.0, 2.0, 3.0],
+    })
+    onward_costs = pl.DataFrame({
+        "anchor_from": [2, 3, 6, 2, 3], "anchor_to_cost": [4, 4, 4, 5, 5],
+        "cost_to_anchor": [2.0, 1.0, 3.0, 4.0, 1.0],
+    })
+    draw_keys = ["home_zone_id", "activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+    noise_hash = pl.struct(draw_keys + ["to"]).hash(seed=seed)
+    _, _, joined, sampled = DestinationSequences._sample_sequence_aware_destinations(
+        steps_lf=steps.lazy(), destination_probability_lf=probabilities.lazy(),
+        origin_cost_lf=origin_costs.lazy(), onward_cost_lf=onward_costs.lazy(),
+        onward_left_on=["to", "anchor_to"], onward_right_on=["anchor_from", "anchor_to_cost"],
+        onward_cost_col="cost_to_anchor", alpha=0.25,
+        sequence_context_columns=["home_zone_id"], seed=seed,
+        output_cols=draw_keys + ["to"],
+    )
+    reference = (
+        joined.with_columns(
+            weight=(pl.col("p_ij").clip(1e-18).log() - 0.25 * (
+                pl.col("cost_to_candidate") + pl.col("cost_to_anchor")
+            )).exp(),
+            noise=noise_hash.cast(pl.Float64).truediv(18446744073709551616.0).log().neg(),
+        )
+        .with_columns(score=pl.col("noise") / pl.col("weight").clip(1e-18) + pl.col("to") * 1e-18)
+        .filter(pl.col("score") == pl.col("score").min().over(draw_keys))
+        .select(draw_keys + ["to"])
+        .collect().sort(draw_keys)
+    )
+    assert_frame_equal(sampled.collect().sort(draw_keys), reference)
+
+
+def test_batched_destination_race_handles_no_reachable_candidates():
+    steps = pl.DataFrame({
+        "home_zone_id": [1], "from": [1], "activity": ["shopping"], "anchor_to": [4],
+        "activity_draw_id": [0], "activity_seq_id": [1], "time_seq_id": [1], "dest_draw_id": [0],
+    })
+    probabilities = pl.DataFrame({"from": [1], "activity": ["shopping"], "to": [2], "p_ij": [1.0]})
+    origin = pl.DataFrame({"candidate_from": [1], "candidate_to": [2], "cost_to_candidate": [1.0]})
+    onward = pl.DataFrame({"anchor_from": [3], "anchor_to_cost": [4], "cost_to_anchor": [1.0]})
+    _, _, _, sampled = DestinationSequences._sample_sequence_aware_destinations(
+        steps_lf=steps.lazy(), destination_probability_lf=probabilities.lazy(),
+        origin_cost_lf=origin.lazy(), onward_cost_lf=onward.lazy(),
+        onward_left_on=["to", "anchor_to"], onward_right_on=["anchor_from", "anchor_to_cost"],
+        onward_cost_col="cost_to_anchor", alpha=0.25,
+        sequence_context_columns=["home_zone_id"], seed=0,
+        output_cols=["home_zone_id", "to"],
+    )
+    assert sampled.collect().is_empty()
 
 
 def test_destination_alpha_is_part_of_cache_key():

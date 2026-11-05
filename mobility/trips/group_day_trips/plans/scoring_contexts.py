@@ -70,13 +70,14 @@ class ScoringContexts:
             *[pl.col(column).first() for column in steps.columns if column not in DEMAND_UNIT_COLS + ["n_persons"]],
         ).select(steps.columns).collect(engine="streaming")
 
-    def expand_step_rows(self, steps: pl.DataFrame) -> pl.LazyFrame:
+    def expand_step_rows(self, steps: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
         """Expose a lazy compatibility view for the outer behavioral updater."""
+        columns = steps.collect_schema().names() if isinstance(steps, pl.LazyFrame) else steps.columns
         return (
             steps.lazy().drop("demand_subgroup_id")
             .rename({"demand_group_id": "_score_context_id"})
             .join(self.unit_map.lazy(), on="_score_context_id")
-            .select(steps.columns)
+            .select(columns)
         )
 
     def _replace_unit_keys(self, frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:

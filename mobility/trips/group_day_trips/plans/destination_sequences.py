@@ -122,7 +122,7 @@ class DestinationSequences(InMemoryAsset):
             else None
         )
         inputs = {
-            "version": 18,
+            "version": 19,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -816,7 +816,7 @@ class DestinationSequences(InMemoryAsset):
         onward_cost_col: str,
         alpha: float,
         sequence_context_columns: list[str],
-        noise_hash: pl.Expr,
+        seed: int,
         output_cols: list[str],
     ) -> tuple[pl.LazyFrame, pl.LazyFrame, pl.LazyFrame, pl.LazyFrame]:
         """Sample destinations while checking both legs around the candidate zone."""
@@ -836,8 +836,25 @@ class DestinationSequences(InMemoryAsset):
             left_on=onward_left_on,
             right_on=onward_right_on,
         )
-        sampled = (
-            candidates_with_costs
+        # Many schedule draws have the same origin, activity and onward zone.
+        # Compute their choice weights once, then run a few draws as columns so
+        # candidate rows do not have to be repeated for every draw.
+        context_columns = list(dict.fromkeys(
+            ["from", "activity"] + [column for column in onward_left_on if column != "to"]
+        ))
+        choice_contexts = steps_lf.select(context_columns).unique()
+        weighted_choices = (
+            choice_contexts.join(destination_probability_lf, on=["from", "activity"])
+            .join(
+                origin_cost_lf,
+                left_on=["from", "to"],
+                right_on=["candidate_from", "candidate_to"],
+            )
+            .join(
+                onward_cost_lf,
+                left_on=onward_left_on,
+                right_on=onward_right_on,
+            )
             .with_columns(
                 sequence_cost_via_candidate=pl.col("cost_to_candidate") + pl.col(onward_cost_col),
             )
@@ -849,33 +866,77 @@ class DestinationSequences(InMemoryAsset):
                     ).exp()
                 ),
             )
-            .with_columns(
-                noise=(
-                    noise_hash
-                    .cast(pl.Float64)
-                    .truediv(pl.lit(18446744073709551616.0))
-                    .log()
-                    .neg()
-                ),
-            )
-            .with_columns(
-                sample_score=pl.col("noise") / pl.col("p_ij").clip(1e-18)
-                + pl.col("to").cast(pl.Float64) * 1e-18
-            )
-            .with_columns(
-                min_score=pl.col("sample_score").min().over(
-                    sequence_context_columns
-                    + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
-                )
-            )
-            .filter(pl.col("sample_score") == pl.col("min_score"))
-            .select(output_cols)
+            .select(context_columns + ["to", "p_ij"])
         )
+        draw_columns = sequence_context_columns + [
+            "activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"
+        ]
+        requests = steps_lf.collect(engine="streaming").with_columns(
+            _race_lane=pl.int_range(pl.len(), dtype=pl.UInt32).over(context_columns)
+        )
+        choices = weighted_choices.collect(engine="streaming")
+        winner_batches = []
+        batch_size = 8
+        max_lanes = int(requests["_race_lane"].max()) + 1 if requests.height else 0
+        for start in range(0, max_lanes, batch_size):
+            lanes = range(start, min(start + batch_size, max_lanes))
+            batch = requests.filter(
+                pl.col("_race_lane").is_between(start, start + batch_size - 1)
+            )
+            per_context = batch.group_by(context_columns).agg([
+                pl.col(column).filter(pl.col("_race_lane") == lane).first().alias(f"_race_{column}_{lane}")
+                for lane in lanes for column in draw_columns
+            ])
+            scores = []
+            for lane in lanes:
+                # Keep the original field names and types inside the struct:
+                # Polars hashes both, so this preserves every seeded draw.
+                draw_hash = pl.struct(
+                    [pl.col(f"_race_{column}_{lane}").alias(column) for column in draw_columns]
+                    + [pl.col("to")]
+                ).hash(seed=seed)
+                scores.append(
+                    pl.when(pl.col(f"_race_{draw_columns[0]}_{lane}").is_not_null())
+                    .then(
+                        draw_hash.cast(pl.Float64).truediv(18446744073709551616.0).log().neg()
+                        / pl.col("p_ij").clip(1e-18)
+                        + pl.col("to").cast(pl.Float64) * 1e-18
+                    )
+                    .otherwise(None)
+                    .alias(f"_race_score_{lane}")
+                )
+            winners = (
+                choices.lazy().join(per_context.lazy(), on=context_columns)
+                .with_columns(scores)
+                .group_by(context_columns)
+                .agg([
+                    pl.struct("to", pl.col(f"_race_score_{lane}").alias("score"))
+                    .filter(pl.col(f"_race_score_{lane}") == pl.col(f"_race_score_{lane}").min())
+                    .alias(f"_race_winner_{lane}")
+                    for lane in lanes
+                ])
+                .collect(engine="streaming")
+                .unpivot(index=context_columns, variable_name="_race_lane", value_name="_race_winner")
+                .with_columns(pl.col("_race_lane").str.strip_prefix("_race_winner_").cast(pl.UInt32))
+                .explode("_race_winner")
+                .filter(pl.col("_race_winner").is_not_null())
+                .unnest("_race_winner")
+            )
+            winner_batches.append(batch.join(winners, on=context_columns + ["_race_lane"]))
+        if winner_batches:
+            # A draw key may occur in more than one context. Match the old
+            # grouped race by selecting its minimum across all those contexts.
+            sampled = (
+                pl.concat(winner_batches, how="vertical_relaxed")
+                .lazy()
+                .filter(pl.col("score") == pl.col("score").min().over(draw_columns))
+                .select(output_cols)
+            )
+        else:
+            sampled = choices.head(0).join(
+                requests.head(0), on=context_columns, how="inner"
+            ).lazy().select(output_cols)
         return candidates, candidates_with_origin_costs, candidates_with_costs, sampled
-
-    def _destination_sample_hash(self, extra_columns: list[str], seed: int) -> pl.Expr:
-        """Build a deterministic draw key for a shared home-zone plan."""
-        return pl.struct(self.spatialization_context_columns + extra_columns).hash(seed=seed)
 
 
     @trace_simulation_step("anchor destination sampling")
@@ -1027,10 +1088,7 @@ class DestinationSequences(InMemoryAsset):
                     onward_cost_col="cost_to_home",
                     alpha=alpha,
                     sequence_context_columns=self.spatialization_context_columns,
-                    noise_hash=self._destination_sample_hash(
-                        ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"],
-                        seed,
-                    ),
+                    seed=seed,
                     output_cols=anchor_output_cols,
                 )
                 sampled_anchor_steps = sampled_anchor_steps_lf.collect(engine="streaming")
@@ -1220,10 +1278,7 @@ class DestinationSequences(InMemoryAsset):
                 onward_cost_col="cost_to_anchor",
                 alpha=alpha,
                 sequence_context_columns=self.spatialization_context_columns,
-                noise_hash=self._destination_sample_hash(
-                    ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"],
-                    seed,
-                ),
+                seed=seed,
                 output_cols=output_cols,
             )
             step_frames.append(sampled_non_anchor_steps)

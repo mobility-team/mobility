@@ -1,4 +1,4 @@
-"""Plan deterministic, budgeted candidate-generation requests."""
+"""Plan deterministic candidate-generation requests."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def build_generation_targets(
     *,
     demand_groups: pl.DataFrame,
     current_plans: pl.DataFrame,
-    activity_schedule_pool: dict[str, pl.DataFrame],
+    activity_schedule_pool: dict[str, pl.DataFrame] | None,
     transport_costs,
     population_segments,
     parameters,
@@ -44,9 +44,11 @@ def build_generation_targets(
             activity_profile_id=pl.col("allowed_activities").list.join("|")
         )
     )
-    zone_profiles = activity_schedule_pool["zone_profiles"]
     active_plans = current_plans.filter(pl.col("mode_seq_id") != 0)
     if scope == BehaviorChangeScope.FULL_REPLANNING:
+        if activity_schedule_pool is None:
+            raise ValueError("Full replanning needs an activity schedule pool.")
+        zone_profiles = activity_schedule_pool["zone_profiles"]
         activity_cells = zone_profiles.select(
             "home_zone_id", "activity_profile_id"
         ).unique()
@@ -171,26 +173,14 @@ def build_generation_targets(
 
 
 class AdaptiveGenerationScheduler:
-    """Choose deterministic generation requests within a per-loop effort cap.
-
-    Effort is reserved before generation starts. A repeated or infeasible draw
-    therefore consumes the same budget as a new feasible candidate.
-    """
+    """Choose deterministic generation requests for each inner batch."""
 
     def __init__(
         self,
         *,
         targets_by_scenario: dict[str, GenerationTargets],
-        budget: int,
-        max_inner_iterations: int,
     ) -> None:
-        if budget < 1:
-            raise ValueError("generation_effort_budget must be at least one.")
-        if max_inner_iterations < 1:
-            raise ValueError("max_inner_iterations must be at least one.")
         self.targets_by_scenario = targets_by_scenario
-        self.budget = int(budget)
-        self.max_inner_iterations = int(max_inner_iterations)
         self.effort_used = 0
         self.attempt_counts: dict[tuple[str, int, int], int] = defaultdict(int)
         self.recent_effect_by_scenario: dict[str, dict[int, float]] = {}
@@ -228,17 +218,6 @@ class AdaptiveGenerationScheduler:
             scenario: self._preferred_per_zone(targets.requests)
             for scenario, targets in targets_by_scenario.items()
         }
-        minimum_coverage_effort = sum(
-            int(row["generation_effort"])
-            for requests in self._preferred_requests.values()
-            for row in requests.iter_rows(named=True)
-        )
-        if minimum_coverage_effort > self.budget:
-            raise ValueError(
-                "generation_effort_budget is too small to make one coverage request "
-                "for each home zone across the configured scenarios. Required "
-                f"{minimum_coverage_effort:,}; configured {self.budget:,}."
-            )
 
     @staticmethod
     def _preferred_per_zone(requests: pl.DataFrame) -> pl.DataFrame:
@@ -263,33 +242,17 @@ class AdaptiveGenerationScheduler:
         recent_effect_by_scenario: dict[str, dict[int, float]],
         scenario_gap_by_scenario: dict[str, float],
     ) -> dict[str, pl.DataFrame]:
-        """Select a small request batch and reserve its full estimated effort."""
+        """Select at most one utility profile per home zone in each run."""
         self.covered_cells_by_scenario = covered_cells_by_scenario
         self.covered_profiles_by_scenario = covered_profiles_by_scenario
         self.recent_effect_by_scenario = recent_effect_by_scenario
         self.scenario_gap_by_scenario = scenario_gap_by_scenario
 
-        remaining = self.budget - self.effort_used
-        if remaining <= 0:
-            empty_schema = {
-                "home_zone_id": pl.Int32,
-                "utility_profile_id": pl.UInt32,
-                "population_weight": pl.Float64,
-                "generation_effort": pl.UInt64,
-                "request_reason": pl.String,
-                "priority": pl.Float64,
-            }
-            return {
-                scenario: pl.DataFrame(schema=empty_schema)
-                for scenario in self.targets_by_scenario
-            }
-        target_batch_effort = max(1, self.budget // self.max_inner_iterations)
         selected: dict[str, list[dict[str, object]]] = {
             scenario: [] for scenario in self.targets_by_scenario
         }
         selected_keys: set[tuple[str, int, int]] = set()
         selected_zones: set[tuple[str, int]] = set()
-        mandatory_effort = 0
 
         if batch_index == 0:
             # Start with one utility profile per zone so every represented
@@ -304,17 +267,6 @@ class AdaptiveGenerationScheduler:
                         (scenario, int(row["home_zone_id"]), int(row["utility_profile_id"]))
                     )
                     selected_zones.add((scenario, int(row["home_zone_id"])))
-                    mandatory_effort += int(row["generation_effort"])
-
-        if mandatory_effort > remaining:
-            raise ValueError(
-                "generation_effort_budget cannot cover the initial home-zone request "
-                "batch. Remaining effort is "
-                f"{remaining:,}; required effort is {mandatory_effort:,}."
-            )
-
-        batch_limit = max(target_batch_effort, mandatory_effort)
-        batch_effort = mandatory_effort
         ranked: list[tuple[float, str, dict[str, object]]] = []
         for scenario, targets in self.targets_by_scenario.items():
             for row in targets.requests.iter_rows(named=True):
@@ -382,22 +334,9 @@ class AdaptiveGenerationScheduler:
                 int(item[2]["utility_profile_id"]),
             )
         )
-        if not selected_keys and ranked:
-            # Let a later batch spend its remaining budget on one useful
-            # request even when that request exceeds the usual batch share.
-            affordable_efforts = [
-                int(request["generation_effort"])
-                for _, _, request in ranked
-                if int(request["generation_effort"]) <= remaining
-            ]
-            if affordable_efforts:
-                batch_limit = max(batch_limit, min(affordable_efforts))
         for priority, scenario, request in ranked:
-            effort = int(request["generation_effort"])
             home_zone_id = int(request["home_zone_id"])
             if (scenario, home_zone_id) in selected_zones:
-                continue
-            if batch_effort + effort > batch_limit or self.effort_used + batch_effort + effort > self.budget:
                 continue
             request["priority"] = priority
             selected[scenario].append(request)
@@ -409,7 +348,6 @@ class AdaptiveGenerationScheduler:
                 )
             )
             selected_zones.add((scenario, home_zone_id))
-            batch_effort += effort
 
         request_frames: dict[str, pl.DataFrame] = {}
         for scenario, records in selected.items():

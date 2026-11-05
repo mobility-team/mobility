@@ -123,6 +123,18 @@ Pass `scenarios=scenarios` and the scenario-aware `car` mode to `PopulationGroup
 
 ## Run And Read Several Scenarios
 
+For each day type, Mobility runs the declared scenarios, sensitivity cases and
+replications as one experiment. Scenarios and sensitivity cases share candidate
+plans within each replication; different replications keep separate choice sets.
+Behavior, costs and results remain separate for each member. The experiment's
+members are fixed when it is created, so selecting a different result does not
+change the experiment. Define sensitivity cases in the model setup before running it.
+
+Adding a scenario or sensitivity case creates a different cohort
+and can introduce new shared plans or change the coordinated search. Results for an existing member can therefore
+change when the experiment's members change, even if that member's own inputs
+and seed remain the same. Keep the cohort fixed when comparing repeated results.
+
 ```python
 population_trips.run(day_type="weekday", scenario="default")
 population_trips.run(day_type="weekday", scenario="car_distance_cost")

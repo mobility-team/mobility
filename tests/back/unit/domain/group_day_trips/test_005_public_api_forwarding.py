@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from mobility.runtime.parameter_values import DEFAULT_SCENARIO, ParameterValue
+from mobility.runtime.parameter_values import DEFAULT_SCENARIO, ParameterValue, SensitivityCase
 from mobility.runtime.scenarios import Scenario, Scenarios
 from mobility.trips.group_day_trips import BehaviorChangePhase, BehaviorChangeScope, PopulationGroupDayTrips
 from mobility.trips.group_day_trips.core.parameters import (
@@ -425,6 +425,69 @@ def test_group_day_trips_run_can_select_scenario_and_replication(monkeypatch):
     assert weekday_run.parameters.run.n_replications == 1
     assert weekday_run.parameters.run.seeds is None
     assert weekday_run.scenario == "saleve_jura"
+
+
+def test_experiment_cohort_is_fixed_and_independent_of_first_requested_view(monkeypatch):
+    _patch_group_day_trips_wrapper(monkeypatch)
+    case = SensitivityCase(case_id="car_cost_1", parameter_name="car_cost", variation_value=2.0)
+    monkeypatch.setattr(
+        group_day_trips_module, "collect_group_day_trips_sensitivity_cases",
+        lambda setup: [None, case],
+    )
+
+    def make_setup():
+        return PopulationGroupDayTrips(
+            population=_make_population("fr"),
+            modes=[ParameterValue.by_scenario(default=1.0, project=2.0)],
+            activities=[object()], surveys=[_FakeSurvey("fr")],
+            scenarios=Scenarios([Scenario(name="project")]),
+            parameters=GroupDayTripsParameters(
+                run=GroupDayTripsRunParameters(n_replications=2, seeds=[12, 34]),
+            ),
+        )
+
+    baseline_first = make_setup()
+    case_first = make_setup()
+    baseline_first.run("weekday")
+    case_first.run("weekday", scenario="project", sensitivity_case=case, replication=1)
+    definition = baseline_first._experiment_definitions[group_day_trips_module.DayType.WEEKDAY]
+    other = case_first._experiment_definitions[group_day_trips_module.DayType.WEEKDAY]
+    assert definition == other
+    assert len(definition.members) == 8
+    assert [member.run_id for member in definition.members] == list(range(8))
+    assert {member.seed for member in definition.members if member.replication == 0} == {12}
+    assert {member.seed for member in definition.members if member.replication == 1} == {34}
+    assert case_first.run("weekday").parameters.run.seed == 12
+
+    # Scenarios and sensitivity cases share a lifecycle within a seed, while
+    # another seed has its own stopping rules and does not run implicitly.
+    first = baseline_first.run("weekday", scenario="default", replication=0)
+    first_project = baseline_first.run("weekday", scenario="project", sensitivity_case=case, replication=0)
+    second = baseline_first.run("weekday", scenario="default", replication=1)
+    assert first.coordinated_run_asset is first_project.coordinated_run_asset
+    assert first.coordinated_run_asset is not second.coordinated_run_asset
+    assert {run.replication for run in first.coordinated_run_asset.runs.values()} == {0}
+    assert {run.replication for run in second.coordinated_run_asset.runs.values()} == {1}
+    calls = []
+    monkeypatch.setattr(first.coordinated_run_asset, "get", lambda: calls.append(0))
+    monkeypatch.setattr(second.coordinated_run_asset, "get", lambda: calls.append(1))
+    first.coordinated_run_asset.get()
+    assert calls == [0]
+
+
+@pytest.mark.parametrize("after_first_request", [False, True])
+def test_experiment_rejects_undeclared_sensitivity_cases(monkeypatch, after_first_request):
+    _patch_group_day_trips_wrapper(monkeypatch)
+    setup = PopulationGroupDayTrips(
+        population=_make_population("fr"), modes=[object()], activities=[object()],
+        surveys=[_FakeSurvey("fr")],
+    )
+    if after_first_request:
+        setup.run("weekday")
+    unknown = SensitivityCase(case_id="unregistered", parameter_name="cost", variation_value=2.0)
+    with pytest.raises(ValueError, match="not part of this experiment"):
+        setup.run("weekday", sensitivity_case=unknown)
+    assert len(setup._experiment_definitions) == int(after_first_request)
 
 
 def test_group_day_trips_remove_clears_all_known_scenario_replications(monkeypatch):

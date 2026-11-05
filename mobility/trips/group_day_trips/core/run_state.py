@@ -1,6 +1,12 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import polars as pl
+
+if TYPE_CHECKING:
+    from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps
 
 
 @dataclass
@@ -13,7 +19,7 @@ class RunState:
     stay_home_plan: pl.DataFrame
     opportunities: pl.DataFrame
     current_plans: pl.DataFrame
-    candidate_plan_steps: pl.DataFrame | None
+    candidate_plan_steps: pl.DataFrame | CompactCandidateSteps | None
     plan_id_index: pl.DataFrame
     destination_saturation: pl.DataFrame
     costs: pl.DataFrame

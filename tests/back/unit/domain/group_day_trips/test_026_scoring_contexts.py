@@ -7,7 +7,8 @@ from polars.testing import assert_frame_equal
 import pytest
 
 from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts
-from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
+from mobility.trips.group_day_trips.plans.plan_updater import CandidatePlanEvaluation, PlanUpdater
+from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS, add_plan_id
 
 
 def test_contexts_preserve_population_profiles_and_stable_ids():
@@ -87,3 +88,40 @@ def test_compact_mnl_preserves_population_weighted_flows(monkeypatch):
     compact = allocate(compact_choices, contexts)
     assert compact["n_persons"].sum() == pytest.approx(50.)
     assert_frame_equal(expanded, compact)
+
+
+def test_reusing_scores_maps_timing_and_population_back_to_each_demand_unit():
+    units = pl.DataFrame({
+        "demand_group_id": [1, 2], "demand_subgroup_id": [0, 0], "_score_context_id": [0, 0],
+    }).with_columns(pl.all().cast(pl.UInt32))
+    contexts = ScoringContexts(pl.DataFrame(), units)
+    current = units.drop("_score_context_id").with_columns(
+        activity_seq_id=pl.lit(1, dtype=pl.UInt32), time_seq_id=pl.lit(1, dtype=pl.UInt32),
+        dest_seq_id=pl.lit(1, dtype=pl.UInt32), mode_seq_id=pl.lit(1, dtype=pl.UInt32),
+        n_persons=pl.Series([20.0, 30.0]), utility=pl.lit(1.0),
+    )
+    current, old_index = add_plan_id(current, previous_index=None)
+    choices = pl.DataFrame({
+        "demand_group_id": [0, 0], "demand_subgroup_id": [0, 0],
+        "activity_seq_id": [0, 1], "time_seq_id": [0, 2],
+        "dest_seq_id": [0, 1], "mode_seq_id": [0, 1],
+        "plan_id": [0, 1], "utility": [0.0, 5.0], "is_feasible": [True, True],
+    }).with_columns(pl.col(PLAN_KEY_COLS + ["plan_id"]).cast(pl.UInt32))
+    steps = choices.with_columns(seq_step_index=pl.lit(1, dtype=pl.UInt8))
+    mapping = choices.filter(pl.col("mode_seq_id") == 1).select(PLAN_KEY_COLS).with_columns(
+        previous_time_seq_id=pl.lit(1, dtype=pl.UInt32),
+    )
+    evaluation = CandidatePlanEvaluation(
+        candidate_plan_steps=steps.filter(pl.col("mode_seq_id") == 1),
+        possible_plan_steps=steps.lazy(), possible_plan_utility=choices,
+        plan_id_index=pl.DataFrame(), scoring_contexts=contexts, time_mapping=mapping,
+    )
+    expanded = PlanUpdater().expand_context_evaluation(evaluation, current, old_index)
+    assert expanded.current_plans["n_persons"].sort().to_list() == [20.0, 30.0]
+    assert expanded.current_plans["time_seq_id"].unique().to_list() == [2]
+    assert expanded.current_plans["plan_id"].n_unique() == 2
+    assert expanded.possible_plan_utility.height == 4
+    assert expanded.possible_plan_steps.collect().height == 4
+    assert expanded.current_plans.join(
+        expanded.possible_plan_utility, on=PLAN_KEY_COLS + ["plan_id"], how="anti"
+    ).height == 0

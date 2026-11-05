@@ -110,6 +110,7 @@ def test_full_replanning_targets_every_zone_activity_and_estimates_draw_effort()
 @pytest.mark.parametrize(
     ("scope", "expected_effort"),
     [
+        (BehaviorChangeScope.NO_TRANSITIONS, 4),
         (BehaviorChangeScope.MODE_REPLANNING, 4),
         (BehaviorChangeScope.DESTINATION_REPLANNING, 16),
     ],
@@ -118,7 +119,7 @@ def test_restricted_replanning_targets_only_active_activity_profiles(scope, expe
     targets = build_generation_targets(
         demand_groups=_demand_groups(),
         current_plans=_current_plans(),
-        activity_schedule_pool=_schedule_pool(),
+        activity_schedule_pool=None,
         transport_costs=_TransportCosts(),
         population_segments=[],
         parameters=_generation_parameters(scope, activity_draws=3),
@@ -156,8 +157,6 @@ def test_scheduler_covers_home_zones_then_targets_missing_profile_cells():
     )
     scheduler = AdaptiveGenerationScheduler(
         targets_by_scenario={"base": targets},
-        budget=200,
-        max_inner_iterations=2,
     )
     no_coverage = {"base": set()}
     no_profile_coverage = {"base": set()}
@@ -195,14 +194,14 @@ def test_scheduler_covers_home_zones_then_targets_missing_profile_cells():
     assert scheduler.effort_used == 160
 
 
-def test_scheduler_rejects_a_budget_that_cannot_cover_each_home_zone():
+def test_scheduler_covers_home_zones_when_estimated_effort_exceeds_old_limit():
     targets = GenerationTargets(
         requests=pl.DataFrame(
             {
                 "home_zone_id": [10, 20],
                 "utility_profile_id": [1, 1],
                 "population_weight": [10.0, 20.0],
-                "generation_effort": [40, 40],
+                "generation_effort": [600_000, 600_000],
             }
         ),
         activity_cells=pl.DataFrame(
@@ -210,12 +209,16 @@ def test_scheduler_rejects_a_budget_that_cannot_cover_each_home_zone():
         ),
     )
 
-    with pytest.raises(ValueError, match="too small to make one coverage request"):
-        AdaptiveGenerationScheduler(
-            targets_by_scenario={"base": targets},
-            budget=79,
-            max_inner_iterations=5,
-        )
+    scheduler = AdaptiveGenerationScheduler(targets_by_scenario={"base": targets})
+    requests = scheduler.select_requests(
+        batch_index=0,
+        covered_cells_by_scenario={"base": set()},
+        covered_profiles_by_scenario={"base": set()},
+        recent_effect_by_scenario={"base": {}},
+        scenario_gap_by_scenario={"base": 0.0},
+    )["base"]
+    assert set(requests["home_zone_id"].to_list()) == {10, 20}
+    assert scheduler.effort_used == 1_200_000
 
 
 def test_sequence_assets_hash_request_keys_without_hashing_polars_frames():

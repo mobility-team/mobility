@@ -1,4 +1,5 @@
 from typing import Any
+import hashlib
 
 import numpy as np
 import polars as pl
@@ -56,6 +57,7 @@ class ActivitySequences(InMemoryAsset):
         generation_requests: pl.DataFrame | None = None,
         parameters: Any = None,
         seed: int | None = None,
+        shared_sampling_tables: dict | None = None,
     ) -> None:
         self.previous_state = previous_state
         self.is_weekday = is_weekday
@@ -68,6 +70,7 @@ class ActivitySequences(InMemoryAsset):
         self.generation_requests = generation_requests
         self.parameters = parameters
         self.seed = seed
+        self.shared_sampling_tables = shared_sampling_tables
         generation_request_zone_ids = (
             tuple(
                 int(zone_id)
@@ -228,28 +231,36 @@ class ActivitySequences(InMemoryAsset):
                 .with_columns(activity_draw_id=pl.lit(0, dtype=pl.UInt32))
             )
 
-        grouped_schedules = profile_schedules.sort(
-            profile_cols + ["activity_seq_id", "time_seq_id"]
-        ).with_columns(
-            p_plan=pl.col("plan_weight_mass")
-            / pl.col("plan_weight_mass").sum().over(profile_cols),
+        # Reuse the joined choices only when both their values and requested
+        # zones match. The draw and its random stream remain specific to a run.
+        sorted_schedules = profile_schedules.sort(profile_cols + ["activity_seq_id", "time_seq_id"])
+        sorted_zones = zone_profiles.sort(zone_cols)
+        digest = hashlib.sha256()
+        for frame in (sorted_schedules, sorted_zones):
+            digest.update(repr(frame.schema).encode())
+            digest.update(frame.hash_rows(seed=0).to_numpy().tobytes())
+        table_key = digest.digest()
+        grouped_schedules = (
+            self.shared_sampling_tables.get(table_key)
+            if self.shared_sampling_tables is not None else None
+        )
+        if grouped_schedules is None:
+            grouped_schedules = sorted_schedules.with_columns(
+                p_plan=pl.col("plan_weight_mass")
+                / pl.col("plan_weight_mass").sum().over(profile_cols),
+            ).group_by(profile_cols).agg(
+                pl.col("activity_seq_id"),
+                pl.col("time_seq_id"),
+                pl.col("p_plan"),
+            ).join(
+                sorted_zones.group_by(profile_cols).agg(pl.col("home_zone_id")),
+                on=profile_cols,
+                how="inner",
+            )
+            if self.shared_sampling_tables is not None:
+                self.shared_sampling_tables[table_key] = grouped_schedules
+        grouped_schedules = grouped_schedules.with_columns(
             context_seed=pl.struct(profile_cols).hash(seed=self.seed),
-        ).group_by(profile_cols).agg(
-            pl.col("activity_seq_id"),
-            pl.col("time_seq_id"),
-            pl.col("p_plan"),
-            pl.col("context_seed").first(),
-        )
-        zones_by_profile = (
-            zone_profiles
-            .sort(zone_cols)
-            .group_by(profile_cols)
-            .agg(pl.col("home_zone_id"))
-        )
-        grouped_schedules = grouped_schedules.join(
-            zones_by_profile,
-            on=profile_cols,
-            how="inner",
         )
         sampled_rows = []
         for row in grouped_schedules.iter_rows(named=True):

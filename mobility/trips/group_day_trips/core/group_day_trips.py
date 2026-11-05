@@ -9,6 +9,7 @@ from ..sensitivity import (
     collect_group_day_trips_sensitivity_cases,
 )
 from .parameters import GroupDayTripsParameters
+from .experiment import ExperimentDefinition, ExperimentMember
 from .run import Run
 from .multi_scenario_run import MultiScenarioRunAsset
 from mobility.activities import Activity, HomeActivity, OtherActivity
@@ -93,7 +94,8 @@ class PopulationGroupDayTrips:
             parameters=self.parameters,
         )
         self._runs: dict[tuple[str, str, int, DayType], Run] = {}
-        self._coordinated_runs: dict[DayType, MultiScenarioRunAsset] = {}
+        self._coordinated_runs: dict[DayType, dict[int, MultiScenarioRunAsset]] = {}
+        self._experiment_definitions: dict[DayType, ExperimentDefinition] = {}
 
     def run(
         self,
@@ -105,10 +107,10 @@ class PopulationGroupDayTrips:
     ) -> Run:
         """Return one scenario view of a coordinated weekday or weekend run.
 
-        The first request builds all configured scenarios for the same day type,
-        sensitivity case, and replication. Calling `get()` on any returned view
-        runs that full scenario cohort together. The view selects which
-        scenario's state and outputs are returned. Omitting `scenario` selects
+        The first request defines a cohort containing all configured scenarios,
+        sensitivity cases and replications for the day type. Calling `get()` on
+        a view runs the scenarios and sensitivity cases for its replication.
+        Other replications run independently. Omitting `scenario` selects
         the default scenario named `"default"`.
 
         Args:
@@ -125,8 +127,28 @@ class PopulationGroupDayTrips:
         scenario = DEFAULT_SCENARIO if scenario is None else scenario
         sensitivity_case_id = "base" if sensitivity_case is None else sensitivity_case.case_id
         self.scenarios.validate_requested([scenario])
+        self.parameters.run.seed_for_replication(replication)
         key = (scenario, sensitivity_case_id, replication, day_type)
         if day_type not in self._coordinated_runs:
+            sensitivity_cases = collect_group_day_trips_sensitivity_cases(self)
+            case_ids = ["base" if case is None else case.case_id for case in sensitivity_cases]
+            if len(case_ids) != len(set(case_ids)):
+                raise ValueError("Sensitivity case IDs must be unique within an experiment.")
+            members = []
+            for cohort_case in sensitivity_cases:
+                for cohort_replication in range(self.parameters.run.n_replications):
+                    for scenario_name in self.scenarios.names:
+                        members.append(ExperimentMember(
+                            run_id=len(members),
+                            scenario=scenario_name,
+                            sensitivity_case=cohort_case,
+                            replication=cohort_replication,
+                            seed=self.parameters.run.seed_for_replication(cohort_replication),
+                        ))
+            definition = ExperimentDefinition(day_type=day_type.value, members=tuple(members))
+            definition.member(
+                scenario=scenario, sensitivity_case=sensitivity_case, replication=replication,
+            )
             survey_plan_assets = SurveyPlanAssets(
                 surveys=self.surveys,
                 activities=self.activities,
@@ -134,47 +156,48 @@ class PopulationGroupDayTrips:
             )
             transport_costs = TransportCosts(self.modes)
             is_weekday = day_type is DayType.WEEKDAY
-            sensitivity_cases = collect_group_day_trips_sensitivity_cases(self)
-            if sensitivity_case not in sensitivity_cases:
-                sensitivity_cases.append(sensitivity_case)
-
             cohort_runs = {}
-            next_run_key = 0
-            for cohort_case in sensitivity_cases:
-                cohort_case_id = "base" if cohort_case is None else cohort_case.case_id
-                for cohort_replication in range(self.parameters.run.n_replications):
-                    parameters = self.parameters.with_replication(cohort_replication)
-                    for scenario_name in self.scenarios.names:
-                        run_key = (
-                            scenario_name,
-                            cohort_case_id,
-                            cohort_replication,
-                            day_type,
-                        )
-                        if run_key not in self._runs:
-                            self._runs[run_key] = Run(
-                                population=self.population,
-                                transport_costs=transport_costs,
-                                activities=self.activities,
-                                modes=self.modes,
-                                surveys=self.surveys,
-                                survey_plan_assets=survey_plan_assets,
-                                parameters=parameters,
-                                is_weekday=is_weekday,
-                                enabled=is_weekday or parameters.periods.simulate_weekend,
-                                scenario=scenario_name,
-                                sensitivity_case=cohort_case,
-                                replication=cohort_replication,
-                            )
-                        run = self._runs[run_key]
-                        run.coordinated_run_key = next_run_key
-                        cohort_runs[next_run_key] = run
-                        next_run_key += 1
+            for member in definition.members:
+                parameters = self.parameters.with_replication(member.replication)
+                run_key = (
+                    member.scenario, member.sensitivity_case_id, member.replication, day_type,
+                )
+                self._runs[run_key] = Run(
+                    population=self.population,
+                    transport_costs=transport_costs,
+                    activities=self.activities,
+                    modes=self.modes,
+                    surveys=self.surveys,
+                    survey_plan_assets=survey_plan_assets,
+                    parameters=parameters,
+                    is_weekday=is_weekday,
+                    enabled=is_weekday or parameters.periods.simulate_weekend,
+                    scenario=member.scenario,
+                    sensitivity_case=member.sensitivity_case,
+                    replication=member.replication,
+                )
+                run = self._runs[run_key]
+                run.coordinated_run_key = member.run_id
+                cohort_runs[member.run_id] = run
 
-            coordinated_run = MultiScenarioRunAsset(cohort_runs)
-            self._coordinated_runs[day_type] = coordinated_run
-            for cohort_run in cohort_runs.values():
-                cohort_run.coordinated_run_asset = coordinated_run
+            # Each replication needs its own inner and outer stopping rules.
+            # Scenarios and sensitivity cases still share candidates within it.
+            coordinators = {}
+            for cohort_replication in range(self.parameters.run.n_replications):
+                replication_runs = {
+                    run_id: run for run_id, run in cohort_runs.items()
+                    if run.replication == cohort_replication
+                }
+                coordinator = MultiScenarioRunAsset(replication_runs)
+                coordinators[cohort_replication] = coordinator
+                for cohort_run in replication_runs.values():
+                    cohort_run.coordinated_run_asset = coordinator
+            self._coordinated_runs[day_type] = coordinators
+            self._experiment_definitions[day_type] = definition
+        else:
+            self._experiment_definitions[day_type].member(
+                scenario=scenario, sensitivity_case=sensitivity_case, replication=replication,
+            )
         return self._runs[key]
 
     def results(
@@ -255,6 +278,7 @@ class PopulationGroupDayTrips:
 
         self._runs = {}
         self._coordinated_runs = {}
+        self._experiment_definitions = {}
 
     def _validate_activities(self, activities: list[Activity] | None) -> None:
         """Check that activity inputs are present and usable."""

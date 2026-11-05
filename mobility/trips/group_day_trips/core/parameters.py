@@ -567,19 +567,6 @@ class GroupDayTripsAdaptiveSearchParameters(BaseModel):
             description="Hard limit on candidate generation and allocation batches per inner loop.",
         ),
     ]
-    generation_effort_budget: Annotated[
-        int,
-        Field(
-            default=1_000_000,
-            ge=1,
-            title="Generation effort budget",
-            description=(
-                "Maximum requested mode-sequence alternatives per outer iteration "
-                "across every scenario and inner batch. Repeated and infeasible "
-                "draws still use effort."
-            ),
-        ),
-    ]
     max_shared_candidates: Annotated[
         int | None,
         Field(
@@ -624,27 +611,6 @@ class GroupDayTripsAdaptiveSearchParameters(BaseModel):
             ge=1,
             title="Consecutive passing inner batches",
             description="Number of consecutive passing batches needed for inner-loop convergence.",
-        ),
-    ]
-    outer_behavior_tolerance: Annotated[
-        float,
-        Field(
-            default=0.01,
-            gt=0.0,
-            title="Outer behavior stability tolerance",
-            description=(
-                "Maximum population-weighted change in scenario plan shares "
-                "between outer iterations."
-            ),
-        ),
-    ]
-    outer_consecutive_passes: Annotated[
-        int,
-        Field(
-            default=2,
-            ge=1,
-            title="Consecutive passing outer iterations",
-            description="Number of consecutive stable outer iterations needed for convergence.",
         ),
     ]
 class GroupDayTripsParameters(BaseModel):

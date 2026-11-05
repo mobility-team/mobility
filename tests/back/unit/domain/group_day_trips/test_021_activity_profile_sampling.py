@@ -51,6 +51,37 @@ def test_profile_draws_use_survey_weights():
     assert sampled["time_seq_id"].to_list() == [20] * 5
 
 
+def test_replications_share_choice_table_but_keep_their_seeded_draws():
+    schedules = pl.DataFrame({
+        "country": ["fr", "fr"], "activity_profile_id": ["work", "work"],
+        "activity_seq_id": [1, 2], "time_seq_id": [10, 20],
+        "plan_weight_mass": [1.0, 2.0],
+    })
+    zones = pl.DataFrame({
+        "country": ["fr", "fr"], "home_zone_id": [1, 2],
+        "activity_profile_id": ["work", "work"],
+    })
+    parameters = GroupDayTripsParameters(activity_sequences={"k_activity_sequences": 10})
+    shared = {}
+    for seed in (0, 1, 2):
+        cached = ActivitySequences(
+            is_weekday=True, iteration=1, seed=seed, parameters=parameters,
+            shared_sampling_tables=shared,
+        )._sample_schedules_with_replacement(schedules, zones)
+        independent = ActivitySequences(
+            is_weekday=True, iteration=1, seed=seed, parameters=parameters,
+        )._sample_schedules_with_replacement(schedules, zones)
+        assert_frame_equal(cached, independent)
+    assert len(shared) == 1
+
+    # Different requested zones must not reuse a table with a different draw order.
+    ActivitySequences(
+        is_weekday=True, iteration=1, seed=0, parameters=parameters,
+        shared_sampling_tables=shared,
+    )._sample_schedules_with_replacement(schedules, zones.head(1))
+    assert len(shared) == 2
+
+
 def test_all_schedules_are_kept_once_when_k_is_none():
     schedules = pl.DataFrame({
         "country": ["fr", "fr", "fr"],

@@ -55,13 +55,15 @@ class CoordinatedRunResult:
 
 
 class MultiScenarioRunAsset(InMemoryAsset):
-    """Coordinate one shared candidate search across scenario, sensitivity and seed runs."""
+    """Coordinate scenarios and sensitivity cases for one replication."""
 
     def __init__(self, runs: dict[int, Any]) -> None:
         if not runs:
             raise ValueError("A coordinated simulation needs at least one scenario run.")
         if any(not isinstance(run_key, int) for run_key in runs):
             raise TypeError("Coordinated runs must be keyed by integer run IDs.")
+        if len({run.replication for run in runs.values()}) != 1:
+            raise ValueError("A coordinator must contain exactly one replication.")
         self.runs = dict(runs)
         first_run = next(iter(self.runs.values()))
         self.run_keys = list(self.runs)
@@ -90,7 +92,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
             {
                 # The result now keeps the last regular inner estimate instead
                 # of running a separate candidate search after the outer loop.
-                "version": 4,
+                "version": 11,
                 "run_contexts": [
                     {
                         "run_key": run_key,
@@ -107,6 +109,10 @@ class MultiScenarioRunAsset(InMemoryAsset):
         )
         self._checkpoint_cohort_hash = hash_inputs(
             {
+                "outer_iteration_policy": "fixed_count",
+                "candidate_history_policy": "per_run_v1",
+                "behavior_evaluation_policy": "reuse_inner_v1",
+                "inner_attachment_policy": "scoring_contexts_v1",
                 "runs": tuple(
                     (
                         run_key,
@@ -157,7 +163,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
             run = self.runs[run_key]
             logging.info(
                 "Coordinated run input | scenario=%s | sensitivity=%s | replication=%d | "
-                "population_sample_size=%s | maximum_outer_iterations=%d",
+                "population_sample_size=%s | outer_iterations=%d",
                 run.scenario,
                 run.sensitivity_case_id,
                 run.replication,
@@ -174,8 +180,6 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 level=logging.INFO,
             )
         diagnostics: list[dict[str, Any]] = []
-        outer_consecutive_passes = 0
-        previous_behavior_states = dict(current_states)
         last_inner_results: dict[int, Any] | None = None
         actual_outer_iterations = 0
 
@@ -208,6 +212,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     state_asset.coordinated_candidate_plan_steps = (
                         inner_result["candidate_plan_steps"][run_key]
                     )
+                    state_asset.coordinated_evaluation = inner_result.get("evaluations", {}).get(run_key)
                     state_asset.coordinated_current_plans = current_states[run_key].current_plans
                     state_asset.coordinated_current_plan_steps = current_states[run_key].current_plan_steps
                     state_asset.coordinated_plan_id_index = inner_result["plan_id_indices"][run_key]
@@ -230,6 +235,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
                         sensitivity_case=run.sensitivity_case_id,
                     ):
                         next_states[run_key] = state_assets[run_key].get()
+                        state_assets[run_key].coordinated_evaluation = None
+                inner_result.get("evaluations", {}).clear()
                 for run_key, state in next_states.items():
                     run = self.runs[run_key]
                     self._log_plan_distribution(
@@ -248,28 +255,11 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     # in this cohort result.
                     states_by_run_key[run_key].append(state_assets[run_key])
 
-                # Compare population-weighted shares after the behavior update.
-                behavior_changes = {
-                    run_key: self._normalized_plan_share_change(
-                        previous_behavior_states[run_key].current_plans,
-                        next_states[run_key].current_plans,
-                        self._represented_population(next_states[run_key]),
-                    )
-                    for run_key in self.run_keys
-                }
-                if all(
-                    change <= self.parameters.adaptive_search.outer_behavior_tolerance
-                    for change in behavior_changes.values()
-                ):
-                    outer_consecutive_passes += 1
-                else:
-                    outer_consecutive_passes = 0
-
-                outer_converged = (
-                    outer_consecutive_passes
-                    >= self.parameters.adaptive_search.outer_consecutive_passes
+                outer_stop_reason = (
+                    "completed_outer_iterations"
+                    if iteration == self.parameters.run.n_iterations
+                    else "outer_continues"
                 )
-                outer_stop_reason = "outer_converged" if outer_converged else "outer_continues"
                 for run_key in self.run_keys:
                     run = self.runs[run_key]
                     convergence = inner_result["convergence_by_run_key"][run_key]
@@ -284,8 +274,6 @@ class MultiScenarioRunAsset(InMemoryAsset):
                             "inner_batch": None,
                             "inner_iterations": inner_result["inner_iterations"],
                             "generation_effort_used": inner_result["generation_effort_used"],
-                            "generation_effort_remaining": inner_result["generation_effort_remaining"],
-                            "generation_effort_budget": inner_result["generation_effort_budget"],
                             "activity_profile_cell_count": (
                                 inner_result["activity_profile_cell_count_by_scenario"][run_key]
                             ),
@@ -304,29 +292,15 @@ class MultiScenarioRunAsset(InMemoryAsset):
                             "flow_change": convergence.flow_changes.get(run_key),
                             "base_gap_change": convergence.base_gap_changes.get(run_key),
                             "inner_converged": convergence.converged,
-                            "outer_behavior_change": behavior_changes[run_key],
-                            "outer_consecutive_passes": outer_consecutive_passes,
-                            "outer_converged": outer_converged,
                             "stop_reason": outer_stop_reason,
                         }
                     )
 
                 current_states = next_states
                 current_state_assets = state_assets
-                previous_behavior_states = next_states
-                if outer_converged:
-                    break
 
         if not actual_outer_iterations or last_inner_results is None:
             raise RuntimeError("The coordinated run completed no outer iterations.")
-
-        if not any(row["phase"] == "outer" and row["outer_converged"] for row in diagnostics):
-            for row in diagnostics:
-                if (
-                    row["phase"] == "outer"
-                    and row["outer_iteration"] == actual_outer_iterations
-                ):
-                    row["stop_reason"] = "maximum_outer_iterations"
 
         # Congestion costs describe the final behavioral allocation. Candidate
         # search remains at the costs fixed at the start of the last outer
@@ -482,7 +456,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
         for scenario in self.scenarios:
             run = self.runs[scenario]
             state_asset = state_assets[scenario]
-            schedule_pool = state_asset.activity_sequences.activity_schedule_pool.get()
+            schedule_pool_asset = state_asset.activity_sequences.activity_schedule_pool
+            schedule_pool = schedule_pool_asset.get() if schedule_pool_asset is not None else None
             transport_costs = (
                 cost_assets[scenario]
                 if cost_assets is not None
@@ -499,10 +474,9 @@ class MultiScenarioRunAsset(InMemoryAsset):
             )
         scheduler = AdaptiveGenerationScheduler(
             targets_by_scenario=generation_targets,
-            budget=adaptive.generation_effort_budget,
-            max_inner_iterations=max_inner_iterations,
         )
         pool = initial_pool
+        previous_catalogue = None
         if pool is None:
             previous_candidates = {
                 scenario: fixed_states[scenario].candidate_plan_steps
@@ -517,7 +491,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 for scenario in self.scenarios
             }
         else:
-            previous_candidates = pool.compact_candidate_steps_by_run_key or pool.candidate_plan_steps_by_run_key
+            previous_catalogue = pool.candidate_catalogue
+            previous_candidates = {} if previous_catalogue is not None else pool.candidate_plan_steps_by_run_key
             previous_destination_indices = pool.destination_sequence_indices
             previous_mode_indices = pool.mode_sequence_indices
 
@@ -527,6 +502,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         }
         time_sequence_steps = {scenario: fixed_states[scenario].schedule_steps for scenario in self.scenarios}
         evaluated_candidates: dict[int, pl.DataFrame | pl.LazyFrame] = {}
+        final_evaluations = {}
         convergence_by_group = {
             group: InnerLoopConvergence(
                 flow_tolerance=flow_tolerance,
@@ -578,18 +554,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     batch_index > 0
                     and not any(frame.height for frame in generation_requests.values())
                 ):
-                    has_positive_effort_targets = any(
-                        targets.requests.filter(pl.col("generation_effort") > 0).height
-                        for targets in generation_targets.values()
-                    )
-                    stop_reason = (
-                        "generation_effort_budget"
-                        if (
-                            scheduler.budget - scheduler.effort_used == 0
-                            or has_positive_effort_targets
-                        )
-                        else "generation_targets_exhausted"
-                    )
+                    stop_reason = "generation_targets_exhausted"
                     break
                 sources, source_by_scenario, seeds_by_scenario = self._build_candidate_sources(
                     state_assets=state_assets,
@@ -604,6 +569,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     iteration=iteration,
                     max_shared_candidates=adaptive.max_shared_candidates,
                     previous_candidates_by_run_key=previous_candidates,
+                    previous_catalogue=previous_catalogue,
                     previous_destination_indices=previous_destination_indices,
                     previous_mode_indices=previous_mode_indices,
                     previous_time_sequence_steps=time_sequence_steps,
@@ -633,43 +599,15 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     ]
 
                     if logging.getLogger().isEnabledFor(logging.DEBUG):
-                        candidate_steps = pool.candidate_plan_steps_by_run_key[scenario]
-                        if isinstance(candidate_steps, pl.LazyFrame):
-                            candidate_steps = candidate_steps.collect(engine="streaming")
-                        unique_plan_count = (
-                            candidate_steps.select(PLAN_KEY_COLS).unique().height
-                            if candidate_steps.height
-                            else 0
-                        )
-                        demand_unit_count = (
-                            candidate_steps.select(DEMAND_UNIT_COLS).unique().height
-                            if candidate_steps.height
-                            else 0
-                        )
-                        sequence_counts = {
-                            column: candidate_steps[column].n_unique()
-                            if candidate_steps.height and column in candidate_steps.columns
-                            else 0
-                            for column in ("activity_seq_id", "dest_seq_id", "mode_seq_id")
-                        }
                         logging.debug(
                             "Plan generation batch | phase=%s | iteration=%d | batch=%d | "
-                            "scenario=%s | generated_mode_sequences=%d | shared_unique_plans=%d | "
-                            "scenario_plan_steps=%d | scenario_plan_variants=%d | "
-                            "demand_units_with_candidates=%d | activity_sequences=%d | "
-                            "destination_sequences=%d | mode_sequences=%d",
+                            "scenario=%s | generated_mode_sequences=%d | shared_unique_plans=%d",
                             phase,
                             iteration,
                             batch_index + 1,
                             run.scenario,
                             generated_sequences_this_batch[scenario],
                             len(pool.candidate_ids),
-                            candidate_steps.height,
-                            unique_plan_count,
-                            demand_unit_count,
-                            sequence_counts["activity_seq_id"],
-                            sequence_counts["dest_seq_id"],
-                            sequence_counts["mode_seq_id"],
                         )
 
                 flows_by_scenario = {}
@@ -917,6 +855,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                             evaluation.scoring_contexts.expand_step_rows(evaluation.candidate_plan_steps)
                             if evaluation.scoring_contexts is not None else evaluation.candidate_plan_steps
                         )
+                        final_evaluations[scenario] = evaluation
                         plan_steps[scenario] = current_steps
                         plan_id_indices[scenario] = (
                             state.plan_id_index if evaluation.scoring_contexts is not None else evaluation.plan_id_index
@@ -1018,8 +957,6 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 requests["generation_effort"].sum() or 0
                             ),
                             "generation_effort_used": scheduler.effort_used,
-                            "generation_effort_remaining": scheduler.budget - scheduler.effort_used,
-                            "generation_effort_budget": scheduler.budget,
                             "activity_profile_cell_count": target_cell_count,
                             "covered_activity_profile_cell_count": covered_cell_count,
                             "uncovered_activity_profile_cell_count": max(
@@ -1042,7 +979,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
                         }
                     )
 
-                previous_candidates = pool.compact_candidate_steps_by_run_key or pool.candidate_plan_steps_by_run_key
+                previous_catalogue = pool.candidate_catalogue
+                previous_candidates = {} if previous_catalogue is not None else pool.candidate_plan_steps_by_run_key
                 previous_destination_indices = pool.destination_sequence_indices
                 previous_mode_indices = pool.mode_sequence_indices
                 batch_index += 1
@@ -1060,6 +998,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
             "pool": pool,
             "time_sequence_steps": time_sequence_steps,
             "candidate_plan_steps": evaluated_candidates,
+            "evaluations": final_evaluations,
             "allocations": allocations,
             "plan_steps": plan_steps,
             "plan_id_indices": plan_id_indices,
@@ -1076,8 +1015,6 @@ class MultiScenarioRunAsset(InMemoryAsset):
             ),
             "stop_reason": stop_reason,
             "generation_effort_used": scheduler.effort_used,
-            "generation_effort_remaining": scheduler.budget - scheduler.effort_used,
-            "generation_effort_budget": scheduler.budget,
             "activity_profile_cell_count_by_scenario": {
                 scenario: generation_targets[scenario].activity_cells.height
                 for scenario in self.scenarios
@@ -1194,6 +1131,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         sources: list[ScenarioCandidateSource] = []
         source_by_scenario: dict[int, ScenarioCandidateSource] = {}
         seeds_by_scenario: dict[int, IterationSeedsAsset] = {}
+        shared_activity_sampling_tables: dict = {}
         for scenario in self.scenarios:
             run = self.runs[scenario]
             state_asset = state_assets[scenario]
@@ -1225,6 +1163,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 activity_schedule_pool=state_asset.activity_sequences.activity_schedule_pool,
                 generation_requests=generation_requests,
                 parameters=run.parameters,
+                shared_sampling_tables=shared_activity_sampling_tables,
             )
             destination_sequences = DestinationSequences(
                 is_weekday=run.is_weekday,
@@ -1264,28 +1203,6 @@ class MultiScenarioRunAsset(InMemoryAsset):
             sources.append(source)
             source_by_scenario[scenario] = source
         return sources, source_by_scenario, seeds_by_scenario
-
-    def _normalized_plan_share_change(
-        self,
-        previous: pl.DataFrame,
-        current: pl.DataFrame,
-        represented_population: float,
-    ) -> float:
-        """Return total variation in population-weighted shares by plan."""
-        if represented_population <= 0:
-            raise ValueError("Each scenario should represent a positive population.")
-        left = previous.select(PLAN_KEY_COLS + [pl.col("n_persons").alias("previous")])
-        right = current.select(PLAN_KEY_COLS + [pl.col("n_persons").alias("current")])
-        change = (
-            left.join(right, on=PLAN_KEY_COLS, how="full", coalesce=True)
-            .with_columns(
-                previous=pl.col("previous").fill_null(0.0),
-                current=pl.col("current").fill_null(0.0),
-            )
-            .select((pl.col("current") - pl.col("previous")).abs().sum())
-            .item()
-        )
-        return float(change or 0.0) / (2.0 * represented_population)
 
     @staticmethod
     def _represented_population(state: RunState) -> float:

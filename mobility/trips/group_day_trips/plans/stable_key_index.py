@@ -75,20 +75,19 @@ class StableKeyIndex:
     ) -> tuple[pl.DataFrame | pl.LazyFrame, pl.DataFrame]:
         """Attach ids to rows and return the updated key-index table."""
         input_was_lazy = isinstance(rows, pl.LazyFrame)
-        df = rows.collect(engine="streaming") if input_was_lazy else rows
-        if self.index_col in df.columns:
-            df = df.drop(self.index_col)
-
-        if df.select(self.key_cols).null_count().row(0) != tuple([0] * len(self.key_cols)):
+        # Only the sorted distinct keys are needed to extend the index. Keep
+        # the potentially much wider input lazy until its caller needs it.
+        key_query = rows.select(self.key_cols).unique().sort(self.key_cols)
+        key_frame = key_query.collect(engine="streaming") if input_was_lazy else key_query
+        if key_frame.null_count().row(0) != tuple([0] * len(self.key_cols)):
             raise ValueError(f"Index keys cannot contain nulls: {self.key_cols}")
 
         if previous_index is None:
-            previous_index = self._empty_from(df)
+            previous_index = self._empty_from(key_frame)
         else:
             previous_index = previous_index.select(self.key_cols + [self.index_col])
             self.validate(previous_index)
 
-        key_frame = df.select(self.key_cols).unique().sort(self.key_cols)
         missing_keys = key_frame.join(
             previous_index.select(self.key_cols),
             on=self.key_cols,
@@ -114,9 +113,14 @@ class StableKeyIndex:
         )
         self.validate(updated_index)
 
-        indexed_rows = df.join(updated_index, on=self.key_cols)
         if input_was_lazy:
-            indexed_rows = indexed_rows.lazy()
+            indexed_rows = rows.drop(self.index_col, strict=False).join(
+                updated_index.lazy(), on=self.key_cols, how="inner"
+            )
+        else:
+            indexed_rows = rows.drop(self.index_col, strict=False).join(
+                updated_index, on=self.key_cols, how="inner"
+            )
         return indexed_rows, updated_index
 
     def extend_and_cache(

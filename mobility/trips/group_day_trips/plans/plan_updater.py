@@ -15,6 +15,7 @@ from ..transitions.transition_events import (
     build_transition_events_lazy,
 )
 from .candidate_plan_steps import CandidatePlanStepsAsset
+from .compact_candidate_steps import CompactCandidateSteps
 from .scoring_contexts import ScoringContexts
 from .demand_subgroups import DEMAND_UNIT_COLS
 from .plan_distance import PlanDistance
@@ -36,6 +37,7 @@ class CandidatePlanEvaluation:
     current_plans: pl.DataFrame | None = None
     time_sequence_steps: pl.DataFrame | None = None
     scoring_contexts: ScoringContexts | None = None
+    time_mapping: pl.DataFrame | None = None
 
 
 class PlanUpdater:
@@ -43,6 +45,40 @@ class PlanUpdater:
 
     def __init__(self) -> None:
         self.schedule_updater = PlanScheduleUpdater()
+
+    def expand_context_evaluation(
+        self, evaluation: CandidatePlanEvaluation, current_plans: pl.DataFrame,
+        previous_plan_id_index: pl.DataFrame | None,
+    ) -> CandidatePlanEvaluation:
+        """Map compact scores to demand units and their persistent plan IDs."""
+        contexts = evaluation.scoring_contexts
+        if contexts is None or evaluation.time_mapping is None:
+            raise ValueError("A compact evaluation and its timing mapping are required.")
+        utilities = contexts.expand_step_rows(evaluation.possible_plan_utility).drop("plan_id")
+        utilities, plan_id_index = add_plan_id(utilities, previous_index=previous_plan_id_index)
+        utilities = utilities.collect(engine="streaming")
+        steps = (
+            contexts.expand_step_rows(evaluation.possible_plan_steps).drop("plan_id")
+            .join(plan_id_index.lazy(), on=PLAN_KEY_COLS, how="inner")
+        )
+        candidates = contexts.expand_step_rows(evaluation.candidate_plan_steps).collect(engine="streaming")
+        mapping = contexts.expand_step_rows(evaluation.time_mapping).collect(engine="streaming")
+        origin_keys = ["previous_time_seq_id" if col == "time_seq_id" else col for col in PLAN_KEY_COLS]
+        origins = (
+            current_plans.drop("plan_id", strict=False).rename({"time_seq_id": "previous_time_seq_id"})
+            .join(mapping, on=origin_keys, how="left")
+            .with_columns(time_seq_id=pl.col("time_seq_id").fill_null(pl.col("previous_time_seq_id")))
+            .group_by(PLAN_KEY_COLS)
+            .agg(n_persons=pl.col("n_persons").sum(), utility=pl.col("utility").first())
+            .join(plan_id_index, on=PLAN_KEY_COLS, how="left")
+        )
+        if origins["plan_id"].null_count():
+            raise ValueError("A current plan is missing from the expanded evaluation.")
+        return CandidatePlanEvaluation(
+            candidate_plan_steps=candidates, possible_plan_steps=steps,
+            possible_plan_utility=utilities, plan_id_index=plan_id_index,
+            current_plans=origins, time_sequence_steps=evaluation.time_sequence_steps,
+        )
 
     @trace_simulation_step("behavior update")
     def get_new_plans(
@@ -67,9 +103,10 @@ class PlanUpdater:
         parameters: Any,
         *,
         shared_candidate_plan_steps: pl.DataFrame | None = None,
+        precomputed_evaluation: CandidatePlanEvaluation | None = None,
     ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.LazyFrame | None, pl.DataFrame, pl.DataFrame]:
         """Advance one iteration of plan updates."""
-        evaluation = self.evaluate_candidate_pool(
+        evaluation = precomputed_evaluation or self.evaluate_candidate_pool(
             current_plans=current_plans,
             current_plan_steps=current_plan_steps,
             candidate_plan_steps=candidate_plan_steps,
@@ -190,6 +227,8 @@ class PlanUpdater:
             if shared_candidate_plan_steps is not None
             else candidate_plan_steps
         )
+        if isinstance(candidate_memory, CompactCandidateSteps):
+            candidate_memory = candidate_memory.lazy()
         if shared_candidate_plan_steps is not None and candidate_plan_steps is not None:
             # Inner timing updates may have replaced the occupied keys. Preserve
             # the real outer origins so they can be rescored and remapped here.
@@ -205,6 +244,10 @@ class PlanUpdater:
                 demand_groups, transport_costs, mode_sequences.population_segments,
             )
             candidate_memory = scoring_contexts.collapse_step_rows(candidate_memory)
+            log_memory_checkpoint(
+                f"plan_updater:iteration:{iteration}:scoring_context_candidates",
+                candidate_steps=candidate_memory,
+            )
             current_plans = scoring_contexts.collapse_allocations(current_plans)
             stay_home_plan = scoring_contexts.collapse_stay_home(stay_home_plan)
             demand_groups = scoring_contexts.demand_groups
@@ -231,6 +274,14 @@ class PlanUpdater:
             parameters,
             shared_candidate_pool=(shared_candidate_plan_steps is not None),
         )
+        # These inputs have already been combined into activity_utility_scale
+        # and min_activity_time. They are not needed in the wide timing table.
+        possible_plan_steps = possible_plan_steps.drop(
+            "mean_duration_per_pers", "value_of_time", "k_saturation_utility",
+            "destination_shadow_price", strict=False,
+        )
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            logging.debug("Scored step schema | iteration=%d | columns=%s", iteration, possible_plan_steps.collect_schema())
         log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:possible_plan_steps_lazy",
             possible_plan_steps=possible_plan_steps,
@@ -254,9 +305,14 @@ class PlanUpdater:
         # Timing changes create new schedule identities. Remap the current
         # distribution too, so transition origins still match the scored plans.
         with simulation_step("materialize and index modeled timings"):
-            timed_steps, time_sequence_steps, time_mapping = assign_time_sequence_ids(
-                possible_plan_steps.drop("plan_id").collect(engine="streaming"), survey_plan_steps
+            scored_steps = possible_plan_steps.drop("plan_id").collect(engine="streaming")
+            log_memory_checkpoint(
+                f"plan_updater:iteration:{iteration}:timed_scored_steps", scored_steps=scored_steps,
             )
+            timed_steps, time_sequence_steps, time_mapping = assign_time_sequence_ids(
+                scored_steps, survey_plan_steps
+            )
+            del scored_steps
             timed_steps, plan_id_index = add_plan_id(timed_steps, previous_index=plan_id_index)
         current_plans = (
             current_plans.rename({"time_seq_id": "previous_time_seq_id"})
@@ -279,7 +335,7 @@ class PlanUpdater:
                     - pl.col("cost")
                 )
             )
-            .drop("activity_utility_scale", "destination_shadow_price")
+            .drop("activity_utility_scale")
         )
         possible_plan_utility, plan_id_index = self.get_possible_plan_utility(
             possible_plan_steps,
@@ -310,6 +366,7 @@ class PlanUpdater:
             current_plans=current_plans,
             time_sequence_steps=time_sequence_steps,
             scoring_contexts=scoring_contexts,
+            time_mapping=time_mapping,
         )
 
     @trace_simulation_step("fresh MNL allocation")
@@ -884,6 +941,7 @@ class PlanUpdater:
         # Materialize the compact scores once. Keeping this entire cost query
         # lazy would retain all profile OD tables during demand-unit expansion.
         compact_scores = scored_candidates.collect(engine="streaming")
+        log_memory_checkpoint("plan_updater:compact_scores", compact_scores=compact_scores)
         return candidate_cost_inputs.select(score_columns + metadata_columns).join(
             compact_scores.lazy(), on=score_columns, how="inner", nulls_equal=True,
         ).select(possible_plan_step_columns)

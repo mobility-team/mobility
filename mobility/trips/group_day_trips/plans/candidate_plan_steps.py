@@ -90,7 +90,10 @@ class CandidatePlanStepsAsset(FileAsset):
         if self.candidate_plan_steps is None:
             raise ValueError("Cannot save candidate plan steps without a dataframe.")
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.candidate_plan_steps.write_parquet(self.cache_path)
+        if isinstance(self.candidate_plan_steps, pl.DataFrame):
+            self.candidate_plan_steps.write_parquet(self.cache_path)
+        else:
+            self.candidate_plan_steps.lazy().sink_parquet(self.cache_path)
         return self.get_cached_asset()
 
     @classmethod
@@ -103,6 +106,7 @@ class CandidatePlanStepsAsset(FileAsset):
         demand_groups: pl.DataFrame,
         profile_assignments: pl.DataFrame,
         candidate_pruner: Callable[[pl.LazyFrame], pl.DataFrame] | None = None,
+        compact_for_shared_pool: bool = False,
     ) -> pl.LazyFrame:
         """Build structural plan-step candidates generated at one iteration."""
         survey_plan_steps = (
@@ -130,6 +134,7 @@ class CandidatePlanStepsAsset(FileAsset):
             profile_assignments=profile_assignments,
             candidate_pruner=candidate_pruner,
             stage="candidate generation",
+            compact_for_shared_pool=compact_for_shared_pool,
         )
 
     @classmethod
@@ -143,6 +148,7 @@ class CandidatePlanStepsAsset(FileAsset):
         profile_assignments: pl.DataFrame,
         candidate_pruner: Callable[[pl.LazyFrame], pl.DataFrame] | None,
         stage: str,
+        compact_for_shared_pool: bool = False,
     ) -> pl.LazyFrame:
         """Attach completed shared plans to eligible demand units."""
         if "allowed_activities" not in demand_groups.columns:
@@ -351,6 +357,20 @@ class CandidatePlanStepsAsset(FileAsset):
                     "mode_seq_id",
                 ],
                 how="inner",
+            )
+
+        if compact_for_shared_pool:
+            # The shared catalogue contains plan content, not ownership by a
+            # demand unit. Eligibility has already been checked above; attach
+            # the merged plans to actual units only after the catalogue is built.
+            return (
+                context_steps
+                .with_columns(
+                    demand_group_id=pl.lit(0, dtype=pl.UInt32),
+                    demand_subgroup_id=pl.lit(0, dtype=pl.UInt32),
+                )
+                .select(cls.STRUCTURAL_COLUMNS)
+                .unique(subset=cls.DEDUPE_COLUMNS, keep="first", maintain_order=True)
             )
 
         return (

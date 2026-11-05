@@ -82,8 +82,7 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
             "time_sequence_steps": {0: pl.DataFrame()}, "rng_states": {0: None},
             "infeasible_counts": {0: 0}, "missing_cost_row_counts": {0: 0},
             "invalid_cost_row_counts": {0: 0}, "converged": False,
-            "generation_effort_used": 0, "generation_effort_remaining": 1_000_000,
-            "generation_effort_budget": 1_000_000,
+            "generation_effort_used": 0,
             "activity_profile_cell_count_by_scenario": {0: 0},
             "covered_activity_profile_cell_count_by_scenario": {0: 0},
             "convergence_by_run_key": {
@@ -115,3 +114,56 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
         behavioral_state(20 + 10 * iterations).current_plans,
     )
     assert result.mnl_od_mode_flows_by_run_key[0]["volume"].item() == 89 + iterations
+
+
+def test_stable_replications_complete_the_configured_outer_iterations(monkeypatch, tmp_path):
+    """A stable allocation must not shorten the modeled time horizon."""
+    parameters = GroupDayTripsParameters(
+        run={"n_iterations": 3},
+    )
+
+    def make_coordinator(replication, increment):
+        states = [SimpleNamespace(iteration=i) for i in range(1, 4)]
+        for asset in states:
+            asset.get = lambda asset=asset: behavioral_state(20 + increment * asset.iteration)
+        run = SimpleNamespace(
+            parameters=parameters, run_context=SimpleNamespace(inputs_hash=str(replication)),
+            scenario="default", sensitivity_case_id="base", replication=replication,
+            iterations=SimpleNamespace(run_inputs_hash=str(replication), base_folder=tmp_path),
+            initial_iteration_state=SimpleNamespace(get=lambda: behavioral_state(20)),
+            iteration_state_assets=states,
+            population=SimpleNamespace(parameters=SimpleNamespace(sample_size=1)),
+        )
+        coordinator = MultiScenarioRunAsset({replication: run})
+        key = replication
+        pool = SimpleNamespace(candidate_ids=(), destination_sequence_indices={key: None}, mode_sequence_indices={key: None})
+
+        def inner(**kwargs):
+            return {
+                "pool": pool, "diagnostics": [], "inner_iterations": 1,
+                "candidate_plan_steps": {key: None}, "plan_steps": {key: behavioral_state(20).current_plan_steps},
+                "plan_id_indices": {key: pl.DataFrame()}, "time_sequence_steps": {key: pl.DataFrame()},
+                "rng_states": {key: None}, "infeasible_counts": {key: 0},
+                "missing_cost_row_counts": {key: 0}, "invalid_cost_row_counts": {key: 0},
+                "generation_effort_used": 0, "activity_profile_cell_count_by_scenario": {key: 0},
+                "covered_activity_profile_cell_count_by_scenario": {key: 0},
+                "convergence_by_run_key": {key: SimpleNamespace(flow_changes={}, base_gap_changes={}, converged=True)},
+            }
+
+        monkeypatch.setattr(coordinator, "_run_inner_loop", inner)
+        monkeypatch.setattr(coordinator, "_write_checkpoint_manifest", lambda iteration: None)
+        monkeypatch.setattr(coordinator, "_log_plan_distribution", lambda **kwargs: None)
+        monkeypatch.setattr(coordinator, "_final_transport_cost_asset", lambda *args: SimpleNamespace(
+            get_costs_by_od=lambda metrics: pl.DataFrame(),
+        ))
+        return coordinator
+
+    fast = make_coordinator(0, 0).create_and_get_asset()
+    slow = make_coordinator(1, 10).create_and_get_asset()
+    assert len(fast.states_by_run_key[0]) == 3
+    assert len(slow.states_by_run_key[1]) == 3
+    diagnostics = fast.final_states_by_run_key[0].adaptive_search_diagnostics
+    assert "outer_converged" not in diagnostics.columns
+    assert diagnostics["stop_reason"].to_list() == ["outer_continues", "outer_continues", "completed_outer_iterations"]
+    assert fast.final_states_by_run_key[0].current_plans["n_persons"][0] == 20
+    assert slow.final_states_by_run_key[1].current_plans["n_persons"][0] == 50

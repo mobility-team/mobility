@@ -37,6 +37,7 @@ from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from ..plans.candidate_plan_steps import CandidatePlanStepsAsset
+from ..plans.compact_candidate_steps import CompactCandidateSteps
 from ..plans.plan_ids import PLAN_KEY_SCHEMA, PLAN_STEP_KEY_SCHEMA
 
 
@@ -193,7 +194,10 @@ class InitialIterationStateAsset(InMemoryAsset):
             if table is None:
                 none_tables.append(table_name)
             else:
-                table.write_parquet(temporary_path / f"{table_name}.parquet")
+                if isinstance(table, CompactCandidateSteps):
+                    table.lazy().sink_parquet(temporary_path / f"{table_name}.parquet")
+                else:
+                    table.write_parquet(temporary_path / f"{table_name}.parquet")
         metadata = {
             "none_tables": none_tables,
             "start_iteration": state.start_iteration,
@@ -680,6 +684,7 @@ class IterationStateAsset(Asset):
         self._loaded_checkpoint = False
         self._checkpoint_saved = False
         self.coordinated_candidate_plan_steps: pl.DataFrame | pl.LazyFrame | None = None
+        self.coordinated_evaluation = None
         self.coordinated_current_plans: pl.DataFrame | None = None
         self.coordinated_current_plan_steps: pl.DataFrame | None = None
         self.coordinated_plan_id_index: pl.DataFrame | None = None
@@ -803,7 +808,12 @@ class IterationStateAsset(Asset):
             if table is None:
                 metadata["none_tables"].append(table_name)
             else:
-                table.write_parquet(temporary_path / f"{table_name}.parquet")
+                if isinstance(table, CompactCandidateSteps):
+                    table.steps.write_parquet(temporary_path / "candidate_steps.parquet")
+                    table.membership.write_parquet(temporary_path / "candidate_membership.parquet")
+                    metadata["compact_candidate_columns"] = table.columns
+                else:
+                    table.write_parquet(temporary_path / f"{table_name}.parquet")
         with (temporary_path / "metadata.json").open("w", encoding="utf-8") as file:
             json.dump(metadata, file, sort_keys=True)
         if path.exists():
@@ -824,14 +834,18 @@ class IterationStateAsset(Asset):
             "mode_sequence_index",
             "time_sequence_steps",
         ]
-        spilled_state = {
-            table_name: (
-                None
-                if table_name in metadata["none_tables"]
-                else pl.read_parquet(path / f"{table_name}.parquet")
-            )
-            for table_name in table_names
-        }
+        spilled_state = {}
+        for table_name in table_names:
+            if table_name in metadata["none_tables"]:
+                spilled_state[table_name] = None
+            elif table_name == "candidate_plan_steps" and "compact_candidate_columns" in metadata:
+                spilled_state[table_name] = CompactCandidateSteps(
+                    steps=pl.read_parquet(path / "candidate_steps.parquet"),
+                    membership=pl.read_parquet(path / "candidate_membership.parquet"),
+                    columns=tuple(metadata["compact_candidate_columns"]),
+                )
+            else:
+                spilled_state[table_name] = pl.read_parquet(path / f"{table_name}.parquet")
         spilled_state["rng_state"] = _nested_lists_to_tuples(metadata["rng_state"])
         return self._restore_compact_state(spilled_state)
 
@@ -845,6 +859,9 @@ class IterationStateAsset(Asset):
             return getattr(compact_state, name)
 
         self._rng_state = value("rng_state")
+        candidates = value("candidate_plan_steps")
+        if candidates is not None and not isinstance(candidates, CompactCandidateSteps):
+            candidates = CompactCandidateSteps.from_frame(candidates)
         return RunState(
             survey_plans=initial.survey_plans,
             survey_plan_steps=initial.survey_plan_steps,
@@ -854,7 +871,7 @@ class IterationStateAsset(Asset):
             stay_home_plan=initial.stay_home_plan,
             opportunities=initial.opportunities,
             current_plans=value("current_plans"),
-            candidate_plan_steps=value("candidate_plan_steps"),
+            candidate_plan_steps=candidates,
             plan_id_index=value("plan_id_index"),
             destination_saturation=value("destination_saturation"),
             costs=self.transport_costs.get_costs_by_od(["cost", "distance"]),
@@ -932,6 +949,16 @@ class IterationStateAsset(Asset):
                 if self.coordinated_current_plan_steps is None
                 else self.coordinated_current_plan_steps
             )
+            previous_plan_id_index = (
+                previous.plan_id_index if self.coordinated_plan_id_index is None
+                else self.coordinated_plan_id_index
+            )
+            precomputed_evaluation = (
+                None if self.coordinated_evaluation is None else
+                self.updater.expand_context_evaluation(
+                    self.coordinated_evaluation, current_plans_before_transition, previous_plan_id_index,
+                )
+            )
             current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index, time_sequence_steps = self.updater.get_new_plans(
                 current_plans_before_transition,
                 current_plan_steps_before_transition,
@@ -949,13 +976,10 @@ class IterationStateAsset(Asset):
                 previous.home_night_dur,
                 previous.stay_home_plan,
                 self.population.transport_zones,
-                (
-                    previous.plan_id_index
-                    if self.coordinated_plan_id_index is None
-                    else self.coordinated_plan_id_index
-                ),
+                previous_plan_id_index,
                 self.parameters,
                 shared_candidate_plan_steps=self.coordinated_candidate_plan_steps,
+                precomputed_evaluation=precomputed_evaluation,
             )
             costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
             destination_saturation = self.updater.get_destination_saturation(
@@ -972,7 +996,10 @@ class IterationStateAsset(Asset):
                 stay_home_plan=previous.stay_home_plan,
                 opportunities=previous.opportunities,
                 current_plans=current_plans,
-                candidate_plan_steps=candidate_plan_steps,
+                candidate_plan_steps=(
+                    None if candidate_plan_steps is None
+                    else CompactCandidateSteps.from_frame(candidate_plan_steps)
+                ),
                 plan_id_index=plan_id_index,
                 time_sequence_steps=time_sequence_steps,
                 destination_saturation=destination_saturation,

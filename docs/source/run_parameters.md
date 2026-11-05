@@ -21,7 +21,7 @@ This is useful for a quick technical check on a small area. Use a larger configu
 
 ## Project Run
 
-A project run usually needs more iterations. Use diagnostics to decide whether the iteration count is adequate for the indicators being reported. Replications are useful when you want to estimate how much results depend on sampling and random seeds.
+A project run usually needs more iterations. The model runs the configured number of outer iterations, even when behavior appears stable: these iterations represent the model's progression over time. Use diagnostics to understand how results change. Replications are useful when you want to estimate how much results depend on sampling and random seeds.
 
 `n_iter_per_cost_update` controls how often travel costs are refreshed during the loop. Setting it to `0` disables congestion feedback. If congestion is part of the study question, document this value with the other supply assumptions.
 
@@ -55,13 +55,10 @@ During candidate evaluation, identical plan steps with the same country, CSP, an
 ## Coordinated Search Limits
 
 Each outer iteration can run up to `adaptive_search.max_inner_iterations`
-candidate-generation and allocation batches (five by default). The scenarios
-share one `adaptive_search.generation_effort_budget` (1,000,000 by default).
-This budget estimates requested mode-sequence alternatives from the activity,
-destination and mode draw counts. Effort is reserved before a batch starts, so
-duplicate or infeasible draws still count toward the limit. If the budget cannot
-cover an initial request for every represented home zone, the run reports the
-required and configured amounts instead of silently skipping zones.
+candidate-generation and allocation batches (five by default). Each batch
+requests at most one utility profile per home zone in each run. Diagnostics
+estimate the requested mode-sequence alternatives from the activity,
+destination and mode draw counts, including duplicate or infeasible draws.
 
 In full replanning, the first batch requests a utility profile in each home
 zone, which gives each allowed-activity profile there a generation attempt.
@@ -69,11 +66,8 @@ Later batches prioritize activity profiles without a feasible non-stay-home
 plan, then missing activity-profile and utility-profile combinations, recent
 allocation changes, differences from the base scenario, and exploration. In
 mode-only or destination-only replanning, coverage targets are limited to
-activity profiles with active plans. The scheduler applies the same effort cap
-across scenarios and stops at the inner-iteration limit, when no remaining
-budget can cover another request, or when there is no generation work left.
-Because requests are reserved as a whole, a small amount of budget can remain
-unused when it is below the next request's effort. The
+activity profiles with active plans. The search stops at the inner-iteration
+limit, when it converges, or when there is no generation work left. The
 `adaptive_search_diagnostics` table reports requested effort, coverage counts,
 and the stop reason for each batch.
 
@@ -223,3 +217,8 @@ inner search, request `results.tables.mnl_od_mode_flows()` in
 last outer iteration, before the behavioral and final transport-cost updates;
 it is not an estimate at the final costs. It is available for a coordinated
 run's last executed outer iteration.
+
+Polars 2 changes the hashes used for seeded sampling and plan identities.
+Results from the same seed can therefore differ from runs made with Polars 1.
+Mobility uses new cache and checkpoint identities so older simulation states
+are not resumed with the new hashes.
