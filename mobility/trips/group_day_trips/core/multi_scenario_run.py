@@ -42,6 +42,7 @@ from mobility.trips.group_day_trips.core.multi_scenario import (
     represented_od_mode_flows,
 )
 from mobility.trips.group_day_trips.core.run_state import RunState
+from mobility.transport.costs.path.shared_congested_costs import prepare_shared_congested_costs
 from mobility.trips.group_day_trips.iterations.iteration_assets import IterationTransportCostsAsset
 
 
@@ -193,6 +194,12 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     run_key: self.runs[run_key].iteration_state_assets[iteration - 1]
                     for run_key in self.run_keys
                 }
+                # Build compatible scenario path costs together before candidate
+                # generation requests them one scenario at a time.
+                if len(state_assets) > 1:
+                    prepare_shared_congested_costs(
+                        [state_asset.transport_costs for state_asset in state_assets.values()]
+                    )
                 inner_result = self._run_inner_loop(
                     state_assets=state_assets,
                     fixed_states=current_states,
@@ -315,6 +322,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
             for run_key in self.run_keys
         }
 
+        if len(final_cost_assets) > 1:
+            prepare_shared_congested_costs(list(final_cost_assets.values()))
         final_states: dict[int, RunState] = {}
         for run_key in self.run_keys:
             run = self.runs[run_key]
