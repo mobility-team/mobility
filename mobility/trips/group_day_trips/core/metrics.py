@@ -19,6 +19,7 @@ import plotly.graph_objects as go
 import polars as pl
 from plotly.subplots import make_subplots
 
+from mobility.runtime.temporary import temporary_folder as mobility_temporary_folder
 from mobility.reports import TransportZoneMaps
 from mobility.reports.theme import MOBILITY_COLORS, apply_report_layout
 from mobility.runtime.assets.resolver import (
@@ -3600,7 +3601,7 @@ class RunMetrics:
                 f"{safe_mode_name}-{value_settings['save_name']}-iterations-"
                 f"{min(iterations)}-{max(iterations)}-map.gif"
             )
-            with tempfile.TemporaryDirectory(prefix=f"{safe_mode_name}-modal-share-delta-") as temporary_folder:
+            with tempfile.TemporaryDirectory(prefix=f"{safe_mode_name}-modal-share-delta-", dir=mobility_temporary_folder()) as temporary_folder:
                 frame_paths = []
                 for frame_index, iteration in enumerate(iterations):
                     modal_share_delta = self.modal_share_delta_by_iteration(

@@ -17,6 +17,7 @@ from mobility.runtime.assets.graph import (
     is_file_asset,
 )
 from mobility.runtime.project_cache import record_file_asset_use
+from mobility.runtime.temporary import temporary_folder
 
 
 _current_asset_resolver: ContextVar["AssetResolver | None"] = ContextVar(
@@ -269,7 +270,7 @@ class AssetResolver:
         """Return this execution's temporary file path for one shared asset."""
         if self._spill_directory is None:
             self._spill_directory = tempfile.TemporaryDirectory(
-                prefix="mobility-shared-assets-"
+                prefix="mobility-shared-assets-", dir=temporary_folder()
             )
         filename = f"{asset.__class__.__name__}-{asset.inputs_hash}{suffix}"
         return pathlib.Path(self._spill_directory.name) / filename
@@ -278,7 +279,7 @@ class AssetResolver:
         """Return a path for a temporary file needed by an external tool."""
         if self._spill_directory is None:
             self._spill_directory = tempfile.TemporaryDirectory(
-                prefix="mobility-run-assets-"
+                prefix="mobility-run-assets-", dir=temporary_folder()
             )
         filename = f"{asset.__class__.__name__}-{asset.inputs_hash}{suffix}"
         return pathlib.Path(self._spill_directory.name) / filename

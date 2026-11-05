@@ -13,6 +13,7 @@ import polars as pl
 from rich.live import Live
 from rich.spinner import Spinner
 
+from mobility.runtime.temporary import temporary_folder
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
 from mobility.transport.modes.choice.compute_subtour_mode_probabilities import (
     compute_subtour_mode_probabilities_serial,
@@ -29,7 +30,7 @@ def run_python_mode_sequence_search(
     is_return_mode_by_id: dict[int, bool],
 ) -> pl.DataFrame:
     """Run the Python mode-sequence search backend."""
-    with tempfile.TemporaryDirectory(prefix="mobility-mode-search-") as temp_folder:
+    with tempfile.TemporaryDirectory(prefix="mobility-mode-search-", dir=temporary_folder()) as temp_folder:
         working_folder = pathlib.Path(temp_folder)
         tmp_folder = working_folder / "tmp_results"
         os.makedirs(tmp_folder)

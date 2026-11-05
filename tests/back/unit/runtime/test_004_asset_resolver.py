@@ -145,3 +145,24 @@ def test_resolver_passes_get_arguments_to_requested_root_asset(tmp_path):
     with asset_resolution_context():
         assert asset.get(token="bbox") == "created-bbox"
         assert asset.get(token="other") == "cached-other-bbox"
+
+
+def test_temporary_assets_use_project_folder_and_are_removed(tmp_path, monkeypatch):
+    """Temporary assets stay in the selected project and disappear after use."""
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    asset = _CountingFileAsset(name="example", cache_folder=tmp_path)
+    with asset_resolution_context() as resolver:
+        spill = resolver._spill_path(asset, suffix=".parquet")
+        external = resolver.temporary_asset_path(asset, suffix=".txt")
+        assert spill.parent.parent == tmp_path / "temporary"
+        assert external.parent == spill.parent
+        spill.write_text("temporary", encoding="utf-8")
+    assert not spill.exists()
+
+
+def test_temporary_folder_defaults_to_package_data(tmp_path, monkeypatch):
+    from mobility.runtime.temporary import temporary_folder
+
+    monkeypatch.delenv("MOBILITY_PROJECT_DATA_FOLDER", raising=False)
+    monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
+    assert temporary_folder() == tmp_path / "projects" / "temporary"

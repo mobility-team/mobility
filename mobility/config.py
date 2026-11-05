@@ -385,6 +385,9 @@ def setup_project_data_folder_path(project_data_folder_path):
     project_data_folder_path (str, optional): The file path for storing project-specific datasets.
     """
 
+    previous_project_folder = os.environ.get("MOBILITY_PROJECT_DATA_FOLDER")
+    polars_temporary_folder = os.environ.get("POLARS_TEMP_DIR")
+
     if project_data_folder_path is not None:
 
         if not pathlib.Path(project_data_folder_path).exists():
@@ -408,6 +411,19 @@ def setup_project_data_folder_path(project_data_folder_path):
                 os.makedirs(default_path)
             else:
                 raise ValueError("Please re run setup_mobility with the project_data_folder_path pointed to your desired location.")
+
+    # Polars 2 can spill queries to disk. Keep its scratch files with the
+    # project unless the user selected another location explicitly.
+    previous_default = (
+        pathlib.Path(previous_project_folder) / "temporary"
+        if previous_project_folder is not None else None
+    )
+    if polars_temporary_folder is None or (
+        previous_default is not None and pathlib.Path(polars_temporary_folder) == previous_default
+    ):
+        temporary_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "temporary"
+        temporary_folder.mkdir(parents=True, exist_ok=True)
+        os.environ["POLARS_TEMP_DIR"] = str(temporary_folder)
 
 
 def install_r_packages(r_packages, r_packages_force_reinstall, r_packages_download_method):

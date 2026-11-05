@@ -383,3 +383,15 @@ Ask your IT team for the company certificate file if the default mamba setup can
 ### You need help with a new error
 
 Check the [open bug reports](https://github.com/mobility-team/mobility/issues?q=is%3Aissue%20state%3Aopen%20label%3Abug). If no open issue matches the problem, open a new issue with the command you ran and the full error message.
+
+Mobility stores its temporary working files in the `temporary` folder inside
+`MOBILITY_PROJECT_DATA_FOLDER`. They are normally removed when the operation
+finishes. Files left after an interrupted process can be removed when no
+Mobility process is using them. External tools may use their own temporary
+folder settings.
+
+Polars 2 can also use disk for large queries. Mobility defaults its scratch
+folder to `temporary` inside the project data folder; set `POLARS_TEMP_DIR`
+before running Mobility to choose another location. Polars controls its own
+disk budget: set `POLARS_OOC_DISK_BUDGET_MB` before running Python if you
+need a smaller limit than its default.
