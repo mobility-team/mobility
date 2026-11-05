@@ -245,8 +245,9 @@ class RunMetrics:
                 index=["variable", group_variable],
                 on=["value", "value_ref"],
                 variable_name="value_type",
-                value_name="value",
+                value_name="_indicator_value",
             )
+            .rename({"_indicator_value": "value"})
             .with_columns(
                 pl.col(group_variable).cast(pl.String),
                 source=(

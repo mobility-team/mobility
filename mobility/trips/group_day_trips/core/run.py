@@ -98,8 +98,10 @@ class Run(InMemoryAsset):
         )
         parameters_for_cache = parameters.model_dump(mode="python")
         parameters_for_cache["outputs"].pop("checkpoint_each_iteration", None)
+        # Polars 2 changes seeded hashes, so older runs and saved states must
+        # not be reused with the new candidate identities.
         run_context_inputs = {
-            "version": 28,
+            "version": 29,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -122,7 +124,7 @@ class Run(InMemoryAsset):
         checkpoint_run_context = {
             **run_context_inputs,
             "parameters": checkpoint_parameters,
-            "checkpoint_version": 5,
+            "checkpoint_version": 6,
         }
         checkpoint_run_hash = hash_inputs(checkpoint_run_context)
         self.run_context = SimpleNamespace(

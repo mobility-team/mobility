@@ -35,8 +35,8 @@ def add_ordered_key_hashes(
 
     return (
         rows.with_columns(
-            ordered_step_content.hash(seed=0, seed_1=11, seed_2=23, seed_3=37).alias(step_hash_1),
-            ordered_step_content.hash(seed=1, seed_1=13, seed_2=29, seed_3=41).alias(step_hash_2),
+            ordered_step_content.hash(seed=0).alias(step_hash_1),
+            ordered_step_content.hash(seed=1).alias(step_hash_2),
         )
         .group_by(group_cols)
         .agg(
@@ -45,10 +45,10 @@ def add_ordered_key_hashes(
         )
         .with_columns(
             pl.col(sequence_hashes_1)
-            .hash(seed=2, seed_1=17, seed_2=31, seed_3=43)
+            .hash(seed=2)
             .alias(key_col_1),
             pl.col(sequence_hashes_2)
-            .hash(seed=3, seed_1=19, seed_2=33, seed_3=47)
+            .hash(seed=3)
             .alias(key_col_2),
         )
         .drop(sequence_hashes_1, sequence_hashes_2)

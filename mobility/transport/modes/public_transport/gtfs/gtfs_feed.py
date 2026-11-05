@@ -168,7 +168,7 @@ class GTFSFeed:
             path,
             columns=selected,
             infer_schema=False,
-            missing_utf8_is_empty_string=True,
+            empty_string_is_null=False,
         )
         # Some publishers pad CSV lines, including the final header and value.
         table = table.rename({name: name.strip() for name in table.columns})
@@ -184,7 +184,7 @@ class GTFSFeed:
         scan = pl.scan_csv(
             self.folder / "stop_times.txt",
             infer_schema=False,
-            missing_utf8_is_empty_string=True,
+            empty_string_is_null=False,
         )
         columns = scan.collect_schema().names()
         scan = scan.rename({name: name.strip() for name in columns})
