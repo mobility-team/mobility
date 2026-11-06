@@ -28,6 +28,7 @@ from mobility.runtime.assets.resolver import (
 )
 
 from ..evaluation.car_traffic_evaluation import CarTrafficEvaluation
+from ..evaluation.calibration_plan_steps import left_closed_bins
 from ..evaluation.public_transport_network_evaluation import (
     PublicTransportNetworkEvaluation,
 )
@@ -156,8 +157,8 @@ class RunMetrics:
                 .rename({"home_zone_id": "transport_zone_id"})
                 .join(transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]), on=["transport_zone_id"])
                 .with_columns(
-                    time_bin=(pl.col("time") * 60.0).cut([0.0, 5.0, 10, 20, 30.0, 45.0, 60.0, 1e6], left_closed=True),
-                    distance_bin=pl.col("distance").cut([0.0, 1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 1e6], left_closed=True),
+                    time_bin=left_closed_bins(pl.col("time") * 60.0, [0.0, 5.0, 10, 20, 30.0, 45.0, 60.0, 1e6]).cast(pl.Categorical),
+                    distance_bin=left_closed_bins(pl.col("distance"), [0.0, 1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 1e6]).cast(pl.Categorical),
                 )
                 .group_by(variable)
                 .agg(
@@ -176,9 +177,8 @@ class RunMetrics:
                 aggregated = aggregated.with_columns(pl.col(variable).cast(pl.String()))
             return aggregated.collect(engine="streaming")
 
-        with pl.StringCache():
-            trip_count = aggregate(self.results.plan_steps)
-            trip_count_ref = aggregate(ref_plan_steps)
+        trip_count = aggregate(self.results.plan_steps)
+        trip_count_ref = aggregate(ref_plan_steps)
 
         comparison = trip_count.join(
             trip_count_ref,

@@ -44,6 +44,7 @@ class Scenarios:
         parameters: Any = None,
         changes: Iterable[ScenarioParameterChange] | None = None,
         n_iterations: int | None = None,
+        warn_unreachable: bool = True,
     ) -> None:
         """Create a scenario manifest.
 
@@ -110,6 +111,7 @@ class Scenarios:
         self._scenarios = tuple(declared_scenarios)
         self._changes = setup_changes
         self._n_iterations = n_iterations
+        self._warn_unreachable = warn_unreachable
         self._validate_unique_names()
         self._validate_references()
         if has_setup_context:
@@ -137,6 +139,7 @@ class Scenarios:
             modes=modes,
             activities=activities,
             parameters=parameters,
+            warn_unreachable=False,
         )
 
     @staticmethod
@@ -187,7 +190,8 @@ class Scenarios:
         """Validate and warn about scenario setup issues."""
         self._validate_change_scenarios_are_declared()
         self._warn_about_unused_scenarios()
-        self._warn_about_unreachable_iterations()
+        if self._warn_unreachable:
+            self._warn_about_unreachable_iterations()
 
     def validate_requested(self, scenarios: Iterable[str]) -> None:
         """Check that selected scenario names are declared."""

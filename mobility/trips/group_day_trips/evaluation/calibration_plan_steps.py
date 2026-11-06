@@ -12,14 +12,21 @@ TIME_BIN_BREAKS_MINUTES = [0.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 1e9]
 CALIBRATION_PLAN_STEP_COLUMNS = ["activity", "distance_bin", "time_bin", "mode", "distance", "time", "n_persons"]
 
 
+def left_closed_bins(values: pl.Expr, breaks: list[float]) -> pl.Expr:
+    """Keep the existing interval labels and treat NaN like a missing value."""
+    boundaries = ["-inf", *(str(int(value)) if float(value).is_integer() else str(value) for value in breaks), "inf"]
+    labels = [f"[{left}, {right})" for left, right in zip(boundaries, boundaries[1:])]
+    return values.fill_nan(None).bin_intervals(breaks, labels=labels, right_closed=False)
+
+
 def distance_bin_expr(column: str = "distance") -> pl.Expr:
     """Return the canonical distance-bin expression shared by calibration diagnostics."""
-    return pl.col(column).cast(pl.Float64).cut(DISTANCE_BIN_BREAKS, left_closed=True).cast(pl.String)
+    return left_closed_bins(pl.col(column).cast(pl.Float64), DISTANCE_BIN_BREAKS).cast(pl.String)
 
 
 def time_bin_expr(column: str = "time") -> pl.Expr:
     """Return the canonical travel-time-bin expression shared by calibration diagnostics."""
-    return (pl.col(column).cast(pl.Float64) * 60.0).cut(TIME_BIN_BREAKS_MINUTES, left_closed=True).cast(pl.String)
+    return left_closed_bins(pl.col(column).cast(pl.Float64) * 60.0, TIME_BIN_BREAKS_MINUTES).cast(pl.String)
 
 
 def to_calibration_plan_steps(

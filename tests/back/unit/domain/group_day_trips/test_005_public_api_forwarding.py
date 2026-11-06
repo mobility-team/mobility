@@ -32,6 +32,7 @@ class _FakeRun:
         self.survey_plan_assets = survey_plan_assets
         self.scenario = scenario
         self.replication = kwargs.get("replication")
+        self.cohort_identity = kwargs.get("cohort_identity")
         sensitivity_case = kwargs.get("sensitivity_case")
         self.sensitivity_case_id = (
             "base" if sensitivity_case is None else sensitivity_case.case_id
@@ -328,10 +329,11 @@ def test_group_day_trips_documents_scenarios_and_changes(monkeypatch):
                 )
             ]),
         )
+        wrapper.experiment("weekday", scenarios=["saleve_jura"])
 
     assert wrapper.scenarios.names == ["default", "saleve_jura"]
     assert wrapper.scenarios.changes[0].path == "setup['modes'][0]"
-    assert "Scenario 'saleve_jura' changes setup['modes'][0] at iterations [5]" in str(
+    assert "Scenario 'saleve_jura' changes setup['modes'][0] at steps [5]" in str(
         caught[0].message
     )
 
@@ -340,6 +342,11 @@ def test_group_day_trips_documents_scenarios_and_changes(monkeypatch):
     assert "saleve_jura" in description
     assert "Title: Saleve-Jura RER" in description
     assert "Reference: default" in description
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        wrapper.experiment("weekday", scenarios=["default"])
+    assert not any("saleve_jura" in str(item.message) for item in caught)
     assert "- setup['modes'][0]: iterations 1, 5" in description
 
 
@@ -427,52 +434,41 @@ def test_group_day_trips_run_can_select_scenario_and_replication(monkeypatch):
     assert weekday_run.scenario == "saleve_jura"
 
 
-def test_experiment_cohort_is_fixed_and_independent_of_first_requested_view(monkeypatch):
+def test_experiment_only_builds_selected_members_and_keeps_lanes_separate(monkeypatch):
     _patch_group_day_trips_wrapper(monkeypatch)
     case = SensitivityCase(case_id="car_cost_1", parameter_name="car_cost", variation_value=2.0)
-    monkeypatch.setattr(
-        group_day_trips_module, "collect_group_day_trips_sensitivity_cases",
-        lambda setup: [None, case],
+    monkeypatch.setattr(group_day_trips_module, "collect_group_day_trips_sensitivity_cases", lambda setup: [None, case])
+    setup = PopulationGroupDayTrips(
+        population=_make_population("fr"),
+        modes=[ParameterValue.by_scenario(default=1.0, project=2.0)],
+        activities=[object()], surveys=[_FakeSurvey("fr")],
+        scenarios=Scenarios([Scenario(name="project")]),
+        parameters=GroupDayTripsParameters(run=GroupDayTripsRunParameters(n_replications=2, seeds=[12, 34])),
     )
-
-    def make_setup():
-        return PopulationGroupDayTrips(
-            population=_make_population("fr"),
-            modes=[ParameterValue.by_scenario(default=1.0, project=2.0)],
-            activities=[object()], surveys=[_FakeSurvey("fr")],
-            scenarios=Scenarios([Scenario(name="project")]),
-            parameters=GroupDayTripsParameters(
-                run=GroupDayTripsRunParameters(n_replications=2, seeds=[12, 34]),
-            ),
-        )
-
-    baseline_first = make_setup()
-    case_first = make_setup()
-    baseline_first.run("weekday")
-    case_first.run("weekday", scenario="project", sensitivity_case=case, replication=1)
-    definition = baseline_first._experiment_definitions[group_day_trips_module.DayType.WEEKDAY]
-    other = case_first._experiment_definitions[group_day_trips_module.DayType.WEEKDAY]
-    assert definition == other
-    assert len(definition.members) == 8
-    assert [member.run_id for member in definition.members] == list(range(8))
-    assert {member.seed for member in definition.members if member.replication == 0} == {12}
-    assert {member.seed for member in definition.members if member.replication == 1} == {34}
-    assert case_first.run("weekday").parameters.run.seed == 12
-
-    # Scenarios and sensitivity cases share a lifecycle within a seed, while
-    # another seed has its own stopping rules and does not run implicitly.
-    first = baseline_first.run("weekday", scenario="default", replication=0)
-    first_project = baseline_first.run("weekday", scenario="project", sensitivity_case=case, replication=0)
-    second = baseline_first.run("weekday", scenario="default", replication=1)
-    assert first.coordinated_run_asset is first_project.coordinated_run_asset
+    experiment = setup.experiment("weekday", scenarios=["project", "default"], replications=[0, 1])
+    assert not experiment._coordinators
+    contexts = experiment.results().run_contexts
+    assert len(contexts) == 4
+    first = experiment.run("weekday", scenario="default", replication=0)
+    project = experiment.run("weekday", scenario="project", replication=0)
+    second = experiment.run("weekday", scenario="default", replication=1)
+    assert first.coordinated_run_asset is project.coordinated_run_asset
     assert first.coordinated_run_asset is not second.coordinated_run_asset
-    assert {run.replication for run in first.coordinated_run_asset.runs.values()} == {0}
-    assert {run.replication for run in second.coordinated_run_asset.runs.values()} == {1}
-    calls = []
-    monkeypatch.setattr(first.coordinated_run_asset, "get", lambda: calls.append(0))
-    monkeypatch.setattr(second.coordinated_run_asset, "get", lambda: calls.append(1))
-    first.coordinated_run_asset.get()
-    assert calls == [0]
+    assert len(first.coordinated_run_asset.runs) == 2
+    assert {run.sensitivity_case_id for run in first.coordinated_run_asset.runs.values()} == {"base"}
+    assert experiment.describe()["replications"] == {0: 12, 1: 34}
+    other = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
+    other_run = other.run("weekday", scenario="default", replication=0)
+    single = setup.run("weekday", scenario="default", replication=0)
+    assert first.cohort_identity == other_run.cohort_identity
+    assert first.cohort_identity != single.cohort_identity
+    assert first.coordinated_run_asset.inputs_hash == other_run.coordinated_run_asset.inputs_hash
+    assert first.coordinated_run_asset.inputs_hash != single.coordinated_run_asset.inputs_hash
+    baseline_view = experiment.results(scenarios="default", replications=[0])
+    assert baseline_view.first_run is first
+    assert len(baseline_view.first_run.coordinated_run_asset.runs) == 2
+    with pytest.raises(ValueError, match="not part of this experiment"):
+        experiment.run("weekday", sensitivity_case=case)
 
 
 @pytest.mark.parametrize("after_first_request", [False, True])
@@ -487,7 +483,6 @@ def test_experiment_rejects_undeclared_sensitivity_cases(monkeypatch, after_firs
     unknown = SensitivityCase(case_id="unregistered", parameter_name="cost", variation_value=2.0)
     with pytest.raises(ValueError, match="not part of this experiment"):
         setup.run("weekday", sensitivity_case=unknown)
-    assert len(setup._experiment_definitions) == int(after_first_request)
 
 
 def test_group_day_trips_remove_clears_all_known_scenario_replications(monkeypatch):

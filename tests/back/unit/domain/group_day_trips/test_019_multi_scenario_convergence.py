@@ -49,11 +49,11 @@ def test_base_gap_change_ignores_equal_changes_in_both_scenarios():
     assert normalized_base_gap_change(previous, previous, current, current, 100.0) == 0.0
 
 
-def test_search_defaults_keep_three_destination_draws_and_a_finite_inner_limit():
+def test_low_effort_defaults_keep_a_finite_inner_limit():
     """Keep the intended sampling defaults and reject an empty inner loop."""
     parameters = GroupDayTripsParameters()
-    assert parameters.destination_sequences.k_destination_sequences == 3
-    assert parameters.adaptive_search.max_inner_iterations == 5
+    assert parameters.destination_sequences.k_destination_sequences == 1
+    assert parameters.adaptive_search.max_inner_iterations == 3
 
     with pytest.raises(ValueError):
         GroupDayTripsParameters(adaptive_search={"max_inner_iterations": 0})

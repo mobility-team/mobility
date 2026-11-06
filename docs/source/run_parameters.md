@@ -1,5 +1,27 @@
 # Run Parameters
 
+## Computational effort
+
+`GroupDayTripsParameters(effort="low")` is the default. Choose `"medium"` or
+`"high"` to increase candidate sampling and the number of independent seeded
+replications. These initial settings are computational budgets, not guarantees
+of accuracy or runtime. Explicit parameters override the selected effort level.
+
+| Setting | Low | Medium | High |
+| --- | ---: | ---: | ---: |
+| Activity schedule draws | 1 | 3 | 6 |
+| Destination draws | 1 | 3 | 5 |
+| Mode combinations | 1 | 3 | 5 |
+| Maximum search batches | 3 | 5 | 8 |
+| Replications | 1 | 3 | 5 |
+
+Default replication seeds are consecutive integers starting at zero. An explicit
+seed list sets the replication count unless a count is also supplied, in which
+case the two must agree. Effort does not change the number of simulation steps.
+Simulation steps advance scenario and behaviour changes; search batches explore
+candidate plans within a step. `n_steps` and `max_search_batches` are accepted
+as names for the corresponding run and adaptive-search settings.
+
 `GroupDayTripsParameters` controls how `PopulationGroupDayTrips` runs.
 
 For a first run, keep the parameters small. The first objective is to check that the model can go from inputs to results. Once this works, you can increase the number of iterations, add replications, and describe how people are allowed to change their plans across iterations.

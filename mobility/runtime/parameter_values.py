@@ -233,6 +233,11 @@ class ParameterValue(BaseModel):
         return cls(values_by_scenario={None: dict(points)}, mode=mode)
 
     @classmethod
+    def by_step(cls, points: dict[int, Any], *, mode: str = "step") -> "ParameterValue":
+        """Return a parameter value that changes by simulation step."""
+        return cls.by_iteration(points, mode=mode)
+
+    @classmethod
     def by_scenario(
         cls,
         values: dict[str, Any] | None = None,
@@ -269,6 +274,15 @@ class ParameterValue(BaseModel):
                 for scenario, value in scenario_values.items()
             }
         )
+
+    @classmethod
+    def by_scenario_and_step(
+        cls,
+        values: dict[str, dict[int, Any] | Any] | None = None,
+        **named_values: dict[int, Any] | Any,
+    ) -> "ParameterValue":
+        """Return a parameter value that changes by scenario and simulation step."""
+        return cls.by_scenario_and_iteration(values, **named_values)
 
     @classmethod
     def by_population_segment(

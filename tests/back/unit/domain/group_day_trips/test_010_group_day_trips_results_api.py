@@ -384,6 +384,9 @@ def test_population_group_day_trips_results_selects_all_replications(tmp_path, m
     wrapper.parameters = SimpleNamespace(run=SimpleNamespace(n_replications=2))
     wrapper.scenarios = Scenarios()
     wrapper.run = _run_factory(tmp_path)
+    wrapper.modes = []
+    wrapper.activities = []
+    wrapper._experiments = []
 
     results = wrapper.results("weekday")
 

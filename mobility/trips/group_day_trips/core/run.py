@@ -89,6 +89,7 @@ class Run(InMemoryAsset):
         scenario: str,
         sensitivity_case: SensitivityCase | None = None,
         replication: int = 0,
+        cohort_identity: object = None,
     ) -> None:
         """Initialize a single weekday or weekend PopulationGroupDayTrips run."""
         sensitivity_case_id = (
@@ -112,6 +113,7 @@ class Run(InMemoryAsset):
             "enabled": enabled,
             "scenario": scenario,
             "sensitivity_case": sensitivity_case,
+            "cohort": cohort_identity,
         }
         run_context_hash = hash_inputs(run_context_inputs)
         checkpoint_parameters = {

@@ -517,6 +517,13 @@ class GroupDayTripsResultMetrics:
         )
         reference_kind = self._reference_kind(reference)
         self._validate_reference_view(reference_view, reference_kind=reference_kind)
+        if reference_kind == "scenario":
+            reference_scenario = self._reference_scenario(reference)
+            if reference_scenario not in self.results.scenarios:
+                raise ValueError(
+                    f"Reference scenario {reference_scenario!r} is not in this result view. "
+                    "Include it in the experiment and select it in the results."
+                )
         if reference_kind == "external" and self._has_metric_filter(
             home_zone_ids=home_zone_ids,
             csp=csp,

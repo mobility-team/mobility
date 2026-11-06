@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -19,6 +19,20 @@ class BehaviorChangePhase(BaseModel):
     """Behavior-change phase applied from ``start_iteration`` onward."""
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_start_step(cls, data):
+        if isinstance(data, dict) and "start_step" in data:
+            if "start_iteration" in data:
+                raise ValueError("Use either start_step or start_iteration, not both.")
+            data = dict(data)
+            data["start_iteration"] = data.pop("start_step")
+        return data
+
+    @property
+    def start_step(self):
+        return self.start_iteration
 
     start_iteration: Annotated[
         int,
@@ -51,6 +65,20 @@ class GroupDayTripsRunParameters(BaseModel):
     """Run length, cost refresh, and stochastic replication settings."""
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_n_steps(cls, data):
+        if isinstance(data, dict) and "n_steps" in data:
+            if "n_iterations" in data:
+                raise ValueError("Use either n_steps or n_iterations, not both.")
+            data = dict(data)
+            data["n_iterations"] = data.pop("n_steps")
+        return data
+
+    @property
+    def n_steps(self):
+        return self.n_iterations
 
     n_iterations: Annotated[
         int,
@@ -103,10 +131,20 @@ class GroupDayTripsRunParameters(BaseModel):
         ),
     ]
 
+    @model_validator(mode="before")
+    @classmethod
+    def infer_replications_from_seeds(cls, data):
+        """A supplied list of seeds defines the number of runs unless specified."""
+        if isinstance(data, dict) and data.get("seeds") is not None and "n_replications" not in data:
+            data = {**data, "n_replications": len(data["seeds"])}
+        return data
+
     @model_validator(mode="after")
     def validate_replication_seeds(self) -> "GroupDayTripsRunParameters":
         """Validate single-run and multi-run seed settings."""
         if self.seeds is not None:
+            if self.seed != 0:
+                raise ValueError("Use either seed or seeds, not both.")
             if len(self.seeds) != self.n_replications:
                 raise ValueError(
                     "GroupDayTripsRunParameters.seeds should contain one seed per replication."
@@ -191,6 +229,28 @@ class GroupDayTripsOutputParameters(BaseModel):
     """Settings for optional saved outputs from the iteration loop."""
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_step_names(cls, data):
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for new, old in (("cache_step_events", "cache_iteration_events"),
+                         ("checkpoint_each_step", "checkpoint_each_iteration")):
+            if new in data:
+                if old in data:
+                    raise ValueError(f"Use either {new} or {old}, not both.")
+                data[old] = data.pop(new)
+        return data
+
+    @property
+    def cache_step_events(self):
+        return self.cache_iteration_events
+
+    @property
+    def checkpoint_each_step(self):
+        return self.checkpoint_each_iteration
 
     cache_iteration_events: Annotated[
         bool,
@@ -558,6 +618,20 @@ class GroupDayTripsAdaptiveSearchParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def accept_max_search_batches(cls, data):
+        if isinstance(data, dict) and "max_search_batches" in data:
+            if "max_inner_iterations" in data:
+                raise ValueError("Use either max_search_batches or max_inner_iterations, not both.")
+            data = dict(data)
+            data["max_inner_iterations"] = data.pop("max_search_batches")
+        return data
+
+    @property
+    def max_search_batches(self):
+        return self.max_inner_iterations
+
     max_inner_iterations: Annotated[
         int,
         Field(
@@ -617,6 +691,47 @@ class GroupDayTripsParameters(BaseModel):
     """Root settings for the grouped day-trips model."""
 
     model_config = ConfigDict(extra="forbid")
+
+    effort: Literal["low", "medium", "high"] = Field(default="low", exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_effort(cls, data):
+        """Fill omitted search settings from the chosen computational budget."""
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        presets = {
+            "low": (1, 1, 1, 3, 1),
+            "medium": (3, 3, 3, 5, 3),
+            "high": (6, 5, 5, 8, 5),
+        }
+        effort = data.get("effort", "low")
+        if effort not in presets:
+            return data  # Let Pydantic report the invalid value.
+        activity, destination, mode, batches, replications = presets[effort]
+        defaults = {
+            "activity_sequences": {"k_activity_sequences": activity},
+            "destination_sequences": {"k_destination_sequences": destination},
+            "mode_sequences": {"k_mode_sequences": mode},
+            "adaptive_search": {"max_inner_iterations": batches},
+            "run": {"n_replications": replications},
+        }
+        for name, preset in defaults.items():
+            supplied = data.get(name, {})
+            if isinstance(supplied, BaseModel):
+                supplied = supplied.model_dump(exclude_unset=True)
+            if not isinstance(supplied, dict):
+                continue
+            supplied = dict(supplied)
+            if name == "adaptive_search" and "max_search_batches" in supplied:
+                if "max_inner_iterations" in supplied:
+                    raise ValueError("Use either max_search_batches or max_inner_iterations, not both.")
+                supplied["max_inner_iterations"] = supplied.pop("max_search_batches")
+            if name == "run" and supplied.get("seeds") is not None and "n_replications" not in supplied:
+                supplied["n_replications"] = len(supplied["seeds"])
+            data[name] = {**preset, **supplied}
+        return data
 
     run: Annotated[
         GroupDayTripsRunParameters,

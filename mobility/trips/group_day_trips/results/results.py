@@ -240,6 +240,8 @@ class GroupDayTripsResults:
             replications = range(self.n_replications)
 
         selected_replications = [int(replication) for replication in replications]
+        if len(selected_replications) != len(set(selected_replications)):
+            raise ValueError("GroupDayTripsResults.replications should not contain duplicates.")
         invalid_replications = [
             replication
             for replication in selected_replications
