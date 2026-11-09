@@ -45,18 +45,18 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=3,
-                n_iter_per_cost_update=0,
+                n_steps=3,
+                n_steps_per_cost_update=0,
                 seed=0,
             ),
             outputs=GroupDayTripsOutputParameters(
-                cache_iteration_events=True,
+                cache_step_events=True,
             ),
             behavior_change=GroupDayTripsBehaviorChangeParameters(
                 phases=[
-                    BehaviorChangePhase(start_iteration=1, scope=BehaviorChangeScope.FULL_REPLANNING),
-                    BehaviorChangePhase(start_iteration=2, scope=BehaviorChangeScope.MODE_REPLANNING),
-                    BehaviorChangePhase(start_iteration=3, scope=BehaviorChangeScope.DESTINATION_REPLANNING),
+                    BehaviorChangePhase(start_step=1, scope=BehaviorChangeScope.FULL_REPLANNING),
+                    BehaviorChangePhase(start_step=2, scope=BehaviorChangeScope.MODE_REPLANNING),
+                    BehaviorChangePhase(start_step=3, scope=BehaviorChangeScope.DESTINATION_REPLANNING),
                 ],
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
@@ -82,7 +82,7 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
 
     assert weekday_plan_steps.height > 0
     assert weekday_transitions.height > 0
-    assert weekday_transitions["iteration"].unique().sort().to_list() == [1, 2, 3]
+    assert weekday_transitions["step"].unique().sort().to_list() == [1, 2, 3]
     assert destination_sequences_1.height > 0
     assert destination_sequences_2.height > 0
     assert destination_sequences_3.height > 0
@@ -92,14 +92,14 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
     assert weekday_plan_steps.filter(pl.col("activity_seq_id") != 0)["mode_seq_id"].min() > 0
 
     bad_mode = weekday_transitions.filter(
-        (pl.col("iteration") == 2)
+        (pl.col("step") == 2)
         & (
             (pl.col("activity_seq_id") != pl.col("activity_seq_id_trans"))
             | (pl.col("dest_seq_id") != pl.col("dest_seq_id_trans"))
         )
     )
     bad_destination = weekday_transitions.filter(
-        (pl.col("iteration") == 3)
+        (pl.col("step") == 3)
         & (pl.col("activity_seq_id") != pl.col("activity_seq_id_trans"))
     )
 

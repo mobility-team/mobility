@@ -24,14 +24,14 @@ as names for the corresponding run and adaptive-search settings.
 
 `GroupDayTripsParameters` controls how `PopulationGroupDayTrips` runs.
 
-For a first run, keep the parameters small. The first objective is to check that the model can go from inputs to results. Once this works, you can increase the number of iterations, add replications, and describe how people are allowed to change their plans across iterations.
+For a first run, keep the parameters small. The first objective is to check that the model can go from inputs to results. Once this works, you can increase the number of simulation steps, add replications, and describe how people are allowed to change their plans across steps.
 
 ## Minimal First Run
 
 ```python
 parameters = mobility.GroupDayTripsParameters(
     run=mobility.GroupDayTripsRunParameters(
-        n_iterations=1,
+        n_steps=1,
     ),
     mode_sequences=mobility.GroupDayTripsModeSequenceParameters(
         mode_sequence_search_parallel=False,
@@ -43,15 +43,15 @@ This is useful for a quick technical check on a small area. Use a larger configu
 
 ## Project Run
 
-A project run usually needs more iterations. The model runs the configured number of outer iterations, even when behavior appears stable: these iterations represent the model's progression over time. Use diagnostics to understand how results change. Replications are useful when you want to estimate how much results depend on sampling and random seeds.
+A project run usually needs more steps. The model runs the configured number of simulation steps, even when behavior appears stable; the steps represent the model's progression. Use diagnostics to understand how results change. Replications are useful when you want to estimate how much results depend on sampling and random seeds.
 
-`n_iter_per_cost_update` controls how often travel costs are refreshed during the loop. Setting it to `0` disables congestion feedback. If congestion is part of the study question, document this value with the other supply assumptions.
+`n_steps_per_cost_update` controls how often travel costs are refreshed during the loop. Setting it to `0` disables congestion feedback. If congestion is part of the study question, document this value with the other supply assumptions.
 
 ```python
 parameters = mobility.GroupDayTripsParameters(
     run=mobility.GroupDayTripsRunParameters(
-        n_iterations=16,
-        n_iter_per_cost_update=1,
+        n_steps=16,
+        n_steps_per_cost_update=1,
         n_replications=2,
         seeds=[0, 1],
     ),
@@ -76,7 +76,7 @@ During candidate evaluation, identical plan steps with the same country, CSP, an
 
 ## Coordinated Search Limits
 
-Each outer iteration can run up to `adaptive_search.max_inner_iterations`
+Each simulation step can run up to `adaptive_search.max_search_batches`
 candidate-generation and allocation batches (five by default). Each batch
 requests at most one utility profile per home zone in each run. Diagnostics
 estimate the requested mode-sequence alternatives from the activity,
@@ -88,36 +88,36 @@ Later batches prioritize activity profiles without a feasible non-stay-home
 plan, then missing activity-profile and utility-profile combinations, recent
 allocation changes, differences from the base scenario, and exploration. In
 mode-only or destination-only replanning, coverage targets are limited to
-activity profiles with active plans. The search stops at the inner-iteration
+activity profiles with active plans. The search stops at the search-batch
 limit, when it converges, or when there is no generation work left. The
 `adaptive_search_diagnostics` table reports requested effort, coverage counts,
 and the stop reason for each batch.
 
-To trace simulation time and RAM, set `MOBILITY_SIMULATION_TRACE` to a JSONL output path before running Python. For example, in PowerShell: `$env:MOBILITY_SIMULATION_TRACE='D:/data/mobility/simulation-trace.jsonl'`. Tracing is disabled when this variable is unset. Each coordinated run appends records with a unique run id. Records identify the nested step, scenario, outer iteration, inner batch, wall time, starting/ending RSS, and sampled peak RSS. RAM is sampled every 100 ms for the Python process, including its native threads; child processes are excluded. Short spikes may be missed. Parent times include child steps, so do not add all recorded durations together. RAM changes measure retained process memory, not bytes allocated by that step alone. Cached result reads do not create another run trace.
+To trace simulation time and RAM, set `MOBILITY_SIMULATION_TRACE` to a JSONL output path before running Python. For example, in PowerShell: `$env:MOBILITY_SIMULATION_TRACE='D:/data/mobility/simulation-trace.jsonl'`. Tracing is disabled when this variable is unset. Each coordinated run appends records with a unique run id. Records identify the nested operation, scenario, simulation step, search batch, wall time, starting/ending RSS, and sampled peak RSS. The `operation` field names the measured operation; `step` and `search_batch` identify the simulation step and search batch. An `asset_step` can identify an asset associated with a different step. RAM is sampled every 100 ms for the Python process, including its native threads; child processes are excluded. Short spikes may be missed. Parent times include child steps, so do not add all recorded durations together. RAM changes measure retained process memory, not bytes allocated by that step alone. Cached result reads do not create another run trace.
 
 ## Behaviour Change Phases
 
 Behaviour change phases describe which plans can change during each part of the run.
 
-If no phases are provided, all iterations use `FULL_REPLANNING`. If phases are provided, iterations before the first `start_iteration` also use `FULL_REPLANNING`.
+If no phases are provided, all steps use `FULL_REPLANNING`. If phases are provided, steps before the first `start_step` also use `FULL_REPLANNING`.
 
 ```python
 parameters = mobility.GroupDayTripsParameters(
     run=mobility.GroupDayTripsRunParameters(
-        n_iterations=16,
+        n_steps=16,
     ),
     behavior_change=mobility.GroupDayTripsBehaviorChangeParameters(
         phases=[
             mobility.BehaviorChangePhase(
-                start_iteration=5,
+                start_step=5,
                 scope=mobility.BehaviorChangeScope.MODE_REPLANNING,
             ),
             mobility.BehaviorChangePhase(
-                start_iteration=9,
+                start_step=9,
                 scope=mobility.BehaviorChangeScope.DESTINATION_REPLANNING,
             ),
             mobility.BehaviorChangePhase(
-                start_iteration=13,
+                start_step=13,
                 scope=mobility.BehaviorChangeScope.FULL_REPLANNING,
             ),
         ],
@@ -131,7 +131,7 @@ The current scopes are:
 - `DESTINATION_REPLANNING`: keep activities fixed, but allow destination and mode changes,
 - `FULL_REPLANNING`: allow activity, destination, and mode replanning.
 
-For a first model, you can leave these phases aside. They become useful when a scenario assumption is introduced after some warm-up iterations, or when you want to separate mode replanning from destination replanning in the interpretation. The order of phases is a modelling assumption: mode-only, destination, then full replanning tells a different story from full replanning followed by restricted replanning.
+For a first model, you can leave these phases aside. They become useful when a scenario assumption is introduced after some warm-up steps, or when you want to separate mode replanning from destination replanning in the interpretation. The order of phases is a modelling assumption: mode-only, destination, then full replanning tells a different story from full replanning followed by restricted replanning.
 
 ## Keep A Parameter Report
 
@@ -178,7 +178,7 @@ parameters = mobility.GroupDayTripsParameters(
 )
 
 pupil_value_of_time = mobility.ParameterValue.by_population_segment(
-    default=mobility.ParameterValue.by_iteration({1: 20.0, 5: 24.0}),
+    default=mobility.ParameterValue.by_step({1: 20.0, 5: 24.0}),
     segment_values={
         "localist_pupils": mobility.ParameterValue.by_scenario(
             default=10.0,
@@ -211,9 +211,9 @@ demand group. The share split happens before
 `max_persons_per_demand_subgroup`, so both parts can then be split further to
 respect the size limit. Population weights are preserved.
 
-Scenario and iteration values are resolved inside each segment. A segment
-value replaces the default value: it does not inherit the default iteration
-curve. Define an iteration curve explicitly inside the segment value when the
+Scenario and step values are resolved inside each segment. A segment
+value replaces the default value: it does not inherit the default step
+curve. Define a step curve explicitly inside the segment value when the
 segment should also change over time.
 
 Mobility deduplicates identical coefficient combinations into utility
@@ -236,9 +236,9 @@ The coordinated run then updates transport costs for that allocation without
 another candidate search. To inspect the MNL allocation from the last regular
 inner search, request `results.tables.mnl_od_mode_flows()` in
 `results.get_all(...)`. That diagnostic uses costs fixed at the start of the
-last outer iteration, before the behavioral and final transport-cost updates;
+last simulation step, before the behavioral and final transport-cost updates;
 it is not an estimate at the final costs. It is available for a coordinated
-run's last executed outer iteration.
+run's last executed step.
 
 Polars 2 changes the hashes used for seeded sampling and plan identities.
 Results from the same seed can therefore differ from runs made with Polars 1.

@@ -13,15 +13,16 @@ from mobility.trips.group_day_trips.core.performance_trace import (
 def test_nested_steps_keep_loop_labels_and_record_failures(tmp_path):
     path = tmp_path / "trace.jsonl"
     with SimulationPerformanceTrace(path) as trace:
-        with trace.step("inner batch", None, {"outer_iteration": 2, "inner_batch": 3}):
+        with trace.step("search batch", None, {"step": 2, "search_batch": 3}):
             with pytest.raises(ValueError):
                 with simulation_step("allocation", scenario="project"):
                     raise ValueError("expected test failure")
     child, parent = [json.loads(line) for line in path.read_text().splitlines()]
     assert child["parent_id"] == parent["step_id"]
     assert child["run_id"] == parent["run_id"]
-    assert child["outer_iteration"] == 2
-    assert child["inner_batch"] == 3
+    assert child["step"] == 2
+    assert child["search_batch"] == 3
+    assert child["operation"] == "allocation"
     assert child["scenario"] == "project"
     assert child["status"] == "error"
     assert child["error_type"] == "ValueError"
@@ -66,8 +67,8 @@ def test_inner_loop_trace_uses_the_outer_iteration_number(tmp_path, monkeypatch)
             assert inner(iteration=3, phase="inner") == 3
     row = json.loads(path.read_text().splitlines()[0])
     assert row["phase"] == "inner"
-    assert row["outer_iteration"] == 3
-    assert row["iteration"] == 3
+    assert row["step"] == 3
+    assert row["asset_step"] == 3
 
 
 def test_mode_search_gets_its_scenario_from_destination_asset(tmp_path):

@@ -61,13 +61,13 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data, gtf
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=2,
-                n_iter_per_cost_update=0,
+                n_steps=2,
+                n_steps_per_cost_update=0,
                 seed=0,
             ),
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
             outputs=GroupDayTripsOutputParameters(
-                cache_iteration_events=True,
+                cache_step_events=True,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
                 dest_prob_cutoff=0.9,
@@ -86,7 +86,7 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data, gtf
         activities=[
             HomeActivity(),
             WorkActivity(
-                value_of_time=mobility.ParameterValue.by_iteration(
+                value_of_time=mobility.ParameterValue.by_step(
                     {1: 5.0, 2: 50.0},
                 ),
             ),
@@ -95,13 +95,13 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data, gtf
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=2,
-                n_iter_per_cost_update=0,
+                n_steps=2,
+                n_steps_per_cost_update=0,
                 seed=0,
             ),
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
             outputs=GroupDayTripsOutputParameters(
-                cache_iteration_events=True,
+                cache_step_events=True,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
                 dest_prob_cutoff=0.9,
@@ -130,8 +130,8 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data, gtf
     assert dynamic_plan_steps.height > 0
     assert static_transitions.height > 0
     assert dynamic_transitions.height > 0
-    static_iter_2 = static_transitions.filter(pl.col("iteration") == 2)
-    dynamic_iter_2 = dynamic_transitions.filter(pl.col("iteration") == 2)
+    static_iter_2 = static_transitions.filter(pl.col("step") == 2)
+    dynamic_iter_2 = dynamic_transitions.filter(pl.col("step") == 2)
 
     assert static_iter_2.height > 0
     assert dynamic_iter_2.height > 0

@@ -37,7 +37,7 @@ class Metric(FileAsset):
         self._has_precomputed_value = False
         self._precomputed_value: pl.DataFrame | pl.LazyFrame | None = None
         inputs = {
-            "version": 3,
+            "version": 4,
             "name": name,
             "dependencies": tuple(dependencies),
             "query": query,

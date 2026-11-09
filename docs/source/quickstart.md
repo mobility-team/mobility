@@ -61,7 +61,7 @@ population_trips = mobility.PopulationGroupDayTrips(
     ],
     surveys=[survey],
     parameters=mobility.GroupDayTripsParameters(
-        run=mobility.GroupDayTripsRunParameters(n_iterations=1),
+        run=mobility.GroupDayTripsRunParameters(n_steps=1),
         mode_sequences=mobility.GroupDayTripsModeSequenceParameters(
             mode_sequence_search_parallel=False,
         ),
@@ -76,14 +76,14 @@ weekday_plan_steps = weekday_run.table("plan_steps")
 weekday_results = population_trips.results("weekday")
 trip_count_by_mode = weekday_results.metrics.trip_count(
     by_variable="mode",
-    iterations="last",
+    steps="last",
     output="table",
 ).get()
 
 # Plot origin-destination flows between transport zones.
 od_flow_plot = weekday_results.metrics.trip_count(
     by_zone=["origin_zone", "destination_zone"],
-    iterations="last",
+    steps="last",
     output="plot",
 )
 
@@ -158,7 +158,7 @@ weekday_plan_steps = weekday_run.table("plan_steps")
 weekday_results = population_trips.results("weekday")
 trip_count_by_mode = weekday_results.metrics.trip_count(
     by_variable="mode",
-    iterations="last",
+    steps="last",
     output="table",
 ).get()
 parameters_report = weekday_run.parameters_dataframe()
@@ -185,7 +185,7 @@ A successful quickstart gives you:
 
 The exact numbers depend on the data and parameters used on your machine. For a first check, focus on whether the workflow runs, the result tables contain rows, and the main indicators have a plausible order of magnitude.
 
-The `trip_count_by_mode` table is a compact first check. Metric tables usually contain columns such as `scenario`, `day_type`, `iteration`, a grouping column like `mode`, and a value column such as `trip_count`, `travel_distance`, or `ghg_emissions`.
+The `trip_count_by_mode` table is a compact first check. Metric tables usually contain columns such as `scenario`, `day_type`, `step`, a grouping column like `mode`, and a value column such as `trip_count`, `travel_distance`, or `ghg_emissions`.
 
 One documentation run of this quickstart, using explicit data folders and 1000 sampled people, produced:
 
@@ -197,7 +197,7 @@ parameters_report shape: 276 rows x 14 columns
 The same run produced this `trip_count_by_mode` table:
 
 ```text
-scenario  day_type  iteration  mode     trip_count  trip_count_std  n_replications
+scenario  day_type  step       mode     trip_count  trip_count_std  n_replications
 default   weekday   1          bicycle  1695.16     null            1
 default   weekday   1          car      217089.35   null            1
 ```

@@ -396,7 +396,7 @@ class CandidatePlanStepsAsset(FileAsset):
         current_plans: pl.DataFrame,
         previous_candidate_plan_steps: pl.DataFrame | None,
         current_iteration: int,
-        n_warmup_iterations: int,
+        n_warmup_steps: int,
         max_inactive_age: int,
         profile_assignments: pl.DataFrame,
         candidate_pruner: Callable[[pl.LazyFrame], pl.DataFrame] | None = None,
@@ -464,7 +464,7 @@ class CandidatePlanStepsAsset(FileAsset):
             )
             .rename({"from_": "from"})
         )
-        if current_iteration <= n_warmup_iterations:
+        if current_iteration <= n_warmup_steps:
             return candidate_memory
 
         age_reference = pl.max_horizontal(

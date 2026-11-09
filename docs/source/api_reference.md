@@ -330,7 +330,7 @@ Main `Scenario` fields:
 Use this when one parameter changes by scenario or by iteration:
 
 ```python
-mobility.ParameterValue.by_scenario_and_iteration(
+mobility.ParameterValue.by_scenario_and_step(
     default=0.0,
     project={1: 0.0, 5: 0.20},
 )
@@ -416,15 +416,15 @@ Main parameter objects:
 
 Intermediate iteration state stays in memory by default. To save compact
 restart checkpoints after each iteration, set
-`outputs=mobility.GroupDayTripsOutputParameters(checkpoint_each_iteration=True)`.
+`outputs=mobility.GroupDayTripsOutputParameters(checkpoint_each_step=True)`.
 These checkpoints are separate from requested result tables.
 
 Common run arguments:
 
-- `n_iterations`: number of model iterations,
+- `n_steps`: number of model iterations,
 - `n_replications`: number of replications,
 - `seeds`: random seeds used by replications,
-- `n_iter_per_cost_update`: how often transport costs are refreshed.
+- `n_steps_per_cost_update`: how often transport costs are refreshed.
 
 Common mode-sequence arguments:
 
@@ -478,8 +478,8 @@ Common dimensions:
 
 Common result options:
 
-- `iterations="last"` for final indicators,
-- `iterations="all"` for iteration diagnostics,
+- `steps="last"` for final indicators,
+- `steps="all"` for iteration diagnostics,
 - `output="table"` for explicit values,
 - `output="plot"` for a visual check,
 - `reference=("scenario", "default")` for scenario gaps,

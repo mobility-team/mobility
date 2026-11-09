@@ -357,11 +357,11 @@ class Iterations:
         self.folder_paths = {name: ensure_dir(path) for name, path in self.folder_paths.items()}
 
 
-    def get_resume_iteration(self, n_iterations: int) -> int | None:
+    def get_resume_iteration(self, n_steps: int) -> int | None:
         """Return and log the effective resume iteration for this run."""
         resume_iteration = self._find_latest_completed_iteration()
         if resume_iteration is not None:
-            resume_iteration = min(int(resume_iteration), int(n_iterations))
+            resume_iteration = min(int(resume_iteration), int(n_steps))
 
         if resume_iteration is None:
             logging.debug(
@@ -379,14 +379,14 @@ class Iterations:
         )
         return resume_iteration
 
-    def has_complete_checkpoints(self, n_iterations: int) -> bool:
+    def has_complete_checkpoints(self, n_steps: int) -> bool:
         """Check that every requested iteration has a complete restart point."""
         return all(
             all(
                 asset.cache_path.exists()
                 for asset in self.iteration(iteration).checkpoint_assets().values()
             )
-            for iteration in range(1, n_iterations + 1)
+            for iteration in range(1, n_steps + 1)
         )
 
 

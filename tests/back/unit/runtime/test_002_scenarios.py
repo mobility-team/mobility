@@ -42,7 +42,7 @@ def test_scenarios_validate_declared_setup_changes_and_describe_them():
         reference=DEFAULT_SCENARIO,
     )
     parameters = {
-        "gtfs_files": ParameterValue.by_scenario_and_iteration(
+        "gtfs_files": ParameterValue.by_scenario_and_step(
             {
                 DEFAULT_SCENARIO: {1: ["base.zip"]},
                 "saleve-jura": {1: ["base.zip"], 3: ["base.zip", "project.zip"]},
@@ -50,7 +50,7 @@ def test_scenarios_validate_declared_setup_changes_and_describe_them():
         )
     }
 
-    scenarios = Scenarios([scenario], parameters=parameters, n_iterations=4)
+    scenarios = Scenarios([scenario], parameters=parameters, n_steps=4)
 
     assert scenarios.names == [DEFAULT_SCENARIO, "saleve-jura"]
     assert scenarios.selected_names(None) == [DEFAULT_SCENARIO]
@@ -142,7 +142,7 @@ def test_scenarios_warn_about_unused_and_unreachable_changes():
                 Scenario(name="unused-scenario"),
             ],
             changes=changes,
-            n_iterations=3,
+            n_steps=3,
         )
 
     messages = [str(warning.message) for warning in warnings]
@@ -157,7 +157,7 @@ def test_collect_parameter_value_changes_finds_values_inside_nested_objects():
         ),
         nested_values=[
             {
-                "files": ParameterValue.by_scenario_and_iteration(
+                "files": ParameterValue.by_scenario_and_step(
                     {"saleve-jura": {1: ["base.zip"], 2: ["project.zip"]}}
                 )
             }

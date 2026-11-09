@@ -87,7 +87,7 @@ class TravelCostsEvaluation:
             Input ref_costs dataframe with a distance_model and a time_model column.
         """
         if iteration is None:
-            iteration = int(self.results.parameters.run.n_iterations)
+            iteration = int(self.results.parameters.run.n_steps)
 
         costs = self.results.run.iteration_transport_cost_assets[
             iteration - 1

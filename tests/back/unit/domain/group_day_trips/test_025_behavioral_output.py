@@ -29,14 +29,14 @@ def behavioral_state(active_people):
         activity_dur=pl.DataFrame(), home_night_dur=pl.DataFrame(),
         stay_home_plan=pl.DataFrame(), opportunities=pl.DataFrame(),
         current_plans=plans, candidate_plan_steps=None, plan_id_index=pl.DataFrame(),
-        destination_saturation=pl.DataFrame(), costs=pl.DataFrame(), start_iteration=1,
+        destination_saturation=pl.DataFrame(), costs=pl.DataFrame(), start_step=1,
         current_plan_steps=steps,
     )
 
 
 @pytest.mark.parametrize("iterations", [1, 2])
 def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, monkeypatch, tmp_path):
-    parameters = GroupDayTripsParameters(run={"n_iterations": iterations})
+    parameters = GroupDayTripsParameters(run={"n_steps": iterations})
     initial = behavioral_state(20)
     origins = []
     inner_calls = []
@@ -74,7 +74,7 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
         inner_calls.append(kwargs)
         estimate = behavioral_state(89 + kwargs["iteration"])
         return {
-            "pool": pool, "diagnostics": [], "inner_iterations": 1,
+            "pool": pool, "diagnostics": [], "search_batches": 1,
             "candidate_plan_steps": {0: None},
             "allocations": {0: estimate.current_plans},
             "plan_steps": {0: estimate.current_plan_steps},
@@ -119,7 +119,7 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
 def test_stable_replications_complete_the_configured_outer_iterations(monkeypatch, tmp_path):
     """A stable allocation must not shorten the modeled time horizon."""
     parameters = GroupDayTripsParameters(
-        run={"n_iterations": 3},
+        run={"n_steps": 3},
     )
 
     def make_coordinator(replication, increment):
@@ -140,7 +140,7 @@ def test_stable_replications_complete_the_configured_outer_iterations(monkeypatc
 
         def inner(**kwargs):
             return {
-                "pool": pool, "diagnostics": [], "inner_iterations": 1,
+                "pool": pool, "diagnostics": [], "search_batches": 1,
                 "candidate_plan_steps": {key: None}, "plan_steps": {key: behavioral_state(20).current_plan_steps},
                 "plan_id_indices": {key: pl.DataFrame()}, "time_sequence_steps": {key: pl.DataFrame()},
                 "rng_states": {key: None}, "infeasible_counts": {key: 0},
@@ -164,6 +164,6 @@ def test_stable_replications_complete_the_configured_outer_iterations(monkeypatc
     assert len(slow.states_by_run_key[1]) == 3
     diagnostics = fast.final_states_by_run_key[0].adaptive_search_diagnostics
     assert "outer_converged" not in diagnostics.columns
-    assert diagnostics["stop_reason"].to_list() == ["outer_continues", "outer_continues", "completed_outer_iterations"]
+    assert diagnostics["stop_reason"].to_list() == ["step_continues", "step_continues", "completed_steps"]
     assert fast.final_states_by_run_key[0].current_plans["n_persons"][0] == 20
     assert slow.final_states_by_run_key[1].current_plans["n_persons"][0] == 50

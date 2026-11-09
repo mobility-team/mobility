@@ -268,7 +268,7 @@ def _with_result_scope(
                         scenario=pl.lit(scenario, dtype=pl.String),
                         sensitivity_case=pl.lit("base", dtype=pl.String),
                         day_type=pl.lit(day_type, dtype=pl.String),
-                        iteration=pl.lit(iteration, dtype=pl.Int32),
+                        step=pl.lit(iteration, dtype=pl.Int32),
                         replication=pl.lit(replication, dtype=pl.Int64),
                     )
                 )

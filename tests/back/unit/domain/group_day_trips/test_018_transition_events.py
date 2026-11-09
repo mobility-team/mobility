@@ -11,7 +11,7 @@ from mobility.trips.group_day_trips.transitions.transition_schema import (
 def test_transition_plan_details_match_cache_schema_with_float32_activity_times():
     transition_events = pl.DataFrame(
         {
-            "iteration": [1],
+            "step": [1],
             "demand_group_id": [1],
             "demand_subgroup_id": [0],
             "activity_seq_id": [10],
@@ -33,7 +33,7 @@ def test_transition_plan_details_match_cache_schema_with_float32_activity_times(
             "is_self_transition": [False],
         },
         schema={
-            "iteration": pl.UInt32,
+            "step": pl.UInt32,
             "demand_group_id": pl.UInt32,
             "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,

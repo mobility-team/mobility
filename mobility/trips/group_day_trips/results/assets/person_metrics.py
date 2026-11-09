@@ -7,7 +7,7 @@ from mobility.trips.group_day_trips.evaluation.calibration_plan_steps import (
 )
 
 
-RESULT_COLUMNS = ["scenario", "sensitivity_case", "day_type", "iteration"]
+RESULT_COLUMNS = ["scenario", "sensitivity_case", "day_type", "step"]
 SCOPE_COLUMNS = RESULT_COLUMNS + ["replication"]
 DEMAND_GROUP_COLUMNS = ["home_zone_id", "csp", "n_cars"]
 

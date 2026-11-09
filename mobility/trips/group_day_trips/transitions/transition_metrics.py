@@ -47,7 +47,7 @@ def state_waterfall(
             "`state_waterfall` requires persisted transition events, but the "
             "run transitions table is empty. Rerun PopulationGroupDayTrips "
             "with GroupDayTripsParameters(outputs=GroupDayTripsOutputParameters("
-            "cache_iteration_events=True))."
+            "cache_step_events=True))."
         )
     _validate_transition_inputs(transitions_df)
 
@@ -188,7 +188,9 @@ def _load_demand_group_keys(
             subgroup_expr,
             pl.col("home_zone_id").cast(pl.Int32),
             pl.col("csp").cast(pl.String),
-            pl.col("n_cars").cast(pl.Int32),
+            # Census categories include "2+"; keep the category label rather
+            # than treating its physical categorical code as a car count.
+            pl.col("n_cars").cast(pl.String),
             pl.col("n_persons").cast(pl.Float64),
         )
         .collect(engine="streaming")
@@ -411,10 +413,10 @@ def _build_state_pair_delta(
             state_pair=pl.format("{} -> {}", pl.col("state_from"), pl.col("state_to")),
             delta_quantity_per_person=(delta_expr * pl.col("n_persons_moved")) / float(total_population),
         )
-        .group_by(["iteration", "state_pair"])
+        .group_by(["step", "state_pair"])
         .agg(delta_quantity_per_person=pl.col("delta_quantity_per_person").sum())
         .with_columns(abs_delta=pl.col("delta_quantity_per_person").abs())
-        .sort(["iteration", "abs_delta"], descending=[False, True])
+        .sort(["step", "abs_delta"], descending=[False, True])
     )
 
 
@@ -454,7 +456,7 @@ def _build_state_pair_details(transitions_enriched: pl.DataFrame) -> pl.DataFram
                 pl.col("home_zone_label").fill_null(pl.format("unknown ({})", pl.col("home_zone_id_str"))),
             ),
         )
-        .group_by(["iteration", "state_pair"])
+        .group_by(["step", "state_pair"])
         .agg(
             from_steps=pl.col("from_steps").unique().sort().str.join("<br><br>"),
             to_steps=pl.col("to_steps").unique().sort().str.join("<br><br>"),
@@ -500,18 +502,18 @@ def _build_iteration_totals(
         transitions_enriched
         .filter(pl.lit(include_stay_home) | (pl.col("mode_seq_id_to") != 0))
         .with_columns(quantity_total=mass_expr)
-        .group_by("iteration")
+        .group_by("step")
         .agg(quantity_total=pl.col("quantity_total").sum())
         .with_columns(quantity_per_person=pl.col("quantity_total") / float(total_population))
-        .sort("iteration")
+        .sort("step")
     )
 
     # Utility has non-zero baseline at iter 0 (stay-home utility). Other quantities start at 0.
     if spec["label"] == "utility" and not transitions_enriched.is_empty():
-        first_iter = int(transitions_enriched["iteration"].min())
+        first_iter = int(transitions_enriched["step"].min())
         base_total = (
             transitions_enriched
-            .filter(pl.col("iteration") == first_iter)
+            .filter(pl.col("step") == first_iter)
             .select((pl.col("utility_from") * pl.col("n_persons_moved")).sum().alias("base_total"))["base_total"][0]
         )
         base_total = float(base_total) if base_total is not None else 0.0
@@ -520,20 +522,20 @@ def _build_iteration_totals(
 
     base = pl.DataFrame(
         {
-            "iteration": [0],
+            "step": [0],
             "quantity_total": [base_total],
             "quantity_per_person": [base_total / float(total_population)],
         }
-    ).with_columns(pl.col("iteration").cast(pl.UInt32))
+    ).with_columns(pl.col("step").cast(pl.UInt32))
 
     return (
         pl.concat([base, totals], how="vertical")
-        .group_by("iteration")
+        .group_by("step")
         .agg(
             quantity_total=pl.col("quantity_total").sum(),
             quantity_per_person=pl.col("quantity_per_person").sum(),
         )
-        .sort("iteration")
+        .sort("step")
     )
 
 
@@ -556,34 +558,34 @@ def _rank_state_pairs(
     """
     top_pairs = (
         pair_delta
-        .with_columns(rank=pl.col("abs_delta").rank(method="ordinal", descending=True).over("iteration"))
+        .with_columns(rank=pl.col("abs_delta").rank(method="ordinal", descending=True).over("step"))
         .filter(pl.col("rank") <= int(top_n))
-        .select(["iteration", "state_pair", "delta_quantity_per_person", "abs_delta"])
+        .select(["step", "state_pair", "delta_quantity_per_person", "abs_delta"])
     )
 
     other_pairs = (
         pair_delta
-        .join(top_pairs.select(["iteration", "state_pair"]), on=["iteration", "state_pair"], how="anti")
-        .select(["iteration", "state_pair"])
+        .join(top_pairs.select(["step", "state_pair"]), on=["step", "state_pair"], how="anti")
+        .select(["step", "state_pair"])
     )
 
     other_values = (
         pair_delta
-        .join(other_pairs, on=["iteration", "state_pair"], how="inner")
-        .group_by("iteration")
+        .join(other_pairs, on=["step", "state_pair"], how="inner")
+        .group_by("step")
         .agg(delta_quantity_per_person=pl.col("delta_quantity_per_person").sum())
         .with_columns(
             state_pair=pl.lit("other"),
             abs_delta=pl.col("delta_quantity_per_person").abs(),
         )
-        .select(["iteration", "state_pair", "delta_quantity_per_person", "abs_delta"])
+        .select(["step", "state_pair", "delta_quantity_per_person", "abs_delta"])
     )
 
     other_details = (
         transitions_enriched
         .with_columns(state_pair=pl.format("{} -> {}", pl.col("state_from"), pl.col("state_to")))
-        .join(other_pairs, on=["iteration", "state_pair"], how="inner")
-        .group_by("iteration")
+        .join(other_pairs, on=["step", "state_pair"], how="inner")
+        .group_by("step")
         .agg(
             n_persons_moved_total=pl.col("n_persons_moved").sum(),
             activity_time_from_avg=_weighted_avg("activity_time_from"),
@@ -605,7 +607,7 @@ def _rank_state_pairs(
         )
         .select(
             [
-                "iteration",
+                "step",
                 "state_pair",
                 "from_steps",
                 "to_steps",
@@ -626,9 +628,9 @@ def _rank_state_pairs(
 
     return (
         pl.concat([top_pairs, other_values], how="vertical")
-        .sort(["iteration", "abs_delta"], descending=[False, True])
-        .join(pair_details, on=["iteration", "state_pair"], how="left")
-        .join(other_details, on=["iteration", "state_pair"], how="left", suffix="_other")
+        .sort(["step", "abs_delta"], descending=[False, True])
+        .join(pair_details, on=["step", "state_pair"], how="left")
+        .join(other_details, on=["step", "state_pair"], how="left", suffix="_other")
         .with_columns(
             from_steps=pl.coalesce([pl.col("from_steps"), pl.col("from_steps_other")]),
             to_steps=pl.coalesce([pl.col("to_steps"), pl.col("to_steps_other")]),
@@ -791,15 +793,15 @@ def _plot_state_waterfall(
         """
         return "none" if value is None else f"{float(value):.3f}"
 
-    base_val = float(iter_totals.filter(pl.col("iteration") == 0)["quantity_per_person"][0])
+    base_val = float(iter_totals.filter(pl.col("step") == 0)["quantity_per_person"][0])
     labels.append("iter 0 total")
     measures.append("absolute")
     values.append(base_val)
     texts.append(f"{base_val:.3f}")
     hovertexts.append(f"Iteration: 0<br>Total average {quantity} per person: {base_val:.3f}")
 
-    for iteration in [int(x) for x in iter_totals["iteration"].to_list() if int(x) != 0]:
-        changes = ranked_pairs.filter(pl.col("iteration") == iteration).sort("abs_delta", descending=True)
+    for iteration in [int(x) for x in iter_totals["step"].to_list() if int(x) != 0]:
+        changes = ranked_pairs.filter(pl.col("step") == iteration).sort("abs_delta", descending=True)
 
         for row in changes.iter_rows(named=True):
             delta = float(row["delta_quantity_per_person"])
@@ -845,7 +847,7 @@ def _plot_state_waterfall(
                 )
             )
 
-        total = float(iter_totals.filter(pl.col("iteration") == iteration)["quantity_per_person"][0])
+        total = float(iter_totals.filter(pl.col("step") == iteration)["quantity_per_person"][0])
         labels.append(f"iter {iteration} total")
         measures.append("total")
         values.append(0.0)

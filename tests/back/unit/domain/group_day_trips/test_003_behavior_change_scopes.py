@@ -111,8 +111,8 @@ def _with_plan_id(
 def test_parameters_resolve_behavior_change_scope_from_active_phases():
     parameters = GroupDayTripsBehaviorChangeParameters(
         phases=[
-            BehaviorChangePhase(start_iteration=3, scope=BehaviorChangeScope.MODE_REPLANNING),
-            BehaviorChangePhase(start_iteration=5, scope=BehaviorChangeScope.DESTINATION_REPLANNING),
+            BehaviorChangePhase(start_step=3, scope=BehaviorChangeScope.MODE_REPLANNING),
+            BehaviorChangePhase(start_step=5, scope=BehaviorChangeScope.DESTINATION_REPLANNING),
         ]
     )
 
@@ -525,7 +525,7 @@ def _build_candidate_memory(previous_candidates, *, iteration=5):
         **inputs,
         previous_candidate_plan_steps=previous_candidates,
         current_iteration=iteration,
-        n_warmup_iterations=1,
+        n_warmup_steps=1,
         max_inactive_age=2,
     ).collect()
 
@@ -1118,7 +1118,7 @@ def test_apply_transitions_prunes_low_probability_targets_consistently(tmp_path)
         transition_probabilities,
         iteration=2,
         plan_probability_pruning_retained_share=0.99,
-        plan_probability_pruning_min_iteration=2,
+        plan_probability_pruning_min_step=2,
     )
     transition_events = transition_events.collect()
 
@@ -1199,7 +1199,7 @@ def test_apply_transitions_probability_pruning_does_not_merge_mobile_targets_int
         transition_probabilities,
         iteration=2,
         plan_probability_pruning_retained_share=0.95,
-        plan_probability_pruning_min_iteration=2,
+        plan_probability_pruning_min_step=2,
     )
     transition_events = transition_events.collect()
 

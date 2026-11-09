@@ -200,7 +200,7 @@ class InitialIterationStateAsset(InMemoryAsset):
                     table.write_parquet(temporary_path / f"{table_name}.parquet")
         metadata = {
             "none_tables": none_tables,
-            "start_iteration": state.start_iteration,
+            "start_step": state.start_step,
             "rng_state": state.rng_state,
         }
         with (temporary_path / "metadata.json").open("w", encoding="utf-8") as file:
@@ -224,7 +224,7 @@ class InitialIterationStateAsset(InMemoryAsset):
         }
         return RunState(
             **state,
-            start_iteration=metadata["start_iteration"],
+            start_step=metadata["start_step"],
             rng_state=_nested_lists_to_tuples(metadata["rng_state"]),
         )
 
@@ -276,7 +276,7 @@ class InitialIterationStateAsset(InMemoryAsset):
             plan_id_index=plan_id_index,
             destination_saturation=opportunities.clone(),
             costs=self.initial_transport_costs.get_costs_by_od(["cost", "distance"]),
-            start_iteration=1,
+            start_step=1,
             rng_state=rng.getstate(),
         )
         logging.debug("Initial group-day-trips iteration state is ready.")
@@ -396,13 +396,13 @@ class CongestionFlowsAsset(InMemoryAsset):
         iteration: int,
         previous_state: Asset | None,
         transport_costs: Any,
-        n_iter_per_cost_update: int,
+        n_steps_per_cost_update: int,
     ) -> None:
         self.is_weekday = is_weekday
         self.iteration = iteration
         self.previous_state = previous_state
         self.transport_costs = transport_costs
-        self.n_iter_per_cost_update = int(n_iter_per_cost_update)
+        self.n_steps_per_cost_update = int(n_steps_per_cost_update)
         self.road_flow_parameters = (
             transport_costs.road_flows.road_flow_parameters()
             if transport_costs.has_enabled_congestion()
@@ -412,10 +412,10 @@ class CongestionFlowsAsset(InMemoryAsset):
             previous_state is not None
             and iteration > 1
             and bool(self.road_flow_parameters)
-            and self.n_iter_per_cost_update > 0
+            and self.n_steps_per_cost_update > 0
             and transport_costs.should_recompute_congested_costs(
                 iteration - 1,
-                self.n_iter_per_cost_update,
+                self.n_steps_per_cost_update,
             )
         )
         self.previous_congestion_flows = (
@@ -424,7 +424,7 @@ class CongestionFlowsAsset(InMemoryAsset):
                 previous_state is not None
                 and iteration > 1
                 and bool(self.road_flow_parameters)
-                and self.n_iter_per_cost_update > 0
+                and self.n_steps_per_cost_update > 0
                 and not self.should_update_costs
             )
             else None
@@ -444,7 +444,7 @@ class CongestionFlowsAsset(InMemoryAsset):
             "previous_congestion_flows": self.previous_congestion_flows,
             "person_od_flows_by_mode": self.person_od_flows_by_mode,
             "road_flow_parameters": self.road_flow_parameters,
-            "n_iter_per_cost_update": int(n_iter_per_cost_update),
+            "n_steps_per_cost_update": int(n_steps_per_cost_update),
         }
         super().__init__(inputs)
 
@@ -511,7 +511,7 @@ class IterationTransportCostsAsset(InMemoryAsset):
         transport_costs: Any,
         scenario: str,
         previous_state: Asset | None,
-        n_iter_per_cost_update: int,
+        n_steps_per_cost_update: int,
         sensitivity_case: SensitivityCase | None = None,
     ) -> None:
         self.is_weekday = is_weekday
@@ -526,7 +526,7 @@ class IterationTransportCostsAsset(InMemoryAsset):
             iteration=iteration,
             previous_state=previous_state,
             transport_costs=self.transport_costs,
-            n_iter_per_cost_update=n_iter_per_cost_update,
+            n_steps_per_cost_update=n_steps_per_cost_update,
         )
         self.modes = self.transport_costs.modes
         self._profile_costs_cache = None
@@ -660,7 +660,7 @@ class IterationStateAsset(Asset):
         modes: list[Any],
         parameters: Any,
         scenario: str,
-        cache_iteration_events: bool,
+        cache_step_events: bool,
         sensitivity_case: SensitivityCase | None = None,
     ) -> None:
         self.previous_state = previous_state
@@ -676,7 +676,7 @@ class IterationStateAsset(Asset):
         self.parameters = parameters
         self.scenario = scenario
         self.sensitivity_case = sensitivity_case
-        self.cache_iteration_events = cache_iteration_events
+        self.cache_step_events = cache_step_events
         self.updater = PlanUpdater()
         self.checkpoint_callback = None
         self.resume_checkpoint_loader = None
@@ -720,7 +720,7 @@ class IterationStateAsset(Asset):
             ),
             "plan_update_parameters": parameters.plan_update,
             "behavior_change_scope": parameters.behavior_change.scope_at(iteration),
-            "cache_iteration_events": cache_iteration_events,
+            "cache_step_events": cache_step_events,
         }
         self.iteration = iteration
         super().__init__(inputs)
@@ -731,7 +731,7 @@ class IterationStateAsset(Asset):
                 iteration=iteration,
                 base_folder=pathlib.Path(base_folder) / "transition-events",
             )
-            if cache_iteration_events
+            if cache_step_events
             else None
         )
 
@@ -777,7 +777,7 @@ class IterationStateAsset(Asset):
                 self.mode_sequences,
             ):
                 active_resolver.release_in_memory_asset(asset)
-            if self.iteration < self.parameters.run.n_iterations:
+            if self.iteration < self.parameters.run.n_steps:
                 active_resolver.release_in_memory_asset(self.transport_costs)
             active_resolver.consume_execution_cost_state(self)
         self.destination_sequences.sequence_index = None
@@ -875,7 +875,7 @@ class IterationStateAsset(Asset):
             plan_id_index=value("plan_id_index"),
             destination_saturation=value("destination_saturation"),
             costs=self.transport_costs.get_costs_by_od(["cost", "distance"]),
-            start_iteration=self.iteration + 1,
+            start_step=self.iteration + 1,
             current_plan_steps=value("current_plan_steps"),
             rng_state=self._rng_state,
             destination_sequence_index=value("destination_sequence_index"),
@@ -1004,7 +1004,7 @@ class IterationStateAsset(Asset):
                 time_sequence_steps=time_sequence_steps,
                 destination_saturation=destination_saturation,
                 costs=costs,
-                start_iteration=self.iteration + 1,
+                start_step=self.iteration + 1,
                 current_plan_steps=current_plan_steps,
                 rng_state=(
                     seeds["rng_state_after_sampling"]
@@ -1024,7 +1024,7 @@ class IterationStateAsset(Asset):
             )
             self._rng_state = state.rng_state
 
-        if transition_events is not None and self.cache_iteration_events:
+        if transition_events is not None and self.cache_step_events:
             if self.transition_events_asset is None:
                 raise RuntimeError("Transition event persistence was not planned.")
             self.transition_events_asset.transition_events = transition_events

@@ -8,7 +8,7 @@ Use this page as a checklist for moving from a technical run to a documented bas
 
 These checks show that the workflow is connected correctly:
 
-- the model runs for the expected day type, scenario, iteration, and replication,
+- the model runs for the expected day type, scenario, step, and replication,
 - plan-step tables are not empty,
 - the population represented by `n_persons` matches the expected study population,
 - main modes and activities appear where expected,
@@ -56,14 +56,14 @@ Use replications to estimate how much results depend on sampling and random choi
 Common sensitivity tests include:
 
 - population sample size,
-- number of iterations,
+- number of steps,
 - generalized-cost parameters,
 - activity opportunity proxies,
 - public-transport access, waiting, and transfer assumptions,
 - congestion or network feedback parameters,
 - zoning level and reporting perimeter.
 
-Scenario gaps should be larger than the variation created by sampling, iterations, and uncertain assumptions before they are treated as stable.
+Scenario gaps should be larger than the variation created by sampling, steps, and uncertain assumptions before they are treated as stable.
 
 ## Current Assumptions To Keep Visible
 
@@ -83,7 +83,7 @@ A scenario result should report:
 - the reference scenario,
 - the changed assumptions,
 - the day type and scenario year or context,
-- the sample size, iterations, replications, and seeds,
+- the sample size, steps, replications, and seeds,
 - the input data versions that matter for the conclusion,
 - the main diagnostics and sensitivity checks,
 - the limits of interpretation.

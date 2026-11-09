@@ -38,12 +38,12 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=1,
-                n_iter_per_cost_update=0,
+                n_steps=1,
+                n_steps_per_cost_update=0,
                 seed=0,
             ),
             outputs=GroupDayTripsOutputParameters(
-                cache_iteration_events=True,
+                cache_step_events=True,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
                 dest_prob_cutoff=0.9,
@@ -90,7 +90,7 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
     weekday_time_per_person = results.metrics.time_per_person()
     weekday_cost_per_person = results.metrics.cost_per_person()
     grouped_global_metrics = results.metrics.aggregate()
-    iteration_metrics = results.diagnostics.iteration_metrics()
+    iteration_metrics = results.diagnostics.step_metrics()
     weekday_distance_compare = results.metrics.distance_per_person(compare_with=results)
 
     assert global_metrics.height > 0
@@ -116,5 +116,5 @@ def test_009_group_day_trips_results_can_be_computed(test_data):
     assert {"variable", "time_bin", "value", "value_ref", "delta", "delta_relative"}.issubset(set(weekday_metrics_by_time_bin.columns))
     assert {"variable", "distance_bin", "value", "value_ref", "delta", "delta_relative"}.issubset(set(weekday_metrics_by_distance_bin.columns))
     assert {"country", "csp", "p_immobility", "p_immobility_ref"}.issubset(set(weekday_immobility.columns))
-    assert {"iteration", "total_loss", "observed_entropy", "mean_utility"}.issubset(set(iteration_metrics.columns))
+    assert {"step", "total_loss", "observed_entropy", "mean_utility"}.issubset(set(iteration_metrics.columns))
     assert "delta" in weekday_distance_compare.columns

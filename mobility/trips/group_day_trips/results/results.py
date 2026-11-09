@@ -159,12 +159,12 @@ class GroupDayTripsResults:
         """Return the configured maximum outer iteration count without running the model."""
         try:
             return max(
-                int(run_context.run.parameters.run.n_iterations)
+                int(run_context.run.parameters.run.n_steps)
                 for run_context in self.run_contexts
             )
         except AttributeError as exc:
             raise TypeError(
-                "Iteration-scoped results need runs with parameters.run.n_iterations."
+                "Iteration-scoped results need runs with parameters.run.n_steps."
             ) from exc
 
     @staticmethod
@@ -175,7 +175,7 @@ class GroupDayTripsResults:
             return len(
                 coordinated_run_asset.get().states_by_run_key[run.coordinated_run_key]
             )
-        return int(run.parameters.run.n_iterations)
+        return int(run.parameters.run.n_steps)
 
     def has_multiple_iterations(self, iterations: IterationSelector = "last") -> bool:
         """Return whether one result query contains several iterations."""
@@ -302,8 +302,8 @@ class GroupDayTripsResults:
             if iterations in {"last", "all"}:
                 return iterations
             raise ValueError(
-                'iterations should be "last", "all", one iteration number, '
-                "or a list/range of iteration numbers."
+                'steps should be "last", "all", one step number, '
+                "or a list/range of step numbers."
             )
         if isinstance(iterations, int):
             selected_iterations = [iterations]
@@ -313,14 +313,14 @@ class GroupDayTripsResults:
             selected_iterations = list(iterations)
         else:
             raise TypeError(
-                'iterations should be "last", "all", one iteration number, '
-                "or a list/range of iteration numbers."
+                'steps should be "last", "all", one step number, '
+                "or a list/range of step numbers."
             )
 
         if not selected_iterations:
-            raise ValueError("GroupDayTripsResults needs at least one iteration.")
+            raise ValueError("GroupDayTripsResults needs at least one step.")
         if not all(isinstance(iteration, int) for iteration in selected_iterations):
-            raise TypeError("iterations should only contain integer iteration numbers.")
+            raise TypeError("steps should only contain integer step numbers.")
         invalid_iterations = [
             iteration
             for iteration in selected_iterations
@@ -328,7 +328,7 @@ class GroupDayTripsResults:
         ]
         if invalid_iterations:
             raise ValueError(
-                "iterations should contain positive iteration numbers. "
+                "steps should contain positive step numbers. "
                 f"Received {invalid_iterations}."
             )
         duplicate_iterations = sorted(
@@ -338,7 +338,7 @@ class GroupDayTripsResults:
         )
         if duplicate_iterations:
             raise ValueError(
-                "iterations should not contain duplicate values. "
+                "steps should not contain duplicate values. "
                 f"Received duplicates: {duplicate_iterations}."
             )
         return selected_iterations

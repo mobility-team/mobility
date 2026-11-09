@@ -61,8 +61,8 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data, gtfs_sources_f
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=1,
-                n_iter_per_cost_update=0,
+                n_steps=1,
+                n_steps_per_cost_update=0,
             ),
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
@@ -109,8 +109,8 @@ def test_008b_group_day_trips_congestion_changes_costs(test_data, gtfs_sources_f
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=2,
-                n_iter_per_cost_update=1,
+                n_steps=2,
+                n_steps_per_cost_update=1,
                 seed=0,
             ),
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),

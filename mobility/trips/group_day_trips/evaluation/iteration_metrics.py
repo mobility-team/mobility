@@ -21,7 +21,7 @@ class IterationMetricsHistory:
     def schema() -> dict[str, pl.DataType]:
         """Return the canonical schema for persisted iteration diagnostics."""
         return {
-            "iteration": pl.UInt16,
+            "step": pl.UInt16,
             "total_loss": pl.Float64,
             "trip_count_loss": pl.Float64,
             "activity_loss": pl.Float64,
@@ -53,7 +53,7 @@ class IterationMetricsHistory:
 
         return frame.select(
             [
-                pl.col("iteration").cast(pl.UInt16),
+                pl.col("step").cast(pl.UInt16),
                 pl.col("total_loss").cast(pl.Float64),
                 pl.col("trip_count_loss").cast(pl.Float64),
                 pl.col("activity_loss").cast(pl.Float64),
@@ -71,7 +71,7 @@ class IterationMetricsHistory:
 
     def get(self) -> pl.DataFrame:
         """Return the persisted iteration-metrics table sorted by iteration."""
-        return self.history.collect(engine="streaming").sort("iteration")
+        return self.history.collect(engine="streaming").sort("step")
 
 
 class IterationMetricsBuilder:

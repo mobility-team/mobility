@@ -105,7 +105,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     for run_key, run in self.runs.items()
                 ],
                 "adaptive_search_parameters": self.parameters.adaptive_search,
-                "maximum_outer_iterations": self.parameters.run.n_iterations,
+                "maximum_outer_iterations": self.parameters.run.n_steps,
             }
         )
         self._checkpoint_cohort_hash = hash_inputs(
@@ -164,12 +164,12 @@ class MultiScenarioRunAsset(InMemoryAsset):
             run = self.runs[run_key]
             logging.info(
                 "Coordinated run input | scenario=%s | sensitivity=%s | replication=%d | "
-                "population_sample_size=%s | outer_iterations=%d",
+                "population_sample_size=%s | steps=%d",
                 run.scenario,
                 run.sensitivity_case_id,
                 run.replication,
                 run.population.parameters.sample_size,
-                self.parameters.run.n_iterations,
+                self.parameters.run.n_steps,
             )
             self._log_plan_distribution(
                 stage="initial state",
@@ -184,8 +184,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
         last_inner_results: dict[int, Any] | None = None
         actual_outer_iterations = 0
 
-        for iteration in range(1, self.parameters.run.n_iterations + 1):
-            with simulation_step("outer iteration", phase="outer", outer_iteration=iteration):
+        for iteration in range(1, self.parameters.run.n_steps + 1):
+            with simulation_step("simulation step", phase="outer", step=iteration):
                 get_group_day_trips_progress().iteration_step(
                     iteration,
                     "coordinated inner candidate search",
@@ -204,7 +204,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     state_assets=state_assets,
                     fixed_states=current_states,
                     iteration=iteration,
-                    max_inner_iterations=self.parameters.adaptive_search.max_inner_iterations,
+                    max_search_batches=self.parameters.adaptive_search.max_search_batches,
                     flow_tolerance=self.parameters.adaptive_search.inner_flow_tolerance,
                     base_gap_tolerance=self.parameters.adaptive_search.inner_base_gap_tolerance,
                     required_passes=self.parameters.adaptive_search.inner_consecutive_passes,
@@ -263,9 +263,9 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     states_by_run_key[run_key].append(state_assets[run_key])
 
                 outer_stop_reason = (
-                    "completed_outer_iterations"
-                    if iteration == self.parameters.run.n_iterations
-                    else "outer_continues"
+                    "completed_steps"
+                    if iteration == self.parameters.run.n_steps
+                    else "step_continues"
                 )
                 for run_key in self.run_keys:
                     run = self.runs[run_key]
@@ -277,9 +277,9 @@ class MultiScenarioRunAsset(InMemoryAsset):
                             "sensitivity_case": run.sensitivity_case_id,
                             "replication": run.replication,
                             "phase": "outer",
-                            "outer_iteration": iteration,
-                            "inner_batch": None,
-                            "inner_iterations": inner_result["inner_iterations"],
+                            "outer_step": iteration,
+                            "search_batch": None,
+                            "search_batches": inner_result["search_batches"],
                             "generation_effort_used": inner_result["generation_effort_used"],
                             "activity_profile_cell_count": (
                                 inner_result["activity_profile_cell_count_by_scenario"][run_key]
@@ -364,11 +364,11 @@ class MultiScenarioRunAsset(InMemoryAsset):
 
     def _prepare_checkpoint_resume(self) -> None:
         """Resume only when every scenario has the same complete cohort checkpoint."""
-        if not self.parameters.outputs.checkpoint_each_iteration:
+        if not self.parameters.outputs.checkpoint_each_step:
             return
 
         resume_iterations = [
-            run.iterations.get_resume_iteration(self.parameters.run.n_iterations)
+            run.iterations.get_resume_iteration(self.parameters.run.n_steps)
             for run in self.runs.values()
         ]
         if (
@@ -396,7 +396,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
             return
 
         logging.info(
-            "Resuming the coordinated scenario cohort from iteration %s.",
+            "Resuming the coordinated scenario cohort from step %s.",
             resume_iteration,
         )
 
@@ -419,7 +419,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
     @trace_simulation_step("checkpoint manifest")
     def _write_checkpoint_manifest(self, iteration: int) -> None:
         """Mark an outer iteration resumable only after every scenario completes."""
-        if not self.parameters.outputs.checkpoint_each_iteration:
+        if not self.parameters.outputs.checkpoint_each_step:
             return
         manifest_path = self._checkpoint_manifest_path(iteration)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -450,7 +450,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         state_assets: dict[int, Any],
         fixed_states: dict[int, RunState],
         iteration: int,
-        max_inner_iterations: int,
+        max_search_batches: int,
         flow_tolerance: float,
         base_gap_tolerance: float,
         required_passes: int,
@@ -532,7 +532,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         invalid_cost_row_counts = {scenario: 0 for scenario in self.scenarios}
         batch_diagnostics: list[dict[str, Any]] = []
         batch_index = 0
-        stop_reason = "maximum_inner_iterations"
+        stop_reason = "max_search_batches"
         final_convergence_by_run_key = {}
         covered_cells_by_scenario: dict[int, set[tuple[int, str]]] = {
             scenario: set() for scenario in self.scenarios
@@ -550,8 +550,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
             scenario: None for scenario in self.scenarios
         }
 
-        while batch_index < max_inner_iterations:
-            with simulation_step("inner batch", inner_batch=batch_index + 1):
+        while batch_index < max_search_batches:
+            with simulation_step("search batch", search_batch=batch_index + 1):
                 generation_requests = scheduler.select_requests(
                     batch_index=batch_index,
                     covered_cells_by_scenario=covered_cells_by_scenario,
@@ -609,7 +609,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
 
                     if logging.getLogger().isEnabledFor(logging.DEBUG):
                         logging.debug(
-                            "Plan generation batch | phase=%s | iteration=%d | batch=%d | "
+                            "Plan generation batch | phase=%s | step=%d | search_batch=%d | "
                             "scenario=%s | generated_mode_sequences=%d | shared_unique_plans=%d",
                             phase,
                             iteration,
@@ -762,7 +762,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
 
                         if logging.getLogger().isEnabledFor(logging.DEBUG):
                             logging.debug(
-                                "Plan candidate evaluation | phase=%s | iteration=%d | batch=%d | "
+                                "Plan candidate evaluation | phase=%s | step=%d | search_batch=%d | "
                                 "scenario=%s | candidate_plan_step_rows=%d | "
                                 "plan_utility_rows_including_stay_home=%d | "
                                 "feasible_plan_utility_rows_including_stay_home=%d | "
@@ -898,8 +898,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 )
                 if all_runs_converged:
                     stop_reason = "inner_converged"
-                elif batch_index + 1 >= max_inner_iterations:
-                    stop_reason = "maximum_inner_iterations"
+                elif batch_index + 1 >= max_search_batches:
+                    stop_reason = "max_search_batches"
                 else:
                     stop_reason = "continue_search"
                 scenario_gap_by_scenario = {
@@ -938,8 +938,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
                             "sensitivity_case": run.sensitivity_case_id,
                             "replication": run.replication,
                             "phase": phase,
-                            "outer_iteration": iteration if phase == "inner" else None,
-                            "inner_batch": batch_index + 1,
+                            "outer_step": iteration if phase == "inner" else None,
+                            "search_batch": batch_index + 1,
                             "generated_mode_sequences": generated_sequences_this_batch[scenario],
                             "generation_request_count": requests.height,
                             "requested_utility_profile_count": (
@@ -1013,7 +1013,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
             "plan_id_indices": plan_id_indices,
             "rng_states": rng_states,
             "diagnostics": batch_diagnostics,
-            "inner_iterations": batch_index,
+            "search_batches": batch_index,
             "infeasible_counts": infeasible_counts,
             "missing_cost_row_counts": missing_cost_row_counts,
             "invalid_cost_row_counts": invalid_cost_row_counts,
@@ -1098,7 +1098,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
 
         logging.log(
             level,
-            "Plan allocation summary | stage=%s | scenario=%s | iteration=%d | "
+            "Plan allocation summary | stage=%s | scenario=%s | step=%d | "
             "demand_units=%d | allocated_demand_units=%d | represented_people=%.3f | "
             "allocated_people=%.3f | population_gap=%.3f | plan_allocations=%d | "
             "unique_plans=%d | active_plan_allocations=%d | active_people=%.3f | "
@@ -1234,7 +1234,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
             scenario=run.scenario,
             sensitivity_case=run.sensitivity_case,
             previous_state=previous_state,
-            n_iter_per_cost_update=run.parameters.run.n_iter_per_cost_update,
+            n_steps_per_cost_update=run.parameters.run.n_steps_per_cost_update,
         )
 
     @staticmethod

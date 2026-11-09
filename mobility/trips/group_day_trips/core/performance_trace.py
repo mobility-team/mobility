@@ -59,7 +59,7 @@ class SimulationPerformanceTrace:
             step_id = self.next_id
             self.next_id += 1
             row = {
-                "run_id": self.run_id, "step_id": step_id, "parent_id": parent_id, "step": name,
+                "run_id": self.run_id, "step_id": step_id, "parent_id": parent_id, "operation": name,
                 **labels, "start_seconds": started_at - self.started_at,
                 "rss_start_bytes": rss, "rss_peak_bytes": rss, "status": "ok",
             }
@@ -121,7 +121,7 @@ def trace_simulation_step(name):
                 if value is None and owner is not None and key != "phase":
                     value = getattr(owner, key, None)
                 if value is not None:
-                    labels[key] = value
+                    labels["asset_step" if key == "iteration" else key] = value
             source = bound.arguments.get("source")
             if source is not None:
                 labels["scenario"] = source.scenario
@@ -131,7 +131,7 @@ def trace_simulation_step(name):
             if destinations is not None and getattr(destinations, "scenario", None) is not None:
                 labels["scenario"] = destinations.scenario
             if name == "inner loop":
-                labels["outer_iteration"] = labels["iteration"]
+                labels["step"] = labels["asset_step"]
             with simulation_step(name, **labels):
                 return function(*args, **kwargs)
         return measured

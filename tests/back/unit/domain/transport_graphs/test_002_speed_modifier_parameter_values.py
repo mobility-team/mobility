@@ -17,10 +17,10 @@ from mobility.transport.modes.car import CarMode
 from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityParameters
 
 
-def test_speed_modifier_parameters_resolve_by_scenario_and_iteration():
+def test_speed_modifier_parameters_resolve_by_scenario_and_step():
     """Resolve every user-facing modifier value before it reaches the R script."""
     def project_value(default, changed):
-        return ParameterValue.by_scenario_and_iteration(
+        return ParameterValue.by_scenario_and_step(
             default=default,
             road_project={1: default, 3: changed},
         )
@@ -151,7 +151,7 @@ def test_path_travel_costs_rebuild_the_graph_chain_for_resolved_modifiers(
         FakePathGraph,
     )
 
-    max_speed = ParameterValue.by_scenario_and_iteration(
+    max_speed = ParameterValue.by_scenario_and_step(
         default=30.0,
         road_project={1: 30.0, 3: 20.0},
     )

@@ -12,7 +12,7 @@ from .transition_schema import TRANSITION_EVENT_COLUMNS, TRANSITION_EVENT_SCHEMA
 def build_transition_events_lazy(transitions: pl.LazyFrame, *, iteration: int) -> pl.LazyFrame:
     """Build the core transition-event table from raw plan-to-plan transitions."""
     return transitions.with_columns(
-        iteration=pl.lit(iteration).cast(pl.UInt32),
+        step=pl.lit(iteration).cast(pl.UInt32),
         utility_from=pl.col("utility_from_updated"),
         utility_to=pl.col("utility_trans"),
         utility_prev_from=pl.col("utility_prev_from"),
@@ -23,7 +23,7 @@ def build_transition_events_lazy(transitions: pl.LazyFrame, *, iteration: int) -
         is_self_transition=pl.col("plan_id") == pl.col("plan_id_trans"),
     ).select(
         [
-            "iteration",
+            "step",
             "demand_group_id",
             "demand_subgroup_id",
             "activity_seq_id",
@@ -164,7 +164,7 @@ class TransitionEventsAsset(FileAsset):
             "version": 2,
             "run_key": run_key,
             "is_weekday": is_weekday,
-            "iteration": iteration,
+            "step": iteration,
         }
         cache_path = pathlib.Path(base_folder) / f"transition_events_{iteration}.parquet"
         super().__init__(inputs, cache_path)

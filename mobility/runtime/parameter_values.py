@@ -223,19 +223,14 @@ class ParameterValue(BaseModel):
         return cls(values_by_scenario={None: {1: value}})
 
     @classmethod
-    def by_iteration(
+    def by_step(
         cls,
         points: dict[int, Any],
         *,
         mode: str = "step",
     ) -> "ParameterValue":
-        """Return a parameter value that changes by simulation iteration."""
-        return cls(values_by_scenario={None: dict(points)}, mode=mode)
-
-    @classmethod
-    def by_step(cls, points: dict[int, Any], *, mode: str = "step") -> "ParameterValue":
         """Return a parameter value that changes by simulation step."""
-        return cls.by_iteration(points, mode=mode)
+        return cls(values_by_scenario={None: dict(points)}, mode=mode)
 
     @classmethod
     def by_scenario(
@@ -257,16 +252,16 @@ class ParameterValue(BaseModel):
         )
 
     @classmethod
-    def by_scenario_and_iteration(
+    def by_scenario_and_step(
         cls,
         values: dict[str, dict[int, Any] | Any] | None = None,
         **named_values: dict[int, Any] | Any,
     ) -> "ParameterValue":
-        """Return a parameter value that changes by scenario and iteration."""
+        """Return a parameter value that changes by scenario and simulation step."""
         scenario_values = cls._scenario_values(
             values,
             named_values,
-            method_name="ParameterValue.by_scenario_and_iteration",
+            method_name="ParameterValue.by_scenario_and_step",
         )
         return cls(
             values_by_scenario={
@@ -274,15 +269,6 @@ class ParameterValue(BaseModel):
                 for scenario, value in scenario_values.items()
             }
         )
-
-    @classmethod
-    def by_scenario_and_step(
-        cls,
-        values: dict[str, dict[int, Any] | Any] | None = None,
-        **named_values: dict[int, Any] | Any,
-    ) -> "ParameterValue":
-        """Return a parameter value that changes by scenario and simulation step."""
-        return cls.by_scenario_and_iteration(values, **named_values)
 
     @classmethod
     def by_population_segment(
@@ -325,14 +311,14 @@ class ParameterValue(BaseModel):
         self,
         *,
         scenario: str | None = None,
-        iteration: int = 1,
+        step: int = 1,
     ) -> Any:
-        """Return the plain value for one scenario and one iteration."""
+        """Return the plain value for one scenario and simulation step."""
         scenario_name = DEFAULT_SCENARIO if scenario is None else scenario
         points = self._points_for_scenario(scenario_name)
         if self.mode == "linear":
-            return self._linear_value(points, iteration)
-        return self._copy_plain_value(self._step_value(points, iteration))
+            return self._linear_value(points, step)
+        return self._copy_plain_value(self._step_value(points, step))
 
     def has_scenarios(self) -> bool:
         """Return whether this value defines named scenarios."""
@@ -354,7 +340,7 @@ class ParameterValue(BaseModel):
             if value.has_scenarios():
                 raise ValueError(
                     "Nested scenario ParameterValue objects are not supported. "
-                    "Use ParameterValue.by_scenario_and_iteration instead."
+                    "Use ParameterValue.by_scenario_and_step instead."
                 )
             return dict(value.values_by_scenario[None])
         if cls._is_iteration_points(value):
@@ -502,7 +488,7 @@ def resolve_parameter_values(
     if isinstance(value, ParameterValue):
         resolved_value = value.at(
             scenario=scenario,
-            iteration=iteration,
+            step=iteration,
         )
         return resolve_parameter_values(
             resolved_value,

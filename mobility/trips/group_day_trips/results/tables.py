@@ -15,42 +15,42 @@ class GroupDayTripsResultTables:
     def plan_steps(
         self,
         *,
-        iterations: IterationSelector = "last",
+        steps: IterationSelector = "last",
         columns: list[str] | tuple[str, ...] | None = None,
     ) -> ScopedRunTable:
         """Declare scoped plan steps with scenario, day type, and replication columns."""
-        return self._table("plan_steps", iterations=iterations, columns=columns)
+        return self._table("plan_steps", iterations=steps, columns=columns)
 
     def demand_groups(
         self,
         *,
-        iterations: IterationSelector = "last",
+        steps: IterationSelector = "last",
         columns: list[str] | tuple[str, ...] | None = None,
     ) -> ScopedRunTable:
         """Declare scoped demand groups with scenario and run scope columns."""
-        return self._table("demand_groups", iterations=iterations, columns=columns)
+        return self._table("demand_groups", iterations=steps, columns=columns)
 
-    def costs(self, *, iterations: IterationSelector = "last") -> Metric:
+    def costs(self, *, steps: IterationSelector = "last") -> Metric:
         """Declare persisted transport costs with scenario and run scope columns."""
-        return self.results.metrics.travel_costs(iterations=iterations)
+        return self.results.metrics.travel_costs(steps=steps)
 
     def transitions(
         self,
         *,
-        iterations: IterationSelector = "last",
+        steps: IterationSelector = "last",
         columns: list[str] | tuple[str, ...] | None = None,
     ) -> ScopedRunTable:
         """Declare scoped transition events with scenario and run scope columns."""
-        return self._table("transitions", iterations=iterations, columns=columns)
+        return self._table("transitions", iterations=steps, columns=columns)
 
-    def iteration_metrics(
+    def step_metrics(
         self,
         *,
-        iterations: IterationSelector = "last",
+        steps: IterationSelector = "last",
         columns: list[str] | tuple[str, ...] | None = None,
     ) -> ScopedRunTable:
-        """Declare scoped per-iteration diagnostics."""
-        return self._table("iteration_metrics", iterations=iterations, columns=columns)
+        """Declare diagnostics for each selected simulation step."""
+        return self._table("iteration_metrics", iterations=steps, columns=columns)
 
     def adaptive_search_diagnostics(
         self,

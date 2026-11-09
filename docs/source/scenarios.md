@@ -32,14 +32,14 @@ Scenario names appear in output folders and result tables, so short names are ea
 
 ## Change A Parameter By Scenario
 
-Use `ParameterValue.by_scenario_and_iteration` when a value changes by scenario:
+Use `ParameterValue.by_scenario_and_step` when a value changes by scenario:
 
 ```python
 car = mobility.CarMode(
     transport_zones,
     generalized_cost_parameters=mobility.GeneralizedCostParameters(
         cost_constant=3.0,
-        cost_of_distance=mobility.ParameterValue.by_scenario_and_iteration(
+        cost_of_distance=mobility.ParameterValue.by_scenario_and_step(
             default=0.0,
             car_distance_cost={
                 1: 0.0,
@@ -65,7 +65,7 @@ limit from iteration 5 in one scenario:
 ```python
 speed_zone = mobility.LimitedSpeedZonesModifier(
     zones_geometry_file_path="inputs/speed-zones.gpkg",
-    max_speed=mobility.ParameterValue.by_scenario_and_iteration(
+    max_speed=mobility.ParameterValue.by_scenario_and_step(
         default=50.0,
         safer_streets={
             1: 50.0,
@@ -108,7 +108,7 @@ scenarios = mobility.Scenarios(
 car = mobility.CarMode(
     transport_zones,
     generalized_cost_parameters=mobility.GeneralizedCostParameters(
-        cost_of_distance=mobility.ParameterValue.by_scenario_and_iteration(
+        cost_of_distance=mobility.ParameterValue.by_scenario_and_step(
             default=0.0,
             car_distance_cost={
                 1: 0.0,
@@ -151,7 +151,7 @@ Then compare indicators:
 ```python
 results.metrics.travel_distance(
     by_variable="mode",
-    iterations="last",
+    steps="last",
     reference=("scenario", "default"),
     output="plot",
 )

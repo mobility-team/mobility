@@ -98,11 +98,11 @@ class Run(InMemoryAsset):
             else sensitivity_case.case_id
         )
         parameters_for_cache = parameters.model_dump(mode="python")
-        parameters_for_cache["outputs"].pop("checkpoint_each_iteration", None)
+        parameters_for_cache["outputs"].pop("checkpoint_each_step", None)
         # Polars 2 changes seeded hashes, so older runs and saved states must
         # not be reused with the new candidate identities.
         run_context_inputs = {
-            "version": 29,
+            "version": 30,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -122,11 +122,11 @@ class Run(InMemoryAsset):
         }
         # The run length selects how many states to build. It does not change
         # the checkpoints for iterations that have already completed.
-        checkpoint_parameters["run"].pop("n_iterations", None)
+        checkpoint_parameters["run"].pop("n_steps", None)
         checkpoint_run_context = {
             **run_context_inputs,
             "parameters": checkpoint_parameters,
-            "checkpoint_version": 6,
+            "checkpoint_version": 7,
         }
         checkpoint_run_hash = hash_inputs(checkpoint_run_context)
         self.run_context = SimpleNamespace(
@@ -179,7 +179,7 @@ class Run(InMemoryAsset):
                 scenario=scenario,
                 sensitivity_case=sensitivity_case,
                 previous_state=None,
-                n_iter_per_cost_update=parameters.run.n_iter_per_cost_update,
+                n_steps_per_cost_update=parameters.run.n_steps_per_cost_update,
             ),
         )
         self.iteration_transport_cost_assets: list[IterationTransportCostsAsset] = []
@@ -195,9 +195,9 @@ class Run(InMemoryAsset):
             sensitivity_case=sensitivity_case,
             initial_state=self.initial_iteration_state,
         )
-        if parameters.outputs.checkpoint_each_iteration:
+        if parameters.outputs.checkpoint_each_step:
             resume_iteration = self.iterations.get_resume_iteration(
-                parameters.run.n_iterations
+                parameters.run.n_steps
             )
 
             # Transition events are a separate requested output. A checkpoint
@@ -205,7 +205,7 @@ class Run(InMemoryAsset):
             # iteration event file is missing.
             if (
                 resume_iteration is not None
-                and parameters.outputs.cache_iteration_events
+                and parameters.outputs.cache_step_events
                 and any(
                     not state_asset.transition_events_asset.cache_path.exists()
                     for state_asset in self.iteration_state_assets
@@ -254,7 +254,7 @@ class Run(InMemoryAsset):
                 )
                 with GroupDayTripsProgressReporter(
                     label=label,
-                    total_iterations=self.parameters.run.n_iterations,
+                    total_iterations=self.parameters.run.n_steps,
                 ):
                     coordinated = self.coordinated_run_asset.get()
             return coordinated.final_states_by_run_key[self.coordinated_run_key]
@@ -270,7 +270,7 @@ class Run(InMemoryAsset):
         )
         with GroupDayTripsProgressReporter(
             label=label,
-            total_iterations=self.parameters.run.n_iterations,
+            total_iterations=self.parameters.run.n_steps,
         ):
             return super().get(*args, **kwargs)
 
@@ -296,7 +296,7 @@ class Run(InMemoryAsset):
             is_weekday=is_weekday,
         )
 
-        for iteration_index in range(1, parameters.run.n_iterations + 1):
+        for iteration_index in range(1, parameters.run.n_steps + 1):
             seeds = IterationSeedsAsset(
                 previous_state=previous_state,
                 iteration=iteration_index,
@@ -308,7 +308,7 @@ class Run(InMemoryAsset):
                 scenario=scenario,
                 sensitivity_case=sensitivity_case,
                 previous_state=(None if iteration_index == 1 else previous_state),
-                n_iter_per_cost_update=parameters.run.n_iter_per_cost_update,
+                n_steps_per_cost_update=parameters.run.n_steps_per_cost_update,
             )
             self.iteration_transport_cost_assets.append(resolved_transport_costs)
             prepared_schedule_pool = (
@@ -365,7 +365,7 @@ class Run(InMemoryAsset):
                 parameters=parameters,
                 scenario=scenario,
                 sensitivity_case=sensitivity_case,
-                cache_iteration_events=parameters.outputs.cache_iteration_events,
+                cache_step_events=parameters.outputs.cache_step_events,
             )
             state_assets.append(state_asset)
             previous_state = state_asset
@@ -382,7 +382,7 @@ class Run(InMemoryAsset):
             "Starting PopulationGroupDayTrips run: run_hash=%s is_weekday=%s iterations=%s",
             self.inputs_hash,
             str(self.is_weekday),
-            str(self.parameters.run.n_iterations),
+            str(self.parameters.run.n_steps),
         )
         log_memory_checkpoint("run:start")
         get_group_day_trips_progress().step("Running model iterations")
@@ -514,7 +514,7 @@ class Run(InMemoryAsset):
     def _build_transitions(self) -> pl.DataFrame | pl.LazyFrame:
         """Combine persisted per-iteration transition events into the final table."""
         get_group_day_trips_progress().step("Building final transition table")
-        if self.parameters.outputs.cache_iteration_events is False:
+        if self.parameters.outputs.cache_step_events is False:
             return pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA)
 
         transition_paths = [
@@ -576,7 +576,7 @@ class Run(InMemoryAsset):
                     f"{table_name} contains search diagnostics and cannot "
                     "be selected as one outer iteration."
                 )
-            maximum_iteration = self.parameters.run.n_iterations
+            maximum_iteration = self.parameters.run.n_steps
             if iteration < 1 or iteration > maximum_iteration:
                 raise ValueError(
                     "iteration should be between 1 and the maximum number of outer "
@@ -747,7 +747,7 @@ class RunTableAsset(InMemoryAsset):
         elif table_name == "transitions":
             dependencies = (
                 tuple(run.iteration_state_assets)
-                if run.parameters.outputs.cache_iteration_events
+                if run.parameters.outputs.cache_step_events
                 else ()
             )
         elif table_name in {"opportunities", "demand_groups"}:
@@ -908,7 +908,7 @@ class RunTableAsset(InMemoryAsset):
                     )
                     resolver.consume_execution_cost_root(self)
         if self.table_name == "transitions":
-            if self.run.coordinated_run_asset is not None or self.run.parameters.outputs.cache_iteration_events:
+            if self.run.coordinated_run_asset is not None or self.run.parameters.outputs.cache_step_events:
                 try:
                     self.run.get()
                 finally:

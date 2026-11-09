@@ -171,7 +171,7 @@ class PlanUpdater:
             transition_prob,
             iteration,
             plan_probability_pruning_retained_share=parameters.plan_update.plan_probability_pruning_retained_share,
-            plan_probability_pruning_min_iteration=parameters.plan_update.plan_probability_pruning_min_iteration,
+            plan_probability_pruning_min_step=parameters.plan_update.plan_probability_pruning_min_step,
         )
         log_memory_checkpoint(
             f"plan_updater:iteration:{iteration}:after_apply_transitions",
@@ -183,7 +183,7 @@ class PlanUpdater:
             f"plan_updater:iteration:{iteration}:current_plan_steps",
             current_plan_steps=current_plan_steps,
         )
-        if parameters.outputs.cache_iteration_events:
+        if parameters.outputs.cache_step_events:
             transition_events = add_transition_plan_details(
                 transition_events,
                 possible_plan_steps.lazy(),
@@ -533,7 +533,7 @@ class PlanUpdater:
                 current_plans=current_plans,
                 previous_candidate_plan_steps=candidate_plan_steps,
                 current_iteration=iteration,
-                n_warmup_iterations=parameters.plan_update.n_warmup_iterations,
+                n_warmup_steps=parameters.plan_update.n_warmup_steps,
                 max_inactive_age=parameters.plan_update.max_inactive_age,
                 profile_assignments=profile_assignments,
                 candidate_pruner=candidate_pruner,
@@ -1412,7 +1412,7 @@ class PlanUpdater:
         iteration: int,
         *,
         plan_probability_pruning_retained_share: float = 1.0,
-        plan_probability_pruning_min_iteration: int = 2,
+        plan_probability_pruning_min_step: int = 2,
     ) -> tuple[pl.DataFrame, pl.LazyFrame]:
         """Apply transition probabilities and emit transition events."""
         plan_cols = PLAN_KEY_COLS
@@ -1441,7 +1441,7 @@ class PlanUpdater:
         transitions = self.remap_low_probability_transition_targets(
             transitions,
             retained_share=plan_probability_pruning_retained_share,
-            min_iteration=plan_probability_pruning_min_iteration,
+            min_iteration=plan_probability_pruning_min_step,
             iteration=iteration,
         )
         transitions = self.attach_previous_target_utility(current_plans, transitions)

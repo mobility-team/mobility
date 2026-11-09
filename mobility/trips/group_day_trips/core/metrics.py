@@ -1618,7 +1618,7 @@ class RunMetrics:
         return self.metric_per_person("cost", *args, **kwargs)
 
     @_with_iteration_resolver
-    def modal_share_evolution_by_iteration(
+    def modal_share_evolution_by_step(
         self,
         iterations: list[int] | range | None = None,
         modes: list[str] | None = None,
@@ -1678,7 +1678,7 @@ class RunMetrics:
         return evolution
 
     @_with_iteration_resolver
-    def modal_share_delta_evolution_by_iteration(
+    def modal_share_delta_evolution_by_step(
         self,
         compare_with: Any,
         iterations: list[int] | range | None = None,
@@ -1750,7 +1750,7 @@ class RunMetrics:
                         "modal_share": "modal_share_reference",
                     }
                 ),
-                on=["iteration", "mode", "mode_label"],
+                on=["step", "mode", "mode_label"],
                 how="inner",
             )
             .with_columns(
@@ -1759,7 +1759,7 @@ class RunMetrics:
             )
             .select(
                 [
-                    "iteration",
+                    "step",
                     "mode",
                     "mode_label",
                     "n_trips",
@@ -1807,12 +1807,12 @@ class RunMetrics:
         """Return the iterations used by modal-share evolution plots."""
         if iterations is None:
             run_parameters = getattr(self.results.parameters, "run", None)
-            n_iterations = getattr(run_parameters, "n_iterations", None)
-            if n_iterations is None:
+            n_steps = getattr(run_parameters, "n_steps", None)
+            if n_steps is None:
                 raise ValueError(
-                    "iterations should be provided when results.parameters.run has no n_iterations."
+                    "iterations should be provided when results.parameters.run has no n_steps."
                 )
-            iterations = range(1, int(n_iterations) + 1)
+            iterations = range(1, int(n_steps) + 1)
 
         iterations = [int(iteration) for iteration in iterations]
         if not iterations:
@@ -1869,7 +1869,7 @@ class RunMetrics:
                 demand_groups=demand_groups,
                 aggregate_public_transport=aggregate_public_transport,
                 inner_zones_only=inner_zones_only,
-            ).with_columns(iteration=pl.lit(iteration))
+            ).with_columns(step=pl.lit(iteration))
             for iteration in iterations
         ]
         return pl.concat(iteration_tables, how="vertical_relaxed")
@@ -1884,7 +1884,7 @@ class RunMetrics:
         """Add missing iteration-mode rows with zero shares."""
         iteration_mode_grid = pl.DataFrame(
             {
-                "iteration": [
+                "step": [
                     iteration
                     for iteration in iterations
                     for _mode in modes
@@ -1903,7 +1903,7 @@ class RunMetrics:
         )
         return (
             iteration_mode_grid
-            .join(modal_share, on=["iteration", "mode"], how="left")
+            .join(modal_share, on=["step", "mode"], how="left")
             .with_columns(
                 pl.col("n_trips").fill_null(0.0),
                 pl.col("modal_share").fill_null(0.0),
@@ -1912,8 +1912,8 @@ class RunMetrics:
                     return_dtype=pl.String,
                 ),
             )
-            .sort(["iteration", "mode_order"])
-            .select(["iteration", "mode", "mode_label", "n_trips", "modal_share"])
+            .sort(["step", "mode_order"])
+            .select(["step", "mode", "mode_label", "n_trips", "modal_share"])
         )
 
     def _modal_share_for_iteration(
@@ -1981,13 +1981,13 @@ class RunMetrics:
         color_map = self._mode_label_color_map(mode_labels)
         figure_kwargs = {
             "data_frame": modal_share.to_pandas(),
-            "x": "iteration",
+            "x": "step",
             "y": "modal_share",
             "color": "mode_label",
             "color_discrete_map": color_map,
             "category_orders": {"mode_label": mode_labels},
             "labels": {
-                "iteration": "Iteration",
+                "step": "Iteration",
                 "modal_share": "Modal share",
                 "mode_label": "Mode",
             },
@@ -2030,14 +2030,14 @@ class RunMetrics:
         color_map = self._mode_label_color_map(mode_labels)
         fig = px.line(
             modal_share_delta.to_pandas(),
-            x="iteration",
+            x="step",
             y="modal_share_delta",
             color="mode_label",
             markers=True,
             color_discrete_map=color_map,
             category_orders={"mode_label": mode_labels},
             labels={
-                "iteration": "Iteration",
+                "step": "Iteration",
                 "modal_share_delta": "Modal share difference",
                 "mode_label": "Mode",
             },
@@ -2080,13 +2080,13 @@ class RunMetrics:
         """Save a modal-share evolution chart as SVG."""
         output_path.parent.mkdir(parents=True, exist_ok=True)
         share_df = modal_share.to_pandas()
-        iterations = sorted(share_df["iteration"].unique().tolist())
+        iterations = sorted(share_df["step"].unique().tolist())
         mode_labels = share_df["mode_label"].drop_duplicates().tolist()
         color_map = self._mode_label_color_map(mode_labels)
         pivot = (
             share_df
             .pivot_table(
-                index="iteration",
+                index="step",
                 columns="mode_label",
                 values="modal_share",
                 aggfunc="sum",
@@ -2162,13 +2162,13 @@ class RunMetrics:
         """Save a modal-share-delta line chart as SVG."""
         output_path.parent.mkdir(parents=True, exist_ok=True)
         delta_df = modal_share_delta.to_pandas()
-        iterations = sorted(delta_df["iteration"].unique().tolist())
+        iterations = sorted(delta_df["step"].unique().tolist())
         mode_labels = delta_df["mode_label"].drop_duplicates().tolist()
         color_map = self._mode_label_color_map(mode_labels)
         pivot = (
             delta_df
             .pivot_table(
-                index="iteration",
+                index="step",
                 columns="mode_label",
                 values="modal_share_delta",
                 aggfunc="sum",
@@ -2215,7 +2215,7 @@ class RunMetrics:
         plt.close(fig)
 
     @_with_iteration_resolver
-    def plot_delta_by_iteration(
+    def plot_delta_by_step(
         self,
         compare_with: Any | None,
         iteration: int,
@@ -2271,7 +2271,7 @@ class RunMetrics:
                 if value == "ghg_emissions"
                 else pl.DataFrame()
             )
-            delta = self._delta_value_by_iteration(
+            delta = self._delta_value_by_step(
                 reference_run=reference_run,
                 reference_demand_groups=reference_demand_groups,
                 current_costs=current_costs,
@@ -2284,7 +2284,7 @@ class RunMetrics:
             )
             global_delta = None
         else:
-            delta, global_delta = self._paired_delta_by_iteration(
+            delta, global_delta = self._paired_delta_by_step(
                 paired_runs=paired_runs,
                 iteration=iteration,
                 value=value,
@@ -2302,7 +2302,7 @@ class RunMetrics:
         fig = None
         if plot or save_to_file or return_figure:
             if global_delta is None:
-                global_delta = self._global_plot_delta_by_iteration(
+                global_delta = self._global_plot_delta_by_step(
                     reference_run=reference_run,
                     reference_demand_groups=reference_demand_groups,
                     current_costs=current_costs,
@@ -2370,7 +2370,7 @@ class RunMetrics:
             return delta, fig
         return delta
 
-    def _delta_value_by_iteration(
+    def _delta_value_by_step(
         self,
         *,
         reference_run: Any,
@@ -2384,7 +2384,7 @@ class RunMetrics:
         relative_delta: bool,
     ) -> pl.DataFrame:
         """Return current, reference and delta values by transport zone."""
-        return self._delta_value_between_runs_by_iteration(
+        return self._delta_value_between_runs_by_step(
             current_run=self.results.run,
             current_demand_groups=self.results.demand_groups,
             reference_run=reference_run,
@@ -2398,7 +2398,7 @@ class RunMetrics:
             relative_delta=relative_delta,
         )
 
-    def _delta_value_between_runs_by_iteration(
+    def _delta_value_between_runs_by_step(
         self,
         *,
         current_run: Any,
@@ -2743,7 +2743,7 @@ class RunMetrics:
             .rename({"home_zone_id": "transport_zone_id"})
         )
 
-    def _global_plot_delta_by_iteration(
+    def _global_plot_delta_by_step(
         self,
         *,
         reference_run: Any,
@@ -2758,7 +2758,7 @@ class RunMetrics:
         relative_delta: bool,
     ) -> float:
         """Return the global delta shown on a generic delta map."""
-        return self._global_plot_delta_between_runs_by_iteration(
+        return self._global_plot_delta_between_runs_by_step(
             current_run=self.results.run,
             current_demand_groups=self.results.demand_groups,
             reference_run=reference_run,
@@ -2773,7 +2773,7 @@ class RunMetrics:
             relative_delta=relative_delta,
         )
 
-    def _global_plot_delta_between_runs_by_iteration(
+    def _global_plot_delta_between_runs_by_step(
         self,
         *,
         current_run: Any,
@@ -2792,7 +2792,7 @@ class RunMetrics:
         """Return a global delta between two run contexts."""
         if value in {"modal_share", "n_trips"}:
             value_type = "modal_share_delta" if value == "modal_share" else "n_trips_delta"
-            absolute_delta = self._global_delta_between_runs_by_iteration(
+            absolute_delta = self._global_delta_between_runs_by_step(
                 current_run=current_run,
                 current_demand_groups=current_demand_groups,
                 reference_run=reference_run,
@@ -3029,7 +3029,7 @@ class RunMetrics:
         return f"Iteration {iteration}\n{scope_label}\n{value_label}"
 
     @_with_iteration_resolver
-    def plot_metric_by_iteration(
+    def plot_metric_by_step(
         self,
         iteration: int,
         quantity: Literal[
@@ -3085,7 +3085,7 @@ class RunMetrics:
 
         frame_title = None
         if plot or save_to_file or return_figure:
-            global_value = self._global_metric_by_iteration(
+            global_value = self._global_metric_by_step(
                 run=self.results.run,
                 demand_groups=self.results.demand_groups,
                 iteration=iteration,
@@ -3144,7 +3144,7 @@ class RunMetrics:
         return metric
 
     @_with_iteration_resolver
-    def modal_share_by_iteration(
+    def modal_share_by_step(
         self,
         iteration: int,
         mode: str = "car",
@@ -3242,7 +3242,7 @@ class RunMetrics:
             return modal_share, fig
         return modal_share
 
-    def _paired_delta_by_iteration(
+    def _paired_delta_by_step(
         self,
         *,
         paired_runs: list[tuple[Any, Any]],
@@ -3279,7 +3279,7 @@ class RunMetrics:
                 else pl.DataFrame()
             )
             pair_deltas.append(
-                self._delta_value_between_runs_by_iteration(
+                self._delta_value_between_runs_by_step(
                     current_run=current_context["run"],
                     current_demand_groups=current_context["demand_groups"],
                     reference_run=reference_context["run"],
@@ -3294,7 +3294,7 @@ class RunMetrics:
                 ).with_columns(pair_id=pl.lit(pair_id))
             )
             global_deltas.append(
-                self._global_plot_delta_between_runs_by_iteration(
+                self._global_plot_delta_between_runs_by_step(
                     current_run=current_context["run"],
                     current_demand_groups=current_context["demand_groups"],
                     reference_run=reference_context["run"],
@@ -3327,7 +3327,7 @@ class RunMetrics:
         return paired_delta, float(sum(global_deltas) / len(global_deltas))
 
     @_with_iteration_resolver
-    def modal_share_delta_by_iteration(
+    def modal_share_delta_by_step(
         self,
         compare_with: Any,
         iteration: int,
@@ -3421,7 +3421,7 @@ class RunMetrics:
         )
         frame_title = None
         if plot or save_to_file or return_figure:
-            global_delta = self._global_delta_by_iteration(
+            global_delta = self._global_delta_by_step(
                 reference_run=reference_run,
                 reference_demand_groups=reference_demand_groups,
                 iteration=iteration,
@@ -3528,14 +3528,14 @@ class RunMetrics:
         return modal_share_delta
 
     @_with_iteration_resolver
-    def car_modal_share_delta_by_iteration(
+    def car_modal_share_delta_by_step(
         self,
         compare_with: Any,
         iteration: int,
         **kwargs,
     ) -> pl.DataFrame | tuple[pl.DataFrame, go.Figure]:
         """Compare car modal share with another scenario for one saved iteration."""
-        result = self.modal_share_delta_by_iteration(
+        result = self.modal_share_delta_by_step(
             compare_with,
             iteration,
             mode="car",
@@ -3547,7 +3547,7 @@ class RunMetrics:
         return self._car_modal_share_delta_columns(result)
 
     @_with_iteration_resolver
-    def modal_share_delta_gifs_by_iteration(
+    def modal_share_delta_gifs_by_step(
         self,
         compare_with: Any,
         modes: list[str],
@@ -3605,7 +3605,7 @@ class RunMetrics:
             with tempfile.TemporaryDirectory(prefix=f"{safe_mode_name}-modal-share-delta-", dir=mobility_temporary_folder()) as temporary_folder:
                 frame_paths = []
                 for frame_index, iteration in enumerate(iterations):
-                    modal_share_delta = self.modal_share_delta_by_iteration(
+                    modal_share_delta = self.modal_share_delta_by_step(
                         compare_with,
                         iteration=iteration,
                         mode=mode,
@@ -3613,7 +3613,7 @@ class RunMetrics:
                         value_type=value_type,
                         plot=False,
                     )
-                    global_delta = self._global_delta_by_iteration(
+                    global_delta = self._global_delta_by_step(
                         reference_run=reference_run,
                         reference_demand_groups=reference_demand_groups,
                         iteration=iteration,
@@ -3757,7 +3757,7 @@ class RunMetrics:
         scope_value = getattr(scope, "value", str(scope))
         return scope_value.replace("_", " ").capitalize()
 
-    def _global_modal_share_delta_by_iteration(
+    def _global_modal_share_delta_by_step(
         self,
         *,
         reference_run: Any,
@@ -3768,7 +3768,7 @@ class RunMetrics:
         inner_zones_only: bool,
     ) -> float:
         """Return the global modal-share delta for one mode."""
-        return self._global_modal_share_delta_between_runs_by_iteration(
+        return self._global_modal_share_delta_between_runs_by_step(
             current_run=self.results.run,
             current_demand_groups=self.results.demand_groups,
             reference_run=reference_run,
@@ -3779,7 +3779,7 @@ class RunMetrics:
             inner_zones_only=inner_zones_only,
         )
 
-    def _global_modal_share_delta_between_runs_by_iteration(
+    def _global_modal_share_delta_between_runs_by_step(
         self,
         *,
         current_run: Any,
@@ -3810,7 +3810,7 @@ class RunMetrics:
         )
         return current_share - reference_share
 
-    def _global_delta_by_iteration(
+    def _global_delta_by_step(
         self,
         *,
         reference_run: Any,
@@ -3822,7 +3822,7 @@ class RunMetrics:
         value_type: Literal["modal_share_delta", "n_trips_delta"],
     ) -> float:
         """Return the global delta shown on one GIF frame."""
-        return self._global_delta_between_runs_by_iteration(
+        return self._global_delta_between_runs_by_step(
             current_run=self.results.run,
             current_demand_groups=self.results.demand_groups,
             reference_run=reference_run,
@@ -3834,7 +3834,7 @@ class RunMetrics:
             value_type=value_type,
         )
 
-    def _global_delta_between_runs_by_iteration(
+    def _global_delta_between_runs_by_step(
         self,
         *,
         current_run: Any,
@@ -3849,7 +3849,7 @@ class RunMetrics:
     ) -> float:
         """Return a modal-share or trip-count delta between two run contexts."""
         if value_type == "modal_share_delta":
-            return self._global_modal_share_delta_between_runs_by_iteration(
+            return self._global_modal_share_delta_between_runs_by_step(
                 current_run=current_run,
                 current_demand_groups=current_demand_groups,
                 reference_run=reference_run,
@@ -3878,7 +3878,7 @@ class RunMetrics:
         )
         return current_n_trips - reference_n_trips
 
-    def _global_metric_by_iteration(
+    def _global_metric_by_step(
         self,
         *,
         run: Any,

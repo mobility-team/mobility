@@ -21,7 +21,7 @@ def test_effort_resolves_search_and_replication_settings(effort, expected):
         parameters.activity_sequences.k_activity_sequences,
         parameters.destination_sequences.k_destination_sequences,
         parameters.mode_sequences.k_mode_sequences,
-        parameters.adaptive_search.max_inner_iterations,
+        parameters.adaptive_search.max_search_batches,
         parameters.run.n_replications,
     ) == expected
     assert [parameters.run.seed_for_replication(i) for i in range(expected[-1])] == list(range(expected[-1]))
@@ -59,12 +59,12 @@ def test_conflicting_explicit_seed_count_is_rejected():
 
 
 def test_step_and_batch_names_keep_the_existing_settings():
-    assert GroupDayTripsRunParameters(n_steps=4).n_iterations == 4
-    assert GroupDayTripsAdaptiveSearchParameters(max_search_batches=7).max_inner_iterations == 7
-    assert BehaviorChangePhase(start_step=3, scope="mode_replanning").start_iteration == 3
-    assert GroupDayTripsOutputParameters(checkpoint_each_step=True).checkpoint_each_iteration
-    with pytest.raises(ValueError, match="either n_steps or n_iterations"):
-        GroupDayTripsRunParameters(n_steps=2, n_iterations=2)
+    assert GroupDayTripsRunParameters(n_steps=4).n_steps == 4
+    assert GroupDayTripsAdaptiveSearchParameters(max_search_batches=7).max_search_batches == 7
+    assert BehaviorChangePhase(start_step=3, scope="mode_replanning").start_step == 3
+    assert GroupDayTripsOutputParameters(checkpoint_each_step=True).checkpoint_each_step
+    with pytest.raises(ValueError):
+        GroupDayTripsRunParameters(**{"n_iterations": 2})
     with pytest.raises(ValueError, match="either seed or seeds"):
         GroupDayTripsRunParameters(seed=2, seeds=[3])
 

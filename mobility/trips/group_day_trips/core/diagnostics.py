@@ -50,6 +50,6 @@ class RunDiagnostics:
             history=self.results.iteration_metrics_store,
         )
 
-    def iteration_metrics(self) -> pl.DataFrame:
-        """Return the persisted per-iteration diagnostics table for this run."""
+    def step_metrics(self) -> pl.DataFrame:
+        """Return the diagnostics for each completed simulation step."""
         return self.results.iteration_metrics_store.get()

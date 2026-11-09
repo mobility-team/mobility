@@ -103,7 +103,7 @@ def test_congestion_flows_reuses_previous_flows_when_refresh_is_not_due(tmp_path
         iteration=3,
         previous_state=previous_state,
         transport_costs=transport_costs,
-        n_iter_per_cost_update=2,
+        n_steps_per_cost_update=2,
     )
 
     road_flow_asset = congestion_flows.get()

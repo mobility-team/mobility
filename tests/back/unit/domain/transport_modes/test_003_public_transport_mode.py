@@ -50,7 +50,7 @@ def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
         routing_parameters=pt_module.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-07-24",
             gtfs_sources_folder=tmp_path / "sources",
-            additional_gtfs_files=ParameterValue.by_scenario_and_iteration(
+            additional_gtfs_files=ParameterValue.by_scenario_and_step(
                 default=None, serm={1: [], 5: [additional_source]}
             ),
         ),
@@ -84,7 +84,7 @@ def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
     if generated:
         # Recreating an unchanged service must reuse the graph.
         parameters = mode.routing_parameters
-        parameters.additional_gtfs_files = ParameterValue.by_scenario_and_iteration(
+        parameters.additional_gtfs_files = ParameterValue.by_scenario_and_step(
             default=None, serm={1: [], 5: [builder.build_asset()]}
         )
         repeated = mode.for_iteration(5, scenario="serm")
@@ -93,7 +93,7 @@ def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
         assert not additional_source.cache_path.exists()
 
         builder.add_line([("a", "b", 60)], start_time=1200, end_time=1800, period=150)
-        parameters.additional_gtfs_files = ParameterValue.by_scenario_and_iteration(
+        parameters.additional_gtfs_files = ParameterValue.by_scenario_and_step(
             default=None, serm={1: [], 5: [builder.build_asset()]}
         )
     else:
@@ -147,7 +147,7 @@ def test_public_transport_for_iteration_resolves_walk_leg_parameters(monkeypatch
         _fake_public_transport_generalized_cost,
     )
 
-    walk_distance_cost = ParameterValue.by_scenario_and_iteration(
+    walk_distance_cost = ParameterValue.by_scenario_and_step(
         {
             "default": {1: 0.0},
             "paid_walk": {1: 0.0, 2: 0.25},

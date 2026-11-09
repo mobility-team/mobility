@@ -148,7 +148,7 @@ def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path):
         survey_plans=empty, survey_plan_steps=_schedule(), demand_groups=empty,
         activity_dur=empty, home_night_dur=empty, stay_home_plan=empty,
         opportunities=empty, current_plans=empty, candidate_plan_steps=compact,
-        plan_id_index=empty, destination_saturation=empty, costs=empty, start_iteration=1,
+        plan_id_index=empty, destination_saturation=empty, costs=empty, start_step=1,
     )
     asset = object.__new__(IterationStateAsset)
     asset.iteration = 1
@@ -456,7 +456,7 @@ def test_modeled_schedule_ids_survive_state_spill_and_restore(tmp_path):
         survey_plans=empty, survey_plan_steps=_schedule(), demand_groups=empty,
         activity_dur=empty, home_night_dur=empty, stay_home_plan=empty,
         opportunities=empty, current_plans=empty, candidate_plan_steps=steps,
-        plan_id_index=empty, destination_saturation=empty, costs=empty, start_iteration=1,
+        plan_id_index=empty, destination_saturation=empty, costs=empty, start_step=1,
     )
     state = RunState(**{**vars(initial), "time_sequence_steps": catalog, "current_plan_steps": steps})
     asset = object.__new__(IterationStateAsset)

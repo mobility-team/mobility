@@ -23,7 +23,7 @@ class RunState:
     plan_id_index: pl.DataFrame
     destination_saturation: pl.DataFrame
     costs: pl.DataFrame
-    start_iteration: int
+    start_step: int
     current_plan_steps: pl.DataFrame | None = None
     rng_state: object | None = None
     destination_sequence_index: pl.DataFrame | None = None

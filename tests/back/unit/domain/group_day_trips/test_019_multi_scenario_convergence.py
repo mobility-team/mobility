@@ -53,10 +53,10 @@ def test_low_effort_defaults_keep_a_finite_inner_limit():
     """Keep the intended sampling defaults and reject an empty inner loop."""
     parameters = GroupDayTripsParameters()
     assert parameters.destination_sequences.k_destination_sequences == 1
-    assert parameters.adaptive_search.max_inner_iterations == 3
+    assert parameters.adaptive_search.max_search_batches == 3
 
     with pytest.raises(ValueError):
-        GroupDayTripsParameters(adaptive_search={"max_inner_iterations": 0})
+        GroupDayTripsParameters(adaptive_search={"max_search_batches": 0})
 
 
 def test_inner_allocation_preserves_plan_ids_for_the_behavior_update(monkeypatch):
@@ -113,7 +113,7 @@ def test_checkpoint_resume_requires_the_complete_scenario_cohort(
     tmp_path, manifest_ready, ready_scenarios
 ):
     """Resume every scenario together, or clear every checkpoint loader."""
-    parameters = GroupDayTripsParameters(outputs={"checkpoint_each_iteration": True})
+    parameters = GroupDayTripsParameters(outputs={"checkpoint_each_step": True})
     runs = {
         run_key: SimpleNamespace(
             parameters=parameters,

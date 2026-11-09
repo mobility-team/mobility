@@ -65,12 +65,12 @@ population_trips = mobility.PopulationGroupDayTrips(
     ),
     parameters=mobility.GroupDayTripsParameters(
         run=mobility.GroupDayTripsRunParameters(
-            n_iterations=1,
-            n_iter_per_cost_update=0,
+            n_steps=1,
+            n_steps_per_cost_update=0,
             seed=0,
         ),
         outputs=mobility.GroupDayTripsOutputParameters(
-            cache_iteration_events=True,
+            cache_step_events=True,
         ),
         periods=mobility.GroupDayTripsPeriodParameters(simulate_weekend=False),
         destination_sequences=mobility.GroupDayTripsDestinationSequenceParameters(

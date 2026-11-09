@@ -119,7 +119,7 @@ class GroupDayTripsResultMetrics:
             columns=columns,
         )
 
-    def _tables_by_iteration(
+    def _tables_by_step(
         self,
         table_name: str,
         *,
@@ -185,7 +185,7 @@ class GroupDayTripsResultMetrics:
         reference: MetricReference = None,
         reference_view: ReferenceView = "gap",
         inner_zone_residents_only: bool = False,
-        iterations: IterationSelector = "last",
+        steps: IterationSelector = "last",
         home_zone_ids: DemandGroupSelector = None,
         csp: DemandGroupSelector = None,
         modes: DemandGroupSelector = None,
@@ -218,7 +218,7 @@ class GroupDayTripsResultMetrics:
             normalize_scope=normalize_scope,
             reference=reference,
             reference_view=reference_view,
-            iterations=iterations,
+            iterations=steps,
             home_zone_ids=home_zone_ids,
             csp=csp,
             modes=modes,
@@ -232,7 +232,7 @@ class GroupDayTripsResultMetrics:
             "reference": reference,
             "reference_view": reference_view,
             "inner_zone_residents_only": inner_zone_residents_only,
-            "iterations": iterations,
+            "iterations": steps,
             "home_zone_ids": home_zone_ids,
             "csp": csp,
             "modes": modes,
@@ -248,7 +248,7 @@ class GroupDayTripsResultMetrics:
                 reference=reference,
                 reference_view=reference_view,
                 inner_zone_residents_only=inner_zone_residents_only,
-                iterations=iterations,
+                iterations=steps,
                 home_zone_ids=home_zone_ids,
                 csp=csp,
                 modes=modes,
@@ -265,7 +265,7 @@ class GroupDayTripsResultMetrics:
                     reference=reference,
                     reference_view=reference_view,
                     inner_zone_residents_only=inner_zone_residents_only,
-                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
+                    iterations="last" if self.results.uses_last_iteration(steps) else iteration,
                     home_zone_ids=home_zone_ids,
                     csp=csp,
                     modes=modes,
@@ -282,13 +282,13 @@ class GroupDayTripsResultMetrics:
                 or csp is not None
                 or any(column in DEMAND_GROUP_COLUMNS for column in group_columns)
             )
-            dependencies = [self._table("plan_steps", iterations=iterations)]
+            dependencies = [self._table("plan_steps", iterations=steps)]
             if needs_demand_groups:
                 dependencies.append(
-                    self._table("demand_groups", iterations=iterations)
+                    self._table("demand_groups", iterations=steps)
                 )
-            if not self.results.uses_last_iteration(iterations):
-                dependencies.append(self._table("costs", iterations=iterations))
+            if not self.results.uses_last_iteration(steps):
+                dependencies.append(self._table("costs", iterations=steps))
             if self._reference_kind(reference) == "external":
                 dependencies.append(self.results.survey_reference_plan_steps)
             if inner_zone_residents_only or self._reference_kind(reference) == "external":
@@ -365,7 +365,7 @@ class GroupDayTripsResultMetrics:
             reference_kind=reference_kind,
             reference_view=reference_view,
         )
-        if "iteration" in values.columns and values["iteration"].n_unique() > 1:
+        if "step" in values.columns and values["step"].n_unique() > 1:
             return plot_metric_over_iterations(
                 values,
                 metric=plot_metric_column,
@@ -534,7 +534,7 @@ class GroupDayTripsResultMetrics:
             raise ValueError(f"No reference is available for {quantity}.")
         if reference_kind == "external" and not self.results.uses_last_iteration(iterations):
             raise ValueError(
-                "External references are only available for iterations='last' for now."
+                "External references are only available for steps='last' for now."
             )
         if reference_kind == "external" and by_zone is not None:
             raise ValueError("External references are not available by zone.")
@@ -567,14 +567,14 @@ class GroupDayTripsResultMetrics:
     def travel_costs(
         self,
         *,
-        iterations: IterationSelector = "last",
+        steps: IterationSelector = "last",
     ) -> Metric:
         """Declare the detailed OD-by-mode travel-cost table to persist."""
-        selected_iterations = self.results.selected_iterations(iterations)
-        uses_final_costs = self.results.uses_last_iteration(iterations)
+        selected_iterations = self.results.selected_iterations(steps)
+        uses_final_costs = self.results.uses_last_iteration(steps)
         costs = self._table(
             "costs",
-            iterations="last" if uses_final_costs else iterations,
+            iterations="last" if uses_final_costs else steps,
         )
 
         def compute_iteration(iteration: int) -> pl.LazyFrame:
@@ -591,7 +591,7 @@ class GroupDayTripsResultMetrics:
             name="travel_costs",
             dependencies=[costs],
             planned_outputs=self._planned_outputs([costs]),
-            query={"iterations": iterations},
+            query={"iterations": steps},
             compute=costs.get,
             compute_iteration=compute_iteration,
             stream_result=True,
@@ -605,16 +605,16 @@ class GroupDayTripsResultMetrics:
         self,
         *,
         reference: MetricReference = None,
-        iterations: IterationSelector = "last",
+        steps: IterationSelector = "last",
     ) -> Metric:
         """Declare immobility by country and socio-professional category."""
         reference_kind = self._reference_kind(reference)
         if reference_kind == "scenario":
             raise ValueError("Scenario references are not available for immobility yet.")
-        if reference_kind == "external" and not self.results.uses_last_iteration(iterations):
-            raise ValueError("External references are only available for iterations='last' for now.")
-        plan_steps = self._tables_by_iteration("plan_steps", iterations=iterations)
-        demand_groups = self._tables_by_iteration("demand_groups", iterations=iterations)
+        if reference_kind == "external" and not self.results.uses_last_iteration(steps):
+            raise ValueError("External references are only available for steps='last' for now.")
+        plan_steps = self._tables_by_step("plan_steps", iterations=steps)
+        demand_groups = self._tables_by_step("demand_groups", iterations=steps)
         survey_immobility = (
             SurveyImmobilityReference(
                 surveys=self.results.surveys,
@@ -632,13 +632,13 @@ class GroupDayTripsResultMetrics:
 
         def compute_iteration(iteration: int) -> pl.DataFrame:
             iteration_calculation = Immobility(
-                plan_steps=self._tables_by_iteration(
+                plan_steps=self._tables_by_step(
                     "plan_steps",
-                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
+                    iterations="last" if self.results.uses_last_iteration(steps) else iteration,
                 ),
-                demand_groups=self._tables_by_iteration(
+                demand_groups=self._tables_by_step(
                     "demand_groups",
-                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
+                    iterations="last" if self.results.uses_last_iteration(steps) else iteration,
                 ),
                 transport_zones=self.results.transport_zones,
                 survey_immobility=survey_immobility,
@@ -649,7 +649,7 @@ class GroupDayTripsResultMetrics:
             name="immobility",
             dependencies=[calculation],
             planned_outputs=self._planned_outputs(plan_steps + demand_groups),
-            query={"reference": reference, "iterations": iterations},
+            query={"reference": reference, "iterations": steps},
             compute=calculation.get,
             compute_iteration=compute_iteration,
         )
@@ -657,11 +657,11 @@ class GroupDayTripsResultMetrics:
     def trip_count_by_demand_group(
         self,
         *,
-        iterations: IterationSelector = "last",
+        steps: IterationSelector = "last",
     ) -> Metric:
         """Declare trip count and trips per person by demand group."""
-        plan_steps = self._tables_by_iteration("plan_steps", iterations=iterations)
-        demand_groups = self._tables_by_iteration("demand_groups", iterations=iterations)
+        plan_steps = self._tables_by_step("plan_steps", iterations=steps)
+        demand_groups = self._tables_by_step("demand_groups", iterations=steps)
         calculation = TripCountByDemandGroup(
             plan_steps=plan_steps,
             demand_groups=demand_groups,
@@ -669,13 +669,13 @@ class GroupDayTripsResultMetrics:
 
         def compute_iteration(iteration: int) -> pl.DataFrame:
             iteration_calculation = TripCountByDemandGroup(
-                plan_steps=self._tables_by_iteration(
+                plan_steps=self._tables_by_step(
                     "plan_steps",
-                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
+                    iterations="last" if self.results.uses_last_iteration(steps) else iteration,
                 ),
-                demand_groups=self._tables_by_iteration(
+                demand_groups=self._tables_by_step(
                     "demand_groups",
-                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
+                    iterations="last" if self.results.uses_last_iteration(steps) else iteration,
                 ),
             )
             return iteration_calculation.get()
@@ -684,7 +684,7 @@ class GroupDayTripsResultMetrics:
             name="trip_count_by_demand_group",
             dependencies=[calculation],
             planned_outputs=self._planned_outputs(plan_steps + demand_groups),
-            query={"iterations": iterations},
+            query={"iterations": steps},
             compute=calculation.get,
             compute_iteration=compute_iteration,
         )
@@ -693,7 +693,7 @@ class GroupDayTripsResultMetrics:
         self,
         *,
         reference: MetricReference = None,
-        iterations: IterationSelector = "last",
+        steps: IterationSelector = "last",
         bin_width_minutes: int = 15,
         output: MetricOutput = "table",
         width: int = 900,
@@ -704,29 +704,29 @@ class GroupDayTripsResultMetrics:
         reference_kind = self._reference_kind(reference)
         if reference_kind == "scenario":
             raise ValueError("Scenario references are not available for activity duration distributions yet.")
-        if reference_kind == "external" and not self.results.uses_last_iteration(iterations):
-            raise ValueError("External references are only available for iterations='last' for now.")
-        if output == "plot" and self.results.has_multiple_iterations(iterations):
+        if reference_kind == "external" and not self.results.uses_last_iteration(steps):
+            raise ValueError("External references are only available for steps='last' for now.")
+        if output == "plot" and self.results.has_multiple_iterations(steps):
             raise ValueError(
-                'output="plot" currently supports only one iteration. '
-                'Use iterations="last" or one iteration number, or use output="table".'
+                'output="plot" currently supports only one step. '
+                'Use steps="last" or one step number, or use output="table".'
             )
-        plan_steps = self._tables_by_iteration("plan_steps", iterations=iterations)
+        plan_steps = self._tables_by_step("plan_steps", iterations=steps)
         calculation = ActivityDurationDistribution(
             plan_steps=plan_steps,
             reference_plan_steps=self.results.survey_reference_plan_steps if reference_kind == "external" else None,
             scenarios=self.results.scenarios,
             day_type=self.results.day_type,
-            iterations=self.results.selected_iterations(iterations),
+            iterations=self.results.selected_iterations(steps),
             replications=self.results.replications,
             bin_width_minutes=bin_width_minutes,
         )
 
         def compute_iteration(iteration: int) -> pl.DataFrame:
             iteration_calculation = ActivityDurationDistribution(
-                plan_steps=self._tables_by_iteration(
+                plan_steps=self._tables_by_step(
                     "plan_steps",
-                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
+                    iterations="last" if self.results.uses_last_iteration(steps) else iteration,
                 ),
                 reference_plan_steps=(
                     self.results.survey_reference_plan_steps
@@ -747,7 +747,7 @@ class GroupDayTripsResultMetrics:
             planned_outputs=self._planned_outputs(plan_steps),
             query={
                 "reference": reference,
-                "iterations": iterations,
+                "iterations": steps,
                 "bin_width_minutes": bin_width_minutes,
             },
             compute=calculation.get,
@@ -766,7 +766,7 @@ class GroupDayTripsResultMetrics:
         self,
         *,
         reference: MetricReference = None,
-        iterations: IterationSelector = "last",
+        steps: IterationSelector = "last",
         interval_minutes: int = 15,
         output: MetricOutput = "table",
         width: int = 980,
@@ -777,35 +777,35 @@ class GroupDayTripsResultMetrics:
         reference_kind = self._reference_kind(reference)
         if reference_kind == "scenario":
             raise ValueError("Scenario references are not available for activity time series yet.")
-        if reference_kind == "external" and not self.results.uses_last_iteration(iterations):
-            raise ValueError("External references are only available for iterations='last' for now.")
-        if output == "plot" and self.results.has_multiple_iterations(iterations):
+        if reference_kind == "external" and not self.results.uses_last_iteration(steps):
+            raise ValueError("External references are only available for steps='last' for now.")
+        if output == "plot" and self.results.has_multiple_iterations(steps):
             raise ValueError(
-                'output="plot" currently supports only one iteration. '
-                'Use iterations="last" or one iteration number, or use output="table".'
+                'output="plot" currently supports only one step. '
+                'Use steps="last" or one step number, or use output="table".'
             )
-        plan_steps = self._tables_by_iteration("plan_steps", iterations=iterations)
-        demand_groups = self._tables_by_iteration("demand_groups", iterations=iterations)
+        plan_steps = self._tables_by_step("plan_steps", iterations=steps)
+        demand_groups = self._tables_by_step("demand_groups", iterations=steps)
         calculation = ActivityTimeSeries(
             plan_steps=plan_steps,
             demand_groups=demand_groups,
             reference_plan_steps=self.results.survey_reference_plan_steps if reference_kind == "external" else None,
             scenarios=self.results.scenarios,
             day_type=self.results.day_type,
-            iterations=self.results.selected_iterations(iterations),
+            iterations=self.results.selected_iterations(steps),
             replications=self.results.replications,
             interval_minutes=interval_minutes,
         )
 
         def compute_iteration(iteration: int) -> pl.DataFrame:
             iteration_calculation = ActivityTimeSeries(
-                plan_steps=self._tables_by_iteration(
+                plan_steps=self._tables_by_step(
                     "plan_steps",
-                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
+                    iterations="last" if self.results.uses_last_iteration(steps) else iteration,
                 ),
-                demand_groups=self._tables_by_iteration(
+                demand_groups=self._tables_by_step(
                     "demand_groups",
-                    iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
+                    iterations="last" if self.results.uses_last_iteration(steps) else iteration,
                 ),
                 reference_plan_steps=(
                     self.results.survey_reference_plan_steps
@@ -826,7 +826,7 @@ class GroupDayTripsResultMetrics:
             planned_outputs=self._planned_outputs(plan_steps + demand_groups),
             query={
                 "reference": reference,
-                "iterations": iterations,
+                "iterations": steps,
                 "interval_minutes": interval_minutes,
             },
             compute=calculation.get,
@@ -846,7 +846,7 @@ class GroupDayTripsResultMetrics:
         *,
         activity: str | None = None,
         inner_zone_residents_only: bool = True,
-        iterations: IterationSelector = "last",
+        steps: IterationSelector = "last",
         output: MetricOutput = "table",
         scenarios: str | list[str] | tuple[str, ...] | None = None,
         width: int = 760,
@@ -856,12 +856,12 @@ class GroupDayTripsResultMetrics:
         """Declare opportunity occupation or render it as a plot."""
         validate_output(output)
         opportunities = self._table("opportunities")
-        plan_steps = self._tables_by_iteration("plan_steps", iterations=iterations)
+        plan_steps = self._tables_by_step("plan_steps", iterations=steps)
 
         def compute() -> pl.DataFrame:
             values = self._opportunity_occupation(
                 inner_zone_residents_only=inner_zone_residents_only,
-                iterations=iterations,
+                iterations=steps,
             )
             values = self._filter_scenarios(values, scenarios=scenarios)
             if activity is not None:
@@ -871,7 +871,7 @@ class GroupDayTripsResultMetrics:
         def compute_iteration(iteration: int) -> pl.DataFrame:
             values = self._opportunity_occupation(
                 inner_zone_residents_only=inner_zone_residents_only,
-                iterations="last" if self.results.uses_last_iteration(iterations) else iteration,
+                iterations="last" if self.results.uses_last_iteration(steps) else iteration,
             )
             values = self._filter_scenarios(values, scenarios=scenarios)
             if activity is not None:
@@ -885,7 +885,7 @@ class GroupDayTripsResultMetrics:
             query={
                 "activity": activity,
                 "inner_zone_residents_only": inner_zone_residents_only,
-                "iterations": iterations,
+                "iterations": steps,
                 "scenarios": scenarios,
             },
             compute=compute,
@@ -1173,7 +1173,7 @@ class GroupDayTripsResultMetrics:
     ) -> pl.DataFrame:
         """Return opportunity occupation by selected iteration and replication."""
         opportunities = self._table("opportunities").get()
-        plan_steps_assets = self._tables_by_iteration(
+        plan_steps_assets = self._tables_by_step(
             "plan_steps",
             iterations=iterations,
         )
@@ -1238,7 +1238,7 @@ class GroupDayTripsResultMetrics:
             opportunities
             .select(SCOPE_COLUMNS + ["to", "activity", "opportunity_capacity"])
             .with_columns(
-                pl.lit(iteration, dtype=pl.Int32).alias("iteration"),
+                pl.lit(iteration, dtype=pl.Int32).alias("step"),
                 pl.col("to").cast(pl.String),
                 pl.col("activity").cast(pl.String),
                 pl.col("opportunity_capacity").cast(pl.Float64),
@@ -1489,7 +1489,7 @@ class GroupDayTripsResultMetrics:
             for column in per_replication_values.columns
             if column not in SCOPE_COLUMNS + [metric_column]
         ]
-        pairing_columns = ["sensitivity_case", "day_type", "iteration", "replication"] + dimension_columns
+        pairing_columns = ["sensitivity_case", "day_type", "step", "replication"] + dimension_columns
         paired_output_columns = RESULT_COLUMNS + dimension_columns
 
         reference_rows = (

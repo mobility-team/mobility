@@ -151,7 +151,7 @@ class GroupDayTripsSensitivityAnalysis:
         normalize_by = kwargs.get("normalize_by")
         normalize_scope = kwargs.get("normalize_scope")
         inner_zone_residents_only = kwargs.get("inner_zone_residents_only", False)
-        iterations = kwargs.get("iterations", "last")
+        iterations = kwargs.get("steps", "last")
         metric_column = GroupDayTripsResultMetrics._metric_column(
             spec.quantity,
             normalize_by,
@@ -246,14 +246,14 @@ class GroupDayTripsSensitivityAnalysis:
         pairing_columns = [
             "scenario",
             "day_type",
-            "iteration",
+            "step",
             "replication",
         ] + dimension_columns
         paired_output_columns = [
             "scenario",
             "sensitivity_case",
             "day_type",
-            "iteration",
+            "step",
         ] + dimension_columns
         base_rows = (
             values

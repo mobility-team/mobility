@@ -76,7 +76,7 @@ class ScopedRunTable(InMemoryAsset):
         self.selected_iterations = results.selected_iterations(iterations)
         self.uses_last_iteration = results.uses_last_iteration(iterations)
         self.last_iterations_by_run = [
-            int(run_context.run.parameters.run.n_iterations)
+            int(run_context.run.parameters.run.n_steps)
             for run_context in self.run_contexts
         ]
         self.selected_iterations_by_run = []
@@ -129,7 +129,7 @@ class ScopedRunTable(InMemoryAsset):
             self.run_output_assets.append(output_assets)
 
         inputs = {
-            "version": 8,
+            "version": 9,
             "table_name": table_name,
             "iterations": tuple(self.selected_iterations),
             "iterations_by_run": tuple(
@@ -207,9 +207,9 @@ class ScopedRunTable(InMemoryAsset):
             if empty_iteration:
                 table = table.limit(0)
             if self.table_name in {"iteration_metrics", "transitions"}:
-                iteration_expr = pl.col("iteration").cast(pl.Int32)
+                iteration_expr = pl.col("step").cast(pl.Int32)
             elif self.table_name == "adaptive_search_diagnostics":
-                iteration_expr = pl.col("outer_iteration").fill_null(
+                iteration_expr = pl.col("outer_step").fill_null(
                     last_iteration
                 ).cast(pl.Int32)
             else:
@@ -225,7 +225,7 @@ class ScopedRunTable(InMemoryAsset):
                         scenario=pl.lit(run_context.scenario, dtype=pl.String),
                         sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
                         day_type=pl.lit(run_context.day_type, dtype=pl.String),
-                        iteration=iteration_expr,
+                        step=iteration_expr,
                         replication=pl.lit(run_context.replication, dtype=pl.Int32),
                     )
                 )
