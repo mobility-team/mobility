@@ -53,6 +53,12 @@ class TripCountMetric(InMemoryAsset):
 
     def create_and_get_asset(self) -> pl.DataFrame:
         """Build the trip-count table."""
+        return self.reduce_tables(self.plan_steps.get(), self.demand_groups.get())
+
+    def reduce_tables(
+        self, plan_steps: pl.LazyFrame, demand_groups: pl.LazyFrame
+    ) -> pl.DataFrame:
+        """Reduce the supplied live tables without resolving simulation state."""
         needed_demand_columns = [
             column
             for column in self.group_columns
@@ -62,8 +68,8 @@ class TripCountMetric(InMemoryAsset):
             needed_demand_columns.append("home_zone_id")
         plan_steps = with_analysis_dimensions(
             add_demand_group_columns(
-                self.plan_steps.get(),
-                self.demand_groups.get(),
+                plan_steps,
+                demand_groups,
                 needed_demand_columns,
             ),
             self.group_columns,
@@ -94,7 +100,7 @@ class TripCountMetric(InMemoryAsset):
             value_column="value",
         )
         if self.per_person:
-            per_replication = self._divide_by_population(per_replication)
+            per_replication = self._divide_by_population(per_replication, demand_groups)
 
         output_columns = RESULT_COLUMNS + list(self.group_columns)
         metric = (
@@ -111,9 +117,10 @@ class TripCountMetric(InMemoryAsset):
 
         return metric
 
-    def _divide_by_population(self, trips: pl.LazyFrame) -> pl.LazyFrame:
+    def _divide_by_population(
+        self, trips: pl.LazyFrame, demand_groups: pl.LazyFrame
+    ) -> pl.LazyFrame:
         """Divide trip counts by the matching population denominator."""
-        demand_groups = self.demand_groups.get()
         if self.inner_zone_residents_only:
             demand_groups = filter_demand_groups_to_inner_zone_residents(
                 demand_groups,

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -13,6 +14,26 @@ from mobility.transport.modes.core.transport_mode import TransportMode
 from mobility.transport.modes.public_transport import public_transport as pt_module
 from mobility.transport.modes.public_transport import public_transport_graph as graph_module
 from mobility.transport.modes.public_transport.gtfs_builder import GTFSBuilder
+from mobility.trips.group_day_trips.core.run import _timetable_file_hashes
+
+
+def test_run_timetable_identity_tracks_selected_file_contents(tmp_path):
+    feed = tmp_path / "service.zip"
+    feed.write_bytes(b"first")
+    missing = tmp_path / "not-selected.zip"
+    mode = SimpleNamespace(routing_parameters=SimpleNamespace(
+        additional_gtfs_files=ParameterValue.by_scenario_and_step(
+            default=None, project={1: None, 2: [str(feed)]},
+            other=[str(missing)],
+        )
+    ))
+    assert _timetable_file_hashes([mode], "default", None, 2) == {}
+    first = _timetable_file_hashes([mode], "project", None, 2)
+    assert list(first) == [str(feed)]
+    feed.write_bytes(b"other")
+    assert _timetable_file_hashes([mode], "project", None, 2) != first
+    # Final costs may use the timetable selected just after the last step.
+    assert _timetable_file_hashes([mode], "project", None, 1) != {}
 
 
 @pytest.mark.parametrize("generated", [False, True])
@@ -50,7 +71,7 @@ def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
         routing_parameters=pt_module.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-07-24",
             gtfs_sources_folder=tmp_path / "sources",
-            additional_gtfs_files=ParameterValue.by_scenario_and_iteration(
+            additional_gtfs_files=ParameterValue.by_scenario_and_step(
                 default=None, serm={1: [], 5: [additional_source]}
             ),
         ),
@@ -82,9 +103,12 @@ def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
     assert graphs["serm", 4].cache_path != graphs["serm", 5].cache_path
 
     if generated:
+        # Generated feeds are identified by their asset inputs; requesting a
+        # run identity must not require creating their archive first.
+        assert _timetable_file_hashes([mode], "serm", None, 5) == {}
         # Recreating an unchanged service must reuse the graph.
         parameters = mode.routing_parameters
-        parameters.additional_gtfs_files = ParameterValue.by_scenario_and_iteration(
+        parameters.additional_gtfs_files = ParameterValue.by_scenario_and_step(
             default=None, serm={1: [], 5: [builder.build_asset()]}
         )
         repeated = mode.for_iteration(5, scenario="serm")
@@ -93,11 +117,18 @@ def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
         assert not additional_source.cache_path.exists()
 
         builder.add_line([("a", "b", 60)], start_time=1200, end_time=1800, period=150)
-        parameters.additional_gtfs_files = ParameterValue.by_scenario_and_iteration(
+        parameters.additional_gtfs_files = ParameterValue.by_scenario_and_step(
             default=None, serm={1: [], 5: [builder.build_asset()]}
         )
     else:
         extra_feed.write_bytes(b"revised timetable")
+        # A resolved mode may be reused across experiments. Its graph must
+        # be rebuilt if a constant external feed changes at the same path.
+        old_mode = mode.for_iteration(5, scenario="serm")
+        old_graph = old_mode.travel_costs.intermodal_graph.public_transport_graph
+        extra_feed.write_bytes(b"another timetable")
+        new_mode = old_mode.for_iteration(5, scenario="serm")
+        assert new_mode.travel_costs.intermodal_graph.public_transport_graph.inputs_hash != old_graph.inputs_hash
 
     # Only the scenario using the changed service gets a new graph hash.
     revised = mode.for_iteration(5, scenario="serm")
@@ -147,7 +178,7 @@ def test_public_transport_for_iteration_resolves_walk_leg_parameters(monkeypatch
         _fake_public_transport_generalized_cost,
     )
 
-    walk_distance_cost = ParameterValue.by_scenario_and_iteration(
+    walk_distance_cost = ParameterValue.by_scenario_and_step(
         {
             "default": {1: 0.0},
             "paid_walk": {1: 0.0, 2: 0.25},

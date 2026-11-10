@@ -7,6 +7,28 @@ import pytest
 from mobility.config import set_params
 
 
+def test_set_params_sets_temporary_disk_limit(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", raising=False)
+    set_params(
+        package_data_folder_path=str(tmp_path / "pkg"),
+        project_data_folder_path=str(tmp_path / "project"),
+        r_packages=False,
+        temporary_disk_limit_gb=1.5,
+    )
+    assert os.environ["MOBILITY_TEMPORARY_DISK_LIMIT_BYTES"] == "1500000000"
+
+
+@pytest.mark.parametrize("value", [-1, float("inf"), "invalid"])
+def test_set_params_rejects_invalid_temporary_disk_limit(tmp_path, value):
+    with pytest.raises(ValueError, match="temporary_disk_limit_gb"):
+        set_params(
+            package_data_folder_path=str(tmp_path / "pkg"),
+            project_data_folder_path=str(tmp_path / "project"),
+            r_packages=False,
+            temporary_disk_limit_gb=value,
+        )
+
+
 def test_set_params_injects_truststore(monkeypatch, tmp_path):
     truststore_module = types.ModuleType("truststore")
     calls = {"count": 0}

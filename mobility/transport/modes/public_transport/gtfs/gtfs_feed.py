@@ -12,6 +12,8 @@ import pandas as pd
 import polars as pl
 from shapely.geometry.base import BaseGeometry
 
+from mobility.runtime.temporary import temporary_file_writer
+
 
 class GTFSFeed:
     """One GTFS ZIP file containing routes, vehicle trips and service calendars.
@@ -119,7 +121,7 @@ class GTFSFeed:
                 digest.update(filename.encode())
                 with (
                     archive.open(paths[filename]) as source,
-                    (self.folder / filename).open("wb") as target,
+                    temporary_file_writer(self.folder / filename) as target,
                 ):
                     for chunk in iter(lambda: source.read(1024 * 1024), b""):
                         digest.update(chunk)
@@ -168,7 +170,7 @@ class GTFSFeed:
             path,
             columns=selected,
             infer_schema=False,
-            missing_utf8_is_empty_string=True,
+            empty_string_is_null=False,
         )
         # Some publishers pad CSV lines, including the final header and value.
         table = table.rename({name: name.strip() for name in table.columns})
@@ -184,7 +186,7 @@ class GTFSFeed:
         scan = pl.scan_csv(
             self.folder / "stop_times.txt",
             infer_schema=False,
-            missing_utf8_is_empty_string=True,
+            empty_string_is_null=False,
         )
         columns = scan.collect_schema().names()
         scan = scan.rename({name: name.strip() for name in columns})

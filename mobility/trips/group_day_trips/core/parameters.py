@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,11 +16,11 @@ class BehaviorChangeScope(str, Enum):
 
 
 class BehaviorChangePhase(BaseModel):
-    """Behavior-change phase applied from ``start_iteration`` onward."""
+    """Behavior-change phase applied from ``start_step`` onward."""
 
     model_config = ConfigDict(extra="forbid")
 
-    start_iteration: Annotated[
+    start_step: Annotated[
         int,
         Field(
             ge=1,
@@ -52,7 +52,7 @@ class GroupDayTripsRunParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    n_iterations: Annotated[
+    n_steps: Annotated[
         int,
         Field(
             default=1,
@@ -64,14 +64,14 @@ class GroupDayTripsRunParameters(BaseModel):
             ),
         ),
     ]
-    n_iter_per_cost_update: Annotated[
+    n_steps_per_cost_update: Annotated[
         int,
         Field(
             default=3,
             ge=0,
             title="Travel costs update period",
             description=(
-                "The simulation updates travel costs every n_iter_per_cost_update "
+                "The simulation updates travel costs every n_steps_per_cost_update "
                 "iterations. Set it to zero to ignore congestion feedback."
             ),
         ),
@@ -103,10 +103,20 @@ class GroupDayTripsRunParameters(BaseModel):
         ),
     ]
 
+    @model_validator(mode="before")
+    @classmethod
+    def infer_replications_from_seeds(cls, data):
+        """A supplied list of seeds defines the number of runs unless specified."""
+        if isinstance(data, dict) and data.get("seeds") is not None and "n_replications" not in data:
+            data = {**data, "n_replications": len(data["seeds"])}
+        return data
+
     @model_validator(mode="after")
     def validate_replication_seeds(self) -> "GroupDayTripsRunParameters":
         """Validate single-run and multi-run seed settings."""
         if self.seeds is not None:
+            if self.seed != 0:
+                raise ValueError("Use either seed or seeds, not both.")
             if len(self.seeds) != self.n_replications:
                 raise ValueError(
                     "GroupDayTripsRunParameters.seeds should contain one seed per replication."
@@ -192,7 +202,7 @@ class GroupDayTripsOutputParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    cache_iteration_events: Annotated[
+    cache_step_events: Annotated[
         bool,
         Field(
             default=False,
@@ -203,7 +213,7 @@ class GroupDayTripsOutputParameters(BaseModel):
             ),
         ),
     ]
-    checkpoint_each_iteration: Annotated[
+    checkpoint_each_step: Annotated[
         bool,
         Field(
             default=False,
@@ -241,14 +251,14 @@ class GroupDayTripsBehaviorChangeParameters(BaseModel):
         if self.phases is None:
             return self
 
-        start_iterations = [phase.start_iteration for phase in self.phases]
+        start_iterations = [phase.start_step for phase in self.phases]
         if start_iterations != sorted(start_iterations):
             raise ValueError(
-                "GroupDayTripsBehaviorChangeParameters.phases must be sorted by start_iteration."
+                "GroupDayTripsBehaviorChangeParameters.phases must be sorted by start_step."
             )
         if len(start_iterations) != len(set(start_iterations)):
             raise ValueError(
-                "GroupDayTripsBehaviorChangeParameters.phases cannot define the same start_iteration twice."
+                "GroupDayTripsBehaviorChangeParameters.phases cannot define the same start_step twice."
             )
         return self
 
@@ -259,7 +269,7 @@ class GroupDayTripsBehaviorChangeParameters(BaseModel):
 
         active_phase = None
         for phase in self.phases:
-            if phase.start_iteration > iteration:
+            if phase.start_step > iteration:
                 break
             active_phase = phase
 
@@ -280,10 +290,9 @@ class GroupDayTripsActivitySequenceParameters(BaseModel):
             ge=1,
             title="Number of schedule draws",
             description=(
-                "Number of timed survey schedule draws per home zone during full "
-                "replanning. Draws are made with replacement from the schedules "
-                "supported by groups in that zone. Extra weighted draws may be "
-                "added to cover activity profiles missed by the initial sample. "
+                "Number of timed survey schedule draws per activity profile in "
+                "each home zone during full replanning. Each profile draws with "
+                "replacement from its compatible schedules, using survey weights. "
                 "Set to None to keep every eligible schedule."
             ),
         ),
@@ -307,6 +316,19 @@ class GroupDayTripsDestinationSequenceParameters(BaseModel):
     """Settings used when sampling destination sequences."""
 
     model_config = ConfigDict(extra="forbid")
+
+    k_destination_sequences: Annotated[
+        int,
+        Field(
+            default=3,
+            ge=1,
+            title="Destination sequences per activity sequence",
+            description=(
+                "Number of destination sequence draws generated for each sampled "
+                "activity sequence and utility profile present in its home zone."
+            ),
+        ),
+    ]
 
     alpha: Annotated[
         float,
@@ -403,7 +425,7 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    n_warmup_iterations: Annotated[
+    n_warmup_steps: Annotated[
         int,
         Field(
             default=1,
@@ -530,7 +552,7 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
             description="Share of transition probability kept as separate target plans.",
         ),
     ]
-    plan_probability_pruning_min_iteration: Annotated[
+    plan_probability_pruning_min_step: Annotated[
         int,
         Field(
             default=2,
@@ -541,10 +563,107 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
     ]
 
 
+class GroupDayTripsAdaptiveSearchParameters(BaseModel):
+    """Convergence tolerances and safety limits for coordinated scenarios."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_search_batches: Annotated[
+        int,
+        Field(
+            default=5,
+            ge=1,
+            title="Maximum inner iterations",
+            description="Hard limit on candidate generation and allocation batches per inner loop.",
+        ),
+    ]
+    max_shared_candidates: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            title="Maximum shared candidate pool size",
+            description=(
+                "Optional maximum number of distinct complete plans in the shared "
+                "pool. Plans active in the current allocation are protected, so "
+                "the limit must fit those plans. None keeps every unique plan."
+            ),
+        ),
+    ]
+    inner_flow_tolerance: Annotated[
+        float,
+        Field(
+            default=0.01,
+            gt=0.0,
+            title="Inner OD-mode flow tolerance",
+            description=(
+                "Maximum normalized root-sum-square change in one scenario's "
+                "OD-mode flows for an inner batch to pass."
+            ),
+        ),
+    ]
+    inner_base_gap_tolerance: Annotated[
+        float,
+        Field(
+            default=0.01,
+            gt=0.0,
+            title="Inner scenario-to-base gap tolerance",
+            description=(
+                "Maximum normalized change in a scenario-to-base OD-mode flow "
+                "gap for an inner batch to pass."
+            ),
+        ),
+    ]
+    inner_consecutive_passes: Annotated[
+        int,
+        Field(
+            default=2,
+            ge=1,
+            title="Consecutive passing inner batches",
+            description="Number of consecutive passing batches needed for inner-loop convergence.",
+        ),
+    ]
 class GroupDayTripsParameters(BaseModel):
     """Root settings for the grouped day-trips model."""
 
     model_config = ConfigDict(extra="forbid")
+
+    effort: Literal["low", "medium", "high"] = Field(default="low", exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_effort(cls, data):
+        """Fill omitted search settings from the chosen computational budget."""
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        presets = {
+            "low": (1, 1, 1, 3, 1),
+            "medium": (3, 3, 3, 5, 3),
+            "high": (6, 5, 5, 8, 5),
+        }
+        effort = data.get("effort", "low")
+        if effort not in presets:
+            return data  # Let Pydantic report the invalid value.
+        activity, destination, mode, batches, replications = presets[effort]
+        defaults = {
+            "activity_sequences": {"k_activity_sequences": activity},
+            "destination_sequences": {"k_destination_sequences": destination},
+            "mode_sequences": {"k_mode_sequences": mode},
+            "adaptive_search": {"max_search_batches": batches},
+            "run": {"n_replications": replications},
+        }
+        for name, preset in defaults.items():
+            supplied = data.get(name, {})
+            if isinstance(supplied, BaseModel):
+                supplied = supplied.model_dump(exclude_unset=True)
+            if not isinstance(supplied, dict):
+                continue
+            supplied = dict(supplied)
+            if name == "run" and supplied.get("seeds") is not None and "n_replications" not in supplied:
+                supplied["n_replications"] = len(supplied["seeds"])
+            data[name] = {**preset, **supplied}
+        return data
 
     run: Annotated[
         GroupDayTripsRunParameters,
@@ -581,6 +700,10 @@ class GroupDayTripsParameters(BaseModel):
     plan_update: Annotated[
         GroupDayTripsPlanUpdateParameters,
         Field(default_factory=GroupDayTripsPlanUpdateParameters),
+    ]
+    adaptive_search: Annotated[
+        GroupDayTripsAdaptiveSearchParameters,
+        Field(default_factory=GroupDayTripsAdaptiveSearchParameters),
     ]
 
     def with_replication(self, replication: int) -> "GroupDayTripsParameters":

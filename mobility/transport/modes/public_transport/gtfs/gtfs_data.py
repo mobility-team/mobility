@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
+from mobility.runtime.temporary import temporary_folder
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.input_hashing import hash_inputs
 from mobility.runtime.io.download_file import clean_path, download_file
@@ -135,7 +136,7 @@ class GTFSData(FileAsset):
                     temporary.write_text(json.dumps(saved, sort_keys=True), encoding="utf-8")
                     temporary.replace(self.cache_path["metadata"])
                     return
-        with tempfile.TemporaryDirectory(prefix="mobility-gtfs-calendar-") as folder:
+        with tempfile.TemporaryDirectory(prefix="mobility-gtfs-calendar-", dir=temporary_folder()) as folder:
             reader = GTFSFeed(self.cache_path["zip"], pathlib.Path(folder))
             reader.extract(("calendar", "calendar_dates"))
             try:

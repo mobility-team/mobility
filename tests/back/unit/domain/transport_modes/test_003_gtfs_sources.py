@@ -110,7 +110,7 @@ def test_003_gtfs_router_normalizes_additional_gtfs_paths(tmp_path):
 
 
 def test_003_gtfs_router_rejects_unresolved_additional_gtfs_parameter():
-    additional_files = ParameterValue.by_iteration({1: None, 5: ["event.zip"]})
+    additional_files = ParameterValue.by_step({1: None, 5: ["event.zip"]})
 
     with pytest.raises(ValueError, match="for_iteration"):
         GTFSRouter.normalize_additional_gtfs_files(additional_files)

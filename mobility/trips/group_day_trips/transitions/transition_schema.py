@@ -10,7 +10,7 @@ import polars as pl
 
 
 TRANSITION_EVENT_SCHEMA: dict[str, pl.DataType] = {
-    "iteration": pl.UInt32,
+    "step": pl.UInt32,
     "demand_group_id": pl.UInt32,
     "demand_subgroup_id": pl.UInt32,
     "activity_seq_id": pl.UInt32,

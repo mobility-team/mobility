@@ -3,18 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from mobility.runtime.assets.graph import asset_graph_key
+from mobility.runtime.assets.graph import asset_graph_key, build_asset_graph
 from mobility.runtime.assets.resolver import (
     asset_resolution_context,
-    get_current_asset_resolver,
 )
 from mobility.runtime.parameter_values import DEFAULT_SCENARIO, SensitivityCase
 from mobility.runtime.scenarios import Scenarios
+from mobility.runtime.temporary import managed_temporary_disk_usage, temporary_disk_limit
 
 from .assets.metric import Metric
 from .assets.scoped_tables import ScopedRunTable
 from .diagnostics import GroupDayTripsResultDiagnostics
-from .execution_plan import ResultExecutionPlan
+from .simulation_runner import SimulationRunner
 from .metrics import GroupDayTripsResultMetrics
 from .tables import GroupDayTripsResultTables
 
@@ -77,10 +77,30 @@ class GroupDayTripsResults:
         self.diagnostics = GroupDayTripsResultDiagnostics(self)
 
     def get_all(self, **requests: Metric | ScopedRunTable) -> dict[str, Any]:
-        """Resolve named metric and table requests in one execution plan."""
+        """Resolve named metric and table requests together."""
         if not requests:
             return {}
 
+        self._validate_requests(requests)
+
+        # A result batch owns its transient execution; it must not release
+        # unrelated values held by a surrounding asset-resolution context.
+        with asset_resolution_context() as resolver:
+            try:
+                values_by_request = SimulationRunner(
+                    requests=list(requests.values()),
+                    resolver=resolver,
+                ).execute()
+            finally:
+                resolver.release_transient_values()
+
+        return {
+            name: values_by_request[asset_graph_key(request)]
+            for name, request in requests.items()
+        }
+
+    def _validate_requests(self, requests: dict[str, Metric | ScopedRunTable]) -> None:
+        """Check that all named requests belong to this result scope."""
         for name, request in requests.items():
             if not isinstance(request, (Metric, ScopedRunTable)):
                 raise TypeError(
@@ -93,18 +113,108 @@ class GroupDayTripsResults:
                     "GroupDayTripsResults object."
                 )
 
-        with asset_resolution_context(get_current_asset_resolver()) as resolver:
-            try:
-                values_by_request = ResultExecutionPlan(
-                    requests=list(requests.values()),
-                    resolver=resolver,
-                ).execute()
-            finally:
-                resolver.release_transient_values()
+    def explain(self, **requests: Metric | ScopedRunTable) -> dict[str, Any]:
+        """Describe requested work and check existing files without running it."""
+        self._validate_requests(requests)
+        SimulationRunner.validate_external_inputs(context.run for context in self.run_contexts)
+        lanes = {}
+        for context in self.run_contexts:
+            coordinator = getattr(context.run, "coordinated_run_asset", None)
+            runs = getattr(coordinator, "runs", {}).values() if coordinator else [context.run]
+            members = [
+                {"scenario": getattr(run, "scenario", context.scenario),
+                 "sensitivity_case": getattr(run, "sensitivity_case_id", context.sensitivity_case_id)}
+                for run in runs
+            ]
+            if not members:
+                members = [{"scenario": context.scenario, "sensitivity_case": context.sensitivity_case_id}]
+            lane = lanes.setdefault(context.replication, {
+                "replication": context.replication,
+                "seed": getattr(context.run.parameters.run, "seed", None),
+                "cohort": members,
+                "configured_steps": int(context.run.parameters.run.n_steps),
+            })
+            for member in members:
+                if member not in lane["cohort"]:
+                    lane["cohort"].append(member)
 
-        return {
-            name: values_by_request[asset_graph_key(request)]
+        outputs = {}
+        for name, request in requests.items():
+            is_metric = isinstance(request, Metric)
+            # Match the resolver's dependency check, but never rebuild a file.
+            graph = build_asset_graph(
+                request, include_root=is_metric, file_assets_only=True,
+                include_node_data=False,
+            )
+            cached = is_metric and all(not asset.is_update_needed() for asset in graph.nodes)
+            outputs[name] = {
+                "type": "metric" if is_metric else "table",
+                "name": request.inputs["name"] if is_metric else request.table_name,
+                "steps": list(request.selected_iterations),
+                "columns": None if is_metric or request.columns is None else list(request.columns),
+                "query": request.inputs.get("query") if is_metric else None,
+                "cache": ("valid" if cached else "needs computation") if is_metric else "transient",
+                "inputs": sorted({
+                    getattr(asset, "table_name", asset.__class__.__name__)
+                    for asset in request.planned_outputs
+                }),
+                "storage": "metric cache" if is_metric else "temporary files owned by the result",
+            }
+        needs_run = any(item["cache"] != "valid" for item in outputs.values())
+        needs_simulation = any(
+            outputs[name]["cache"] != "valid"
+            and not SimulationRunner._uses_initial_state_only(request)
             for name, request in requests.items()
+        )
+        pending = [request for name, request in requests.items() if outputs[name]["cache"] != "valid"]
+        for lane in lanes.values():
+            final_costs, inner_flows = (
+                SimulationRunner._final_requirements(pending, lane["configured_steps"])
+                if needs_simulation else (False, False)
+            )
+            lane["final_costs"] = "planned" if final_costs else "not needed"
+            lane["inner_flow_diagnostics"] = "planned" if inner_flows else "not needed"
+            lane["computations"] = (
+                [
+                    "Prepare inputs and initial cohort state",
+                    "Advance the cohort through configured steps, using valid checkpoints when available",
+                ]
+                if needs_simulation else []
+            )
+            lane["step_outputs"] = {
+                step: [
+                    name for name, request in requests.items()
+                    if outputs[name]["cache"] != "valid"
+                    and step in request.selected_iterations
+                ]
+                for step in sorted({
+                    step for name, request in requests.items()
+                    if outputs[name]["cache"] != "valid"
+                    for step in request.selected_iterations
+                })
+            }
+        return {
+            "day_type": self.day_type,
+            "lanes": list(lanes.values()),
+            "outputs": outputs,
+            "simulation": (
+                "Required; valid checkpoints may supply saved steps. "
+                "All configured steps and cohort members are included."
+                if needs_simulation else (
+                    "No simulation is required; requested inputs are available without advancing the cohort."
+                    if needs_run else "No simulation is required for these cached outputs."
+                )
+            ),
+            "temporary_storage": {
+                "managed_bytes": managed_temporary_disk_usage(),
+                "limit_bytes": temporary_disk_limit(),
+                "note": (
+                    "Result sizes are not estimated. Polars spill and some external-tool files "
+                    "are not tracked. Existing path-cost caches are outside the temporary limit. "
+                    "Path-cost and shared congestion outputs are checked after R finishes writing; "
+                    "map frames are checked after rendering."
+                ),
+            },
         }
 
     @property
@@ -142,7 +252,8 @@ class GroupDayTripsResults:
 
     def uses_last_iteration(self, iterations: IterationSelector = "last") -> bool:
         """Return whether a result query uses normal final run outputs."""
-        return self.selected_iterations(iterations) == [self.last_iteration]
+        parsed_iterations = self._validate_iterations(iterations)
+        return parsed_iterations == "last"
 
     def selected_iterations(self, iterations: IterationSelector = "last") -> list[int]:
         """Return concrete iteration numbers for one result query."""
@@ -155,13 +266,30 @@ class GroupDayTripsResults:
 
     @property
     def last_iteration(self) -> int:
-        """Return the configured last model iteration."""
+        """Return the configured maximum outer iteration count without running the model."""
         try:
-            return int(self.first_run.parameters.run.n_iterations)
+            return max(
+                int(run_context.run.parameters.run.n_steps)
+                for run_context in self.run_contexts
+            )
         except AttributeError as exc:
             raise TypeError(
-                "Iteration-scoped results need runs with parameters.run.n_iterations."
+                "Iteration-scoped results need runs with parameters.run.n_steps."
             ) from exc
+
+    @staticmethod
+    def _last_iteration_for_run(run) -> int:
+        """Return the number of outer states completed by one run context."""
+        coordinated_run_asset = getattr(run, "coordinated_run_asset", None)
+        if coordinated_run_asset is not None:
+            if (
+                hasattr(coordinated_run_asset, "_advance_cohort_step")
+                and not getattr(coordinated_run_asset, "_is_running", False)
+            ):
+                return int(run.parameters.run.n_steps)
+            result = coordinated_run_asset.get()
+            return result.current_iteration
+        return int(run.parameters.run.n_steps)
 
     def has_multiple_iterations(self, iterations: IterationSelector = "last") -> bool:
         """Return whether one result query contains several iterations."""
@@ -226,6 +354,8 @@ class GroupDayTripsResults:
             replications = range(self.n_replications)
 
         selected_replications = [int(replication) for replication in replications]
+        if len(selected_replications) != len(set(selected_replications)):
+            raise ValueError("GroupDayTripsResults.replications should not contain duplicates.")
         invalid_replications = [
             replication
             for replication in selected_replications
@@ -286,8 +416,8 @@ class GroupDayTripsResults:
             if iterations in {"last", "all"}:
                 return iterations
             raise ValueError(
-                'iterations should be "last", "all", one iteration number, '
-                "or a list/range of iteration numbers."
+                'steps should be "last", "all", one step number, '
+                "or a list/range of step numbers."
             )
         if isinstance(iterations, int):
             selected_iterations = [iterations]
@@ -297,14 +427,14 @@ class GroupDayTripsResults:
             selected_iterations = list(iterations)
         else:
             raise TypeError(
-                'iterations should be "last", "all", one iteration number, '
-                "or a list/range of iteration numbers."
+                'steps should be "last", "all", one step number, '
+                "or a list/range of step numbers."
             )
 
         if not selected_iterations:
-            raise ValueError("GroupDayTripsResults needs at least one iteration.")
-        if not all(isinstance(iteration, int) for iteration in selected_iterations):
-            raise TypeError("iterations should only contain integer iteration numbers.")
+            raise ValueError("GroupDayTripsResults needs at least one step.")
+        if not all(type(iteration) is int for iteration in selected_iterations):
+            raise TypeError("steps should only contain integer step numbers.")
         invalid_iterations = [
             iteration
             for iteration in selected_iterations
@@ -312,7 +442,7 @@ class GroupDayTripsResults:
         ]
         if invalid_iterations:
             raise ValueError(
-                "iterations should contain positive iteration numbers. "
+                "steps should contain positive step numbers. "
                 f"Received {invalid_iterations}."
             )
         duplicate_iterations = sorted(
@@ -322,7 +452,16 @@ class GroupDayTripsResults:
         )
         if duplicate_iterations:
             raise ValueError(
-                "iterations should not contain duplicate values. "
+                "steps should not contain duplicate values. "
                 f"Received duplicates: {duplicate_iterations}."
+            )
+        unavailable = [
+            iteration for iteration in selected_iterations
+            if iteration > self.last_iteration
+        ]
+        if unavailable:
+            raise ValueError(
+                f"steps cannot exceed the configured maximum of {self.last_iteration}. "
+                f"Received {unavailable}."
             )
         return selected_iterations

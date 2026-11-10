@@ -4,18 +4,23 @@ import pathlib
 import pickle
 import random
 import shutil
+import tempfile
 from typing import Any
 
 import polars as pl
+
+from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
 
 from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.cache_schema import read_cached_parquet
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.temporary import write_temporary_bytes, write_temporary_parquet
 from mobility.runtime.assets.resolver import (
     asset_resolution_context,
     get_current_asset_resolver,
 )
+from mobility.runtime.assets.graph import asset_graph_key
 from mobility.activities.activity import (
     resolve_activity_arrival_time_rigidity,
     resolve_activity_parameters,
@@ -35,6 +40,7 @@ from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from ..plans.candidate_plan_steps import CandidatePlanStepsAsset
+from ..plans.compact_candidate_steps import CompactCandidateSteps
 from ..plans.plan_ids import PLAN_KEY_SCHEMA, PLAN_STEP_KEY_SCHEMA
 
 
@@ -122,7 +128,7 @@ class InitialIterationStateAsset(InMemoryAsset):
             sensitivity_case=sensitivity_case,
         )
         inputs = {
-            "version": 6,
+            "version": 9,
             "is_weekday": is_weekday,
             "sensitivity_case": sensitivity_case,
             "population": population,
@@ -181,27 +187,32 @@ class InitialIterationStateAsset(InMemoryAsset):
     @staticmethod
     def _spill_state(state: RunState, path: pathlib.Path) -> None:
         """Write every initial table to temporary Parquet files."""
-        temporary_path = path.with_name(f"{path.name}.tmp")
-        if temporary_path.exists():
-            shutil.rmtree(temporary_path)
-        temporary_path.mkdir(parents=True)
-        none_tables = []
-        for table_name in _INITIAL_STATE_TABLES:
-            table = getattr(state, table_name)
-            if table is None:
-                none_tables.append(table_name)
-            else:
-                table.write_parquet(temporary_path / f"{table_name}.parquet")
-        metadata = {
-            "none_tables": none_tables,
-            "start_iteration": state.start_iteration,
-            "rng_state": state.rng_state,
-        }
-        with (temporary_path / "metadata.json").open("w", encoding="utf-8") as file:
-            json.dump(metadata, file, sort_keys=True)
         if path.exists():
-            shutil.rmtree(path)
-        temporary_path.replace(path)
+            raise FileExistsError(f"A state spill already exists: {path}")
+        temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
+        try:
+            none_tables = []
+            for table_name in _INITIAL_STATE_TABLES:
+                table = getattr(state, table_name)
+                if table is None:
+                    none_tables.append(table_name)
+                else:
+                    if isinstance(table, CompactCandidateSteps):
+                        table = table.lazy()
+                    write_temporary_parquet(table, temporary_path / f"{table_name}.parquet")
+            metadata = {
+                "none_tables": none_tables,
+                "start_step": state.start_step,
+                "rng_state": state.rng_state,
+            }
+            write_temporary_bytes(
+                json.dumps(metadata, sort_keys=True).encode("utf-8"),
+                temporary_path / "metadata.json",
+            )
+            temporary_path.rename(path)
+        except BaseException:
+            shutil.rmtree(temporary_path, ignore_errors=True)
+            raise
 
     @staticmethod
     def _load_spilled_state(path: pathlib.Path) -> RunState:
@@ -218,7 +229,7 @@ class InitialIterationStateAsset(InMemoryAsset):
         }
         return RunState(
             **state,
-            start_iteration=metadata["start_iteration"],
+            start_step=metadata["start_step"],
             rng_state=_nested_lists_to_tuples(metadata["rng_state"]),
         )
 
@@ -226,6 +237,7 @@ class InitialIterationStateAsset(InMemoryAsset):
         """Return the random generator state held by the initial state."""
         return self.get().rng_state
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> RunState:
         """Build the starting state for the iteration loop."""
         logging.debug("Building initial group-day-trips iteration state...")
@@ -269,7 +281,7 @@ class InitialIterationStateAsset(InMemoryAsset):
             plan_id_index=plan_id_index,
             destination_saturation=opportunities.clone(),
             costs=self.initial_transport_costs.get_costs_by_od(["cost", "distance"]),
-            start_iteration=1,
+            start_step=1,
             rng_state=rng.getstate(),
         )
         logging.debug("Initial group-day-trips iteration state is ready.")
@@ -288,16 +300,20 @@ class IterationSeedsAsset(InMemoryAsset):
         *,
         previous_state: Asset,
         iteration: int,
+        batch_index: int = 0,
     ) -> None:
         self.previous_state = previous_state
         self.iteration = iteration
+        self.batch_index = batch_index
         inputs = {
-            "version": 1,
+            "version": 2,
             "previous_state": previous_state,
             "iteration": iteration,
+            "batch_index": batch_index,
         }
         super().__init__(inputs)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> dict[str, object]:
         """Draw the stochastic seeds used by one iteration."""
         logging.debug("Drawing stochastic seeds for iteration %s...", str(self.iteration))
@@ -305,9 +321,13 @@ class IterationSeedsAsset(InMemoryAsset):
         self.previous_state.get()
         rng = random.Random()
         rng.setstate(self.previous_state.get_rng_state())
+        activity_seed = destination_seed = None
+        for _ in range(self.batch_index + 1):
+            activity_seed = rng.getrandbits(64)
+            destination_seed = rng.getrandbits(64)
         seeds = {
-            "activity_sequences": rng.getrandbits(64),
-            "destination_sequences": rng.getrandbits(64),
+            "activity_sequences": activity_seed,
+            "destination_sequences": destination_seed,
             "rng_state_after_sampling": rng.getstate(),
         }
         logging.debug("Stochastic seeds for iteration %s are ready.", str(self.iteration))
@@ -327,12 +347,13 @@ class PersonODFlowsByModeAsset(InMemoryAsset):
         self.iteration = self.source_iteration
         self.previous_state = previous_state
         inputs = {
-            "version": 1,
+            "version": 3,
             "source_iteration": int(source_iteration),
             "previous_state": previous_state,
         }
         super().__init__(inputs)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         """Aggregate current plan steps into person OD flows by mode."""
         previous = self.previous_state.get()
@@ -355,7 +376,10 @@ class PersonODFlowsByModeAsset(InMemoryAsset):
                     mode=pl.col("mode").cast(pl.String),
                 )
                 .group_by(["from", "to", "mode"])
-                .agg(flow_volume=pl.col("n_persons").sum().cast(pl.Float64))
+                # A different plan-row order must not change the sum sent to
+                # traffic assignment through floating-point rounding.
+                .agg(flow_volume=pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum())
+                .sort(["from", "to", "mode"])
             )
 
         logging.debug(
@@ -380,13 +404,13 @@ class CongestionFlowsAsset(InMemoryAsset):
         iteration: int,
         previous_state: Asset | None,
         transport_costs: Any,
-        n_iter_per_cost_update: int,
+        n_steps_per_cost_update: int,
     ) -> None:
         self.is_weekday = is_weekday
         self.iteration = iteration
         self.previous_state = previous_state
         self.transport_costs = transport_costs
-        self.n_iter_per_cost_update = int(n_iter_per_cost_update)
+        self.n_steps_per_cost_update = int(n_steps_per_cost_update)
         self.road_flow_parameters = (
             transport_costs.road_flows.road_flow_parameters()
             if transport_costs.has_enabled_congestion()
@@ -396,10 +420,10 @@ class CongestionFlowsAsset(InMemoryAsset):
             previous_state is not None
             and iteration > 1
             and bool(self.road_flow_parameters)
-            and self.n_iter_per_cost_update > 0
+            and self.n_steps_per_cost_update > 0
             and transport_costs.should_recompute_congested_costs(
                 iteration - 1,
-                self.n_iter_per_cost_update,
+                self.n_steps_per_cost_update,
             )
         )
         self.previous_congestion_flows = (
@@ -408,7 +432,7 @@ class CongestionFlowsAsset(InMemoryAsset):
                 previous_state is not None
                 and iteration > 1
                 and bool(self.road_flow_parameters)
-                and self.n_iter_per_cost_update > 0
+                and self.n_steps_per_cost_update > 0
                 and not self.should_update_costs
             )
             else None
@@ -428,7 +452,7 @@ class CongestionFlowsAsset(InMemoryAsset):
             "previous_congestion_flows": self.previous_congestion_flows,
             "person_od_flows_by_mode": self.person_od_flows_by_mode,
             "road_flow_parameters": self.road_flow_parameters,
-            "n_iter_per_cost_update": int(n_iter_per_cost_update),
+            "n_steps_per_cost_update": int(n_steps_per_cost_update),
         }
         super().__init__(inputs)
 
@@ -440,6 +464,7 @@ class CongestionFlowsAsset(InMemoryAsset):
         previous_transport_costs = previous_state.inputs.get("transport_costs")
         return getattr(previous_transport_costs, "congestion_flows", None)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> VehicleODFlowsAsset | None:
         """Build road vehicle flows from the matching iteration state."""
         road_flow_asset = None
@@ -494,7 +519,7 @@ class IterationTransportCostsAsset(InMemoryAsset):
         transport_costs: Any,
         scenario: str,
         previous_state: Asset | None,
-        n_iter_per_cost_update: int,
+        n_steps_per_cost_update: int,
         sensitivity_case: SensitivityCase | None = None,
     ) -> None:
         self.is_weekday = is_weekday
@@ -509,7 +534,7 @@ class IterationTransportCostsAsset(InMemoryAsset):
             iteration=iteration,
             previous_state=previous_state,
             transport_costs=self.transport_costs,
-            n_iter_per_cost_update=n_iter_per_cost_update,
+            n_steps_per_cost_update=n_steps_per_cost_update,
         )
         self.modes = self.transport_costs.modes
         self._profile_costs_cache = None
@@ -524,6 +549,7 @@ class IterationTransportCostsAsset(InMemoryAsset):
         }
         super().__init__(inputs)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         """Build the full OD-by-mode transport-cost table for this iteration."""
         logging.debug(
@@ -578,6 +604,7 @@ class IterationTransportCostsAsset(InMemoryAsset):
         available_columns = [column for column in columns if column in costs.columns]
         return costs.select(available_columns)
 
+    @trace_simulation_step("expected OD transport costs")
     def get_costs_by_od(self, metrics: list) -> pl.DataFrame:
         """Aggregate cached costs to the OD-only view used by destination choice."""
         costs = self.get_costs_by_od_and_mode(metrics, detail_distances=False)
@@ -595,6 +622,7 @@ class IterationTransportCostsAsset(InMemoryAsset):
             population_segments,
         )
 
+    @trace_simulation_step("profile transport costs")
     def get_profile_costs_by_od_and_mode(self, profiles, metrics):
         """Return profile-specific costs with this iteration's congestion state."""
         cache_key = tuple(
@@ -640,7 +668,7 @@ class IterationStateAsset(Asset):
         modes: list[Any],
         parameters: Any,
         scenario: str,
-        cache_iteration_events: bool,
+        cache_step_events: bool,
         sensitivity_case: SensitivityCase | None = None,
     ) -> None:
         self.previous_state = previous_state
@@ -656,15 +684,24 @@ class IterationStateAsset(Asset):
         self.parameters = parameters
         self.scenario = scenario
         self.sensitivity_case = sensitivity_case
-        self.cache_iteration_events = cache_iteration_events
+        self.cache_step_events = cache_step_events
         self.updater = PlanUpdater()
         self.checkpoint_callback = None
         self.resume_checkpoint_loader = None
         self._rng_state = None
         self._loaded_checkpoint = False
         self._checkpoint_saved = False
+        self.coordinated_candidate_plan_steps: pl.DataFrame | pl.LazyFrame | None = None
+        self.coordinated_evaluation = None
+        self.coordinated_current_plans: pl.DataFrame | None = None
+        self.coordinated_current_plan_steps: pl.DataFrame | None = None
+        self.coordinated_plan_id_index: pl.DataFrame | None = None
+        self.coordinated_destination_sequence_index: pl.DataFrame | None = None
+        self.coordinated_mode_sequence_index: pl.DataFrame | None = None
+        self.coordinated_rng_state: object | None = None
+        self.coordinated_time_sequence_steps: pl.DataFrame | None = None
         inputs = {
-            "version": 8,
+            "version": 22,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -691,7 +728,7 @@ class IterationStateAsset(Asset):
             ),
             "plan_update_parameters": parameters.plan_update,
             "behavior_change_scope": parameters.behavior_change.scope_at(iteration),
-            "cache_iteration_events": cache_iteration_events,
+            "cache_step_events": cache_step_events,
         }
         self.iteration = iteration
         super().__init__(inputs)
@@ -702,7 +739,7 @@ class IterationStateAsset(Asset):
                 iteration=iteration,
                 base_folder=pathlib.Path(base_folder) / "transition-events",
             )
-            if cache_iteration_events
+            if cache_step_events
             else None
         )
 
@@ -739,7 +776,8 @@ class IterationStateAsset(Asset):
         # runs when the current state was restored from a spill or checkpoint.
         active_resolver = get_current_asset_resolver()
         if active_resolver is not None:
-            active_resolver.release_in_memory_asset(self.previous_state)
+            if self.coordinated_candidate_plan_steps is None:
+                active_resolver.release_in_memory_asset(self.previous_state)
             for asset in (
                 self.seeds,
                 self.activity_sequences,
@@ -747,7 +785,7 @@ class IterationStateAsset(Asset):
                 self.mode_sequences,
             ):
                 active_resolver.release_in_memory_asset(asset)
-            if self.iteration < self.parameters.run.n_iterations:
+            if self.iteration < self.parameters.run.n_steps:
                 active_resolver.release_in_memory_asset(self.transport_costs)
             active_resolver.consume_execution_cost_state(self)
         self.destination_sequences.sequence_index = None
@@ -758,10 +796,9 @@ class IterationStateAsset(Asset):
 
     def _spill_state(self, state: RunState, path: pathlib.Path) -> None:
         """Write shared plan tables to parquet and the RNG tuple to JSON."""
-        temporary_path = path.with_name(f"{path.name}.tmp")
-        if temporary_path.exists():
-            shutil.rmtree(temporary_path)
-        temporary_path.mkdir(parents=True)
+        if path.exists():
+            raise FileExistsError(f"A state spill already exists: {path}")
+        temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
         table_names = [
             "current_plans",
             "current_plan_steps",
@@ -770,19 +807,29 @@ class IterationStateAsset(Asset):
             "destination_saturation",
             "destination_sequence_index",
             "mode_sequence_index",
+            "time_sequence_steps",
         ]
-        metadata = {"none_tables": [], "rng_state": state.rng_state}
-        for table_name in table_names:
-            table = getattr(state, table_name)
-            if table is None:
-                metadata["none_tables"].append(table_name)
-            else:
-                table.write_parquet(temporary_path / f"{table_name}.parquet")
-        with (temporary_path / "metadata.json").open("w", encoding="utf-8") as file:
-            json.dump(metadata, file, sort_keys=True)
-        if path.exists():
-            shutil.rmtree(path)
-        temporary_path.replace(path)
+        try:
+            metadata = {"none_tables": [], "rng_state": state.rng_state}
+            for table_name in table_names:
+                table = getattr(state, table_name)
+                if table is None:
+                    metadata["none_tables"].append(table_name)
+                else:
+                    if isinstance(table, CompactCandidateSteps):
+                        write_temporary_parquet(table.steps, temporary_path / "candidate_steps.parquet")
+                        write_temporary_parquet(table.membership, temporary_path / "candidate_membership.parquet")
+                        metadata["compact_candidate_columns"] = table.columns
+                    else:
+                        write_temporary_parquet(table, temporary_path / f"{table_name}.parquet")
+            write_temporary_bytes(
+                json.dumps(metadata, sort_keys=True).encode("utf-8"),
+                temporary_path / "metadata.json",
+            )
+            temporary_path.rename(path)
+        except BaseException:
+            shutil.rmtree(temporary_path, ignore_errors=True)
+            raise
 
     def _load_spilled_state(self, path: pathlib.Path) -> RunState:
         """Restore a spilled state using invariant tables from iteration zero."""
@@ -796,15 +843,20 @@ class IterationStateAsset(Asset):
             "destination_saturation",
             "destination_sequence_index",
             "mode_sequence_index",
+            "time_sequence_steps",
         ]
-        spilled_state = {
-            table_name: (
-                None
-                if table_name in metadata["none_tables"]
-                else pl.read_parquet(path / f"{table_name}.parquet")
-            )
-            for table_name in table_names
-        }
+        spilled_state = {}
+        for table_name in table_names:
+            if table_name in metadata["none_tables"]:
+                spilled_state[table_name] = None
+            elif table_name == "candidate_plan_steps" and "compact_candidate_columns" in metadata:
+                spilled_state[table_name] = CompactCandidateSteps(
+                    steps=pl.read_parquet(path / "candidate_steps.parquet"),
+                    membership=pl.read_parquet(path / "candidate_membership.parquet"),
+                    columns=tuple(metadata["compact_candidate_columns"]),
+                )
+            else:
+                spilled_state[table_name] = pl.read_parquet(path / f"{table_name}.parquet")
         spilled_state["rng_state"] = _nested_lists_to_tuples(metadata["rng_state"])
         return self._restore_compact_state(spilled_state)
 
@@ -818,6 +870,9 @@ class IterationStateAsset(Asset):
             return getattr(compact_state, name)
 
         self._rng_state = value("rng_state")
+        candidates = value("candidate_plan_steps")
+        if candidates is not None and not isinstance(candidates, CompactCandidateSteps):
+            candidates = CompactCandidateSteps.from_frame(candidates)
         return RunState(
             survey_plans=initial.survey_plans,
             survey_plan_steps=initial.survey_plan_steps,
@@ -827,15 +882,16 @@ class IterationStateAsset(Asset):
             stay_home_plan=initial.stay_home_plan,
             opportunities=initial.opportunities,
             current_plans=value("current_plans"),
-            candidate_plan_steps=value("candidate_plan_steps"),
+            candidate_plan_steps=candidates,
             plan_id_index=value("plan_id_index"),
             destination_saturation=value("destination_saturation"),
             costs=self.transport_costs.get_costs_by_od(["cost", "distance"]),
-            start_iteration=self.iteration + 1,
+            start_step=self.iteration + 1,
             current_plan_steps=value("current_plan_steps"),
             rng_state=self._rng_state,
             destination_sequence_index=value("destination_sequence_index"),
             mode_sequence_index=value("mode_sequence_index"),
+            time_sequence_steps=value("time_sequence_steps"),
         )
 
     def get_rng_state(self) -> object:
@@ -849,6 +905,7 @@ class IterationStateAsset(Asset):
             )
         return self._rng_state
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> RunState:
         """Load a saved checkpoint or run one iteration in memory."""
         transition_events = None
@@ -856,11 +913,13 @@ class IterationStateAsset(Asset):
         if self.resume_checkpoint_loader is not None:
             try:
                 checkpoint = self.resume_checkpoint_loader()
-            except (FileNotFoundError, RuntimeError):
-                logging.warning(
-                    "Iteration %s checkpoint is incomplete; recomputing this iteration.",
-                    self.iteration,
-                )
+            except (FileNotFoundError, RuntimeError) as exc:
+                # Once a cohort has started from checkpoints, silently
+                # recomputing only one member could change its shared search.
+                raise RuntimeError(
+                    f"Could not restore the checkpoint for step {self.iteration}; "
+                    "the cohort cannot safely continue from this saved state."
+                ) from exc
 
         # Checkpoints contain only the changing plan state. Read invariant
         # tables from the initial state so a restart can skip earlier updates.
@@ -881,9 +940,10 @@ class IterationStateAsset(Asset):
             logging.debug("Starting group-day-trips iteration %s...", str(self.iteration))
             seeds = self.seeds.get()
             logging.debug("Preparing sampled alternatives for iteration %s...", str(self.iteration))
-            self.activity_sequences.get()
-            self.destination_sequences.get()
-            self.mode_sequences.get()
+            if self.coordinated_candidate_plan_steps is None:
+                self.activity_sequences.get()
+                self.destination_sequences.get()
+                self.mode_sequences.get()
 
             logging.debug("Updating plan choices for iteration %s...", str(self.iteration))
             get_group_day_trips_progress().iteration_step(
@@ -892,12 +952,35 @@ class IterationStateAsset(Asset):
             )
             resolved_activity_parameters = self.inputs["resolved_activity_parameters"]
             arrival_time_rigidity_by_activity = self.inputs["arrival_time_rigidity_by_activity"]
-            current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index = self.updater.get_new_plans(
-                previous.current_plans,
-                previous.current_plan_steps,
+            current_plans_before_transition = (
+                previous.current_plans
+                if self.coordinated_current_plans is None
+                else self.coordinated_current_plans
+            )
+            current_plan_steps_before_transition = (
+                previous.current_plan_steps
+                if self.coordinated_current_plan_steps is None
+                else self.coordinated_current_plan_steps
+            )
+            previous_plan_id_index = (
+                previous.plan_id_index if self.coordinated_plan_id_index is None
+                else self.coordinated_plan_id_index
+            )
+            precomputed_evaluation = (
+                None if self.coordinated_evaluation is None else
+                self.updater.expand_context_evaluation(
+                    self.coordinated_evaluation, current_plans_before_transition, previous_plan_id_index,
+                )
+            )
+            # The expanded evaluation owns the inputs needed by this update;
+            # the compact search evaluation has no further consumer here.
+            self.coordinated_evaluation = None
+            current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index, time_sequence_steps = self.updater.get_new_plans(
+                current_plans_before_transition,
+                current_plan_steps_before_transition,
                 previous.candidate_plan_steps,
                 previous.demand_groups,
-                previous.survey_plan_steps,
+                previous.schedule_steps if self.coordinated_time_sequence_steps is None else self.coordinated_time_sequence_steps,
                 self.transport_costs,
                 previous.destination_saturation,
                 previous.activity_dur,
@@ -909,9 +992,14 @@ class IterationStateAsset(Asset):
                 previous.home_night_dur,
                 previous.stay_home_plan,
                 self.population.transport_zones,
-                previous.plan_id_index,
+                previous_plan_id_index,
                 self.parameters,
+                shared_candidate_plan_steps=self.coordinated_candidate_plan_steps,
+                precomputed_evaluation=precomputed_evaluation,
             )
+            # Do not retain scoring and timing tables while compacting the
+            # returned candidates for the next simulation step.
+            del precomputed_evaluation
             costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
             destination_saturation = self.updater.get_destination_saturation(
                 current_plan_steps,
@@ -927,22 +1015,43 @@ class IterationStateAsset(Asset):
                 stay_home_plan=previous.stay_home_plan,
                 opportunities=previous.opportunities,
                 current_plans=current_plans,
-                candidate_plan_steps=candidate_plan_steps,
+                candidate_plan_steps=(
+                    None if candidate_plan_steps is None
+                    else CompactCandidateSteps.from_frame(candidate_plan_steps)
+                ),
                 plan_id_index=plan_id_index,
+                time_sequence_steps=time_sequence_steps,
                 destination_saturation=destination_saturation,
                 costs=costs,
-                start_iteration=self.iteration + 1,
+                start_step=self.iteration + 1,
                 current_plan_steps=current_plan_steps,
-                rng_state=seeds["rng_state_after_sampling"],
-                destination_sequence_index=self.destination_sequences.sequence_index,
-                mode_sequence_index=self.mode_sequences.sequence_index,
+                rng_state=(
+                    seeds["rng_state_after_sampling"]
+                    if self.coordinated_rng_state is None
+                    else self.coordinated_rng_state
+                ),
+                destination_sequence_index=(
+                    self.destination_sequences.sequence_index
+                    if self.coordinated_destination_sequence_index is None
+                    else self.coordinated_destination_sequence_index
+                ),
+                mode_sequence_index=(
+                    self.mode_sequences.sequence_index
+                    if self.coordinated_mode_sequence_index is None
+                    else self.coordinated_mode_sequence_index
+                ),
             )
-            self._rng_state = seeds["rng_state_after_sampling"]
+            self._rng_state = state.rng_state
 
-        if transition_events is not None and self.cache_iteration_events:
+        if transition_events is not None and self.cache_step_events:
             if self.transition_events_asset is None:
                 raise RuntimeError("Transition event persistence was not planned.")
             self.transition_events_asset.transition_events = transition_events
+            # A recomputed step must replace an old or rejected event file.
+            self.transition_events_asset.hash_path.unlink(missing_ok=True)
+            resolver = get_current_asset_resolver()
+            if resolver is not None:
+                resolver.prepared_asset_keys.discard(asset_graph_key(self.transition_events_asset))
             self.transition_events_asset.get()
 
         logging.debug("Group-day-trips iteration %s is ready.", str(self.iteration))
@@ -982,6 +1091,7 @@ class CurrentPlansAsset(FileAsset):
             required_schema=self.REQUIRED_SCHEMA,
         )
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.current_plans is None:
             raise ValueError("Cannot save current plans without a dataframe.")
@@ -1021,6 +1131,7 @@ class CurrentPlanStepsAsset(FileAsset):
             required_schema=self.REQUIRED_SCHEMA,
         )
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.current_plan_steps is None:
             raise ValueError("Cannot save current plan steps without a dataframe.")
@@ -1065,6 +1176,7 @@ class PlanIdIndexAsset(FileAsset):
             required_schema=self.REQUIRED_SCHEMA,
         )
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.plan_id_index is None:
             raise ValueError("Cannot save the plan-id index without a dataframe.")
@@ -1101,6 +1213,7 @@ class SequenceIndexAsset(FileAsset):
     def get_cached_asset(self) -> pl.DataFrame:
         return pl.read_parquet(self.cache_path)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.sequence_index is None:
             raise ValueError(
@@ -1140,6 +1253,7 @@ class RemainingOpportunitiesAsset(FileAsset):
     def get_cached_asset(self) -> pl.DataFrame:
         return pl.read_parquet(self.cache_path)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.destination_saturation is None:
             raise ValueError("Cannot save destination saturation without a dataframe.")
@@ -1174,6 +1288,7 @@ class RngStateAsset(FileAsset):
         with open(self.cache_path, "rb") as file:
             return pickle.load(file)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self):
         if self.rng_state is None:
             raise ValueError("Cannot save RNG state without a value.")
@@ -1210,6 +1325,7 @@ class IterationCompleteAsset(FileAsset):
         with open(self.cache_path, "r", encoding="utf-8") as file:
             return json.load(file)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> dict:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.cache_path, "w", encoding="utf-8") as file:

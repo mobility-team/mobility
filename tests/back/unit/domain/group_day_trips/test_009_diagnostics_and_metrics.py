@@ -5,6 +5,7 @@ import polars as pl
 import pytest
 
 from mobility.reports.theme import MOBILITY_COLORS
+from mobility.runtime.temporary import TemporaryDiskLimitExceeded
 from mobility.trips.group_day_trips.core.diagnostics import RunDiagnostics
 from mobility.trips.group_day_trips.core.parameters import (
     BehaviorChangePhase,
@@ -47,6 +48,51 @@ class _FrameAsset:
 
     def get(self):
         return self.frame.lazy() if self.lazy else self.frame
+
+
+def test_direct_run_results_request_only_the_table_used():
+    requested = []
+
+    class Run:
+        def table(self, name):
+            requested.append(name)
+            return pl.DataFrame({"value": [1]})
+
+    results = RunResults(
+        inputs_hash="test", is_weekday=True, transport_zones=None,
+        demand_groups=None, plan_steps=None, opportunities=None, costs=None,
+        population_weighted_plan_steps=_FrameAsset(pl.DataFrame({"reference": [2]})),
+        transitions=None, surveys=[], modes=[], parameters=None, run=Run(),
+        defer_run_tables=True,
+    )
+    assert requested == []
+    view = results.plan_steps
+    assert requested == ["plan_steps"]
+    assert view.collect()["value"].to_list() == [1]
+    assert results.population_weighted_plan_steps.collect()["reference"].to_list() == [2]
+    assert requested == ["plan_steps"]
+
+
+def test_comparison_inputs_are_only_read_once():
+    class Reference:
+        def __init__(self):
+            self.reads = []
+
+        @property
+        def demand_groups(self):
+            self.reads.append("demand_groups")
+            return pl.DataFrame({"value": [1]}).lazy()
+
+        @property
+        def costs(self):
+            self.reads.append("costs")
+            return pl.DataFrame({"value": [2]}).lazy()
+
+    reference = Reference()
+    metrics = RunMetrics(SimpleNamespace())
+    metrics._resolve_comparison_demand_groups(compare_with=reference, reference_run=None)
+    metrics._resolve_comparison_costs(compare_with=reference, reference_run=None)
+    assert reference.reads == ["demand_groups", "costs"]
 
 
 def _unused_run_table(*_args, **_kwargs):
@@ -137,7 +183,14 @@ def _use_fake_iteration_states(monkeypatch, fake_iterations_class):
         )
         return iterations.iteration(iteration).load_state()
 
-    monkeypatch.setattr(RunMetrics, "_saved_iteration_state", get_state)
+    monkeypatch.setattr(
+        RunMetrics, "_saved_iteration_plan_steps",
+        lambda metrics, run, iteration: get_state(metrics, run, iteration).current_plan_steps,
+    )
+    monkeypatch.setattr(
+        RunMetrics, "_saved_iteration_plans",
+        lambda metrics, run, iteration: get_state(metrics, run, iteration).current_plans,
+    )
 
 
 def test_metrics_aggregate_and_travel_indicators_by_match_reference_when_inputs_match():
@@ -288,7 +341,7 @@ def test_travel_costs_plot_uses_report_style_and_mode_colors(monkeypatch, tmp_pa
             self.iteration = iteration
 
         def get_costs_by_od_and_mode(self, columns):
-            seen["iteration"] = self.iteration
+            seen["step"] = self.iteration
             seen["columns"] = columns
             return pl.DataFrame(
                 {
@@ -322,7 +375,7 @@ def test_travel_costs_plot_uses_report_style_and_mode_colors(monkeypatch, tmp_pa
         return FakeFigure()
 
     results = SimpleNamespace(
-        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=3)),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_steps=3)),
         run=SimpleNamespace(
             iteration_transport_cost_assets=[
                 FakeIterationTransportCosts(1),
@@ -367,7 +420,7 @@ def test_travel_costs_plot_uses_report_style_and_mode_colors(monkeypatch, tmp_pa
 
     assert comparison.height == 2
     assert output_path.exists()
-    assert seen["iteration"] == 3
+    assert seen["step"] == 3
     assert seen["columns"] == ["time", "distance"]
     assert seen["scatter_kwargs"]["color"] == "mode"
     assert seen["scatter_kwargs"]["color_discrete_map"] == {
@@ -733,7 +786,7 @@ def test_modal_share_evolution_by_iteration_returns_share_table(monkeypatch, tmp
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=2)),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_steps=2)),
         run=SimpleNamespace(
             inputs_hash="runhash",
             is_weekday=True,
@@ -743,13 +796,13 @@ def test_modal_share_evolution_by_iteration_returns_share_table(monkeypatch, tmp
 
     _use_fake_iteration_states(monkeypatch, FakeIterations)
 
-    modal_share = results.metrics.modal_share_evolution_by_iteration(
+    modal_share = results.metrics.modal_share_evolution_by_step(
         modes=["walk", "bicycle", "car"],
         plot=False,
     )
 
     assert modal_share.to_dict(as_series=False) == {
-        "iteration": [1, 1, 1, 2, 2, 2],
+        "step": [1, 1, 1, 2, 2, 2],
         "mode": ["walk", "bicycle", "car", "walk", "bicycle", "car"],
         "mode_label": ["Walk", "Bicycle", "Car", "Walk", "Bicycle", "Car"],
         "n_trips": pytest.approx([1.0, 0.0, 2.0, 2.0, 1.0, 1.0]),
@@ -789,7 +842,7 @@ def test_modal_share_evolution_by_iteration_groups_public_transport(monkeypatch,
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=1)),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_steps=1)),
         run=SimpleNamespace(
             inputs_hash="runhash",
             is_weekday=True,
@@ -799,13 +852,13 @@ def test_modal_share_evolution_by_iteration_groups_public_transport(monkeypatch,
 
     _use_fake_iteration_states(monkeypatch, FakeIterations)
 
-    modal_share = results.metrics.modal_share_evolution_by_iteration(
+    modal_share = results.metrics.modal_share_evolution_by_step(
         modes=["walk/public_transport/walk", "car"],
         plot=False,
     )
 
     assert modal_share.to_dict(as_series=False) == {
-        "iteration": [1, 1],
+        "step": [1, 1],
         "mode": ["public_transport", "car"],
         "mode_label": ["Public transport", "Car"],
         "n_trips": pytest.approx([3.0, 1.0]),
@@ -851,7 +904,7 @@ def test_modal_share_evolution_by_iteration_can_use_inner_zones_only(monkeypatch
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=1)),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_steps=1)),
         run=SimpleNamespace(
             inputs_hash="runhash",
             is_weekday=True,
@@ -861,14 +914,14 @@ def test_modal_share_evolution_by_iteration_can_use_inner_zones_only(monkeypatch
 
     _use_fake_iteration_states(monkeypatch, FakeIterations)
 
-    modal_share = results.metrics.modal_share_evolution_by_iteration(
+    modal_share = results.metrics.modal_share_evolution_by_step(
         modes=["walk", "car"],
         inner_zones_only=True,
         plot=False,
     )
 
     assert modal_share.to_dict(as_series=False) == {
-        "iteration": [1, 1],
+        "step": [1, 1],
         "mode": ["walk", "car"],
         "mode_label": ["Walk", "Car"],
         "n_trips": pytest.approx([1.0, 1.0]),
@@ -908,7 +961,7 @@ def test_modal_share_evolution_by_iteration_can_plot_and_save_svg(monkeypatch, t
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=1)),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_steps=1)),
         run=SimpleNamespace(
             inputs_hash="runhash",
             is_weekday=True,
@@ -928,7 +981,7 @@ def test_modal_share_evolution_by_iteration_can_plot_and_save_svg(monkeypatch, t
     monkeypatch.setattr(results.metrics, "_plot_modal_share_evolution", fake_plot)
     monkeypatch.setattr(results.metrics, "_save_modal_share_evolution_svg", fake_save)
 
-    modal_share, fig = results.metrics.modal_share_evolution_by_iteration(
+    modal_share, fig = results.metrics.modal_share_evolution_by_step(
         plot=True,
         plot_method="notebook",
         save_to_file=True,
@@ -1010,20 +1063,20 @@ def test_modal_share_delta_evolution_by_iteration_compares_two_scenarios(monkeyp
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=2)),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_steps=2)),
         run=current_run,
     )
 
     _use_fake_iteration_states(monkeypatch, FakeIterations)
 
-    delta = results.metrics.modal_share_delta_evolution_by_iteration(
+    delta = results.metrics.modal_share_delta_evolution_by_step(
         SimpleNamespace(run=reference_run, demand_groups=pl.DataFrame().lazy()),
         modes=["public_transport", "car"],
         plot=False,
     )
 
     assert delta.to_dict(as_series=False) == {
-        "iteration": [1, 1, 2, 2],
+        "step": [1, 1, 2, 2],
         "mode": ["public_transport", "car", "public_transport", "car"],
         "mode_label": ["Public transport", "Car", "Public transport", "Car"],
         "n_trips": pytest.approx([2.0, 2.0, 3.0, 1.0]),
@@ -1087,7 +1140,7 @@ def test_modal_share_delta_evolution_by_iteration_can_plot_and_save_svg(monkeypa
         transitions=pl.DataFrame().lazy(),
         surveys=[],
         modes=[],
-        parameters=SimpleNamespace(run=SimpleNamespace(n_iterations=1)),
+        parameters=SimpleNamespace(run=SimpleNamespace(n_steps=1)),
         run=current_run,
     )
     seen = {}
@@ -1103,7 +1156,7 @@ def test_modal_share_delta_evolution_by_iteration_can_plot_and_save_svg(monkeypa
     monkeypatch.setattr(results.metrics, "_plot_modal_share_delta_evolution", fake_plot)
     monkeypatch.setattr(results.metrics, "_save_modal_share_delta_evolution_svg", fake_save)
 
-    delta, fig = results.metrics.modal_share_delta_evolution_by_iteration(
+    delta, fig = results.metrics.modal_share_delta_evolution_by_step(
         SimpleNamespace(run=reference_run, demand_groups=pl.DataFrame().lazy()),
         plot=True,
         plot_method="notebook",
@@ -1208,7 +1261,7 @@ def test_car_modal_share_delta_by_iteration_uses_saved_home_zone_states(monkeypa
 
     _use_fake_iteration_states(monkeypatch, FakeIterations)
 
-    modal_share_delta = results.metrics.car_modal_share_delta_by_iteration(
+    modal_share_delta = results.metrics.car_modal_share_delta_by_step(
         reference_results,
         iteration=3,
         plot=False,
@@ -1221,7 +1274,7 @@ def test_car_modal_share_delta_by_iteration_uses_saved_home_zone_states(monkeypa
         "car_modal_share_delta": pytest.approx([0.25, -1.0, 0.0]),
     }
 
-    walk_modal_share_delta = results.metrics.modal_share_delta_by_iteration(
+    walk_modal_share_delta = results.metrics.modal_share_delta_by_step(
         reference_results,
         iteration=3,
         mode="walk",
@@ -1303,7 +1356,7 @@ def test_modal_share_by_iteration_plots_one_scenario(monkeypatch, tmp_path):
             behavior_change=GroupDayTripsBehaviorChangeParameters(
                 phases=[
                     BehaviorChangePhase(
-                        start_iteration=2,
+                        start_step=2,
                         scope=BehaviorChangeScope.MODE_REPLANNING,
                     )
                 ]
@@ -1319,7 +1372,7 @@ def test_modal_share_by_iteration_plots_one_scenario(monkeypatch, tmp_path):
         FakeTransportZoneMaps,
     )
 
-    modal_share, fig = results.metrics.modal_share_by_iteration(
+    modal_share, fig = results.metrics.modal_share_by_step(
         iteration=2,
         mode="walk",
         plot=True,
@@ -1438,7 +1491,7 @@ def test_plot_metric_by_iteration_plots_average_distance(monkeypatch, tmp_path):
         FakeTransportZoneMaps,
     )
 
-    metric, fig = results.metrics.plot_metric_by_iteration(
+    metric, fig = results.metrics.plot_metric_by_step(
         iteration=3,
         quantity="distance",
         plot=True,
@@ -1592,7 +1645,7 @@ def test_car_modal_share_delta_by_iteration_plots_with_transport_zone_maps(
         FakeTransportZoneMaps,
     )
 
-    returned_delta, returned_fig = results.metrics.modal_share_delta_by_iteration(
+    returned_delta, returned_fig = results.metrics.modal_share_delta_by_step(
         SimpleNamespace(run=run, demand_groups=pl.DataFrame().lazy()),
         iteration=1,
         mode="walk/public_transport/walk",
@@ -1709,7 +1762,7 @@ def test_plot_delta_by_iteration_can_compare_mean_utility(monkeypatch, tmp_path)
 
     _use_fake_iteration_states(monkeypatch, FakeIterations)
 
-    delta = results.metrics.plot_delta_by_iteration(
+    delta = results.metrics.plot_delta_by_step(
         SimpleNamespace(run=reference_run, demand_groups=reference_demand_groups.lazy()),
         iteration=1,
         value="mean_utility",
@@ -1818,7 +1871,7 @@ def test_plot_delta_by_iteration_can_compare_ghg_emissions(monkeypatch, tmp_path
 
     _use_fake_iteration_states(monkeypatch, FakeIterations)
 
-    delta = results.metrics.plot_delta_by_iteration(
+    delta = results.metrics.plot_delta_by_step(
         SimpleNamespace(
             run=reference_run,
             demand_groups=pl.DataFrame(
@@ -1937,7 +1990,7 @@ def test_plot_delta_by_iteration_can_compare_relative_ghg_emissions(monkeypatch,
 
     _use_fake_iteration_states(monkeypatch, FakeIterations)
 
-    delta = results.metrics.plot_delta_by_iteration(
+    delta = results.metrics.plot_delta_by_step(
         SimpleNamespace(
             run=reference_run,
             demand_groups=demand_groups.lazy(),
@@ -1976,7 +2029,7 @@ def test_plot_delta_by_iteration_rejects_relative_modal_share(tmp_path):
     )
 
     with pytest.raises(ValueError, match="relative_delta=True is not available"):
-        results.metrics.plot_delta_by_iteration(
+        results.metrics.plot_delta_by_step(
             SimpleNamespace(run=run, demand_groups=pl.DataFrame().lazy()),
             iteration=1,
             value="modal_share",
@@ -2056,7 +2109,7 @@ def test_plot_delta_by_iteration_plots_with_transport_zone_maps(monkeypatch, tmp
         FakeTransportZoneMaps,
     )
 
-    delta, fig = results.metrics.plot_delta_by_iteration(
+    delta, fig = results.metrics.plot_delta_by_step(
         SimpleNamespace(run=run, demand_groups=pl.DataFrame().lazy()),
         iteration=2,
         value="mean_utility",
@@ -2159,7 +2212,7 @@ def test_plot_delta_by_iteration_can_auto_cap_outliers(monkeypatch, tmp_path):
         FakeTransportZoneMaps,
     )
 
-    results.metrics.plot_delta_by_iteration(
+    results.metrics.plot_delta_by_step(
         SimpleNamespace(run=reference_run, demand_groups=pl.DataFrame().lazy()),
         iteration=1,
         value="mean_utility",
@@ -2269,7 +2322,7 @@ def test_plot_delta_by_iteration_can_average_paired_seed_deltas(monkeypatch, tmp
         FakeTransportZoneMaps,
     )
 
-    delta, fig = results.metrics.plot_delta_by_iteration(
+    delta, fig = results.metrics.plot_delta_by_step(
         None,
         iteration=1,
         value="mean_utility",
@@ -2376,7 +2429,7 @@ def test_modal_share_delta_gifs_by_iteration_writes_one_gif_per_mode(monkeypatch
     monkeypatch.setattr(results.metrics, "_save_modal_share_delta_frame", fake_save_frame)
     monkeypatch.setattr(results.metrics, "_write_gif", fake_write_gif)
 
-    gif_paths = results.metrics.modal_share_delta_gifs_by_iteration(
+    gif_paths = results.metrics.modal_share_delta_gifs_by_step(
         reference_results,
         modes=["walk", "car"],
         iterations=range(1, 3),
@@ -2398,6 +2451,24 @@ def test_modal_share_delta_gifs_by_iteration_writes_one_gif_per_mode(monkeypatch
     assert all(frame["color_range"] == 0.25 for frame in seen["frames"])
     assert [frame["global_delta"] for frame in seen["frames"]] == pytest.approx([0.0, 0.0, 0.0, 0.0])
     assert all(gif_call[2] == 250 for gif_call in seen["gifs"])
+
+    # Frames written by the image renderer count toward the project limit and
+    # are removed if a frame exceeds it.
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path / "project"))
+    monkeypatch.setenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", "0")
+    written = []
+
+    def write_frame(**kwargs):
+        path = kwargs["output_path"]
+        path.write_bytes(b"frame")
+        written.append(path)
+
+    monkeypatch.setattr(results.metrics, "_save_modal_share_delta_frame", write_frame)
+    with pytest.raises(TemporaryDiskLimitExceeded):
+        results.metrics.modal_share_delta_gifs_by_step(
+            reference_results, modes=["walk"], iterations=[1], output_folder=tmp_path,
+        )
+    assert written and all(not path.exists() for path in written)
 
 
 def test_modal_share_delta_gif_global_delta_uses_inner_zone_scope(monkeypatch, tmp_path):
@@ -2473,7 +2544,7 @@ def test_modal_share_delta_gif_global_delta_uses_inner_zone_scope(monkeypatch, t
     )
     monkeypatch.setattr(results.metrics, "_write_gif", lambda *args, **kwargs: None)
 
-    results.metrics.modal_share_delta_gifs_by_iteration(
+    results.metrics.modal_share_delta_gifs_by_step(
         SimpleNamespace(run=reference_run, demand_groups=pl.DataFrame().lazy()),
         modes=["car"],
         iterations=[1],
@@ -2508,7 +2579,7 @@ def test_modal_share_delta_gif_frame_adds_iteration_counter(monkeypatch, tmp_pat
             behavior_change=GroupDayTripsBehaviorChangeParameters(
                 phases=[
                     BehaviorChangePhase(
-                        start_iteration=5,
+                        start_step=5,
                         scope=BehaviorChangeScope.MODE_REPLANNING,
                     )
                 ]
@@ -2982,7 +3053,7 @@ def test_model_loss_summary_history_and_validation():
     history_store = IterationMetricsHistory(
         pl.DataFrame(
             {
-                "iteration": [1],
+                "step": [1],
                 "total_loss": [0.3],
                 "trip_count_loss": [0.08],
                 "activity_loss": [0.04],
@@ -3010,7 +3081,7 @@ def test_model_loss_summary_history_and_validation():
     assert summary.height == 1
     assert summary["total_loss"].unique().item() > 0.0
     assert history.columns == [
-        "iteration",
+        "step",
         "total_loss",
         "trip_count_loss",
         "activity_loss",
@@ -3193,7 +3264,7 @@ def test_model_entropy_and_trip_pattern_distribution_cover_mobile_and_stay_home_
     history_store = IterationMetricsHistory(
         pl.DataFrame(
             {
-                "iteration": [1],
+                "step": [1],
                 "total_loss": [0.3],
                 "trip_count_loss": [0.08],
                 "activity_loss": [0.04],
@@ -3223,8 +3294,8 @@ def test_model_entropy_and_trip_pattern_distribution_cover_mobile_and_stay_home_
     assert distribution["probability"].sum() == pytest.approx(1.0)
     assert comparison.height == 2
     assert set(summary.columns) == {"observed_entropy", "expected_entropy", "entropy_gap"}
-    assert history.columns == ["iteration", "observed_entropy"]
-    assert history_row["iteration"] == 2
+    assert history.columns == ["step", "observed_entropy"]
+    assert history_row["step"] == 2
     assert history_row["observed_entropy"] >= 0.0
 
 
@@ -3232,7 +3303,7 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
     class FakeLoss:
         def history_row(self, *, iteration, plan_steps):
             return {
-                "iteration": iteration,
+                "step": iteration,
                 "total_loss": float(iteration),
                 "activity_loss": 0.1,
                 "distance_bin_loss": 0.2,
@@ -3243,14 +3314,14 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
     class FakeTripCountLoss:
         def history_row(self, *, iteration, plan_steps):
             return {
-                "iteration": iteration,
+                "step": iteration,
                 "trip_count_loss": 0.5,
             }
 
     class FakeEntropy:
         def history_row(self, *, iteration, plan_steps):
             return {
-                "iteration": iteration,
+                "step": iteration,
                 "observed_entropy": float(iteration) / 10.0,
             }
 
@@ -3284,20 +3355,6 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
         ),
     )
 
-    class FakeIteration:
-        def __init__(self, state):
-            self._state = state
-
-        def load_state(self):
-            return self._state
-
-    fake_state = SimpleNamespace(
-        current_plans=current_plans,
-        current_plan_steps=current_plan_steps,
-        destination_saturation=pl.DataFrame(),
-    )
-    fake_iterations = SimpleNamespace(iteration=lambda _: FakeIteration(fake_state))
-    rebuilt = builder.rebuild_history(iterations=fake_iterations, resume_from_iteration=2)
     history_store = IterationMetricsHistory(IterationMetricsHistory.from_records([row]).lazy())
     diagnostics = RunDiagnostics(
         SimpleNamespace(
@@ -3326,10 +3383,9 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
     assert row["mean_travel_time"] == pytest.approx(0.5)
     assert row["mean_travel_distance"] == pytest.approx(5.0)
     assert row["excess_occupation_share"] == pytest.approx((100.0 - 62.5) / 180.0)
-    assert [record["iteration"] for record in rebuilt] == [1, 2]
-    assert diagnostics.iteration_metrics()["iteration"].to_list() == [2]
+    assert diagnostics.step_metrics()["step"].to_list() == [2]
     assert diagnostics.loss().history().columns == [
-        "iteration",
+        "step",
         "total_loss",
         "trip_count_loss",
         "activity_loss",
@@ -3337,5 +3393,15 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
         "time_bin_loss",
         "mode_loss",
     ]
-    assert diagnostics.trip_count_loss().history().columns == ["iteration", "trip_count_loss"]
-    assert diagnostics.entropy().history().columns == ["iteration", "observed_entropy"]
+    assert diagnostics.trip_count_loss().history().columns == ["step", "trip_count_loss"]
+    assert diagnostics.entropy().history().columns == ["step", "observed_entropy"]
+
+
+def test_waterfall_keeps_categorical_car_ownership_labels():
+    from mobility.trips.group_day_trips.transitions.transition_metrics import _load_demand_group_keys
+
+    groups = pl.DataFrame({
+        "demand_group_id": [1, 2], "home_zone_id": [1, 1],
+        "csp": ["a", "a"], "n_cars": ["1", "2+"], "n_persons": [1.0, 1.0],
+    }).with_columns(pl.col("n_cars").cast(pl.Categorical)).lazy()
+    assert _load_demand_group_keys(groups, None)["n_cars"].to_list() == ["1", "2+"]

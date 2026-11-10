@@ -184,13 +184,13 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_parame
 
     common_parameters = GroupDayTripsParameters(
         run=GroupDayTripsRunParameters(
-            n_iterations=2,
-            n_iter_per_cost_update=0,
+            n_steps=2,
+            n_steps_per_cost_update=0,
             seed=0,
         ),
         periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
         outputs=GroupDayTripsOutputParameters(
-            cache_iteration_events=True,
+            cache_step_events=True,
         ),
         destination_sequences=GroupDayTripsDestinationSequenceParameters(
             dest_prob_cutoff=0.9,
@@ -206,7 +206,7 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_parame
         population=pop,
         modes=_build_modes(
             transport_zones,
-            additional_gtfs_files=mobility.ParameterValue.by_iteration(
+            additional_gtfs_files=mobility.ParameterValue.by_step(
                 {
                     1: [slow_gtfs_zip],
                     2: [slow_gtfs_zip],
@@ -227,7 +227,7 @@ def test_008d_group_day_trips_pt_intermodal_travel_times_change_with_gtfs_parame
         population=pop,
         modes=_build_modes(
             transport_zones,
-            additional_gtfs_files=mobility.ParameterValue.by_iteration(
+            additional_gtfs_files=mobility.ParameterValue.by_step(
                 {
                     1: [slow_gtfs_zip],
                     2: [fast_gtfs_zip],

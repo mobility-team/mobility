@@ -24,8 +24,14 @@ def test_parameter_value_accepts_scenario_mapping_with_non_identifier_names():
     assert resolve_parameter_values(value, scenario="saleve-jura") == 2.0
 
 
+def test_parameter_value_can_be_read_at_a_simulation_step():
+    value = ParameterValue.by_step({1: "base", 3: "changed"})
+    assert value.at(step=2) == "base"
+    assert value.at(step=3) == "changed"
+
+
 def test_parameter_value_accepts_scenario_iteration_mapping():
-    value = ParameterValue.by_scenario_and_iteration(
+    value = ParameterValue.by_scenario_and_step(
         {
             "default": {1: ["base.zip"]},
             "saleve-jura": {
@@ -52,7 +58,7 @@ def test_parameter_value_uses_explicit_default_for_other_scenarios():
 
 
 def test_parameter_value_uses_explicit_default_iterations_for_other_scenarios():
-    value = ParameterValue.by_scenario_and_iteration(
+    value = ParameterValue.by_scenario_and_step(
         default=0.0,
         carbon_tax={1: 0.0, 5: 0.12},
     )
@@ -125,7 +131,7 @@ def test_sensitivity_value_rejects_wrapping_parameter_value():
 
 
 def test_sensitivity_value_inside_scenario_iteration_value():
-    value = ParameterValue.by_scenario_and_iteration(
+    value = ParameterValue.by_scenario_and_step(
         default=0.0,
         carbon_tax={
             1: 0.0,
@@ -151,7 +157,7 @@ def test_sensitivity_value_inside_scenario_iteration_value():
 
 def test_population_segment_value_composes_with_iteration_values():
     value = ParameterValue.by_population_segment(
-        default=ParameterValue.by_iteration({1: 1.0, 5: 1.2}),
+        default=ParameterValue.by_step({1: 1.0, 5: 1.2}),
         segment_values={
             "localist_pupils": ParameterValue.by_scenario(
                 default=2.0,

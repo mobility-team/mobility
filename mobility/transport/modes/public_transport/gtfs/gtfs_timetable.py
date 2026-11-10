@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 
+from mobility.runtime.temporary import temporary_folder
+
 from .gtfs_feed import GTFSFeed
 
 
@@ -137,7 +139,7 @@ class GTFSTimetable:
             logging.info("Checking GTFS %s", path)
             try:
                 # Check the small calendars before extracting the larger trip tables.
-                with tempfile.TemporaryDirectory(prefix="mobility-gtfs-") as directory:
+                with tempfile.TemporaryDirectory(prefix="mobility-gtfs-", dir=temporary_folder()) as directory:
                     reader = GTFSFeed(path, Path(directory))
                     reader.extract(("calendar", "calendar_dates"))
                     source = {"path": str(path), "sha256": None}

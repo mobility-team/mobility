@@ -1,5 +1,42 @@
+from types import SimpleNamespace
+
+import polars as pl
+
 from mobility.runtime.assets.file_asset import FileAsset
-from mobility.trips.group_day_trips.iterations.iteration_assets import CongestionFlowsAsset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.trips.group_day_trips.iterations.iteration_assets import (
+    CongestionFlowsAsset,
+    PersonODFlowsByModeAsset,
+)
+
+
+class _PlanState(InMemoryAsset):
+    def __init__(self, steps):
+        self.steps = steps
+        super().__init__({"version": 1})
+
+    def get(self):
+        return SimpleNamespace(current_plan_steps=self.steps)
+
+
+def test_person_flows_are_stable_when_plan_rows_are_reordered():
+    steps = pl.DataFrame({
+        "from": [2, 1, 1, 1, 1, 3],
+        "to": [3, 2, 2, 2, 2, 4],
+        "mode": ["car", "car", "car", "car", "car", "walk"],
+        "activity_seq_id": [1, 1, 1, 1, 1, 0],
+        "n_persons": [3.0, 1e16, 1.0, 1.0, 2.0, 20.0],
+    })
+    first = PersonODFlowsByModeAsset(source_iteration=1, previous_state=_PlanState(steps))
+    shuffled = PersonODFlowsByModeAsset(
+        source_iteration=1,
+        previous_state=_PlanState(steps.reverse()),
+    )
+
+    flows = first.create_and_get_asset()
+    assert flows.equals(shuffled.create_and_get_asset())
+    assert flows.select("from", "to").rows() == [(1, 2), (2, 3)]
+    assert flows.filter(pl.col("from") == 1)["flow_volume"].item() == 1e16 + 4.0
 
 
 class _PreviousCongestionFlows(FileAsset):
@@ -103,7 +140,7 @@ def test_congestion_flows_reuses_previous_flows_when_refresh_is_not_due(tmp_path
         iteration=3,
         previous_state=previous_state,
         transport_costs=transport_costs,
-        n_iter_per_cost_update=2,
+        n_steps_per_cost_update=2,
     )
 
     road_flow_asset = congestion_flows.get()

@@ -1,4 +1,6 @@
 import polars as pl
+import pytest
+from polars.testing import assert_frame_equal
 
 from mobility.trips.group_day_trips.plans.stable_key_index import StableKeyIndex
 
@@ -36,3 +38,33 @@ def test_stable_key_index_reserves_zero_and_extends_previous_ids():
         ]
     )
     assert second_index["mode_seq_id"].to_list() == [1, 2, 3]
+
+
+def test_lazy_index_collects_keys_without_evaluating_wide_values():
+    calls = []
+
+    def expensive(value):
+        calls.append(value)
+        return value * 10
+
+    rows = pl.DataFrame({"key": [2, 1, 2], "value": [3, 4, 5]}).lazy().with_columns(
+        pl.col("value").map_elements(expensive, return_dtype=pl.Int64).alias("value")
+    )
+    indexer = StableKeyIndex(key_cols=["key"], index_col="plan_id", first_new_id=0)
+    indexed, index = indexer.extend(rows, previous_index=None)
+    assert isinstance(indexed, pl.LazyFrame)
+    assert calls == []
+    assert index.to_dicts() == [{"key": 1, "plan_id": 0}, {"key": 2, "plan_id": 1}]
+    actual = indexed.collect().sort("value")
+    expected, eager_index = indexer.extend(
+        pl.DataFrame({"key": [2, 1, 2], "value": [30, 40, 50]}), previous_index=None,
+    )
+    assert_frame_equal(actual, expected.sort("value"))
+    assert_frame_equal(index, eager_index)
+    assert len(calls) == 3
+
+
+def test_lazy_index_still_rejects_null_keys():
+    indexer = StableKeyIndex(key_cols=["key"], index_col="plan_id")
+    with pytest.raises(ValueError, match="cannot contain nulls"):
+        indexer.extend(pl.DataFrame({"key": [1, None]}).lazy(), previous_index=None)

@@ -81,7 +81,7 @@ def test_run_inputs_keep_context_objects_out_of_direct_dependencies(tmp_path, mo
     survey_plan_assets = _MemoryAsset("survey-plan-assets")
     transport_costs = _MemoryAsset("transport-costs")
     parameters = GroupDayTripsParameters(
-        run=GroupDayTripsRunParameters(n_iterations=1),
+        run=GroupDayTripsRunParameters(n_steps=1),
     )
 
     run = Run(

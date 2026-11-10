@@ -21,7 +21,7 @@ class IterationMetricsHistory:
     def schema() -> dict[str, pl.DataType]:
         """Return the canonical schema for persisted iteration diagnostics."""
         return {
-            "iteration": pl.UInt16,
+            "step": pl.UInt16,
             "total_loss": pl.Float64,
             "trip_count_loss": pl.Float64,
             "activity_loss": pl.Float64,
@@ -53,7 +53,7 @@ class IterationMetricsHistory:
 
         return frame.select(
             [
-                pl.col("iteration").cast(pl.UInt16),
+                pl.col("step").cast(pl.UInt16),
                 pl.col("total_loss").cast(pl.Float64),
                 pl.col("trip_count_loss").cast(pl.Float64),
                 pl.col("activity_loss").cast(pl.Float64),
@@ -71,7 +71,7 @@ class IterationMetricsHistory:
 
     def get(self) -> pl.DataFrame:
         """Return the persisted iteration-metrics table sorted by iteration."""
-        return self.history.collect(engine="streaming").sort("iteration")
+        return self.history.collect(engine="streaming").sort("step")
 
 
 class IterationMetricsBuilder:
@@ -121,30 +121,6 @@ class IterationMetricsBuilder:
             "mean_travel_distance": self._mean_travel_metric(current_plans, current_plan_steps, "distance"),
             "excess_occupation_share": self._excess_occupation_share(destination_saturation),
         }
-
-    def rebuild_history(
-        self,
-        *,
-        iterations,
-        resume_from_iteration: int | None,
-    ) -> list[dict[str, float]]:
-        """Rebuild persisted iteration diagnostics from saved iteration states when resuming."""
-        if resume_from_iteration is None:
-            return []
-
-        iteration_metrics_records: list[dict[str, float]] = []
-        for iteration_index in range(1, resume_from_iteration + 1):
-            saved_state = iterations.iteration(iteration_index).load_state()
-            iteration_metrics_records.append(
-                self.history_row(
-                    iteration=iteration_index,
-                    current_plans=saved_state.current_plans,
-                    current_plan_steps=saved_state.current_plan_steps,
-                    destination_saturation=saved_state.destination_saturation,
-                )
-            )
-
-        return iteration_metrics_records
 
     @staticmethod
     def _mean_plan_utility(current_plans: pl.DataFrame) -> float:

@@ -111,13 +111,13 @@ def test_normalize_for_hash_raises_for_unsupported_objects():
 
 def test_parameter_asset_hashes_follow_inputs():
     """Equivalent nested assets share a hash; changing their inputs changes it."""
-    first = ParameterValue.by_scenario_and_iteration(
+    first = ParameterValue.by_scenario_and_step(
         default=None, serm={5: [InMemoryAsset({"period": 300})]}
     )
-    repeated = ParameterValue.by_scenario_and_iteration(
+    repeated = ParameterValue.by_scenario_and_step(
         default=None, serm={5: [InMemoryAsset({"period": 300})]}
     )
-    changed = ParameterValue.by_scenario_and_iteration(
+    changed = ParameterValue.by_scenario_and_step(
         default=None, serm={5: [InMemoryAsset({"period": 150})]}
     )
     assert hash_inputs({"parameters": first}) == hash_inputs({"parameters": repeated})
@@ -127,7 +127,7 @@ def test_parameter_asset_hashes_follow_inputs():
 @pytest.mark.parametrize("parameters", [
     _NestedParams(child=_Params(label="x", count=2), path=Path("inputs/feed.zip"), values=(1, 2)),
     _DisplayParams(count=1),
-    ParameterValue.by_scenario_and_iteration(default=None, serm={1: [], 5: ["feed.zip"]}),
+    ParameterValue.by_scenario_and_step(default=None, serm={1: [], 5: ["feed.zip"]}),
     GroupDayTripsParameters(),
 ])
 def test_parameter_hashes_match_existing_json_strategy(parameters):

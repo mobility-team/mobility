@@ -1,3 +1,4 @@
+import logging
 import pathlib
 from collections.abc import Callable
 
@@ -89,7 +90,10 @@ class CandidatePlanStepsAsset(FileAsset):
         if self.candidate_plan_steps is None:
             raise ValueError("Cannot save candidate plan steps without a dataframe.")
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.candidate_plan_steps.write_parquet(self.cache_path)
+        if isinstance(self.candidate_plan_steps, pl.DataFrame):
+            self.candidate_plan_steps.write_parquet(self.cache_path)
+        else:
+            self.candidate_plan_steps.lazy().sink_parquet(self.cache_path)
         return self.get_cached_asset()
 
     @classmethod
@@ -102,6 +106,7 @@ class CandidatePlanStepsAsset(FileAsset):
         demand_groups: pl.DataFrame,
         profile_assignments: pl.DataFrame,
         candidate_pruner: Callable[[pl.LazyFrame], pl.DataFrame] | None = None,
+        compact_for_shared_pool: bool = False,
     ) -> pl.LazyFrame:
         """Build structural plan-step candidates generated at one iteration."""
         survey_plan_steps = (
@@ -128,6 +133,8 @@ class CandidatePlanStepsAsset(FileAsset):
             demand_groups=demand_groups,
             profile_assignments=profile_assignments,
             candidate_pruner=candidate_pruner,
+            stage="candidate generation",
+            compact_for_shared_pool=compact_for_shared_pool,
         )
 
     @classmethod
@@ -140,6 +147,8 @@ class CandidatePlanStepsAsset(FileAsset):
         demand_groups: pl.DataFrame,
         profile_assignments: pl.DataFrame,
         candidate_pruner: Callable[[pl.LazyFrame], pl.DataFrame] | None,
+        stage: str,
+        compact_for_shared_pool: bool = False,
     ) -> pl.LazyFrame:
         """Attach completed shared plans to eligible demand units."""
         if "allowed_activities" not in demand_groups.columns:
@@ -159,6 +168,8 @@ class CandidatePlanStepsAsset(FileAsset):
                 activity_profile_id=pl.col("allowed_activities").list.join("|")
             )
         )
+        input_demand_units = demand_groups.select(DEMAND_UNIT_COLS).unique().height
+        profiled_demand_units = units.select(DEMAND_UNIT_COLS).unique().height
         schedule_activities = get_survey_schedule_activities(survey_plan_steps)
         schedules = (
             destination_rows
@@ -235,6 +246,75 @@ class CandidatePlanStepsAsset(FileAsset):
             .unique()
         )
 
+        # Count compatible contexts before joining full plan-step rows. These
+        # small key tables show whether coverage is lost at sequence matching,
+        # activity eligibility, or expansion back to population demand units.
+        sequence_contexts = (
+            mode_rows
+            .select(
+                [
+                    "home_zone_id",
+                    "utility_profile_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                ]
+            )
+            .unique()
+            .join(
+                scoring_contexts.select(
+                    [
+                        "home_zone_id",
+                        "utility_profile_id",
+                        "country",
+                        "activity_profile_id",
+                        "_score_context_id",
+                    ]
+                ),
+                on=["home_zone_id", "utility_profile_id"],
+                how="inner",
+            )
+        )
+        eligible_contexts = (
+            sequence_contexts
+            .join(
+                eligible_schedules,
+                on=[
+                    "country",
+                    "activity_profile_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                ],
+                how="inner",
+            )
+            .select("_score_context_id")
+            .unique()
+        )
+        demand_units_with_candidates = (
+            context_to_units
+            .join(eligible_contexts, on="_score_context_id", how="inner")
+            .select(DEMAND_UNIT_COLS)
+            .unique()
+            .height
+        )
+        total_demand_units = profiled_demand_units
+        contexts_with_sequences = sequence_contexts.select("_score_context_id").unique().height
+        contexts_with_eligible_schedules = eligible_contexts.height
+        logging.debug(
+            "Plan attachment contexts | stage=%s | demand_units=%d | "
+            "demand_units_without_utility_profile=%d | scoring_contexts=%d | "
+            "contexts_with_sequences=%d | "
+            "contexts_with_eligible_schedules=%d | demand_units_with_candidates=%d | "
+            "demand_units_without_candidates=%d",
+            stage,
+            input_demand_units,
+            max(0, input_demand_units - profiled_demand_units),
+            scoring_contexts.height,
+            contexts_with_sequences,
+            contexts_with_eligible_schedules,
+            demand_units_with_candidates,
+            max(0, total_demand_units - demand_units_with_candidates),
+        )
+
         plan_steps = (
             mode_rows.lazy()
             .join(
@@ -279,6 +359,20 @@ class CandidatePlanStepsAsset(FileAsset):
                 how="inner",
             )
 
+        if compact_for_shared_pool:
+            # The shared catalogue contains plan content, not ownership by a
+            # demand unit. Eligibility has already been checked above; attach
+            # the merged plans to actual units only after the catalogue is built.
+            return (
+                context_steps
+                .with_columns(
+                    demand_group_id=pl.lit(0, dtype=pl.UInt32),
+                    demand_subgroup_id=pl.lit(0, dtype=pl.UInt32),
+                )
+                .select(cls.STRUCTURAL_COLUMNS)
+                .unique(subset=cls.DEDUPE_COLUMNS, keep="first", maintain_order=True)
+            )
+
         return (
             context_steps
             .drop(DEMAND_UNIT_COLS)
@@ -302,7 +396,7 @@ class CandidatePlanStepsAsset(FileAsset):
         current_plans: pl.DataFrame,
         previous_candidate_plan_steps: pl.DataFrame | None,
         current_iteration: int,
-        n_warmup_iterations: int,
+        n_warmup_steps: int,
         max_inactive_age: int,
         profile_assignments: pl.DataFrame,
         candidate_pruner: Callable[[pl.LazyFrame], pl.DataFrame] | None = None,
@@ -370,7 +464,7 @@ class CandidatePlanStepsAsset(FileAsset):
             )
             .rename({"from_": "from"})
         )
-        if current_iteration <= n_warmup_iterations:
+        if current_iteration <= n_warmup_steps:
             return candidate_memory
 
         age_reference = pl.max_horizontal(

@@ -7,6 +7,54 @@ from typing import Any
 import polars as pl
 
 
+def add_ordered_key_hashes(
+    rows: pl.DataFrame,
+    *,
+    group_cols: list[str],
+    order_col: str,
+    step_content: pl.Expr,
+    key_prefix: str,
+) -> pl.DataFrame:
+    """Build a compact, integer key for each ordered sequence of step content.
+
+    Two independently seeded 64-bit hashes make accidental collisions
+    negligible while keeping sequence joins on fixed-width integers. The
+    original values stay in their typed columns; no delimited text key is
+    assembled.
+    """
+    step_hash_1 = f"__{key_prefix}_step_hash_1"
+    step_hash_2 = f"__{key_prefix}_step_hash_2"
+    sequence_hashes_1 = f"__{key_prefix}_sequence_hashes_1"
+    sequence_hashes_2 = f"__{key_prefix}_sequence_hashes_2"
+    key_col_1 = f"{key_prefix}_1"
+    key_col_2 = f"{key_prefix}_2"
+    ordered_step_content = pl.struct(
+        pl.col(order_col),
+        step_content.alias("step_content"),
+    )
+
+    return (
+        rows.with_columns(
+            ordered_step_content.hash(seed=0).alias(step_hash_1),
+            ordered_step_content.hash(seed=1).alias(step_hash_2),
+        )
+        .group_by(group_cols)
+        .agg(
+            pl.col(step_hash_1).sort_by(order_col).alias(sequence_hashes_1),
+            pl.col(step_hash_2).sort_by(order_col).alias(sequence_hashes_2),
+        )
+        .with_columns(
+            pl.col(sequence_hashes_1)
+            .hash(seed=2)
+            .alias(key_col_1),
+            pl.col(sequence_hashes_2)
+            .hash(seed=3)
+            .alias(key_col_2),
+        )
+        .drop(sequence_hashes_1, sequence_hashes_2)
+    )
+
+
 @dataclass(frozen=True)
 class StableKeyIndex:
     """Maintain stable integer ids for sorted key columns.
@@ -27,20 +75,19 @@ class StableKeyIndex:
     ) -> tuple[pl.DataFrame | pl.LazyFrame, pl.DataFrame]:
         """Attach ids to rows and return the updated key-index table."""
         input_was_lazy = isinstance(rows, pl.LazyFrame)
-        df = rows.collect(engine="streaming") if input_was_lazy else rows
-        if self.index_col in df.columns:
-            df = df.drop(self.index_col)
-
-        if df.select(self.key_cols).null_count().row(0) != tuple([0] * len(self.key_cols)):
+        # Only the sorted distinct keys are needed to extend the index. Keep
+        # the potentially much wider input lazy until its caller needs it.
+        key_query = rows.select(self.key_cols).unique().sort(self.key_cols)
+        key_frame = key_query.collect(engine="streaming") if input_was_lazy else key_query
+        if key_frame.null_count().row(0) != tuple([0] * len(self.key_cols)):
             raise ValueError(f"Index keys cannot contain nulls: {self.key_cols}")
 
         if previous_index is None:
-            previous_index = self._empty_from(df)
+            previous_index = self._empty_from(key_frame)
         else:
             previous_index = previous_index.select(self.key_cols + [self.index_col])
             self.validate(previous_index)
 
-        key_frame = df.select(self.key_cols).unique().sort(self.key_cols)
         missing_keys = key_frame.join(
             previous_index.select(self.key_cols),
             on=self.key_cols,
@@ -66,9 +113,14 @@ class StableKeyIndex:
         )
         self.validate(updated_index)
 
-        indexed_rows = df.join(updated_index, on=self.key_cols)
         if input_was_lazy:
-            indexed_rows = indexed_rows.lazy()
+            indexed_rows = rows.drop(self.index_col, strict=False).join(
+                updated_index.lazy(), on=self.key_cols, how="inner"
+            )
+        else:
+            indexed_rows = rows.drop(self.index_col, strict=False).join(
+                updated_index, on=self.key_cols, how="inner"
+            )
         return indexed_rows, updated_index
 
     def extend_and_cache(

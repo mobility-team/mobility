@@ -17,11 +17,16 @@ The returned object gives access to:
 - `results.diagnostics`,
 - `results.tables`.
 
-Metric and table methods declare deferred requests. Use `results.get_all(...)` when several outputs should share scenario work. It plans those requests together, reduces metric values as each iteration becomes available, and releases run state after its last planned use. A request's `.get()` is convenient when you need only that one output; it runs only that request. Metrics are cached, while raw tables remain transient.
+A request containing only `results.tables.demand_groups(...)` reads the initial
+demand groups without running the behavior simulation.
+
+Metric and table methods declare deferred requests. Use `results.get_all(...)` when several outputs should share scenario work. For supported requests, it reduces metrics and writes tables as each step becomes available. Some undeclared dependencies may require separate executions. A request's `.get()` is convenient when you need only that one output; it runs only that request. Metrics are cached, while raw tables remain transient. Selected step numbers must be within the configured run.
 
 For example, request a metric and a raw table together:
 
 ```python
+import polars as pl
+
 outputs = results.get_all(
     trip_counts=results.metrics.trip_count(by_variable="mode"),
     travel_distances=results.metrics.travel_distance(by_variable="mode"),
@@ -33,15 +38,67 @@ outputs = results.get_all(
 trip_count_table = outputs["trip_counts"]
 travel_distance_table = outputs["travel_distances"]
 plan_steps = outputs["plan_steps"]
+car_steps = plan_steps.filter(pl.col("mode") == "car").collect()
+plan_steps.save("plan_steps.parquet")
+```
+
+To inspect requests before executing them, pass them to `results.explain(...)`.
+The returned dictionary lists each replication's full scenario cohort and seed,
+the selected steps and inputs, current cache status, and planned result storage.
+For each replication it also describes the main simulation work and names the
+outputs requested at each step. It does not start a simulation.
+
+```python
+description = results.explain(
+    trips=results.metrics.trip_count(by_variable="mode"),
+    plan_steps=results.tables.plan_steps(columns=["scenario", "mode"]),
+)
 ```
 
 Use `.get()` for one output:
 
 ```python
 plan_steps = results.tables.plan_steps().get()
+table = plan_steps.collect()
 ```
 
-Use `population_trips.run(...)` when you need to execute or inspect one concrete run. Call `run.table("plan_steps")` to get a raw output table as a Polars DataFrame; the table stays transient. Use `population_trips.results(...)` when you want indicators.
+Raw table results own temporary files in the project data folder. The files are
+removed when the result and its views are no longer referenced; call `close()`
+to remove them sooner. `filter`, `select` and `sort` return views that share the
+same lifetime. `group_by(...).agg(...)` also returns an owned view, so an
+aggregation can run without collecting the full table first:
+
+```python
+trips_by_mode = (
+    plan_steps.filter(pl.col("activity_seq_id") != 0)
+    .group_by("mode")
+    .agg(trips=pl.col("n_persons").sum())
+    .collect()
+)
+```
+
+`collect()` returns an independent Polars DataFrame; `save()`
+writes a Parquet file that remains after cleanup. Large tables can require
+substantial temporary disk space. When requesting specific `columns`, every
+name must be present in the selected table; an unknown name raises an error.
+
+To limit Mobility's managed temporary files, set `temporary_disk_limit_gb`
+when configuring Mobility, for example `mobility.set_params(temporary_disk_limit_gb=20)`.
+The limit is shared by open result tables and other
+managed temporary files in the project. Mobility stops a managed write and
+cleans up the incomplete result when the limit would be exceeded. There is no
+limit unless this setting or the `MOBILITY_TEMPORARY_DISK_LIMIT_BYTES`
+environment variable is provided.
+
+Polars may also write its own spill files, which are not covered by this limit.
+The shared congestion calculation writes its temporary output from R; Mobility
+checks its size after R finishes, so that write can temporarily exceed the limit.
+Map-animation frames are checked after each frame is rendered and can likewise
+exceed the limit briefly while a frame is being written.
+Other external-tool scratch files are not fully tracked. Check available disk
+space as well, especially for large tables.
+
+Use `population_trips.run(...)` when you need to execute or inspect one concrete run. Call `run.table("plan_steps")` to get a raw output table as a Polars DataFrame; the table stays transient. `run.results()` creates analysis helpers without running the model; each analysis requests the tables it needs. Use `population_trips.results(...)` when you want to request several indicators or tables together.
 
 Most result metrics are population-weighted. Trip counts sum the represented people attached to simulated trips. Distance, time, cost, and emissions multiply each trip quantity by the represented-person weight before aggregation. When several replications are selected, metric values are averaged across replications and standard-deviation columns describe the spread across replications.
 
@@ -52,7 +109,7 @@ Trip count:
 ```python
 results.metrics.trip_count(
     by_variable="mode",
-    iterations="last",
+    steps="last",
     output="table",
 ).get()
 ```
@@ -62,7 +119,7 @@ Travel distance:
 ```python
 results.metrics.travel_distance(
     by_variable="mode",
-    iterations="last",
+    steps="last",
     output="table",
 ).get()
 ```
@@ -72,7 +129,7 @@ Travel time:
 ```python
 results.metrics.travel_time(
     by_variable="activity",
-    iterations="last",
+    steps="last",
     output="table",
 ).get()
 ```
@@ -82,7 +139,7 @@ Greenhouse gas emissions:
 ```python
 results.metrics.ghg_emissions(
     by_variable="mode",
-    iterations="last",
+    steps="last",
     output="table",
 ).get()
 ```
@@ -93,7 +150,7 @@ Metric tables usually contain:
 
 - `scenario`,
 - `day_type`,
-- `iteration`,
+- `step`,
 - optional grouping columns such as `mode`, `activity`, or a zone id,
 - one metric column, such as `trip_count`, `travel_distance`, `travel_time`, `cost`, or `ghg_emissions`.
 
@@ -122,7 +179,7 @@ Example:
 results.metrics.trip_count(
     by_zone="home_zone",
     by_variable="mode",
-    iterations="last",
+    steps="last",
     output="plot",
     inner_zone_residents_only=True,
 )
@@ -139,7 +196,7 @@ results.metrics.travel_distance(
     by_variable="mode",
     normalize_by="person_count",
     normalize_scope="study_area",
-    iterations="last",
+    steps="last",
     output="table",
 ).get()
 ```
@@ -151,7 +208,7 @@ results.metrics.trip_count(
     by_variable="mode",
     normalize_by="metric_total",
     normalize_scope="study_area",
-    iterations="last",
+    steps="last",
     output="table",
 ).get()
 ```
@@ -161,7 +218,7 @@ results.metrics.trip_count(
 ```python
 comparison = results.metrics.travel_distance(
     by_variable="mode",
-    iterations="last",
+    steps="last",
     reference=("scenario", "default"),
     output="table",
 ).get()
@@ -174,13 +231,13 @@ Some metrics can also be compared with survey references:
 ```python
 results.metrics.trip_count(
     by_variable="mode",
-    iterations="last",
+    steps="last",
     reference="external",
     output="plot",
 )
 ```
 
-External references are available for some dimensions and final-iteration results. They are mainly available for survey-comparable indicators such as trip counts, distances, times, immobility, activity-duration distributions, and activity time series. Model-only quantities such as generalized cost usually have no external reference.
+External references are available for some dimensions and final-step results. They are mainly available for survey-comparable indicators such as trip counts, distances, times, immobility, activity-duration distributions, and activity time series. Model-only quantities such as generalized cost usually have no external reference.
 
 ## Survey-Comparable Checks
 
@@ -194,16 +251,16 @@ results.metrics.activity_time_series(reference="external").get()
 
 These checks compare modelled behaviour with the survey reference used by the run. Use them as a first check before local validation.
 
-## Iterations And Replications
+## Steps And Replications
 
-Use `iterations="last"` for final-iteration indicators after checking the iteration diagnostics.
+Use `steps="last"` for final-step indicators after checking the step diagnostics.
 
-Use `iterations="all"` when you want to inspect how an indicator changes during the run:
+Use `steps="all"` when you want to inspect how an indicator changes during the run:
 
 ```python
 results.metrics.trip_count(
     by_variable="mode",
-    iterations="all",
+    steps="all",
     output="plot",
 )
 ```
@@ -212,16 +269,16 @@ If the setup has several replications, `population_trips.results(...)` selects a
 
 ## Detailed Travel Costs
 
-Use `travel_costs` when you need the OD-by-mode travel-cost table itself. It is a persisted result, separate from the aggregated `metrics.cost(...)` indicator:
+Use `tables.costs` when you need the OD-by-mode travel-cost table itself, separate from the aggregated `metrics.cost(...)` indicator:
 
 ```python
-last_iteration_costs = results.metrics.travel_costs(iterations="last").get()
-one_iteration_costs = results.metrics.travel_costs(iterations=3).get()
-selected_costs = results.metrics.travel_costs(iterations=[1, 3, 5]).get()
-all_iteration_costs = results.metrics.travel_costs(iterations="all").get()
+last_iteration_costs = results.tables.costs(steps="last").get()
+one_iteration_costs = results.tables.costs(steps=3).get()
+selected_costs = results.tables.costs(steps=[1, 3, 5]).get()
+all_iteration_costs = results.tables.costs(steps="all").get()
 ```
 
-The returned value is a Polars `LazyFrame`. Collect it only when you need the rows in memory. For `iterations="all"`, Mobility writes the selected iteration tables into one cached Parquet result as the run advances.
+The returned table owns temporary files and can be collected or saved as described above. Pass `columns=[...]` to keep only the columns you need. `results.metrics.travel_costs(...)` is an alias for the same transient table request.
 
 ## First Results Checklist
 
@@ -231,7 +288,7 @@ For a new project setup, start with these checks:
 2. `travel_distance(by_variable="mode")`: are distances in the expected order of magnitude for the territory?
 3. `ghg_emissions(by_variable="mode")`: are emissions consistent with the modes and emission factors used?
 4. `trip_count(by_zone="home_zone", by_variable="mode")`: do maps or zone tables reveal missing areas, boundary effects, or unexpected spatial concentration?
-5. `diagnostics.iteration_metrics(iterations="all")`: do indicators behave consistently across iterations?
+5. `diagnostics.step_metrics(steps="all")`: do indicators behave consistently across steps?
 6. `immobility(reference="external")`: does immobility remain close to the survey reference for the relevant groups?
 7. `activity_duration_distribution(reference="external")`: do activity durations keep a credible shape?
 
@@ -253,9 +310,9 @@ This is useful for checking raw simulated plan steps. For indicators, diagnostic
 Diagnostics help check whether the model behaves as expected:
 
 ```python
-diagnostics = results.diagnostics.iteration_metrics(
-    iterations="all",
+diagnostics = results.diagnostics.step_metrics(
+    steps="all",
 ).get().collect()
 ```
 
-Use diagnostics when a scenario result looks surprising, when the model varies across iterations, or when you need to check that a scenario gap is larger than iteration variation.
+Use diagnostics when a scenario result looks surprising, when the model varies across steps, or when you need to check that a scenario gap is larger than step variation.

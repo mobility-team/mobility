@@ -11,6 +11,6 @@ class GroupDayTripsResultDiagnostics:
     def __init__(self, results) -> None:
         self.results = results
 
-    def iteration_metrics(self, *, iterations: IterationSelector = "last") -> ScopedRunTable:
-        """Declare the scoped per-iteration diagnostics table."""
-        return self.results.tables.iteration_metrics(iterations=iterations)
+    def step_metrics(self, *, steps: IterationSelector = "last") -> ScopedRunTable:
+        """Declare diagnostics for each selected simulation step."""
+        return self.results.tables.step_metrics(steps=steps)

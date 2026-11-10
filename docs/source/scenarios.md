@@ -32,14 +32,14 @@ Scenario names appear in output folders and result tables, so short names are ea
 
 ## Change A Parameter By Scenario
 
-Use `ParameterValue.by_scenario_and_iteration` when a value changes by scenario:
+Use `ParameterValue.by_scenario_and_step` when a value changes by scenario:
 
 ```python
 car = mobility.CarMode(
     transport_zones,
     generalized_cost_parameters=mobility.GeneralizedCostParameters(
         cost_constant=3.0,
-        cost_of_distance=mobility.ParameterValue.by_scenario_and_iteration(
+        cost_of_distance=mobility.ParameterValue.by_scenario_and_step(
             default=0.0,
             car_distance_cost={
                 1: 0.0,
@@ -65,7 +65,7 @@ limit from iteration 5 in one scenario:
 ```python
 speed_zone = mobility.LimitedSpeedZonesModifier(
     zones_geometry_file_path="inputs/speed-zones.gpkg",
-    max_speed=mobility.ParameterValue.by_scenario_and_iteration(
+    max_speed=mobility.ParameterValue.by_scenario_and_step(
         default=50.0,
         safer_streets={
             1: 50.0,
@@ -108,7 +108,7 @@ scenarios = mobility.Scenarios(
 car = mobility.CarMode(
     transport_zones,
     generalized_cost_parameters=mobility.GeneralizedCostParameters(
-        cost_of_distance=mobility.ParameterValue.by_scenario_and_iteration(
+        cost_of_distance=mobility.ParameterValue.by_scenario_and_step(
             default=0.0,
             car_distance_cost={
                 1: 0.0,
@@ -123,22 +123,35 @@ Pass `scenarios=scenarios` and the scenario-aware `car` mode to `PopulationGroup
 
 ## Run And Read Several Scenarios
 
-```python
-population_trips.run(day_type="weekday", scenario="default")
-population_trips.run(day_type="weekday", scenario="car_distance_cost")
+Each results request selects the scenarios, sensitivity cases and replications
+that make up an experiment. Scenarios and sensitivity cases share candidate
+plans within each selected replication; different replications keep separate
+choice sets. Behavior, costs and results remain separate for each member. The
+experiment's members are fixed when it is created. Define sensitivity cases in
+the model setup before requesting them.
 
+Adding a scenario or sensitivity case creates a different cohort
+and can introduce new shared plans or change the coordinated search. Results for an existing member can therefore
+change when the experiment's members change, even if that member's own inputs
+and seed remain the same. Keep the cohort fixed when comparing repeated results.
+
+```python
 results = population_trips.results(
     "weekday",
     scenarios=["default", "car_distance_cost"],
 )
 ```
 
+The two selected scenarios run together. A direct `run(...)` request creates a
+one-member experiment. Its results can differ from those of a member of a larger
+experiment because the shared candidate pool is different.
+
 Then compare indicators:
 
 ```python
 results.metrics.travel_distance(
     by_variable="mode",
-    iterations="last",
+    steps="last",
     reference=("scenario", "default"),
     output="plot",
 )

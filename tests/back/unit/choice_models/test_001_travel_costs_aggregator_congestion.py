@@ -25,6 +25,28 @@ class _FakeModeParameters(BaseModel):
     persons_per_vehicle: float = 2.0
 
 
+def test_vehicle_flows_have_stable_values_and_order(project_dir):
+    flows = pl.DataFrame({
+        "from": [2, 1, 1, 1, 1],
+        "to": [3, 2, 2, 2, 2],
+        "mode": ["car", "car", "car", "car", "car"],
+        "flow_volume": [3.0, 1e16, 1.0, 1.0, 2.0],
+    })
+    result = []
+    for index, rows in enumerate([flows, flows.reverse()]):
+        person_flows = _PersonODFlowsAsset(source_key=str(index), flows=rows)
+        vehicle_flows = VehicleODFlowsAsset(
+            person_od_flows_by_mode=person_flows,
+            road_flow_parameters=[{"mode_name": "car", "vehicles_per_person": 1.0}],
+        )
+        with asset_resolution_context():
+            result.append(pl.read_parquet(vehicle_flows.get()))
+
+    assert result[0].equals(result[1])
+    assert result[0].select("from", "to").rows() == [(1, 2), (2, 3)]
+    assert result[0]["vehicle_volume"].to_list() == [1e16 + 4.0, 3.0]
+
+
 def _make_mode(*, name: str, congestion: bool, persons_per_vehicle: float = 2.0):
     return SimpleNamespace(
         inputs={

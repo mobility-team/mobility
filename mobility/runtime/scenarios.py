@@ -43,7 +43,8 @@ class Scenarios:
         activities: Any = None,
         parameters: Any = None,
         changes: Iterable[ScenarioParameterChange] | None = None,
-        n_iterations: int | None = None,
+        n_steps: int | None = None,
+        warn_unreachable: bool = True,
     ) -> None:
         """Create a scenario manifest.
 
@@ -63,8 +64,8 @@ class Scenarios:
             parameters=parameters,
             changes=changes,
         )
-        if n_iterations is None:
-            n_iterations = self._infer_n_iterations(parameters)
+        if n_steps is None:
+            n_steps = self._infer_n_iterations(parameters)
 
         if scenarios is None:
             declared_scenarios = []
@@ -109,7 +110,8 @@ class Scenarios:
 
         self._scenarios = tuple(declared_scenarios)
         self._changes = setup_changes
-        self._n_iterations = n_iterations
+        self._n_iterations = n_steps
+        self._warn_unreachable = warn_unreachable
         self._validate_unique_names()
         self._validate_references()
         if has_setup_context:
@@ -137,6 +139,7 @@ class Scenarios:
             modes=modes,
             activities=activities,
             parameters=parameters,
+            warn_unreachable=False,
         )
 
     @staticmethod
@@ -187,7 +190,8 @@ class Scenarios:
         """Validate and warn about scenario setup issues."""
         self._validate_change_scenarios_are_declared()
         self._warn_about_unused_scenarios()
-        self._warn_about_unreachable_iterations()
+        if self._warn_unreachable:
+            self._warn_about_unreachable_iterations()
 
     def validate_requested(self, scenarios: Iterable[str]) -> None:
         """Check that selected scenario names are declared."""
@@ -300,8 +304,8 @@ class Scenarios:
             return None
         run_parameters = getattr(parameters, "run", None)
         if run_parameters is not None:
-            return getattr(run_parameters, "n_iterations", None)
-        return getattr(parameters, "n_iterations", None)
+            return getattr(run_parameters, "n_steps", None)
+        return getattr(parameters, "n_steps", None)
 
     @staticmethod
     def _scenario_names_from_changes(
@@ -366,7 +370,7 @@ class Scenarios:
                 if unreachable_points:
                     warnings.warn(
                         f"Scenario '{scenario}' changes {change.path} at iterations "
-                        f"{unreachable_points}, but the run has n_iterations="
+                        f"{unreachable_points}, but the run has n_steps="
                         f"{self._n_iterations}. These values will never be used.",
                         stacklevel=3,
                     )

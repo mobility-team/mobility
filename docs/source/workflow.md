@@ -137,7 +137,7 @@ population_trips = mobility.PopulationGroupDayTrips(
     surveys=[survey],
     scenarios=scenarios,
     parameters=mobility.GroupDayTripsParameters(
-        run=mobility.GroupDayTripsRunParameters(n_iterations=5),
+        run=mobility.GroupDayTripsRunParameters(n_steps=5),
     ),
 )
 ```
@@ -161,7 +161,7 @@ results = population_trips.results(
 
 trip_count = results.metrics.trip_count(
     by_variable="mode",
-    iterations="last",
+    steps="last",
     output="table",
 ).get()
 ```

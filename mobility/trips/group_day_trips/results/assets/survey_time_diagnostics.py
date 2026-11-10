@@ -55,28 +55,27 @@ class ActivityDurationDistribution(InMemoryAsset):
         results = []
         for iteration, plan_steps_asset in zip(self.iterations, self.plan_steps):
             try:
-                duration_tables = [
-                    _activity_duration_samples(plan_steps_asset.get(), source="model")
-                ]
-                if self.reference_plan_steps is not None:
-                    survey_steps = _with_result_scope(
-                        self.reference_plan_steps.get(),
-                        scenarios=self.scenarios,
-                        day_type=self.day_type,
-                        iterations=[iteration],
-                        replications=self.replications,
-                    )
-                    duration_tables.append(
-                        _activity_duration_samples(survey_steps, source="survey")
-                    )
-                durations = pl.concat(duration_tables, how="vertical_relaxed")
-                results.append(self._iteration_distribution(durations))
+                results.append(self.combine_replications(
+                    self.iteration_by_replication(iteration, plan_steps_asset)
+                ))
             finally:
                 release_scoped_run_tables(iteration)
         return pl.concat(results, how="vertical_relaxed")
 
-    def _iteration_distribution(self, durations: pl.DataFrame) -> pl.DataFrame:
-        """Aggregate one iteration before another run state is loaded."""
+    def iteration_by_replication(self, iteration: int, plan_steps_asset: Asset) -> pl.DataFrame:
+        """Reduce model and optional survey samples for one selected step."""
+        duration_tables = [_activity_duration_samples(plan_steps_asset.get(), source="model")]
+        if self.reference_plan_steps is not None:
+            survey_steps = _with_result_scope(
+                self.reference_plan_steps.get(), scenarios=self.scenarios,
+                day_type=self.day_type, iterations=[iteration], replications=self.replications,
+            )
+            duration_tables.append(_activity_duration_samples(survey_steps, source="survey"))
+        durations = pl.concat(duration_tables, how="vertical_relaxed")
+        return self.distribution_by_replication(durations)
+
+    def distribution_by_replication(self, durations: pl.DataFrame) -> pl.DataFrame:
+        """Reduce duration samples to bins for each seed."""
         bin_width_hours = self.bin_width_minutes / 60.0
         distribution = (
             durations.lazy()
@@ -112,6 +111,14 @@ class ActivityDurationDistribution(InMemoryAsset):
                 / pl.col("weighted_visits").sum().over(SCOPE_COLUMNS + ["source", "activity"])
             )
         )
+        # The samples are already materialized. The streaming executor has
+        # intermittently failed on this grouped string aggregation, so use
+        # Polars' in-memory engine for this one reduction.
+        return distribution.collect(engine="in-memory")
+
+    @staticmethod
+    def combine_replications(distribution: pl.DataFrame) -> pl.DataFrame:
+        """Average the per-seed duration bins."""
         output_columns = RESULT_COLUMNS + [
             "source",
             "activity",
@@ -121,7 +128,7 @@ class ActivityDurationDistribution(InMemoryAsset):
             "duration_label",
         ]
         return (
-            distribution
+            distribution.lazy()
             .group_by(output_columns)
             .agg(
                 pl.col("weighted_visits").mean().alias("weighted_visits"),
@@ -208,6 +215,17 @@ class ActivityTimeSeries(InMemoryAsset):
         demand_groups_asset: Asset,
     ) -> pl.DataFrame:
         """Aggregate one iteration before another run state is loaded."""
+        return self.combine_replications(
+            self.series_by_replication(
+                iteration=iteration, plan_steps_asset=plan_steps_asset,
+                demand_groups_asset=demand_groups_asset,
+            )
+        )
+
+    def series_by_replication(
+        self, *, iteration: int, plan_steps_asset: Asset, demand_groups_asset: Asset,
+    ) -> pl.DataFrame:
+        """Keep one activity time series per seed for the final reduction."""
         bins = _time_bins(interval_minutes=self.interval_minutes)
         total_population = (
             demand_groups_asset.get()
@@ -234,7 +252,11 @@ class ActivityTimeSeries(InMemoryAsset):
                 total_population=total_population,
             ).with_columns(source=pl.lit("survey"))
             series_tables.append(survey_series)
-        per_replication = pl.concat(series_tables, how="vertical_relaxed")
+        return pl.concat(series_tables, how="vertical_relaxed")
+
+    @staticmethod
+    def combine_replications(per_replication: pl.DataFrame) -> pl.DataFrame:
+        """Average activity occupancy across seeds."""
         output_columns = RESULT_COLUMNS + ["source", "time_bin_start", "time_label", "label"]
         return (
             per_replication
@@ -268,7 +290,7 @@ def _with_result_scope(
                         scenario=pl.lit(scenario, dtype=pl.String),
                         sensitivity_case=pl.lit("base", dtype=pl.String),
                         day_type=pl.lit(day_type, dtype=pl.String),
-                        iteration=pl.lit(iteration, dtype=pl.Int32),
+                        step=pl.lit(iteration, dtype=pl.Int32),
                         replication=pl.lit(replication, dtype=pl.Int64),
                     )
                 )

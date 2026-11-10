@@ -1,9 +1,16 @@
 import json
+import os
 import pickle
+import subprocess
+import sys
+import time
 from types import SimpleNamespace
 
 import polars as pl
+import psutil
 import pytest
+from mobility.runtime.temporary import TemporaryDiskLimitExceeded
+from mobility.transport.modes.choice.compute_subtour_mode_probs_parallel_utilities import process_batch_serial
 from mobility.trips.group_day_trips.plans.mode_sequence_search.prepare import build_location_chains
 from mobility.trips.group_day_trips.plans.mode_sequence_search.search_python import (
     run_python_mode_sequence_search,
@@ -20,6 +27,20 @@ class _DummyLive:
 
     def __exit__(self, exc_type, exc, tb):
         return False
+
+
+def test_mode_search_output_respects_temporary_disk_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", "1")
+    folder = tmp_path / "temporary" / "mobility-mode-search-test" / "tmp_results"
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(
+        "mobility.transport.modes.choice.compute_subtour_mode_probs_parallel_utilities.run_top_k_search",
+        lambda *args, **kwargs: pl.DataFrame({"value": [1]}),
+    )
+    with pytest.raises(TemporaryDiskLimitExceeded):
+        process_batch_serial([(1, [1, 2])], 0, {}, {}, {}, {}, {}, {}, {}, 1, folder)
+    assert not list(folder.iterdir())
 
 
 class _DummyProcess:
@@ -187,6 +208,88 @@ def test_run_python_mode_sequence_search_subprocess_serializes_inputs_for_worker
     process = created_processes[0]
     assert process.wait_called is True
     assert len(created_processes) == 1
+
+
+def test_interrupted_mode_search_stops_workers_before_removing_files(monkeypatch, tmp_path):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setattr(
+        "mobility.trips.group_day_trips.plans.mode_sequence_search.search_python.Live",
+        lambda *args, **kwargs: _DummyLive(),
+    )
+    marker = tmp_path / "worker.pid"
+    original_popen = subprocess.Popen
+    created = []
+    parent_script = (
+        "import pathlib, subprocess, sys, time; "
+        "worker=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        "pathlib.Path(sys.argv[1]).write_text(str(worker.pid)); time.sleep(60)"
+    )
+
+    class InterruptibleProcess:
+        def __init__(self):
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            self.process = original_popen([sys.executable, "-c", parent_script, str(marker)], creationflags=flags)
+            self.pid = self.process.pid
+            self.interrupted = False
+            self.worker = None
+
+        def wait(self, timeout=None):
+            if not self.interrupted:
+                self.interrupted = True
+                deadline = time.monotonic() + 10
+                worker_pid = ""
+                while not worker_pid and time.monotonic() < deadline:
+                    if marker.exists():
+                        worker_pid = marker.read_text().strip()
+                    time.sleep(0.05)
+                if not worker_pid:
+                    raise RuntimeError("The test worker did not start.")
+                self.worker = psutil.Process(int(worker_pid))
+                raise KeyboardInterrupt()
+            return self.process.wait(timeout=timeout)
+
+        def poll(self):
+            return self.process.poll()
+
+        def terminate(self):
+            self.process.terminate()
+
+        def kill(self):
+            self.process.kill()
+
+    def start_process(*args, **kwargs):
+        process = InterruptibleProcess()
+        created.append(process)
+        return process
+
+    monkeypatch.setattr(
+        "mobility.trips.group_day_trips.plans.mode_sequence_search.search_python.subprocess.Popen",
+        start_process,
+    )
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run_python_mode_sequence_search(
+                iteration=1,
+                parameters=_mode_sequence_parameters(k_mode_sequences=1),
+                unique_destination_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
+                leg_mode_costs=pl.DataFrame({"from": [1], "to": [2], "mode_id": [0], "cost": [1.0]}),
+                modes_by_name={"walk": {"vehicle": None, "multimodal": False, "return_mode": None, "is_return_mode": False}},
+                is_return_mode_by_id={0: False},
+            )
+        assert created[0].poll() is not None
+        worker = created[0].worker
+        assert not worker.is_running() or worker.status() == psutil.STATUS_ZOMBIE
+        assert not list((tmp_path / "temporary").glob("mobility-mode-search-*"))
+    finally:
+        for process in created:
+            if process.worker is not None:
+                try:
+                    process.worker.kill()
+                except (psutil.NoSuchProcess, psutil.ZombieProcess):
+                    pass
+            if process.poll() is None:
+                process.kill()
+                process.process.wait(timeout=5)
 
 
 def test_run_python_mode_sequence_search_serial_backend_filters_return_modes(monkeypatch, tmp_path):

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,6 +7,8 @@ import pandas as pd
 from plotly.basedatatypes import BaseFigure
 import plotly.graph_objects as go
 import polars as pl
+from mobility.runtime.assets.resolver import asset_resolution_context
+from polars.testing import assert_frame_equal
 import pytest
 from shapely.geometry import Polygon
 
@@ -13,14 +16,16 @@ from mobility.reports import TransportZoneMaps
 from mobility.runtime import Scenario, Scenarios
 from mobility.runtime.parameter_values import SensitivityCase, SensitivityValue
 from mobility.runtime.assets.file_asset import FileAsset
-from mobility.runtime.assets.graph import build_asset_graph
+from mobility.runtime.assets.graph import asset_graph_key, build_asset_graph
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.assets.resolver import AssetResolver
 from mobility.surveys.mobility_survey import MobilitySurveyParameters
 from mobility.trips.group_day_trips.core.group_day_trips import PopulationGroupDayTrips
-from mobility.trips.group_day_trips.core.run import Run
 from mobility.trips.group_day_trips.results import GroupDayTripsResults
 from mobility.trips.group_day_trips.results.metrics import GroupDayTripsResultMetrics
+from mobility.trips.group_day_trips.results.assets.metric import Metric
+from mobility.trips.group_day_trips.results.result_table import ResultTable
+from mobility.trips.group_day_trips.results.simulation_runner import SimulationRunner
 from mobility.trips.group_day_trips.sensitivity import GroupDayTripsSensitivityAnalysis
 from mobility.trips.group_day_trips.results.plots import (
     plot_metric_by_zone,
@@ -59,8 +64,9 @@ class _FakeRun(FileAsset):
         self._iteration_plan_steps = iteration_plan_steps or {}
         self._iteration_costs = iteration_costs or {}
         self.parameters = SimpleNamespace(
-            run=SimpleNamespace(n_iterations=max(self._iteration_plan_steps, default=1))
+            run=SimpleNamespace(n_steps=max(self._iteration_plan_steps, default=1))
         )
+        self.coordinated_run_key = 0
         self.population = SimpleNamespace(transport_zones=transport_zones)
         self.surveys = surveys or []
         cache_path = {
@@ -120,7 +126,7 @@ class _FakeRunTable(InMemoryAsset):
             {
                 "run_inputs_hash": run.inputs_hash,
                 "table_name": table_name,
-                "iteration": iteration,
+                "step": iteration,
             }
         )
 
@@ -134,7 +140,7 @@ class _FakeRunTable(InMemoryAsset):
             return self.run._iteration_costs[self.iteration]
         if self.table_name == "iteration_metrics":
             return self.run.frames[self.table_name].filter(
-                pl.col("iteration") == self.iteration
+                pl.col("step") == self.iteration
             )
         raise ValueError(
             f"Fake run has no iteration table `{self.table_name}`."
@@ -306,7 +312,7 @@ def _run_factory(base_folder: Path):
         )
         iteration_metrics = pl.DataFrame(
             {
-                "iteration": [1, 2],
+                "step": [1, 2],
                 "total_loss": [float(replication), float(replication) + 10.0],
             }
         )
@@ -383,6 +389,9 @@ def test_population_group_day_trips_results_selects_all_replications(tmp_path, m
     wrapper.parameters = SimpleNamespace(run=SimpleNamespace(n_replications=2))
     wrapper.scenarios = Scenarios()
     wrapper.run = _run_factory(tmp_path)
+    wrapper.modes = []
+    wrapper.activities = []
+    wrapper._experiments = []
 
     results = wrapper.results("weekday")
 
@@ -497,6 +506,7 @@ def test_sensitivity_metric_compares_cases_to_base(tmp_path, monkeypatch):
     car_result = result.filter(pl.col("mode") == "car").table
 
     assert car_result["scenario"].to_list() == ["default"]
+    assert car_result["step"].to_list() == [2]
     assert car_result["parameter"].to_list() == ["Car cost"]
     assert car_result["variation"].to_list() == ["+20%"]
     assert car_result["gap"].to_list() == [4.0]
@@ -508,16 +518,19 @@ def test_result_tables_add_scope_columns(tmp_path, monkeypatch):
 
     outputs = results.get_all(
         plan_steps=results.tables.plan_steps(),
-        iteration_metrics=results.diagnostics.iteration_metrics(),
+        iteration_metrics=results.diagnostics.step_metrics(),
     )
     plan_steps = outputs["plan_steps"].sort("replication").collect()
     iteration_metrics = outputs["iteration_metrics"].sort("replication").collect()
 
     assert plan_steps["scenario"].to_list() == ["default", "default", "default", "default"]
     assert plan_steps["day_type"].to_list() == ["weekday", "weekday", "weekday", "weekday"]
-    assert plan_steps["iteration"].to_list() == [2, 2, 2, 2]
+    assert plan_steps["step"].to_list() == [2, 2, 2, 2]
     assert plan_steps["replication"].to_list() == [0, 0, 1, 1]
-    assert iteration_metrics["iteration"].to_list() == [2, 2]
+    assert iteration_metrics["step"].to_list() == [2, 2]
+
+    selected = results.tables.plan_steps(columns=["step", "mode"]).get().collect()
+    assert selected.columns == ["step", "mode"]
     assert iteration_metrics["total_loss"].to_list() == [10.0, 11.0]
 
 
@@ -545,6 +558,40 @@ def test_get_all_shares_run_outputs_between_metrics_and_tables(tmp_path, monkeyp
     assert plan_step_builds == [("default-base-weekday-0", None)]
 
 
+def test_get_all_preserves_the_callers_resolver_values(tmp_path):
+    results = _results(tmp_path, replication=0)
+    marker = InMemoryAsset({"name": "caller-value"})
+    with asset_resolution_context() as resolver:
+        value = resolver.get_in_memory_asset(marker, object)
+        table = results.get_all(steps=results.tables.plan_steps())["steps"]
+        assert resolver.in_memory_values[asset_graph_key(marker)] is value
+        assert table.collect().height == 2
+        table.close()
+
+
+def test_mnl_flow_diagnostic_is_a_separate_final_table(tmp_path):
+    results = _results(tmp_path, replication=0)
+    flows = pl.DataFrame({"from": [1], "to": [2], "mode": ["car"], "n_persons": [25.]})
+    for context in results.run_contexts:
+        context.run.frames["mnl_od_mode_flows"] = flows
+    request = results.tables.mnl_od_mode_flows()
+    assert request.uses_last_iteration
+    actual = results.get_all(mnl=request)["mnl"].collect()
+    assert actual["n_persons"].to_list() == [25.]
+
+
+def test_detailed_costs_are_transient_tables(tmp_path):
+    results = _results(tmp_path, replication=0)
+    request = results.tables.costs(steps=1, columns=["step", "mode", "cost"])
+    table = request.get()
+    assert table.collect().columns == ["step", "mode", "cost"]
+    assert not list((tmp_path / "group_day_trips" / "metrics").glob("*travel_costs*"))
+    table.close()
+    alias = results.metrics.travel_costs(steps=1).get()
+    assert alias.collect().height == 2
+    alias.close()
+
+
 def test_result_tables_can_include_multiple_scenarios(tmp_path, monkeypatch):
     """Check that one result set can concatenate several scenarios."""
     results = _results(tmp_path, scenarios=["default", "test"])
@@ -569,14 +616,268 @@ def test_result_tables_can_select_saved_iterations(tmp_path, monkeypatch):
     results = _results(tmp_path, replication=0)
 
     plan_steps = (
-        results.tables.plan_steps(iterations=[1, 2])
+        results.tables.plan_steps(steps=[1, 2])
         .get()
-        .sort(["iteration", "mode"])
+        .sort(["step", "mode"])
         .collect()
     )
 
-    assert plan_steps["iteration"].to_list() == [1, 1, 2, 2]
+    assert plan_steps["step"].to_list() == [1, 1, 2, 2]
     assert plan_steps["distance"].to_list() == pytest.approx([5.0, 2.5, 10.0, 5.0])
+
+
+def test_raw_tables_stream_one_replication_lane_at_a_time(tmp_path, monkeypatch):
+    """Reduce mixed requests one seed at a time, including paired gaps."""
+    results = _results(tmp_path, scenarios=["default", "test"])
+    events = []
+    # One seed has no walking trips; its missing group must count as zero.
+    for context in results.run_contexts:
+        if context.replication == 0:
+            for step, frame in context.run._iteration_plan_steps.items():
+                context.run._iteration_plan_steps[step] = frame.filter(pl.col("mode") != "walk")
+        else:
+            context.run.frames["demand_groups"] = context.run.frames["demand_groups"].with_columns(
+                n_persons=pl.col("n_persons") * 2
+            )
+    requests = {
+        "table": results.tables.plan_steps(steps="all"),
+        "costs": results.tables.costs(steps="all", columns=["replication", "step", "mode", "cost"]),
+        "final_costs": results.tables.costs(columns=["replication", "step", "mode", "cost"]),
+        "trips": results.metrics.trip_count(by_variable="mode", steps="all"),
+        "distance": results.metrics.travel_distance(by_variable="mode", steps="all"),
+        "cost": results.metrics.cost(by_variable="mode", steps="all"),
+        "emissions": results.metrics.ghg_emissions(by_variable="mode", steps="all"),
+        "gap": results.metrics.trip_count(
+            by_variable="mode", steps="all", reference=("scenario", "default")
+        ),
+        "filtered": results.metrics.trip_count(by_variable="mode", steps="all", modes=["car"]),
+        "filtered_gap": results.metrics.trip_count(
+            by_variable="mode", steps="all", modes=["car"], reference=("scenario", "default"),
+        ),
+        "filtered_share_gap": results.metrics.travel_distance(
+            by_variable="mode", steps="all", modes=["car"], normalize_by="metric_total",
+            normalize_scope="study_area", reference=("scenario", "default"),
+        ),
+        "filtered_person_gap": results.metrics.trip_count(
+            by_variable="mode", steps="all", modes=["car"], normalize_by="person_count",
+            normalize_scope="study_area", reference=("scenario", "default"),
+        ),
+        "shares": results.metrics.trip_count(
+            by_variable="mode", steps="all", normalize_by="metric_total", normalize_scope="study_area"
+        ),
+        "share_gap": results.metrics.travel_distance(
+            by_variable="mode", steps="all", normalize_by="metric_total", normalize_scope="study_area",
+            reference=("scenario", "default"),
+        ),
+        "per_person": results.metrics.trip_count(
+            by_variable="mode", steps="all", normalize_by="person_count", normalize_scope="study_area",
+        ),
+        "person_gap": results.metrics.travel_distance(
+            by_zone="home_zone", steps="all", normalize_by="person_count", normalize_scope="zone",
+            reference=("scenario", "default"),
+        ),
+        "demand_groups": results.metrics.trip_count_by_demand_group(steps="all"),
+        "immobility": results.metrics.immobility(steps="all"),
+        "survey_immobility": results.metrics.immobility(reference="external"),
+        "durations": results.metrics.activity_duration_distribution(steps="all"),
+        "survey_durations": results.metrics.activity_duration_distribution(reference="external"),
+        "activity_time": results.metrics.activity_time_series(steps="all", interval_minutes=60),
+        "survey_activity_time": results.metrics.activity_time_series(reference="external", interval_minutes=60),
+        "occupation": results.metrics.opportunity_occupation(
+            steps="all", inner_zone_residents_only=False,
+        ),
+        "external": results.metrics.trip_count(by_variable="mode", reference="external"),
+        "external_history": results.metrics.trip_count(by_variable="mode", reference="external", steps="all"),
+        "external_first": results.metrics.trip_count(by_variable="mode", reference="external", steps=1),
+        "external_history_share": results.metrics.travel_distance(
+            by_variable="mode", reference="external", steps="all", normalize_by="metric_total",
+            normalize_scope="study_area",
+        ),
+        "external_values": results.metrics.trip_count(
+            by_variable="mode", normalize_by="person_count", normalize_scope="study_area",
+            reference="external", reference_view="values",
+        ),
+    }
+    with asset_resolution_context():
+        expected = {
+            name: pl.concat([request.compute_iteration(step) for step in request.selected_iterations])
+            for name, request in requests.items() if name not in {"table", "costs", "final_costs"}
+        }
+        expected_costs = pl.concat([
+            requests["costs"].compute_iteration(step).collect() for step in (1, 2)
+        ])
+        expected_final_costs = requests["final_costs"].compute_iteration(2).collect()
+
+    class FakeCoordinator(InMemoryAsset):
+        def __init__(self, replication):
+            super().__init__({"replication": replication})
+            self.replication = replication
+            self.parameters = SimpleNamespace(run=SimpleNamespace(n_steps=2))
+            self._cached_result = None
+            self.current_step = 0
+
+        def _advance_cohort_step(self):
+            pass
+
+        def create_and_get_asset(self):
+            raise AssertionError("The test coordinator must use its live callback.")
+
+        def get(self, *, step_consumer=None, runner=None):
+            if step_consumer is None:
+                return SimpleNamespace(current_iteration=self.current_step)
+            for step in (1, 2):
+                self.current_step = step
+                events.append((self.replication, step))
+                step_consumer(step)
+            return None
+
+    coordinators = {replication: FakeCoordinator(replication) for replication in (0, 1)}
+    for context in results.run_contexts:
+        context.run.coordinated_run_asset = coordinators[context.replication]
+    outputs = results.get_all(**requests)
+    table = outputs["table"]
+    rows = table.collect()
+    assert events == [(0, 1), (0, 2), (1, 1), (1, 2)]
+    assert rows.group_by(["replication", "scenario", "step"]).len().height == 8
+    for name, expected_table in (("costs", expected_costs), ("final_costs", expected_final_costs)):
+        actual_table = outputs[name].collect()
+        assert_frame_equal(actual_table.sort(actual_table.columns), expected_table.sort(expected_table.columns))
+        outputs[name].close()
+    for name, expected_value in expected.items():
+        actual = outputs[name]
+        assert_frame_equal(actual.sort(actual.columns), expected_value.sort(expected_value.columns),
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+    first = outputs["external_history"].filter(pl.col("step") == 1)
+    assert_frame_equal(first.sort(first.columns), outputs["external_first"].sort(first.columns))
+    assert first["trip_count_reference"].null_count() == 0
+    table.close()
+
+    # A cached derived metric must not rerun its cached input. A raw table
+    # requested alongside it still advances each replication just once.
+    events.clear()
+    derived = Metric(
+        name="cached_derived_trips", results=results, dependencies=[requests["trips"]],
+        planned_outputs=requests["trips"].planned_outputs, query={},
+        compute=lambda: requests["trips"].get().with_columns(plus_one=pl.col("trip_count") + 1),
+    )
+    derived.cache_path = tmp_path / "cached-derived.parquet"
+    derived.hash_path = tmp_path / "cached-derived.inputs-hash"
+    expected_derived = derived.get()
+    assert events == []
+    cached = results.get_all(derived=derived)["derived"]
+    assert_frame_equal(cached, expected_derived)
+    assert events == []
+    mixed_cached = results.get_all(derived=derived, table=results.tables.plan_steps(steps="all"))
+    assert_frame_equal(mixed_cached["derived"], expected_derived)
+    assert events == [(0, 1), (0, 2), (1, 1), (1, 2)]
+    mixed_cached["table"].close()
+
+    # A custom metric can declare scoped tables and use them after both lanes,
+    # without causing another execution or keeping the complete tables in RAM.
+    events.clear()
+    selected_columns = ["scenario", "replication", "step"]
+    dependency = results.tables.plan_steps(steps="all", columns=selected_columns)
+    reference = _FakeLazyFrameAsset(
+        base_folder=tmp_path, name="custom-reference", frame=pl.DataFrame({"factor": [2]}),
+    )
+    custom = Metric(
+        name="custom_step_rows", results=results, dependencies=[dependency, reference],
+        planned_outputs=dependency.planned_outputs, query={},
+        compute=lambda: dependency.get().group_by(["replication", "scenario", "step"]).len()
+        .join(reference.get(), how="cross"),
+    )
+    custom.cache_path = tmp_path / "custom-step-rows.parquet"
+    custom.hash_path = tmp_path / "custom-step-rows.inputs-hash"
+    append = ResultTable._append
+    written = []
+
+    def count_append(result, value):
+        written.append(Path(result._directory.name))
+        append(result, value)
+
+    monkeypatch.setattr(ResultTable, "_append", count_append)
+    mixed = results.get_all(
+        table=results.tables.plan_steps(steps="all", columns=selected_columns), custom=custom,
+    )
+    monkeypatch.setattr(ResultTable, "_append", append)
+    expected_rows = (mixed["table"].collect().group_by(["replication", "scenario", "step"]).len()
+                     .with_columns(factor=pl.lit(2, dtype=pl.Int64)))
+    assert_frame_equal(mixed["custom"].sort(expected_rows.columns), expected_rows.sort(expected_rows.columns))
+    assert events == [(0, 1), (0, 2), (1, 1), (1, 2)]
+    assert len(written) == 4 and len(set(written)) == 1
+    mixed["table"].close()
+
+    # A metric failure must also remove its captured dependency fragments.
+    directories = []
+    append = ResultTable._append
+
+    def record_append(result, value):
+        directories.append(Path(result._directory.name))
+        append(result, value)
+
+    def fail_metric():
+        raise RuntimeError("custom metric failed")
+
+    failed = Metric(
+        name="failed_custom", results=results, dependencies=[dependency],
+        planned_outputs=dependency.planned_outputs, query={}, compute=fail_metric,
+    )
+    monkeypatch.setattr(ResultTable, "_append", record_append)
+    with pytest.raises(RuntimeError, match="custom metric failed"):
+        results.get_all(custom=failed)
+    assert directories and all(not directory.exists() for directory in directories)
+    monkeypatch.setattr(ResultTable, "_append", append)
+
+    # Failure and cancellation in a later lane must remove earlier fragments.
+    append = ResultTable._append
+    for error in (RuntimeError("result write failed"), KeyboardInterrupt()):
+        directories = []
+
+        def fail_later_append(result, value):
+            directories.append(Path(result._directory.name))
+            if len(directories) == 3:
+                raise error
+            append(result, value)
+
+        monkeypatch.setattr(ResultTable, "_append", fail_later_append)
+        with asset_resolution_context() as resolver:
+            with pytest.raises(type(error)):
+                results.get_all(table=results.tables.plan_steps(steps="all"))
+            assert getattr(resolver, "result_coordinator", None) is None
+        assert directories and all(not directory.exists() for directory in directories)
+
+    # A later step with a missing requested column must also clean up the
+    # fragments that were successfully written for the earlier step.
+    directories = []
+    monkeypatch.setattr(ResultTable, "_append", record_append)
+    results.run_contexts[0].run._iteration_plan_steps[2] = (
+        results.run_contexts[0].run._iteration_plan_steps[2].drop("mode")
+    )
+    with pytest.raises(ValueError, match="mode"):
+        results.get_all(table=results.tables.plan_steps(steps="all", columns=["scenario", "mode"]))
+    assert directories and all(not directory.exists() for directory in directories)
+
+
+def test_custom_metric_with_non_file_dependency_stays_conservative(tmp_path):
+    results = _results(tmp_path, replication=0)
+    table = results.tables.plan_steps(steps="all")
+    reference = _FakeLazyFrameAsset(
+        base_folder=tmp_path, name="derived-reference", frame=pl.DataFrame({"factor": [2]}),
+    )
+    reference.inputs["source"] = InMemoryAsset({"name": "unknown source"})
+    custom = Metric(
+        name="custom_derived", results=results, dependencies=[table, reference], query={},
+        compute=lambda: pl.DataFrame(),
+    )
+    assert SimulationRunner._capturable_tables(custom) is None
+    assert SimulationRunner._final_requirements([custom], 2) == (True, True)
+    inconsistent = Metric(
+        name="custom_other_output", results=results, dependencies=[table],
+        planned_outputs=results.tables.costs().planned_outputs, query={},
+        compute=lambda: pl.DataFrame(),
+    )
+    assert SimulationRunner._capturable_tables(inconsistent) is None
+    assert SimulationRunner._final_requirements([inconsistent], 2) == (True, True)
 
 
 def test_results_last_iteration_uses_run_parameters(tmp_path, monkeypatch):
@@ -586,17 +887,241 @@ def test_results_last_iteration_uses_run_parameters(tmp_path, monkeypatch):
     assert results.last_iteration == 2
 
 
+def test_result_declaration_does_not_run_coordinated_simulation(tmp_path):
+    """Let the simulation runner open its resolver before any simulation starts."""
+    results = _results(tmp_path, replication=0)
+
+    def unexpected_execution():
+        raise AssertionError("Declaring a result must not execute the simulation.")
+
+    results.first_run.coordinated_run_asset = SimpleNamespace(get=unexpected_execution)
+    results.tables.plan_steps(steps="last")
+    results.tables.plan_steps(steps="all")
+    results.metrics.trip_count(by_variable="mode")
+
+
+def test_result_declaration_rejects_unavailable_steps(tmp_path):
+    results = _results(tmp_path, replication=0)
+    with pytest.raises(ValueError, match=r"maximum of 2.*\[3\]"):
+        results.tables.plan_steps(steps=[1, 3])
+    with pytest.raises(ValueError, match=r"maximum of 2.*\[3\]"):
+        results.metrics.trip_count(steps=3)
+    with pytest.raises(TypeError, match="integer"):
+        results.tables.plan_steps(steps=True)
+
+
+def test_public_table_rejects_unknown_projected_columns(tmp_path):
+    results = _results(tmp_path, replication=0)
+    request = results.tables.plan_steps(columns=["scenario", "modde"])
+    with pytest.raises(ValueError, match="modde"):
+        request.get()
+
+
+def test_explain_describes_cohort_and_outputs_without_running(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", raising=False)
+    results = _results(tmp_path, scenarios=["default", "test"])
+    metric = results.metrics.trip_count(by_variable="mode", steps="all")
+    table = results.tables.plan_steps(steps=1, columns=["scenario", "mode"])
+
+    def unexpected_execution(*args, **kwargs):
+        raise AssertionError("Explaining a request must not run the model.")
+
+    monkeypatch.setattr(_FakeRunTable, "create_and_get_asset", unexpected_execution)
+    description = results.explain(trips=metric, steps=table)
+    assert [lane["replication"] for lane in description["lanes"]] == [0, 1]
+    assert {member["scenario"] for member in description["lanes"][0]["cohort"]} == {"default", "test"}
+    assert description["outputs"]["trips"]["steps"] == [1, 2]
+    assert description["outputs"]["trips"]["cache"] == "needs computation"
+    assert description["outputs"]["steps"]["columns"] == ["scenario", "mode"]
+    assert description["outputs"]["steps"]["cache"] == "transient"
+    assert description["lanes"][0]["computations"] == [
+        "Prepare inputs and initial cohort state",
+        "Advance the cohort through configured steps, using valid checkpoints when available",
+    ]
+    assert description["lanes"][0]["step_outputs"] == {1: ["trips", "steps"], 2: ["trips"]}
+    assert description["temporary_storage"]["limit_bytes"] is None
+    assert "Polars spill" in description["temporary_storage"]["note"]
+    assert "not tracked" in description["temporary_storage"]["note"]
+
+
+def test_explain_reports_existing_metric_cache(tmp_path, monkeypatch):
+    results = _results(tmp_path, replication=0)
+    metric = results.metrics.trip_count(by_variable="mode")
+    metric.get()
+
+    def unexpected_execution(*args, **kwargs):
+        raise AssertionError("Explaining a cache must not execute its inputs.")
+
+    monkeypatch.setattr(_FakeRunTable, "create_and_get_asset", unexpected_execution)
+    description = results.explain(trips=metric)
+    assert description["outputs"]["trips"]["cache"] == "valid"
+    assert description["simulation"] == "No simulation is required for these cached outputs."
+    assert description["lanes"][0]["computations"] == []
+    assert description["lanes"][0]["step_outputs"] == {}
+    table = results.tables.plan_steps(steps=1, columns=["scenario", "mode"])
+    mixed = results.explain(trips=metric, steps=table)
+    assert mixed["lanes"][0]["step_outputs"] == {1: ["steps"]}
+    assert mixed["lanes"][0]["computations"]
+    metric.hash_path.write_text("outdated")
+    assert results.explain(trips=metric)["outputs"]["trips"]["cache"] == "needs computation"
+
+
+def test_demand_groups_only_preserve_scope_without_running_steps(tmp_path):
+    results = _results(tmp_path, scenarios=["default", "test"])
+
+    def unexpected_simulation(*args, **kwargs):
+        raise AssertionError("Demand groups do not require simulation steps.")
+
+    for context in results.run_contexts:
+        context.run.coordinated_run_asset = SimpleNamespace(
+            _advance_cohort_step=unexpected_simulation, _is_running=False,
+        )
+    request = results.tables.demand_groups(steps="all", columns=[
+        "scenario", "replication", "step", "demand_group_id"
+    ])
+    assert "No simulation" in results.explain(groups=request)["simulation"]
+    assert results.explain(groups=request)["lanes"][0]["computations"] == []
+    table = results.get_all(groups=request)["groups"]
+    scopes = table.collect().select("scenario", "replication", "step").unique()
+    table.close()
+    assert set(scopes.iter_rows()) == {
+        (scenario, replication, step)
+        for scenario in ("default", "test")
+        for replication in (0, 1)
+        for step in (1, 2)
+    }
+    reference = _FakeLazyFrameAsset(
+        base_folder=tmp_path, name="group-reference", frame=pl.DataFrame({"factor": [2]}),
+    )
+    custom = Metric(
+        name="custom_group_count", results=results, dependencies=[request, reference],
+        planned_outputs=request.planned_outputs, query={},
+        compute=lambda: request.get().group_by(["scenario", "replication", "step"]).len()
+        .join(reference.get(), how="cross"),
+    )
+    assert "No simulation" in results.explain(groups=request, custom=custom)["simulation"]
+    values = results.get_all(groups=request, custom=custom)
+    expected = (values["groups"].collect().group_by(["scenario", "replication", "step"]).len()
+                .with_columns(factor=pl.lit(2, dtype=pl.Int64)))
+    assert_frame_equal(values["custom"].sort(expected.columns), expected.sort(expected.columns))
+    values["groups"].close()
+
+
+def test_opportunities_need_only_initial_state(tmp_path):
+    results = _results(tmp_path, scenarios=["default", "test"])
+
+    def unexpected_simulation(*args, **kwargs):
+        raise AssertionError("Opportunities do not require simulation steps.")
+
+    for context in results.run_contexts:
+        context.run.coordinated_run_asset = SimpleNamespace(
+            _advance_cohort_step=unexpected_simulation, _is_running=False,
+        )
+    request = results.tables._table("opportunities", iterations="last")
+    description = results.explain(opportunities=request)
+    assert "No simulation" in description["simulation"]
+    assert all(lane["final_costs"] == "not needed" for lane in description["lanes"])
+    assert SimulationRunner._final_requirements([request], 2) == (False, False)
+    table = results.get_all(opportunities=request)["opportunities"]
+    actual = table.collect()
+    assert set(actual.select("scenario", "replication", "step").unique().iter_rows()) == {
+        (scenario, replication, 2)
+        for scenario in ("default", "test")
+        for replication in (0, 1)
+    }
+    table.close()
+
+
+@pytest.mark.parametrize("failure", ["write", "publish", "after_publish"])
+def test_failed_metric_publication_preserves_existing_cache(tmp_path, monkeypatch, failure):
+    """A failed replacement must not leave a partial metric for other readers."""
+    results = _results(tmp_path, replication=0)
+    metric = results.metrics.trip_count(by_variable="mode")
+    value = metric.get()
+    original_file = metric.cache_path.read_bytes()
+    original_hash = metric.hash_path.read_bytes()
+    metric.set_precomputed_value(value)
+
+    if failure == "write":
+        def fail_write(frame, path, *args, **kwargs):
+            Path(path).write_bytes(b"partial parquet")
+            raise OSError("write failed")
+        monkeypatch.setattr(pl.DataFrame, "write_parquet", fail_write)
+    elif failure == "publish":
+        def fail_publish(*args):
+            raise OSError("publish failed")
+        monkeypatch.setattr("mobility.trips.group_day_trips.results.assets.metric.os.replace", fail_publish)
+    else:
+        replace = os.replace
+        def interrupt_after_publish(*args):
+            replace(*args)
+            raise KeyboardInterrupt()
+        monkeypatch.setattr("mobility.trips.group_day_trips.results.assets.metric.os.replace", interrupt_after_publish)
+
+    with pytest.raises(KeyboardInterrupt if failure == "after_publish" else OSError):
+        metric.create_and_get_asset()
+    if failure != "after_publish":
+        assert metric.cache_path.read_bytes() == original_file
+    if failure == "write":
+        assert metric.hash_path.read_bytes() == original_hash
+    else:
+        assert not metric.hash_path.exists()
+    assert not list(metric.cache_path.parent.glob(f".{metric.cache_path.name}.*.tmp"))
+
+
+def test_result_tables_use_completed_iterations_after_early_stop(tmp_path):
+    """Label final outputs correctly and omit iterations the run never reached."""
+    results = _results(tmp_path, replication=0)
+    run = results.first_run
+    run.scenario = "default"
+    run.coordinated_run_asset = SimpleNamespace(
+        get=lambda: SimpleNamespace(
+            current_iteration=1
+        )
+    )
+
+    tables = results.get_all(
+        final=results.tables.plan_steps(),
+        history=results.tables.plan_steps(steps="all"),
+    )
+
+    assert tables["final"].collect()["step"].unique().to_list() == [1]
+    assert tables["history"].collect()["step"].unique().to_list() == [1]
+
+
 def test_trip_count_metrics_keep_selected_iterations(tmp_path, monkeypatch):
     """Check that metric tables keep iteration when several iterations are selected."""
     results = _results(tmp_path, replication=0)
 
     trip_count = results.metrics.trip_count(
         by_variable="mode",
-        iterations=[1, 2],
-    ).get().sort(["iteration", "mode"])
+        steps=[1, 2],
+    ).get().sort(["step", "mode"])
 
-    assert trip_count["iteration"].to_list() == [1, 1, 2, 2]
+    assert trip_count["step"].to_list() == [1, 1, 2, 2]
     assert trip_count["trip_count"].to_list() == pytest.approx([2.0, 1.0, 2.0, 1.0])
+
+
+@pytest.mark.parametrize("per_person", [False, True])
+def test_trip_count_reduces_live_tables_without_resolving_assets(tmp_path, monkeypatch, per_person):
+    """A runner can reduce the same tables while a simulation step is live."""
+    results = _results(tmp_path, replication=0)
+    metric = results.metrics._trip_count(
+        output_column="trip_count", group_columns=["mode"], per_person=per_person,
+        iterations=2,
+    )
+    with asset_resolution_context():
+        plan_steps = metric.plan_steps.get()
+        demand_groups = metric.demand_groups.get()
+        expected = metric.create_and_get_asset()
+
+    def unexpected_get():
+        raise AssertionError("Reducing live tables must not resolve the run again.")
+
+    monkeypatch.setattr(metric.plan_steps, "get", unexpected_get)
+    monkeypatch.setattr(metric.demand_groups, "get", unexpected_get)
+    actual = metric.reduce_tables(plan_steps, demand_groups)
+    assert_frame_equal(actual, expected)
 
 
 def test_iteration_trip_count_can_group_by_home_zone_from_demand_groups(tmp_path, monkeypatch):
@@ -606,10 +1131,10 @@ def test_iteration_trip_count_can_group_by_home_zone_from_demand_groups(tmp_path
     trip_count = results.metrics.trip_count(
         by_zone="home_zone",
         inner_zone_residents_only=True,
-        iterations=[1, 2],
-    ).get().sort(["iteration", "home_zone_id"])
+        steps=[1, 2],
+    ).get().sort(["step", "home_zone_id"])
 
-    assert trip_count["iteration"].to_list() == [1, 1, 2, 2]
+    assert trip_count["step"].to_list() == [1, 1, 2, 2]
     assert trip_count["home_zone_id"].to_list() == ["z1", "z2", "z1", "z2"]
     assert trip_count["trip_count"].to_list() == pytest.approx([2.0, 1.0, 2.0, 1.0])
 
@@ -620,12 +1145,12 @@ def test_iteration_travel_metrics_can_group_by_demand_group_columns(tmp_path, mo
 
     distance = results.metrics.travel_distance(
         by_zone="home_zone",
-        iterations=[1, 2],
-    ).get().sort(["iteration", "home_zone_id"])
+        steps=[1, 2],
+    ).get().sort(["step", "home_zone_id"])
     time = results.metrics.travel_time(
         by_variable="csp",
-        iterations=[1, 2],
-    ).get().sort(["iteration", "csp"])
+        steps=[1, 2],
+    ).get().sort(["step", "csp"])
 
     assert distance["home_zone_id"].to_list() == ["z1", "z2", "z1", "z2"]
     assert distance["travel_distance"].to_list() == pytest.approx([10.0, 2.5, 20.0, 5.0])
@@ -639,10 +1164,10 @@ def test_iteration_emissions_use_quantity_stored_on_plan_steps(tmp_path, monkeyp
 
     emissions = results.metrics.ghg_emissions(
         by_variable="mode",
-        iterations=[1, 2],
-    ).get().sort(["iteration", "mode"])
+        steps=[1, 2],
+    ).get().sort(["step", "mode"])
 
-    assert emissions["iteration"].to_list() == [1, 1, 2, 2]
+    assert emissions["step"].to_list() == [1, 1, 2, 2]
     assert emissions["mode"].to_list() == ["car", "walk", "car", "walk"]
     assert emissions["ghg_emissions"].to_list() == pytest.approx([2.0, 0.5, 2.0, 0.5])
 
@@ -658,10 +1183,10 @@ def test_iteration_emissions_can_join_saved_iteration_costs(tmp_path, monkeypatc
 
     emissions = results.metrics.ghg_emissions(
         by_variable="mode",
-        iterations=[1, 2],
-    ).get().sort(["iteration", "mode"])
+        steps=[1, 2],
+    ).get().sort(["step", "mode"])
 
-    assert emissions["iteration"].to_list() == [1, 1, 2, 2]
+    assert emissions["step"].to_list() == [1, 1, 2, 2]
     assert emissions["mode"].to_list() == ["car", "walk", "car", "walk"]
     assert emissions["ghg_emissions"].to_list() == pytest.approx([2.0, 0.5, 2.0, 0.5])
 
@@ -671,15 +1196,15 @@ def test_iteration_final_state_metrics_use_demand_group_columns(tmp_path, monkey
     results = _results(tmp_path, replication=0)
 
     immobility = results.metrics.immobility(
-        iterations=[1, 2],
-    ).get().sort(["iteration", "csp"])
+        steps=[1, 2],
+    ).get().sort(["step", "csp"])
     demand_group = results.metrics.trip_count_by_demand_group(
-        iterations=[1, 2],
+        steps=[1, 2],
     ).get().sort(
-        ["iteration", "home_zone_id"]
+        ["step", "home_zone_id"]
     )
 
-    assert immobility["iteration"].to_list() == [1, 1, 2, 2]
+    assert immobility["step"].to_list() == [1, 1, 2, 2]
     assert immobility["csp"].to_list() == ["retired", "worker", "retired", "worker"]
     assert immobility["p_immobility"].to_list() == pytest.approx([0.0, 0.0, 0.0, 0.0])
     assert demand_group["home_zone_id"].to_list() == ["z1", "z2", "z1", "z2"]
@@ -782,7 +1307,7 @@ def test_zone_person_count_normalization_aligns_zone_id_types(tmp_path, monkeypa
             plan_steps=plan_steps,
             demand_groups=demand_groups,
             costs=pl.DataFrame({"from": [], "to": [], "mode": []}),
-            iteration_metrics=pl.DataFrame({"iteration": [1], "total_loss": [0.0]}),
+            iteration_metrics=pl.DataFrame({"step": [1], "total_loss": [0.0]}),
         )
 
     results = GroupDayTripsResults(
@@ -857,7 +1382,7 @@ def test_metrics_can_filter_to_inner_zone_residents(tmp_path, monkeypatch):
                     "ghg_emissions_per_trip": [1.0, 0.5],
                 }
             ),
-            iteration_metrics=pl.DataFrame({"iteration": [1], "total_loss": [0.0]}),
+            iteration_metrics=pl.DataFrame({"step": [1], "total_loss": [0.0]}),
             transport_zones=transport_zones,
         )
 
@@ -1021,7 +1546,7 @@ def test_compact_metric_call_reuses_one_asset_resolver(tmp_path, monkeypatch):
         normalize_scope="study_area",
         output="plot",
         inner_zone_residents_only=True,
-        iterations="last",
+        steps="last",
         reference="external",
         reference_view="values",
     )
@@ -1042,43 +1567,6 @@ def test_scoped_run_table_does_not_depend_on_full_run_asset(tmp_path):
     )
 
     assert not any(isinstance(asset, _FakeRun) for asset in graph.nodes)
-
-
-def test_run_iteration_table_returns_the_selected_iteration_steps(tmp_path):
-    """Check iteration tables expose the step data from the matching run state."""
-    plan_steps = pl.DataFrame(
-        {
-            "demand_group_id": [1],
-            "demand_subgroup_id": [0],
-            "activity_seq_id": [1],
-            "time_seq_id": [1],
-            "dest_seq_id": [1],
-            "mode_seq_id": [1],
-            "seq_step_index": [1],
-            "n_persons": [2.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "demand_subgroup_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "time_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "seq_step_index": pl.UInt8,
-            "n_persons": pl.Float64,
-        },
-    )
-
-    class IterationStateAsset:
-        def get(self):
-            return SimpleNamespace(current_plan_steps=plan_steps)
-
-    run = object.__new__(Run)
-    run.iteration_state_assets = [IterationStateAsset()]
-
-    table = run.iteration_table("plan_steps", 1).collect()
-
-    assert table["n_persons"].to_list() == [2.0]
 
 
 def test_metric_projection_accepts_plan_steps_without_demand_group_id(tmp_path):
@@ -1192,7 +1680,7 @@ def test_metrics_can_include_survey_reference(tmp_path, monkeypatch):
         by_variable="mode",
         output="plot",
         inner_zone_residents_only=True,
-        iterations="last",
+        steps="last",
         reference="external",
     )
     reference_values_plot = results.metrics.trip_count(
@@ -1289,7 +1777,7 @@ def test_external_reference_person_count_uses_reference_population(tmp_path, mon
             plan_steps=plan_steps,
             demand_groups=demand_groups,
             costs=pl.DataFrame({"from": [], "to": [], "mode": []}),
-            iteration_metrics=pl.DataFrame({"iteration": [1], "total_loss": [0.0]}),
+            iteration_metrics=pl.DataFrame({"step": [1], "total_loss": [0.0]}),
             reference_plan_steps=reference_plan_steps,
             transport_zones=transport_zones,
         )
@@ -1455,12 +1943,12 @@ def test_iteration_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
 
     distance = results.metrics.travel_distance(
         by_variable="mode",
-        iterations=[1, 2],
+        steps=[1, 2],
         reference=("scenario", "default"),
-    ).get().sort(["iteration", "mode"])
+    ).get().sort(["step", "mode"])
 
     assert distance["scenario"].to_list() == ["test", "test", "test", "test"]
-    assert distance["iteration"].to_list() == [1, 1, 2, 2]
+    assert distance["step"].to_list() == [1, 1, 2, 2]
     assert distance["mode"].to_list() == ["car", "walk", "car", "walk"]
     assert distance["travel_distance"].to_list() == pytest.approx([13.0, 4.0, 26.0, 8.0])
     assert distance["travel_distance_reference"].to_list() == pytest.approx([10.0, 2.5, 20.0, 5.0])
@@ -1468,7 +1956,7 @@ def test_iteration_metrics_can_use_scenario_reference(tmp_path, monkeypatch):
 
     distance_values_plot = results.metrics.travel_distance(
         by_variable="mode",
-        iterations=[1, 2],
+        steps=[1, 2],
         reference=("scenario", "default"),
         reference_view="values",
         output="plot",
@@ -1547,7 +2035,7 @@ def test_sparse_dimension_groups_count_missing_seed_as_zero(tmp_path, monkeypatc
             plan_steps=plan_steps,
             demand_groups=demand_groups,
             costs=pl.DataFrame({"from": [], "to": [], "mode": []}),
-            iteration_metrics=pl.DataFrame({"iteration": [1], "total_loss": [0.0]}),
+            iteration_metrics=pl.DataFrame({"step": [1], "total_loss": [0.0]}),
         )
 
     results = GroupDayTripsResults(
@@ -1679,7 +2167,7 @@ def test_metric_plot_uses_line_chart_for_multiple_iterations(tmp_path, monkeypat
 
     fig = results.metrics.travel_distance(
         by_variable="mode",
-        iterations=[1, 2],
+        steps=[1, 2],
         output="plot",
         width=640,
         height=360,
@@ -1690,7 +2178,7 @@ def test_metric_plot_uses_line_chart_for_multiple_iterations(tmp_path, monkeypat
     assert fig.layout.title.y == pytest.approx(0.98)
     assert fig.layout.legend.y == pytest.approx(1.03)
     assert 85 <= fig.layout.margin.t <= 100
-    assert fig.layout.xaxis.title.text == "Iteration"
+    assert fig.layout.xaxis.title.text == "Simulation step"
     assert all(trace.type == "scatter" for trace in fig.data)
     ribbon_traces = [trace for trace in fig.data if trace.fill == "toself"]
     line_traces = [trace for trace in fig.data if trace.mode == "lines+markers"]
@@ -1814,7 +2302,7 @@ def test_reference_gap_map_uses_diverging_colors(tmp_path, monkeypatch):
         normalize_scope="zone",
         output="plot",
         inner_zone_residents_only=True,
-        iterations="last",
+        steps="last",
         reference=("scenario", "default"),
     )
 
@@ -1828,7 +2316,7 @@ def test_reference_gap_map_uses_diverging_colors(tmp_path, monkeypatch):
         by_zone="home_zone",
         output="plot",
         inner_zone_residents_only=True,
-        iterations="last",
+        steps="last",
         reference=("scenario", "default"),
     )
 

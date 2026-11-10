@@ -1,5 +1,7 @@
 import polars as pl
 
+from ..stable_key_index import add_ordered_key_hashes
+
 
 def assemble_mode_sequence_rows(
     *,
@@ -27,13 +29,13 @@ def build_mode_sequence_keys(search_rows: pl.DataFrame) -> pl.DataFrame:
         "dest_seq_id",
         "mode_seq_index",
     ]
-    return (
-        search_rows
-        .group_by(candidate_columns)
-        .agg(mode_sequence_key=pl.col("mode_index").sort_by("seq_step_index").cast(pl.Utf8()))
-        .with_columns(mode_sequence_key=pl.col("mode_sequence_key").list.join("-"))
-        .sort(candidate_columns + ["mode_sequence_key"])
-    )
+    return add_ordered_key_hashes(
+        search_rows,
+        group_cols=candidate_columns,
+        order_col="seq_step_index",
+        step_content=pl.struct(pl.col("mode").cast(pl.String)),
+        key_prefix="mode_sequence_key",
+    ).sort(candidate_columns + ["mode_sequence_key_1", "mode_sequence_key_2"])
 
 
 def finalize_mode_sequence_rows(

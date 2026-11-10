@@ -7,6 +7,10 @@ from typing import Any
 
 import polars as pl
 
+from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
+from mobility.runtime.assets.graph import asset_graph_key
+from mobility.runtime.assets.resolver import get_current_asset_resolver
+
 from ..core.run_state import RunState
 from ..plans.activity_sequences import ActivitySequences
 from ..plans.activity_schedule_pool import ActivitySchedulePoolAsset
@@ -37,6 +41,7 @@ class IterationState:
     rng_state: object
     destination_sequence_index: pl.DataFrame
     mode_sequence_index: pl.DataFrame
+    time_sequence_steps: pl.DataFrame | None = None
 
 
 class Iteration:
@@ -123,6 +128,7 @@ class Iteration:
         )
 
 
+    @trace_simulation_step("checkpoint load_state")
     def load_state(self) -> IterationState:
         """Load the saved run state for this completed iteration."""
         checkpoint_assets = self.checkpoint_assets()
@@ -151,6 +157,7 @@ class Iteration:
                 "destination_sequence_index"
             ].get(),
             mode_sequence_index=checkpoint_assets["mode_sequence_index"].get(),
+            time_sequence_steps=checkpoint_assets["time_sequence_steps"].get(),
         )
 
     def checkpoint_assets(self) -> dict[str, Any]:
@@ -161,6 +168,10 @@ class Iteration:
         iteration = self.iteration
         base_folder = iteration_state_folder
         return {
+            "time_sequence_steps": SequenceIndexAsset(
+                run_key=run_key, is_weekday=is_weekday, iteration=iteration,
+                sequence_name="time_sequence_steps", base_folder=base_folder,
+            ),
             "current_plans": CurrentPlansAsset(
                 run_key=run_key,
                 is_weekday=is_weekday,
@@ -220,6 +231,7 @@ class Iteration:
         }
 
 
+    @trace_simulation_step("checkpoint save_state")
     def save_state(self, state: RunState, rng_state: object) -> None:
         """Persist the run state for this completed iteration."""
         iteration_state_folder = self.iterations.folder_paths["iteration-state"]
@@ -233,6 +245,14 @@ class Iteration:
         # makes a partial checkpoint look ready to resume.
         completion_asset.remove()
         try:
+            # A rejected checkpoint can still have individually valid cache
+            # markers. Force every newly computed table to replace its old
+            # contents, including when this resolver has already checked it.
+            resolver = get_current_asset_resolver()
+            for asset in self.checkpoint_assets().values():
+                asset.hash_path.unlink(missing_ok=True)
+                if resolver is not None:
+                    resolver.prepared_asset_keys.discard(asset_graph_key(asset))
             CurrentPlansAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
@@ -291,6 +311,14 @@ class Iteration:
                 base_folder=iteration_state_folder,
                 rng_state=rng_state,
             ).get()
+            SequenceIndexAsset(
+                run_key=self.iterations.run_inputs_hash,
+                is_weekday=self.iterations.is_weekday,
+                iteration=self.iteration,
+                sequence_name="time_sequence_steps",
+                base_folder=iteration_state_folder,
+                sequence_index=state.schedule_steps,
+            ).get()
             completion_asset.get()
         except Exception as exc:
             raise RuntimeError(
@@ -339,11 +367,11 @@ class Iterations:
         self.folder_paths = {name: ensure_dir(path) for name, path in self.folder_paths.items()}
 
 
-    def get_resume_iteration(self, n_iterations: int) -> int | None:
+    def get_resume_iteration(self, n_steps: int) -> int | None:
         """Return and log the effective resume iteration for this run."""
         resume_iteration = self._find_latest_completed_iteration()
         if resume_iteration is not None:
-            resume_iteration = min(int(resume_iteration), int(n_iterations))
+            resume_iteration = min(int(resume_iteration), int(n_steps))
 
         if resume_iteration is None:
             logging.debug(
@@ -361,15 +389,16 @@ class Iterations:
         )
         return resume_iteration
 
-    def has_complete_checkpoints(self, n_iterations: int) -> bool:
-        """Check that every requested iteration has a complete restart point."""
-        return all(
-            all(
-                asset.cache_path.exists()
+    def has_complete_checkpoints(self, n_steps: int) -> bool:
+        """Check that every requested checkpoint file and identity is valid."""
+        try:
+            return all(
+                not asset.is_update_needed()
+                for iteration in range(1, n_steps + 1)
                 for asset in self.iteration(iteration).checkpoint_assets().values()
             )
-            for iteration in range(1, n_iterations + 1)
-        )
+        except (OSError, UnicodeError, ValueError):
+            return False
 
 
     def iteration(self, iteration: int) -> Iteration:
@@ -387,6 +416,7 @@ class Iterations:
                 "*plan_id_index_*.parquet",
                 "*destination_sequence_index_*.parquet",
                 "*mode_sequence_index_*.parquet",
+                "*time_sequence_steps_*.parquet",
                 "*remaining_opportunities_*.parquet",
                 "*rng_state_*.pkl",
                 "*iteration_complete_*.json",

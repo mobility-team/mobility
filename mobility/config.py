@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import pathlib
 import platform
@@ -42,6 +43,7 @@ def set_params(
     r_idle_memory_change_mb=1.0,
     r_cpu_check_interval_seconds=5,
     track_project_cache=True,
+    temporary_disk_limit_gb=None,
 ):
     """
     Sets up the necessary environment for the Mobility package.
@@ -77,7 +79,20 @@ def set_params(
     r_cpu_check_interval_seconds (int, optional): frequency of the R idle monitor checks.
     track_project_cache (bool, optional): Whether Mobility should track cache
         files used by the running script for later project-data cleanup.
+    temporary_disk_limit_gb (float, optional): Maximum gigabytes of managed
+        temporary files in the project. Polars spill and external writes are
+        not fully controlled by this limit.
     """
+
+    temporary_limit_bytes = None
+    if temporary_disk_limit_gb is not None:
+        try:
+            limit_gb = float(temporary_disk_limit_gb)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("temporary_disk_limit_gb must be a non-negative number.") from exc
+        if not math.isfinite(limit_gb) or limit_gb < 0 or not math.isfinite(limit_gb * 1_000_000_000):
+            raise ValueError("temporary_disk_limit_gb must be a non-negative number.")
+        temporary_limit_bytes = int(limit_gb * 1_000_000_000)
 
     feedback = _normalize_feedback_setting(
         feedback,
@@ -103,6 +118,7 @@ def set_params(
     set_env_variable("MOBILITY_R_IDLE_CPU_PERCENT", r_idle_cpu_percent)
     set_env_variable("MOBILITY_R_IDLE_MEMORY_CHANGE_MB", r_idle_memory_change_mb)
     set_env_variable("MOBILITY_R_CPU_CHECK_INTERVAL_SECONDS", r_cpu_check_interval_seconds)
+    set_env_variable("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", temporary_limit_bytes)
 
     os.environ["MOBILITY_DEBUG"] = "1" if debug else "0"
     os.environ["MOBILITY_FEEDBACK"] = feedback
@@ -385,6 +401,9 @@ def setup_project_data_folder_path(project_data_folder_path):
     project_data_folder_path (str, optional): The file path for storing project-specific datasets.
     """
 
+    previous_project_folder = os.environ.get("MOBILITY_PROJECT_DATA_FOLDER")
+    polars_temporary_folder = os.environ.get("POLARS_TEMP_DIR")
+
     if project_data_folder_path is not None:
 
         if not pathlib.Path(project_data_folder_path).exists():
@@ -408,6 +427,19 @@ def setup_project_data_folder_path(project_data_folder_path):
                 os.makedirs(default_path)
             else:
                 raise ValueError("Please re run setup_mobility with the project_data_folder_path pointed to your desired location.")
+
+    # Polars 2 can spill queries to disk. Keep its scratch files with the
+    # project unless the user selected another location explicitly.
+    previous_default = (
+        pathlib.Path(previous_project_folder) / "temporary"
+        if previous_project_folder is not None else None
+    )
+    if polars_temporary_folder is None or (
+        previous_default is not None and pathlib.Path(polars_temporary_folder) == previous_default
+    ):
+        temporary_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"]) / "temporary"
+        temporary_folder.mkdir(parents=True, exist_ok=True)
+        os.environ["POLARS_TEMP_DIR"] = str(temporary_folder)
 
 
 def install_r_packages(r_packages, r_packages_force_reinstall, r_packages_download_method):

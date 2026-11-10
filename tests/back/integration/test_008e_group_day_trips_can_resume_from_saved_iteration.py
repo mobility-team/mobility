@@ -48,14 +48,14 @@ def _build_group_day_trips(test_data, gtfs_sources_folder):
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=2,
-                n_iter_per_cost_update=0,
+                n_steps=2,
+                n_steps_per_cost_update=0,
                 seed=108,
             ),
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
             outputs=GroupDayTripsOutputParameters(
-                cache_iteration_events=True,
-                checkpoint_each_iteration=True,
+                cache_step_events=True,
+                checkpoint_each_step=True,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
                 dest_prob_cutoff=0.9,
@@ -91,7 +91,7 @@ def test_008e_group_day_trips_resumes_from_saved_iteration_checkpoint(test_data,
 
     assert first_plan_steps.height > 0
     assert first_transitions.height > 0
-    assert first_iteration_metrics["iteration"].to_list() == [1, 2]
+    assert first_iteration_metrics["step"].to_list() == [1, 2]
 
     # Checkpointing is opt-in. The next identical run resumes from these saved
     # states while rebuilding its transient result tables in memory.
@@ -109,8 +109,8 @@ def test_008e_group_day_trips_resumes_from_saved_iteration_checkpoint(test_data,
     assert plan_steps.height > 0
     assert transitions.height > 0
     assert iteration_metrics.height == 2
-    assert sorted(transitions["iteration"].unique().to_list()) == [1, 2]
-    assert iteration_metrics["iteration"].to_list() == [1, 2]
+    assert sorted(transitions["step"].unique().to_list()) == [1, 2]
+    assert iteration_metrics["step"].to_list() == [1, 2]
     assert rerun.final_iteration_state.get().destination_saturation.columns == [
         "activity",
         "to",

@@ -58,11 +58,11 @@ def test_public_transport_routing_parameters_exposes_explicit_outer_distance():
     assert params.max_beeline_distance == 80.0
 
 
-def test_public_transport_routing_parameters_resolve_list_profiles_by_iteration():
+def test_public_transport_routing_parameters_resolve_list_profiles_by_step():
     params = PublicTransportRoutingParameters(
         gtfs_reference_date="2025-01-01",
         gtfs_sources_folder="inputs/gtfs_sources",
-        additional_gtfs_files=ParameterValue.by_iteration(
+        additional_gtfs_files=ParameterValue.by_step(
             {
                 1: ["base.zip"],
                 2: ["base.zip", "event.zip"],
@@ -81,7 +81,7 @@ def test_public_transport_routing_parameters_resolve_scenario_gtfs_files():
     params = PublicTransportRoutingParameters(
         gtfs_reference_date="2025-01-01",
         gtfs_sources_folder="inputs/gtfs_sources",
-        additional_gtfs_files=ParameterValue.by_scenario_and_iteration(
+        additional_gtfs_files=ParameterValue.by_scenario_and_step(
             baseline=None,
             saleve_jura={
                 1: [],

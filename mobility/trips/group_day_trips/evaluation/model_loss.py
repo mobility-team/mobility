@@ -135,7 +135,7 @@ class ModelLoss:
         if self.history_store is None:
             raise ValueError("No model loss history is attached to this ModelLoss instance.")
         history = self.history_store.get()
-        columns = ["iteration", "total_loss", "activity_loss", "distance_bin_loss", "time_bin_loss", "mode_loss"]
+        columns = ["step", "total_loss", "activity_loss", "distance_bin_loss", "time_bin_loss", "mode_loss"]
         if "trip_count_loss" in history.columns:
             columns.insert(2, "trip_count_loss")
         return history.select(columns)
@@ -144,7 +144,7 @@ class ModelLoss:
         """Build one persisted loss-history row for a given iteration state."""
         metric_losses = self.metric_losses(plan_steps=plan_steps)
         return {
-            "iteration": iteration,
+            "step": iteration,
             "total_loss": float(metric_losses["loss"].sum()) if metric_losses.height > 0 else 0.0,
             **self.marginal_losses(plan_steps=plan_steps),
         }

@@ -5,6 +5,7 @@ from typing import Any
 import plotly.graph_objects as go
 import polars as pl
 
+from mobility.runtime.assets.resolver import asset_resolution_context, get_current_asset_resolver
 from mobility.runtime.parameter_values import (
     SensitivityCase,
     SensitivityValue,
@@ -151,7 +152,7 @@ class GroupDayTripsSensitivityAnalysis:
         normalize_by = kwargs.get("normalize_by")
         normalize_scope = kwargs.get("normalize_scope")
         inner_zone_residents_only = kwargs.get("inner_zone_residents_only", False)
-        iterations = kwargs.get("iterations", "last")
+        iterations = kwargs.get("steps", "last")
         metric_column = GroupDayTripsResultMetrics._metric_column(
             spec.quantity,
             normalize_by,
@@ -174,17 +175,18 @@ class GroupDayTripsSensitivityAnalysis:
             else None
         )
         group_columns = zone_columns + ([variable_column] if variable_column is not None else [])
-        per_replication_values = results.metrics._metric_by_replication(
-            quantity=spec.quantity,
-            quantity_column=spec.quantity_column,
-            metric_column=metric_column,
-            group_columns=group_columns,
-            zone_column=zone_column,
-            normalize_by=normalize_by,
-            normalize_scope=normalize_scope,
-            inner_zone_residents_only=inner_zone_residents_only,
-            iterations=iterations,
-        )
+        with asset_resolution_context(get_current_asset_resolver()):
+            per_replication_values = results.metrics._metric_by_replication(
+                quantity=spec.quantity,
+                quantity_column=spec.quantity_column,
+                metric_column=metric_column,
+                group_columns=group_columns,
+                zone_column=zone_column,
+                normalize_by=normalize_by,
+                normalize_scope=normalize_scope,
+                inner_zone_residents_only=inner_zone_residents_only,
+                iterations=iterations,
+            )
         table = self._with_base_gap(
             values,
             per_replication_values=per_replication_values,
@@ -197,34 +199,7 @@ class GroupDayTripsSensitivityAnalysis:
 
     def _collect_cases(self) -> list[SensitivityCase | None]:
         """Collect unique sensitivity cases from the setup."""
-        sensitivity_values = collect_sensitivity_values(
-            {
-                "modes": self.setup.modes,
-                "activities": self.setup.activities,
-                "parameters": self.setup.parameters,
-            }
-        )
-        by_name: dict[str, SensitivityValue] = {}
-        for value in sensitivity_values:
-            existing = by_name.get(value.name)
-            if existing is None:
-                by_name[value.name] = value
-                continue
-            if (
-                existing.label != value.label
-                or existing.variation_type != value.variation_type
-                or existing.variation_values != value.variation_values
-                or existing.variation_labels != value.variation_labels
-            ):
-                raise ValueError(
-                    "SensitivityValue names should be unique unless all "
-                    f"settings match. Conflicting name: {value.name!r}."
-                )
-
-        cases: list[SensitivityCase | None] = [None]
-        for name in sorted(by_name):
-            cases.extend(by_name[name].cases())
-        return cases
+        return collect_group_day_trips_sensitivity_cases(self.setup)
 
     def _metadata(self) -> pl.DataFrame:
         """Return display metadata for non-base sensitivity cases."""
@@ -273,14 +248,14 @@ class GroupDayTripsSensitivityAnalysis:
         pairing_columns = [
             "scenario",
             "day_type",
-            "iteration",
+            "step",
             "replication",
         ] + dimension_columns
         paired_output_columns = [
             "scenario",
             "sensitivity_case",
             "day_type",
-            "iteration",
+            "step",
         ] + dimension_columns
         base_rows = (
             values
@@ -354,3 +329,35 @@ class GroupDayTripsSensitivityAnalysis:
             ]
             + [reference_column, "gap", "gap_std", "relative_gap"]
         )
+
+
+def collect_group_day_trips_sensitivity_cases(setup: Any) -> list[SensitivityCase | None]:
+    """Return the unique, deterministic sensitivity cases available in a setup."""
+    sensitivity_values = collect_sensitivity_values(
+        {
+            "modes": setup.modes,
+            "activities": setup.activities,
+            "parameters": setup.parameters,
+        }
+    )
+    by_name: dict[str, SensitivityValue] = {}
+    for value in sensitivity_values:
+        existing = by_name.get(value.name)
+        if existing is None:
+            by_name[value.name] = value
+            continue
+        if (
+            existing.label != value.label
+            or existing.variation_type != value.variation_type
+            or existing.variation_values != value.variation_values
+            or existing.variation_labels != value.variation_labels
+        ):
+            raise ValueError(
+                "SensitivityValue names should be unique unless all "
+                f"settings match. Conflicting name: {value.name!r}."
+            )
+
+    cases: list[SensitivityCase | None] = [None]
+    for name in sorted(by_name):
+        cases.extend(by_name[name].cases())
+    return cases
