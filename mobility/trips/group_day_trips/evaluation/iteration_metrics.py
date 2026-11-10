@@ -122,30 +122,6 @@ class IterationMetricsBuilder:
             "excess_occupation_share": self._excess_occupation_share(destination_saturation),
         }
 
-    def rebuild_history(
-        self,
-        *,
-        iterations,
-        resume_from_iteration: int | None,
-    ) -> list[dict[str, float]]:
-        """Rebuild persisted iteration diagnostics from saved iteration states when resuming."""
-        if resume_from_iteration is None:
-            return []
-
-        iteration_metrics_records: list[dict[str, float]] = []
-        for iteration_index in range(1, resume_from_iteration + 1):
-            saved_state = iterations.iteration(iteration_index).load_state()
-            iteration_metrics_records.append(
-                self.history_row(
-                    iteration=iteration_index,
-                    current_plans=saved_state.current_plans,
-                    current_plan_steps=saved_state.current_plan_steps,
-                    destination_saturation=saved_state.destination_saturation,
-                )
-            )
-
-        return iteration_metrics_records
-
     @staticmethod
     def _mean_plan_utility(current_plans: pl.DataFrame) -> float:
         """Return the population-weighted mean utility of the current plan mix."""

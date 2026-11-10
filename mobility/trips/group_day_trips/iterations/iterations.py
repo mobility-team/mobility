@@ -8,6 +8,8 @@ from typing import Any
 import polars as pl
 
 from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
+from mobility.runtime.assets.graph import asset_graph_key
+from mobility.runtime.assets.resolver import get_current_asset_resolver
 
 from ..core.run_state import RunState
 from ..plans.activity_sequences import ActivitySequences
@@ -243,6 +245,14 @@ class Iteration:
         # makes a partial checkpoint look ready to resume.
         completion_asset.remove()
         try:
+            # A rejected checkpoint can still have individually valid cache
+            # markers. Force every newly computed table to replace its old
+            # contents, including when this resolver has already checked it.
+            resolver = get_current_asset_resolver()
+            for asset in self.checkpoint_assets().values():
+                asset.hash_path.unlink(missing_ok=True)
+                if resolver is not None:
+                    resolver.prepared_asset_keys.discard(asset_graph_key(asset))
             CurrentPlansAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
@@ -380,14 +390,15 @@ class Iterations:
         return resume_iteration
 
     def has_complete_checkpoints(self, n_steps: int) -> bool:
-        """Check that every requested iteration has a complete restart point."""
-        return all(
-            all(
-                asset.cache_path.exists()
+        """Check that every requested checkpoint file and identity is valid."""
+        try:
+            return all(
+                not asset.is_update_needed()
+                for iteration in range(1, n_steps + 1)
                 for asset in self.iteration(iteration).checkpoint_assets().values()
             )
-            for iteration in range(1, n_steps + 1)
-        )
+        except (OSError, UnicodeError, ValueError):
+            return False
 
 
     def iteration(self, iteration: int) -> Iteration:

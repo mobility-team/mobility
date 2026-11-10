@@ -17,7 +17,7 @@ from .assets.final_state_metrics import (
     SurveyImmobilityReference,
     TripCountByDemandGroup,
 )
-from .assets.metric import Metric
+from .assets.metric import Metric, MetricLaneResult
 from .assets.person_metrics import (
     DEMAND_GROUP_COLUMNS,
     RESULT_COLUMNS,
@@ -152,7 +152,6 @@ class GroupDayTripsResultMetrics:
         query: dict,
         compute,
         compute_iteration=None,
-        stream_result: bool = False,
     ) -> Metric:
         """Declare one persisted result and its iteration-level calculation."""
         selected_iterations = self.results.selected_iterations(
@@ -170,7 +169,6 @@ class GroupDayTripsResultMetrics:
             compute=compute,
             selected_iterations=selected_iterations,
             compute_iteration=compute_iteration,
-            stream_result=stream_result,
         )
         return metric
 
@@ -281,6 +279,7 @@ class GroupDayTripsResultMetrics:
                 or home_zone_ids is not None
                 or csp is not None
                 or any(column in DEMAND_GROUP_COLUMNS for column in group_columns)
+                or (self._reference_kind(reference) == "external" and not self.results.uses_last_iteration(steps))
             )
             dependencies = [self._table("plan_steps", iterations=steps)]
             if needs_demand_groups:
@@ -301,6 +300,183 @@ class GroupDayTripsResultMetrics:
                 compute=compute,
                 compute_iteration=compute_iteration,
             )
+            # Keep one value per seed and group until all lanes have run. This
+            # preserves zero-filled groups and paired scenario comparisons.
+            reference_kind = self._reference_kind(reference)
+            if (
+                normalize_by in {None, "metric_total", "person_count"}
+            ):
+                metric_column = self._metric_column(spec.quantity, normalize_by)
+                zone_columns = self._zone_columns(by_zone)
+                zone_column = zone_columns[0] if len(zone_columns) == 1 else None
+                needs_unfiltered_pairs = (
+                    reference_kind == "scenario" and reference_view == "gap" and modes is not None
+                )
+
+                def compute_lane(iteration):
+                    selected_step = "last" if self.results.uses_last_iteration(steps) else iteration
+                    values = self._metric_by_replication(
+                        quantity=spec.quantity,
+                        quantity_column=spec.quantity_column,
+                        metric_column=spec.quantity,
+                        group_columns=group_columns,
+                        zone_column=zone_column,
+                        normalize_by=None,
+                        normalize_scope=normalize_scope,
+                        inner_zone_residents_only=inner_zone_residents_only,
+                        iterations=selected_step,
+                        home_zone_ids=home_zone_ids,
+                        csp=csp,
+                        modes=modes,
+                    )
+                    paired_values = None
+                    if needs_unfiltered_pairs:
+                        # Preserve the existing paired-gap calculation, which
+                        # uses all modes even when displayed values are filtered.
+                        paired_values = self._metric_by_replication(
+                            quantity=spec.quantity, quantity_column=spec.quantity_column,
+                            metric_column=spec.quantity, group_columns=group_columns,
+                            zone_column=zone_column, normalize_by=None,
+                            normalize_scope=normalize_scope,
+                            inner_zone_residents_only=inner_zone_residents_only,
+                            iterations=selected_step, home_zone_ids=home_zone_ids, csp=csp,
+                        )
+                    population = None
+                    if normalize_by == "person_count":
+                        population = self._population(
+                            zone_column=zone_column if normalize_scope == "zone" else None,
+                            by_replication=True,
+                            inner_zone_residents_only=inner_zone_residents_only,
+                            iterations=selected_step,
+                            home_zone_ids=home_zone_ids,
+                            csp=csp,
+                        )
+                    reference_values = None
+                    if reference_kind == "external":
+                        reference_values = self._external_reference_values(
+                            by_variable=by_variable, indicator=spec.indicator,
+                            metric_column=metric_column, normalize_by=normalize_by,
+                            normalize_scope=normalize_scope, iterations=selected_step,
+                        )
+                    return MetricLaneResult(values, population, paired_values, reference_values)
+
+                def finish_lanes(parts):
+                    populations = None
+                    paired_values = None
+                    if needs_unfiltered_pairs:
+                        paired_values = pl.concat(
+                            [part.paired_values for part in parts], how="vertical_relaxed"
+                        )
+                        paired_values = complete_missing_replication_groups(
+                            paired_values.lazy(), group_columns=group_columns,
+                            value_column=spec.quantity,
+                        ).collect(engine="streaming")
+                    if normalize_by == "person_count":
+                        populations = pl.concat([part.population for part in parts], how="vertical_relaxed")
+                    if reference_kind == "external":
+                        reference_values = pl.concat(
+                            [part.reference_values for part in parts], how="vertical_relaxed"
+                        )
+                        reference_column = f"{metric_column}_reference"
+                        reference_keys = [column for column in reference_values.columns if column != reference_column]
+                        reference_values = reference_values.group_by(reference_keys).agg(
+                            pl.col(reference_column).mean()
+                        )
+                    per_replication = pl.concat([part.values for part in parts], how="vertical_relaxed")
+                    per_replication = complete_missing_replication_groups(
+                        per_replication.lazy(), group_columns=group_columns,
+                        value_column=spec.quantity,
+                    ).collect(engine="streaming")
+                    output_columns = RESULT_COLUMNS + group_columns
+                    values = (
+                        per_replication.group_by(output_columns)
+                        .agg(
+                            pl.col(spec.quantity).mean(),
+                            pl.col(spec.quantity).std().alias(f"{spec.quantity}_std"),
+                            pl.col("replication").n_unique().cast(pl.UInt32).alias("n_replications"),
+                        )
+                        .sort(output_columns)
+                    )
+                    if needs_unfiltered_pairs:
+                        per_replication = paired_values
+                    if normalize_by == "metric_total":
+                        denominator_columns = self._denominator_columns(
+                            normalize_scope=normalize_scope, zone_column=zone_column,
+                        )
+                        values = self._with_metric_total_share(
+                            values, denominator_columns=denominator_columns,
+                            group_columns=group_columns, value_column=spec.quantity,
+                            output_column=metric_column,
+                        )
+                        if reference_kind == "scenario" and reference_view == "gap":
+                            per_replication = self._with_metric_total_share_by_replication(
+                                per_replication, denominator_columns=denominator_columns,
+                                group_columns=group_columns, value_column=spec.quantity,
+                                output_column=metric_column,
+                            )
+                    elif normalize_by == "person_count":
+                        population_dimensions = [zone_column] if normalize_scope == "zone" else []
+                        population_keys = RESULT_COLUMNS + population_dimensions
+                        population = populations.group_by(population_keys).agg(
+                            pl.col("n_persons").mean()
+                        )
+                        if population_dimensions:
+                            values = values.with_columns(pl.col(zone_column).cast(pl.String))
+                        values = (
+                            values.join(population, on=population_keys, how="left")
+                            .with_columns(
+                                (pl.col(spec.quantity) / pl.col("n_persons").clip(1e-12)).alias(metric_column),
+                                (pl.col(f"{spec.quantity}_std") / pl.col("n_persons").clip(1e-12))
+                                .alias(f"{metric_column}_std"),
+                            )
+                            .select(output_columns + [metric_column, f"{metric_column}_std", "n_replications"])
+                            .sort(output_columns)
+                        )
+                        if reference_kind == "scenario" and reference_view == "gap":
+                            if population_dimensions:
+                                per_replication = per_replication.with_columns(
+                                    pl.col(zone_column).cast(pl.String)
+                                )
+                            per_replication = (
+                                per_replication.join(
+                                    populations, on=SCOPE_COLUMNS + population_dimensions, how="left"
+                                )
+                                .with_columns(
+                                    (pl.col(spec.quantity) / pl.col("n_persons").clip(1e-12))
+                                    .alias(metric_column)
+                                )
+                                .select(SCOPE_COLUMNS + group_columns + [metric_column])
+                            )
+                    if reference_kind == "scenario":
+                        if reference_view == "gap":
+                            return self._with_scenario_reference(
+                                values, per_replication_values=per_replication,
+                                reference_scenario=self._reference_scenario(reference),
+                                metric_column=metric_column, scenarios=scenarios,
+                            )
+                        return self._with_scenario_reference_values(
+                            values, reference_scenario=self._reference_scenario(reference),
+                            scenarios=scenarios,
+                        )
+                    if reference_kind == "external":
+                        if reference_view == "gap":
+                            values = self._with_external_reference(
+                                values, by_variable=by_variable, indicator=spec.indicator,
+                                metric_column=metric_column, normalize_by=normalize_by,
+                                normalize_scope=normalize_scope, iterations="last",
+                                reference_values=reference_values,
+                            )
+                            return self._filter_scenarios(values, scenarios=scenarios)
+                        return self._with_external_reference_values(
+                            values, by_variable=by_variable, indicator=spec.indicator,
+                            metric_column=metric_column, normalize_by=normalize_by,
+                            normalize_scope=normalize_scope, iterations="last",
+                            scenarios=scenarios, reference_values=reference_values,
+                        )
+                    return self._filter_scenarios(values, scenarios=scenarios)
+
+                metric.compute_lane = compute_lane
+                metric.finish_lanes = finish_lanes
             if output == "plot":
                 return self._plot_metric_table(
                     metric.get(),
@@ -532,10 +708,6 @@ class GroupDayTripsResultMetrics:
             raise ValueError("External references are not available with metric filters.")
         if reference_kind == "external" and indicator is None:
             raise ValueError(f"No reference is available for {quantity}.")
-        if reference_kind == "external" and not self.results.uses_last_iteration(iterations):
-            raise ValueError(
-                "External references are only available for steps='last' for now."
-            )
         if reference_kind == "external" and by_zone is not None:
             raise ValueError("External references are not available by zone.")
         if (
@@ -568,34 +740,9 @@ class GroupDayTripsResultMetrics:
         self,
         *,
         steps: IterationSelector = "last",
-    ) -> Metric:
-        """Declare the detailed OD-by-mode travel-cost table to persist."""
-        selected_iterations = self.results.selected_iterations(steps)
-        uses_final_costs = self.results.uses_last_iteration(steps)
-        costs = self._table(
-            "costs",
-            iterations="last" if uses_final_costs else steps,
-        )
-
-        def compute_iteration(iteration: int) -> pl.LazyFrame:
-            return self._table(
-                "costs",
-                iterations=(
-                    "last"
-                    if uses_final_costs
-                    else iteration
-                ),
-            ).get()
-
-        return self._metric_asset(
-            name="travel_costs",
-            dependencies=[costs],
-            planned_outputs=self._planned_outputs([costs]),
-            query={"iterations": steps},
-            compute=costs.get,
-            compute_iteration=compute_iteration,
-            stream_result=True,
-        )
+    ) -> ScopedRunTable:
+        """Declare a transient OD-by-mode travel-cost table."""
+        return self._table("costs", iterations=steps)
 
     def ghg_emissions(self, **kwargs) -> Metric | pl.DataFrame:
         """Return greenhouse gas emissions, optionally split and normalized."""
@@ -645,7 +792,7 @@ class GroupDayTripsResultMetrics:
             )
             return iteration_calculation.get()
 
-        return self._metric_asset(
+        metric = self._metric_asset(
             name="immobility",
             dependencies=[calculation],
             planned_outputs=self._planned_outputs(plan_steps + demand_groups),
@@ -653,6 +800,24 @@ class GroupDayTripsResultMetrics:
             compute=calculation.get,
             compute_iteration=compute_iteration,
         )
+
+        def compute_lane(iteration):
+            selected_step = "last" if self.results.uses_last_iteration(steps) else iteration
+            values = calculation.iteration_by_replication(
+                self._table("plan_steps", iterations=selected_step),
+                self._table("demand_groups", iterations=selected_step),
+            )
+            return MetricLaneResult(values)
+
+        def finish_lanes(parts):
+            values = calculation.combine_replications(pl.concat([part.values for part in parts]))
+            if survey_immobility is not None:
+                values = calculation._with_survey_reference(values, survey_immobility.get())
+            return values
+
+        metric.compute_lane = compute_lane
+        metric.finish_lanes = finish_lanes
+        return metric
 
     def trip_count_by_demand_group(
         self,
@@ -680,7 +845,7 @@ class GroupDayTripsResultMetrics:
             )
             return iteration_calculation.get()
 
-        return self._metric_asset(
+        metric = self._metric_asset(
             name="trip_count_by_demand_group",
             dependencies=[calculation],
             planned_outputs=self._planned_outputs(plan_steps + demand_groups),
@@ -688,6 +853,20 @@ class GroupDayTripsResultMetrics:
             compute=calculation.get,
             compute_iteration=compute_iteration,
         )
+
+        def compute_lane(iteration):
+            selected_step = "last" if self.results.uses_last_iteration(steps) else iteration
+            values = calculation.iteration_by_replication(
+                self._table("plan_steps", iterations=selected_step),
+                self._table("demand_groups", iterations=selected_step),
+            )
+            return MetricLaneResult(values)
+
+        metric.compute_lane = compute_lane
+        metric.finish_lanes = lambda parts: calculation.combine_replications(
+            pl.concat([part.values for part in parts])
+        )
+        return metric
 
     def activity_duration_distribution(
         self,
@@ -752,6 +931,28 @@ class GroupDayTripsResultMetrics:
             },
             compute=calculation.get,
             compute_iteration=compute_iteration,
+        )
+
+        def compute_lane(iteration):
+            coordinator = get_current_asset_resolver().result_coordinator
+            contexts = [context for context in self.results.run_contexts
+                        if context.run.coordinated_run_asset is coordinator]
+            selected_step = "last" if self.results.uses_last_iteration(steps) else iteration
+            lane_calculation = ActivityDurationDistribution(
+                plan_steps=[], reference_plan_steps=calculation.reference_plan_steps,
+                scenarios=list(dict.fromkeys(context.scenario for context in contexts)),
+                day_type=self.results.day_type, iterations=[iteration],
+                replications=list(dict.fromkeys(context.replication for context in contexts)),
+                bin_width_minutes=bin_width_minutes,
+            )
+            values = lane_calculation.iteration_by_replication(
+                iteration, self._table("plan_steps", iterations=selected_step)
+            )
+            return MetricLaneResult(values)
+
+        metric.compute_lane = compute_lane
+        metric.finish_lanes = lambda parts: calculation.combine_replications(
+            pl.concat([part.values for part in parts], how="vertical_relaxed")
         )
         if output == "plot":
             return plot_activity_duration_distribution(
@@ -832,6 +1033,30 @@ class GroupDayTripsResultMetrics:
             compute=calculation.get,
             compute_iteration=compute_iteration,
         )
+
+        def compute_lane(iteration):
+            coordinator = get_current_asset_resolver().result_coordinator
+            contexts = [context for context in self.results.run_contexts
+                        if context.run.coordinated_run_asset is coordinator]
+            selected_step = "last" if self.results.uses_last_iteration(steps) else iteration
+            lane_calculation = ActivityTimeSeries(
+                plan_steps=[], demand_groups=[], reference_plan_steps=calculation.reference_plan_steps,
+                scenarios=list(dict.fromkeys(context.scenario for context in contexts)),
+                day_type=self.results.day_type, iterations=[iteration],
+                replications=list(dict.fromkeys(context.replication for context in contexts)),
+                interval_minutes=interval_minutes,
+            )
+            values = lane_calculation.series_by_replication(
+                iteration=iteration,
+                plan_steps_asset=self._table("plan_steps", iterations=selected_step),
+                demand_groups_asset=self._table("demand_groups", iterations=selected_step),
+            )
+            return MetricLaneResult(values)
+
+        metric.compute_lane = compute_lane
+        metric.finish_lanes = lambda parts: calculation.combine_replications(
+            pl.concat([part.values for part in parts], how="vertical_relaxed")
+        )
         if output == "plot":
             return plot_activity_time_series(
                 metric.get(),
@@ -891,6 +1116,23 @@ class GroupDayTripsResultMetrics:
             compute=compute,
             compute_iteration=compute_iteration,
         )
+
+        def compute_lane(iteration):
+            selected_step = "last" if self.results.uses_last_iteration(steps) else iteration
+            values = self._opportunity_occupation_by_replication(
+                opportunities=self._table("opportunities").get(),
+                plan_steps=self._table("plan_steps", iterations=selected_step).get(),
+                iteration=iteration, inner_zone_residents_only=inner_zone_residents_only,
+            )
+            return MetricLaneResult(values)
+
+        def finish_lanes(parts):
+            values = self._combine_opportunity_replications(pl.concat([part.values for part in parts]))
+            values = self._filter_scenarios(values, scenarios=scenarios)
+            return values.filter(pl.col("activity") == activity) if activity is not None else values
+
+        metric.compute_lane = compute_lane
+        metric.finish_lanes = finish_lanes
         if output == "plot":
             values = metric.get()
             if activity is not None:
@@ -1060,7 +1302,6 @@ class GroupDayTripsResultMetrics:
                     iterations=iterations,
                     home_zone_ids=home_zone_ids,
                     csp=csp,
-                    modes=modes,
                 )
             elif normalize_by == "metric_total":
                 values = self._with_metric_total_share(
@@ -1204,6 +1445,18 @@ class GroupDayTripsResultMetrics:
         inner_zone_residents_only: bool,
     ) -> pl.DataFrame:
         """Aggregate one iteration before loading another run state."""
+        return self._combine_opportunity_replications(
+            self._opportunity_occupation_by_replication(
+                opportunities=opportunities, plan_steps=plan_steps,
+                iteration=iteration, inner_zone_residents_only=inner_zone_residents_only,
+            )
+        )
+
+    def _opportunity_occupation_by_replication(
+        self, *, opportunities: pl.LazyFrame, plan_steps: pl.LazyFrame,
+        iteration: int, inner_zone_residents_only: bool,
+    ) -> pl.DataFrame:
+        """Keep occupied duration and capacity for each seed and destination."""
         if inner_zone_residents_only:
             plan_steps = filter_plan_steps_to_inner_zone_residents(
                 plan_steps,
@@ -1268,14 +1521,18 @@ class GroupDayTripsResultMetrics:
                 ),
             )
         )
+        return per_replication.rename({"to": "transport_zone_id"}).collect(engine="streaming")
+
+    @staticmethod
+    def _combine_opportunity_replications(per_replication: pl.DataFrame) -> pl.DataFrame:
+        """Average destination occupancy across seeds."""
         output_columns = RESULT_COLUMNS + [
             "transport_zone_id",
             "activity",
             "destination_is_inner_zone",
         ]
         return (
-            per_replication
-            .rename({"to": "transport_zone_id"})
+            per_replication.lazy()
             .group_by(output_columns)
             .agg(
                 opportunity_capacity=pl.col("opportunity_capacity").mean(),
@@ -1323,7 +1580,7 @@ class GroupDayTripsResultMetrics:
 
         if by_variable is None:
             comparison = (
-                self._survey_reference_marginal([])
+                self._survey_reference_marginal([], iterations=iterations)
                 .get()
                 .filter(pl.col("indicator") == indicator)
                 .group_by(RESULT_COLUMNS + ["reference_source"])
@@ -1338,7 +1595,7 @@ class GroupDayTripsResultMetrics:
         else:
             group_column = self._variable_column(by_variable)
             comparison = (
-                self._survey_reference_marginal([group_column])
+                self._survey_reference_marginal([group_column], iterations=iterations)
                 .get()
                 .filter(pl.col("indicator") == indicator)
             )
@@ -1380,7 +1637,7 @@ class GroupDayTripsResultMetrics:
         """Return one quantity share with its external reference share."""
         group_column = self._variable_column(by_variable)
         comparison = (
-            self._survey_reference_marginal([group_column])
+            self._survey_reference_marginal([group_column], iterations=iterations)
             .get()
             .filter(pl.col("indicator") == indicator)
         )
@@ -1675,16 +1932,18 @@ class GroupDayTripsResultMetrics:
         normalize_by: NormalizeBy | None,
         normalize_scope: NormalizeScope | None,
         iterations: IterationSelector,
+        reference_values: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
         """Add the natural external reference to a normal metric table."""
-        reference_values = self._external_reference_values(
-            by_variable=by_variable,
-            indicator=indicator,
-            metric_column=metric_column,
-            normalize_by=normalize_by,
-            normalize_scope=normalize_scope,
-            iterations=iterations,
-        )
+        if reference_values is None:
+            reference_values = self._external_reference_values(
+                by_variable=by_variable,
+                indicator=indicator,
+                metric_column=metric_column,
+                normalize_by=normalize_by,
+                normalize_scope=normalize_scope,
+                iterations=iterations,
+            )
         reference_column = f"{metric_column}_reference"
         join_columns = list(RESULT_COLUMNS)
         if by_variable is not None:
@@ -1733,19 +1992,22 @@ class GroupDayTripsResultMetrics:
         normalize_scope: NormalizeScope | None,
         iterations: IterationSelector,
         scenarios: str | list[str] | tuple[str, ...] | None,
+        reference_values: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
         """Return model rows and external reference rows in one value table."""
         model_rows = self._filter_scenarios(values, scenarios=scenarios)
         output_columns = list(model_rows.columns)
         reference_column = f"{metric_column}_reference"
-        reference_rows = self._external_reference_values(
-            by_variable=by_variable,
-            indicator=indicator,
-            metric_column=metric_column,
-            normalize_by=normalize_by,
-            normalize_scope=normalize_scope,
-            iterations=iterations,
-        )
+        reference_rows = reference_values
+        if reference_rows is None:
+            reference_rows = self._external_reference_values(
+                by_variable=by_variable,
+                indicator=indicator,
+                metric_column=metric_column,
+                normalize_by=normalize_by,
+                normalize_scope=normalize_scope,
+                iterations=iterations,
+            )
         reference_rows = self._filter_scenarios(reference_rows, scenarios=scenarios)
         reference_rows = reference_rows.rename({reference_column: metric_column})
 
@@ -1788,7 +2050,7 @@ class GroupDayTripsResultMetrics:
         """Return external reference values with the same dimensions as metric values."""
         if by_variable is None:
             comparison = (
-                self._survey_reference_marginal([])
+                self._survey_reference_marginal([], iterations=iterations)
                 .get()
                 .filter(pl.col("indicator") == indicator)
                 .group_by(RESULT_COLUMNS + ["reference_source"])
@@ -1799,7 +2061,7 @@ class GroupDayTripsResultMetrics:
         else:
             group_column = self._variable_column(by_variable)
             comparison = (
-                self._survey_reference_marginal([group_column])
+                self._survey_reference_marginal([group_column], iterations=iterations)
                 .get()
                 .filter(pl.col("indicator") == indicator)
                 .group_by(RESULT_COLUMNS + ["reference_source", group_column])
@@ -2636,13 +2898,19 @@ class GroupDayTripsResultMetrics:
             predicate = predicate & extra_filter
         return frame.filter(predicate)
 
-    def _survey_reference_marginal(self, marginal_columns: list[str]) -> SurveyReferenceMarginal:
+    def _survey_reference_marginal(
+        self, marginal_columns: list[str], *, iterations: IterationSelector = "last"
+    ) -> SurveyReferenceMarginal:
         """Build one cached survey-reference marginal."""
         return SurveyReferenceMarginal(
             comparison=SurveyReferenceComparison(
-                plan_steps=self._table("plan_steps"),
+                plan_steps=self._table("plan_steps", iterations=iterations),
                 reference_plan_steps=self.results.survey_reference_plan_steps,
                 transport_zones=self.results.transport_zones,
+                demand_groups=(
+                    None if self.results.uses_last_iteration(iterations)
+                    else self._table("demand_groups", iterations=iterations)
+                ),
             ),
             marginal_columns=marginal_columns,
         )

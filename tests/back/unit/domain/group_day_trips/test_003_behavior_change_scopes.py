@@ -13,6 +13,45 @@ from mobility.trips.group_day_trips.plans.plan_ids import add_plan_id
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 
 
+def test_transition_probabilities_are_stable_when_options_are_reordered():
+    transitions = pl.DataFrame({
+        "plan_id_from": [1] * 4, "plan_id_trans": [1, 2, 3, 4],
+        "demand_group_id": [1] * 4, "demand_subgroup_id": [0] * 4,
+        "activity_seq_id": [1] * 4, "time_seq_id": [1] * 4,
+        "dest_seq_id": [1] * 4, "mode_seq_id": [1] * 4,
+        "activity_seq_id_trans": [1] * 4, "time_seq_id_trans": [1] * 4,
+        "dest_seq_id_trans": [1] * 4, "mode_seq_id_trans": [1, 2, 3, 4],
+        "utility_prev_from": [0.0] * 4, "utility": [0.0] * 4,
+        "utility_trans": [0.0, -12.350490091531594, -0.24164211866780505, -6.232632468659979],
+    })
+    updater = PlanUpdater()
+    forward = updater.compute_transition_probabilities_from_utilities(transitions.lazy()).sort("plan_id_trans")
+    reverse = updater.compute_transition_probabilities_from_utilities(transitions.reverse().lazy()).sort("plan_id_trans")
+    assert forward.equals(reverse)
+
+
+def test_pruning_uses_plan_keys_to_break_equal_mass_ties():
+    # The same contributions arrive in different orders for two equal targets.
+    # Summing them in arrival order can make one target appear slightly larger.
+    transitions = pl.DataFrame({
+        "plan_id_trans": [1, 1, 1, 2, 2, 2, 3],
+        "demand_group_id": [1] * 7,
+        "demand_subgroup_id": [0] * 7,
+        "activity_seq_id_trans": [1] * 7,
+        "time_seq_id_trans": [1] * 7,
+        "dest_seq_id_trans": [1] * 7,
+        "mode_seq_id_trans": [1, 1, 1, 2, 2, 2, 3],
+        "utility_trans": [0.0] * 7,
+        "n_persons_moved": [1.0, 2**-53, 2**-53, 2**-53, 2**-53, 1.0, 0.1],
+    })
+    updater = PlanUpdater()
+    forward = updater.build_low_probability_target_map(transitions.lazy(), retained_share=0.4)
+    reverse = updater.build_low_probability_target_map(transitions.reverse().lazy(), retained_share=0.4)
+
+    assert forward.sort("plan_id_trans").equals(reverse.sort("plan_id_trans"))
+    assert forward.sort("plan_id_trans")["plan_id_trans_final"].to_list() == [1, 1, 1]
+
+
 def _make_possible_plan_steps(rows: dict[str, list]) -> pl.DataFrame:
     rows = {
         "demand_subgroup_id": rows.get("demand_subgroup_id", [0] * len(rows["demand_group_id"])),

@@ -32,22 +32,21 @@ def test_nested_steps_keep_loop_labels_and_record_failures(tmp_path):
     assert child["rss_delta_bytes"] == child["rss_end_bytes"] - child["rss_start_bytes"]
 
 
-def test_cached_reads_do_not_rewrite_trace_and_new_runs_append(tmp_path, monkeypatch):
+def test_new_runs_append_and_nested_traces_share_one_run(tmp_path, monkeypatch):
     path = tmp_path / "trace.jsonl"
     monkeypatch.setenv("MOBILITY_SIMULATION_TRACE", str(path))
 
     @trace_simulation_run
-    def run(owner):
-        owner._cached_result = 42
-        with simulation_step("allocation"):
-            return owner._cached_result
+    def nested():
+        return 42
 
-    owner = SimpleNamespace(_cached_result=None)
-    assert run(owner) == 42
-    original = path.read_bytes()
-    assert run(owner) == 42
-    assert path.read_bytes() == original
-    assert run(SimpleNamespace(_cached_result=None)) == 42
+    @trace_simulation_run
+    def run():
+        with simulation_step("allocation"):
+            return nested()
+
+    assert run() == 42
+    assert run() == 42
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     assert len(rows) == 4
     assert len({row["run_id"] for row in rows}) == 2

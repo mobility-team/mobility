@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import logging
 import math
 import os
@@ -19,6 +20,7 @@ import plotly.graph_objects as go
 import polars as pl
 from plotly.subplots import make_subplots
 
+from mobility.runtime.temporary import check_temporary_disk_limit
 from mobility.runtime.temporary import temporary_folder as mobility_temporary_folder
 from mobility.reports import TransportZoneMaps
 from mobility.reports.theme import MOBILITY_COLORS, apply_report_layout
@@ -40,11 +42,24 @@ if TYPE_CHECKING:
 
 
 def _with_iteration_resolver(method):
-    """Share transient iteration states for one iteration-analysis request."""
+    """Share selected step tables for one iteration-analysis request."""
     @wraps(method)
     def wrapped(self, *args, **kwargs):
-        with asset_resolution_context(get_current_asset_resolver()):
-            return method(self, *args, **kwargs)
+        with asset_resolution_context(get_current_asset_resolver()) as resolver:
+            scope = getattr(resolver, "iteration_analysis_scope", None)
+            if scope is not None:
+                return method(self, *args, **kwargs)
+            arguments = inspect.signature(method).bind(self, *args, **kwargs)
+            arguments.apply_defaults()
+            scope = {"arguments": arguments.arguments, "tables": {}}
+            resolver.iteration_analysis_scope = scope
+            try:
+                return method(self, *args, **kwargs)
+            finally:
+                for tables in scope["tables"].values():
+                    for table in tables.values():
+                        table.close()
+                del resolver.iteration_analysis_scope
 
     return wrapped
 
@@ -1509,25 +1524,68 @@ class RunMetrics:
 
         metric_per_person = metric + "_per_person"
 
+        reference_run = self._resolve_comparison_run(compare_with) if compare_with is not None else None
+        deferred_reference = (
+            reference_run is not None
+            and (reference_run is compare_with or getattr(compare_with, "_defer_run_tables", False))
+            and callable(getattr(reference_run, "_resolve_run_tables", None))
+            and not any(name in getattr(compare_with, "__dict__", {}) for name in ("costs", "demand_groups"))
+        )
+        shared_tables = None
+        if getattr(self.results, "_defer_run_tables", False):
+            current_run = self.results.run
+            if (deferred_reference
+                    and current_run.coordinated_run_asset is not None
+                    and current_run.coordinated_run_asset is reference_run.coordinated_run_asset):
+                shared_tables = current_run._resolve_cohort_run_tables(
+                    [current_run, reference_run], ["plan_steps", "costs", "demand_groups"],
+                )
+                tables = {
+                    name: shared_tables[(current_run.coordinated_run_key, name)]
+                    for name in ("plan_steps", "costs", "demand_groups")
+                }
+            else:
+                tables = current_run._resolve_run_tables({
+                    "plan_steps": None, "costs": None, "demand_groups": None,
+                })
+            plan_steps = tables["plan_steps"].lazy()
+            costs = tables["costs"].lazy()
+            demand_groups = tables["demand_groups"].lazy()
+        else:
+            plan_steps = self.results.plan_steps
+            costs = self.results.costs
+            demand_groups = self.results.demand_groups
+
         metric_per_groups_and_transport_zones = (
-            self.results.plan_steps.filter(pl.col("activity_seq_id") != 0)
+            plan_steps.filter(pl.col("activity_seq_id") != 0)
             .rename({"home_zone_id": "transport_zone_id"})
-            .join(self.results.costs, on=["from", "to", "mode"])
+            .join(costs, on=["from", "to", "mode"])
             .group_by(["transport_zone_id", "csp", "n_cars"])
             .agg(metric=(pl.col(metric) * pl.col("n_persons")).sum())
             .join(transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]), on=["transport_zone_id"])
-            .join(self.results.demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
+            .join(demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
             .with_columns(metric_per_person=pl.col("metric") / pl.col("n_persons"))
             .rename({"metric": metric, "metric_per_person": metric_per_person})
             .collect(engine="streaming")
         )
 
         if compare_with is not None:
-            comparison = self._resolve_run_context(compare_with, include_costs=True)
-            reference_run = comparison["run"]
-            plan_steps_comp = reference_run._table_asset("plan_steps").get().lazy()
-            costs_comp = comparison["costs"]
-            demand_groups_comp = comparison["demand_groups"]
+            if shared_tables is not None:
+                plan_steps_comp = shared_tables[(reference_run.coordinated_run_key, "plan_steps")].lazy()
+                costs_comp = shared_tables[(reference_run.coordinated_run_key, "costs")]
+                demand_groups_comp = shared_tables[(reference_run.coordinated_run_key, "demand_groups")]
+            elif deferred_reference:
+                reference_tables = reference_run._resolve_run_tables({
+                    "plan_steps": None, "costs": None, "demand_groups": None,
+                })
+                plan_steps_comp = reference_tables["plan_steps"].lazy()
+                costs_comp = reference_tables["costs"]
+                demand_groups_comp = reference_tables["demand_groups"]
+            else:
+                comparison = self._resolve_run_context(compare_with, include_costs=True)
+                plan_steps_comp = reference_run._table_asset("plan_steps").get().lazy()
+                costs_comp = comparison["costs"]
+                demand_groups_comp = comparison["demand_groups"]
             if isinstance(costs_comp, pl.DataFrame):
                 costs_comp = costs_comp.lazy()
             if isinstance(demand_groups_comp, pl.DataFrame):
@@ -2262,7 +2320,10 @@ class RunMetrics:
                 compare_with=compare_with,
                 reference_run=reference_run,
             )
-            current_costs = self.results.costs if value == "ghg_emissions" else pl.DataFrame()
+            if value == "ghg_emissions" and getattr(self.results, "_defer_run_tables", False):
+                current_costs = self._iteration_analysis_table(self.results.run, "costs", iteration)
+            else:
+                current_costs = self.results.costs if value == "ghg_emissions" else pl.DataFrame()
             reference_costs = (
                 self._resolve_comparison_costs(
                     compare_with=compare_with,
@@ -2637,7 +2698,7 @@ class RunMetrics:
         iteration: int,
     ) -> pl.DataFrame:
         """Compute weighted mean plan utility by home transport zone."""
-        current_plans = self._saved_iteration_state(run, iteration).current_plans.lazy()
+        current_plans = self._saved_iteration_plans(run, iteration).lazy()
         current_plans = self._join_home_zone(current_plans, demand_groups)
         required_columns = {"home_zone_id", "utility", "n_persons"}
         missing_columns = required_columns.difference(current_plans.collect_schema().names())
@@ -2851,7 +2912,7 @@ class RunMetrics:
     ) -> float:
         """Compute a global value for one saved iteration."""
         if value == "mean_utility":
-            current_plans = self._saved_iteration_state(run, iteration).current_plans.lazy()
+            current_plans = self._saved_iteration_plans(run, iteration).lazy()
             current_plans = self._join_home_zone(current_plans, demand_groups)
             required_columns = {"home_zone_id", "utility", "n_persons"}
             missing_columns = required_columns.difference(current_plans.collect_schema().names())
@@ -3602,7 +3663,7 @@ class RunMetrics:
                 f"{safe_mode_name}-{value_settings['save_name']}-iterations-"
                 f"{min(iterations)}-{max(iterations)}-map.gif"
             )
-            with tempfile.TemporaryDirectory(prefix=f"{safe_mode_name}-modal-share-delta-", dir=mobility_temporary_folder()) as temporary_folder:
+            with tempfile.TemporaryDirectory(prefix=f"mobility-map-frames-{safe_mode_name}-", dir=mobility_temporary_folder()) as temporary_folder:
                 frame_paths = []
                 for frame_index, iteration in enumerate(iterations):
                     modal_share_delta = self.modal_share_delta_by_step(
@@ -3638,6 +3699,9 @@ class RunMetrics:
                         max_labels=max_labels,
                         simplify_tolerance=simplify_tolerance,
                     )
+                    # The renderer writes its own file, so check as soon as it
+                    # returns and let the temporary folder clean up on failure.
+                    check_temporary_disk_limit()
                     frame_paths.append(frame_path)
                 self._write_gif(frame_paths, gif_path, duration_ms=duration_ms)
             gif_paths[mode] = gif_path
@@ -4324,18 +4388,71 @@ class RunMetrics:
         )
 
     def _saved_iteration_plan_steps(self, run: Any, iteration: int) -> pl.DataFrame:
-        """Load current plan steps saved for one run iteration."""
-        return self._saved_iteration_state(run, iteration).current_plan_steps
+        """Request one step's plan steps through its cohort runner."""
+        return self._iteration_analysis_table(run, "plan_steps", iteration)
 
-    def _saved_iteration_state(self, run: Any, iteration: int) -> Any:
-        """Return one iteration state from the run's asset chain."""
-        state_assets = run.iteration_state_assets
-        if iteration < 1 or iteration > len(state_assets):
-            raise ValueError(
-                "iteration should be between 1 and the run's number of iterations. "
-                f"Received {iteration}."
-            )
-        return state_assets[iteration - 1].get()
+    def _saved_iteration_plans(self, run: Any, iteration: int) -> pl.DataFrame:
+        """Request one step's allocations through its cohort runner."""
+        return self._iteration_analysis_table(run, "plans", iteration)
+
+    def _iteration_analysis_table(self, run: Any, table_name: str, iteration: int) -> pl.DataFrame:
+        """Read a selected table, batching related runs and steps for this analysis."""
+        resolver = get_current_asset_resolver()
+        scope = getattr(resolver, "iteration_analysis_scope", None) if resolver is not None else None
+        if scope is None or not callable(getattr(run, "_resolve_diagnostic_step_tables", None)):
+            return run.iteration_table(table_name, iteration).collect(engine="streaming")
+
+        arguments = scope["arguments"]
+        if "iterations" in arguments:
+            iterations = self._modal_share_evolution_iterations(arguments["iterations"])
+        else:
+            iterations = [int(arguments.get("iteration", iteration))]
+        if iteration not in iterations:
+            raise ValueError(f"Iteration {iteration} was not requested for this analysis.")
+
+        run._ensure_coordinator()
+        coordinator = run.coordinated_run_asset
+        include_final_costs = (
+            arguments.get("value") == "ghg_emissions"
+            and table_name in {"plan_steps", "costs"}
+        )
+        cache_key = (id(coordinator), table_name)
+        if cache_key not in scope["tables"]:
+            if arguments.get("paired_runs") is not None:
+                candidates = [item for pair in arguments["paired_runs"] for item in pair]
+            else:
+                candidates = [self.results.run]
+                if arguments.get("compare_with") is not None:
+                    candidates.append(arguments["compare_with"])
+            runs = []
+            for candidate in candidates:
+                candidate = self._resolve_comparison_run(candidate)
+                if not callable(getattr(candidate, "_resolve_diagnostic_step_tables", None)):
+                    continue
+                candidate._ensure_coordinator()
+                if candidate.coordinated_run_asset is coordinator and not any(candidate is other for other in runs):
+                    runs.append(candidate)
+            if not any(run is other for other in runs):
+                runs.append(run)
+            for member in runs:
+                if any(step > member.parameters.run.n_steps for step in iterations):
+                    raise ValueError("An iteration exceeds the run's number of steps.")
+            if include_final_costs:
+                step_tables, cost_tables = run._resolve_diagnostic_step_tables(
+                    runs, "plan_steps", sorted(set(iterations)), include_final_costs=True,
+                )
+                scope["tables"][(id(coordinator), "plan_steps")] = step_tables
+                scope["tables"][(id(coordinator), "costs")] = cost_tables
+            else:
+                scope["tables"][cache_key] = run._resolve_diagnostic_step_tables(
+                    runs, table_name, sorted(set(iterations)),
+                )
+
+        table = scope["tables"][cache_key][run.coordinated_run_key]
+        selected = table if table_name == "costs" else table.filter(pl.col("step") == iteration)
+        return selected.collect().drop(
+            ["scenario", "sensitivity_case", "day_type", "replication", "step"], strict=False,
+        )
 
     def _join_home_zone(
         self,
@@ -4420,8 +4537,10 @@ class RunMetrics:
         reference_run: Any,
     ) -> pl.DataFrame | pl.LazyFrame:
         """Return demand groups for the reference scenario."""
-        if hasattr(compare_with, "demand_groups"):
-            return compare_with.demand_groups
+        missing = object()
+        demand_groups = getattr(compare_with, "demand_groups", missing)
+        if demand_groups is not missing:
+            return demand_groups
 
         return reference_run._table_asset("demand_groups").get().lazy()
 
@@ -4432,8 +4551,19 @@ class RunMetrics:
         reference_run: Any,
     ) -> pl.DataFrame | pl.LazyFrame:
         """Return costs for the reference scenario."""
-        if hasattr(compare_with, "costs"):
-            return compare_with.costs
+        resolver = get_current_asset_resolver()
+        scope = getattr(resolver, "iteration_analysis_scope", None) if resolver is not None else None
+        if (scope is not None and scope["arguments"].get("value") == "ghg_emissions"
+                and (reference_run is compare_with or getattr(compare_with, "_defer_run_tables", False))
+                and "costs" not in getattr(compare_with, "__dict__", {})
+                and callable(getattr(reference_run, "_resolve_diagnostic_step_tables", None))):
+            return self._iteration_analysis_table(
+                reference_run, "costs", int(scope["arguments"]["iteration"])
+            ).lazy()
+        missing = object()
+        costs = getattr(compare_with, "costs", missing)
+        if costs is not missing:
+            return costs
 
         return reference_run._table_asset("costs").get().lazy()
 

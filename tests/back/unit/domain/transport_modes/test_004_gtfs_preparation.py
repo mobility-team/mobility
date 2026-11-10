@@ -19,6 +19,7 @@ from mobility.transport.modes.public_transport.gtfs.gtfs_router import GTFSRoute
 from mobility.transport.modes.public_transport.gtfs.gtfs_feed import GTFSFeed
 from mobility.transport.modes.public_transport.gtfs.gtfs_data import GTFSData
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.temporary import TemporaryDiskLimitExceeded
 
 
 @pytest.fixture
@@ -58,6 +59,17 @@ def test_quoted_csv_header_with_bom_keeps_stop_ids(tmp_path, feed_files, zones, 
     actual, _ = GTFSTimetable([write_feed(tmp_path / "quoted.zip", feed_files)], zones, route_types).prepare()
     for name in expected:
         pd.testing.assert_frame_equal(actual[name], expected[name])
+
+
+def test_gtfs_extraction_respects_temporary_disk_limit(tmp_path, monkeypatch, feed_files, zones, route_types):
+    """A large feed must not bypass the project's temporary-file limit."""
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", "10")
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    with pytest.raises(TemporaryDiskLimitExceeded, match="temporary files reached"):
+        GTFSTimetable([path], zones, route_types).prepare()
+    temporary = tmp_path / "temporary"
+    assert not list(temporary.glob("mobility-gtfs-*"))
 
 
 def test_feed_in_subfolder_matches_root_feed(tmp_path, feed_files, zones, route_types):

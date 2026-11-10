@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from .assets.metric import Metric
 from .assets.scoped_tables import ScopedRunTable
 
 IterationSelector = str | int | list[int] | range
@@ -19,7 +18,7 @@ class GroupDayTripsResultTables:
         columns: list[str] | tuple[str, ...] | None = None,
     ) -> ScopedRunTable:
         """Declare scoped plan steps with scenario, day type, and replication columns."""
-        return self._table("plan_steps", iterations=steps, columns=columns)
+        return self._table("plan_steps", iterations=steps, columns=columns, strict_columns=columns is not None)
 
     def demand_groups(
         self,
@@ -28,11 +27,16 @@ class GroupDayTripsResultTables:
         columns: list[str] | tuple[str, ...] | None = None,
     ) -> ScopedRunTable:
         """Declare scoped demand groups with scenario and run scope columns."""
-        return self._table("demand_groups", iterations=steps, columns=columns)
+        return self._table("demand_groups", iterations=steps, columns=columns, strict_columns=columns is not None)
 
-    def costs(self, *, steps: IterationSelector = "last") -> Metric:
-        """Declare persisted transport costs with scenario and run scope columns."""
-        return self.results.metrics.travel_costs(steps=steps)
+    def costs(
+        self,
+        *,
+        steps: IterationSelector = "last",
+        columns: list[str] | tuple[str, ...] | None = None,
+    ) -> ScopedRunTable:
+        """Declare transient transport costs with scenario and run scope columns."""
+        return self._table("costs", iterations=steps, columns=columns, strict_columns=columns is not None)
 
     def transitions(
         self,
@@ -41,7 +45,7 @@ class GroupDayTripsResultTables:
         columns: list[str] | tuple[str, ...] | None = None,
     ) -> ScopedRunTable:
         """Declare scoped transition events with scenario and run scope columns."""
-        return self._table("transitions", iterations=steps, columns=columns)
+        return self._table("transitions", iterations=steps, columns=columns, strict_columns=columns is not None)
 
     def step_metrics(
         self,
@@ -50,7 +54,7 @@ class GroupDayTripsResultTables:
         columns: list[str] | tuple[str, ...] | None = None,
     ) -> ScopedRunTable:
         """Declare diagnostics for each selected simulation step."""
-        return self._table("iteration_metrics", iterations=steps, columns=columns)
+        return self._table("iteration_metrics", iterations=steps, columns=columns, strict_columns=columns is not None)
 
     def adaptive_search_diagnostics(
         self,
@@ -62,6 +66,7 @@ class GroupDayTripsResultTables:
             "adaptive_search_diagnostics",
             iterations="last",
             columns=columns,
+            strict_columns=columns is not None,
         )
 
     def _table(
@@ -70,6 +75,7 @@ class GroupDayTripsResultTables:
         *,
         iterations: IterationSelector,
         columns: list[str] | tuple[str, ...] | None = None,
+        strict_columns: bool = False,
     ) -> ScopedRunTable:
         """Build a deferred scoped table request for one run output."""
         return ScopedRunTable(
@@ -77,6 +83,7 @@ class GroupDayTripsResultTables:
             table_name=table_name,
             iterations=iterations,
             columns=columns,
+            strict_columns=strict_columns,
         )
 
     def mnl_od_mode_flows(self) -> ScopedRunTable:

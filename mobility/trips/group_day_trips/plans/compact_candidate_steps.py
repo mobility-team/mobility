@@ -48,16 +48,20 @@ class CompactCandidateSteps:
             return frame
         if set(frame.columns) != set(STEP_COLUMNS + MEMBERSHIP_COLUMNS):
             return frame
-        steps = frame.select(STEP_COLUMNS).unique()
+        steps = frame.lazy().select(STEP_COLUMNS).unique().collect(engine="streaming")
         if steps.group_by(STEP_KEY_COLUMNS).len().filter(pl.col("len") > 1).height:
             return frame
-        membership = frame.select(MEMBERSHIP_COLUMNS).unique()
+        membership = frame.lazy().select(MEMBERSHIP_COLUMNS).unique().collect(engine="streaming")
         if membership.group_by(PLAN_KEY_COLS).len().filter(pl.col("len") > 1).height:
             return frame
         # Duplicate or incomplete plan rows cannot be represented by the join.
-        if frame.select(CandidatePlanStepsAsset.DEDUPE_COLUMNS).unique().height != frame.height:
+        unique_rows = (
+            frame.lazy().select(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
+            .unique().select(pl.len()).collect(engine="streaming").item()
+        )
+        if unique_rows != frame.height:
             return frame
-        actual_counts = frame.group_by(PLAN_KEY_COLS).len(name="actual")
+        actual_counts = frame.lazy().group_by(PLAN_KEY_COLS).len(name="actual").collect(engine="streaming")
         step_counts = steps.group_by(PLAN_COLUMNS).len(name="expected")
         if actual_counts.join(step_counts, on=PLAN_COLUMNS).filter(pl.col("actual") != pl.col("expected")).height:
             return frame

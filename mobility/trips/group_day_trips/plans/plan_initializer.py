@@ -53,7 +53,7 @@ class PlanInitializer:
             .with_columns(home_zone_id=pl.col("home_zone_id").cast(pl.Int32))
             .join(lau_to_city_cat.lazy(), on=["local_admin_unit_id"])
             .group_by(["country", "home_zone_id", "city_category", "csp", "n_cars"])
-            .agg(pl.col("n_persons").sum())
+            .agg(pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum())
             .collect(engine="streaming")
         )
 
@@ -276,6 +276,8 @@ class PlanInitializer:
         )
         weighted_plan_step_schema = population_weighted_plan_steps.collect_schema()
 
+        # Keep the sorted values until each sum is computed. A direct
+        # sort().sum() can have its sort removed by the Polars optimizer.
         mean_activity_durations = (
             weighted_plan_steps
             .filter(pl.col("seq_step_index") != pl.col("seq_step_index").max().over(plan_keys_without_home_zone))
@@ -283,8 +285,9 @@ class PlanInitializer:
             .agg(
                 mean_duration_per_pers=pl.max_horizontal(
                     [
-                        (pl.col("duration_per_pers") * pl.col("n_persons")).sum()
-                        / pl.col("n_persons").sum().clip(1e-18),
+                        (pl.col("duration_per_pers") * pl.col("n_persons"))
+                        .cast(pl.Float64).sort().implode().list.sum()
+                        / pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum().clip(1e-18),
                         pl.lit(two_minutes),
                     ]
                 )
@@ -297,14 +300,17 @@ class PlanInitializer:
             .group_by(plan_segment_keys)
             .agg(
                 n_persons=pl.col("n_persons").first(),
-                home_night_per_pers=24.0 - pl.col("duration_per_pers").sum(),
+                home_night_per_pers=(
+                    24.0 - pl.col("duration_per_pers").cast(pl.Float64).sort().implode().list.sum()
+                ),
             )
             .group_by(["country", "csp"])
             .agg(
                 mean_home_night_per_pers=pl.max_horizontal(
                     [
-                        (pl.col("home_night_per_pers") * pl.col("n_persons")).sum()
-                        / pl.col("n_persons").sum().clip(1e-18),
+                        (pl.col("home_night_per_pers") * pl.col("n_persons"))
+                        .cast(pl.Float64).sort().implode().list.sum()
+                        / pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum().clip(1e-18),
                         pl.lit(two_minutes),
                     ]
                 )
@@ -316,12 +322,13 @@ class PlanInitializer:
             demand_groups
             .with_columns(country=pl.col("country").cast(pl.String()))
             .group_by("country")
-            .agg(pl.col("n_persons").sum().alias("country_n_persons"))
+            .agg(pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum().alias("country_n_persons"))
         )
         activity_demand_per_pers = (
             weighted_plan_steps
             .group_by(["country", "activity"])
-            .agg(total_duration=(pl.col("duration_per_pers") * pl.col("n_persons")).sum())
+            .agg(total_duration=(pl.col("duration_per_pers") * pl.col("n_persons"))
+                 .cast(pl.Float64).sort().implode().list.sum())
             .join(country_population.lazy(), on="country", how="inner")
             .with_columns(duration_per_pers=pl.col("total_duration") / pl.col("country_n_persons").clip(1e-18))
             .select(["country", "activity", "duration_per_pers"])
@@ -443,11 +450,11 @@ class PlanInitializer:
         demand = (
             demand_groups
             .group_by("country")
-            .agg(n_persons=pl.col("n_persons").sum())
+            .agg(n_persons=pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum())
             .join(activity_demand_per_pers, on="country", how="inner")
             .with_columns(duration=pl.col("duration_per_pers") * pl.col("n_persons"))
             .group_by("activity")
-            .agg(pl.col("duration").sum())
+            .agg(pl.col("duration").cast(pl.Float64).sort().implode().list.sum())
         )
 
         activity_names = activity_demand_per_pers.schema["activity"].categories
@@ -492,7 +499,8 @@ class PlanInitializer:
             .join(demand, on="activity")
             .with_columns(
                 opportunity_capacity=(
-                    pl.col("n_opp") / pl.col("n_opp").sum().over("activity")
+                    pl.col("n_opp")
+                    / pl.col("n_opp").cast(pl.Float64).sort().implode().list.sum().over("activity")
                     * pl.col("duration")
                     * pl.col("sink_saturation_coeff")
                 ),

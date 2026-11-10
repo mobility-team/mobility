@@ -5,6 +5,7 @@ from typing import Any
 import plotly.graph_objects as go
 import polars as pl
 
+from mobility.runtime.assets.resolver import asset_resolution_context, get_current_asset_resolver
 from mobility.runtime.parameter_values import (
     SensitivityCase,
     SensitivityValue,
@@ -174,17 +175,18 @@ class GroupDayTripsSensitivityAnalysis:
             else None
         )
         group_columns = zone_columns + ([variable_column] if variable_column is not None else [])
-        per_replication_values = results.metrics._metric_by_replication(
-            quantity=spec.quantity,
-            quantity_column=spec.quantity_column,
-            metric_column=metric_column,
-            group_columns=group_columns,
-            zone_column=zone_column,
-            normalize_by=normalize_by,
-            normalize_scope=normalize_scope,
-            inner_zone_residents_only=inner_zone_residents_only,
-            iterations=iterations,
-        )
+        with asset_resolution_context(get_current_asset_resolver()):
+            per_replication_values = results.metrics._metric_by_replication(
+                quantity=spec.quantity,
+                quantity_column=spec.quantity_column,
+                metric_column=metric_column,
+                group_columns=group_columns,
+                zone_column=zone_column,
+                normalize_by=normalize_by,
+                normalize_scope=normalize_scope,
+                inner_zone_residents_only=inner_zone_residents_only,
+                iterations=iterations,
+            )
         table = self._with_base_gap(
             values,
             per_replication_values=per_replication_values,

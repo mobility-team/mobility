@@ -1,4 +1,6 @@
+import os
 import pathlib
+import tempfile
 
 import polars as pl
 
@@ -180,6 +182,13 @@ class TransitionEventsAsset(FileAsset):
         if self.transition_events is None:
             raise ValueError("Cannot save transition events without a lazy query.")
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.cache_path.unlink(missing_ok=True)
-        self.transition_events.sink_parquet(self.cache_path)
+        fd, temporary_path = tempfile.mkstemp(
+            prefix=f".{self.cache_path.name}.", suffix=".tmp", dir=self.cache_path.parent,
+        )
+        os.close(fd)
+        try:
+            self.transition_events.sink_parquet(temporary_path)
+            os.replace(temporary_path, self.cache_path)
+        finally:
+            pathlib.Path(temporary_path).unlink(missing_ok=True)
         return self.cache_path

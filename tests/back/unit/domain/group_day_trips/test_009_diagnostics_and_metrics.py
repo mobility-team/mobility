@@ -5,6 +5,7 @@ import polars as pl
 import pytest
 
 from mobility.reports.theme import MOBILITY_COLORS
+from mobility.runtime.temporary import TemporaryDiskLimitExceeded
 from mobility.trips.group_day_trips.core.diagnostics import RunDiagnostics
 from mobility.trips.group_day_trips.core.parameters import (
     BehaviorChangePhase,
@@ -47,6 +48,51 @@ class _FrameAsset:
 
     def get(self):
         return self.frame.lazy() if self.lazy else self.frame
+
+
+def test_direct_run_results_request_only_the_table_used():
+    requested = []
+
+    class Run:
+        def table(self, name):
+            requested.append(name)
+            return pl.DataFrame({"value": [1]})
+
+    results = RunResults(
+        inputs_hash="test", is_weekday=True, transport_zones=None,
+        demand_groups=None, plan_steps=None, opportunities=None, costs=None,
+        population_weighted_plan_steps=_FrameAsset(pl.DataFrame({"reference": [2]})),
+        transitions=None, surveys=[], modes=[], parameters=None, run=Run(),
+        defer_run_tables=True,
+    )
+    assert requested == []
+    view = results.plan_steps
+    assert requested == ["plan_steps"]
+    assert view.collect()["value"].to_list() == [1]
+    assert results.population_weighted_plan_steps.collect()["reference"].to_list() == [2]
+    assert requested == ["plan_steps"]
+
+
+def test_comparison_inputs_are_only_read_once():
+    class Reference:
+        def __init__(self):
+            self.reads = []
+
+        @property
+        def demand_groups(self):
+            self.reads.append("demand_groups")
+            return pl.DataFrame({"value": [1]}).lazy()
+
+        @property
+        def costs(self):
+            self.reads.append("costs")
+            return pl.DataFrame({"value": [2]}).lazy()
+
+    reference = Reference()
+    metrics = RunMetrics(SimpleNamespace())
+    metrics._resolve_comparison_demand_groups(compare_with=reference, reference_run=None)
+    metrics._resolve_comparison_costs(compare_with=reference, reference_run=None)
+    assert reference.reads == ["demand_groups", "costs"]
 
 
 def _unused_run_table(*_args, **_kwargs):
@@ -137,7 +183,14 @@ def _use_fake_iteration_states(monkeypatch, fake_iterations_class):
         )
         return iterations.iteration(iteration).load_state()
 
-    monkeypatch.setattr(RunMetrics, "_saved_iteration_state", get_state)
+    monkeypatch.setattr(
+        RunMetrics, "_saved_iteration_plan_steps",
+        lambda metrics, run, iteration: get_state(metrics, run, iteration).current_plan_steps,
+    )
+    monkeypatch.setattr(
+        RunMetrics, "_saved_iteration_plans",
+        lambda metrics, run, iteration: get_state(metrics, run, iteration).current_plans,
+    )
 
 
 def test_metrics_aggregate_and_travel_indicators_by_match_reference_when_inputs_match():
@@ -2399,6 +2452,24 @@ def test_modal_share_delta_gifs_by_iteration_writes_one_gif_per_mode(monkeypatch
     assert [frame["global_delta"] for frame in seen["frames"]] == pytest.approx([0.0, 0.0, 0.0, 0.0])
     assert all(gif_call[2] == 250 for gif_call in seen["gifs"])
 
+    # Frames written by the image renderer count toward the project limit and
+    # are removed if a frame exceeds it.
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path / "project"))
+    monkeypatch.setenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", "0")
+    written = []
+
+    def write_frame(**kwargs):
+        path = kwargs["output_path"]
+        path.write_bytes(b"frame")
+        written.append(path)
+
+    monkeypatch.setattr(results.metrics, "_save_modal_share_delta_frame", write_frame)
+    with pytest.raises(TemporaryDiskLimitExceeded):
+        results.metrics.modal_share_delta_gifs_by_step(
+            reference_results, modes=["walk"], iterations=[1], output_folder=tmp_path,
+        )
+    assert written and all(not path.exists() for path in written)
+
 
 def test_modal_share_delta_gif_global_delta_uses_inner_zone_scope(monkeypatch, tmp_path):
     class FakeIterations:
@@ -3284,20 +3355,6 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
         ),
     )
 
-    class FakeIteration:
-        def __init__(self, state):
-            self._state = state
-
-        def load_state(self):
-            return self._state
-
-    fake_state = SimpleNamespace(
-        current_plans=current_plans,
-        current_plan_steps=current_plan_steps,
-        destination_saturation=pl.DataFrame(),
-    )
-    fake_iterations = SimpleNamespace(iteration=lambda _: FakeIteration(fake_state))
-    rebuilt = builder.rebuild_history(iterations=fake_iterations, resume_from_iteration=2)
     history_store = IterationMetricsHistory(IterationMetricsHistory.from_records([row]).lazy())
     diagnostics = RunDiagnostics(
         SimpleNamespace(
@@ -3326,7 +3383,6 @@ def test_iteration_metrics_builder_rebuilds_history_and_run_diagnostics_exposes_
     assert row["mean_travel_time"] == pytest.approx(0.5)
     assert row["mean_travel_distance"] == pytest.approx(5.0)
     assert row["excess_occupation_share"] == pytest.approx((100.0 - 62.5) / 180.0)
-    assert [record["step"] for record in rebuilt] == [1, 2]
     assert diagnostics.step_metrics()["step"].to_list() == [2]
     assert diagnostics.loss().history().columns == [
         "step",

@@ -9,6 +9,7 @@ from importlib import resources
 from mobility.transport.graphs.core.path_graph import PathGraph
 from mobility.transport.costs.travel_costs_asset import TravelCostsBase
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.graph import asset_graph_key
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.assets.resolver import (
     asset_resolution_context,
@@ -19,6 +20,7 @@ from mobility.runtime.parameter_values import (
     resolve_parameter_values,
 )
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
+from mobility.runtime.temporary import check_temporary_disk_limit, temporary_file_writer
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.costs.parameters.path_routing_parameters import PathRoutingParameters
 from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityParameters
@@ -35,8 +37,8 @@ from typing import List
 class PathTravelCostsTable(TravelCostsBase, FileAsset):
     """Single path travel-cost table for one routing graph."""
 
-    # R writes this Parquet for Python to read; the execution resolver removes it
-    # after that handoff and retains a run-local spill only when scenarios reuse it.
+    # The resolver can release its in-memory value when the last consumer is
+    # finished. Existing file caches remain available to other executions.
     is_execution_scoped_cost_asset = True
 
     def __init__(
@@ -75,8 +77,12 @@ class PathTravelCostsTable(TravelCostsBase, FileAsset):
 
     def get_cached_asset(self) -> pd.DataFrame:
         """Return the cached OD travel-cost table."""
-        logging.debug("Travel costs already prepared. Reusing the file : %s", str(self.cache_path))
-        return pd.read_parquet(self.cache_path)
+        resolver = get_current_asset_resolver()
+        path = self.cache_path
+        if resolver is not None:
+            path = resolver.execution_cost_output_paths.get(asset_graph_key(self), path)
+        logging.debug("Travel costs already prepared. Reusing the file : %s", str(path))
+        return pd.read_parquet(path)
 
     def create_and_get_asset(self) -> pd.DataFrame:
         """Compute this OD travel-cost table from its routing graph."""
@@ -92,22 +98,39 @@ class PathTravelCostsTable(TravelCostsBase, FileAsset):
                 'prepare_travel_costs.R'
             )
         )
-        script.run(
-            args=[
-                str(self.transport_zones.cache_path),
-                str(self.routing_graph.get()),
-                self.backend,
-                "" if self.cch_graph is None else str(self.cch_graph.get()),
-                str(self.routing_parameters.max_beeline_distance),
-                str(self.cache_path),
-            ]
+        resolver = get_current_asset_resolver()
+        output_path = (
+            resolver.temporary_asset_path(self, suffix="-path-costs.parquet")
+            if resolver is not None else self.cache_path
         )
-        return pd.read_parquet(self.cache_path)
+        try:
+            script.run(
+                args=[
+                    str(self.transport_zones.cache_path),
+                    str(self.routing_graph.get()),
+                    self.backend,
+                    "" if self.cch_graph is None else str(self.cch_graph.get()),
+                    str(self.routing_parameters.max_beeline_distance),
+                    str(output_path),
+                ]
+            )
+            if resolver is not None:
+                # R controls this write, so check its size after it finishes.
+                check_temporary_disk_limit()
+            values = pd.read_parquet(output_path)
+            if resolver is not None:
+                resolver.execution_cost_output_paths[asset_graph_key(self)] = output_path
+            return values
+        except BaseException:
+            if resolver is not None:
+                output_path.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def spill_execution_value(value: pd.DataFrame, path: pathlib.Path) -> None:
         """Spill a shared pandas cost table while preserving Parquet storage."""
-        value.to_parquet(path, index=False)
+        with temporary_file_writer(path) as file:
+            value.to_parquet(file, index=False)
 
     @staticmethod
     def load_execution_value(path: pathlib.Path) -> pd.DataFrame:

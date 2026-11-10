@@ -7,6 +7,7 @@ import polars as pl
 from ..evaluation.model_entropy import ModelEntropy
 from ..evaluation.model_loss import ModelLoss
 from ..evaluation.model_trip_count_loss import ModelTripCountLoss
+from ..evaluation.iteration_metrics import IterationMetricsHistory
 
 if TYPE_CHECKING:
     from .results import RunResults
@@ -42,12 +43,21 @@ class RunDiagnostics:
 
     def trip_count_loss(self) -> ModelTripCountLoss:
         """Return the trip-count distribution loss helper for this run."""
+        if getattr(self.results, "_defer_run_tables", False):
+            tables = self.results.run._resolve_run_tables({
+                "plan_steps": None, "iteration_metrics": None,
+            })
+            observed = tables["plan_steps"].lazy()
+            history = IterationMetricsHistory(tables["iteration_metrics"].lazy())
+        else:
+            observed = self.results.plan_steps
+            history = self.results.iteration_metrics_store
         return ModelTripCountLoss(
             expected_plan_steps=self.results.population_weighted_plan_steps,
             surveys=self.results.surveys,
             is_weekday=self.results.is_weekday,
-            observed_plan_steps=self.results.plan_steps,
-            history=self.results.iteration_metrics_store,
+            observed_plan_steps=observed,
+            history=history,
         )
 
     def step_metrics(self) -> pl.DataFrame:

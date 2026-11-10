@@ -143,8 +143,7 @@ def trace_simulation_run(function):
     @functools.wraps(function)
     def measured(*args, **kwargs):
         path = os.environ.get("MOBILITY_SIMULATION_TRACE")
-        cached = args and getattr(args[0], "_cached_result", None) is not None
-        if not path or cached or _ACTIVE_TRACE.get() is not None:
+        if not path or _ACTIVE_TRACE.get() is not None:
             return function(*args, **kwargs)
         with SimulationPerformanceTrace(path) as trace:
             with trace.step("coordinated run", None, {}):

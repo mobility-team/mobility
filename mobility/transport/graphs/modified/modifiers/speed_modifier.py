@@ -1,4 +1,5 @@
 import geopandas as gpd
+import hashlib
 import pathlib
 from typing import Annotated
 
@@ -19,6 +20,22 @@ VariableFloat = float | ParameterValue | SensitivityValue
 VariableInt = int | ParameterValue | SensitivityValue
 VariablePath = pathlib.Path | str | ParameterValue | SensitivityValue
 VariableString = str | ParameterValue | SensitivityValue
+
+
+def geometry_file_hashes(path):
+    """Fingerprint a GIS file and the sidecars belonging to a shapefile."""
+    path = pathlib.Path(path)
+    paths = sorted(path.parent.glob(f"{path.stem}.*")) if path.suffix.lower() == ".shp" else [path]
+    if path not in paths:
+        paths.append(path)
+    hashes = {}
+    for item in paths:
+        if not item.is_file():
+            hashes[str(item)] = None
+            continue
+        with item.open("rb") as file:
+            hashes[str(item)] = hashlib.file_digest(file, "sha256").hexdigest()
+    return hashes
 
 
 class BorderCrossingSpeedModifierParameters(BaseModel):
@@ -65,8 +82,11 @@ class SpeedModifier(InMemoryAsset):
     """Base class for road graph changes that can vary during a run."""
 
     def __init__(self, inputs: dict):
-        super().__init__(inputs)
         parameters = inputs["parameters"]
+        path = getattr(parameters, "zones_geometry_file_path", None)
+        if isinstance(path, (str, pathlib.Path)):
+            inputs = {**inputs, "geometry_file_hashes": geometry_file_hashes(path)}
+        super().__init__(inputs)
         for field_name in parameters.__class__.model_fields:
             setattr(self, field_name, getattr(parameters, field_name))
 
@@ -84,13 +104,18 @@ class SpeedModifier(InMemoryAsset):
             iteration=iteration,
             sensitivity_case=sensitivity_case,
         )
-        if resolved_parameters == parameters:
+        path = getattr(resolved_parameters, "zones_geometry_file_path", None)
+        geometry_unchanged = (
+            not isinstance(path, (str, pathlib.Path))
+            or self.inputs.get("geometry_file_hashes") == geometry_file_hashes(path)
+        )
+        if resolved_parameters == parameters and geometry_unchanged:
             return self
 
         constructor_inputs = {
             name: value
             for name, value in self.inputs.items()
-            if name != "parameters"
+            if name not in {"parameters", "geometry_file_hashes"}
         }
         return self.__class__(
             **constructor_inputs,

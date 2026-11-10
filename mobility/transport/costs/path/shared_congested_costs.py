@@ -9,6 +9,7 @@ import polars as pl
 from mobility.runtime.assets.graph import asset_graph_key
 from mobility.runtime.assets.resolver import get_current_asset_resolver
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
+from mobility.runtime.temporary import check_temporary_disk_limit, write_temporary_bytes
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
 
 
@@ -71,7 +72,7 @@ def prepare_shared_congested_costs(cost_assets):
         flow_paths = [str(flow.get()) for flow, _ in entries]
         manifest_path = resolver.temporary_asset_path(entries[0][1], suffix="-shared-flows.json")
         output_path = resolver.temporary_asset_path(entries[0][1], suffix="-shared-costs.parquet")
-        manifest_path.write_text(json.dumps(flow_paths), encoding="utf-8")
+        write_temporary_bytes(json.dumps(flow_paths).encode("utf-8"), manifest_path)
         travel_costs.transport_zones.get()
         graph_path = travel_costs.modified_path_graph.get()
         cch_path = travel_costs.cch_path_graph.get()
@@ -83,6 +84,10 @@ def prepare_shared_congested_costs(cost_assets):
             str(manifest_path), str(cch_path), *(str(value) for value in key[-1]),
             str(output_path), str(travel_costs.routing_parameters.max_beeline_distance),
         ])
+
+        # R writes this file directly, so its size can only be checked once
+        # the external process returns.
+        check_temporary_disk_limit()
 
         wide = pl.read_parquet(output_path)
         # Publish only after the whole batch was successfully computed. Each

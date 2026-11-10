@@ -2,6 +2,7 @@ from typing import Any
 
 import pathlib
 import shutil
+import tempfile
 
 import polars as pl
 
@@ -14,6 +15,7 @@ from mobility.runtime.assets.resolver import (
     asset_resolution_context,
     get_current_asset_resolver,
 )
+from mobility.runtime.temporary import write_temporary_bytes, write_temporary_parquet
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from mobility.trips.group_day_trips.plans.demand_subgroups import DEMAND_UNIT_COLS
@@ -140,16 +142,21 @@ class ModeSequences(InMemoryAsset):
 
     def _spill_sequences(self, sequences: pl.DataFrame, path: pathlib.Path) -> None:
         """Spill sampled rows and their stable index as one transient asset."""
-        if path.exists():
-            shutil.rmtree(path)
-        path.mkdir(parents=True)
-        sequences.write_parquet(path / "sequences.parquet")
-        if self.sequence_index is not None:
-            self.sequence_index.write_parquet(path / "sequence_index.parquet")
-        (path / "generated_mode_sequences.txt").write_text(
-            str(self.generated_mode_sequences),
-            encoding="utf-8",
-        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
+        try:
+            write_temporary_parquet(sequences, temporary_path / "sequences.parquet")
+            if self.sequence_index is not None:
+                write_temporary_parquet(self.sequence_index, temporary_path / "sequence_index.parquet")
+            write_temporary_bytes(
+                str(self.generated_mode_sequences).encode("utf-8"),
+                temporary_path / "generated_mode_sequences.txt",
+            )
+            if path.exists():
+                raise FileExistsError(f"A sequence spill already exists at {path}.")
+            temporary_path.rename(path)
+        finally:
+            shutil.rmtree(temporary_path, ignore_errors=True)
 
     def _load_spilled_sequences(self, path: pathlib.Path) -> pl.DataFrame:
         """Restore sampled rows and the matching stable index."""

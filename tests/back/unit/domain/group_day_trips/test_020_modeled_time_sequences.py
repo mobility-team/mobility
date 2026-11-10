@@ -1,6 +1,9 @@
 """Keep modeled schedules distinct without losing complete shared plans."""
 
 from dataclasses import replace
+import random
+import weakref
+from pathlib import Path
 from types import SimpleNamespace
 
 import polars as pl
@@ -11,6 +14,7 @@ from mobility.trips.group_day_trips.core.multi_scenario import CANDIDATE_ID_COLS
 from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePoolAsset, ScenarioCandidateSource
 from mobility.trips.group_day_trips.plans.candidate_plan_steps import CandidatePlanStepsAsset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.temporary import TemporaryDiskLimitExceeded
 from mobility.trips.group_day_trips.plans.time_sequences import assign_time_sequence_ids
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS, add_plan_id
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
@@ -19,7 +23,7 @@ from mobility.trips.group_day_trips.plans.compact_candidate_steps import Compact
 from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts
 from mobility.trips.group_day_trips.core.parameters import GroupDayTripsParameters, BehaviorChangeScope
 from mobility.trips.group_day_trips.core.run_state import RunState
-from mobility.trips.group_day_trips.iterations.iteration_assets import IterationStateAsset
+from mobility.trips.group_day_trips.iterations.iteration_assets import InitialIterationStateAsset, IterationStateAsset
 
 
 def _schedule():
@@ -101,6 +105,14 @@ def test_merging_candidate_chunks_preserves_complete_pool_and_history():
         pool._merge_candidate_content([first, later]), first,
     ])
     assert_frame_equal(expected, chunked)
+    assert expected.height == first.height
+    assert expected["first_seen_iteration"].to_list() == [1, 1]
+    assert expected["last_seen_iteration"].to_list() == [3, 3]
+    assert expected["last_active_iteration"].to_list() == [3, 3]
+    assert_frame_equal(
+        expected.select("seq_step_index", "activity", "from", "to", "mode").sort("seq_step_index"),
+        first.select("seq_step_index", "activity", "from", "to", "mode").sort("seq_step_index"),
+    )
 
 
 def test_compact_outer_candidates_preserve_demand_membership_and_history():
@@ -136,7 +148,7 @@ def test_compact_outer_candidates_keep_inconsistent_rows_without_loss():
     assert CompactCandidateSteps.from_frame(incomplete) is incomplete
 
 
-def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path):
+def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path, monkeypatch):
     expanded = pl.concat([
         _plan_steps().with_columns(demand_group_id=pl.lit(index, dtype=pl.UInt32))
         for index in range(30)
@@ -144,22 +156,41 @@ def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path):
     compact = CompactCandidateSteps.from_frame(expanded)
     assert isinstance(compact, CompactCandidateSteps)
     empty = pl.DataFrame()
+    rng = random.Random(732)
+    rng.random()
+    indices = pl.DataFrame({"key": [2, 1], "id": [17, 29]})
     initial = RunState(
         survey_plans=empty, survey_plan_steps=_schedule(), demand_groups=empty,
         activity_dur=empty, home_night_dur=empty, stay_home_plan=empty,
         opportunities=empty, current_plans=empty, candidate_plan_steps=compact,
-        plan_id_index=empty, destination_saturation=empty, costs=empty, start_step=1,
+        plan_id_index=indices, destination_saturation=empty, costs=empty, start_step=2,
+        rng_state=rng.getstate(), destination_sequence_index=indices,
+        mode_sequence_index=indices, time_sequence_steps=_schedule(),
     )
     asset = object.__new__(IterationStateAsset)
     asset.iteration = 1
     asset.initial_state = SimpleNamespace(get=lambda: initial)
     asset.transport_costs = SimpleNamespace(get_costs_by_od=lambda metrics: empty)
     asset._spill_state(initial, tmp_path / "state")
+    with pytest.raises(FileExistsError):
+        asset._spill_state(initial, tmp_path / "state")
     assert (tmp_path / "state" / "candidate_steps.parquet").exists()
     assert (tmp_path / "state" / "candidate_membership.parquet").exists()
     assert not (tmp_path / "state" / "candidate_plan_steps.parquet").exists()
     restored = asset._load_spilled_state(tmp_path / "state")
     assert isinstance(restored.candidate_plan_steps, CompactCandidateSteps)
+    assert restored.rng_state == initial.rng_state
+    resumed_rng = random.Random()
+    resumed_rng.setstate(restored.rng_state)
+    assert [resumed_rng.random() for _ in range(5)] == [rng.random() for _ in range(5)]
+    for name in ("plan_id_index", "destination_sequence_index", "mode_sequence_index", "time_sequence_steps"):
+        assert_frame_equal(getattr(restored, name), getattr(initial, name), check_exact=True)
+    assert restored.start_step == initial.start_step
+    assert_frame_equal(
+        add_candidate_ids(restored.candidate_plan_steps.lazy().collect()).select(CANDIDATE_ID_COLS).unique().sort(CANDIDATE_ID_COLS),
+        add_candidate_ids(compact.lazy().collect()).select(CANDIDATE_ID_COLS).unique().sort(CANDIDATE_ID_COLS),
+        check_exact=True,
+    )
     assert_frame_equal(
         restored.candidate_plan_steps.lazy().collect().sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS),
         expanded.sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS), check_exact=True,
@@ -172,6 +203,35 @@ def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path):
         checkpoint.sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS),
         expanded.sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS), check_exact=True,
     )
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    managed = tmp_path / "temporary" / "mobility-shared-assets-test"
+    managed.mkdir(parents=True)
+    monkeypatch.setenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", "100000000")
+    asset._spill_state(initial, managed / "state")
+    limited_restore = asset._load_spilled_state(managed / "state")
+    assert limited_restore.rng_state == initial.rng_state
+    monkeypatch.setenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", "1")
+    with pytest.raises(TemporaryDiskLimitExceeded):
+        asset._spill_state(initial, managed / "failed")
+    assert not (managed / "failed.tmp").exists()
+    assert not (managed / "failed").exists()
+    assert (managed / "state").exists()
+    assert not list(managed.glob(".failed-*"))
+
+    # Publishing failure or cancellation must remove staging data without
+    # touching an already available state spill.
+    monkeypatch.delenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES")
+    for spill in (asset._spill_state, InitialIterationStateAsset._spill_state):
+        for error in (OSError("publish failed"), KeyboardInterrupt()):
+            def fail_publish(source, destination):
+                raise error
+            with monkeypatch.context() as patch:
+                patch.setattr(Path, "rename", fail_publish)
+                with pytest.raises(type(error)):
+                    spill(initial, managed / "unpublished")
+            assert not (managed / "unpublished").exists()
+            assert not list(managed.glob(".unpublished-*"))
+            assert (managed / "state" / "metadata.json").exists()
 
 
 def test_catalogue_separates_plan_content_variants_and_run_history():
@@ -532,10 +592,27 @@ def test_pool_keeps_occupied_timing_when_previous_pool_has_only_survey_timing(mo
     monkeypatch.setattr(other_previous, "get", lambda: other_state)
     other_source = replace(source, run_key=2, scenario="other", previous_state=other_previous)
     monkeypatch.setattr(CandidatePlanStepsAsset, "build_iteration_candidates", lambda **kwargs: original.head(0).lazy())
+    merge = SharedCandidatePoolAsset._merge_candidate_content
+    attach = SharedCandidatePoolAsset._build_scenario_candidate_steps
+    source_frames = []
+    checked_release = []
+
+    def remember_source_frames(pool, frames):
+        source_frames[:] = [weakref.ref(frame) for frame in frames]
+        return merge(pool, frames)
+
+    def check_source_frames_released(pool, *args, **kwargs):
+        assert source_frames and all(frame() is None for frame in source_frames)
+        checked_release.append(True)
+        return attach(pool, *args, **kwargs)
+
+    monkeypatch.setattr(SharedCandidatePoolAsset, "_merge_candidate_content", remember_source_frames)
+    monkeypatch.setattr(SharedCandidatePoolAsset, "_build_scenario_candidate_steps", check_source_frames_released)
     pool = SharedCandidatePoolAsset(
         sources=[source, other_source], iteration=2, previous_candidates_by_run_key={1: original},
         previous_time_sequence_steps={1: catalog},
     ).create_and_get_asset()
+    assert checked_release
 
     keys = pool.candidate_plan_steps_by_run_key[1].select(PLAN_KEY_COLS).unique()
     assert state.current_plans.join(keys, on=PLAN_KEY_COLS, how="anti").height == 0
@@ -545,6 +622,45 @@ def test_pool_keeps_occupied_timing_when_previous_pool_has_only_survey_timing(mo
     assert other_steps["first_seen_iteration"].unique().to_list() == [2]
     active_steps = pool.candidate_plan_steps_by_run_key[1].join(state.current_plans, on=PLAN_KEY_COLS)
     assert active_steps["last_active_iteration"].unique().to_list() == [2]
+
+    # Many demand groups can share the same plan. In particular, the occupied
+    # group need not be the first group retained for shared plan content.
+    def for_group(frame, group):
+        return frame.with_columns(
+            demand_group_id=pl.lit(group, dtype=pl.UInt32),
+            csp=pl.lit("worker" if group % 2 else "other"),
+            first_seen_iteration=pl.lit(1 + group % 2, dtype=pl.UInt16),
+            last_seen_iteration=pl.lit(2 + group % 3, dtype=pl.UInt16),
+            last_active_iteration=pl.lit(group % 3, dtype=pl.UInt16),
+        )
+
+    expanded_previous = pl.concat([for_group(original, group) for group in range(1, 31)])
+    expanded_occupied = pl.concat([for_group(occupied, group) for group in range(1, 31)])
+    state.demand_groups = expanded_previous.select(
+        "demand_group_id", "demand_subgroup_id", "country", "csp"
+    ).unique().with_columns(home_zone_id=pl.lit(1, dtype=pl.Int32), allowed_activities=pl.lit(["work"]))
+    state.current_plans = expanded_occupied.filter(pl.col("demand_group_id") == 17).select(PLAN_KEY_COLS).unique()
+    state.candidate_plan_steps = expanded_occupied
+    expanded_pool = SharedCandidatePoolAsset(
+        sources=[source], iteration=2, compact=True, previous_candidates_by_run_key={1: expanded_previous},
+        previous_time_sequence_steps={1: catalog},
+    ).create_and_get_asset()
+    compact_previous = CompactCandidateSteps.from_frame(expanded_previous)
+    compact_occupied = CompactCandidateSteps.from_frame(expanded_occupied)
+    assert isinstance(compact_previous, CompactCandidateSteps)
+    assert isinstance(compact_occupied, CompactCandidateSteps)
+    state.candidate_plan_steps = compact_occupied
+    compact_pool = SharedCandidatePoolAsset(
+        sources=[source], iteration=2, compact=True, previous_candidates_by_run_key={1: compact_previous},
+        previous_time_sequence_steps={1: catalog},
+    ).create_and_get_asset()
+    assert compact_pool.candidate_ids == expanded_pool.candidate_ids
+    for name in ("candidate_replications",):
+        left, right = getattr(compact_pool, name), getattr(expanded_pool, name)
+        assert_frame_equal(left.sort(left.columns), right.sort(right.columns), check_exact=True)
+    left = compact_pool.candidate_plan_steps_by_run_key[1].collect().sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
+    right = expanded_pool.candidate_plan_steps_by_run_key[1].collect().sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
+    assert_frame_equal(left, right, check_exact=True)
 
 
 def test_pool_shares_scenarios_but_keeps_replication_choice_sets_separate(monkeypatch):
@@ -609,7 +725,26 @@ def test_pool_shares_scenarios_but_keeps_replication_choice_sets_separate(monkey
         return original_catalogue_builder(candidates)
 
     monkeypatch.setattr(PlanCatalogue, "from_candidates", classmethod(capture_catalogue_input))
+    merge = SharedCandidatePoolAsset._merge_candidate_content
+    attach = SharedCandidatePoolAsset._build_scenario_candidate_steps
+    source_frames = []
+    checked_release = []
+
+    def remember_source_frames(pool, frames):
+        source_frames[:] = [weakref.ref(frame) for frame in frames]
+        return merge(pool, frames)
+
+    def check_source_frames_released(pool, *args, **kwargs):
+        assert source_frames and all(frame() is None for frame in source_frames)
+        checked_release.append(True)
+        return attach(pool, *args, **kwargs)
+
+    monkeypatch.setattr(SharedCandidatePoolAsset, "_merge_candidate_content", remember_source_frames)
+    monkeypatch.setattr(SharedCandidatePoolAsset, "_build_scenario_candidate_steps", check_source_frames_released)
     result = SharedCandidatePoolAsset(sources=sources, iteration=1, compact=True).create_and_get_asset()
+    assert checked_release
+    monkeypatch.setattr(SharedCandidatePoolAsset, "_merge_candidate_content", merge)
+    monkeypatch.setattr(SharedCandidatePoolAsset, "_build_scenario_candidate_steps", attach)
     monkeypatch.setattr(PlanCatalogue, "from_candidates", original_catalogue_builder)
     assert len(result.candidate_ids) == 3
     assert result.candidate_replications.group_by("replication").len().sort("replication")["len"].to_list() == [2, 2]

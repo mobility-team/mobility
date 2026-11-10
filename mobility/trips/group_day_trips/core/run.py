@@ -7,7 +7,8 @@ from typing import List
 
 import polars as pl
 
-from mobility.runtime.assets.cache_schema import read_cached_parquet
+from mobility.runtime.assets.cache_schema import scan_cached_parquet
+from mobility.runtime.assets.graph import asset_graph_key, build_asset_graph
 from ..iterations import (
     InitialIterationStateAsset,
     IterationSeedsAsset,
@@ -36,7 +37,6 @@ from ..plans.activity_schedule_pool import ActivitySchedulePoolAsset
 from ..plans.demand_subgroups import DEMAND_UNIT_COLS
 from ..plans.plan_ids import PLAN_KEY_COLS
 from ..transitions.transition_schema import TRANSITION_EVENT_SCHEMA
-from .memory_logging import log_memory_checkpoint
 from .parameters import BehaviorChangeScope, GroupDayTripsParameters
 from .progress import (
     GroupDayTripsProgressReporter,
@@ -45,6 +45,9 @@ from .progress import (
 )
 from .results import RunResults
 from .run_state import RunState
+from .multi_scenario_run import MultiScenarioRunAsset
+from ..results.simulation_runner import SimulationRunner
+from ..results.results import GroupDayTripsResults
 from mobility.transport.costs.transport_costs import TransportCosts
 from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
@@ -53,12 +56,60 @@ from mobility.runtime.assets.resolver import (
     get_current_asset_resolver,
 )
 from mobility.runtime.assets.input_hashing import hash_inputs
-from mobility.runtime.parameter_values import SensitivityCase
+from mobility.runtime.parameter_values import SensitivityCase, resolve_parameter_values
 from mobility.activities import Activity
 from mobility.surveys import SurveyPlanAssets
 from mobility.surveys.mobility_survey import MobilitySurvey
 from mobility.population import Population
 from mobility.transport.modes.core.transport_mode import TransportMode
+from mobility.transport.modes.public_transport.gtfs.gtfs_data import GTFSData
+from mobility.transport.modes.public_transport.gtfs.gtfs_router import GTFSRouter
+from mobility.transport.modes.public_transport.custom_gtfs import CustomGTFS
+from mobility.transport.graphs.modified.modifiers.speed_modifier import SpeedModifier, geometry_file_hashes
+
+
+def _timetable_file_hashes(modes, scenario, sensitivity_case, n_steps):
+    """Identify external timetables used by this run, including final costs."""
+    hashes = {}
+    for mode in modes:
+        routing = getattr(mode, "routing_parameters", None)
+        sources = getattr(routing, "additional_gtfs_files", None)
+        if sources is None:
+            continue
+        for iteration in range(1, n_steps + 2):
+            selected = resolve_parameter_values(
+                sources, scenario=scenario, iteration=iteration,
+                sensitivity_case=sensitivity_case,
+            )
+            if selected is None:
+                continue
+            for source in GTFSRouter.normalize_additional_gtfs_files(selected):
+                if not isinstance(source, CustomGTFS) and source not in hashes:
+                    hashes[source] = GTFSData.file_sha256(source)
+    return hashes
+
+
+def _road_geometry_hashes(modes, scenario, sensitivity_case, n_steps):
+    """Identify road geometry files selected during this run."""
+    hashes = {}
+    for mode in modes:
+        if not isinstance(mode, Asset):
+            continue
+        graph = build_asset_graph(mode, include_node_data=False)
+        for modifier in graph.nodes:
+            if not isinstance(modifier, SpeedModifier):
+                continue
+            path = getattr(modifier.parameters, "zones_geometry_file_path", None)
+            if path is None:
+                continue
+            for iteration in range(1, n_steps + 2):
+                selected = resolve_parameter_values(
+                    path, scenario=scenario, iteration=iteration,
+                    sensitivity_case=sensitivity_case,
+                )
+                if selected is not None and str(selected) not in hashes:
+                    hashes[str(selected)] = geometry_file_hashes(selected)
+    return hashes
 
 
 @dataclass(frozen=True)
@@ -99,15 +150,21 @@ class Run(InMemoryAsset):
         )
         parameters_for_cache = parameters.model_dump(mode="python")
         parameters_for_cache["outputs"].pop("checkpoint_each_step", None)
-        # Polars 2 changes seeded hashes, so older runs and saved states must
-        # not be reused with the new candidate identities.
+        # Version changes invalidate results when candidate identity or
+        # numerical calculations used by the model change.
         run_context_inputs = {
-            "version": 30,
+            "version": 40,
             "population": population,
             "activities": activities,
             "modes": modes,
             "surveys": surveys,
             "survey_plan_assets": survey_plan_assets,
+            "timetable_file_hashes": _timetable_file_hashes(
+                modes, scenario, sensitivity_case, parameters.run.n_steps,
+            ),
+            "road_geometry_hashes": _road_geometry_hashes(
+                modes, scenario, sensitivity_case, parameters.run.n_steps,
+            ),
             "parameters": parameters_for_cache,
             "is_weekday": is_weekday,
             "enabled": enabled,
@@ -116,6 +173,8 @@ class Run(InMemoryAsset):
             "cohort": cohort_identity,
         }
         run_context_hash = hash_inputs(run_context_inputs)
+        self._timetable_hashes = run_context_inputs["timetable_file_hashes"]
+        self._geometry_hashes = run_context_inputs["road_geometry_hashes"]
         checkpoint_parameters = {
             **parameters_for_cache,
             "run": {**parameters_for_cache["run"]},
@@ -126,7 +185,7 @@ class Run(InMemoryAsset):
         checkpoint_run_context = {
             **run_context_inputs,
             "parameters": checkpoint_parameters,
-            "checkpoint_version": 7,
+            "checkpoint_version": 17,
         }
         checkpoint_run_hash = hash_inputs(checkpoint_run_context)
         self.run_context = SimpleNamespace(
@@ -240,39 +299,57 @@ class Run(InMemoryAsset):
         }
         super().__init__(inputs)
 
+    def _validate_external_inputs(self) -> None:
+        """Reject a run whose declared external files have changed in place."""
+        if (
+            _timetable_file_hashes(self.modes, self.scenario, self.sensitivity_case, self.parameters.run.n_steps)
+            != self._timetable_hashes
+            or _road_geometry_hashes(self.modes, self.scenario, self.sensitivity_case, self.parameters.run.n_steps)
+            != self._geometry_hashes
+        ):
+            raise RuntimeError(
+                "A timetable or road geometry file changed after this experiment was created. "
+                "Create a new experiment and result request to use the changed input."
+            )
+
     def get(self, *args, **kwargs) -> RunState:
         """Resolve the final iteration state while reporting run progress."""
-        if self.coordinated_run_asset is not None:
-            self._raise_if_disabled()
-            if is_group_day_trips_progress_active():
-                coordinated = self.coordinated_run_asset.get()
-            else:
-                day_type = "weekday" if self.is_weekday else "weekend"
-                label = (
-                    f"GroupDayTrips {day_type} coordinated runs="
-                    f"{len(self.coordinated_run_asset.run_keys)}"
-                )
+        self._raise_if_disabled()
+        self._ensure_coordinator()
+        direct_request = not getattr(self.coordinated_run_asset, "_is_running", False)
+        if direct_request:
+            day_type = "weekday" if self.is_weekday else "weekend"
+            label = (
+                f"GroupDayTrips {day_type} coordinated runs="
+                f"{len(self.coordinated_run_asset.run_keys)}"
+            )
+            with asset_resolution_context() as resolver:
+                if is_group_day_trips_progress_active():
+                    return SimulationRunner(requests=[], resolver=resolver).execute_final_state(self)
                 with GroupDayTripsProgressReporter(
-                    label=label,
-                    total_iterations=self.parameters.run.n_steps,
+                    label=label, total_iterations=self.parameters.run.n_steps,
                 ):
-                    coordinated = self.coordinated_run_asset.get()
-            return coordinated.final_states_by_run_key[self.coordinated_run_key]
-
+                    return SimulationRunner(requests=[], resolver=resolver).execute_final_state(self)
         if is_group_day_trips_progress_active():
-            return super().get(*args, **kwargs)
+            coordinated = self.coordinated_run_asset.get()
+        else:
+            day_type = "weekday" if self.is_weekday else "weekend"
+            label = (
+                f"GroupDayTrips {day_type} coordinated runs="
+                f"{len(self.coordinated_run_asset.run_keys)}"
+            )
+            with GroupDayTripsProgressReporter(
+                label=label,
+                total_iterations=self.parameters.run.n_steps,
+            ):
+                coordinated = self.coordinated_run_asset.get()
+        return coordinated.final_states_by_run_key[self.coordinated_run_key]
 
-        day_type = "weekday" if self.is_weekday else "weekend"
-        label = (
-            f"GroupDayTrips {day_type} "
-            f"scenario={self.scenario} sensitivity={self.sensitivity_case_id} "
-            f"repl={self.replication}"
-        )
-        with GroupDayTripsProgressReporter(
-            label=label,
-            total_iterations=self.parameters.run.n_steps,
-        ):
-            return super().get(*args, **kwargs)
+    def _ensure_coordinator(self) -> None:
+        """Give a directly constructed run the same engine as an experiment."""
+        if self.coordinated_run_asset is None:
+            self.coordinated_run_key = 0
+            self.coordinated_run_asset = MultiScenarioRunAsset({0: self})
 
     def _build_iteration_state_assets(
         self,
@@ -373,23 +450,8 @@ class Run(InMemoryAsset):
         return state_assets
 
     def create_and_get_asset(self) -> RunState:
-        """Run the requested iteration chain and return its final state."""
-        self._raise_if_disabled()
-        resolver = get_current_asset_resolver()
-        if resolver is not None:
-            resolver.retain_assets_shared_by_roots(self.iteration_state_assets)
-        logging.debug(
-            "Starting PopulationGroupDayTrips run: run_hash=%s is_weekday=%s iterations=%s",
-            self.inputs_hash,
-            str(self.is_weekday),
-            str(self.parameters.run.n_steps),
-        )
-        log_memory_checkpoint("run:start")
-        get_group_day_trips_progress().step("Running model iterations")
-        state = self.final_iteration_state.get()
-        self._assert_current_plan_steps_are_available(state)
-        logging.debug("PopulationGroupDayTrips run finished: run_hash=%s", self.inputs_hash)
-        return state
+        """Run values must be requested through the simulation runner."""
+        raise RuntimeError("Request a run with run.get() so its cohort is simulated together.")
 
     def _raise_if_disabled(self) -> None:
         """Fail fast when callers try to access a disabled run."""
@@ -446,18 +508,6 @@ class Run(InMemoryAsset):
             ),
             model_entropy=ModelEntropy(expected_plan_steps=expected_inputs.trip_pattern_distribution),
         )
-
-    def _assert_current_plan_steps_are_available(self, state: RunState) -> None:
-        """Fail fast if final step-level plans were not produced by the iteration loop."""
-        if state.current_plan_steps is not None:
-            return
-
-        raise RuntimeError(
-            "Run reached finalization without `current_plan_steps`. "
-            "This usually means the run resumed after the final saved iteration "
-            "but before final outputs were materialized."
-        )
-
 
     def _build_final_costs(self) -> pl.DataFrame:
         """Build final OD costs for a requested plan-step table."""
@@ -517,19 +567,27 @@ class Run(InMemoryAsset):
         if self.parameters.outputs.cache_step_events is False:
             return pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA)
 
+        coordinator = getattr(self, "coordinated_run_asset", None)
+        active_result = getattr(coordinator, "_active_result", None)
+        completed_steps = (
+            active_result.current_iteration if active_result is not None
+            else len(self.iteration_state_assets)
+        )
         transition_paths = [
             state_asset.transition_events_asset.cache_path
-            for state_asset in self.iteration_state_assets
-            if state_asset.transition_events_asset.cache_path.exists()
+            for state_asset in self.iteration_state_assets[:completed_steps]
         ]
-        if not transition_paths:
+        missing_steps = [
+            step for step, path in enumerate(transition_paths, start=1) if not path.exists()
+        ]
+        if not transition_paths or missing_steps:
             raise RuntimeError(
-                "Run finished without persisted transition events. "
-                "Call `remove()` to clear cached artifacts and rerun from scratch."
+                "Transition events are missing for completed simulation steps "
+                f"{missing_steps}. Run the experiment again to regenerate them."
             )
 
         transitions = [
-            read_cached_parquet(
+            scan_cached_parquet(
                 path,
                 table_name="transition_events",
                 required_schema=TRANSITION_EVENT_SCHEMA,
@@ -546,7 +604,120 @@ class Run(InMemoryAsset):
         iteration: int | None = None,
     ) -> pl.DataFrame:
         """Return one requested run table as a Polars DataFrame."""
+        self._raise_if_disabled()
+        self._table_asset(table_name, iteration=iteration)  # Validate the request.
+        if table_name not in {"opportunities", "demand_groups"}:
+            self._ensure_coordinator()
+        if (
+            self.coordinated_run_asset is not None
+            and not getattr(self.coordinated_run_asset, "_is_running", False)
+            and table_name not in {"opportunities", "demand_groups"}
+            and (iteration is None or table_name in {"plans", "plan_steps", "costs", "iteration_metrics"})
+        ):
+            return self._resolve_run_tables({table_name: iteration})[table_name]
         return self._table_asset(table_name, iteration=iteration).get()
+
+    def _resolve_run_tables(self, tables: dict[str, int | None]) -> dict[str, pl.DataFrame]:
+        """Request this run's tables together while its full cohort advances."""
+        self._ensure_coordinator()
+        results = GroupDayTripsResults(
+            run=lambda *args, **kwargs: self,
+            day_type="weekday" if self.is_weekday else "weekend",
+            scenarios=[self.scenario],
+            sensitivity_cases=[self.sensitivity_case],
+            n_replications=self.replication + 1,
+            replication=self.replication,
+        )
+        requests = {
+            name: results.tables._table(
+                name,
+                iterations=(
+                    "all" if name == "iteration_metrics" and iteration is None
+                    else "last" if iteration is None else iteration
+                ),
+            )
+            for name, iteration in tables.items()
+        }
+        values = results.get_all(**requests)
+        try:
+            return {name: self._unscoped_run_table(name, table) for name, table in values.items()}
+        finally:
+            for table in values.values():
+                table.close()
+
+    @staticmethod
+    def _unscoped_run_table(name, table) -> pl.DataFrame:
+        """Collect a result table using the direct-run column conventions."""
+        result = table.collect()
+        if name == "adaptive_search_diagnostics":
+            added_columns = ["day_type"]
+            if "replication" in result.columns:
+                result = result.with_columns(pl.col("replication").cast(pl.Int64))
+        else:
+            added_columns = ["scenario", "sensitivity_case", "day_type", "replication"]
+        if name == "iteration_metrics":
+            result = result.with_columns(pl.col("step").cast(pl.UInt16))
+        elif name == "transitions":
+            result = result.with_columns(pl.col("step").cast(pl.UInt32))
+        if name not in {"iteration_metrics", "transitions"}:
+            added_columns.append("step")
+        return result.drop(added_columns, strict=False)
+
+    @staticmethod
+    def _resolve_cohort_run_tables(runs, table_names):
+        """Request final tables for related scenario runs in one execution."""
+        coordinator = runs[0].coordinated_run_asset
+        if coordinator is None or any(run.coordinated_run_asset is not coordinator for run in runs):
+            raise ValueError("Related run tables require one shared scenario cohort.")
+        requests = {}
+        for run in runs:
+            results = GroupDayTripsResults(
+                run=lambda *args, _run=run, **kwargs: _run,
+                day_type="weekday" if run.is_weekday else "weekend",
+                scenarios=[run.scenario], sensitivity_cases=[run.sensitivity_case],
+                n_replications=run.replication + 1, replication=run.replication,
+            )
+            for name in table_names:
+                requests[(run.coordinated_run_key, name)] = results.tables._table(name, iterations="last")
+        with asset_resolution_context() as resolver:
+            values = {}
+            try:
+                values = SimulationRunner(requests=list(requests.values()), resolver=resolver).execute()
+                return {
+                    key: Run._unscoped_run_table(key[1], values[asset_graph_key(request)])
+                    for key, request in requests.items()
+                }
+            finally:
+                for table in values.values():
+                    table.close()
+                resolver.release_transient_values()
+
+    @staticmethod
+    def _resolve_diagnostic_step_tables(runs, table_name: str, iterations: list[int], *, include_final_costs=False):
+        """Stream selected steps for related runs in one cohort execution."""
+        resolver = get_current_asset_resolver()
+        if resolver is None:
+            raise RuntimeError("A diagnostic table batch needs an active resolver.")
+        requests = []
+        cost_requests = []
+        for run in runs:
+            results = GroupDayTripsResults(
+                run=lambda *args, _run=run, **kwargs: _run,
+                day_type="weekday" if run.is_weekday else "weekend",
+                scenarios=[run.scenario], sensitivity_cases=[run.sensitivity_case],
+                n_replications=run.replication + 1, replication=run.replication,
+            )
+            requests.append(results.tables._table(table_name, iterations=iterations))
+            if include_final_costs:
+                cost_requests.append(results.tables.costs())
+        values = SimulationRunner(requests=[*requests, *cost_requests], resolver=resolver).execute()
+        step_tables = {run.coordinated_run_key: values[asset_graph_key(request)]
+                       for run, request in zip(runs, requests)}
+        if not include_final_costs:
+            return step_tables
+        cost_tables = {run.coordinated_run_key: values[asset_graph_key(request)]
+                       for run, request in zip(runs, cost_requests)}
+        return step_tables, cost_tables
 
     def _table_asset(
         self,
@@ -554,8 +725,9 @@ class Run(InMemoryAsset):
         *,
         iteration: int | None = None,
     ) -> "RunTableAsset":
-        """Build the transient output used by the result planner."""
+        """Build the transient output used by the simulation runner."""
         supported_tables = {
+            "plans",
             "plan_steps",
             "opportunities",
             "costs",
@@ -584,44 +756,30 @@ class Run(InMemoryAsset):
                 )
         return RunTableAsset(self, table_name=table_name, iteration=iteration)
 
-    def _all_tables(self) -> dict[str, pl.LazyFrame]:
-        """Build every run table for the legacy RunResults helper."""
-        self._raise_if_disabled()
-        table_names = (
-            "iteration_metrics",
-            "plan_steps",
-            "opportunities",
-            "costs",
-            "transitions",
-            "demand_groups",
-        )
-        return {
-            name: self._table_asset(name).get().lazy()
-            for name in table_names
-        }
-
     def iteration_table(self, table_name: str, iteration: int) -> pl.LazyFrame:
         """Return one table for a completed model iteration."""
-        if table_name not in {"plan_steps", "costs"}:
+        if table_name not in {"plans", "plan_steps", "costs"}:
             raise ValueError(
-                "Saved iteration tables currently support only `plan_steps` and `costs`. "
+                "Saved iteration tables currently support `plans`, `plan_steps` and `costs`. "
                 f"Received `{table_name}`."
             )
-        coordinated_states = None
-        if getattr(self, "coordinated_run_asset", None) is not None:
-            coordinated_states = self.coordinated_run_asset.get().states_by_run_key[
-                self.coordinated_run_key
-            ]
-        available_iterations = (
-            len(coordinated_states)
-            if coordinated_states is not None
-            else len(self.iteration_state_assets)
-        )
-        if iteration < 1 or iteration > available_iterations:
+        self._ensure_coordinator()
+        if (
+            getattr(self, "coordinated_run_asset", None) is not None
+            and not getattr(self.coordinated_run_asset, "_is_running", False)
+        ):
+            return self.table(table_name, iteration=iteration).lazy()
+        coordinated = self.coordinated_run_asset.get()
+        live_iteration = coordinated.current_iteration
+        if not live_iteration or coordinated.current_state_assets is None:
+            raise RuntimeError("No simulation step is currently available.")
+        if iteration < 1 or iteration > live_iteration:
             raise ValueError(
                 "iteration should be between 1 and the run's number of iterations. "
                 f"Received {iteration}."
             )
+        if iteration != live_iteration:
+            raise RuntimeError("Only the current simulation step is available during execution.")
 
         if table_name == "costs":
             costs_asset = self.iteration_transport_cost_assets[iteration - 1]
@@ -629,11 +787,9 @@ class Run(InMemoryAsset):
                 ["cost", "distance", "time", "ghg_emissions_per_trip"]
             ).lazy()
 
-        state = (
-            coordinated_states[iteration - 1].get()
-            if coordinated_states is not None
-            else self.iteration_state_assets[iteration - 1].get()
-        )
+        state = coordinated.current_state_assets[self.coordinated_run_key].get()
+        if table_name == "plans":
+            return state.current_plans.lazy()
         if state.current_plan_steps is None:
             raise RuntimeError(
                 "PopulationGroupDayTrips iteration state has no current plan steps "
@@ -643,16 +799,14 @@ class Run(InMemoryAsset):
 
 
     def results(self) -> RunResults:
-        """Return the analysis helper bound to transient run output tables."""
-        with asset_resolution_context():
-            cached = self._all_tables()
-
+        """Return analysis helpers that request each run table when needed."""
+        self._raise_if_disabled()
+        self._ensure_coordinator()
         expected_inputs = self._get_expected_diagnostics_inputs()
         observed_calibration_plan_steps = ObservedCalibrationPlanSteps(
             run=self,
             is_weekday=self.is_weekday,
         )
-        iteration_metrics = IterationMetricsHistory(cached["iteration_metrics"])
         observed_trip_pattern_distribution = ObservedTripPatternDistribution(
             run=self,
             is_weekday=self.is_weekday,
@@ -662,21 +816,22 @@ class Run(InMemoryAsset):
             inputs_hash=self.inputs_hash,
             is_weekday=self.is_weekday,
             transport_zones=self.population.inputs["transport_zones"],
-            demand_groups=cached["demand_groups"],
-            plan_steps=cached["plan_steps"],
-            opportunities=cached["opportunities"],
-            costs=cached["costs"],
-            population_weighted_plan_steps=expected_inputs.population_weighted_plan_steps.get(),
+            demand_groups=None,
+            plan_steps=None,
+            opportunities=None,
+            costs=None,
+            population_weighted_plan_steps=expected_inputs.population_weighted_plan_steps,
             expected_calibration_plan_steps=expected_inputs.calibration_plan_steps,
             observed_calibration_plan_steps=observed_calibration_plan_steps,
-            iteration_metrics=iteration_metrics,
+            iteration_metrics=None,
             expected_entropy_plan_steps=expected_inputs.trip_pattern_distribution,
             observed_entropy_plan_steps=observed_trip_pattern_distribution,
-            transitions=cached["transitions"],
+            transitions=None,
             surveys=self.surveys,
             modes=self.modes,
             parameters=self.parameters,
             run=self,
+            defer_run_tables=True,
         )
 
     def remove(self) -> None:
@@ -723,7 +878,7 @@ class RunTableAsset(InMemoryAsset):
         if iteration is not None:
             if run.coordinated_run_asset is not None:
                 dependencies = (run.coordinated_run_asset,)
-            elif table_name == "plan_steps":
+            elif table_name in {"plans", "plan_steps"}:
                 dependencies = (run.iteration_state_assets[iteration - 1],)
             elif table_name == "costs":
                 dependencies = (run.iteration_transport_cost_assets[iteration - 1],)
@@ -734,6 +889,7 @@ class RunTableAsset(InMemoryAsset):
                     f"Iteration-scoped output `{table_name}` is not supported."
                 )
         elif run.coordinated_run_asset is not None and table_name in {
+            "plans",
             "plan_steps",
             "costs",
             "transitions",
@@ -770,9 +926,13 @@ class RunTableAsset(InMemoryAsset):
             dependencies = (run.final_iteration_state,)
         super().__init__(
             {
-                "version": 4,
-                # Scenario views share a coordinator but return different rows.
+                "version": 5,
+                # Members share a coordinator but return different rows.
                 "scenario": run.scenario,
+                "sensitivity_case": run.sensitivity_case,
+                "replication": run.replication,
+                "run_context_hash": run.run_context.inputs_hash,
+                "coordinated_run_key": run.coordinated_run_key,
                 "dependencies": dependencies,
                 "table_name": table_name,
                 "iteration": iteration,
@@ -782,33 +942,36 @@ class RunTableAsset(InMemoryAsset):
     def create_and_get_asset(self) -> pl.DataFrame:
         """Compute only the table selected by this output request."""
         self.run._raise_if_disabled()
+        if self.table_name not in {"opportunities", "demand_groups"}:
+            self.run._ensure_coordinator()
+        if (
+            self.run.coordinated_run_asset is not None
+            and not getattr(self.run.coordinated_run_asset, "_is_running", False)
+            and self.table_name not in {"opportunities", "demand_groups"}
+        ):
+            return self.run._resolve_run_tables({self.table_name: self.iteration})[self.table_name]
         resolver = get_current_asset_resolver()
         if resolver is not None:
             resolver.retain_assets_shared_by_roots([self])
         if self.iteration is not None:
             if self.table_name == "iteration_metrics":
                 builder = self.run._build_iteration_metrics_builder()
-                if self.run.coordinated_run_asset is not None:
-                    state_asset = self.run.coordinated_run_asset.get().states_by_run_key[
-                        self.run.coordinated_run_key
-                    ][self.iteration - 1]
-                    state = state_asset.get()
-                    iteration_number = self.iteration
-                else:
-                    state_asset = self.run.iteration_state_assets[self.iteration - 1]
-                    state = state_asset.get()
-                    iteration_number = state_asset.iteration
+                coordinated = self.run.coordinated_run_asset.get()
+                if self.iteration != coordinated.current_iteration:
+                    raise RuntimeError("Only the current simulation step is available during execution.")
+                state_asset = coordinated.current_state_assets[self.run.coordinated_run_key]
+                state = state_asset.get()
                 row = builder.history_row(
-                    iteration=iteration_number,
+                    iteration=self.iteration,
                     current_plans=state.current_plans,
                     current_plan_steps=state.current_plan_steps,
                     destination_saturation=state.destination_saturation,
                 )
                 return IterationMetricsHistory.from_records([row])
-            if self.table_name not in {"plan_steps", "costs"}:
+            if self.table_name not in {"plans", "plan_steps", "costs"}:
                 raise ValueError(
                     "Iteration-scoped run tables currently support "
-                    "`plan_steps` and `costs`."
+                    "`plans`, `plan_steps` and `costs`."
                 )
             try:
                 return self.run.iteration_table(
@@ -837,31 +1000,7 @@ class RunTableAsset(InMemoryAsset):
                     resolver.release_in_memory_asset(initial_asset)
 
         if self.table_name == "iteration_metrics":
-            get_group_day_trips_progress().step("Preparing iteration diagnostics")
-            builder = self.run._build_iteration_metrics_builder()
-            records = []
-            if self.run.coordinated_run_asset is not None:
-                iteration_state_assets = (
-                    self.run.coordinated_run_asset.get().states_by_run_key[
-                        self.run.coordinated_run_key
-                    ]
-                )
-                iteration_states = [state_asset.get() for state_asset in iteration_state_assets]
-            else:
-                iteration_states = [
-                    state_asset.get()
-                    for state_asset in self.run.iteration_state_assets
-                ]
-            for iteration, iteration_state in enumerate(iteration_states, start=1):
-                records.append(
-                    builder.history_row(
-                        iteration=iteration,
-                        current_plans=iteration_state.current_plans,
-                        current_plan_steps=iteration_state.current_plan_steps,
-                        destination_saturation=iteration_state.destination_saturation,
-                    )
-                )
-            return IterationMetricsHistory.from_records(records)
+            raise RuntimeError("Request step diagnostics through the simulation runner.")
         if self.table_name == "adaptive_search_diagnostics":
             state = self.run.get()
             if state.adaptive_search_diagnostics is None:

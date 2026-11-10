@@ -136,7 +136,7 @@ def build_generation_targets(
         profiled_units
         .filter(pl.col("allowed_activities").list.len() > 0)
         .group_by("home_zone_id", "utility_profile_id")
-        .agg(population_weight=pl.col("n_persons").sum())
+        .agg(population_weight=pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum())
     )
     if activity_draws_by_zone_profile is None:
         requests = weighted_profiles.join(
@@ -209,7 +209,7 @@ class AdaptiveGenerationScheduler:
             scenario: {
                 int(row["home_zone_id"]): float(row["population_weight"] or 0.0)
                 for row in targets.requests.group_by("home_zone_id").agg(
-                    pl.col("population_weight").sum()
+                    pl.col("population_weight").sort().implode().list.sum()
                 ).iter_rows(named=True)
             }
             for scenario, targets in targets_by_scenario.items()
@@ -412,7 +412,7 @@ def allocation_effect_by_zone(
             plans.lazy()
             .join(context_groups.select(context_columns).lazy(), on=DEMAND_UNIT_COLS)
             .group_by(join_columns)
-            .agg(pl.col("n_persons").sum())
+            .agg(pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum())
             .collect(engine="streaming")
         )
 
@@ -425,15 +425,17 @@ def allocation_effect_by_zone(
             current=pl.col("current").fill_null(0.0),
         )
         .group_by(target_columns)
-        .agg(change=(pl.col("current") - pl.col("previous")).abs().sum())
+        .agg(change=(pl.col("current") - pl.col("previous")).abs().sort().implode().list.sum())
     )
     population = context_groups.group_by(target_columns).agg(
-        population=pl.col("n_persons").sum()
+        population=pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum()
     )
     changes = changes.join(population, on=target_columns, how="left").with_columns(
         effect=(pl.col("change") / (2.0 * pl.col("population").clip(lower_bound=1.0)))
     )
     return {
         int(row["home_zone_id"]): float(row["effect"] or 0.0)
-        for row in changes.group_by("home_zone_id").agg(pl.col("effect").sum()).iter_rows(named=True)
+        for row in changes.group_by("home_zone_id").agg(
+            pl.col("effect").sort().implode().list.sum()
+        ).iter_rows(named=True)
     }

@@ -7,6 +7,7 @@ import polars as pl
 from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.assets.resolver import get_current_asset_resolver
+from mobility.runtime.temporary import temporary_disk_limit, temporary_file_writer
 
 
 class VehicleODFlowsAsset(InMemoryAsset):
@@ -26,7 +27,7 @@ class VehicleODFlowsAsset(InMemoryAsset):
         road_flow_parameters: list[dict[str, Any]],
     ):
         inputs = {
-            "schema_version": 2,
+            "schema_version": 4,
             "person_od_flows_by_mode": person_od_flows_by_mode,
             "road_flow_parameters": [
                 {
@@ -77,14 +78,19 @@ class VehicleODFlowsAsset(InMemoryAsset):
             df = (
                 pl.concat(vehicle_flows, how="vertical")
                 .group_by(["from", "to"])
-                .agg(pl.col("vehicle_volume").sum())
+                .agg(pl.col("vehicle_volume").cast(pl.Float64).sort().implode().list.sum())
                 .select(["from", "to", "vehicle_volume"])
+                .sort(["from", "to"])
                 .to_pandas()
             )
         else:
             df = pd.DataFrame(columns=["from", "to", "vehicle_volume"])
 
-        df.to_parquet(self.cache_path, index=False)
+        if temporary_disk_limit() is None:
+            df.to_parquet(self.cache_path, index=False)
+        else:
+            with temporary_file_writer(self.cache_path) as file:
+                df.to_parquet(file, index=False)
         logging.debug("Transient road vehicle OD flows are ready.")
 
         return self.cache_path

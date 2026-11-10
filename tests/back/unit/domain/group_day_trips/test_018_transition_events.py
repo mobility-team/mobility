@@ -1,11 +1,35 @@
+from pathlib import Path
+
 import polars as pl
+import pytest
 
 from mobility.trips.group_day_trips.transitions.transition_events import (
     add_transition_plan_details,
+    TransitionEventsAsset,
 )
 from mobility.trips.group_day_trips.transitions.transition_schema import (
     TRANSITION_EVENT_SCHEMA,
 )
+
+
+@pytest.mark.parametrize("error", [OSError("write failed"), KeyboardInterrupt()])
+def test_interrupted_event_write_preserves_previous_file(tmp_path, monkeypatch, error):
+    asset = TransitionEventsAsset(
+        run_key="run", is_weekday=True, iteration=1, base_folder=tmp_path,
+        transition_events=pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA).lazy(),
+    )
+    asset.create_and_get_asset()
+    original = asset.cache_path.read_bytes()
+
+    def fail_after_partial_write(frame, path, *args, **kwargs):
+        Path(path).write_bytes(b"partial")
+        raise error
+
+    monkeypatch.setattr(pl.LazyFrame, "sink_parquet", fail_after_partial_write)
+    with pytest.raises(type(error)):
+        asset.create_and_get_asset()
+    assert asset.cache_path.read_bytes() == original
+    assert not list(tmp_path.glob(f".{asset.cache_path.name}.*.tmp"))
 
 
 def test_transition_plan_details_match_cache_schema_with_float32_activity_times():

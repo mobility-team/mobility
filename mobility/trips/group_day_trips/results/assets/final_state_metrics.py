@@ -42,6 +42,13 @@ class TripCountByDemandGroup(InMemoryAsset):
     @staticmethod
     def _iteration_values(plan_steps_asset: Asset, demand_groups_asset: Asset) -> pl.DataFrame:
         """Reduce one iteration before moving to the next state."""
+        return TripCountByDemandGroup.combine_replications(
+            TripCountByDemandGroup.iteration_by_replication(plan_steps_asset, demand_groups_asset)
+        )
+
+    @staticmethod
+    def iteration_by_replication(plan_steps_asset: Asset, demand_groups_asset: Asset) -> pl.DataFrame:
+        """Keep each seed's demand-group totals for the final reduction."""
         plan_steps = plan_steps_asset.get()
         demand_groups = demand_groups_asset.get()
         dimensions = _demand_group_dimensions(demand_groups)
@@ -65,9 +72,18 @@ class TripCountByDemandGroup(InMemoryAsset):
                 n_trips_per_person=pl.col("n_trips") / pl.col("n_persons").clip(1e-12),
             )
         )
+        return per_replication.collect(engine="streaming")
+
+    @staticmethod
+    def combine_replications(per_replication: pl.DataFrame) -> pl.DataFrame:
+        """Average counts and per-person values across matching demand groups."""
+        dimensions = [
+            column for column in ("home_zone_id", "csp", "n_cars")
+            if column in per_replication.columns
+        ]
         output_columns = RESULT_COLUMNS + dimensions
-        metric = (
-            per_replication
+        return (
+            per_replication.lazy()
             .group_by(output_columns)
             .agg(
                 pl.col("n_persons").mean().alias("n_persons"),
@@ -80,8 +96,6 @@ class TripCountByDemandGroup(InMemoryAsset):
             .sort(output_columns)
             .collect(engine="streaming")
         )
-
-        return metric
 
 
 class Immobility(InMemoryAsset):
@@ -141,6 +155,14 @@ class Immobility(InMemoryAsset):
         demand_groups_asset: Asset,
     ) -> pl.DataFrame:
         """Reduce one iteration before moving to the next state."""
+        return self.combine_replications(
+            self.iteration_by_replication(plan_steps_asset, demand_groups_asset)
+        )
+
+    def iteration_by_replication(
+        self, plan_steps_asset: Asset, demand_groups_asset: Asset,
+    ) -> pl.DataFrame:
+        """Keep each seed's immobile and total population until all seeds finish."""
         plan_steps = plan_steps_asset.get()
         demand_groups = demand_groups_asset.get()
         zones = _transport_zones_with_country(self.transport_zones)
@@ -173,9 +195,14 @@ class Immobility(InMemoryAsset):
             )
             .with_columns(p_immobility=pl.col("n_persons_imm") / pl.col("n_persons").clip(1e-12))
         )
+        return per_replication.collect(engine="streaming")
+
+    @staticmethod
+    def combine_replications(per_replication: pl.DataFrame) -> pl.DataFrame:
+        """Average immobility across seeds without pooling their populations."""
         output_columns = RESULT_COLUMNS + ["country", "csp"]
         return (
-            per_replication
+            per_replication.lazy()
             .group_by(output_columns)
             .agg(
                 pl.col("n_persons_imm").mean().alias("n_persons_imm"),

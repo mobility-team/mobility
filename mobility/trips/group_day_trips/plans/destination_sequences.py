@@ -1,5 +1,6 @@
 import pathlib
 import shutil
+import tempfile
 import logging
 from typing import Any
 
@@ -12,6 +13,7 @@ from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.graph import asset_graph_key
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.assets.resolver import asset_resolution_context, get_current_asset_resolver
+from mobility.runtime.temporary import write_temporary_parquet
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from .debug_logs import (
     log_destination_sequence_diagnostics,
@@ -190,12 +192,17 @@ class DestinationSequences(InMemoryAsset):
 
     def _spill_sequences(self, sequences: pl.DataFrame, path: pathlib.Path) -> None:
         """Spill sampled rows and their stable index together."""
-        if path.exists():
-            shutil.rmtree(path)
-        path.mkdir(parents=True)
-        sequences.write_parquet(path / "sequences.parquet")
-        if self.sequence_index is not None:
-            self.sequence_index.write_parquet(path / "sequence_index.parquet")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
+        try:
+            write_temporary_parquet(sequences, temporary_path / "sequences.parquet")
+            if self.sequence_index is not None:
+                write_temporary_parquet(self.sequence_index, temporary_path / "sequence_index.parquet")
+            if path.exists():
+                raise FileExistsError(f"A sequence spill already exists at {path}.")
+            temporary_path.rename(path)
+        finally:
+            shutil.rmtree(temporary_path, ignore_errors=True)
 
 
     def _load_spilled_sequences(self, path: pathlib.Path) -> pl.DataFrame:

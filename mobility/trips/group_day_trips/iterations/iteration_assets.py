@@ -4,6 +4,7 @@ import pathlib
 import pickle
 import random
 import shutil
+import tempfile
 from typing import Any
 
 import polars as pl
@@ -14,10 +15,12 @@ from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.cache_schema import read_cached_parquet
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.temporary import write_temporary_bytes, write_temporary_parquet
 from mobility.runtime.assets.resolver import (
     asset_resolution_context,
     get_current_asset_resolver,
 )
+from mobility.runtime.assets.graph import asset_graph_key
 from mobility.activities.activity import (
     resolve_activity_arrival_time_rigidity,
     resolve_activity_parameters,
@@ -125,7 +128,7 @@ class InitialIterationStateAsset(InMemoryAsset):
             sensitivity_case=sensitivity_case,
         )
         inputs = {
-            "version": 6,
+            "version": 9,
             "is_weekday": is_weekday,
             "sensitivity_case": sensitivity_case,
             "population": population,
@@ -184,30 +187,32 @@ class InitialIterationStateAsset(InMemoryAsset):
     @staticmethod
     def _spill_state(state: RunState, path: pathlib.Path) -> None:
         """Write every initial table to temporary Parquet files."""
-        temporary_path = path.with_name(f"{path.name}.tmp")
-        if temporary_path.exists():
-            shutil.rmtree(temporary_path)
-        temporary_path.mkdir(parents=True)
-        none_tables = []
-        for table_name in _INITIAL_STATE_TABLES:
-            table = getattr(state, table_name)
-            if table is None:
-                none_tables.append(table_name)
-            else:
-                if isinstance(table, CompactCandidateSteps):
-                    table.lazy().sink_parquet(temporary_path / f"{table_name}.parquet")
-                else:
-                    table.write_parquet(temporary_path / f"{table_name}.parquet")
-        metadata = {
-            "none_tables": none_tables,
-            "start_step": state.start_step,
-            "rng_state": state.rng_state,
-        }
-        with (temporary_path / "metadata.json").open("w", encoding="utf-8") as file:
-            json.dump(metadata, file, sort_keys=True)
         if path.exists():
-            shutil.rmtree(path)
-        temporary_path.replace(path)
+            raise FileExistsError(f"A state spill already exists: {path}")
+        temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
+        try:
+            none_tables = []
+            for table_name in _INITIAL_STATE_TABLES:
+                table = getattr(state, table_name)
+                if table is None:
+                    none_tables.append(table_name)
+                else:
+                    if isinstance(table, CompactCandidateSteps):
+                        table = table.lazy()
+                    write_temporary_parquet(table, temporary_path / f"{table_name}.parquet")
+            metadata = {
+                "none_tables": none_tables,
+                "start_step": state.start_step,
+                "rng_state": state.rng_state,
+            }
+            write_temporary_bytes(
+                json.dumps(metadata, sort_keys=True).encode("utf-8"),
+                temporary_path / "metadata.json",
+            )
+            temporary_path.rename(path)
+        except BaseException:
+            shutil.rmtree(temporary_path, ignore_errors=True)
+            raise
 
     @staticmethod
     def _load_spilled_state(path: pathlib.Path) -> RunState:
@@ -342,7 +347,7 @@ class PersonODFlowsByModeAsset(InMemoryAsset):
         self.iteration = self.source_iteration
         self.previous_state = previous_state
         inputs = {
-            "version": 1,
+            "version": 3,
             "source_iteration": int(source_iteration),
             "previous_state": previous_state,
         }
@@ -371,7 +376,10 @@ class PersonODFlowsByModeAsset(InMemoryAsset):
                     mode=pl.col("mode").cast(pl.String),
                 )
                 .group_by(["from", "to", "mode"])
-                .agg(flow_volume=pl.col("n_persons").sum().cast(pl.Float64))
+                # A different plan-row order must not change the sum sent to
+                # traffic assignment through floating-point rounding.
+                .agg(flow_volume=pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum())
+                .sort(["from", "to", "mode"])
             )
 
         logging.debug(
@@ -693,7 +701,7 @@ class IterationStateAsset(Asset):
         self.coordinated_rng_state: object | None = None
         self.coordinated_time_sequence_steps: pl.DataFrame | None = None
         inputs = {
-            "version": 11,
+            "version": 22,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -788,10 +796,9 @@ class IterationStateAsset(Asset):
 
     def _spill_state(self, state: RunState, path: pathlib.Path) -> None:
         """Write shared plan tables to parquet and the RNG tuple to JSON."""
-        temporary_path = path.with_name(f"{path.name}.tmp")
-        if temporary_path.exists():
-            shutil.rmtree(temporary_path)
-        temporary_path.mkdir(parents=True)
+        if path.exists():
+            raise FileExistsError(f"A state spill already exists: {path}")
+        temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
         table_names = [
             "current_plans",
             "current_plan_steps",
@@ -802,23 +809,27 @@ class IterationStateAsset(Asset):
             "mode_sequence_index",
             "time_sequence_steps",
         ]
-        metadata = {"none_tables": [], "rng_state": state.rng_state}
-        for table_name in table_names:
-            table = getattr(state, table_name)
-            if table is None:
-                metadata["none_tables"].append(table_name)
-            else:
-                if isinstance(table, CompactCandidateSteps):
-                    table.steps.write_parquet(temporary_path / "candidate_steps.parquet")
-                    table.membership.write_parquet(temporary_path / "candidate_membership.parquet")
-                    metadata["compact_candidate_columns"] = table.columns
+        try:
+            metadata = {"none_tables": [], "rng_state": state.rng_state}
+            for table_name in table_names:
+                table = getattr(state, table_name)
+                if table is None:
+                    metadata["none_tables"].append(table_name)
                 else:
-                    table.write_parquet(temporary_path / f"{table_name}.parquet")
-        with (temporary_path / "metadata.json").open("w", encoding="utf-8") as file:
-            json.dump(metadata, file, sort_keys=True)
-        if path.exists():
-            shutil.rmtree(path)
-        temporary_path.replace(path)
+                    if isinstance(table, CompactCandidateSteps):
+                        write_temporary_parquet(table.steps, temporary_path / "candidate_steps.parquet")
+                        write_temporary_parquet(table.membership, temporary_path / "candidate_membership.parquet")
+                        metadata["compact_candidate_columns"] = table.columns
+                    else:
+                        write_temporary_parquet(table, temporary_path / f"{table_name}.parquet")
+            write_temporary_bytes(
+                json.dumps(metadata, sort_keys=True).encode("utf-8"),
+                temporary_path / "metadata.json",
+            )
+            temporary_path.rename(path)
+        except BaseException:
+            shutil.rmtree(temporary_path, ignore_errors=True)
+            raise
 
     def _load_spilled_state(self, path: pathlib.Path) -> RunState:
         """Restore a spilled state using invariant tables from iteration zero."""
@@ -902,11 +913,13 @@ class IterationStateAsset(Asset):
         if self.resume_checkpoint_loader is not None:
             try:
                 checkpoint = self.resume_checkpoint_loader()
-            except (FileNotFoundError, RuntimeError):
-                logging.warning(
-                    "Iteration %s checkpoint is incomplete; recomputing this iteration.",
-                    self.iteration,
-                )
+            except (FileNotFoundError, RuntimeError) as exc:
+                # Once a cohort has started from checkpoints, silently
+                # recomputing only one member could change its shared search.
+                raise RuntimeError(
+                    f"Could not restore the checkpoint for step {self.iteration}; "
+                    "the cohort cannot safely continue from this saved state."
+                ) from exc
 
         # Checkpoints contain only the changing plan state. Read invariant
         # tables from the initial state so a restart can skip earlier updates.
@@ -959,6 +972,9 @@ class IterationStateAsset(Asset):
                     self.coordinated_evaluation, current_plans_before_transition, previous_plan_id_index,
                 )
             )
+            # The expanded evaluation owns the inputs needed by this update;
+            # the compact search evaluation has no further consumer here.
+            self.coordinated_evaluation = None
             current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index, time_sequence_steps = self.updater.get_new_plans(
                 current_plans_before_transition,
                 current_plan_steps_before_transition,
@@ -981,6 +997,9 @@ class IterationStateAsset(Asset):
                 shared_candidate_plan_steps=self.coordinated_candidate_plan_steps,
                 precomputed_evaluation=precomputed_evaluation,
             )
+            # Do not retain scoring and timing tables while compacting the
+            # returned candidates for the next simulation step.
+            del precomputed_evaluation
             costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
             destination_saturation = self.updater.get_destination_saturation(
                 current_plan_steps,
@@ -1028,6 +1047,11 @@ class IterationStateAsset(Asset):
             if self.transition_events_asset is None:
                 raise RuntimeError("Transition event persistence was not planned.")
             self.transition_events_asset.transition_events = transition_events
+            # A recomputed step must replace an old or rejected event file.
+            self.transition_events_asset.hash_path.unlink(missing_ok=True)
+            resolver = get_current_asset_resolver()
+            if resolver is not None:
+                resolver.prepared_asset_keys.discard(asset_graph_key(self.transition_events_asset))
             self.transition_events_asset.get()
 
         logging.debug("Group-day-trips iteration %s is ready.", str(self.iteration))

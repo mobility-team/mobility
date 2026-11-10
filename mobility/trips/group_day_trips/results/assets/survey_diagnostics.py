@@ -4,12 +4,13 @@ import polars as pl
 
 from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.resolver import get_current_asset_resolver
 from mobility.trips.group_day_trips.evaluation.calibration_plan_steps import (
     distance_bin_expr,
     time_bin_expr,
 )
 
-from .person_metrics import RESULT_COLUMNS, SCOPE_COLUMNS
+from .person_metrics import RESULT_COLUMNS, SCOPE_COLUMNS, add_demand_group_columns
 
 JOINT_DIMENSIONS = ["country", "activity", "mode", "distance_bin", "time_bin"]
 
@@ -39,16 +40,19 @@ class SurveyReferenceComparison(InMemoryAsset):
         plan_steps: Asset,
         reference_plan_steps: Asset,
         transport_zones: Asset,
+        demand_groups: Asset | None = None,
     ) -> None:
         self.plan_steps = plan_steps
         self.reference_plan_steps = reference_plan_steps
         self.transport_zones = transport_zones
+        self.demand_groups = demand_groups
 
         inputs = {
             "version": 5,
             "plan_steps": plan_steps,
             "reference_plan_steps": reference_plan_steps,
             "transport_zones": transport_zones,
+                "demand_groups": demand_groups,
         }
         super().__init__(inputs)
 
@@ -102,9 +106,19 @@ class SurveyReferenceComparison(InMemoryAsset):
 
         return _with_string_dimensions(comparison)
 
+    def get(self):
+        resolver = get_current_asset_resolver()
+        if resolver is not None and getattr(resolver, "result_coordinator", None) is not None:
+            return self.create_and_get_asset()
+        return super().get()
+
     def _model_plan_steps(self) -> pl.LazyFrame:
         """Return model plan steps with country and calibration bins."""
         plan_steps = self.plan_steps.get()
+        if self.demand_groups is not None:
+            plan_steps = add_demand_group_columns(
+                plan_steps, self.demand_groups.get(), ["home_zone_id"]
+            )
         required_columns = {
             "activity_seq_id",
             "home_zone_id",
@@ -291,3 +305,9 @@ class SurveyReferenceMarginal(InMemoryAsset):
         )
 
         return marginal
+
+    def get(self):
+        resolver = get_current_asset_resolver()
+        if resolver is not None and getattr(resolver, "result_coordinator", None) is not None:
+            return self.create_and_get_asset()
+        return super().get()

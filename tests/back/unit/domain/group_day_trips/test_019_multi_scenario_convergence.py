@@ -85,32 +85,38 @@ def test_inner_allocation_preserves_plan_ids_for_the_behavior_update(monkeypatch
 
 @pytest.mark.parametrize("table_name", ["plan_steps", "costs", "iteration_metrics", "adaptive_search_diagnostics"])
 def test_coordinated_result_tables_keep_separate_scenario_cache_entries(monkeypatch, table_name):
-    """Sharing a simulation must not make a project reuse baseline output rows."""
+    """Sharing a simulation must not mix scenario or sensitivity-case rows."""
     coordinator = InMemoryAsset({"cohort": "shared"})
     costs = InMemoryAsset({"costs": "shared"})
     runs = [
         SimpleNamespace(
             scenario=scenario,
+            sensitivity_case=case,
+            replication=0,
+            run_context=SimpleNamespace(inputs_hash="shared-context"),
+            coordinated_run_key=index,
             coordinated_run_asset=coordinator,
             iteration_transport_cost_assets=[costs],
         )
-        for scenario in ["default", "project"]
+        for index, (scenario, case) in enumerate([
+            ("default", None), ("project", None),
+            ("default", "changed"), ("project", "changed"),
+        ])
     ]
     tables = [RunTableAsset(run, table_name=table_name) for run in runs]
     monkeypatch.setattr(
         RunTableAsset,
         "create_and_get_asset",
-        lambda table: pl.DataFrame({"value": [1 if table.run.scenario == "default" else 2]}),
+        lambda table: pl.DataFrame({"value": [table.run.coordinated_run_key]}),
     )
 
     with asset_resolution_context():
-        assert tables[0].get()["value"].item() == 1
-        assert tables[1].get()["value"].item() == 2
+        assert [table.get()["value"].item() for table in tables] == [0, 1, 2, 3]
 
 
 @pytest.mark.parametrize("manifest_ready,ready_scenarios", [(False, 2), (True, 1), (True, 2)])
 def test_checkpoint_resume_requires_the_complete_scenario_cohort(
-    tmp_path, manifest_ready, ready_scenarios
+    tmp_path, manifest_ready, ready_scenarios, monkeypatch
 ):
     """Resume every scenario together, or clear every checkpoint loader."""
     parameters = GroupDayTripsParameters(outputs={"checkpoint_each_step": True})
@@ -125,12 +131,14 @@ def test_checkpoint_resume_requires_the_complete_scenario_cohort(
                 run_inputs_hash=scenario,
                 base_folder=tmp_path,
                 get_resume_iteration=lambda maximum: 1,
+                has_complete_checkpoints=lambda count: True,
             ),
             iteration_state_assets=[SimpleNamespace(iteration=1, resume_checkpoint_loader=None)],
         )
         for run_key, scenario in enumerate(["default", "project"])
     }
     coordinator = MultiScenarioRunAsset(runs)
+    monkeypatch.setattr(coordinator, "_checkpoint_file_hashes", lambda iteration: {})
 
     # A cohort marker is written only after both scenario states are saved.
     if manifest_ready:

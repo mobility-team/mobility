@@ -17,11 +17,16 @@ The returned object gives access to:
 - `results.diagnostics`,
 - `results.tables`.
 
-Metric and table methods declare deferred requests. Use `results.get_all(...)` when several outputs should share scenario work. It plans those requests together, reduces metric values as each step becomes available, and releases run state after its last planned use. A request's `.get()` is convenient when you need only that one output; it runs only that request. Metrics are cached, while raw tables remain transient.
+A request containing only `results.tables.demand_groups(...)` reads the initial
+demand groups without running the behavior simulation.
+
+Metric and table methods declare deferred requests. Use `results.get_all(...)` when several outputs should share scenario work. For supported requests, it reduces metrics and writes tables as each step becomes available. Some undeclared dependencies may require separate executions. A request's `.get()` is convenient when you need only that one output; it runs only that request. Metrics are cached, while raw tables remain transient. Selected step numbers must be within the configured run.
 
 For example, request a metric and a raw table together:
 
 ```python
+import polars as pl
+
 outputs = results.get_all(
     trip_counts=results.metrics.trip_count(by_variable="mode"),
     travel_distances=results.metrics.travel_distance(by_variable="mode"),
@@ -33,15 +38,67 @@ outputs = results.get_all(
 trip_count_table = outputs["trip_counts"]
 travel_distance_table = outputs["travel_distances"]
 plan_steps = outputs["plan_steps"]
+car_steps = plan_steps.filter(pl.col("mode") == "car").collect()
+plan_steps.save("plan_steps.parquet")
+```
+
+To inspect requests before executing them, pass them to `results.explain(...)`.
+The returned dictionary lists each replication's full scenario cohort and seed,
+the selected steps and inputs, current cache status, and planned result storage.
+For each replication it also describes the main simulation work and names the
+outputs requested at each step. It does not start a simulation.
+
+```python
+description = results.explain(
+    trips=results.metrics.trip_count(by_variable="mode"),
+    plan_steps=results.tables.plan_steps(columns=["scenario", "mode"]),
+)
 ```
 
 Use `.get()` for one output:
 
 ```python
 plan_steps = results.tables.plan_steps().get()
+table = plan_steps.collect()
 ```
 
-Use `population_trips.run(...)` when you need to execute or inspect one concrete run. Call `run.table("plan_steps")` to get a raw output table as a Polars DataFrame; the table stays transient. Use `population_trips.results(...)` when you want indicators.
+Raw table results own temporary files in the project data folder. The files are
+removed when the result and its views are no longer referenced; call `close()`
+to remove them sooner. `filter`, `select` and `sort` return views that share the
+same lifetime. `group_by(...).agg(...)` also returns an owned view, so an
+aggregation can run without collecting the full table first:
+
+```python
+trips_by_mode = (
+    plan_steps.filter(pl.col("activity_seq_id") != 0)
+    .group_by("mode")
+    .agg(trips=pl.col("n_persons").sum())
+    .collect()
+)
+```
+
+`collect()` returns an independent Polars DataFrame; `save()`
+writes a Parquet file that remains after cleanup. Large tables can require
+substantial temporary disk space. When requesting specific `columns`, every
+name must be present in the selected table; an unknown name raises an error.
+
+To limit Mobility's managed temporary files, set `temporary_disk_limit_gb`
+when configuring Mobility, for example `mobility.set_params(temporary_disk_limit_gb=20)`.
+The limit is shared by open result tables and other
+managed temporary files in the project. Mobility stops a managed write and
+cleans up the incomplete result when the limit would be exceeded. There is no
+limit unless this setting or the `MOBILITY_TEMPORARY_DISK_LIMIT_BYTES`
+environment variable is provided.
+
+Polars may also write its own spill files, which are not covered by this limit.
+The shared congestion calculation writes its temporary output from R; Mobility
+checks its size after R finishes, so that write can temporarily exceed the limit.
+Map-animation frames are checked after each frame is rendered and can likewise
+exceed the limit briefly while a frame is being written.
+Other external-tool scratch files are not fully tracked. Check available disk
+space as well, especially for large tables.
+
+Use `population_trips.run(...)` when you need to execute or inspect one concrete run. Call `run.table("plan_steps")` to get a raw output table as a Polars DataFrame; the table stays transient. `run.results()` creates analysis helpers without running the model; each analysis requests the tables it needs. Use `population_trips.results(...)` when you want to request several indicators or tables together.
 
 Most result metrics are population-weighted. Trip counts sum the represented people attached to simulated trips. Distance, time, cost, and emissions multiply each trip quantity by the represented-person weight before aggregation. When several replications are selected, metric values are averaged across replications and standard-deviation columns describe the spread across replications.
 
@@ -212,16 +269,16 @@ If the setup has several replications, `population_trips.results(...)` selects a
 
 ## Detailed Travel Costs
 
-Use `travel_costs` when you need the OD-by-mode travel-cost table itself. It is a persisted result, separate from the aggregated `metrics.cost(...)` indicator:
+Use `tables.costs` when you need the OD-by-mode travel-cost table itself, separate from the aggregated `metrics.cost(...)` indicator:
 
 ```python
-last_iteration_costs = results.metrics.travel_costs(steps="last").get()
-one_iteration_costs = results.metrics.travel_costs(steps=3).get()
-selected_costs = results.metrics.travel_costs(steps=[1, 3, 5]).get()
-all_iteration_costs = results.metrics.travel_costs(steps="all").get()
+last_iteration_costs = results.tables.costs(steps="last").get()
+one_iteration_costs = results.tables.costs(steps=3).get()
+selected_costs = results.tables.costs(steps=[1, 3, 5]).get()
+all_iteration_costs = results.tables.costs(steps="all").get()
 ```
 
-The returned value is a Polars `LazyFrame`. Collect it only when you need the rows in memory. For `steps="all"`, Mobility writes the selected step tables into one cached Parquet result as the run advances.
+The returned table owns temporary files and can be collected or saved as described above. Pass `columns=[...]` to keep only the columns you need. `results.metrics.travel_costs(...)` is an alias for the same transient table request.
 
 ## First Results Checklist
 

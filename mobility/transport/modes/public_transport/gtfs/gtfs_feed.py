@@ -12,6 +12,8 @@ import pandas as pd
 import polars as pl
 from shapely.geometry.base import BaseGeometry
 
+from mobility.runtime.temporary import temporary_file_writer
+
 
 class GTFSFeed:
     """One GTFS ZIP file containing routes, vehicle trips and service calendars.
@@ -119,7 +121,7 @@ class GTFSFeed:
                 digest.update(filename.encode())
                 with (
                     archive.open(paths[filename]) as source,
-                    (self.folder / filename).open("wb") as target,
+                    temporary_file_writer(self.folder / filename) as target,
                 ):
                     for chunk in iter(lambda: source.read(1024 * 1024), b""):
                         digest.update(chunk)

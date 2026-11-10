@@ -38,7 +38,7 @@ def release_scoped_run_tables(
 
         resolver.release_in_memory_asset(asset)
         # Demand groups are invariant across iterations and are reused by every
-        # metric. Keep their small table in this resolver until the plan ends.
+        # metric. Keep their small table in this resolver until the runner ends.
         if asset.table_name == "demand_groups":
             continue
         for run_index, output_assets in enumerate(asset.run_output_assets):
@@ -63,6 +63,7 @@ class ScopedRunTable(InMemoryAsset):
         table_name: str,
         iterations: IterationSelector = "last",
         columns: list[str] | tuple[str, ...] | None = None,
+        strict_columns: bool = False,
     ) -> None:
         run_contexts = results.run_contexts
         if not run_contexts:
@@ -72,6 +73,7 @@ class ScopedRunTable(InMemoryAsset):
         self.run_contexts = list(run_contexts)
         self.table_name = table_name
         self.columns = None if columns is None else tuple(dict.fromkeys(columns))
+        self.strict_columns = strict_columns
         self.iterations = results._validate_iterations(iterations)
         self.selected_iterations = results.selected_iterations(iterations)
         self.uses_last_iteration = results.uses_last_iteration(iterations)
@@ -101,10 +103,10 @@ class ScopedRunTable(InMemoryAsset):
         self.run_output_assets = []
         for run_index, run_context in enumerate(self.run_contexts):
             run_iterations = self.selected_iterations_by_run[run_index]
-            if self.table_name == "iteration_metrics":
+            if self.table_name in {"plans", "iteration_metrics"}:
                 output_assets = [
                     run_context.run._table_asset(
-                        "iteration_metrics",
+                        self.table_name,
                         iteration=iteration,
                     )
                     for iteration in run_iterations
@@ -153,6 +155,8 @@ class ScopedRunTable(InMemoryAsset):
                 for run_context in self.run_contexts
             ),
         }
+        if strict_columns:
+            inputs["strict_columns"] = True
         super().__init__(inputs)
 
     @property
@@ -164,14 +168,24 @@ class ScopedRunTable(InMemoryAsset):
             for asset in output_assets
         )
 
-    def get(self) -> pl.LazyFrame:
-        """Resolve a standalone table through the result planner."""
-        if get_current_asset_resolver() is not None:
+    def get(self):
+        """Return a transient result table, or an internal scan during execution."""
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            coordinator = getattr(resolver, "result_coordinator", None)
+            if coordinator is not None:
+                # Lane-scoped reads must not reuse a table cached for another
+                # seed. The runner consumes these views before the step ends.
+                resolver.lane_scoped_tables.append(self)
+                return pl.concat([
+                    self.compute_iteration(iteration, coordinator=coordinator)
+                    for iteration in self.selected_iterations
+                ], how="vertical_relaxed")
             return super().get()
         return self.results.get_all(table=self)["table"]
 
-    def compute_iteration(self, iteration: int) -> pl.LazyFrame:
-        """Build this table's scoped rows for one selected iteration."""
+    def compute_iteration(self, iteration: int, *, coordinator=None) -> pl.LazyFrame:
+        """Build scoped rows for one step, optionally for one replication lane."""
         if iteration not in self.selected_iterations:
             raise ValueError(
                 f"Iteration {iteration} is not selected for {self.table_name}."
@@ -181,6 +195,8 @@ class ScopedRunTable(InMemoryAsset):
         for run_index, (run_context, output_assets) in enumerate(
             zip(self.run_contexts, self.run_output_assets)
         ):
+            if coordinator is not None and run_context.run.coordinated_run_asset is not coordinator:
+                continue
             if not self.uses_last_iteration and iteration not in self.selected_iterations_by_run[run_index]:
                 continue
             if self.table_name == "demand_groups":
@@ -194,7 +210,7 @@ class ScopedRunTable(InMemoryAsset):
                 output_asset = output_assets[output_index]
 
             # Resolve the actual stopping point only during execution, inside
-            # the planner's shared resolver. Later planned iterations are empty.
+            # the runner's shared resolver. Later requested iterations are empty.
             last_iteration = self.results._last_iteration_for_run(run_context.run)
             empty_iteration = not self.uses_last_iteration and iteration > last_iteration
             if output_asset.iteration is not None and (
@@ -203,7 +219,19 @@ class ScopedRunTable(InMemoryAsset):
                 output_asset = run_context.run._table_asset(
                     self.table_name, iteration=last_iteration
                 )
-            table = output_asset.get().lazy()
+            active_coordinator = getattr(run_context.run, "coordinated_run_asset", None)
+            if (
+                self.table_name == "transitions"
+                and active_coordinator is not None
+                and getattr(active_coordinator, "_is_running", False)
+            ):
+                # Transition events are already saved per step when enabled.
+                # Scan them directly instead of collecting their full history.
+                run_context.run.get()
+                transitions = run_context.run._build_transitions()
+                table = transitions.lazy() if isinstance(transitions, pl.DataFrame) else transitions
+            else:
+                table = output_asset.get().lazy()
             if empty_iteration:
                 table = table.limit(0)
             if self.table_name in {"iteration_metrics", "transitions"}:
@@ -250,6 +278,13 @@ class ScopedRunTable(InMemoryAsset):
         if self.columns is None:
             return table
         schema = table.collect_schema().names()
+        if self.strict_columns:
+            missing = [column for column in self.columns if column not in schema]
+            if missing:
+                raise ValueError(
+                    f"Columns not available in {self.table_name}: {missing}. "
+                    f"Available columns: {schema}."
+                )
         columns = [column for column in self.columns if column in schema]
         return table.select(columns)
 

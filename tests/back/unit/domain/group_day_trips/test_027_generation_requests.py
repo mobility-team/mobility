@@ -107,6 +107,29 @@ def test_full_replanning_targets_every_zone_activity_and_estimates_draw_effort()
     assert activity_cells == {(10, "home"), (10, "school"), (20, "school")}
 
 
+def test_generation_weights_are_stable_when_demand_rows_are_reordered():
+    groups = _demand_groups().with_columns(
+        home_zone_id=pl.lit(10),
+        n_persons=pl.Series([1.14693223016641, 0.0005996553909933203, 0.5443508129577577, 0.00007824598691254914]),
+    )
+
+    class SameProfile:
+        def get_utility_profiles(self, demand_groups, population_segments):
+            return demand_groups.select("demand_group_id", "demand_subgroup_id").with_columns(
+                utility_profile_id=pl.lit(1)
+            ), None
+
+    def requests(rows):
+        return build_generation_targets(
+            demand_groups=rows, current_plans=_current_plans(),
+            activity_schedule_pool=_schedule_pool(), transport_costs=SameProfile(),
+            population_segments=[], parameters=_generation_parameters(BehaviorChangeScope.FULL_REPLANNING),
+            iteration=1,
+        ).requests
+
+    assert requests(groups).equals(requests(groups.reverse()))
+
+
 @pytest.mark.parametrize(
     ("scope", "expected_effort"),
     [

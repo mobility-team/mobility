@@ -17,7 +17,7 @@ from mobility.runtime.assets.graph import (
     is_file_asset,
 )
 from mobility.runtime.project_cache import record_file_asset_use
-from mobility.runtime.temporary import temporary_folder
+from mobility.runtime.temporary import temporary_folder, write_temporary_parquet
 
 
 _current_asset_resolver: ContextVar["AssetResolver | None"] = ContextVar(
@@ -64,9 +64,11 @@ class AssetResolver:
         self.in_memory_assets: dict[tuple, Asset] = {}
         self.shared_asset_keys: set[tuple] = set()
         self.spilled_asset_keys: set[tuple] = set()
+        self.pinned_asset_keys: set[tuple] = set()
         self._temporary_value_paths: dict[tuple, pathlib.Path] = {}
         self.execution_cost_assets: dict[tuple, Asset] = {}
         self.execution_cost_consumers: dict[tuple, set[tuple]] = {}
+        self.execution_cost_output_paths: dict[tuple, pathlib.Path] = {}
         self._execution_cost_consumer_stack: list[tuple] = []
         self._spill_directory: tempfile.TemporaryDirectory | None = None
 
@@ -91,14 +93,9 @@ class AssetResolver:
         self._register_current_execution_cost_use(asset)
 
         def compute():
-            try:
-                return self.get(asset, *args, **kwargs)
-            finally:
-                # Cost tables are useful while this resolver is active. Their
-                # Parquet files are only needed for the R/Python handoff or the
-                # initial cache read, so remove them as soon as that read ends.
-                asset.remove()
-                self.prepared_asset_keys.discard(asset_graph_key(asset))
+            # The file may be a valid cache shared with another execution.
+            # Releasing this resolver's value must not remove that cache.
+            return self.get(asset, *args, **kwargs)
 
         return self.get_in_memory_asset(
             asset,
@@ -196,7 +193,7 @@ class AssetResolver:
                     self._temporary_value_paths[asset_key] = spill_path
             elif spill_path is not None and isinstance(value, pl.DataFrame):
                 try:
-                    value.write_parquet(spill_path)
+                    write_temporary_parquet(value, spill_path)
                 except OSError:
                     logging.warning(
                         "Could not spill shared %s table to temporary disk; "
@@ -215,12 +212,25 @@ class AssetResolver:
     def release_in_memory_asset(self, asset: Asset) -> None:
         """Release a transient value while keeping any shared disk spill."""
         asset_key = asset_graph_key(asset)
+        if asset_key in self.pinned_asset_keys:
+            return
         if (
             asset_key not in self.shared_asset_keys
             or asset_key in self.spilled_asset_keys
         ):
             self.in_memory_values.pop(asset_key, None)
             self.in_memory_assets.pop(asset_key, None)
+
+    @contextmanager
+    def pin_in_memory_assets(self, assets: list[Asset]) -> Iterator[None]:
+        """Keep current values live until all step consumers have finished."""
+        keys = {asset_graph_key(asset) for asset in assets}
+        added = keys - self.pinned_asset_keys
+        self.pinned_asset_keys.update(added)
+        try:
+            yield
+        finally:
+            self.pinned_asset_keys.difference_update(added)
 
     def release_transient_values(self) -> None:
         """Release resolved values, keeping only shared values that could not spill."""
@@ -232,6 +242,7 @@ class AssetResolver:
         if self._spill_directory is not None:
             self._spill_directory.cleanup()
             self._spill_directory = None
+        self.execution_cost_output_paths.clear()
 
     @contextmanager
     def execution_cost_consumer(self, consumer: Asset) -> Iterator[None]:
@@ -448,7 +459,7 @@ class AssetResolver:
                 self.execution_cost_consumers.pop(asset_key, None)
 
     def _discard_execution_cost_asset(self, asset_key: tuple) -> None:
-        asset = self.execution_cost_assets.pop(asset_key, None)
+        self.execution_cost_assets.pop(asset_key, None)
         self.in_memory_values.pop(asset_key, None)
         self.in_memory_assets.pop(asset_key, None)
         self.spilled_asset_keys.discard(asset_key)
@@ -457,8 +468,9 @@ class AssetResolver:
         spill_path = self._temporary_value_paths.pop(asset_key, None)
         if spill_path is not None and spill_path.exists():
             spill_path.unlink()
-        if asset is not None and is_file_asset(asset):
-            asset.remove()
+        output_path = self.execution_cost_output_paths.pop(asset_key, None)
+        if output_path is not None:
+            output_path.unlink(missing_ok=True)
 
     def _prepare_dependency_graph(
         self,
@@ -569,7 +581,10 @@ class AssetResolver:
         elif cache_path is not None:
             pathlib.Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
         value = asset.create_and_get_asset(*args, **kwargs)
-        asset.update_hash(asset.inputs_hash)
+        # An execution-owned cost file is not the persistent cache identified
+        # by this asset's hash marker.
+        if asset_graph_key(asset) not in self.execution_cost_output_paths:
+            asset.update_hash(asset.inputs_hash)
         logging.debug(
             "Asset %s (%s) is ready.",
             asset.__class__.__name__,
