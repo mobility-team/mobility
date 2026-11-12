@@ -4,6 +4,7 @@ import json
 import filecmp
 import hashlib
 import logging
+import pathlib
 from importlib import resources
 
 import polars as pl
@@ -13,6 +14,7 @@ from mobility.runtime.assets.resolver import get_current_asset_resolver
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.runtime.temporary import check_temporary_disk_limit, write_temporary_bytes
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
+from mobility.transport.modes.carpool.detailed.detailed_carpool_travel_costs import DetailedCarpoolTravelCosts
 
 
 def prepare_shared_congested_costs(cost_assets):
@@ -20,7 +22,7 @@ def prepare_shared_congested_costs(cost_assets):
 
     The resolver owns the results for this execution only. Scenarios whose
     road network, routing settings or assignment parameters differ are never
-    batched together. Single scenarios retain the ordinary cost path.
+    batched together. A matching carpool mode also receives the assigned graph.
     """
     resolver = get_current_asset_resolver()
     if resolver is None:
@@ -30,6 +32,11 @@ def prepare_shared_congested_costs(cost_assets):
     for iteration_costs in cost_assets:
         if not iteration_costs.congestion_flows.should_update_costs:
             continue
+        carpool_graphs = set()
+        for mode in iteration_costs.modes:
+            costs = mode.inputs["generalized_cost"].inputs.get("travel_costs")
+            if isinstance(costs, DetailedCarpoolTravelCosts):
+                carpool_graphs.add(costs.car_travel_costs.inputs_hash)
         for mode in iteration_costs.modes:
             generalized_cost = mode.inputs["generalized_cost"]
             travel_costs = generalized_cost.inputs.get("travel_costs")
@@ -50,24 +57,29 @@ def prepare_shared_congested_costs(cost_assets):
                 travel_costs.routing_parameters.max_beeline_distance,
                 settings,
             )
-            groups.setdefault(key, []).append((iteration_costs, travel_costs))
+            groups.setdefault(key, []).append(
+                (iteration_costs, travel_costs, travel_costs.inputs_hash in carpool_graphs)
+            )
 
     for key, members in groups.items():
-        if len(members) < 2:
-            continue
         entries = []
-        seen = set()
-        for iteration_costs, travel_costs in members:
+        seen = {}
+        for iteration_costs, travel_costs, needs_graph in members:
             flow = iteration_costs.congestion_flows.get()
             if flow is None:
                 continue
-            table = travel_costs.asset_for_flow_asset(flow).congested_costs
+            variant = travel_costs.asset_for_flow_asset(flow)
+            table = variant.congested_costs
             table_key = asset_graph_key(table)
-            if table_key in seen or table_key in resolver.in_memory_values:
+            if table_key in seen:
+                if needs_graph:
+                    entries[seen[table_key]][2] = variant.congested_path_graph
                 continue
-            seen.add(table_key)
-            entries.append((flow, table))
-        if len(entries) < 2:
+            if table_key in resolver.in_memory_values:
+                continue
+            seen[table_key] = len(entries)
+            entries.append([flow, table, variant.congested_path_graph if needs_graph else None])
+        if not entries:
             continue
 
         # Different scenario assets can write identical sorted OD flows. Only
@@ -76,7 +88,7 @@ def prepare_shared_congested_costs(cost_assets):
         # collision cannot cause different flows to share a result.
         unique_flows = []
         groups_by_hash = {}
-        for flow, table in entries:
+        for flow, table, graph in entries:
             flow_path = flow.get()
             file = open(flow_path, "rb")
             try:
@@ -89,16 +101,29 @@ def prepare_shared_congested_costs(cost_assets):
                 None,
             )
             if match is None:
-                match = (flow_path, [])
+                match = (flow_path, [], [])
                 groups_by_hash.setdefault(digest, []).append(match)
                 unique_flows.append(match)
             match[1].append(table)
+            if graph is not None:
+                match[2].append(graph)
 
         travel_costs = members[0][1]
-        flow_paths = [str(path) for path, _ in unique_flows]
+        flow_paths = [str(path) for path, _, _ in unique_flows]
         manifest_path = resolver.temporary_asset_path(entries[0][1], suffix="-shared-flows.json")
         output_path = resolver.temporary_asset_path(entries[0][1], suffix="-shared-costs.parquet")
+        graph_manifest_path = resolver.temporary_asset_path(entries[0][1], suffix="-shared-graphs.json")
         write_temporary_bytes(json.dumps(flow_paths).encode("utf-8"), manifest_path)
+        graph_paths = []
+        for _, _, graphs in unique_flows:
+            if graphs:
+                graph_dir = resolver.temporary_asset_path(graphs[0], suffix="-shared-graph")
+                graph_path = graph_dir / "congested" / (graphs[0].inputs_hash + "-congested-path-graph")
+                graph_path.parent.mkdir(parents=True, exist_ok=True)
+                graph_paths.append(str(graph_path))
+            else:
+                graph_paths.append("")
+        write_temporary_bytes(json.dumps(graph_paths).encode("utf-8"), graph_manifest_path)
         travel_costs.transport_zones.get()
         graph_path = travel_costs.modified_path_graph.get()
         cch_path = travel_costs.cch_path_graph.get()
@@ -111,7 +136,7 @@ def prepare_shared_congested_costs(cost_assets):
         )).run(args=[
             str(graph_path), str(travel_costs.transport_zones.cache_path), "True",
             str(manifest_path), str(cch_path), *(str(value) for value in key[-1]),
-            str(output_path), str(travel_costs.routing_parameters.max_beeline_distance),
+            str(output_path), str(travel_costs.routing_parameters.max_beeline_distance), str(graph_manifest_path),
         ])
 
         # R writes this file directly, so its size can only be checked once
@@ -119,19 +144,24 @@ def prepare_shared_congested_costs(cost_assets):
         check_temporary_disk_limit()
 
         wide = pl.read_parquet(output_path)
+        for graph_path in graph_paths:
+            if graph_path and not pathlib.Path(graph_path).is_file():
+                raise RuntimeError("The congestion calculation did not produce the requested graph.")
         # Publish only after the whole batch was successfully computed. Each
         # view has the same logical key and schema as the ordinary path table.
         views = []
-        for index, (_, tables) in enumerate(unique_flows):
+        for index, (_, tables, graphs) in enumerate(unique_flows):
             view = wide.select(
                 "from", "to",
                 pl.col(f"distance_{index}").alias("distance"),
                 pl.col(f"time_{index}").alias("time"),
             ).filter(pl.col("distance").is_not_null() & pl.col("time").is_not_null())
-            views.append((tables, view.to_pandas()))
-        for tables, view in views:
+            views.append((tables, graphs, view.to_pandas(), graph_paths[index]))
+        for tables, graphs, view, graph_path in views:
             for index, table in enumerate(tables):
                 table_key = asset_graph_key(table)
                 # Each asset previously owned its own mutable pandas table.
                 resolver.in_memory_values[table_key] = view if index == 0 else view.copy(deep=True)
                 resolver.in_memory_assets[table_key] = table
+            for graph in graphs:
+                resolver.congested_graph_paths[asset_graph_key(graph)] = pathlib.Path(graph_path)

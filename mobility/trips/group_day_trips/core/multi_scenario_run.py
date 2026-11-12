@@ -95,8 +95,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
         self._is_running = False
         super().__init__(
             {
-                # Inactive physical plans now expire per replication.
-                "version": 23,
+                # Congestion costs and state identities follow the whole search.
+                "version": 24,
                 "run_contexts": [
                     {
                         "run_key": run_key,
@@ -180,8 +180,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
             )
             for run_key in self.run_keys
         }
-        if len(final_cost_assets) > 1:
-            prepare_shared_congested_costs(list(final_cost_assets.values()))
+        prepare_shared_congested_costs(list(final_cost_assets.values()))
         final_states: dict[int, RunState] = {}
         for run_key in self.run_keys:
             run = self.runs[run_key]
@@ -226,10 +225,9 @@ class MultiScenarioRunAsset(InMemoryAsset):
         }
         # Build compatible scenario path costs together before candidate
         # generation requests them one scenario at a time.
-        if len(state_assets) > 1:
-            prepare_shared_congested_costs(
-                [state_asset.transport_costs for state_asset in state_assets.values()]
-            )
+        prepare_shared_congested_costs(
+            [state_asset.transport_costs for state_asset in state_assets.values()]
+        )
         inner_result = self._run_inner_loop(
             state_assets=state_assets,
             fixed_states=current_states,

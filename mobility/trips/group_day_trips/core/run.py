@@ -141,6 +141,9 @@ class Run(InMemoryAsset):
         sensitivity_case: SensitivityCase | None = None,
         replication: int = 0,
         cohort_identity: object = None,
+        cohort_state_identity: object = None,
+        timetable_hashes: dict | None = None,
+        road_geometry_hashes: dict | None = None,
     ) -> None:
         """Initialize a single weekday or weekend PopulationGroupDayTrips run."""
         sensitivity_case_id = (
@@ -153,17 +156,21 @@ class Run(InMemoryAsset):
         # Version changes invalidate results when candidate identity or
         # numerical calculations used by the model change.
         run_context_inputs = {
-            "version": 41,
+            "version": 42,
             "population": population,
             "activities": activities,
             "modes": modes,
             "surveys": surveys,
             "survey_plan_assets": survey_plan_assets,
-            "timetable_file_hashes": _timetable_file_hashes(
-                modes, scenario, sensitivity_case, parameters.run.n_steps,
+            "timetable_file_hashes": (
+                timetable_hashes if timetable_hashes is not None else _timetable_file_hashes(
+                    modes, scenario, sensitivity_case, parameters.run.n_steps,
+                )
             ),
-            "road_geometry_hashes": _road_geometry_hashes(
-                modes, scenario, sensitivity_case, parameters.run.n_steps,
+            "road_geometry_hashes": (
+                road_geometry_hashes if road_geometry_hashes is not None else _road_geometry_hashes(
+                    modes, scenario, sensitivity_case, parameters.run.n_steps,
+                )
             ),
             "parameters": parameters_for_cache,
             "is_weekday": is_weekday,
@@ -253,6 +260,7 @@ class Run(InMemoryAsset):
             scenario=scenario,
             sensitivity_case=sensitivity_case,
             initial_state=self.initial_iteration_state,
+            cohort_state_identity=cohort_state_identity if cohort_state_identity is not None else cohort_identity,
         )
         if parameters.outputs.checkpoint_each_step:
             resume_iteration = self.iterations.get_resume_iteration(
@@ -364,6 +372,7 @@ class Run(InMemoryAsset):
         scenario: str,
         sensitivity_case: SensitivityCase | None,
         initial_state: Asset,
+        cohort_state_identity: object = None,
     ) -> list[IterationStateAsset]:
         """Build the content-addressed state asset chain for the run iterations."""
         state_assets: list[IterationStateAsset] = []
@@ -443,6 +452,7 @@ class Run(InMemoryAsset):
                 scenario=scenario,
                 sensitivity_case=sensitivity_case,
                 cache_step_events=parameters.outputs.cache_step_events,
+                cohort_state_identity=cohort_state_identity,
             )
             state_assets.append(state_asset)
             previous_state = state_asset

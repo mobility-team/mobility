@@ -390,9 +390,14 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
     
     def get_congested_graph_path(self, flow_asset=None) -> pathlib.Path:
         """Return the graph path backing the current congested cost view."""
-        if flow_asset is not None:
-            return self.asset_for_flow_asset(flow_asset).congested_path_graph.get()
-        return self.congested_path_graph.get()
+        graph = (self.asset_for_flow_asset(flow_asset).congested_path_graph
+                 if flow_asset is not None else self.congested_path_graph)
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            path = resolver.congested_graph_paths.get(asset_graph_key(graph))
+            if path is not None:
+                return path
+        return graph.get()
 
     def asset_for_road_flows(self, road_flow_asset: VehicleODFlowsAsset | None):
         if road_flow_asset is None:

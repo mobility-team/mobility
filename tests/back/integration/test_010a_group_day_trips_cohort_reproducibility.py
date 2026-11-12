@@ -49,7 +49,7 @@ from mobility.trips.group_day_trips.transitions.transition_schema import TRANSIT
 from mobility.transport.graphs.modified.modifiers.speed_modifier import NewRoadModifier
 
 
-def make_setup(test_data, *, n_steps=2, n_replications=1, record_events=False, sensitivity=False):
+def make_setup(test_data, *, n_steps=2, n_replications=1, record_events=False, sensitivity=False, congestion=False):
     zones = mobility.TransportZones(
         local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
         radius=test_data["transport_zones_radius"],
@@ -58,7 +58,7 @@ def make_setup(test_data, *, n_steps=2, n_replications=1, record_events=False, s
     return PopulationGroupDayTrips(
         population=population,
         modes=[mobility.CarMode(
-            zones, generalized_cost_parameters=mobility.GeneralizedCostParameters(
+            zones, congestion=congestion, generalized_cost_parameters=mobility.GeneralizedCostParameters(
                 cost_of_distance=mobility.ParameterValue.by_scenario(
                     default=(mobility.SensitivityValue.relative(0.1, [0.5], name="car_cost")
                              if sensitivity else 0.1),
@@ -327,7 +327,8 @@ def test_result_and_cohort_identity_include_other_scenario_timetable(test_data, 
     """A filtered result still depends on every scenario sharing its search."""
     feed = tmp_path / "project-service.zip"
     feed.write_bytes(b"first timetable")
-    setup = make_setup(test_data)
+    setup = make_setup(test_data, congestion=True)
+    setup.parameters.run.n_steps_per_cost_update = 1
     # The file is an identity input only: constructing these requests does not
     # open it as a timetable or run the simulation.
     setup.modes[0].routing_parameters = SimpleNamespace(
@@ -346,6 +347,8 @@ def test_result_and_cohort_identity_include_other_scenario_timetable(test_data, 
             run.coordinated_run_asset.inputs_hash,
             run.coordinated_run_asset._checkpoint_cohort_hash,
             metric.inputs_hash,
+            run.iteration_state_assets[0].inputs_hash,
+            run.iteration_transport_cost_assets[1].congestion_flows.inputs_hash,
         )
 
     before = identities()
@@ -364,13 +367,41 @@ def test_result_and_cohort_identity_include_other_scenario_timetable(test_data, 
     assert all(old != new for old, new in zip(before[1:], after[1:]))
 
 
+def test_state_and_congestion_identity_include_search_and_cohort(test_data):
+    """Different shared searches cannot reuse one another's road assignments."""
+    setup = make_setup(test_data, n_steps=2, congestion=True)
+    setup.parameters.run.n_steps_per_cost_update = 1
+
+    def identities(scenarios):
+        run = setup.experiment("weekday", scenarios=scenarios, replication=0).run(
+            "weekday", scenario="default"
+        )
+        costs = run.iteration_transport_cost_assets[1]
+        road_flows = costs.transport_costs.build_road_flow_asset(costs.congestion_flows.person_od_flows_by_mode)
+        graph = setup.modes[0].inputs["travel_costs"].asset_for_flow_asset(road_flows).congested_path_graph
+        return (
+            run.iteration_state_assets[0].inputs_hash,
+            costs.congestion_flows.inputs_hash,
+            graph.inputs_hash,
+        )
+
+    setup.parameters.adaptive_search.max_search_batches = 1
+    single_batch = identities(["default"])
+    setup.parameters.adaptive_search.max_search_batches = 2
+    two_batches = identities(["default"])
+    two_scenarios = identities(["default", "project"])
+    assert all(first != second for first, second in zip(single_batch, two_batches))
+    assert all(first != second for first, second in zip(two_batches, two_scenarios))
+
+
 def test_result_and_cohort_identity_include_other_scenario_road(test_data, tmp_path):
     """Editing a shared cohort member's road file invalidates filtered results."""
     road = tmp_path / "project-road.geojson"
     road.write_text("first geometry", encoding="utf-8")
     default_road = tmp_path / "default-road.geojson"
     default_road.write_text("default geometry", encoding="utf-8")
-    setup = make_setup(test_data)
+    setup = make_setup(test_data, congestion=True)
+    setup.parameters.run.n_steps_per_cost_update = 1
     modifier = NewRoadModifier(mobility.ParameterValue.by_scenario(
         default=str(default_road), project=str(road),
     ))
@@ -380,7 +411,11 @@ def test_result_and_cohort_identity_include_other_scenario_road(test_data, tmp_p
         experiment = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
         run = experiment.run("weekday", scenario="default")
         metric = experiment.results(scenarios=["default"]).metrics.trip_count(by_variable="mode")
-        return run.run_context.inputs_hash, run.coordinated_run_asset._checkpoint_cohort_hash, metric.inputs_hash
+        return (
+            run.run_context.inputs_hash, run.coordinated_run_asset._checkpoint_cohort_hash,
+            metric.inputs_hash, run.iteration_state_assets[0].inputs_hash,
+            run.iteration_transport_cost_assets[1].congestion_flows.inputs_hash,
+        )
 
     before = identities()
     experiment = setup.experiment("weekday", scenarios=["default", "project"], replication=0)

@@ -684,6 +684,7 @@ class IterationStateAsset(Asset):
         scenario: str,
         cache_step_events: bool,
         sensitivity_case: SensitivityCase | None = None,
+        cohort_state_identity: object = None,
     ) -> None:
         self.previous_state = previous_state
         self.initial_state = initial_state
@@ -715,8 +716,8 @@ class IterationStateAsset(Asset):
         self.coordinated_rng_state: object | None = None
         self.coordinated_time_sequence_steps: pl.DataFrame | None = None
         inputs = {
-            # Modeled schedules that merge now combine candidate history.
-            "version": 27,
+            # State identity includes the shared search and full cohort.
+            "version": 28,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -742,6 +743,10 @@ class IterationStateAsset(Asset):
                 sensitivity_case=sensitivity_case,
             ),
             "plan_update_parameters": parameters.plan_update,
+            # Shared candidate search affects each completed state, and hence
+            # the road flows and congestion graphs built from that state.
+            "adaptive_search_parameters": parameters.adaptive_search,
+            "cohort_state_identity": cohort_state_identity,
             "behavior_change_scope": parameters.behavior_change.scope_at(iteration),
             "cache_step_events": cache_step_events,
         }

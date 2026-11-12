@@ -69,6 +69,7 @@ class AssetResolver:
         self.execution_cost_assets: dict[tuple, Asset] = {}
         self.execution_cost_consumers: dict[tuple, set[tuple]] = {}
         self.execution_cost_output_paths: dict[tuple, pathlib.Path] = {}
+        self.congested_graph_paths: dict[tuple, pathlib.Path] = {}
         self._execution_cost_consumer_stack: list[tuple] = []
         self._spill_directory: tempfile.TemporaryDirectory | None = None
 
@@ -243,6 +244,7 @@ class AssetResolver:
             self._spill_directory.cleanup()
             self._spill_directory = None
         self.execution_cost_output_paths.clear()
+        self.congested_graph_paths.clear()
 
     @contextmanager
     def execution_cost_consumer(self, consumer: Asset) -> Iterator[None]:

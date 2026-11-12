@@ -1,6 +1,16 @@
 # Grand Genève performance notes
 
 These measurements are diagnostic runs, not forecasts for a full experiment.
+The later single-scenario road-path comparison found an older cached congestion
+graph that did not match a fresh assignment for the same observed flows. The
+iteration-state identity omitted adaptive search and the shared cohort, so
+different searches could reuse the same flow-dependent graph key. Consequently,
+earlier runs that used the ordinary graph cache, including the 20-step
+single-scenario comparisons, cannot be treated as validated model results.
+The state identity now includes the search and cohort, and old flow-dependent
+graph caches are invalidated. With fresh graphs, a six-step ordinary-path run
+matched the unified path's 23 trip-count rows within 6.6e-9 represented trips.
+
 The cache-only probe is `tests/manual/inspect_grand_geneve_execution.py`; it
 refuses to download missing inputs. It logs the actual run settings and the
 trace location. Summarize a trace with:

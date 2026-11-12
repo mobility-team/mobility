@@ -3,6 +3,7 @@ import logging
 import warnings
 
 from mobility.runtime.parameter_values import DEFAULT_SCENARIO, SensitivityCase
+from mobility.runtime.assets.input_hashing import hash_inputs
 from mobility.runtime.scenarios import Scenarios
 from mobility.transport.costs.transport_costs import TransportCosts
 from ..results import GroupDayTripsResults
@@ -11,7 +12,7 @@ from ..sensitivity import (
     collect_group_day_trips_sensitivity_cases,
 )
 from .parameters import GroupDayTripsParameters
-from .run import Run
+from .run import Run, _road_geometry_hashes, _timetable_file_hashes
 from .multi_scenario_run import MultiScenarioRunAsset
 from mobility.activities import Activity, HomeActivity, OtherActivity
 from mobility.surveys import SurveyPlanAssets, select_surveys_for_population
@@ -25,6 +26,15 @@ class DayType(StrEnum):
 
     WEEKDAY = "weekday"
     WEEKEND = "weekend"
+
+
+def _cohort_state_fingerprint(cohort_inputs, activities, modes):
+    """Identify all shared-search inputs that can change a member's state."""
+    return hash_inputs({
+        "members": cohort_inputs,
+        "activities": [activity.inputs for activity in activities],
+        "modes": [mode.inputs for mode in modes],
+    })
 
 
 class GroupDayTripsExperiment:
@@ -123,6 +133,17 @@ class GroupDayTripsExperiment:
         cases = sorted(self.sensitivity_cases, key=lambda case: "" if case is None else case.case_id)
         # Include full case values, not just their names, in checkpoint identity.
         cohort = tuple((scenario, case) for case in cases for scenario in scenarios)
+        # Any cohort member can contribute candidates to every other member.
+        # Include their external files in each iteration's state identity.
+        cohort_inputs = tuple(
+            (
+                scenario, case,
+                _timetable_file_hashes(setup.modes, scenario, case, self.parameters.run.n_steps),
+                _road_geometry_hashes(setup.modes, scenario, case, self.parameters.run.n_steps),
+            )
+            for scenario, case in cohort
+        )
+        cohort_state_identity = _cohort_state_fingerprint(cohort_inputs, setup.activities, setup.modes)
         logging.info(
             "Experiment lane | day_type=%s | scenarios=%s | sensitivity_cases=%s | replication=%s | seed=%s | steps=%s",
             self.day_type.value, scenarios,
@@ -132,7 +153,7 @@ class GroupDayTripsExperiment:
         survey_assets = SurveyPlanAssets(surveys=setup.surveys, activities=setup.activities, modes=setup.modes)
         costs = TransportCosts(setup.modes)
         runs = {}
-        for run_id, (scenario, case) in enumerate(cohort):
+        for run_id, (scenario, case, timetable_hashes, road_hashes) in enumerate(cohort_inputs):
             parameters = self.parameters.with_replication(replication)
             run = Run(
                 population=setup.population, transport_costs=costs, activities=setup.activities,
@@ -141,6 +162,8 @@ class GroupDayTripsExperiment:
                 enabled=self.day_type is DayType.WEEKDAY or parameters.periods.simulate_weekend,
                 scenario=scenario, sensitivity_case=case, replication=replication,
                 cohort_identity=cohort,
+                cohort_state_identity=cohort_state_identity,
+                timetable_hashes=timetable_hashes, road_geometry_hashes=road_hashes,
             )
             run.coordinated_run_key = run_id
             case_id = "base" if case is None else case.case_id

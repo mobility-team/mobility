@@ -23,6 +23,7 @@ congestion_assignment_max_iterations <- args[9]
 congestion_assignment_max_gap <- args[10]
 congestion_assignment_retained_volume_share <- args[11]
 output_fp <- args[12]
+graph_paths <- if (length(args) >= 14) unlist(fromJSON(args[14])) else character()
 
 
 source(file.path(package_fp, "transport", "graphs", "core", "cpprouting_io.R"))
@@ -232,6 +233,16 @@ for (i in seq_along(flow_paths)) {
   
   # Update travel times
   scenario_graph$data$dist <- traffic$data$cost
+
+  # Some consumers, such as detailed carpool, need the assigned graph itself.
+  if (length(graph_paths) >= i && nzchar(graph_paths[[i]])) {
+    graph_fp <- graph_paths[[i]]
+    graph_hash <- strsplit(basename(graph_fp), "-")[[1]][1]
+    save_cppr_graph(scenario_graph, dirname(graph_fp), graph_hash)
+    write_parquet(vertices, file.path(dirname(dirname(graph_fp)), paste0(graph_hash, "-vertices.parquet")))
+    write_parquet(od_vertex_map, file.path(dirname(dirname(graph_fp)), paste0(graph_hash, "-od-vertex-map.parquet")))
+    file.create(graph_fp)
+  }
   
   # Route this assignment immediately without saving a congested graph.
   metric <- cpp_cch_customize(cch, scenario_graph$data$dist)

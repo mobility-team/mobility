@@ -22,6 +22,12 @@ from mobility.trips.group_day_trips.core.parameters import (
 from mobility.trips.group_day_trips.core import group_day_trips as group_day_trips_module
 
 
+@pytest.fixture(autouse=True)
+def _fake_cohort_state_fingerprint(monkeypatch):
+    # These API-forwarding tests intentionally use placeholder modes and activities.
+    monkeypatch.setattr(group_day_trips_module, "_cohort_state_fingerprint", lambda *args: "test-cohort")
+
+
 class _FakeRun:
     removed_runs = []
 

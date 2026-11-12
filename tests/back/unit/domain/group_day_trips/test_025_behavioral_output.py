@@ -389,6 +389,7 @@ def test_cohort_step_uses_all_pre_step_states_before_updating_scenarios(monkeypa
 
 @pytest.mark.parametrize("iterations", [1, 2])
 def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, monkeypatch, tmp_path):
+    monkeypatch.setattr(coordinated_module, "prepare_shared_congested_costs", lambda assets: None)
     parameters = GroupDayTripsParameters(run={"n_steps": iterations})
     initial = behavioral_state(20)
     origins = []
@@ -418,7 +419,7 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
     monkeypatch.setattr(coordinated_module, "represented_od_mode_flows", reduce_flows)
 
     for iteration in range(1, iterations + 1):
-        asset = SimpleNamespace(iteration=iteration, inputs_hash=f"state-{iteration}")
+        asset = SimpleNamespace(iteration=iteration, inputs_hash=f"state-{iteration}", transport_costs=None)
 
         def update(asset=asset, iteration=iteration):
             expected = behavioral_state(20 + 10 * (iteration - 1))
@@ -547,12 +548,13 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
 
 def test_stable_replications_complete_the_configured_outer_iterations(monkeypatch, tmp_path):
     """A stable allocation must not shorten the modeled time horizon."""
+    monkeypatch.setattr(coordinated_module, "prepare_shared_congested_costs", lambda assets: None)
     parameters = GroupDayTripsParameters(
         run={"n_steps": 3},
     )
 
     def make_coordinator(replication, increment):
-        states = [SimpleNamespace(iteration=i, inputs_hash=f"{replication}-{i}") for i in range(1, 4)]
+        states = [SimpleNamespace(iteration=i, inputs_hash=f"{replication}-{i}", transport_costs=None) for i in range(1, 4)]
         for asset in states:
             asset.get = lambda asset=asset: behavioral_state(20 + increment * asset.iteration)
         run = SimpleNamespace(
