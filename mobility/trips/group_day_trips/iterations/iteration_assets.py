@@ -622,6 +622,11 @@ class IterationTransportCostsAsset(InMemoryAsset):
             population_segments,
         )
 
+    def release_profile_costs(self):
+        """Release profile tables after this iteration has used them."""
+        self._profile_costs_cache = None
+        self._profile_costs_cache_key = None
+
     @trace_simulation_step("profile transport costs")
     def get_profile_costs_by_od_and_mode(self, profiles, metrics):
         """Return profile-specific costs with this iteration's congestion state."""
@@ -630,13 +635,22 @@ class IterationTransportCostsAsset(InMemoryAsset):
             for profile_id, assets in sorted(profiles.items())
         )
         if self._profile_costs_cache_key != cache_key:
+            road_flows = self.congestion_flows.get()
             effective_transport_costs = self.transport_costs.asset_for_road_flows(
-                self.congestion_flows.get()
+                road_flows
+            )
+            # With explicit road flows, this asset's full table was built from
+            # the same effective costs. Reuse it instead of building it again
+            # when resolving the default modes of each utility profile.
+            default_costs = (
+                self.get_costs_by_od_and_mode(["cost", "distance", "time"])
+                if road_flows is not None else None
             )
             self._profile_costs_cache = (
                 effective_transport_costs.get_profile_costs_by_od_and_mode(
                     profiles,
                     ["cost", "distance", "time"],
+                    default_costs=default_costs,
                 )
             )
             self._profile_costs_cache_key = cache_key
@@ -701,7 +715,8 @@ class IterationStateAsset(Asset):
         self.coordinated_rng_state: object | None = None
         self.coordinated_time_sequence_steps: pl.DataFrame | None = None
         inputs = {
-            "version": 22,
+            # Modeled schedules that merge now combine candidate history.
+            "version": 27,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -745,6 +760,10 @@ class IterationStateAsset(Asset):
 
     def get(self) -> RunState:
         """Return this state, spilling shared intermediates to temporary disk."""
+        coordinated = (
+            self.coordinated_candidate_plan_steps is not None
+            or self.coordinated_evaluation is not None
+        )
         resolver = get_current_asset_resolver()
         if resolver is not None:
             with resolver.execution_cost_consumer(self):
@@ -776,7 +795,7 @@ class IterationStateAsset(Asset):
         # runs when the current state was restored from a spill or checkpoint.
         active_resolver = get_current_asset_resolver()
         if active_resolver is not None:
-            if self.coordinated_candidate_plan_steps is None:
+            if not coordinated:
                 active_resolver.release_in_memory_asset(self.previous_state)
             for asset in (
                 self.seeds,
@@ -788,6 +807,11 @@ class IterationStateAsset(Asset):
             if self.iteration < self.parameters.run.n_steps:
                 active_resolver.release_in_memory_asset(self.transport_costs)
             active_resolver.consume_execution_cost_state(self)
+        # The iteration assets themselves stay in the run graph. Their cached
+        # OD tables must not stay alive for every completed iteration too.
+        release_profile_costs = getattr(self.transport_costs, "release_profile_costs", None)
+        if release_profile_costs is not None:
+            release_profile_costs()
         self.destination_sequences.sequence_index = None
         self.destination_sequences.previous_sequence_index = None
         self.mode_sequences.sequence_index = None
@@ -819,6 +843,9 @@ class IterationStateAsset(Asset):
                     if isinstance(table, CompactCandidateSteps):
                         write_temporary_parquet(table.steps, temporary_path / "candidate_steps.parquet")
                         write_temporary_parquet(table.membership, temporary_path / "candidate_membership.parquet")
+                        if table.unit_map is not None:
+                            write_temporary_parquet(table.unit_map, temporary_path / "candidate_unit_map.parquet")
+                            metadata["compact_candidate_unit_map"] = True
                         metadata["compact_candidate_columns"] = table.columns
                     else:
                         write_temporary_parquet(table, temporary_path / f"{table_name}.parquet")
@@ -854,6 +881,8 @@ class IterationStateAsset(Asset):
                     steps=pl.read_parquet(path / "candidate_steps.parquet"),
                     membership=pl.read_parquet(path / "candidate_membership.parquet"),
                     columns=tuple(metadata["compact_candidate_columns"]),
+                    unit_map=(pl.read_parquet(path / "candidate_unit_map.parquet")
+                              if metadata.get("compact_candidate_unit_map") else None),
                 )
             else:
                 spilled_state[table_name] = pl.read_parquet(path / f"{table_name}.parquet")
@@ -940,7 +969,7 @@ class IterationStateAsset(Asset):
             logging.debug("Starting group-day-trips iteration %s...", str(self.iteration))
             seeds = self.seeds.get()
             logging.debug("Preparing sampled alternatives for iteration %s...", str(self.iteration))
-            if self.coordinated_candidate_plan_steps is None:
+            if self.coordinated_candidate_plan_steps is None and self.coordinated_evaluation is None:
                 self.activity_sequences.get()
                 self.destination_sequences.get()
                 self.mode_sequences.get()
@@ -970,6 +999,19 @@ class IterationStateAsset(Asset):
                 None if self.coordinated_evaluation is None else
                 self.updater.expand_context_evaluation(
                     self.coordinated_evaluation, current_plans_before_transition, previous_plan_id_index,
+                    self.parameters.behavior_change.scope_at(self.iteration),
+                    share_transition_probabilities=True,
+                    transition_parameters={
+                        "transport_zones": self.population.transport_zones,
+                        "transition_distance_threshold": self.parameters.plan_update.transition_distance_threshold,
+                        "enable_transition_distance_model": self.parameters.plan_update.enable_transition_distance_model,
+                        "transition_revision_probability": self.parameters.plan_update.transition_revision_probability,
+                        "transition_logit_scale": self.parameters.plan_update.transition_logit_scale,
+                        "transition_utility_pruning_delta": self.parameters.plan_update.transition_utility_pruning_delta,
+                        "min_transition_utility_gain": self.parameters.plan_update.min_transition_utility_gain,
+                        "transition_distance_friction": self.parameters.plan_update.transition_distance_friction,
+                        "plan_embedding_dimension_weights": self.parameters.plan_update.plan_embedding_dimension_weights,
+                    },
                 )
             )
             # The expanded evaluation owns the inputs needed by this update;
@@ -1017,6 +1059,7 @@ class IterationStateAsset(Asset):
                 current_plans=current_plans,
                 candidate_plan_steps=(
                     None if candidate_plan_steps is None
+                    else candidate_plan_steps if isinstance(candidate_plan_steps, CompactCandidateSteps)
                     else CompactCandidateSteps.from_frame(candidate_plan_steps)
                 ),
                 plan_id_index=plan_id_index,

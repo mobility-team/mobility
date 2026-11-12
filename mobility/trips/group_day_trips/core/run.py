@@ -153,7 +153,7 @@ class Run(InMemoryAsset):
         # Version changes invalidate results when candidate identity or
         # numerical calculations used by the model change.
         run_context_inputs = {
-            "version": 40,
+            "version": 41,
             "population": population,
             "activities": activities,
             "modes": modes,

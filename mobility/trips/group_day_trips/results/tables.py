@@ -61,7 +61,12 @@ class GroupDayTripsResultTables:
         *,
         columns: list[str] | tuple[str, ...] | None = None,
     ) -> ScopedRunTable:
-        """Declare inner- and outer-loop convergence diagnostics for each scenario."""
+        """Declare convergence diagnostics for each scenario.
+
+        ``scored_candidate_scope`` says whether all candidates or only reachable
+        candidates were scored. Feasibility and cost-error counts cover that
+        scored scope; ``unique_pool_size`` still describes the complete pool.
+        """
         return self._table(
             "adaptive_search_diagnostics",
             iterations="last",

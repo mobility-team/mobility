@@ -2,6 +2,7 @@
 
 import weakref
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,8 @@ import pytest
 from polars.testing import assert_frame_equal
 
 import mobility
+import mobility.trips.group_day_trips.plans.plan_updater as plan_updater_module
+import mobility.trips.group_day_trips.plans.shared_candidate_pool as shared_pool_module
 from mobility.activities import HomeActivity, OtherActivity, WorkActivity
 from mobility.runtime.assets.graph import asset_graph_key
 from mobility.runtime.assets.file_asset import FileAsset
@@ -18,6 +21,8 @@ from mobility.runtime.assets.resolver import asset_resolution_context, get_curre
 from mobility.runtime.scenarios import Scenario, Scenarios
 from mobility.surveys.france import EMPMobilitySurvey
 from mobility.trips.group_day_trips import (
+    BehaviorChangePhase,
+    BehaviorChangeScope,
     GroupDayTripsDestinationSequenceParameters,
     GroupDayTripsModeSequenceParameters,
     GroupDayTripsParameters,
@@ -25,12 +30,18 @@ from mobility.trips.group_day_trips import (
     PopulationGroupDayTrips,
 )
 from mobility.trips.group_day_trips.core.multi_scenario_run import MultiScenarioRunAsset
+from mobility.trips.group_day_trips.core.multi_scenario import allocation_od_mode_flows, represented_od_mode_flows
 from mobility.trips.group_day_trips.core.metrics import RunMetrics
 from mobility.trips.group_day_trips.core.run import Run
 from mobility.trips.group_day_trips.evaluation.iteration_metrics import IterationMetricsHistory
 from mobility.trips.group_day_trips.iterations.iterations import Iterations
-from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps
+from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps, PLAN_COLUMNS
+from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS
+from mobility.trips.group_day_trips.plans.candidate_plan_steps import CandidatePlanStepsAsset
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
+from mobility.trips.group_day_trips.plans.plan_catalogue import PlanCatalogue
+from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts
+from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringLookup
 from mobility.trips.group_day_trips.results.assets.metric import Metric
 from mobility.trips.group_day_trips.results.result_table import ResultTable
 from mobility.trips.group_day_trips.sensitivity import collect_group_day_trips_sensitivity_cases
@@ -75,6 +86,241 @@ def make_setup(test_data, *, n_steps=2, n_replications=1, record_events=False, s
             ),
         ),
     )
+
+
+def test_restricted_choices_keep_the_same_transition_probabilities(test_data, monkeypatch):
+    """Check actual scored choices before and after restricting the outer update."""
+    # The unit tests cover the individual restrictions for all behavior scopes.
+    scope = BehaviorChangeScope.MODE_REPLANNING
+    setup = make_setup(test_data)
+    setup.parameters.behavior_change.phases = [BehaviorChangePhase(start_step=2, scope=scope)]
+    restrict = PlanUpdater._restrict_transition_choices
+    expand = PlanUpdater.expand_context_evaluation
+    checked = []
+
+    def expand_unit_choices(updater, *args, **kwargs):
+        # Exercise the unit-level path used for finite transition distances.
+        return expand(updater, *args, **{**kwargs, "share_transition_probabilities": False})
+
+    def compare(utilities, origins, evaluation, active_scope):
+        narrowed = restrict(utilities, origins, evaluation, active_scope)
+        time_steps = evaluation.time_sequence_steps.select("time_seq_id", "reference_time_seq_id").unique()
+
+        def transitions(choices):
+            choices = choices.join(time_steps.lazy(), on="time_seq_id", how="left").with_columns(
+                reference_time_seq_id=pl.col("reference_time_seq_id").fill_null(pl.col("time_seq_id"))
+            )
+            return PlanUpdater().get_transition_probabilities(
+                origins, choices, pl.DataFrame(), active_scope, transport_zones=None,
+            ).sort(["plan_id_from", "plan_id_trans"])
+
+        assert_frame_equal(transitions(utilities), transitions(narrowed), check_exact=True)
+        checked.append(True)
+        return narrowed
+
+    monkeypatch.setattr(PlanUpdater, "_restrict_transition_choices", staticmethod(compare))
+    monkeypatch.setattr(PlanUpdater, "expand_context_evaluation", expand_unit_choices)
+    experiment = setup.experiment("weekday", scenarios=["default"], replication=0)
+    with asset_resolution_context():
+        experiment.run("weekday").coordinated_run_asset.get(step_consumer=lambda step: None)
+    assert len(checked) == 1
+
+
+def test_context_transition_distances_match_unit_calculation(test_data, monkeypatch):
+    """Share distance calculations without changing eligible transitions."""
+    setup = make_setup(test_data)
+    setup.parameters.plan_update.enable_transition_distance_model = True
+    setup.parameters.plan_update.transition_distance_threshold = 100.0
+    setup.parameters.plan_update.transition_distance_friction = 0.5
+    setup.parameters.behavior_change.phases = [
+        BehaviorChangePhase(start_step=2, scope=BehaviorChangeScope.MODE_REPLANNING)
+    ]
+    expand = PlanUpdater.expand_context_evaluation
+    checked = []
+
+    def compare(updater, *args, **kwargs):
+        reference = expand(updater, *args, **{**kwargs, "share_transition_probabilities": False})
+        result = expand(updater, *args, **kwargs)
+        scope = args[3]
+        settings = kwargs["transition_parameters"]
+        choices = reference.possible_plan_utility.join(
+            reference.time_sequence_steps.select("time_seq_id", "reference_time_seq_id").unique(),
+            on="time_seq_id", how="left",
+        ).with_columns(reference_time_seq_id=pl.col("reference_time_seq_id").fill_null(pl.col("time_seq_id")))
+        expected = updater.get_transition_probabilities(
+            reference.current_plans, choices.lazy(), reference.possible_plan_steps.collect(), scope, **settings,
+        )
+        actual = updater.get_context_transition_probabilities(result, scope, **settings)
+        columns = [column for column in expected.columns if column not in ("plan_id_from", "plan_id_trans")]
+        keys = PLAN_KEY_COLS + [column + "_trans" for column in PLAN_COLUMNS]
+        assert_frame_equal(actual.select(columns).sort(keys), expected.select(columns).sort(keys),
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+        checked.append(scope)
+        return result
+
+    monkeypatch.setattr(PlanUpdater, "expand_context_evaluation", compare)
+    experiment = setup.experiment("weekday", scenarios=["default"], replication=0)
+    experiment.run("weekday").coordinated_run_asset.get(step_consumer=lambda step: None)
+    assert checked.count(BehaviorChangeScope.MODE_REPLANNING) == 1
+
+
+def test_intermediate_restricted_scoring_preserves_reachable_flows(test_data, monkeypatch):
+    # The unit tests exercise reachable choices under each behavior scope.
+    scope = BehaviorChangeScope.MODE_REPLANNING
+    setup = make_setup(test_data)
+    setup.parameters.adaptive_search.max_search_batches = 3
+    setup.parameters.adaptive_search.inner_consecutive_passes = 2
+    setup.parameters.behavior_change.phases = [
+        BehaviorChangePhase(start_step=2, scope=scope)
+    ]
+    evaluate = PlanUpdater.evaluate_candidate_pool
+    advance = MultiScenarioRunAsset._advance_cohort_step
+    checked = []
+    scored_scopes = []
+
+    def compare(updater, **kwargs):
+        cache = kwargs.get("inner_plan_cache")
+        previous_cache = cache.plans if cache is not None else None
+        result = evaluate(updater, **kwargs)
+        scope = kwargs.get("reachable_scoring_scope")
+        if scope is not None:
+            signature_keys = PLAN_KEY_COLS + ["_scored_plan_1", "_scored_plan_2"]
+            assert previous_cache is not None and cache.plans is not None
+            assert previous_cache.join(cache.plans.select(signature_keys), on=signature_keys, how="anti").is_empty()
+            reference = evaluate(updater, **{
+                **kwargs, "reachable_scoring_scope": None, "forced_scoring_contexts": None,
+                "scoring_lookup": None, "inner_plan_cache": None, "time_index_cache": None,
+            })
+            update = kwargs["parameters"].plan_update
+            settings = dict(
+                transport_zones=kwargs["transport_zones"],
+                transition_revision_probability=update.transition_revision_probability,
+                transition_logit_scale=update.transition_logit_scale,
+                transition_utility_pruning_delta=update.transition_utility_pruning_delta,
+                min_transition_utility_gain=update.min_transition_utility_gain,
+                plan_probability_pruning_retained_share=update.plan_probability_pruning_retained_share,
+                plan_probability_pruning_min_step=update.plan_probability_pruning_min_step,
+            )
+            actual = updater.estimate_reachable_allocation(
+                result, kwargs["current_plans"], kwargs["iteration"], scope, **settings,
+            )
+            expected = updater.estimate_reachable_allocation(
+                reference, kwargs["current_plans"], kwargs["iteration"], scope, **settings,
+            )
+            actual_flows = allocation_od_mode_flows(actual, result.possible_plan_steps)
+            expected_flows = allocation_od_mode_flows(expected, reference.possible_plan_steps)
+            assert_frame_equal(actual_flows, expected_flows, check_exact=False, rel_tol=1e-10, abs_tol=1e-8)
+            checked.append((result.possible_plan_utility.height, reference.possible_plan_utility.height))
+        return result
+
+    def record_step(coordinator, iteration, *args, **kwargs):
+        result = advance(coordinator, iteration, *args, **kwargs)
+        scored_scopes.extend(row["scored_candidate_scope"] for row in result[2]["diagnostics"])
+        return result
+
+    monkeypatch.setattr(PlanUpdater, "evaluate_candidate_pool", compare)
+    monkeypatch.setattr(MultiScenarioRunAsset, "_advance_cohort_step", record_step)
+    experiment = setup.experiment("weekday", scenarios=["default"], replication=0)
+    experiment.run("weekday").coordinated_run_asset.get(step_consumer=lambda step: None)
+    assert len(checked) == 1
+    assert all(actual <= full for actual, full in checked)
+    assert any(actual < full for actual, full in checked)
+    assert {"all", "reachable"}.issubset(scored_scopes)
+
+
+def test_single_search_batch_does_not_build_reuse_caches(test_data, monkeypatch):
+    setup = make_setup(test_data, n_steps=1)
+    setup.parameters.adaptive_search.max_search_batches = 1
+
+    def unexpected_cache(*args, **kwargs):
+        raise AssertionError("A single batch has no later batch to reuse scores.")
+
+    monkeypatch.setattr(PlanUpdater, "_plan_signatures", staticmethod(unexpected_cache))
+    monkeypatch.setattr(ScoringLookup, "retain", unexpected_cache)
+    monkeypatch.setattr(PlanCatalogue, "from_candidates", classmethod(unexpected_cache))
+    experiment = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
+    with asset_resolution_context():
+        experiment.run("weekday").coordinated_run_asset.get(step_consumer=lambda step: None)
+
+
+def test_single_batch_only_estimates_allocation_when_flows_are_requested(test_data, monkeypatch, tmp_path, caplog):
+    setup = make_setup(test_data, n_steps=2)
+    setup.parameters.adaptive_search.max_search_batches = 1
+    caplog.set_level(logging.INFO)
+    estimate = PlanUpdater.estimate_mnl_allocation
+    calls = []
+
+    def record_estimate(updater, *args, **kwargs):
+        calls.append(True)
+        return estimate(updater, *args, **kwargs)
+
+    monkeypatch.setattr(PlanUpdater, "estimate_mnl_allocation", record_estimate)
+    experiment = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
+    results = experiment.results()
+    trips = results.metrics.trip_count(by_variable="mode")
+    trips.cache_path = tmp_path / "without-flows.parquet"
+    trips.hash_path = tmp_path / "without-flows.hash"
+    first = results.get_all(trips=trips, diagnostics=results.tables.adaptive_search_diagnostics())
+    without_flows = first["trips"]
+    first_diagnostics = first["diagnostics"].collect().sort(["scenario", "outer_step", "search_batch"])
+    first["diagnostics"].close()
+    assert not calls
+
+    results = experiment.results()
+    trips = results.metrics.trip_count(by_variable="mode")
+    trips.cache_path = tmp_path / "with-flows.parquet"
+    trips.hash_path = tmp_path / "with-flows.hash"
+    flows = results.tables.mnl_od_mode_flows()
+    values = results.get_all(trips=trips, flows=flows, diagnostics=results.tables.adaptive_search_diagnostics())
+    assert len(calls) == 2  # One final-step estimate for each scenario.
+    assert not values["flows"].collect().is_empty()
+    values["flows"].close()
+    assert_frame_equal(without_flows, values["trips"], check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+    assert_frame_equal(
+        first_diagnostics,
+        values["diagnostics"].collect().sort(["scenario", "outer_step", "search_batch"]),
+    )
+    values["diagnostics"].close()
+
+
+def test_time_index_reuse_preserves_cohort_results_and_random_state(test_data, monkeypatch):
+    setup = make_setup(test_data, n_steps=2)
+    setup.parameters.adaptive_search.max_search_batches = 2
+    assign = plan_updater_module.assign_time_sequence_ids
+    advance = MultiScenarioRunAsset._advance_cohort_step
+    use_cache = [True]
+    hits = []
+    states = []
+
+    def assign_with_optional_cache(steps, schedule_steps, *, index_cache=None):
+        if use_cache[0] and index_cache is not None and index_cache.schedules is schedule_steps:
+            hits.append(True)
+        return assign(steps, schedule_steps, index_cache=index_cache if use_cache[0] else None)
+
+    def record_state(coordinator, iteration, current_states, **kwargs):
+        assets, next_states, search = advance(coordinator, iteration, current_states, **kwargs)
+        states.append((search["pool"].candidate_ids, {
+            key: (state.rng_state, state.current_plans.clone()) for key, state in next_states.items()
+        }))
+        return assets, next_states, search
+
+    monkeypatch.setattr(plan_updater_module, "assign_time_sequence_ids", assign_with_optional_cache)
+    monkeypatch.setattr(shared_pool_module, "assign_time_sequence_ids", assign_with_optional_cache)
+    monkeypatch.setattr(MultiScenarioRunAsset, "_advance_cohort_step", record_state)
+    for enabled in (True, False):
+        use_cache[0] = enabled
+        experiment = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
+        with asset_resolution_context():
+            experiment.run("weekday").coordinated_run_asset.get(step_consumer=lambda step: None)
+    assert hits
+    assert len(states) == 4
+    for (actual_ids, actual_states), (expected_ids, expected_states) in zip(states[:2], states[2:]):
+        assert actual_ids == expected_ids
+        for key, (rng, plans) in actual_states.items():
+            expected_rng, expected_plans = expected_states[key]
+            assert rng == expected_rng
+            assert_frame_equal(plans.sort(plans.columns), expected_plans.sort(expected_plans.columns),
+                               check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
 
 
 def test_result_and_cohort_identity_include_other_scenario_timetable(test_data, tmp_path):
@@ -148,6 +394,166 @@ def test_result_and_cohort_identity_include_other_scenario_road(test_data, tmp_p
     assert all(old != new for old, new in zip(before[1:], after[1:]))
 
 
+def test_inner_reuse_matches_fresh_evaluation_for_each_batch(test_data, monkeypatch):
+    """Reusing scores must leave the whole choice set and its allocation intact."""
+    setup = make_setup(test_data, n_steps=2)
+    evaluate = PlanUpdater.evaluate_candidate_pool
+    assemble = PlanUpdater._assemble_incremental_evaluation
+    collapse_factored = ScoringContexts.collapse_factored_step_rows
+    checked = []
+    reused = []
+    factored = []
+    factored_active = []
+    pool_limits = []
+    init_pool = shared_pool_module.SharedCandidatePoolAsset.__init__
+
+    def record_pool_limit(pool, *args, **kwargs):
+        pool_limits.append((kwargs["iteration"], kwargs.get("max_inactive_age")))
+        init_pool(pool, *args, **kwargs)
+
+    def record_factored(contexts, *args, **kwargs):
+        result = collapse_factored(contexts, *args, **kwargs)
+        if result is not None:
+            factored.append(True)
+            if args[2] is not None:
+                factored_active.append(True)
+        return result
+
+    def record_assembly(updater, *args, **kwargs):
+        result = assemble(updater, *args, **kwargs)
+        if result is not None:
+            reused.append(True)
+        return result
+
+    def compare_evaluation(updater, *args, **kwargs):
+        cache = kwargs.get("inner_plan_cache")
+        if cache is None or cache.plans is None:
+            return evaluate(updater, *args, **kwargs)
+        shared = kwargs["shared_candidate_plan_steps"].lazy().sort(
+            CandidatePlanStepsAsset.DEDUPE_COLUMNS
+        )
+        active = kwargs.get("shared_active_plan_steps")
+        if active is not None and active.height:
+            shared = pl.concat([shared, active.lazy()], how="vertical_relaxed").unique(
+                subset=CandidatePlanStepsAsset.DEDUPE_COLUMNS, keep="last", maintain_order=True,
+            ).sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
+        fresh = evaluate(updater, *args, **{
+            **kwargs, "shared_candidate_plan_steps": shared, "shared_active_plan_steps": None,
+            "factored_candidate_steps": None, "inner_plan_cache": None, "scoring_lookup": None,
+        })
+        result = evaluate(updater, *args, **kwargs)
+        keys = ["demand_group_id", "demand_subgroup_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]
+        step_keys = keys + ["seq_step_index"]
+        assert_frame_equal(result.candidate_plan_steps.sort(step_keys), fresh.candidate_plan_steps.sort(step_keys))
+        assert_frame_equal(result.possible_plan_utility.sort(keys), fresh.possible_plan_utility.sort(keys),
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+        assert_frame_equal(result.possible_plan_steps.collect().sort(step_keys),
+                           fresh.possible_plan_steps.collect().sort(step_keys),
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+        assert_frame_equal(result.time_sequence_steps.sort(["time_seq_id", "seq_step_index"]),
+                           fresh.time_sequence_steps.sort(["time_seq_id", "seq_step_index"]))
+        mapping_keys = ["previous_time_seq_id" if col == "time_seq_id" else col for col in keys]
+        assert_frame_equal(result.time_mapping.sort(mapping_keys), fresh.time_mapping.sort(mapping_keys))
+        assert_frame_equal(result.current_plans.sort(keys), fresh.current_plans.sort(keys),
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+        result_allocation, result_steps = updater.estimate_mnl_allocation(
+            result, kwargs["demand_groups"], logit_scale=kwargs["parameters"].plan_update.transition_logit_scale,
+        )
+        fresh_allocation, fresh_steps = updater.estimate_mnl_allocation(
+            fresh, kwargs["demand_groups"], logit_scale=kwargs["parameters"].plan_update.transition_logit_scale,
+        )
+        assert_frame_equal(result_allocation.sort(keys), fresh_allocation.sort(keys),
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+        assert_frame_equal(result_steps.sort(step_keys), fresh_steps.sort(step_keys),
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+        flow_keys = ["from", "to", "mode"]
+        assert_frame_equal(represented_od_mode_flows(result_steps).sort(flow_keys),
+                           represented_od_mode_flows(fresh_steps).sort(flow_keys),
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+        assert_frame_equal(allocation_od_mode_flows(result_allocation, result.possible_plan_steps),
+                           represented_od_mode_flows(result_steps).sort(flow_keys),
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+        checked.append(True)
+        return result
+
+    monkeypatch.setattr(PlanUpdater, "_assemble_incremental_evaluation", record_assembly)
+    monkeypatch.setattr(shared_pool_module.SharedCandidatePoolAsset, "__init__", record_pool_limit)
+    monkeypatch.setattr(ScoringContexts, "collapse_factored_step_rows", record_factored)
+    monkeypatch.setattr(PlanUpdater, "evaluate_candidate_pool", compare_evaluation)
+    result = setup.experiment("weekday", scenarios=["default"], replication=0).run("weekday").get()
+    assert result.current_plans.height
+    assert checked and reused and factored and factored_active
+    assert [limit for step, limit in pool_limits if step == 1] == [None] * sum(
+        step == 1 for step, _ in pool_limits
+    )
+    second_step_limits = [limit for step, limit in pool_limits if step == 2]
+    assert second_step_limits[0] == setup.parameters.plan_update.max_inactive_age
+    assert all(limit is None for limit in second_step_limits[1:])
+
+
+def test_inner_reuse_preserves_search_and_random_state(test_data, monkeypatch):
+    """Each batch must make the same search decisions as a fresh evaluation."""
+    evaluate = PlanUpdater.evaluate_candidate_pool
+    allocate = PlanUpdater.estimate_mnl_allocation
+    run_inner = MultiScenarioRunAsset._run_inner_loop
+    build_sources = MultiScenarioRunAsset._build_candidate_sources
+    observations = []
+    batch_random_states = []
+
+    def record_sources(coordinator, *args, **kwargs):
+        result = build_sources(coordinator, *args, **kwargs)
+        batch_random_states.append((
+            kwargs["iteration"], kwargs["batch_index"],
+            {key: seeds.get()["rng_state_after_sampling"] for key, seeds in result[2].items()},
+        ))
+        return result
+
+    def record_inner(coordinator, *args, **kwargs):
+        result = run_inner(coordinator, *args, **kwargs)
+        observations.append({
+            "diagnostics": pl.DataFrame(result["diagnostics"]),
+            "candidate_ids": result["pool"].candidate_ids,
+            "flows": result["flows_by_scenario"],
+            "rng_states": result["rng_states"],
+            "stop_reason": result["stop_reason"],
+        })
+        return result
+
+    def evaluate_fresh(updater, *args, **kwargs):
+        return evaluate(updater, *args, **{
+            **kwargs, "inner_plan_cache": None, "scoring_lookup": None,
+            "compact_plan_id_index": None, "factored_candidate_steps": None,
+        })
+
+    def allocate_with_expanded_steps(updater, *args, **kwargs):
+        return allocate(updater, *args, **{**kwargs, "include_plan_steps": True})
+
+    monkeypatch.setattr(MultiScenarioRunAsset, "_run_inner_loop", record_inner)
+    monkeypatch.setattr(MultiScenarioRunAsset, "_build_candidate_sources", record_sources)
+    setup = make_setup(test_data, n_steps=2)
+    setup.experiment("weekday", scenarios=["default", "project"], replication=0).run("weekday").get()
+    reused = observations[:]
+    reused_random_states = batch_random_states[:]
+    observations.clear()
+    batch_random_states.clear()
+    monkeypatch.setattr(PlanUpdater, "evaluate_candidate_pool", evaluate_fresh)
+    monkeypatch.setattr(PlanUpdater, "estimate_mnl_allocation", allocate_with_expanded_steps)
+    setup.experiment("weekday", scenarios=["default", "project"], replication=0).run("weekday").get()
+    assert len(reused) == len(observations) == 2
+    assert len(reused_random_states) > len(reused)
+    assert reused_random_states == batch_random_states
+    for actual, fresh in zip(reused, observations):
+        assert actual["candidate_ids"] == fresh["candidate_ids"]
+        assert actual["rng_states"] == fresh["rng_states"]
+        assert actual["stop_reason"] == fresh["stop_reason"]
+        assert_frame_equal(actual["diagnostics"], fresh["diagnostics"],
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+        assert actual["flows"].keys() == fresh["flows"].keys()
+        for key in actual["flows"]:
+            assert_frame_equal(actual["flows"][key], fresh["flows"][key],
+                               check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+
+
 def test_live_results_match_complete_cohort(test_data, monkeypatch, tmp_path):
     """Selected results must preserve the cohort's behavior and random path."""
     setup = make_setup(test_data, record_events=True)
@@ -158,19 +564,35 @@ def test_live_results_match_complete_cohort(test_data, monkeypatch, tmp_path):
     expand = PlanUpdater.expand_context_evaluation
     compact = CompactCandidateSteps.from_frame
     expanded_evaluations = []
+    compact_histories = []
     checked_compactions = []
     compacted_candidates = []
 
-    def record_evaluation(updater, *args):
-        evaluation = expand(updater, *args)
+    def record_evaluation(updater, *args, **kwargs):
+        if compact_histories:
+            assert compact_histories[-1]() is None
+        compact_evaluation = args[0]
+        compact_histories.append(weakref.ref(compact_evaluation.candidate_plan_steps))
+        candidate_steps = compact_evaluation.candidate_plan_steps
+        if isinstance(candidate_steps, CompactCandidateSteps):
+            candidate_steps = candidate_steps.lazy()
+        expected_candidates = compact_evaluation.scoring_contexts.expand_step_rows(
+            candidate_steps
+        ).collect(engine="streaming")
+        evaluation = expand(updater, *args, **kwargs)
+        candidates = evaluation.candidate_plan_steps
+        if isinstance(candidates, CompactCandidateSteps):
+            candidates = candidates.lazy().collect(engine="streaming")
+        candidate_keys = CandidatePlanStepsAsset.DEDUPE_COLUMNS
+        assert_frame_equal(candidates.sort(candidate_keys), expected_candidates.sort(candidate_keys))
         expanded_evaluations.append(weakref.ref(evaluation))
         return evaluation
 
-    def check_compaction(cls, frame):
+    def check_compaction(cls, frame, **kwargs):
         if expanded_evaluations:
             assert expanded_evaluations[-1]() is None
             checked_compactions.append(True)
-        result = compact(frame)
+        result = compact(frame, **kwargs)
         compacted_candidates.append(isinstance(result, CompactCandidateSteps))
         return result
 
@@ -281,7 +703,7 @@ def test_live_results_match_complete_cohort(test_data, monkeypatch, tmp_path):
 
     # Compare both supported candidate-history representations in the same
     # model: lossless compaction and the full-table fallback.
-    monkeypatch.setattr(CompactCandidateSteps, "from_frame", classmethod(lambda cls, frame: frame))
+    monkeypatch.setattr(CompactCandidateSteps, "from_frame", classmethod(lambda cls, frame, **kwargs: frame))
     other = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
     reference = other.results()
     comparisons = {
@@ -1020,6 +1442,7 @@ def test_derived_earlier_step_metric_does_not_build_final_outputs(test_data, mon
 
 def test_custom_inner_flow_metric_keeps_final_flows(test_data, monkeypatch, tmp_path):
     setup = make_setup(test_data)
+    setup.parameters.adaptive_search.max_search_batches = 2
     results = setup.experiment("weekday", scenarios=["default", "project"], replication=0).results()
     flows = results.tables.mnl_od_mode_flows()
     metric = Metric(
@@ -1041,20 +1464,32 @@ def test_custom_inner_flow_metric_keeps_final_flows(test_data, monkeypatch, tmp_
     assert lane["inner_flow_diagnostics"] == "planned"
     advance = MultiScenarioRunAsset._advance_cohort_step
     retained = []
+    batches = []
+    fresh_calls = []
+    estimate = PlanUpdater.estimate_mnl_allocation
+
+    def record_fresh(updater, *args, **kwargs):
+        fresh_calls.append(True)
+        return estimate(updater, *args, **kwargs)
 
     def record_step(coordinator, iteration, *args, **kwargs):
         retained.append(kwargs["keep_inner_flows"])
-        return advance(coordinator, iteration, *args, **kwargs)
+        result = advance(coordinator, iteration, *args, **kwargs)
+        batches.append(result[2]["search_batches"])
+        return result
 
     def unexpected_final_costs(*args, **kwargs):
         raise AssertionError("Inner-flow diagnostics do not need final costs.")
 
     monkeypatch.setattr(MultiScenarioRunAsset, "_advance_cohort_step", record_step)
+    monkeypatch.setattr(PlanUpdater, "estimate_mnl_allocation", record_fresh)
     monkeypatch.setattr(MultiScenarioRunAsset, "_finalize_cohort", unexpected_final_costs)
     values = results.get_all(custom=metric, derived=derived)
     assert set(values["custom"]["scenario"]) == {"default", "project"}
     assert values["derived"]["doubled"].to_list() == (values["custom"]["len"] * 2).to_list()
     assert retained == [False, True]
+    assert batches[-1] == 2
+    assert len(fresh_calls) == 2  # One final diagnostic for each scenario.
 
 
 def test_cached_metric_does_not_trigger_unneeded_final_costs(test_data, monkeypatch, tmp_path):

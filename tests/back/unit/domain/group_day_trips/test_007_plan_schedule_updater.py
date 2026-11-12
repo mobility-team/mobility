@@ -150,6 +150,31 @@ def test_plan_schedule_updater_keeps_last_activity_boundary_when_no_next_trip_ex
     assert result["duration_per_pers"].to_list() == [1.0]
 
 
+def test_timing_update_keeps_each_plan_end_when_rows_are_interleaved():
+    steps = _make_plan_steps({
+        "demand_group_id": [1, 1, 1, 1, 1],
+        "demand_subgroup_id": [0, 1, 0, 1, 0],
+        "activity_seq_id": [10] * 5,
+        "time_seq_id": [100] * 5,
+        "dest_seq_id": [1000] * 5,
+        "mode_seq_id": [1, 1, 1, 1, 2],
+        "seq_step_index": [1, 0, 0, 1, 0],
+        "activity": ["other"] * 5,
+        "departure_time": [17.0, 9.0, 8.0, 18.0, 10.0],
+        "arrival_time": [17.5, 9.5, 8.5, 18.5, 10.5],
+        "next_departure_time": [20.0, 18.0, 17.0, 21.0, 22.0],
+        "duration_per_pers": [2.5, 8.5, 8.5, 2.5, 11.5],
+        "time": [0.5] * 5,
+    })
+
+    result = PlanScheduleUpdater().update_plan_timings(
+        steps, arrival_time_rigidity_by_activity={"other": 0.0}, enabled=True,
+    ).collect()
+
+    assert result["departure_time"].to_list() == [8.0, 17.0, 10.0, 9.0, 18.0]
+    assert result["next_departure_time"].to_list() == [17.0, 20.0, 22.0, 18.0, 21.0]
+
+
 def test_activity_arrival_time_rigidity_defaults_from_anchor_flag_and_allows_override():
     """Check the default and override rules for timing rigidity by activity.
 

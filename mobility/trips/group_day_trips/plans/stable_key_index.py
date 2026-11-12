@@ -6,6 +6,8 @@ from typing import Any
 
 import polars as pl
 
+from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
+
 
 def add_ordered_key_hashes(
     rows: pl.DataFrame,
@@ -68,6 +70,7 @@ class StableKeyIndex:
     index_col: str
     first_new_id: int = 1
 
+    @trace_simulation_step("extend stable index")
     def extend(
         self,
         rows: pl.DataFrame | pl.LazyFrame,
@@ -75,9 +78,10 @@ class StableKeyIndex:
     ) -> tuple[pl.DataFrame | pl.LazyFrame, pl.DataFrame]:
         """Attach ids to rows and return the updated key-index table."""
         input_was_lazy = isinstance(rows, pl.LazyFrame)
-        # Only the sorted distinct keys are needed to extend the index. Keep
-        # the potentially much wider input lazy until its caller needs it.
-        key_query = rows.select(self.key_cols).unique().sort(self.key_cols)
+        # Keep the potentially much wider input lazy until its caller needs
+        # it. Existing keys need not be sorted again: only unseen keys receive
+        # new IDs, in their usual sorted order.
+        key_query = rows.select(self.key_cols).unique()
         key_frame = key_query.collect(engine="streaming") if input_was_lazy else key_query
         if key_frame.null_count().row(0) != tuple([0] * len(self.key_cols)):
             raise ValueError(f"Index keys cannot contain nulls: {self.key_cols}")
@@ -92,7 +96,7 @@ class StableKeyIndex:
             previous_index.select(self.key_cols),
             on=self.key_cols,
             how="anti",
-        )
+        ).sort(self.key_cols)
 
         max_index = previous_index[self.index_col].max()
         next_index = self.first_new_id if max_index is None else int(max_index) + 1
@@ -111,7 +115,15 @@ class StableKeyIndex:
             .with_columns(pl.col(self.index_col).cast(pl.UInt32))
             .sort(self.index_col)
         )
-        self.validate(updated_index)
+        # A validated UInt32 index stays unique: missing_keys is distinct and
+        # excludes existing keys, while its new IDs are consecutive above the
+        # previous maximum. Keep the full check for other input types (casting
+        # can merge distinct values) and when the assigned IDs may overflow.
+        if (
+            previous_index.schema[self.index_col] != pl.UInt32
+            or next_index + missing_keys.height > 2**32
+        ):
+            self.validate(updated_index)
 
         if input_was_lazy:
             indexed_rows = rows.drop(self.index_col, strict=False).join(

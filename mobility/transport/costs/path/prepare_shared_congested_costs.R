@@ -170,9 +170,14 @@ if (any(!buildings_sample$vertex_id %in% graph_refs)) {
 travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, vertex_id)], by.x = "building_id_from_cluster", by.y = "building_id")
 travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, vertex_id)], by.x = "building_id_to_cluster", by.y = "building_id", suffixes = c("_from", "_to"))
 
+# The route and zone aggregation need only these fields. Drop building and
+# coordinate details before routing the same requests for each scenario.
+travel_costs <- travel_costs[, .(
+  from, to, vertex_id_from, vertex_id_to, weight_from_cluster, weight_to_cluster
+)]
+
 flow_paths <- unlist(fromJSON(flows_fp))
 wide <- NULL
-flow_paths <- unlist(fromJSON(flows_fp))
 for (i in seq_along(flow_paths)) {
   info(logger, paste0("Assigning scenario ", i, " of ", length(flow_paths)))
   od_flows <- as.data.table(read_parquet(flow_paths[[i]]))
@@ -223,6 +228,7 @@ for (i in seq_along(flow_paths)) {
     max_it = congestion_assignment_max_iterations,
     verbose = TRUE
   )
+  info(logger, "Traffic assignment complete; routing the affected OD pairs...")
   
   # Update travel times
   scenario_graph$data$dist <- traffic$data$cost
@@ -233,6 +239,7 @@ for (i in seq_along(flow_paths)) {
     metric, from = travel_costs$vertex_id_from, to = travel_costs$vertex_id_to,
     values = data.frame(distance = scenario_graph$attrib$aux)
   )
+  info(logger, "Routing complete; aggregating travel costs by zone pair...")
   travel_costs[, time := path_values$cost]
   travel_costs[, distance := path_values$distance]
   reachable <- travel_costs[!is.na(time) & !is.na(distance)]

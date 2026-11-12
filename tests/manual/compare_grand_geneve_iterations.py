@@ -262,7 +262,7 @@ def report_state(asset):
         candidates = state.candidate_plan_steps
         if isinstance(candidates, CompactCandidateSteps):
             candidates.steps.write_parquet(work / f"step-{asset.iteration}-{asset.scenario}-candidate-steps.parquet")
-            candidates.membership.write_parquet(
+            candidates.memberships().collect(engine="streaming").write_parquet(
                 work / f"step-{asset.iteration}-{asset.scenario}-candidate-membership.parquet"
             )
         elif isinstance(candidates, pl.DataFrame):

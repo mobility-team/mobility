@@ -1,7 +1,9 @@
 import math
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
 from mobility.trips.group_day_trips import (
     BehaviorChangePhase,
@@ -9,8 +11,95 @@ from mobility.trips.group_day_trips import (
     GroupDayTripsBehaviorChangeParameters,
 )
 from mobility.trips.group_day_trips.plans.candidate_plan_steps import CandidatePlanStepsAsset
-from mobility.trips.group_day_trips.plans.plan_ids import add_plan_id
-from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
+from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS, add_plan_id
+from mobility.trips.group_day_trips.plans.plan_updater import CandidatePlanEvaluation, PlanUpdater
+from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts
+
+
+@pytest.mark.parametrize("scope,expected_modes", [
+    (BehaviorChangeScope.MODE_REPLANNING, [1, 2]),
+    (BehaviorChangeScope.DESTINATION_REPLANNING, [1, 2, 3]),
+    (BehaviorChangeScope.NO_TRANSITIONS, [1]),
+])
+def test_intermediate_scoring_keeps_reachable_candidates_and_forced_contexts(scope, expected_modes):
+    candidates = pl.DataFrame({
+        "demand_group_id": [1, 1, 1, 1, 2, 2, 3], "demand_subgroup_id": [0] * 7,
+        "activity_seq_id": [1, 1, 1, 2, 1, 2, 1], "time_seq_id": [1, 2, 1, 1, 1, 1, 1],
+        "dest_seq_id": [1, 1, 2, 1, 1, 2, 1], "mode_seq_id": [1, 2, 3, 4, 1, 4, 1],
+        "seq_step_index": [1] * 7,
+    })
+    origins = candidates.filter(
+        ((pl.col("demand_group_id") == 1) & (pl.col("mode_seq_id") == 1))
+        | ((pl.col("demand_group_id") == 2) & (pl.col("mode_seq_id") == 1))
+    ).select(PLAN_KEY_COLS)
+    references = pl.DataFrame({"time_seq_id": [1, 2], "reference_time_seq_id": [1, 1]})
+    forced = pl.DataFrame({"demand_group_id": [2], "demand_subgroup_id": [0]})
+    selected = PlanUpdater._reachable_scoring_candidates(candidates, origins, references, scope, forced)
+    assert selected.filter(pl.col("demand_group_id") == 1)["mode_seq_id"].sort().to_list() == expected_modes
+    assert selected.filter(pl.col("demand_group_id") == 2)["mode_seq_id"].sort().to_list() == [1, 4]
+    assert selected.filter(pl.col("demand_group_id") == 3).is_empty()
+
+
+@pytest.mark.parametrize("scope", list(BehaviorChangeScope))
+def test_shared_context_transitions_keep_unit_origins_and_history(scope):
+    units = pl.DataFrame({
+        "demand_group_id": [1, 2, 3], "demand_subgroup_id": [0, 0, 0],
+        "_score_context_id": [0, 0, 0],
+    }).cast(pl.UInt32)
+    contexts = ScoringContexts(pl.DataFrame(), units)
+    choices = pl.DataFrame({
+        "demand_group_id": [0, 0, 0, 0], "demand_subgroup_id": [0, 0, 0, 0],
+        "activity_seq_id": [0, 1, 1, 1], "time_seq_id": [0, 1, 1, 1],
+        "dest_seq_id": [0, 1, 1, 2], "mode_seq_id": [0, 1, 2, 1],
+        "utility": [0.0, 1.0, 2.0, 3.0], "is_feasible": [True, True, False, True],
+    }).with_columns(pl.col(PLAN_KEY_COLS).cast(pl.UInt32))
+    choices, compact_index = add_plan_id(choices, previous_index=None)
+    expanded_choices, index = add_plan_id(contexts.expand_step_rows(choices).drop("plan_id"), previous_index=None)
+    expanded_choices = expanded_choices.collect()
+    origins = expanded_choices.filter(
+        ((pl.col("demand_group_id") == 1) & (pl.col("mode_seq_id") == 1) & (pl.col("dest_seq_id") == 1))
+        | ((pl.col("demand_group_id") == 2) & (pl.col("mode_seq_id") == 2))
+        | ((pl.col("demand_group_id") == 3) & (pl.col("mode_seq_id") == 0))
+    ).select(PLAN_KEY_COLS + ["plan_id"]).with_columns(
+        n_persons=pl.Series([10.0, 20.0, 30.0]), utility=pl.Series([-1.0, -2.0, -3.0]),
+    )
+    times = pl.DataFrame({"time_seq_id": [0, 1], "reference_time_seq_id": [0, 1]}).cast(pl.UInt32)
+    compact = CandidatePlanEvaluation(
+        candidate_plan_steps=pl.DataFrame(), possible_plan_steps=pl.DataFrame(),
+        possible_plan_utility=choices, plan_id_index=compact_index,
+        time_sequence_steps=times, scoring_contexts=contexts,
+        time_mapping=choices.select(PLAN_KEY_COLS).with_columns(previous_time_seq_id=pl.col("time_seq_id")),
+        current_plans=contexts.collapse_allocations(origins).join(compact_index, on=PLAN_KEY_COLS),
+    )
+    evaluation = CandidatePlanEvaluation(
+        candidate_plan_steps=pl.DataFrame(), possible_plan_steps=pl.DataFrame(),
+        possible_plan_utility=expanded_choices, plan_id_index=index, current_plans=origins,
+        time_sequence_steps=times, compact_transition_evaluation=compact,
+    )
+    updater = PlanUpdater()
+    settings = dict(transport_zones=None, transition_revision_probability=0.4, min_transition_utility_gain=0.1)
+    expected = updater.get_transition_probabilities(
+        origins, expanded_choices.join(times, on="time_seq_id").lazy(), pl.DataFrame(), scope, **settings,
+    )
+    actual = updater.get_context_transition_probabilities(evaluation, scope, **settings)
+    keys = ["plan_id_from", "plan_id_trans"]
+    assert_frame_equal(actual.select(expected.columns).sort(keys), expected.sort(keys))
+    for retained_share, iteration in ((1.0, 3), (0.8, 3), (0.8, 1)):
+        expected_allocation, _ = updater.apply_transitions(origins, expected, iteration, plan_probability_pruning_retained_share=retained_share)
+        actual_allocation, _ = updater.apply_transitions(origins, actual, iteration, plan_probability_pruning_retained_share=retained_share)
+        assert_frame_equal(actual_allocation.sort(PLAN_KEY_COLS), expected_allocation.sort(PLAN_KEY_COLS))
+        without_events, events = updater.apply_transitions(
+            origins, actual, iteration, plan_probability_pruning_retained_share=retained_share, include_events=False,
+        )
+        assert events is None
+        assert_frame_equal(without_events.sort(PLAN_KEY_COLS), expected_allocation.sort(PLAN_KEY_COLS))
+        expected_context = contexts.collapse_allocations(expected_allocation).join(compact_index, on=PLAN_KEY_COLS)
+        reachable = updater.estimate_reachable_allocation(
+            compact, origins, iteration, scope, plan_probability_pruning_retained_share=retained_share, **settings,
+        )
+        compare_columns = [column for column in expected_context.columns if column != "utility"]
+        assert_frame_equal(reachable.select(compare_columns).sort(PLAN_KEY_COLS),
+                           expected_context.select(compare_columns).sort(PLAN_KEY_COLS))
 
 
 def test_transition_probabilities_are_stable_when_options_are_reordered():
@@ -28,6 +117,123 @@ def test_transition_probabilities_are_stable_when_options_are_reordered():
     forward = updater.compute_transition_probabilities_from_utilities(transitions.lazy()).sort("plan_id_trans")
     reverse = updater.compute_transition_probabilities_from_utilities(transitions.reverse().lazy()).sort("plan_id_trans")
     assert forward.equals(reverse)
+
+
+def test_full_replanning_keeps_self_and_all_feasible_for_forced_reassignment():
+    """Pruning must not remove a self-transition or strand an infeasible origin."""
+    choices = pl.DataFrame({
+        "demand_group_id": [1, 1, 1, 1, 2, 2, 2, 3],
+        "demand_subgroup_id": [0] * 8,
+        "activity_seq_id": [1, 2, 3, 4, 1, 2, 3, 1],
+        "time_seq_id": [1] * 8,
+        "dest_seq_id": [1, 2, 3, 4, 1, 2, 3, 1],
+        "mode_seq_id": [1] * 8,
+        "plan_id": list(range(1, 9)),
+        "utility": [0.0, 10.0, -2.0, 100.0, 10.0, -100.0, 0.0, 0.0],
+        "is_feasible": [True, True, True, False, False, True, True, False],
+    })
+    current = choices.filter(pl.col("plan_id").is_in([1, 5, 8])).select(
+        "demand_group_id", "demand_subgroup_id", "activity_seq_id", "time_seq_id",
+        "dest_seq_id", "mode_seq_id", "utility",
+    )
+    result = PlanUpdater().get_transition_probabilities(
+        current, choices.lazy(), pl.DataFrame(), BehaviorChangeScope.FULL_REPLANNING,
+        transport_zones=None, transition_utility_pruning_delta=1.0,
+        transition_logit_scale=1.0, min_transition_utility_gain=0.1,
+        transition_revision_probability=0.4,
+    )
+    assert result.select("plan_id_from", "plan_id_trans").sort(
+        ["plan_id_from", "plan_id_trans"]
+    ).rows() == [(1, 1), (1, 2), (5, 6), (5, 7)]
+    sums = result.group_by("plan_id_from").agg(pl.col("p_transition").sum()).sort("plan_id_from")
+    assert sums["p_transition"].to_list() == pytest.approx([1.0, 1.0])
+
+
+@pytest.mark.parametrize("scale,delta,gain", [(0.25, 1.0, 0.1), (1.0, math.inf, 0.0), (0.0, 1.0, 0.2)])
+@pytest.mark.parametrize("scope", list(BehaviorChangeScope))
+def test_replanning_matches_filtering_after_pair_generation(scale, delta, gain, scope):
+    """Moving the filters into the join must preserve the old pair choices and probabilities."""
+    choices = pl.DataFrame({
+        "demand_group_id": [1, 1, 1, 1, 2, 2, 2, 1], "demand_subgroup_id": [0] * 8,
+        "activity_seq_id": [1, 1, 1, 4, 1, 2, 3, 0], "time_seq_id": [1, 2, 1, 1, 1, 1, 1, 0],
+        "reference_time_seq_id": [1, 1, 1, 1, 1, 1, 1, 0],
+        "dest_seq_id": [1, 1, 2, 4, 1, 2, 3, 0], "mode_seq_id": [1, 2, 1, 1, 1, 1, 1, 0],
+        "plan_id": list(range(1, 9)), "utility": [0.0, 4.0, 5.0, 9.0, 7.0, -2.0, 2.0, 8.0],
+        "is_feasible": [True, True, True, False, False, True, True, True],
+    }).lazy()
+    current = choices.filter(pl.col("plan_id").is_in([1, 2, 5, 8])).select(PLAN_KEY_COLS + ["utility"]).collect()
+    updater = PlanUpdater()
+    actual = updater.build_allowed_plan_transitions(
+        current, choices, scope,
+        transition_utility_pruning_delta=delta, transition_logit_scale=scale,
+        min_transition_utility_gain=gain,
+    )
+    # This is the previous calculation: enumerate the eligible pairs first,
+    # then find the best target and filter within each origin plan.
+    forced = ~pl.col("is_feasible").fill_null(True)
+    same = (pl.col("plan_id_from") == pl.col("plan_id_trans"))
+    scope_pair = pl.lit(True)
+    if scope in (BehaviorChangeScope.DESTINATION_REPLANNING, BehaviorChangeScope.MODE_REPLANNING):
+        scope_pair = (
+            (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
+            & (pl.col("reference_time_seq_id") == pl.col("reference_time_seq_id_trans"))
+        )
+        if scope == BehaviorChangeScope.MODE_REPLANNING:
+            scope_pair = scope_pair & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
+        scope_pair = (scope_pair & (pl.col("mode_seq_id_trans") != 0)) | forced
+        current = current.filter(pl.col("mode_seq_id") != 0)
+    elif scope == BehaviorChangeScope.NO_TRANSITIONS:
+        scope_pair = (
+            (pl.col("activity_seq_id") == pl.col("activity_seq_id_trans"))
+            & (pl.col("time_seq_id") == pl.col("time_seq_id_trans"))
+            & (pl.col("dest_seq_id") == pl.col("dest_seq_id_trans"))
+            & (pl.col("mode_seq_id") == pl.col("mode_seq_id_trans"))
+        ) | forced
+    legacy = (
+        current.lazy().rename({"utility": "utility_prev_from"})
+        .join(choices, on=PLAN_KEY_COLS).rename({"plan_id": "plan_id_from"})
+        .join_where(
+            choices.filter(pl.col("is_feasible")),
+            (pl.col("demand_group_id") == pl.col("demand_group_id_trans"))
+            & (pl.col("demand_subgroup_id") == pl.col("demand_subgroup_id_trans")) & scope_pair,
+            suffix="_trans",
+        )
+        .drop("demand_group_id_trans", "demand_subgroup_id_trans")
+        .rename({"plan_id": "plan_id_trans"})
+        .with_columns(max_utility_trans=pl.col("utility_trans").max().over(PLAN_KEY_COLS))
+    )
+    threshold = updater._scale_utility_pruning_delta(delta, scale)
+    if math.isfinite(threshold):
+        legacy = legacy.filter(forced | same | (pl.col("utility_trans") >= pl.col("max_utility_trans") - threshold))
+    legacy = legacy.filter(forced | same | (pl.col("utility_trans") >= pl.col("utility") + gain)).drop("max_utility_trans")
+    expected = updater.compute_transition_probabilities_from_utilities(
+        legacy, transition_logit_scale=scale, transition_revision_probability=0.4,
+    ).sort(["plan_id_from", "plan_id_trans"])
+    result = updater.compute_transition_probabilities_from_utilities(
+        actual, transition_logit_scale=scale, transition_revision_probability=0.4,
+    ).sort(["plan_id_from", "plan_id_trans"])
+    assert result.equals(expected)
+
+    if scope != BehaviorChangeScope.FULL_REPLANNING:
+        units = current.select("demand_group_id", "demand_subgroup_id").unique().with_columns(
+            _score_context_id=pl.col("demand_group_id")
+        )
+        time_steps = choices.select("time_seq_id", "reference_time_seq_id").unique().collect()
+        evaluation = SimpleNamespace(
+            scoring_contexts=ScoringContexts(pl.DataFrame(), units),
+            possible_plan_utility=choices.drop("reference_time_seq_id").collect(),
+            time_sequence_steps=time_steps,
+        )
+        narrowed = updater._restrict_transition_choices(
+            choices.drop("reference_time_seq_id"), current, evaluation, scope,
+        ).join(time_steps.lazy(), on="time_seq_id", how="left")
+        assert narrowed.collect().height < choices.collect().height
+        reduced = updater.get_transition_probabilities(
+            current, narrowed, pl.DataFrame(), scope, transport_zones=None,
+            transition_utility_pruning_delta=delta, transition_logit_scale=scale,
+            min_transition_utility_gain=gain, transition_revision_probability=0.4,
+        ).sort(["plan_id_from", "plan_id_trans"])
+        assert reduced.equals(result)
 
 
 def test_pruning_uses_plan_keys_to_break_equal_mass_ties():
@@ -610,6 +816,30 @@ def test_candidate_memory_keeps_regenerated_inactive_plans_after_warmup():
     assert result.select("first_seen_iteration").item() == 1
     assert result.select("last_seen_iteration").item() == 5
     assert result.select("arrival_time").item() == pytest.approx(18.6)
+
+
+def test_candidate_memory_keeps_occupied_and_recent_plans_at_age_boundary():
+    inputs = _candidate_memory_inputs()
+    previous = pl.concat([
+        _previous_candidate_plan(activity_seq_id=12, mode_seq_id=1002, last_seen=2, arrival_time=18.5),
+        _previous_candidate_plan(activity_seq_id=13, mode_seq_id=1003, last_seen=3, arrival_time=18.5),
+        _previous_candidate_plan(activity_seq_id=14, mode_seq_id=1004, last_seen=2, arrival_time=18.5),
+    ])
+    inputs["current_plans"] = previous.filter(pl.col("activity_seq_id") == 14).select(
+        "demand_group_id", "demand_subgroup_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"
+    )
+    args = dict(
+        **inputs, previous_candidate_plan_steps=previous, current_iteration=5,
+        n_warmup_steps=1, max_inactive_age=2,
+    )
+    result = CandidatePlanStepsAsset.build_candidate_memory(**args).collect()
+    assert set(result["activity_seq_id"]) == {11, 13, 14}
+    assert result.filter(pl.col("activity_seq_id") == 14)["last_active_iteration"].item() == 5
+
+    # Warmup keeps the same old, unoccupied plan until pruning starts.
+    warmup = CandidatePlanStepsAsset.build_candidate_memory(**{**args, "n_warmup_steps": 5}).collect()
+    assert set(warmup["activity_seq_id"]) == {11, 12, 13, 14}
+
 
 def test_get_transition_probabilities_limits_destination_replanning_to_same_timing_profile(tmp_path):
     updater = PlanUpdater()

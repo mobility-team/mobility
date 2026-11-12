@@ -7,6 +7,30 @@ from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.trips.group_day_trips.plans.plan_initializer import PlanInitializer
 
 
+def test_initial_population_grouping_preserves_sorted_sums_and_labels(tmp_path):
+    groups = pl.DataFrame({
+        "local_admin_unit_id": ["a", "a", "a", "b", "b"],
+        "transport_zone_id": [1, 1, 1, 2, 2],
+        "country": ["fr", "fr", "fr", "ch", "ch"],
+        "socio_pro_category": ["worker", "worker", "worker", None, None],
+        "n_cars": ["1", "1", "1", "0", "0"],
+        "weight": [1e16, 1.0, 1.0, 1.0, 2.0],
+    })
+    cities = pl.DataFrame({"local_admin_unit_id": ["a", "b"], "city_category": ["urban", "rural"]})
+    path = tmp_path / "population.parquet"
+    groups.write_parquet(path)
+    keys = ["country", "home_zone_id", "city_category", "csp", "n_cars"]
+    expected = (
+        groups.lazy().rename({"transport_zone_id": "home_zone_id", "socio_pro_category": "csp", "weight": "n_persons"})
+        .with_columns(home_zone_id=pl.col("home_zone_id").cast(pl.Int32))
+        .join(cities.lazy(), on="local_admin_unit_id")
+        .group_by(keys).agg(pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum())
+        .sort(keys).collect(engine="streaming")
+    )
+    actual = PlanInitializer._aggregate_population_groups(path, cities).sort(keys)
+    assert actual.equals(expected)
+
+
 def test_population_weighted_survey_summaries_use_one_asset_with_correct_aggregations():
     """Check that runtime survey summaries come from one weighted step asset.
 
@@ -94,6 +118,23 @@ def test_survey_summaries_are_stable_when_input_rows_are_reordered():
             "mean_duration_per_pers", "mean_home_night_per_pers", "duration_per_pers"
         }]
         assert left.sort(keys).equals(right.sort(keys))
+
+    # Survey and population country enums may contain different domains.
+    # Their labels must still match and their weighted sums must stay exact.
+    enum_steps = steps.with_columns(
+        country=pl.col("country").cast(pl.Enum(["fr", "ch"])),
+        csp=pl.col("csp").cast(pl.Enum(["A", "B"])),
+        activity=pl.col("activity").cast(pl.Enum(["home", "work"])),
+    )
+    enum_groups = groups.with_columns(country=pl.col("country").cast(pl.Enum(["fr"])))
+    compact = initializer.get_survey_duration_summaries(enum_steps.lazy(), enum_groups)
+    for left, right in zip(forward, compact):
+        keys = [name for name in left.columns if name not in {
+            "mean_duration_per_pers", "mean_home_night_per_pers", "duration_per_pers"
+        }]
+        assert left.with_columns(pl.col(keys).cast(pl.String)).sort(keys).equals(
+            right.with_columns(pl.col(keys).cast(pl.String)).sort(keys)
+        )
 
 
 def test_opportunity_capacities_are_stable_when_input_rows_are_reordered():

@@ -305,6 +305,7 @@ class SimulationRunner:
                                 - inner_result["covered_activity_profile_cell_count_by_scenario"][run_key],
                             ),
                             "unique_pool_size": len(inner_result["pool"].candidate_ids),
+                            "scored_candidate_scope": inner_result["scored_candidate_scope_by_scenario"][run_key],
                             "infeasible_candidate_count": inner_result["infeasible_counts"][run_key],
                             "missing_cost_row_candidate_count": inner_result["missing_cost_row_counts"][run_key],
                             "invalid_cost_row_candidate_count": inner_result["invalid_cost_row_counts"][run_key],

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
+import math
 import os
 import pathlib
 import tempfile
@@ -22,12 +23,18 @@ from mobility.activities.activity import (
     resolve_activity_parameters,
 )
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
+from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from mobility.trips.group_day_trips.iterations.iteration_assets import IterationSeedsAsset
 from mobility.trips.group_day_trips.plans.activity_sequences import ActivitySequences
 from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
 from mobility.trips.group_day_trips.plans.demand_subgroups import DEMAND_UNIT_COLS
+from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps
 from mobility.trips.group_day_trips.plans.mode_sequence_search.mode_sequences import ModeSequences
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS
+from mobility.trips.group_day_trips.plans.scoring_contexts import (
+    InnerPlanCache, ScoringContexts, ScoringLookup, ScoringMemoryBudget,
+)
+from mobility.trips.group_day_trips.plans.time_sequences import TimeSequenceIndexCache
 from mobility.trips.group_day_trips.plans.shared_candidate_pool import (
     ScenarioCandidateSource,
     SharedCandidatePoolAsset,
@@ -42,6 +49,7 @@ from mobility.trips.group_day_trips.core.multi_scenario import (
     CANDIDATE_ID_COLS,
     InnerLoopConvergence,
     add_candidate_ids,
+    allocation_od_mode_flows,
     represented_od_mode_flows,
 )
 from mobility.trips.group_day_trips.core.run_state import RunState
@@ -82,13 +90,13 @@ class MultiScenarioRunAsset(InMemoryAsset):
             for group, run_keys in self.run_keys_by_group.items()
         }
         self.parameters = first_run.parameters
+        self._scoring_context_cache = {}
         self._active_result: CoordinatedRunResult | None = None
         self._is_running = False
         super().__init__(
             {
-                # The result now keeps the last regular inner estimate instead
-                # of running a separate candidate search after the outer loop.
-                "version": 21,
+                # Inactive physical plans now expire per replication.
+                "version": 23,
                 "run_contexts": [
                     {
                         "run_key": run_key,
@@ -106,7 +114,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         self._checkpoint_cohort_hash = hash_inputs(
             {
                 "outer_iteration_policy": "fixed_count",
-                "candidate_history_policy": "per_run_v1",
+                "candidate_history_policy": "physical_plan_age_per_replication_v3",
                 "behavior_evaluation_policy": "reuse_inner_v1",
                 "inner_attachment_policy": "scoring_contexts_v1",
                 "checkpoint_manifest_version": 2,
@@ -133,6 +141,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         try:
             return super().get(*args, **kwargs)
         finally:
+            self._scoring_context_cache.clear()
             if kwargs.get("step_consumer") is not None:
                 for run in self.runs.values():
                     for state_asset in run.iteration_state_assets:
@@ -230,19 +239,22 @@ class MultiScenarioRunAsset(InMemoryAsset):
             base_gap_tolerance=self.parameters.adaptive_search.inner_base_gap_tolerance,
             required_passes=self.parameters.adaptive_search.inner_consecutive_passes,
             initial_pool=None,
+            keep_inner_flows=keep_inner_flows,
         )
-        # The inner loop has already reduced its flows for convergence. Reuse
-        # those totals for the optional diagnostic rather than retaining or
-        # reconstructing the detailed search allocations.
-        inner_flows = inner_result.pop("flows_by_scenario")
-        inner_result["mnl_od_mode_flows"] = inner_flows if keep_inner_flows else {}
-        del inner_flows
+        # The completed evaluations own the data needed by the outer update.
+        # Drop the pool's attachment queries and active-step tables before
+        # advancing scenarios; only its IDs, indices and catalogue are used.
+        inner_result["pool"] = replace(
+            inner_result["pool"], candidate_plan_steps_by_run_key={},
+            candidate_step_parts_by_run_key=None, scoring_candidate_steps_by_run_key=None,
+        )
+        # Fresh MNL flows are an optional diagnostic; convergence uses the
+        # reachable allocation from the fixed outer state instead.
+        inner_result.pop("flows_by_scenario")
+        inner_result["mnl_od_mode_flows"] = inner_result.pop("mnl_flows_by_scenario")
         # Inner allocations measure search stability. Behavioral transitions
         # always start from the preceding outer distribution.
         for run_key, state_asset in state_assets.items():
-            state_asset.coordinated_candidate_plan_steps = (
-                inner_result["candidate_plan_steps"][run_key]
-            )
             state_asset.coordinated_current_plans = current_states[run_key].current_plans
             state_asset.coordinated_current_plan_steps = current_states[run_key].current_plan_steps
             state_asset.coordinated_plan_id_index = inner_result["plan_id_indices"][run_key]
@@ -276,7 +288,46 @@ class MultiScenarioRunAsset(InMemoryAsset):
             for state_asset in state_assets.values():
                 state_asset.coordinated_evaluation = None
             inner_result.get("evaluations", {}).clear()
+        self._share_equal_state_tables(next_states)
         return state_assets, next_states, inner_result
+
+    @staticmethod
+    @trace_simulation_step("share identical scenario state tables")
+    def _share_equal_state_tables(states):
+        """Reuse complete, equal state tables across equivalent scenarios."""
+        for name in (
+            "time_sequence_steps", "current_plans", "current_plan_steps", "plan_id_index",
+            "destination_sequence_index", "mode_sequence_index",
+        ):
+            shared = []
+            for state in states.values():
+                table = getattr(state, name)
+                if table is None:
+                    continue
+                match = next((other for other in shared
+                              if other.schema == table.schema and other.equals(table)), None)
+                if match is None:
+                    shared.append(table)
+                else:
+                    setattr(state, name, match)
+
+        # Candidate steps, memberships and unit maps may coincide separately;
+        # compare each complete table without merging scenario histories.
+        for name in ("steps", "membership", "unit_map"):
+            shared = []
+            for state in states.values():
+                candidates = state.candidate_plan_steps
+                if not isinstance(candidates, CompactCandidateSteps):
+                    continue
+                table = getattr(candidates, name)
+                if table is None:
+                    continue
+                match = next((other for other in shared
+                              if other.schema == table.schema and other.equals(table)), None)
+                if match is None:
+                    shared.append(table)
+                else:
+                    state.candidate_plan_steps = replace(candidates, **{name: match})
 
     def _prepare_checkpoint_resume(self) -> None:
         """Resume only when every scenario has the same complete cohort checkpoint."""
@@ -425,8 +476,14 @@ class MultiScenarioRunAsset(InMemoryAsset):
         cost_assets: dict[int, Any] | None = None,
         generation_previous_states: dict[int, Any] | None = None,
         phase: str = "inner",
+        keep_inner_flows: bool = True,
     ) -> dict[int, Any]:
         """Expand and evaluate the shared pool while outer state stays fixed."""
+        # A single batch cannot be compared with a preceding batch.
+        estimate_allocation = (
+            max_search_batches > 1
+            or logging.getLogger().isEnabledFor(logging.DEBUG)
+        )
         adaptive = self.parameters.adaptive_search
         generation_targets = {}
         for scenario in self.scenarios:
@@ -450,6 +507,10 @@ class MultiScenarioRunAsset(InMemoryAsset):
             )
         scheduler = AdaptiveGenerationScheduler(
             targets_by_scenario=generation_targets,
+        )
+        has_future_generation = any(
+            targets.requests.filter(pl.col("generation_effort") > 0).height
+            for targets in generation_targets.values()
         )
         pool = initial_pool
         previous_catalogue = None
@@ -477,8 +538,23 @@ class MultiScenarioRunAsset(InMemoryAsset):
             for scenario in self.scenarios
         }
         time_sequence_steps = {scenario: fixed_states[scenario].schedule_steps for scenario in self.scenarios}
-        evaluated_candidates: dict[int, pl.DataFrame | pl.LazyFrame] = {}
         final_evaluations = {}
+        # Contexts depend on the fixed pre-step demand and scenario costs, not
+        # on the candidate pool. Keep one per scenario only for this inner loop.
+        scoring_setup_by_run_key = {}
+        compact_plan_indices_by_run_key = {}
+        time_index_caches = {run_key: TimeSequenceIndexCache() for run_key in self.run_keys}
+        # Bound retained scoring lookups across the whole scenario cohort.
+        scoring_memory = ScoringMemoryBudget(max_bytes=512 * 1024 * 1024)
+        scoring_lookups = {
+            run_key: ScoringLookup(scoring_memory) if max_search_batches > 1 else None
+            for run_key in self.run_keys
+        }
+        plan_memory = ScoringMemoryBudget(max_bytes=1024 * 1024 * 1024)
+        inner_plan_caches = {
+            run_key: InnerPlanCache(plan_memory) if max_search_batches > 1 else None
+            for run_key in self.run_keys
+        }
         convergence_by_group = {
             group: InnerLoopConvergence(
                 flow_tolerance=flow_tolerance,
@@ -514,6 +590,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
         previous_allocations: dict[int, pl.DataFrame | None] = {
             scenario: None for scenario in self.scenarios
         }
+        forced_scoring_contexts = {}
+        scored_candidate_scope = {scenario: "all" for scenario in self.scenarios}
 
         while batch_index < max_search_batches:
             with simulation_step("search batch", search_batch=batch_index + 1):
@@ -534,7 +612,6 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     # The preceding results are needed if search stops, but
                     # this batch will replace them. Keep only the catalogue,
                     # indices and allocation summaries used to generate it.
-                    evaluated_candidates.clear()
                     final_evaluations.clear()
                     pool = None
                 sources, source_by_scenario, seeds_by_scenario = self._build_candidate_sources(
@@ -549,12 +626,19 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     sources=sources,
                     iteration=iteration,
                     max_shared_candidates=adaptive.max_shared_candidates,
+                    max_inactive_age=(
+                        self.parameters.plan_update.max_inactive_age
+                        if batch_index == 0 and iteration > self.parameters.plan_update.n_warmup_steps
+                        else None
+                    ),
                     previous_candidates_by_run_key=previous_candidates,
                     previous_catalogue=previous_catalogue,
                     previous_destination_indices=previous_destination_indices,
                     previous_mode_indices=previous_mode_indices,
                     previous_time_sequence_steps=time_sequence_steps,
                     compact=True,
+                    build_catalogue=batch_index + 1 < max_search_batches,
+                    time_index_caches=time_index_caches,
                 )
                 pool = pool_asset.get()
                 # Only the latest pool is needed by the next batch. Keeping every
@@ -602,11 +686,43 @@ class MultiScenarioRunAsset(InMemoryAsset):
                             if cost_assets is not None
                             else state_asset.transport_costs
                         )
+                        scoring_setup = scoring_setup_by_run_key.get(scenario)
+                        if scoring_setup is None:
+                            contexts = self._get_scoring_contexts(
+                                scenario, state.demand_groups, transport_costs,
+                                source_by_scenario[scenario].mode_sequences.population_segments,
+                            )
+                            scoring_setup = (
+                                contexts, contexts.collapse_allocations(state.current_plans),
+                                contexts.collapse_stay_home(state.stay_home_plan),
+                            )
+                            scoring_setup_by_run_key[scenario] = scoring_setup
+                        candidate_parts = (pool.candidate_step_parts_by_run_key or {}).get(scenario)
+                        scope = run.parameters.behavior_change.scope_at(iteration)
+                        # Before enough comparisons exist to stop, and while a
+                        # later generation request is guaranteed, the complete
+                        # pool remains available for a final full evaluation.
+                        another_batch_guaranteed = (
+                            batch_index < required_passes
+                            and batch_index + 1 < max_search_batches and has_future_generation
+                        )
+                        restrict_scoring = (
+                            batch_index > 0 and another_batch_guaranteed
+                            and scope != BehaviorChangeScope.FULL_REPLANNING
+                        )
+                        scored_candidate_scope[scenario] = "reachable" if restrict_scoring else "all"
                         evaluation = state_asset.updater.evaluate_candidate_pool(
                             current_plans=state.current_plans,
                             current_plan_steps=state.current_plan_steps,
                             candidate_plan_steps=state.candidate_plan_steps,
-                            shared_candidate_plan_steps=pool.candidate_plan_steps_by_run_key[scenario],
+                            shared_candidate_plan_steps=(
+                                candidate_parts[0] if candidate_parts is not None
+                                else pool.candidate_plan_steps_by_run_key[scenario]
+                            ),
+                            shared_active_plan_steps=(candidate_parts[1] if candidate_parts is not None else None),
+                            factored_candidate_steps=(
+                                pool.scoring_candidate_steps_by_run_key or {}
+                            ).get(scenario),
                             demand_groups=state.demand_groups,
                             survey_plan_steps=pool.time_sequence_steps_by_run_key[scenario],
                             transport_costs=transport_costs,
@@ -631,7 +747,30 @@ class MultiScenarioRunAsset(InMemoryAsset):
                             previous_plan_id_index=plan_id_indices[scenario],
                             parameters=run.parameters,
                             compact_contexts=True,
+                            scoring_contexts=scoring_setup[0],
+                            compact_current_plans=scoring_setup[1],
+                            compact_stay_home=scoring_setup[2],
+                            compact_plan_id_index=compact_plan_indices_by_run_key.get(scenario),
+                            scoring_lookup=scoring_lookups[scenario],
+                            inner_plan_cache=inner_plan_caches[scenario],
+                            time_index_cache=time_index_caches[scenario],
+                            reachable_scoring_scope=scope if restrict_scoring else None,
+                            forced_scoring_contexts=forced_scoring_contexts.get(scenario),
                         )
+                        if batch_index == 0 and scope != BehaviorChangeScope.FULL_REPLANNING:
+                            active = evaluation.current_plans
+                            if scope != BehaviorChangeScope.NO_TRANSITIONS:
+                                active = active.filter(pl.col("mode_seq_id") != 0)
+                            forced_scoring_contexts[scenario] = (
+                                active.select(PLAN_KEY_COLS)
+                                .join(
+                                    evaluation.possible_plan_utility.select(PLAN_KEY_COLS + ["is_feasible"]),
+                                    on=PLAN_KEY_COLS, how="left",
+                                )
+                                .filter(~pl.col("is_feasible").fill_null(False))
+                                .select(DEMAND_UNIT_COLS).unique()
+                            )
+                        compact_plan_indices_by_run_key[scenario] = evaluation.plan_id_index
                         evaluation_demand_groups = (
                             evaluation.scoring_contexts.demand_groups
                             if evaluation.scoring_contexts is not None else state.demand_groups
@@ -768,11 +907,28 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 max(0, total_demand_units - non_stay_home_demand_units),
                                 non_stay_home_units_without_feasible_plans,
                             )
-                        allocation, current_steps = state_asset.updater.estimate_mnl_allocation(
-                            evaluation,
-                            state.demand_groups,
-                            logit_scale=run.parameters.plan_update.transition_logit_scale,
-                        )
+                        allocation, current_steps = (None, None)
+                        if estimate_allocation:
+                            update = run.parameters.plan_update
+                            allocation = state_asset.updater.estimate_reachable_allocation(
+                                evaluation, state.current_plans, iteration,
+                                run.parameters.behavior_change.scope_at(iteration),
+                                transport_zones=run.population.transport_zones,
+                                transition_distance_threshold=update.transition_distance_threshold,
+                                enable_transition_distance_model=update.enable_transition_distance_model,
+                                transition_revision_probability=update.transition_revision_probability,
+                                transition_logit_scale=update.transition_logit_scale,
+                                transition_utility_pruning_delta=update.transition_utility_pruning_delta,
+                                min_transition_utility_gain=update.min_transition_utility_gain,
+                                transition_distance_friction=update.transition_distance_friction,
+                                plan_embedding_dimension_weights=update.plan_embedding_dimension_weights,
+                                plan_probability_pruning_retained_share=update.plan_probability_pruning_retained_share,
+                                plan_probability_pruning_min_step=update.plan_probability_pruning_min_step,
+                            )
+                            if logging.getLogger().isEnabledFor(logging.DEBUG):
+                                current_steps = state_asset.updater.get_current_plan_steps(
+                                    allocation, evaluation.possible_plan_steps.lazy(),
+                                )
                         if evaluation.scoring_contexts is not None:
                             context_groups = evaluation.scoring_contexts.demand_groups
                             feasible_contexts = (
@@ -816,30 +972,56 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 )
                                 for row in feasible_contexts.iter_rows(named=True)
                             }
-                            recent_effect_by_scenario[scenario] = allocation_effect_by_zone(
-                                previous_allocations[scenario],
-                                allocation,
-                                context_groups,
+                            if allocation is not None:
+                                recent_effect_by_scenario[scenario] = allocation_effect_by_zone(
+                                    previous_allocations[scenario], allocation, context_groups,
+                                )
+                                previous_allocations[scenario] = allocation.clone()
+                        if allocation is not None:
+                            self._log_plan_distribution(
+                                stage=f"{phase} allocation batch {batch_index + 1}",
+                                scenario=scenario,
+                                iteration=iteration,
+                                demand_groups=evaluation_demand_groups,
+                                plans=allocation,
+                                plan_steps=current_steps,
                             )
-                            previous_allocations[scenario] = allocation.clone()
-                        self._log_plan_distribution(
-                            stage=f"{phase} allocation batch {batch_index + 1}",
-                            scenario=scenario,
-                            iteration=iteration,
-                            demand_groups=evaluation_demand_groups,
-                            plans=allocation,
-                            plan_steps=current_steps,
-                        )
                         time_sequence_steps[scenario] = evaluation.time_sequence_steps
-                        evaluated_candidates[scenario] = (
-                            evaluation.scoring_contexts.expand_step_rows(evaluation.candidate_plan_steps)
-                            if evaluation.scoring_contexts is not None else evaluation.candidate_plan_steps
-                        )
-                        final_evaluations[scenario] = evaluation
                         plan_id_indices[scenario] = (
                             state.plan_id_index if evaluation.scoring_contexts is not None else evaluation.plan_id_index
                         )
-                        flows_by_scenario[scenario] = represented_od_mode_flows(current_steps)
+                        if allocation is None:
+                            # The first convergence check reports no comparison;
+                            # no later check or flow consumer can use this value.
+                            flows_by_scenario[scenario] = pl.DataFrame()
+                        elif current_steps is not None:
+                            flows_by_scenario[scenario] = represented_od_mode_flows(current_steps)
+                        else:
+                            flows_by_scenario[scenario] = allocation_od_mode_flows(
+                                allocation, evaluation.possible_plan_steps,
+                            )
+                        # A completed evaluation can remain live while other
+                        # scenarios are scored. Store its history in factored
+                        # form before retaining it when this may be the last batch.
+                        if (batch_index + 1 >= max_search_batches
+                                or batch_index >= required_passes or not has_future_generation):
+                            update = run.parameters.plan_update
+                            evaluation = self._compact_completed_candidate_history(
+                                evaluation, state_asset.updater, scope,
+                                keep_all_steps=keep_inner_flows,
+                                transition_parameters={
+                                    "transport_zones": run.population.transport_zones,
+                                    "transition_distance_threshold": update.transition_distance_threshold,
+                                    "enable_transition_distance_model": update.enable_transition_distance_model,
+                                    "transition_revision_probability": update.transition_revision_probability,
+                                    "transition_logit_scale": update.transition_logit_scale,
+                                    "transition_utility_pruning_delta": update.transition_utility_pruning_delta,
+                                    "min_transition_utility_gain": update.min_transition_utility_gain,
+                                    "transition_distance_friction": update.transition_distance_friction,
+                                    "plan_embedding_dimension_weights": update.plan_embedding_dimension_weights,
+                                },
+                            )
+                        final_evaluations[scenario] = evaluation
                         # Only the convergence summary and next-batch allocation
                         # are needed after this scenario's inner evaluation.
                         del evaluation, possible_plan_utility, evaluation_demand_groups, allocation, current_steps
@@ -947,6 +1129,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 0, target_profile_cell_count - covered_profile_cell_count
                             ),
                             "unique_pool_size": len(pool.candidate_ids),
+                            "scored_candidate_scope": scored_candidate_scope[scenario],
                             "infeasible_candidate_count": infeasible_counts[scenario],
                             "missing_cost_row_candidate_count": missing_cost_row_counts[scenario],
                             "invalid_cost_row_candidate_count": invalid_cost_row_counts[scenario],
@@ -973,12 +1156,28 @@ class MultiScenarioRunAsset(InMemoryAsset):
             for row in batch_diagnostics[-len(self.scenarios):]:
                 row["stop_reason"] = stop_reason
 
+        # Only the final candidate set is exposed as the fresh-MNL diagnostic.
+        # Wait until search stops, so earlier batches never compute it.
+        mnl_flows_by_scenario = {}
+        if keep_inner_flows:
+            for scenario in self.scenarios:
+                evaluation = final_evaluations[scenario]
+                allocation, _ = state_assets[scenario].updater.estimate_mnl_allocation(
+                    evaluation, fixed_states[scenario].demand_groups,
+                    logit_scale=self.runs[scenario].parameters.plan_update.transition_logit_scale,
+                    include_plan_steps=False,
+                )
+                mnl_flows_by_scenario[scenario] = allocation_od_mode_flows(
+                    allocation, evaluation.possible_plan_steps,
+                )
+                del allocation
+
         return {
             "pool": pool,
             "time_sequence_steps": time_sequence_steps,
-            "candidate_plan_steps": evaluated_candidates,
             "evaluations": final_evaluations,
             "flows_by_scenario": flows_by_scenario,
+            "mnl_flows_by_scenario": mnl_flows_by_scenario,
             "plan_id_indices": plan_id_indices,
             "rng_states": rng_states,
             "diagnostics": batch_diagnostics,
@@ -986,6 +1185,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
             "infeasible_counts": infeasible_counts,
             "missing_cost_row_counts": missing_cost_row_counts,
             "invalid_cost_row_counts": invalid_cost_row_counts,
+            "scored_candidate_scope_by_scenario": scored_candidate_scope,
             "convergence_by_run_key": final_convergence_by_run_key,
             "converged": all(
                 convergence.converged
@@ -1010,6 +1210,68 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 for scenario in self.scenarios
             },
         }
+
+    @trace_simulation_step("reuse or build scoring contexts")
+    def _get_scoring_contexts(self, run_key, demand_groups, transport_costs, population_segments):
+        """Reuse grouping only when demand and profile assignments still match."""
+        assignments, _ = transport_costs.get_utility_profiles(
+            demand_groups.sort(DEMAND_UNIT_COLS), population_segments,
+        )
+        previous = self._scoring_context_cache.get(run_key)
+        candidates = ([previous] if previous is not None else []) + [
+            entry for key, entry in self._scoring_context_cache.items() if key != run_key
+        ]
+        for saved_demand, saved_assignments, contexts in candidates:
+            if (saved_demand.schema == demand_groups.schema
+                    and saved_assignments.schema == assignments.schema
+                    and saved_demand.equals(demand_groups)
+                    and saved_assignments.equals(assignments)):
+                self._scoring_context_cache[run_key] = (saved_demand, saved_assignments, contexts)
+                return contexts
+        contexts = ScoringContexts.build(
+            demand_groups, transport_costs, population_segments, assignments=assignments,
+        )
+        # A clone preserves the values to compare even if a caller mutates the
+        # original DataFrame; immutable buffers remain shared until changed.
+        self._scoring_context_cache[run_key] = (demand_groups.clone(), assignments, contexts)
+        return contexts
+
+    @staticmethod
+    @trace_simulation_step("compact completed candidate history")
+    def _compact_completed_candidate_history(
+        evaluation, updater, scope, *, keep_all_steps, transition_parameters,
+    ):
+        """Keep only plan details needed after a scenario has been scored."""
+        history = CompactCandidateSteps.from_frame(evaluation.candidate_plan_steps, prefer_compact=True)
+        steps = evaluation.possible_plan_steps.lazy()
+        needs_distances = (
+            transition_parameters["enable_transition_distance_model"]
+            and math.isfinite(transition_parameters["transition_distance_threshold"])
+        )
+        if not keep_all_steps and not needs_distances:
+            choices = (
+                evaluation.possible_plan_utility
+                .join(evaluation.time_sequence_steps.select("time_seq_id", "reference_time_seq_id").unique(),
+                      on="time_seq_id", how="left")
+                .with_columns(reference_time_seq_id=pl.col("reference_time_seq_id").fill_null(pl.col("time_seq_id")))
+            )
+            probabilities = updater.get_transition_probabilities(
+                evaluation.current_plans, choices.lazy(), steps, scope, **transition_parameters,
+            )
+            needed_ids = pl.concat([
+                evaluation.current_plans.select("plan_id"),
+                probabilities.select(pl.col("plan_id_trans").alias("plan_id")),
+            ]).unique()
+            steps = steps.join(needed_ids.lazy(), on="plan_id", how="semi")
+        steps = steps.select(
+            PLAN_KEY_COLS + [
+                "plan_id", "seq_step_index", "activity", "from", "to", "mode", "distance", "time",
+                "duration_per_pers", "departure_time", "arrival_time", "next_departure_time",
+            ]
+        ).collect(engine="streaming")
+        return replace(
+            evaluation, candidate_plan_steps=history, possible_plan_steps=steps,
+        )
 
     @staticmethod
     def _log_plan_distribution(

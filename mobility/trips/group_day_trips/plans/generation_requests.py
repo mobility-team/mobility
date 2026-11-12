@@ -395,7 +395,7 @@ def allocation_effect_by_zone(
     current: pl.DataFrame,
     context_groups: pl.DataFrame,
 ) -> dict[int, float]:
-    """Measure recent MNL share movement by origin zone and activity profile."""
+    """Measure recent allocation movement by origin zone and activity profile."""
     if previous is None or previous.is_empty():
         return {}
     context_columns = DEMAND_UNIT_COLS + [

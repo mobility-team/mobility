@@ -1,7 +1,7 @@
 """Search estimates must never replace the actual behavioral allocation."""
 
 from types import SimpleNamespace
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 import gc
 import weakref
@@ -11,16 +11,53 @@ import pytest
 from polars.testing import assert_frame_equal
 
 from mobility.trips.group_day_trips.core.multi_scenario_run import MultiScenarioRunAsset
+from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePoolResult
 import mobility.trips.group_day_trips.core.multi_scenario_run as coordinated_module
 import mobility.trips.group_day_trips.results.simulation_runner as runner_module
 from mobility.trips.group_day_trips.core.parameters import GroupDayTripsParameters
 from mobility.trips.group_day_trips.core.run_state import RunState
 from mobility.trips.group_day_trips.core.run import Run
 from mobility.trips.group_day_trips.iterations.iterations import Iterations
-from mobility.trips.group_day_trips.iterations.iteration_assets import CurrentPlansAsset
+from mobility.trips.group_day_trips.iterations.iteration_assets import CurrentPlansAsset, IterationStateAsset
+import mobility.trips.group_day_trips.iterations.iteration_assets as iteration_assets_module
 from mobility.trips.group_day_trips.transitions.transition_schema import TRANSITION_EVENT_SCHEMA
 from mobility.runtime.assets.resolver import AssetResolver
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+
+
+@pytest.mark.parametrize("coordinated", [True, False])
+def test_previous_state_lifetime_accounts_for_consumed_precomputed_evaluation(monkeypatch, coordinated):
+    """A scenario must not release a prior state still needed by its cohort."""
+    asset = object.__new__(IterationStateAsset)
+    asset.coordinated_candidate_plan_steps = None
+    asset.coordinated_evaluation = object() if coordinated else None
+    asset.previous_state = object()
+    asset.seeds = object()
+    asset.activity_sequences = object()
+    asset.destination_sequences = SimpleNamespace(sequence_index=None, previous_sequence_index=None)
+    asset.mode_sequences = SimpleNamespace(sequence_index=None, previous_sequence_index=None)
+    cleared = []
+    asset.transport_costs = SimpleNamespace(release_profile_costs=lambda: cleared.append(True))
+    asset.iteration = 1
+    asset.parameters = SimpleNamespace(run=SimpleNamespace(n_steps=1))
+    asset.checkpoint_callback = None
+    released = []
+
+    def get_state(current, *args, **kwargs):
+        # The actual state builder consumes this evaluation before returning.
+        current.coordinated_evaluation = None
+        return SimpleNamespace(rng_state=(1, 2, 3))
+
+    resolver = SimpleNamespace(
+        execution_cost_consumer=lambda current: nullcontext(),
+        get_in_memory_asset=get_state,
+        release_in_memory_asset=released.append,
+        consume_execution_cost_state=lambda current: None,
+    )
+    monkeypatch.setattr(iteration_assets_module, "get_current_asset_resolver", lambda: resolver)
+    asset.get()
+    assert cleared == [True]
+    assert (asset.previous_state in released) is (not coordinated)
 
 
 def test_transition_history_scans_recorded_files(tmp_path):
@@ -300,7 +337,9 @@ def test_cohort_step_uses_all_pre_step_states_before_updating_scenarios(monkeypa
             return behavioral_state(50 + key)
         asset.get = update
 
-    pool = SimpleNamespace(
+    pool = SharedCandidatePoolResult(
+        candidate_plan_steps_by_run_key={}, generated_mode_sequences_by_run_key={}, candidate_ids=(),
+        time_sequence_steps_by_run_key={}, candidate_replications=pl.DataFrame(),
         destination_sequence_indices={key: None for key in states},
         mode_sequence_indices={key: None for key in states},
     )
@@ -321,6 +360,7 @@ def test_cohort_step_uses_all_pre_step_states_before_updating_scenarios(monkeypa
         assert kwargs["state_assets"] == assets
         assert not seen
         inner_result["flows_by_scenario"] = {}
+        inner_result["mnl_flows_by_scenario"] = {}
         return inner_result
 
     monkeypatch.setattr(coordinator, "_run_inner_loop", search)
@@ -399,7 +439,9 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
         population=SimpleNamespace(parameters=SimpleNamespace(sample_size=1)),
     )
     coordinator = MultiScenarioRunAsset({0: run})
-    pool = SimpleNamespace(
+    pool = SharedCandidatePoolResult(
+        candidate_plan_steps_by_run_key={}, generated_mode_sequences_by_run_key={},
+        time_sequence_steps_by_run_key={}, candidate_replications=pl.DataFrame(),
         candidate_ids=((1, 2),), destination_sequence_indices={0: pl.DataFrame()},
         mode_sequence_indices={0: pl.DataFrame()},
     )
@@ -417,14 +459,17 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
         previous_search_values.append(weakref.ref(intermediate))
         inner_calls.append(kwargs)
         estimate = behavioral_state(89 + kwargs["iteration"])
+        flows = {0: coordinated_module.represented_od_mode_flows(estimate.current_plan_steps)}
         return {
             "unused_search_intermediate": intermediate,
             "pool": pool, "diagnostics": [], "search_batches": 1,
             "candidate_plan_steps": {0: None},
-            "flows_by_scenario": {0: coordinated_module.represented_od_mode_flows(estimate.current_plan_steps)},
+            "flows_by_scenario": flows,
+            "mnl_flows_by_scenario": flows if kwargs["keep_inner_flows"] else {},
             "plan_id_indices": {0: pl.DataFrame()},
             "time_sequence_steps": {0: pl.DataFrame()}, "rng_states": {0: None},
             "infeasible_counts": {0: 0}, "missing_cost_row_counts": {0: 0},
+            "scored_candidate_scope_by_scenario": {0: "all"},
             "invalid_cost_row_counts": {0: 0}, "converged": False,
             "generation_effort_used": 0,
             "activity_profile_cell_count_by_scenario": {0: 0},
@@ -520,14 +565,19 @@ def test_stable_replications_complete_the_configured_outer_iterations(monkeypatc
         )
         coordinator = MultiScenarioRunAsset({replication: run})
         key = replication
-        pool = SimpleNamespace(candidate_ids=(), destination_sequence_indices={key: None}, mode_sequence_indices={key: None})
+        pool = SharedCandidatePoolResult(
+            candidate_plan_steps_by_run_key={}, generated_mode_sequences_by_run_key={}, candidate_ids=(),
+            time_sequence_steps_by_run_key={}, candidate_replications=pl.DataFrame(),
+            destination_sequence_indices={key: None}, mode_sequence_indices={key: None},
+        )
 
         def inner(**kwargs):
             return {
                 "pool": pool, "diagnostics": [], "search_batches": 1,
-                "candidate_plan_steps": {key: None}, "flows_by_scenario": {},
+                "candidate_plan_steps": {key: None}, "flows_by_scenario": {}, "mnl_flows_by_scenario": {},
                 "plan_id_indices": {key: pl.DataFrame()}, "time_sequence_steps": {key: pl.DataFrame()},
                 "rng_states": {key: None}, "infeasible_counts": {key: 0},
+                "scored_candidate_scope_by_scenario": {key: "all"},
                 "missing_cost_row_counts": {key: 0}, "invalid_cost_row_counts": {key: 0},
                 "generation_effort_used": 0, "activity_profile_cell_count_by_scenario": {key: 0},
                 "covered_activity_profile_cell_count_by_scenario": {key: 0},

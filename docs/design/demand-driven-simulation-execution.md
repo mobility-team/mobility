@@ -243,8 +243,24 @@ result-resolution path until they declare their needs. Supported requests in
 the same batch continue to share their step-wise cohort execution; an unknown
 dependency may still require separate work when it is resolved.
 The inner-search allocations and detailed result steps are released as soon as
-each scenario's flow totals are computed. The final inner-flow diagnostic reuses
-those totals when requested. Each scoring evaluation is released after its update.
+each scenario's flow totals are computed. Search convergence uses reachable
+behavioral allocations; the optional fresh-MNL flow diagnostic is calculated
+separately after the final search batch. Each scoring evaluation is released after its update.
+When a batch may be the last, its candidate history is compacted before retaining
+the evaluation while the other scenarios are scored.
+The retained step table contains only columns needed downstream. If neither
+fresh-MNL flows nor finite transition distances are requested, it contains
+steps only for occupied or reachable plans.
+During restricted behavior phases, intermediate batches that cannot yet end
+the search score only reachable plans. Contexts with infeasible occupied plans
+retain every candidate for forced reassignment, and the last batch scores the
+complete pool so that candidate history and the optional MNL output remain complete.
+When candidate steps are factored, the reachable filter runs on context-plan
+memberships before physical steps are attached.
+For shared transition probabilities, the outer update creates new demand-unit
+plan IDs only for occupied origins and reachable targets. Existing IDs and the
+full candidate history are retained for later steps. Transition distances are
+calculated on context-level plans before target IDs are assigned.
 The expanded evaluation is also released before the resulting candidate steps
 are compacted for the next step.
 When another search batch is selected, the preceding batch's evaluation and
@@ -617,3 +633,176 @@ a five-step comparison with the former implementation.
 After the stable pruning change, all 456 group-day-trip and runtime unit tests
 and all 24 cohort reproducibility integration cases passed. These include
 checkpoint continuation and the supported shared-result paths.
+
+## Scoring reuse investigation
+
+A separate diagnostic captured scoring inputs before utility and modeled timing
+calculations in step 4, batches 1 and 2, for the default and carbon-tax
+scenarios. The run used the same two-scenario, one-replication Grand Geneve
+configuration as the five-step probe and stopped during the second batch.
+
+| Input keys | Batch 1 rows / distinct keys | Batch 2 rows / distinct keys |
+| --- | ---: | ---: |
+| Current scoring key, including plan IDs | 17,244,549 / 17,244,549 | 18,651,750 / 18,651,750 |
+| Step inputs without plan IDs | 17,244,549 / 9,880,586 | 18,651,750 / 10,688,674 |
+| Travel cost inputs | 17,244,549 / 403,550 | 18,651,750 / 412,280 |
+| Activity parameter inputs | 17,244,549 / 61,685 | 18,651,750 / 61,913 |
+
+All distinct first-batch keys in these four groups reappeared in the second
+batch. The second batch added 1,407,201 current scoring keys, 808,088 distinct
+step inputs without plan IDs, 8,730 travel cost inputs and 228 activity parameter
+inputs. Both scenarios had identical input-key sets in batch 1. A key without
+plan IDs includes country, CSP, activity, origin, destination, mode, original
+timings, duration and utility profile; the travel key includes utility profile,
+origin, destination and mode, while the activity key includes country, CSP,
+activity and destination.
+
+These counts identify possible reuse, not measured speedup. Matching keys across
+scenarios do not establish identical transport costs, profile meanings,
+activity parameters or saturation. The captured inputs precede modeled timing
+adjustments, which can depend on neighboring plan steps; they do not establish
+that final step utilities or entire plans can be reused. Reuse must preserve
+feasibility, schedule identities, deterministic sums and the inputs' lifetimes.
+The opt-in capture and counting commands are
+`pixi run python tests/manual/capture_scoring_inputs.py` and
+`pixi run python tests/manual/analyze_scoring_inputs.py CAPTURE_FOLDER`.
+
+The inner loop now keeps scoring contexts and temporary plan indexes for each
+scenario within the fixed outer step. A bounded complete-plan cache records the
+input plan content, modeled schedule mapping, utility and feasibility. Later
+batches rescore changed complete plans, combine their results with matching
+plans still in the current pool, and recalculate allocation for the full choice
+set. A separate bounded lookup shares fixed travel-cost and activity inputs
+across plans and batches. Both caches are scoped to the current inner loop and
+scenario; they are not shared between scenarios or written as persistent model
+state. The cohort-wide retained-data budgets are 1 GiB for plan results and
+512 MiB for scoring lookups. If a lookup cannot fit, later work recomputes it;
+the limits do not cover temporary operations or all other simulation data.
+When input schedules collapse into one modeled plan, the runner combines their
+histories using the candidate catalogue's existing rules: earliest iteration
+and first-seen value, and latest seen and active values. Every leg receives
+the combined history. This replaces the former arbitrary choice of one input
+history; because history affects candidate retention, it can also change later
+search and simulation results. Fresh and incremental evaluation use the same
+rule, and neither needs to reevaluate plans solely to resolve their histories.
+Simulation and checkpoint identities include the new history policy, so saved
+states from the former policy are not silently resumed under the new one.
+Cross-scenario score reuse remains disabled because
+matching plan inputs alone do not prove matching costs and model state. A new
+softmax implementation was not introduced: the earlier trace measured roughly
+40 seconds for fresh allocation, including work beyond normalization, versus
+almost 15 minutes for candidate evaluation. Any future blockwise reduction must
+also preserve deterministic numerical behavior.
+
+On the captured step-4 input rows, a focused lookup benchmark with constructed
+costs and activity parameters produced matching output fingerprints in all
+three methods. The original lookup took 6.13 and 6.80 seconds for batches 1 and
+2 and peaked at 9.34 GiB RSS. The narrower lookup took 3.65 and 3.84 seconds,
+peaking at 3.78 GiB; retaining that lookup across batches took 3.56 and 3.79
+seconds, peaking at 3.73 GiB. This diagnostic does not measure modeled timing,
+complete-plan evaluation or an entire simulation.
+
+A fresh two-scenario two-step Grand Geneve run using incremental evaluation
+matched the earlier current implementation exactly for the saved detailed plan
+states, candidate IDs and candidate steps, and matched the requested tables at
+the established tolerance. Candidate and RNG fingerprints also matched. The
+earlier run took 318 seconds with an 18.00 GiB traced peak; the incremental run
+took 271 seconds with a 20.74 GiB traced peak. These are individual runs, not a
+controlled performance benchmark or proof for other horizons or scenarios.
+That incremental measurement predates the history safeguard: its step-2
+candidate history could not be compacted and is not acceptable for later steps.
+With the full-batch safeguard, a diagnostic stopped while saving the first large step-2
+history. All 9,632,685 membership rows matched the fresh-evaluation reference
+exactly, including null values. The history remained compact; this diagnostic
+took 291 seconds and had a sampled process RSS peak of 18.29 GiB. It did not
+finish both scenarios or measure later steps, so it is not a whole-run benchmark.
+An initial selective-history diagnostic matched the same membership rows in
+268 seconds at 20.30 GiB sampled peak RSS. A subsequent regression test exposed
+different step metadata, so that version was corrected; the diagnostic's timing
+and memory do not measure the corrected version. The corrected implementation
+completed a two-step comparison in 289 seconds at 17.90 GiB sampled peak RSS.
+Both scenarios' step-2 membership rows matched the reference exactly;
+allocations and requested tables matched at the established floating-point
+tolerance, and candidate and random-state fingerprints matched. These are
+individual runs and do not establish a controlled speedup.
+Before the history merge change, an opt-in five-step run completed in 1,487
+seconds with a traced peak RSS of 43.92 GiB, compared with 1,535 seconds and
+44.25 GiB in the earlier run. The two-scenario trip-count tables matched at
+the established tolerance (maximum absolute difference below 5e-9), and the
+candidate-pool sizes matched at every step. Both scenarios' candidate histories
+remained compact. Total top-level candidate evaluation time was 825 seconds,
+compared with 889 seconds previously; these individual runs are not a controlled
+benchmark and shared the machine with brief test runs. Peak managed temporary
+storage sampled during the new run was 2.91 GB. This does not establish that a
+20-step, ten-scenario run fits within available memory.
+
+After adopting the history merge rule, a two-step run took 280 seconds and
+peaked at 19.23 GiB sampled RSS; the immediately preceding selective-history
+run took 289 seconds and peaked at 17.90 GiB. These individual runs are not a
+controlled benchmark. Candidate counts, allocations and requested outputs
+matched for both steps at the established tolerance, while 182,923 of the
+9,632,685 step-2 candidate memberships had different history fields. A
+separate fresh evaluation using the merge rule matched all 9,632,685 saved
+incremental history rows exactly. Later search and pruning can still differ
+because the history change is intentional.
+
+A five-step run with the merge rule took 1,240 seconds and reached 44.75 GiB
+traced peak RSS, compared with 1,487 seconds and 43.92 GiB in the preceding
+selective-history run. Candidate evaluation plus fresh allocation totaled
+703 seconds versus 897 seconds. All 40 trip-count rows matched within the
+established tolerance and all 40 per-batch candidate counts matched; both
+scenario histories stayed compact. These are individual runs under different
+machine load, not a controlled benchmark. The history fields deliberately
+differ, so this result does not imply identical behavior for configurations
+where candidate retention depends on those differences.
+
+## Candidate attachment and transition memory
+
+The inner loop now keeps shared physical plan steps separate from their
+demand-unit memberships where the input can be represented without loss.
+Membership is grouped into scoring contexts before the steps are attached;
+conflicting or incomplete representations use the existing row-based path.
+The shared and occupied candidate rows are also combined with one final
+deduplication instead of sorting and deduplicating intermediate expansions.
+
+On a captured step-2 batch, the factored result matched all 8,269,243 compacted
+rows exactly. A complete two-step, two-scenario run took 261 seconds with a
+20.32 GiB sampled RSS peak, versus 280 seconds and 19.23 GiB for the preceding
+run. Candidate and random-state fingerprints matched, both scenarios' saved
+candidate memberships matched exactly, and requested tables and allocations
+matched at the established tolerance. These are individual runs, not a
+controlled benchmark.
+
+For each replanning scope, origins with the same fixed sequence choices have
+the same feasible target set. The maximum target utility is now calculated
+before joining origins to targets, allowing the existing utility and gain
+filters to run inside the join. Self-transitions and forced reassignment retain
+their original rules; a no-transition step needs no maximum calculation. On
+captured step-4 Grand Geneve inputs (498,044 current plans and 19,384,212
+possible-plan rows), separate
+processes produced 3,110,966 transition rows with matching two-seed fingerprints
+over every output column. The previous calculation took 5.62 seconds and
+peaked at 22.98 GiB RSS; the fused calculation took 1.44 seconds and peaked at
+2.58 GiB. These are isolated measurements and do not include the rest of the
+simulation's live state.
+
+When transition-event details and transition distances are not requested, the
+complete possible-step table stays lazy until it is joined to the resulting
+current plans. Event recording and transition-distance calculations still
+collect the complete table when they need it.
+
+With these changes, the same opt-in five-step, two-scenario run took 1,053
+seconds and reached 38.45 GiB traced peak RSS, versus 1,240 seconds and
+44.75 GiB in the preceding run. Candidate evaluation took 444 seconds versus
+629 seconds; fresh allocation took 71 versus 74 seconds. Candidate compaction
+took 48 seconds versus 216 seconds, while shared-pool generation and
+attachment took 308 versus 284 seconds. These spans are nested: compaction is
+part of candidate evaluation, and they must not be added together. All 40
+per-batch candidate counts matched, and all 40 trip-count rows matched at the
+established tolerance. The peak moved to expansion of allocated plan steps in
+step 5. These individual runs had different machine load and are not a
+controlled benchmark; they do not establish memory requirements for ten
+scenarios or twenty steps.
+
+The opt-in lookup benchmark is `pixi run python
+tests/manual/benchmark_scoring_lookup.py CAPTURE_FOLDER METHOD`.

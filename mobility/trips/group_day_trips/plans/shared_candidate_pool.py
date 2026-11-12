@@ -14,12 +14,15 @@ from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 
 from .candidate_plan_steps import CandidatePlanStepsAsset
-from .compact_candidate_steps import CompactCandidateSteps, PLAN_COLUMNS
+from .compact_candidate_steps import (
+    CompactCandidateSteps, ScoringCandidateSteps, MEMBERSHIP_COLUMNS, PLAN_COLUMNS, STEP_COLUMNS,
+    STEP_KEY_COLUMNS,
+)
 from .plan_catalogue import PlanCatalogue
 from .demand_subgroups import DEMAND_UNIT_COLS
 from .plan_ids import PLAN_KEY_COLS
 from .stable_key_index import StableKeyIndex
-from .time_sequences import assign_time_sequence_ids
+from .time_sequences import TimeSequenceIndexCache, assign_time_sequence_ids
 from .activity_profiles import get_schedules_by_activity_profile, get_survey_schedule_activities
 from ..core.multi_scenario import CANDIDATE_ID_COLS, add_candidate_ids
 
@@ -30,7 +33,7 @@ def _frame_hash(frame: pl.DataFrame | CompactCandidateSteps | None) -> str | Non
         return None
     if isinstance(frame, CompactCandidateSteps):
         return hashlib.sha256(repr((
-            _frame_hash(frame.steps), _frame_hash(frame.membership), frame.columns,
+            _frame_hash(frame.steps), _frame_hash(frame.membership), _frame_hash(frame.unit_map), frame.columns,
         )).encode()).hexdigest()
     digest = hashlib.sha256()
     schema = tuple((column, str(dtype)) for column, dtype in frame.schema.items())
@@ -64,6 +67,10 @@ class SharedCandidatePoolResult:
     time_sequence_steps_by_run_key: dict[int, pl.DataFrame]
     candidate_replications: pl.DataFrame
     candidate_catalogue: PlanCatalogue | None = None
+    # Keep the attachment and active rows separate for the inner loop so it
+    # can combine both with the occupied plans in one deduplication.
+    candidate_step_parts_by_run_key: dict[int, tuple[pl.LazyFrame, pl.DataFrame | None]] | None = None
+    scoring_candidate_steps_by_run_key: dict[int, ScoringCandidateSteps] | None = None
 
 
 class SharedCandidatePoolAsset(InMemoryAsset):
@@ -75,12 +82,15 @@ class SharedCandidatePoolAsset(InMemoryAsset):
         sources: list[ScenarioCandidateSource],
         iteration: int,
         max_shared_candidates: int | None = None,
+        max_inactive_age: int | None = None,
         previous_candidates_by_run_key: dict[int, pl.DataFrame | CompactCandidateSteps | None] | None = None,
         previous_catalogue: PlanCatalogue | None = None,
         previous_destination_indices: dict[int, pl.DataFrame | None] | None = None,
         previous_mode_indices: dict[int, pl.DataFrame | None] | None = None,
         previous_time_sequence_steps: dict[int, pl.DataFrame] | None = None,
         compact: bool = False,
+        build_catalogue: bool = True,
+        time_index_caches: dict[int, TimeSequenceIndexCache] | None = None,
     ) -> None:
         if not sources:
             raise ValueError("A shared candidate pool needs at least one run source.")
@@ -92,6 +102,7 @@ class SharedCandidatePoolAsset(InMemoryAsset):
         self.sources = sources
         self.iteration = iteration
         self.max_shared_candidates = max_shared_candidates
+        self.max_inactive_age = max_inactive_age
         self.previous_candidates_by_run_key = previous_candidates_by_run_key or {}
         self.previous_catalogue = previous_catalogue
         self.previous_destination_indices = previous_destination_indices or {}
@@ -99,17 +110,23 @@ class SharedCandidatePoolAsset(InMemoryAsset):
         self.previous_time_sequence_steps = previous_time_sequence_steps or {}
         self.time_sequence_steps_by_run_key: dict[int, pl.DataFrame] = {}
         self.compact = compact
+        self.build_catalogue = build_catalogue
+        self.time_index_caches = time_index_caches or {}
         self.compact_candidate_steps_by_run_key: dict[int, pl.DataFrame] = {}
+        self.unordered_candidate_steps_by_run_key: dict[int, pl.LazyFrame] = {}
+        self.scoring_candidate_steps_by_run_key: dict[int, ScoringCandidateSteps] = {}
         super().__init__(
             {
-                "version": 15,
+                "version": 16,
                 "compact": compact,
+                "build_catalogue": build_catalogue,
                 "iteration": iteration,
                 "time_sequence_hashes": {
                     run_key: _frame_hash(frame)
                     for run_key, frame in self.previous_time_sequence_steps.items()
                 },
                 "max_shared_candidates": max_shared_candidates,
+                "max_inactive_age": max_inactive_age,
                 "previous_candidate_hashes": {
                     run_key: _frame_hash(frame)
                     for run_key, frame in self.previous_candidates_by_run_key.items()
@@ -157,6 +174,7 @@ class SharedCandidatePoolAsset(InMemoryAsset):
         candidate_replication_frames: list[pl.DataFrame] = []
         profile_assignments_by_run_key: dict[int, pl.DataFrame] = {}
         history_by_run_key: dict[int, pl.DataFrame] = {}
+        replication_history_frames: list[pl.DataFrame] = []
         generated_by_replication: list[pl.DataFrame] = []
         candidate_catalogues: list[PlanCatalogue] = []
         history_keys = CANDIDATE_ID_COLS + [
@@ -202,8 +220,22 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                     # History is ultimately reduced by plan variant, not by
                     # demand unit. Reduce membership before joining steps so
                     # identical plans are not expanded once per person group.
+                    if compact_previous.unit_map is not None:
+                        # All units in a context have this same history. Only
+                        # the first unit is needed for the plan-level merge.
+                        representatives = (
+                            compact_previous.unit_map.sort(DEMAND_UNIT_COLS)
+                            .unique(subset=["_score_context_id"], keep="first", maintain_order=True)
+                        )
+                        source_membership = (
+                            compact_previous.membership.drop("demand_subgroup_id")
+                            .rename({"demand_group_id": "_score_context_id"})
+                            .join(representatives, on="_score_context_id", how="inner")
+                        )
+                    else:
+                        source_membership = compact_previous.membership
                     membership = (
-                        compact_previous.membership.sort(DEMAND_UNIT_COLS)
+                        source_membership.sort(DEMAND_UNIT_COLS)
                         .group_by(PLAN_COLUMNS, maintain_order=True)
                         .agg(
                             [pl.col(column).first() for column in DEMAND_UNIT_COLS + ["country", "csp"]]
@@ -234,7 +266,7 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                     )
                     if isinstance(active_source, CompactCandidateSteps):
                         active_rows = (
-                            active_source.membership.lazy()
+                            active_source.memberships()
                             .join(active_keys, on=PLAN_KEY_COLS, how="inner")
                             .join(active_source.steps.lazy(), on=PLAN_COLUMNS, how="inner")
                             .select(active_source.columns)
@@ -290,7 +322,7 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                         active_join_columns = PLAN_KEY_COLS
                         if compact_previous is not None:
                             active_keys = (
-                                compact_previous.membership.lazy()
+                                compact_previous.memberships()
                                 .join(active_keys, on=PLAN_KEY_COLS, how="semi")
                                 .select(PLAN_COLUMNS)
                                 .unique()
@@ -389,6 +421,12 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                         pl.col("last_active_iteration").max(),
                     )
                 )
+                if self.max_inactive_age is not None:
+                    replication_history_frames.append(
+                        history_by_run_key[run_key].select(
+                            CANDIDATE_ID_COLS + CandidatePlanStepsAsset.RETENTION_COLUMNS
+                        ).with_columns(replication=pl.lit(source.run.replication, dtype=pl.UInt32))
+                    )
 
             # The merged history and replication IDs now own what this source
             # contributes. Keep its candidate rows only in candidate_frames
@@ -438,9 +476,6 @@ class SharedCandidatePoolAsset(InMemoryAsset):
             active_candidate_ids = None
         active_candidate_id_frames.clear()
 
-        if self.max_shared_candidates is not None:
-            shared_candidates = self._limit_candidate_pool(shared_candidates)
-
         if candidate_replication_frames:
             candidate_replications = (
                 pl.concat(candidate_replication_frames)
@@ -452,6 +487,37 @@ class SharedCandidatePoolAsset(InMemoryAsset):
             candidate_replications = shared_candidates.select(CANDIDATE_ID_COLS).head(0).with_columns(
                 replication=pl.lit(None, dtype=pl.UInt32)
             )
+        if self.max_inactive_age is not None and replication_history_frames:
+            # Scenarios share a physical pool within a replication, but one
+            # seed's recent activity must not keep another seed's plan alive.
+            history = pl.concat(replication_history_frames).group_by(
+                ["replication"] + CANDIDATE_ID_COLS
+            ).agg(
+                pl.col("first_seen_iteration").min(),
+                pl.col("last_seen_iteration").max(),
+                pl.col("last_active_iteration").max(),
+            )
+            cutoff = max(0, self.iteration - self.max_inactive_age)
+            retained = history.filter(
+                pl.max_horizontal(
+                    "first_seen_iteration", "last_seen_iteration", "last_active_iteration"
+                ) >= cutoff
+            ).select(["replication"] + CANDIDATE_ID_COLS)
+            candidate_replications = candidate_replications.join(
+                retained, on=["replication"] + CANDIDATE_ID_COLS, how="semi"
+            )
+            shared_candidates = shared_candidates.join(
+                candidate_replications.select(CANDIDATE_ID_COLS).unique(),
+                on=CANDIDATE_ID_COLS, how="semi",
+            )
+            del history, retained
+        replication_history_frames.clear()
+        if self.max_shared_candidates is not None:
+            shared_candidates = self._limit_candidate_pool(shared_candidates)
+            candidate_replications = candidate_replications.join(
+                shared_candidates.select(CANDIDATE_ID_COLS).unique(), on=CANDIDATE_ID_COLS, how="semi"
+            )
+        candidate_replications = candidate_replications.sort(["replication"] + CANDIDATE_ID_COLS)
         generated_candidates = (
             pl.concat(generated_by_replication).unique()
             if generated_by_replication else candidate_replications.head(0)
@@ -460,6 +526,7 @@ class SharedCandidatePoolAsset(InMemoryAsset):
         generated_by_replication.clear()
 
         candidate_steps_by_run_key: dict[int, pl.DataFrame | pl.LazyFrame] = {}
+        candidate_step_parts_by_run_key = {}
         destination_indices: dict[int, pl.DataFrame] = {}
         mode_indices: dict[int, pl.DataFrame] = {}
 
@@ -551,6 +618,11 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                         replication_candidates.height,
                     )
                 active_candidate_steps = active_candidate_steps_by_run_key.get(run_key)
+                if self.compact:
+                    candidate_step_parts_by_run_key[run_key] = (
+                        self.unordered_candidate_steps_by_run_key.pop(run_key),
+                        active_candidate_steps,
+                    )
                 if active_candidate_steps is not None and active_candidate_steps.height:
                     # Keep active plans addressable by their existing local ids.
                     candidate_steps = (
@@ -571,6 +643,8 @@ class SharedCandidatePoolAsset(InMemoryAsset):
 
             if self.compact and run_key in self.compact_candidate_steps_by_run_key:
                 compact_steps = self.compact_candidate_steps_by_run_key.pop(run_key)
+                if not self.build_catalogue:
+                    continue
                 content = self._attach_sequence_content_keys(
                     add_candidate_ids(compact_steps), destination_index, mode_index,
                     self.time_sequence_steps_by_run_key[run_key],
@@ -611,6 +685,8 @@ class SharedCandidatePoolAsset(InMemoryAsset):
             time_sequence_steps_by_run_key=self.time_sequence_steps_by_run_key,
             candidate_replications=candidate_replications,
             candidate_catalogue=PlanCatalogue.merge(candidate_catalogues) if candidate_catalogues else None,
+            candidate_step_parts_by_run_key=candidate_step_parts_by_run_key,
+            scoring_candidate_steps_by_run_key=self.scoring_candidate_steps_by_run_key,
         )
 
     @staticmethod
@@ -732,7 +808,9 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                 for column in DEMAND_UNIT_COLS
             ])
         )
-        plan_rows, schedule_steps, _ = assign_time_sequence_ids(plan_rows, schedule_steps)
+        plan_rows, schedule_steps, _ = assign_time_sequence_ids(
+            plan_rows, schedule_steps, index_cache=getattr(self, "time_index_caches", {}).get(run_key),
+        )
         self.time_sequence_steps_by_run_key[run_key] = schedule_steps
         plan_rows = plan_rows.with_columns(
             home_zone_id=pl.col("from").sort_by("seq_step_index").first().over(CANDIDATE_ID_COLS)
@@ -767,6 +845,51 @@ class SharedCandidatePoolAsset(InMemoryAsset):
             schedules=schedules,
             profiles=units.select("country", "activity_profile_id", "allowed_activities"),
         ).select("country", "activity_profile_id", "activity_seq_id", "time_seq_id")
+        if getattr(self, "compact", False):
+            # Keep one physical step table and attach demand units to plan
+            # membership, so context grouping does not repeat every step.
+            # Different content or history for the same plan key cannot be
+            # represented this way and uses the ordinary row-based path.
+            physical = plan_rows.select(STEP_COLUMNS).unique()
+            plan_members = plan_rows.select(
+                PLAN_COLUMNS + ["home_zone_id", "iteration"] + CandidatePlanStepsAsset.RETENTION_COLUMNS
+            ).unique()
+            unique_physical = physical.select(STEP_KEY_COLUMNS).n_unique() == physical.height
+            unique_members = (
+                plan_members.select(PLAN_COLUMNS + ["home_zone_id"]).n_unique() == plan_members.height
+                if unique_physical else None
+            )
+            if unique_physical and not unique_members:
+                # Different sampled histories can become the same modeled plan.
+                # Merge their dates before attaching demand units, using the
+                # same earliest/latest rules as modeled-plan history.
+                history_keys = PLAN_COLUMNS + ["home_zone_id"]
+                plan_rows = plan_rows.with_columns(
+                    pl.col("iteration").min().over(history_keys),
+                    pl.col("first_seen_iteration").min().over(history_keys),
+                    pl.col("last_seen_iteration").max().over(history_keys),
+                    pl.col("last_active_iteration").max().over(history_keys),
+                )
+                plan_members = plan_rows.select(
+                    history_keys + ["iteration"] + CandidatePlanStepsAsset.RETENTION_COLUMNS
+                ).unique(subset=history_keys, keep="first")
+                unique_members = True
+            if unique_physical and unique_members:
+                membership = (
+                    plan_members.lazy()
+                    .join(units.lazy(), on="home_zone_id", how="inner")
+                    .join(eligible.lazy(), on=["country", "activity_profile_id", "activity_seq_id", "time_seq_id"])
+                    .select(MEMBERSHIP_COLUMNS)
+                    .unique(subset=PLAN_KEY_COLS, keep="first")
+                )
+                self.scoring_candidate_steps_by_run_key[run_key] = ScoringCandidateSteps(physical, membership)
+            else:
+                logging.getLogger(__name__).debug(
+                    "Factored candidates unavailable: scenario=%s step=%s "
+                    "unique_physical=%s unique_members=%s physical_rows=%d membership_rows=%d",
+                    source.scenario, self.iteration, unique_physical, unique_members,
+                    physical.height, plan_members.height,
+                )
         candidate_steps = (
             plan_rows.lazy().drop(DEMAND_UNIT_COLS + ["country", "csp"])
             .join(units.lazy(), on="home_zone_id", how="inner")
@@ -781,9 +904,21 @@ class SharedCandidatePoolAsset(InMemoryAsset):
         candidate_steps = (
             candidate_steps
             .select(CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS)
-            .unique(subset=CandidatePlanStepsAsset.DEDUPE_COLUMNS, keep="first")
-            .sort(PLAN_KEY_COLS + ["seq_step_index"])
         )
+        # If each physical step is unique before attachment, the joins above
+        # cannot duplicate a unit/plan/step: units have one row per demand unit
+        # and eligibility has one row per profile and schedule. Check the
+        # smaller physical table instead of deduplicating every attached row.
+        physical_keys = PLAN_COLUMNS + ["home_zone_id", "seq_step_index"]
+        unique_attachment = (
+            getattr(self, "compact", False)
+            and plan_rows.select(physical_keys).n_unique() == plan_rows.height
+            and units.select(DEMAND_UNIT_COLS).n_unique() == units.height
+        )
+        if not unique_attachment:
+            candidate_steps = candidate_steps.unique(
+                subset=CandidatePlanStepsAsset.DEDUPE_COLUMNS, keep="first"
+            )
         if missing.height:
             raise ValueError(
                 f"{missing.height} complete shared plans disappeared during attachment "
@@ -793,9 +928,10 @@ class SharedCandidatePoolAsset(InMemoryAsset):
             self.compact_candidate_steps_by_run_key[run_key] = plan_rows.select(
                 CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS
             )
-            return candidate_steps
+            self.unordered_candidate_steps_by_run_key[run_key] = candidate_steps
+            return candidate_steps.sort(PLAN_KEY_COLS + ["seq_step_index"])
         # The eager path remains available to standalone callers and tests.
-        return candidate_steps.collect(engine="streaming")
+        return candidate_steps.sort(PLAN_KEY_COLS + ["seq_step_index"]).collect(engine="streaming")
 
     def _limit_candidate_pool(self, candidates: pl.DataFrame) -> pl.DataFrame:
         """Keep active plans first, then the most recently generated candidates."""

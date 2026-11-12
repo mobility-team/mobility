@@ -440,7 +440,10 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
             default=2,
             ge=0,
             title="Maximum inactive candidate-plan age",
-            description="Number of iterations an inactive candidate plan can stay in memory.",
+            description=(
+                "Number of steps an unused physical plan stays in the shared pool. "
+                "Generation or use in any scenario refreshes it for that replication."
+            ),
         ),
     ]
     min_activity_time_constant: Annotated[

@@ -1,5 +1,6 @@
 """Equivalent populations share scoring without losing their original identities."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import polars as pl
@@ -9,6 +10,50 @@ import pytest
 from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts
 from mobility.trips.group_day_trips.plans.plan_updater import CandidatePlanEvaluation, PlanUpdater
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS, add_plan_id
+from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
+from mobility.trips.group_day_trips.core.multi_scenario_run import MultiScenarioRunAsset
+from mobility.trips.group_day_trips.plans.compact_candidate_steps import (
+    CompactCandidateSteps, ScoringCandidateSteps, MEMBERSHIP_COLUMNS, PLAN_COLUMNS, STEP_COLUMNS,
+)
+
+
+def test_scenarios_share_only_identical_modeled_schedules():
+    first = pl.DataFrame({"time_seq_id": [1, 2], "departure_time": [8.0, 9.0]})
+    equal = first.clone()
+    changed = first.with_columns(departure_time=pl.col("departure_time") + 1.0)
+    reordered = first.reverse()
+    different_schema = first.with_columns(pl.col("time_seq_id").cast(pl.UInt32))
+    states = {
+        0: SimpleNamespace(time_sequence_steps=first),
+        1: SimpleNamespace(time_sequence_steps=equal),
+        2: SimpleNamespace(time_sequence_steps=changed),
+        3: SimpleNamespace(time_sequence_steps=reordered),
+        4: SimpleNamespace(time_sequence_steps=None),
+        5: SimpleNamespace(time_sequence_steps=different_schema),
+    }
+    for state in states.values():
+        state.current_plans = state.time_sequence_steps
+        state.current_plan_steps = state.time_sequence_steps
+        state.plan_id_index = state.time_sequence_steps
+        state.destination_sequence_index = state.time_sequence_steps
+        state.mode_sequence_index = state.time_sequence_steps
+        state.candidate_plan_steps = None
+    MultiScenarioRunAsset._share_equal_state_tables(states)
+    assert states[0].time_sequence_steps is states[1].time_sequence_steps
+    assert states[2].time_sequence_steps is changed
+    assert states[3].time_sequence_steps is reordered
+    assert states[4].time_sequence_steps is None
+    assert states[5].time_sequence_steps is different_schema
+    assert states[0].current_plan_steps is states[1].current_plan_steps
+    assert states[2].current_plan_steps is changed
+
+    # Physical steps can be shared even if scenario histories differ.
+    states[0].candidate_plan_steps = CompactCandidateSteps(first, first, ("x",), unit_map=first)
+    states[1].candidate_plan_steps = CompactCandidateSteps(equal, changed, ("x",), unit_map=equal)
+    MultiScenarioRunAsset._share_equal_state_tables(states)
+    assert states[0].candidate_plan_steps.steps is states[1].candidate_plan_steps.steps
+    assert states[0].candidate_plan_steps.unit_map is states[1].candidate_plan_steps.unit_map
+    assert states[0].candidate_plan_steps.membership is not states[1].candidate_plan_steps.membership
 
 
 def test_contexts_preserve_population_profiles_and_stable_ids():
@@ -52,6 +97,119 @@ def test_contexts_preserve_population_profiles_and_stable_ids():
         n_persons=pl.Series([20., 30.]), utility=pl.lit(5.),
     )
     assert contexts.collapse_allocations(allocation)["n_persons"].item() == 50.
+
+
+def test_context_reuse_checks_demand_and_profile_assignments():
+    demand = pl.DataFrame({
+        "demand_group_id": [1, 2], "demand_subgroup_id": [0, 0],
+        "home_zone_id": [10, 10], "country": ["FR", "FR"], "csp": [1, 1],
+        "n_persons": [20.0, 30.0], "allowed_activities": [["home"], ["home"]],
+    })
+    changed_profiles = [False]
+    calls = []
+
+    def assignments(groups, _segments):
+        calls.append(True)
+        return groups.select("demand_group_id", "demand_subgroup_id").with_columns(
+            utility_profile_id=pl.when((pl.col("demand_group_id") == 2) & changed_profiles[0])
+            .then(pl.lit(1)).otherwise(pl.lit(0)).cast(pl.UInt32),
+        ), {}
+
+    coordinator = object.__new__(MultiScenarioRunAsset)
+    coordinator._scoring_context_cache = {}
+    costs = SimpleNamespace(get_utility_profiles=assignments)
+    original = coordinator._get_scoring_contexts(0, demand, costs, [])
+    assert coordinator._get_scoring_contexts(0, demand, costs, []) is original
+    assert coordinator._get_scoring_contexts(1, demand.clone(), costs, []) is original
+    changed_profiles[0] = True
+    different_profiles = coordinator._get_scoring_contexts(1, demand, costs, [])
+    assert different_profiles is not original
+    assert different_profiles.demand_groups.height == 2
+    changed_profiles[0] = False
+    demand.replace_column(demand.get_column_index("n_persons"), pl.Series("n_persons", [20.0, 40.0]))
+    different_demand = coordinator._get_scoring_contexts(0, demand, costs, [])
+    assert different_demand is not original
+    assert different_demand.demand_groups["n_persons"].sum() == 60.0
+    different_schema = coordinator._get_scoring_contexts(
+        0, demand.with_columns(pl.col("csp").cast(pl.Int32)), costs, [],
+    )
+    assert different_schema is not different_demand
+    assert different_schema.demand_groups.schema["csp"] == pl.Int32
+    assert len(calls) == 6
+
+
+def test_factored_candidates_preserve_active_history_and_reject_inconsistent_steps():
+    units = pl.DataFrame({
+        "demand_group_id": [1, 2], "demand_subgroup_id": [0, 0], "_score_context_id": [0, 0],
+    }).with_columns(pl.all().cast(pl.UInt32))
+    contexts = ScoringContexts(pl.DataFrame(), units)
+    rows = units.drop("_score_context_id").join(
+        pl.DataFrame({"seq_step_index": [0, 1], "from": [1, 2], "to": [2, 1]}), how="cross"
+    ).with_columns(
+        pl.col("seq_step_index").cast(pl.UInt8),
+        activity_seq_id=pl.lit(1, dtype=pl.UInt32), time_seq_id=pl.lit(1, dtype=pl.UInt32),
+        dest_seq_id=pl.lit(1, dtype=pl.UInt32), mode_seq_id=pl.lit(1, dtype=pl.UInt32),
+        country=pl.lit("fr"), csp=pl.lit("worker"), activity=pl.lit("work"), mode=pl.lit("car"),
+        duration_per_pers=pl.lit(1.0), departure_time=pl.lit(8.0), arrival_time=pl.lit(9.0),
+        next_departure_time=pl.lit(10.0), iteration=pl.lit(1, dtype=pl.UInt16),
+        first_seen_iteration=pl.lit(1, dtype=pl.UInt16), last_seen_iteration=pl.lit(1, dtype=pl.UInt16),
+        last_active_iteration=pl.lit(None, dtype=pl.UInt16),
+    )
+    steps = rows.select(STEP_COLUMNS).unique()
+    members = rows.select(MEMBERSHIP_COLUMNS).unique()
+    shared = ScoringCandidateSteps(steps, members.lazy())
+    previous = CompactCandidateSteps(steps, members, tuple(rows.columns))
+    current = rows.filter(pl.col("demand_group_id") == 1).select(PLAN_KEY_COLS).unique()
+    active = rows.filter(pl.col("demand_group_id") == 1).with_columns(
+        last_seen_iteration=pl.lit(5, dtype=pl.UInt16)
+    )
+    # The occupied row from the previous state wins over the pool's active row.
+    raw = pl.concat([rows, active, rows.filter(pl.col("demand_group_id") == 1)]).unique(
+        subset=PLAN_KEY_COLS + ["seq_step_index"], keep="last"
+    )
+    actual = contexts.collapse_factored_step_rows(shared, active, previous, current)
+    assert actual is not None
+    keys = PLAN_KEY_COLS + ["seq_step_index"]
+    assert_frame_equal(actual.sort(keys), contexts.collapse_step_rows(raw).select(actual.columns).sort(keys))
+    shared_history = CompactCandidateSteps(
+        steps, members.filter(pl.col("demand_group_id") == 1).with_columns(
+            demand_group_id=pl.lit(0, dtype=pl.UInt32)
+        ), tuple(rows.columns), unit_map=units,
+    )
+    from_shared_history = contexts.collapse_factored_step_rows(shared, active, shared_history, current)
+    assert_frame_equal(from_shared_history.sort(keys), actual.sort(keys))
+    other_steps = steps.with_columns(mode_seq_id=pl.lit(2, dtype=pl.UInt32), mode=pl.lit("walk"))
+    other_members = members.with_columns(mode_seq_id=pl.lit(2, dtype=pl.UInt32))
+    both = ScoringCandidateSteps(
+        pl.concat([steps, other_steps]), pl.concat([members, other_members]).lazy(),
+    )
+    all_candidates = contexts.collapse_factored_step_rows(both, active, previous, current)
+    early = contexts.collapse_factored_step_rows(
+        both, active, previous, current,
+        context_filter=lambda groups: groups.filter(pl.col("mode_seq_id") == 1),
+    )
+    assert_frame_equal(early.sort(keys), all_candidates.filter(pl.col("mode_seq_id") == 1).sort(keys))
+    assert contexts.collapse_factored_step_rows(
+        shared, active.with_columns(pl.col("to") + 10), previous, current
+    ) is None
+    assert contexts.collapse_factored_step_rows(
+        shared, active.filter(pl.col("seq_step_index") == 0), previous, current
+    ) is None
+
+    varied = members.with_columns(
+        iteration=pl.when(pl.col("demand_group_id") == 2).then(pl.lit(2, dtype=pl.UInt16))
+        .otherwise(pl.col("iteration"))
+    )
+    merged = contexts.collapse_factored_step_rows(
+        ScoringCandidateSteps(steps, varied.lazy()), None, None, current.head(0)
+    )
+    assert merged is not None
+    assert merged["iteration"].unique().to_list() == [1]
+    varied_rows = rows.with_columns(
+        iteration=pl.when(pl.col("demand_group_id") == 2).then(pl.lit(2, dtype=pl.UInt16))
+        .otherwise(pl.col("iteration"))
+    )
+    assert_frame_equal(merged.sort(keys), contexts.collapse_step_rows(varied_rows).select(merged.columns).sort(keys))
 
 
 def test_compact_mnl_preserves_population_weighted_flows(monkeypatch):
@@ -100,6 +258,12 @@ def test_reusing_scores_maps_timing_and_population_back_to_each_demand_unit():
         dest_seq_id=pl.lit(1, dtype=pl.UInt32), mode_seq_id=pl.lit(1, dtype=pl.UInt32),
         n_persons=pl.Series([20.0, 30.0]), utility=pl.lit(1.0),
     )
+    # Stay-home has no entry in the modeled-time mapping and retains its time.
+    current = pl.concat([current, current.head(1).with_columns(
+        activity_seq_id=pl.lit(0, dtype=pl.UInt32), time_seq_id=pl.lit(0, dtype=pl.UInt32),
+        dest_seq_id=pl.lit(0, dtype=pl.UInt32), mode_seq_id=pl.lit(0, dtype=pl.UInt32),
+        n_persons=pl.lit(10.0),
+    )])
     current, old_index = add_plan_id(current, previous_index=None)
     choices = pl.DataFrame({
         "demand_group_id": [0, 0], "demand_subgroup_id": [0, 0],
@@ -107,21 +271,151 @@ def test_reusing_scores_maps_timing_and_population_back_to_each_demand_unit():
         "dest_seq_id": [0, 1], "mode_seq_id": [0, 1],
         "plan_id": [0, 1], "utility": [0.0, 5.0], "is_feasible": [True, True],
     }).with_columns(pl.col(PLAN_KEY_COLS + ["plan_id"]).cast(pl.UInt32))
-    steps = choices.with_columns(seq_step_index=pl.lit(1, dtype=pl.UInt8))
+    steps = choices.with_columns(
+        seq_step_index=pl.lit(1, dtype=pl.UInt8), activity=pl.lit("home"),
+        mode=pl.when(pl.col("mode_seq_id") == 0).then(pl.lit("walk")).otherwise(pl.lit("car")),
+        departure_time=pl.lit(8.0), arrival_time=pl.lit(9.0), next_departure_time=pl.lit(24.0),
+    )
     mapping = choices.filter(pl.col("mode_seq_id") == 1).select(PLAN_KEY_COLS).with_columns(
         previous_time_seq_id=pl.lit(1, dtype=pl.UInt32),
     )
+    history = steps.filter(pl.col("mode_seq_id") == 1).drop("plan_id", "utility", "is_feasible").with_columns(
+        country=pl.lit("FR"), csp=pl.lit("worker"), iteration=pl.lit(1, dtype=pl.UInt16),
+        first_seen_iteration=pl.lit(1, dtype=pl.UInt16), last_seen_iteration=pl.lit(1, dtype=pl.UInt16),
+        last_active_iteration=pl.lit(None, dtype=pl.UInt16), activity=pl.lit("work"),
+        **{"from": pl.lit(1), "to": pl.lit(2)}, mode=pl.lit("car"),
+        duration_per_pers=pl.lit(1.0), departure_time=pl.lit(8.0), arrival_time=pl.lit(9.0),
+        next_departure_time=pl.lit(10.0),
+    )
+    # A single context and step cannot save space until the memberships are
+    # expanded to both demand units. Preserve that history without expanding steps.
+    assert isinstance(CompactCandidateSteps.from_frame(history), pl.DataFrame)
     evaluation = CandidatePlanEvaluation(
-        candidate_plan_steps=steps.filter(pl.col("mode_seq_id") == 1),
+        candidate_plan_steps=history,
         possible_plan_steps=steps.lazy(), possible_plan_utility=choices,
         plan_id_index=pl.DataFrame(), scoring_contexts=contexts, time_mapping=mapping,
     )
     expanded = PlanUpdater().expand_context_evaluation(evaluation, current, old_index)
-    assert expanded.current_plans["n_persons"].sort().to_list() == [20.0, 30.0]
-    assert expanded.current_plans["time_seq_id"].unique().to_list() == [2]
-    assert expanded.current_plans["plan_id"].n_unique() == 2
+    assert isinstance(expanded.candidate_plan_steps, CompactCandidateSteps)
+    assert expanded.candidate_plan_steps.unit_map is not None
+    assert expanded.candidate_plan_steps.membership.height == 1
+    assert expanded.candidate_plan_steps.memberships().collect().height == 2
+    assert_frame_equal(
+        expanded.candidate_plan_steps.lazy().collect().sort(PLAN_KEY_COLS),
+        contexts.expand_step_rows(history).collect().sort(PLAN_KEY_COLS),
+    )
+    assert expanded.current_plans["n_persons"].sort().to_list() == [10.0, 20.0, 30.0]
+    assert expanded.current_plans["time_seq_id"].unique().sort().to_list() == [0, 2]
+    assert expanded.current_plans["plan_id"].n_unique() == 3
     assert expanded.possible_plan_utility.height == 4
     assert expanded.possible_plan_steps.collect().height == 4
     assert expanded.current_plans.join(
         expanded.possible_plan_utility, on=PLAN_KEY_COLS + ["plan_id"], how="anti"
     ).height == 0
+    shared = PlanUpdater().expand_context_evaluation(
+        evaluation, current, old_index, share_transition_probabilities=True,
+    )
+    assert isinstance(shared.possible_plan_utility, pl.LazyFrame)
+    assert_frame_equal(shared.plan_id_index, expanded.plan_id_index)
+    assert_frame_equal(shared.current_plans.sort(PLAN_KEY_COLS), expanded.current_plans.sort(PLAN_KEY_COLS))
+    compact_index = choices.select(PLAN_KEY_COLS + ["plan_id"])
+    compact_origins = contexts.collapse_allocations(expanded.current_plans).join(compact_index, on=PLAN_KEY_COLS)
+    compact_evaluation = replace(
+        evaluation, plan_id_index=compact_index, current_plans=compact_origins,
+        time_sequence_steps=pl.DataFrame({"time_seq_id": [0, 2], "reference_time_seq_id": [0, 1]}).cast(pl.UInt32),
+    )
+    extra_choice = choices.filter(pl.col("mode_seq_id") == 1).with_columns(
+        mode_seq_id=pl.lit(2, dtype=pl.UInt32), plan_id=pl.lit(2, dtype=pl.UInt32),
+    )
+    extra_steps = steps.filter(pl.col("mode_seq_id") == 1).with_columns(
+        mode_seq_id=pl.lit(2, dtype=pl.UInt32), plan_id=pl.lit(2, dtype=pl.UInt32),
+    )
+    full_steps = pl.concat([steps, extra_steps]).with_columns(
+        distance=pl.lit(1.0), time=pl.lit(1.0), duration_per_pers=pl.lit(1.0),
+        **{"from": pl.lit(1), "to": pl.lit(2)},
+    ).lazy()
+    with_extra = replace(
+        compact_evaluation, possible_plan_steps=full_steps,
+        possible_plan_utility=pl.concat([choices, extra_choice]),
+    )
+    settings = {"transport_zones": None, "enable_transition_distance_model": False,
+                "transition_distance_threshold": float("inf")}
+    reduced = MultiScenarioRunAsset._compact_completed_candidate_history(
+        with_extra, PlanUpdater(), BehaviorChangeScope.NO_TRANSITIONS,
+        keep_all_steps=False, transition_parameters=settings,
+    )
+    assert set(reduced.possible_plan_steps["plan_id"].to_list()) == {0, 1}
+    forced_steps = MultiScenarioRunAsset._compact_completed_candidate_history(
+        replace(with_extra, possible_plan_utility=with_extra.possible_plan_utility.with_columns(
+            is_feasible=pl.col("mode_seq_id") != 1,
+        )), PlanUpdater(), BehaviorChangeScope.NO_TRANSITIONS,
+        keep_all_steps=False, transition_parameters=settings,
+    )
+    assert set(forced_steps.possible_plan_steps["plan_id"].to_list()) == {0, 1, 2}
+    complete = MultiScenarioRunAsset._compact_completed_candidate_history(
+        with_extra, PlanUpdater(), BehaviorChangeScope.NO_TRANSITIONS,
+        keep_all_steps=True, transition_parameters=settings,
+    )
+    assert set(complete.possible_plan_steps["plan_id"].to_list()) == {0, 1, 2}
+    finite_distance = MultiScenarioRunAsset._compact_completed_candidate_history(
+        with_extra, PlanUpdater(), BehaviorChangeScope.NO_TRANSITIONS, keep_all_steps=False,
+        transition_parameters={**settings, "enable_transition_distance_model": True,
+                               "transition_distance_threshold": 1.0},
+    )
+    assert set(finite_distance.possible_plan_steps["plan_id"].to_list()) == {0, 1, 2}
+    narrowed = PlanUpdater().expand_context_evaluation(
+        compact_evaluation, current, old_index, BehaviorChangeScope.NO_TRANSITIONS,
+        share_transition_probabilities=True, transition_parameters={"transport_zones": None},
+    )
+    assert narrowed.plan_id_index.height == 5
+    assert expanded.plan_id_index.height == 6
+    assert_frame_equal(narrowed.current_plans.drop("plan_id").sort(PLAN_KEY_COLS),
+                       expanded.current_plans.drop("plan_id").sort(PLAN_KEY_COLS))
+    assert_frame_equal(narrowed.plan_id_index.join(old_index, on=PLAN_KEY_COLS + ["plan_id"]), old_index)
+    infeasible = replace(
+        compact_evaluation,
+        possible_plan_utility=choices.with_columns(is_feasible=pl.col("mode_seq_id") == 0),
+    )
+    forced = PlanUpdater().expand_context_evaluation(
+        infeasible, current, old_index, BehaviorChangeScope.NO_TRANSITIONS,
+        share_transition_probabilities=True, transition_parameters={"transport_zones": None},
+    )
+    # Both units can be forced to stay home even though the normal scope
+    # would keep them on their current plans.
+    assert forced.plan_id_index.height == 6
+    updater = PlanUpdater()
+    for scope in BehaviorChangeScope:
+        limited = updater.expand_context_evaluation(
+            compact_evaluation, current, old_index, scope,
+            share_transition_probabilities=True, transition_parameters={"transport_zones": None},
+        )
+        actual = updater.get_context_transition_probabilities(limited, scope, transport_zones=None)
+        reference_choices = expanded.possible_plan_utility.join(
+            compact_evaluation.time_sequence_steps, on="time_seq_id", how="left"
+        )
+        expected = updater.get_transition_probabilities(
+            expanded.current_plans, reference_choices.lazy(), pl.DataFrame(), scope, transport_zones=None,
+        )
+        columns = [column for column in expected.columns if column not in ("plan_id_from", "plan_id_trans")]
+        keys = PLAN_KEY_COLS + [column + "_trans" for column in PLAN_COLUMNS]
+        assert_frame_equal(actual.select(columns).sort(keys), expected.select(columns).sort(keys))
+    for threshold in (0.0, 100.0):
+        distance_settings = {
+            "transport_zones": None, "enable_transition_distance_model": True,
+            "transition_distance_threshold": threshold, "transition_distance_friction": 0.5,
+        }
+        limited = updater.expand_context_evaluation(
+            compact_evaluation, current, old_index, BehaviorChangeScope.FULL_REPLANNING,
+            share_transition_probabilities=True, transition_parameters=distance_settings,
+        )
+        actual = updater.get_context_transition_probabilities(
+            limited, BehaviorChangeScope.FULL_REPLANNING, **distance_settings,
+        )
+        expected = updater.get_transition_probabilities(
+            expanded.current_plans, reference_choices.lazy(), expanded.possible_plan_steps.collect(),
+            BehaviorChangeScope.FULL_REPLANNING, **distance_settings,
+        )
+        columns = [column for column in expected.columns if column not in ("plan_id_from", "plan_id_trans")]
+        assert_frame_equal(actual.select(columns).sort(keys), expected.select(columns).sort(keys))
+        if threshold == 100.0:
+            assert actual["tau_transition"].max() > 0.0

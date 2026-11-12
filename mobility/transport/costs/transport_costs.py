@@ -179,47 +179,48 @@ class TransportCosts(InMemoryAsset):
 
         profile_ids: dict[tuple[str, ...], int] = {}
         profile_id_by_memberships: dict[tuple[str, ...], int] = {}
+        profile_id_by_segment_list: dict[tuple[str, ...], int] = {}
         profiles: dict[int, list[InMemoryAsset]] = {}
-        assignments = []
-        rows = demand_groups.select(sorted(required)).iter_rows(named=True)
-        for row in rows:
-            memberships_key = tuple(sorted(set(row["population_segments"] or [])))
-            profile_id = profile_id_by_memberships.get(memberships_key)
+        # Resolve each membership once, retaining first-seen profile IDs.
+        # Keep the demand-unit columns in Polars instead of building a Python
+        # dictionary for every row.
+        ids = []
+        for members in demand_groups["population_segments"].to_list():
+            segment_list = tuple(members or ())
+            profile_id = profile_id_by_segment_list.get(segment_list)
             if profile_id is None:
-                resolved_assets = [
-                    self._resolved_generalized_cost(
-                        mode.inputs["generalized_cost"],
-                        memberships=set(memberships_key),
-                        population_segments=population_segments,
-                    )
-                    for mode in self.modes
-                ]
-                profile_key = tuple(asset.inputs_hash for asset in resolved_assets)
-                profile_id = profile_ids.get(profile_key)
+                memberships_key = tuple(sorted(set(segment_list)))
+                profile_id = profile_id_by_memberships.get(memberships_key)
                 if profile_id is None:
-                    profile_id = len(profile_ids)
-                    profile_ids[profile_key] = profile_id
-                    profiles[profile_id] = resolved_assets
-                profile_id_by_memberships[memberships_key] = profile_id
-            assignments.append(
-                {
-                    "demand_group_id": row["demand_group_id"],
-                    "demand_subgroup_id": row["demand_subgroup_id"],
-                    "utility_profile_id": profile_id,
-                }
-            )
-
-        assignment_schema = {
-            "demand_group_id": pl.UInt32,
-            "demand_subgroup_id": pl.UInt32,
-            "utility_profile_id": pl.UInt32,
-        }
-        return pl.DataFrame(assignments, schema=assignment_schema), profiles
+                    resolved_assets = [
+                        self._resolved_generalized_cost(
+                            mode.inputs["generalized_cost"],
+                            memberships=set(memberships_key),
+                            population_segments=population_segments,
+                        )
+                        for mode in self.modes
+                    ]
+                    profile_key = tuple(asset.inputs_hash for asset in resolved_assets)
+                    profile_id = profile_ids.get(profile_key)
+                    if profile_id is None:
+                        profile_id = len(profile_ids)
+                        profile_ids[profile_key] = profile_id
+                        profiles[profile_id] = resolved_assets
+                    profile_id_by_memberships[memberships_key] = profile_id
+                profile_id_by_segment_list[segment_list] = profile_id
+            ids.append(profile_id)
+        assignments = demand_groups.select(
+            pl.col("demand_group_id").cast(pl.UInt32),
+            pl.col("demand_subgroup_id").cast(pl.UInt32),
+        ).with_columns(utility_profile_id=pl.Series(ids, dtype=pl.UInt32))
+        return assignments, profiles
 
     def get_profile_costs_by_od_and_mode(
         self,
         profiles: dict[int, list[InMemoryAsset]],
         metrics: list[str],
+        *,
+        default_costs: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
         """Compute OD-by-mode costs once for every distinct utility profile."""
         profile_costs = []
@@ -232,10 +233,11 @@ class TransportCosts(InMemoryAsset):
             )
             for mode in self.modes
         ]
-        default_costs = self.get_costs_by_od_and_mode(
-            metrics,
-            detail_distances=False,
-        )
+        if default_costs is None:
+            default_costs = self.get_costs_by_od_and_mode(
+                metrics,
+                detail_distances=False,
+            )
 
         # Cache by generalized-cost asset, not by population profile. Profiles
         # that inherit one mode's default coefficients reuse its existing OD

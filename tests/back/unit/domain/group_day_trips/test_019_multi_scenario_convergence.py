@@ -4,14 +4,18 @@ from types import SimpleNamespace
 
 import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
 from mobility.trips.group_day_trips.core.multi_scenario import (
     InnerLoopConvergence,
+    allocation_od_mode_flows,
     normalized_base_gap_change,
+    represented_od_mode_flows,
 )
 from mobility.trips.group_day_trips.core.parameters import GroupDayTripsParameters
 from mobility.trips.group_day_trips.core.multi_scenario_run import MultiScenarioRunAsset
 from mobility.trips.group_day_trips.plans.plan_updater import CandidatePlanEvaluation, PlanUpdater
+from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS
 from mobility.trips.group_day_trips.core.run import RunTableAsset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.assets.resolver import asset_resolution_context
@@ -47,6 +51,46 @@ def test_base_gap_change_ignores_equal_changes_in_both_scenarios():
     current = previous.with_columns(volume=pl.lit(20.0))
 
     assert normalized_base_gap_change(previous, previous, current, current, 100.0) == 0.0
+
+
+def test_inner_flow_reduction_matches_expanded_steps():
+    """Count repeated trips and demand groups without expanding wide steps."""
+    allocation = pl.DataFrame({
+        "demand_group_id": [1, 2, 1], "demand_subgroup_id": [0, 0, 0],
+        "activity_seq_id": [1, 1, 0], "time_seq_id": [1, 1, 0],
+        "dest_seq_id": [1, 1, 0], "mode_seq_id": [1, 1, 0],
+        "n_persons": [2.5, 4.5, 10.0],
+    })
+    steps = pl.DataFrame({
+        "demand_group_id": [1, 1, 2, 2], "demand_subgroup_id": [0, 0, 0, 0],
+        "activity_seq_id": [1, 1, 1, 1], "time_seq_id": [1, 1, 1, 1],
+        "dest_seq_id": [1, 1, 1, 1], "mode_seq_id": [1, 1, 1, 1],
+        "from": [10, 10, 10, 20], "to": [20, 20, 20, 10],
+        "mode": ["car", "car", "car", "walk"],
+    })
+    expanded = allocation.join(steps, on=PLAN_KEY_COLS, how="left")
+
+    assert_frame_equal(
+        allocation_od_mode_flows(allocation, steps.lazy()),
+        represented_od_mode_flows(expanded),
+    )
+
+
+def test_inner_flows_do_not_depend_on_row_order():
+    """Small contributions must not disappear when plans arrive in another order."""
+    steps = pl.DataFrame({
+        "demand_group_id": [1, 2, 3], "demand_subgroup_id": [0, 0, 0],
+        "activity_seq_id": [1, 1, 1], "time_seq_id": [1, 1, 1],
+        "dest_seq_id": [1, 1, 1], "mode_seq_id": [1, 1, 1],
+        "from": [10, 10, 10], "to": [20, 20, 20], "mode": ["car"] * 3,
+        "n_persons": [1.0, 2**-53, 2**-53],
+    })
+    allocation = steps.select(PLAN_KEY_COLS + ["n_persons"])
+    choices = steps.drop("n_persons")
+    forward = represented_od_mode_flows(steps)
+    assert_frame_equal(forward, represented_od_mode_flows(steps.reverse()))
+    assert_frame_equal(forward, allocation_od_mode_flows(allocation.reverse(), choices.lazy()))
+    assert forward["volume"].item() == 1.0 + 2**-52
 
 
 def test_low_effort_defaults_keep_a_finite_inner_limit():

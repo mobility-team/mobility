@@ -5,6 +5,7 @@ import polars as pl
 
 from mobility.activities.activity import ActivityParameters
 from mobility.surveys import SurveyPlanAssets
+from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
 from mobility.transport.modes.core.mode_values import get_mode_values
 from .demand_subgroups import DEMAND_UNIT_COLS, split_demand_groups
 from .plan_ids import add_plan_id
@@ -20,6 +21,34 @@ class PlanInitializer:
     and (5) fetch current OD costs.
     """
 
+    @staticmethod
+    @trace_simulation_step("aggregate initial population groups")
+    def _aggregate_population_groups(population_groups_path, lau_to_city_cat):
+        """Aggregate represented people to the demand groups used by the model."""
+        groups = (
+            pl.scan_parquet(population_groups_path)
+            .rename({
+                "socio_pro_category": "csp",
+                "transport_zone_id": "home_zone_id",
+                "weight": "n_persons",
+            })
+            .with_columns(home_zone_id=pl.col("home_zone_id").cast(pl.Int32))
+            .join(lau_to_city_cat.lazy(), on=["local_admin_unit_id"])
+        )
+        keys = ["country", "home_zone_id", "city_category", "csp", "n_cars"]
+        schema = groups.collect_schema()
+        string_keys = [key for key in keys if schema[key] == pl.String]
+        # Most input rows repeat the same country and demographic labels.
+        # Group their compact codes, then restore the original string schema.
+        return (
+            groups.with_columns(pl.col(string_keys).cast(pl.Categorical))
+            .group_by(keys)
+            .agg(pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum())
+            .with_columns(pl.col(string_keys).cast(pl.String))
+            .collect(engine="streaming")
+        )
+
+    @trace_simulation_step("prepare initial survey plans")
     def get_survey_plan_data(self, population, survey_plan_assets: SurveyPlanAssets, is_weekday, parameters):
         """Build runtime survey plan inputs from survey assets and demand groups."""
 
@@ -41,21 +70,7 @@ class PlanInitializer:
             .collect(engine="streaming")
             .row(0, named=True)
         )
-        demand_groups = (
-            pl.scan_parquet(population_assets["population_groups"])
-            .rename(
-                {
-                    "socio_pro_category": "csp",
-                    "transport_zone_id": "home_zone_id",
-                    "weight": "n_persons",
-                }
-            )
-            .with_columns(home_zone_id=pl.col("home_zone_id").cast(pl.Int32))
-            .join(lau_to_city_cat.lazy(), on=["local_admin_unit_id"])
-            .group_by(["country", "home_zone_id", "city_category", "csp", "n_cars"])
-            .agg(pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum())
-            .collect(engine="streaming")
-        )
+        demand_groups = self._aggregate_population_groups(population_assets["population_groups"], lau_to_city_cat)
 
         # Population groups carry the represented population weights used by
         # the model; the sampled-individual file records the source sample size.
@@ -237,6 +252,7 @@ class PlanInitializer:
             ),
         )
 
+    @trace_simulation_step("summarize initial survey durations")
     def get_survey_duration_summaries(
         self,
         population_weighted_plan_steps: pl.LazyFrame,
@@ -269,11 +285,9 @@ class PlanInitializer:
         ]
         plan_keys_without_home_zone = [key for key in plan_segment_keys if key != "home_zone_id"]
 
-        weighted_plan_steps = population_weighted_plan_steps.with_columns(
-            country=pl.col("country").cast(pl.String()),
-            csp=pl.col("csp").cast(pl.String()),
-            activity=pl.col("activity").cast(pl.String()),
-        )
+        # The cached survey table usually stores these labels as enums. Keep
+        # their compact representation while grouping millions of step rows.
+        weighted_plan_steps = population_weighted_plan_steps
         weighted_plan_step_schema = population_weighted_plan_steps.collect_schema()
 
         # Keep the sorted values until each sum is computed. A direct
@@ -329,6 +343,9 @@ class PlanInitializer:
             .group_by(["country", "activity"])
             .agg(total_duration=(pl.col("duration_per_pers") * pl.col("n_persons"))
                  .cast(pl.Float64).sort().implode().list.sum())
+            # The population and survey tables can have different enum
+            # domains, so match country labels after reducing the step rows.
+            .with_columns(country=pl.col("country").cast(pl.String()))
             .join(country_population.lazy(), on="country", how="inner")
             .with_columns(duration_per_pers=pl.col("total_duration") / pl.col("country_n_persons").clip(1e-18))
             .select(["country", "activity", "duration_per_pers"])
@@ -343,6 +360,7 @@ class PlanInitializer:
             weighted_plan_step_schema["activity"],
         )
 
+    @trace_simulation_step("prepare initial stay-home state")
     def get_stay_home_state(
         self,
         demand_groups,
@@ -437,6 +455,7 @@ class PlanInitializer:
 
         return stay_home_state, current_states, plan_id_index
 
+    @trace_simulation_step("prepare initial opportunities")
     def get_opportunities(
         self,
         activity_demand_per_pers,

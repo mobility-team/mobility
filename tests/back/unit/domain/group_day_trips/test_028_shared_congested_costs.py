@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+import json
+from pathlib import Path
 
 import polars as pl
 
@@ -53,6 +55,13 @@ def test_shared_costs_keep_scenarios_and_missing_routes_separate(tmp_path, monke
     monkeypatch.setattr(PathTravelCosts, "asset_for_flow_asset", lambda self, flow: SimpleNamespace(congested_costs=flow.table))
     first, first_table = make_iteration_costs(tmp_path, "first")
     second, second_table = make_iteration_costs(tmp_path, "second", mode_name="other-road-mode")
+    (tmp_path / "first.parquet").write_bytes(b"first flow")
+    (tmp_path / "second.parquet").write_bytes(b"second flow")
+    # Even a digest collision must not merge different input files.
+    monkeypatch.setattr(
+        "mobility.transport.costs.path.shared_congested_costs.hashlib.file_digest",
+        lambda file, algorithm: SimpleNamespace(digest=lambda: b"same hash"),
+    )
     calls = []
 
     class FakeRunner:
@@ -80,6 +89,44 @@ def test_shared_costs_keep_scenarios_and_missing_routes_separate(tmp_path, monke
         assert len(calls) == 1
 
 
+def test_identical_flow_files_share_one_assignment(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setattr(PathTravelCosts, "asset_for_flow_asset", lambda self, flow: SimpleNamespace(congested_costs=flow.table))
+    first, first_table = make_iteration_costs(tmp_path, "first")
+    second, second_table = make_iteration_costs(tmp_path, "second")
+    third, third_table = make_iteration_costs(tmp_path, "third")
+    (tmp_path / "first.parquet").write_bytes(b"same flow")
+    (tmp_path / "second.parquet").write_bytes(b"same flow")
+    (tmp_path / "third.parquet").write_bytes(b"different flow")
+    calls = []
+
+    class FakeRunner:
+        def __init__(self, path):
+            pass
+
+        def run(self, args):
+            calls.append(json.loads(Path(args[3]).read_text(encoding="utf-8")))
+            pl.DataFrame({
+                "from": [1], "to": [2],
+                "distance_0": [1.0], "time_0": [0.1],
+                "distance_1": [3.0], "time_1": [0.3],
+            }).write_parquet(args[-2])
+
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", FakeRunner)
+    with asset_resolution_context() as resolver:
+        prepare_shared_congested_costs([first, second, third])
+        assert len(calls) == 1
+        assert len(calls[0]) == 2
+        a = resolver.in_memory_values[asset_graph_key(first_table)]
+        b = resolver.in_memory_values[asset_graph_key(second_table)]
+        c = resolver.in_memory_values[asset_graph_key(third_table)]
+        assert a is not b and a.equals(b)
+        assert a["distance"].tolist() == [1.0]
+        assert c["distance"].tolist() == [3.0]
+        a.loc[0, "distance"] = 99.0
+        assert b["distance"].tolist() == [1.0]
+
+
 def test_incompatible_networks_are_not_batched(tmp_path, monkeypatch):
     """Different road networks remain on the ordinary per-scenario path."""
     monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
@@ -88,3 +135,29 @@ def test_incompatible_networks_are_not_batched(tmp_path, monkeypatch):
     with asset_resolution_context() as resolver:
         prepare_shared_congested_costs([first, second])
         assert not resolver.in_memory_values
+
+
+def test_all_identical_flows_use_a_single_assignment(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setattr(PathTravelCosts, "asset_for_flow_asset", lambda self, flow: SimpleNamespace(congested_costs=flow.table))
+    first, first_table = make_iteration_costs(tmp_path, "first")
+    second, second_table = make_iteration_costs(tmp_path, "second")
+    (tmp_path / "first.parquet").write_bytes(b"same")
+    (tmp_path / "second.parquet").write_bytes(b"same")
+    calls = []
+
+    class FakeRunner:
+        def __init__(self, path):
+            pass
+
+        def run(self, args):
+            calls.append(json.loads(Path(args[3]).read_text(encoding="utf-8")))
+            pl.DataFrame({"from": [1], "to": [2], "distance_0": [1.0], "time_0": [0.1]}).write_parquet(args[-2])
+
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", FakeRunner)
+    with asset_resolution_context() as resolver:
+        prepare_shared_congested_costs([first, second])
+        assert len(calls) == 1 and len(calls[0]) == 1
+        assert resolver.in_memory_values[asset_graph_key(first_table)].equals(
+            resolver.in_memory_values[asset_graph_key(second_table)]
+        )

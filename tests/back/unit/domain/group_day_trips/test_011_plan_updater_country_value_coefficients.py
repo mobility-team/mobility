@@ -3,19 +3,22 @@ from types import SimpleNamespace
 import math
 import pandas as pd
 import polars as pl
+from polars.testing import assert_frame_equal
 import pytest
 
 from mobility.trips.group_day_trips.plans.plan_ids import add_plan_id
-from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
+from mobility.trips.group_day_trips.plans.plan_updater import CandidatePlanEvaluation, PlanUpdater
+from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringLookup, ScoringMemoryBudget
 
 
 @pytest.mark.parametrize("distance_model", [False, True])
-def test_plan_steps_are_collected_when_transitions_need_them(monkeypatch, distance_model):
+@pytest.mark.parametrize("cache_events", [False, True])
+def test_plan_steps_are_collected_when_transitions_need_them(monkeypatch, distance_model, cache_events):
     """Keep the large step table out of transitions unless distances need it."""
     updater = PlanUpdater()
     steps = pl.DataFrame({"value": [1]}).lazy()
     plans = pl.DataFrame({"n_persons": [1.0]})
-    evaluation = SimpleNamespace(
+    evaluation = CandidatePlanEvaluation(
         candidate_plan_steps=pl.DataFrame(), possible_plan_steps=steps,
         possible_plan_utility=pl.DataFrame({"time_seq_id": [1]}),
         time_sequence_steps=pl.DataFrame({"time_seq_id": [1], "reference_time_seq_id": [1]}),
@@ -30,7 +33,7 @@ def test_plan_steps_are_collected_when_transitions_need_them(monkeypatch, distan
     )
     parameters = SimpleNamespace(
         plan_update=settings, behavior_change=SimpleNamespace(scope_at=lambda _: None),
-        outputs=SimpleNamespace(cache_step_events=False),
+        outputs=SimpleNamespace(cache_step_events=cache_events),
     )
     collected = []
     collect = pl.LazyFrame.collect
@@ -52,6 +55,10 @@ def test_plan_steps_are_collected_when_transitions_need_them(monkeypatch, distan
     monkeypatch.setattr(updater, "get_transition_probabilities", transitions)
     monkeypatch.setattr(updater, "apply_transitions", apply)
     monkeypatch.setattr(updater, "get_current_plan_steps", lambda *args: pl.DataFrame())
+    monkeypatch.setattr(
+        "mobility.trips.group_day_trips.plans.plan_updater.add_transition_plan_details",
+        lambda *args: pl.DataFrame().lazy(),
+    )
     updater.get_new_plans(
         current_plans=plans, current_plan_steps=None, candidate_plan_steps=None,
         demand_groups=None, survey_plan_steps=None, transport_costs=None,
@@ -61,7 +68,7 @@ def test_plan_steps_are_collected_when_transitions_need_them(monkeypatch, distan
         stay_home_plan=None, transport_zones=None, previous_plan_id_index=None,
         parameters=parameters, precomputed_evaluation=evaluation,
     )
-    assert len(collected) == 1
+    assert len(collected) == int(distance_model or cache_events)
 
 
 @pytest.mark.parametrize("unit_count", [1, 3])
@@ -102,34 +109,35 @@ def test_plan_updater_prepares_destination_country_value_coefficient(unit_count)
     ).with_columns(activity=pl.col("activity").cast(pl.Enum(["work"])))
     destination_saturation = pl.DataFrame(
         {
-            "to": [10, 20],
-            "activity": ["work", "work"],
-            "k_saturation_utility": [1.0, 1.0],
+            "to": [10, 20, 30],
+            "activity": ["work", "work", "work"],
+            "k_saturation_utility": [1.0, 1.0, 1.0],
         }
     ).with_columns(activity=pl.col("activity").cast(pl.Enum(["work"])))
 
     class _StubTransportCosts:
-        def __init__(self):
+        def __init__(self, cost=1.0):
+            self.cost = cost
             self.modes = [SimpleNamespace(inputs={"parameters": SimpleNamespace(name="car")})]
 
         def get_costs_by_od_and_mode(self, columns, detail_distances=False):
             return pl.DataFrame(
                 {
-                    "from": [1, 1],
-                    "to": [10, 20],
-                    "mode": ["car", "car"],
-                    "cost": [1.0, 1.0],
-                    "distance": [10.0, 10.0],
-                    "time": [1.0, 1.0],
+                    "from": [1, 1, 1],
+                    "to": [10, 20, 30],
+                    "mode": ["car", "car", "car"],
+                    "cost": [self.cost, self.cost, self.cost],
+                    "distance": [10.0, 10.0, 10.0],
+                    "time": [1.0, 1.0, 1.0],
                 }
             )
 
     transport_zones = SimpleNamespace(
         get=lambda: pd.DataFrame(
             {
-                "transport_zone_id": [10, 20],
-                "local_admin_unit_id": ["fr001", "ch001"],
-                "country": ["fr", "ch"],
+                "transport_zone_id": [10, 20, 30],
+                "local_admin_unit_id": ["fr001", "ch001", "fr002"],
+                "country": ["fr", "ch", "fr"],
             }
         )
     )
@@ -140,6 +148,16 @@ def test_plan_updater_prepares_destination_country_value_coefficient(unit_count)
     # Units share plan content and utility inputs, but retain their own memory
     # dates when compact scores are attached back to the population.
     base_candidates = candidates.collect()
+    # A different plan and schedule can use the same travel and activity
+    # inputs. Sharing those inputs must not replace its own IDs or timings.
+    base_candidates = pl.concat([
+        base_candidates,
+        base_candidates.head(1).with_columns(
+            activity_seq_id=pl.lit(11, dtype=pl.Int64), time_seq_id=pl.lit(2, dtype=pl.Int64),
+            dest_seq_id=pl.lit(102, dtype=pl.Int64), mode_seq_id=pl.lit(1002, dtype=pl.Int64),
+            departure_time=pl.lit(7.0), arrival_time=pl.lit(8.0),
+        ),
+    ])
     candidates = pl.concat([
         base_candidates.with_columns(
             demand_group_id=pl.lit(unit, dtype=pl.Int64),
@@ -147,7 +165,7 @@ def test_plan_updater_prepares_destination_country_value_coefficient(unit_count)
         )
         for unit in range(1, unit_count + 1)
     ]).lazy()
-    result = updater.compute_plan_steps_candidates_utility(
+    scoring_inputs = dict(
         candidates=candidates,
         transport_costs=_StubTransportCosts(),
         destination_saturation=destination_saturation,
@@ -156,7 +174,10 @@ def test_plan_updater_prepares_destination_country_value_coefficient(unit_count)
         resolved_activity_parameters=resolved_activity_parameters,
         min_activity_time_constant=1.0,
         allow_missing_costs_for_current_plans=False,
-    ).collect()
+    )
+    lookup = ScoringLookup(ScoringMemoryBudget(max_bytes=1024 * 1024))
+    result = updater.compute_plan_steps_candidates_utility(**scoring_inputs, scoring_lookup=lookup).collect()
+    assert lookup.scores.height == 2
 
     coefficients_by_destination = dict(
         zip(result["to"].to_list(), result["activity_utility_scale"].to_list(), strict=True)
@@ -164,8 +185,52 @@ def test_plan_updater_prepares_destination_country_value_coefficient(unit_count)
     assert coefficients_by_destination[10] == pytest.approx(8.0)
     assert coefficients_by_destination[20] == pytest.approx(16.0)
     assert "last_seen_iteration" in result.columns
-    assert result.height == 2 * unit_count
+    assert result.height == 3 * unit_count
+    variant = result.filter(pl.col("activity_seq_id") == 11)
+    assert variant["departure_time"].to_list() == [7.0] * unit_count
+    assert variant["activity_utility_scale"].to_list() == [8.0] * unit_count
     assert result.filter(pl.col("last_seen_iteration") != pl.col("demand_group_id")).is_empty()
+
+    # The next pool can drop candidates and add a new plan with the same
+    # scoring inputs. It must return only the current pool's rows.
+    next_candidates = candidates.filter(pl.col("to") == 10).with_columns(
+        time_seq_id=pl.col("time_seq_id") + 10,
+    )
+    next_candidates = pl.concat([
+        next_candidates,
+        next_candidates.head(1).with_columns(to=pl.lit(30, dtype=pl.Int64)),
+    ])
+    next_inputs = {**scoring_inputs, "candidates": next_candidates}
+    reused = updater.compute_plan_steps_candidates_utility(**next_inputs, scoring_lookup=lookup).collect()
+    fresh = updater.compute_plan_steps_candidates_utility(**next_inputs).collect()
+    order = ["demand_group_id", "activity_seq_id", "time_seq_id", "to"]
+    assert reused.sort(order).equals(fresh.sort(order))
+    assert reused.height == 2 * unit_count + 1
+    assert lookup.scores.height == 3
+    other_step_inputs = {**next_inputs, "transport_costs": _StubTransportCosts(cost=2.0)}
+    other_lookup = ScoringLookup(ScoringMemoryBudget(max_bytes=1024 * 1024))
+    changed = updater.compute_plan_steps_candidates_utility(
+        **other_step_inputs, scoring_lookup=other_lookup
+    ).collect()
+    assert changed["cost"].to_list() == [2.0] * (2 * unit_count + 1)
+    assert reused["cost"].to_list() == [1.0] * (2 * unit_count + 1)
+    empty = updater.compute_plan_steps_candidates_utility(
+        **{**next_inputs, "candidates": next_candidates.head(0)}, scoring_lookup=lookup
+    ).collect()
+    assert empty.is_empty()
+
+
+def test_scoring_lookup_respects_shared_memory_budget():
+    budget = ScoringMemoryBudget(max_bytes=16)
+    first = ScoringLookup(budget)
+    second = ScoringLookup(budget)
+    first.retain(pl.DataFrame({"value": [1, 2]}))
+    assert budget.used_bytes == 16
+    second.retain(pl.DataFrame({"value": [3]}))
+    assert second.scores is None
+    first.retain(pl.DataFrame({"value": [1, 2, 3]}))
+    assert first.scores is None
+    assert budget.used_bytes == 0
 
 
 def test_plan_updater_integrates_shadow_price_in_activity_value_when_enabled():
@@ -377,7 +442,7 @@ def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
         }
     )
 
-    result, _ = updater.get_possible_plan_utility(
+    result, expected_index = updater.get_possible_plan_utility(
         possible_plan_steps,
         home_night_dur,
         value_of_time_stay_home=1.0,
@@ -386,6 +451,13 @@ def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
         plan_id_index=plan_id_index,
     )
     result = result.collect()
+    reused, reused_index = updater.get_possible_plan_utility(
+        possible_plan_steps, home_night_dur, value_of_time_stay_home=1.0,
+        stay_home_plan=stay_home_plan, min_activity_time_constant=1.0,
+        plan_id_index=plan_id_index, mobile_ids_already_indexed=True,
+    )
+    assert_frame_equal(result.sort("plan_id"), reused.collect().sort("plan_id"))
+    assert_frame_equal(expected_index, reused_index)
 
     mobile_utility = result.filter(pl.col("mode_seq_id") != 0)["utility"].item()
     expected_home_night_utility = 10.0 * math.log(14.0 / (10.0 * math.exp(-1.0)))
@@ -515,12 +587,17 @@ def test_add_stay_home_plan_steps_preserves_candidate_retention_columns(tmp_path
         }
     )
 
-    result, _ = updater.add_stay_home_plan_steps(
+    result, complete_index = updater.add_stay_home_plan_steps(
         possible_plan_steps,
         stay_home_plan,
         plan_id_index=plan_id_index,
     )
     result = result.collect()
+    reused, reused_index = updater.add_stay_home_plan_steps(
+        possible_plan_steps, stay_home_plan, plan_id_index=complete_index, plan_id_index_complete=True,
+    )
+    assert_frame_equal(result.sort("plan_id"), reused.collect().sort("plan_id"))
+    assert_frame_equal(complete_index, reused_index)
 
     assert "last_seen_iteration" in result.columns
     assert result.filter(pl.col("mode_seq_id") == 0).select("last_seen_iteration").item() is None

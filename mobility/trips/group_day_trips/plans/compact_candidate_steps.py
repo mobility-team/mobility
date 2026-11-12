@@ -22,28 +22,51 @@ MEMBERSHIP_COLUMNS = PLAN_KEY_COLS + [
 
 
 @dataclass(frozen=True)
+class ScoringCandidateSteps:
+    """Shared physical steps and lazy demand-unit memberships in an inner batch."""
+
+    steps: pl.DataFrame
+    membership: pl.LazyFrame
+
+
+@dataclass(frozen=True)
 class CompactCandidateSteps:
     """A plan-step table and one membership row per demand unit and plan."""
 
     steps: pl.DataFrame
     membership: pl.DataFrame
     columns: tuple[str, ...]
+    unit_map: pl.DataFrame | None = None
+
+    def memberships(self) -> pl.LazyFrame:
+        """Expand shared context history only when demand-unit rows are needed."""
+        if self.unit_map is None:
+            return self.membership.lazy()
+        return (
+            self.membership.lazy().drop("demand_subgroup_id")
+            .rename({"demand_group_id": "_score_context_id"})
+            .join(self.unit_map.lazy(), on="_score_context_id")
+            .select(MEMBERSHIP_COLUMNS)
+        )
 
     def lazy(self) -> pl.LazyFrame:
         """Reconstruct candidate rows only when an operation needs them."""
         return (
-            self.membership.lazy()
+            self.memberships()
             .join(self.steps.lazy(), on=PLAN_COLUMNS, how="inner")
             .select(self.columns)
             .sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
         )
 
     def estimated_size(self) -> int:
-        return self.steps.estimated_size() + self.membership.estimated_size()
+        return (self.steps.estimated_size() + self.membership.estimated_size()
+                + (self.unit_map.estimated_size() if self.unit_map is not None else 0))
 
     @classmethod
-    def from_frame(cls, frame: pl.DataFrame) -> "CompactCandidateSteps | pl.DataFrame":
-        """Compact only when the input can be reconstructed without loss."""
+    def from_frame(
+        cls, frame: pl.DataFrame, *, prefer_compact: bool = False,
+    ) -> "CompactCandidateSteps | pl.DataFrame":
+        """Compact losslessly, optionally anticipating later membership expansion."""
         if frame.is_empty():
             return frame
         if set(frame.columns) != set(STEP_COLUMNS + MEMBERSHIP_COLUMNS):
@@ -66,4 +89,4 @@ class CompactCandidateSteps:
         if actual_counts.join(step_counts, on=PLAN_COLUMNS).filter(pl.col("actual") != pl.col("expected")).height:
             return frame
         compact = cls(steps=steps, membership=membership, columns=tuple(frame.columns))
-        return compact if compact.estimated_size() < frame.estimated_size() else frame
+        return compact if prefer_compact or compact.estimated_size() < frame.estimated_size() else frame

@@ -61,9 +61,14 @@ class PlanScheduleUpdater:
             .sort(PLAN_KEY_COLS + ["seq_step_index"])
             .with_columns(
                 next_departure_time=(
-                    pl.col("departure_time")
-                    .shift(-1)
-                    .over(PLAN_KEY_COLS)
+                    # Rows of the same plan are adjacent after sorting. Only
+                    # use the next row's departure when its plan keys match.
+                    pl.when(pl.all_horizontal([
+                        pl.col(key).eq_missing(pl.col(key).shift(-1))
+                        for key in PLAN_KEY_COLS
+                    ]))
+                    .then(pl.col("departure_time").shift(-1))
+                    .otherwise(pl.col("next_departure_time"))
                     .fill_null(pl.col("next_departure_time"))
                     .cast(time_dtype)
                 )

@@ -1,6 +1,7 @@
 """Keep modeled schedules distinct without losing complete shared plans."""
 
 from dataclasses import replace
+from itertools import permutations
 import random
 import weakref
 from pathlib import Path
@@ -10,17 +11,18 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
+import mobility.trips.group_day_trips.plans.time_sequences as time_sequences
 from mobility.trips.group_day_trips.core.multi_scenario import CANDIDATE_ID_COLS, add_candidate_ids
 from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePoolAsset, ScenarioCandidateSource
 from mobility.trips.group_day_trips.plans.candidate_plan_steps import CandidatePlanStepsAsset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.temporary import TemporaryDiskLimitExceeded
-from mobility.trips.group_day_trips.plans.time_sequences import assign_time_sequence_ids
+from mobility.trips.group_day_trips.plans.time_sequences import TimeSequenceIndexCache, assign_time_sequence_ids
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS, add_plan_id
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 from mobility.trips.group_day_trips.plans.plan_catalogue import PlanCatalogue
-from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps
-from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts
+from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps, PLAN_COLUMNS
+from mobility.trips.group_day_trips.plans.scoring_contexts import InnerPlanCache, ScoringContexts, ScoringMemoryBudget
 from mobility.trips.group_day_trips.core.parameters import GroupDayTripsParameters, BehaviorChangeScope
 from mobility.trips.group_day_trips.core.run_state import RunState
 from mobility.trips.group_day_trips.iterations.iteration_assets import InitialIterationStateAsset, IterationStateAsset
@@ -46,6 +48,92 @@ def _plan_steps():
         iteration=pl.lit(1, dtype=pl.UInt16), first_seen_iteration=pl.lit(1, dtype=pl.UInt16),
         last_seen_iteration=pl.lit(1, dtype=pl.UInt16), last_active_iteration=pl.lit(None, dtype=pl.UInt16),
     ).with_columns(pl.Series("from", [1, 2], dtype=pl.Int32), pl.Series("to", [2, 1], dtype=pl.Int32))
+
+
+def test_time_index_reuse_matches_rebuilding_and_rejects_a_different_catalogue(monkeypatch):
+    original = time_sequences.add_ordered_key_hashes
+    catalogue_hashes = []
+
+    def record_hashes(*args, **kwargs):
+        if kwargs["group_cols"] == ["time_seq_id"]:
+            catalogue_hashes.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(time_sequences, "add_ordered_key_hashes", record_hashes)
+    cache = TimeSequenceIndexCache()
+    changed_steps = _plan_steps().with_columns(pl.col("arrival_time") + 0.5)
+    steps, catalogue, _ = assign_time_sequence_ids(changed_steps, _schedule(), index_cache=cache)
+    assert catalogue["time_seq_id"].n_unique() == 2
+    assert len(catalogue_hashes) == 1
+    reused = assign_time_sequence_ids(steps, catalogue, index_cache=cache)
+    assert len(catalogue_hashes) == 1
+    rebuilt = assign_time_sequence_ids(steps, catalogue)
+    for actual, expected in zip(reused, rebuilt):
+        assert_frame_equal(actual, expected)
+    assert len(catalogue_hashes) == 2
+    # A different object, even with the same values, must rebuild its index.
+    assign_time_sequence_ids(steps, catalogue.clone(), index_cache=cache)
+    assert len(catalogue_hashes) == 3
+
+
+def test_timing_hashes_match_materialized_seconds(monkeypatch):
+    original = time_sequences.add_ordered_key_hashes
+    checked = []
+    columns = ["departure_time", "arrival_time", "next_departure_time", "duration_per_pers"]
+
+    def compare_hashes(rows, **kwargs):
+        actual = original(rows, **kwargs)
+        seconds = rows.with_columns([
+            (pl.col(column).cast(pl.Float64) * 3600.0).round(0).cast(pl.Int64)
+            .alias(f"_{column}_seconds") for column in columns
+        ])
+        reference_content = pl.struct(
+            pl.col("activity").cast(pl.String),
+            *[pl.col(f"_{column}_seconds") for column in columns],
+        )
+        reference = original(seconds, **{**kwargs, "step_content": reference_content})
+        assert_frame_equal(actual.sort(kwargs["group_cols"]), reference.sort(kwargs["group_cols"]))
+        checked.append(True)
+        return actual
+
+    monkeypatch.setattr(time_sequences, "add_ordered_key_hashes", compare_hashes)
+    assign_time_sequence_ids(_plan_steps(), _schedule())
+    assert len(checked) == 2
+
+
+def test_new_timed_schedule_preserves_existing_sparse_ids():
+    """An existing ID gap must not make an old schedule look newly created."""
+    existing = _schedule().with_columns(
+        time_seq_id=pl.lit(10, dtype=pl.UInt32),
+        arrival_time=pl.col("arrival_time") + 0.25,
+    )
+    catalogue = pl.concat([_schedule(), existing])
+    incoming = pl.concat([
+        _plan_steps(),
+        _plan_steps().with_columns(
+            demand_group_id=pl.lit(2, dtype=pl.UInt32),
+            arrival_time=pl.col("arrival_time") + 0.5,
+        ),
+    ])
+    updated, result_catalogue, _ = assign_time_sequence_ids(incoming, catalogue)
+    assert result_catalogue["time_seq_id"].unique().sort().to_list() == [1, 10, 11]
+    assert updated.group_by("demand_group_id").agg(pl.col("time_seq_id").first()).sort(
+        "demand_group_id"
+    )["time_seq_id"].to_list() == [1, 11]
+    assert_frame_equal(
+        result_catalogue.filter(pl.col("time_seq_id") == 10).drop("reference_time_seq_id"),
+        existing,
+    )
+
+
+def test_current_plan_coverage_accepts_plan_keys_and_rejects_missing_active_plan():
+    current = _plan_steps().select(PLAN_KEY_COLS).unique()
+    updater = PlanUpdater()
+    updater._assert_current_plans_covered_by_possible_plan_steps(current, current.lazy(), 1)
+    with pytest.raises(ValueError, match="Current non-stay-home plans are missing"):
+        updater._assert_current_plans_covered_by_possible_plan_steps(current, current.head(0).lazy(), 1)
+    stay_home = current.with_columns(mode_seq_id=pl.lit(0, dtype=pl.UInt32))
+    updater._assert_current_plans_covered_by_possible_plan_steps(stay_home, current.head(0).lazy(), 1)
 
 
 def test_shared_generation_keeps_plan_content_without_expanding_demand_units():
@@ -143,18 +231,30 @@ def test_compact_outer_candidates_keep_inconsistent_rows_without_loss():
     )
     inconsistent = pl.concat([first, different])
     assert CompactCandidateSteps.from_frame(inconsistent) is inconsistent
+    assert CompactCandidateSteps.from_frame(inconsistent, prefer_compact=True) is inconsistent
 
     incomplete = pl.concat([first, first.head(1).with_columns(demand_group_id=pl.lit(2, dtype=pl.UInt32))])
     assert CompactCandidateSteps.from_frame(incomplete) is incomplete
+    assert CompactCandidateSteps.from_frame(incomplete, prefer_compact=True) is incomplete
 
 
-def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path, monkeypatch):
+@pytest.mark.parametrize("shared_context", [False, True])
+def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path, monkeypatch, shared_context):
     expanded = pl.concat([
         _plan_steps().with_columns(demand_group_id=pl.lit(index, dtype=pl.UInt32))
         for index in range(30)
     ])
     compact = CompactCandidateSteps.from_frame(expanded)
     assert isinstance(compact, CompactCandidateSteps)
+    if shared_context:
+        compact = CompactCandidateSteps(
+            steps=compact.steps,
+            membership=compact.membership.filter(pl.col("demand_group_id") == 0),
+            columns=compact.columns,
+            unit_map=expanded.select("demand_group_id", "demand_subgroup_id").unique().with_columns(
+                _score_context_id=pl.lit(0, dtype=pl.UInt32)
+            ),
+        )
     empty = pl.DataFrame()
     rng = random.Random(732)
     rng.random()
@@ -176,6 +276,7 @@ def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path, monk
         asset._spill_state(initial, tmp_path / "state")
     assert (tmp_path / "state" / "candidate_steps.parquet").exists()
     assert (tmp_path / "state" / "candidate_membership.parquet").exists()
+    assert (tmp_path / "state" / "candidate_unit_map.parquet").exists() == shared_context
     assert not (tmp_path / "state" / "candidate_plan_steps.parquet").exists()
     restored = asset._load_spilled_state(tmp_path / "state")
     assert isinstance(restored.candidate_plan_steps, CompactCandidateSteps)
@@ -378,6 +479,8 @@ def test_attachment_preserves_two_timings_of_the_same_route_and_modes(duration_o
     pool.time_sequence_steps_by_run_key = {}
     pool.compact = compact
     pool.compact_candidate_steps_by_run_key = {}
+    pool.unordered_candidate_steps_by_run_key = {}
+    pool.scoring_candidate_steps_by_run_key = {}
 
     # Physical catalog legs may have come from different original people.
     # Those representative ids must not split a complete plan during indexing.
@@ -446,6 +549,8 @@ def test_shared_attachment_uses_one_representative_per_scoring_context():
     pool.time_sequence_steps_by_run_key = {}
     pool.compact = True
     pool.compact_candidate_steps_by_run_key = {}
+    pool.unordered_candidate_steps_by_run_key = {}
+    pool.scoring_candidate_steps_by_run_key = {}
     attached = pool._build_scenario_candidate_steps(
         shared_candidates=shared,
         destination_index=pl.DataFrame({"destination_sequence_key_1": [21], "destination_sequence_key_2": [22], "dest_seq_id": [1]},
@@ -456,12 +561,78 @@ def test_shared_attachment_uses_one_representative_per_scoring_context():
     ).collect()
     assert attached.height == 4
     assert attached["demand_group_id"].unique().sort().to_list() == [1, 3]
+    factored = pool.scoring_candidate_steps_by_run_key[1]
+    reconstructed = factored.membership.join(
+        factored.steps.lazy(), on=PLAN_COLUMNS, how="inner"
+    ).select(attached.columns).collect()
+    assert_frame_equal(
+        reconstructed.sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS),
+        attached.sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS),
+    )
     contexts = ScoringContexts.build(
         units, SimpleNamespace(get_utility_profiles=lambda demand, segments: (assignments, {})), None,
     )
     restored = contexts.expand_step_rows(contexts.collapse_step_rows(attached)).collect()
     assert restored.height == 6
     assert restored["demand_group_id"].unique().sort().to_list() == [1, 2, 3]
+
+
+def test_shared_attachment_merges_histories_for_identical_modeled_plans():
+    """Keep both source IDs while merging the resulting plan's history."""
+    first = add_candidate_ids(_plan_steps()).with_columns(
+        destination_sequence_key_1=pl.lit(21, dtype=pl.UInt64),
+        destination_sequence_key_2=pl.lit(22, dtype=pl.UInt64),
+        mode_sequence_key_1=pl.lit(31, dtype=pl.UInt64),
+        mode_sequence_key_2=pl.lit(32, dtype=pl.UInt64),
+        reference_time_seq_id=pl.lit(1, dtype=pl.UInt32),
+        first_seen_iteration=pl.lit(1, dtype=pl.UInt16),
+        last_seen_iteration=pl.lit(2, dtype=pl.UInt16),
+        last_active_iteration=pl.lit(1, dtype=pl.UInt16),
+    ).drop("dest_seq_id", "mode_seq_id")
+    second = first.with_columns(
+        candidate_id_1=pl.col("candidate_id_1") ^ pl.lit(1, dtype=pl.UInt64),
+        iteration=pl.lit(3, dtype=pl.UInt16),
+        first_seen_iteration=pl.lit(2, dtype=pl.UInt16),
+        last_seen_iteration=pl.lit(4, dtype=pl.UInt16),
+        last_active_iteration=pl.lit(3, dtype=pl.UInt16),
+    )
+    units = pl.DataFrame({
+        "demand_group_id": [1], "demand_subgroup_id": [0], "country": ["fr"],
+        "csp": ["worker"], "home_zone_id": [1], "allowed_activities": [["work"]],
+    }).with_columns(pl.col("demand_group_id", "demand_subgroup_id").cast(pl.UInt32),
+                    pl.col("home_zone_id").cast(pl.Int32))
+    source = SimpleNamespace(
+        run_key=1, scenario="default",
+        previous_state=SimpleNamespace(get=lambda: SimpleNamespace(schedule_steps=_schedule(), demand_groups=units)),
+    )
+    pool = object.__new__(SharedCandidatePoolAsset)
+    pool.previous_time_sequence_steps = {}
+    pool.time_sequence_steps_by_run_key = {}
+    pool.compact = True
+    pool.compact_candidate_steps_by_run_key = {}
+    pool.unordered_candidate_steps_by_run_key = {}
+    pool.scoring_candidate_steps_by_run_key = {}
+    destination_index = pl.DataFrame({
+        "destination_sequence_key_1": [21], "destination_sequence_key_2": [22], "dest_seq_id": [1],
+    }, schema_overrides={"destination_sequence_key_1": pl.UInt64, "destination_sequence_key_2": pl.UInt64,
+                         "dest_seq_id": pl.UInt32})
+    mode_index = pl.DataFrame({
+        "mode_sequence_key_1": [31], "mode_sequence_key_2": [32], "mode_seq_id": [1],
+    }, schema_overrides={"mode_sequence_key_1": pl.UInt64, "mode_sequence_key_2": pl.UInt64,
+                         "mode_seq_id": pl.UInt32})
+    for candidates in (pl.concat([first, second]), pl.concat([second, first])):
+        attached = pool._build_scenario_candidate_steps(
+            shared_candidates=candidates, destination_index=destination_index,
+            mode_index=mode_index, source=source,
+        ).collect(engine="streaming")
+        factored = pool.scoring_candidate_steps_by_run_key[1]
+        reconstructed = factored.membership.join(factored.steps.lazy(), on=PLAN_COLUMNS).select(attached.columns).collect()
+        assert_frame_equal(attached.sort("seq_step_index"), reconstructed.sort("seq_step_index"))
+        assert attached.height == 2
+        assert attached["iteration"].to_list() == [1, 1]
+        assert attached["first_seen_iteration"].to_list() == [1, 1]
+        assert attached["last_seen_iteration"].to_list() == [4, 4]
+        assert attached["last_active_iteration"].to_list() == [3, 3]
 
 
 def test_evaluation_remaps_current_plans_after_modeled_travel_changes_timings(monkeypatch):
@@ -505,6 +676,167 @@ def test_evaluation_remaps_current_plans_after_modeled_travel_changes_timings(mo
     ).height == 0
     assert evaluation.candidate_plan_steps["time_seq_id"].n_unique() == 1
 
+
+def test_inner_plan_reuse_scores_new_complete_plans_and_keeps_current_pool(monkeypatch):
+    """A later batch can reuse one plan while adding and removing others."""
+    first = _plan_steps()
+    added = first.with_columns(
+        pl.col("to") + 10,
+        dest_seq_id=pl.lit(2, dtype=pl.UInt32),
+    )
+    current, index = add_plan_id(first.select(PLAN_KEY_COLS).unique(), previous_index=None)
+    current = current.with_columns(n_persons=pl.lit(100.0), utility=pl.lit(0.0))
+    stay_home = first.head(1).with_columns(
+        pl.lit(0, dtype=pl.UInt32).alias("activity_seq_id"),
+        pl.lit(0, dtype=pl.UInt32).alias("time_seq_id"),
+        pl.lit(0, dtype=pl.UInt32).alias("dest_seq_id"),
+        pl.lit(0, dtype=pl.UInt32).alias("mode_seq_id"),
+        activity=pl.lit("home"), mode=pl.lit("stay_home"),
+        departure_time=pl.lit(0.0), arrival_time=pl.lit(0.0), next_departure_time=pl.lit(24.0),
+        duration_per_pers=pl.lit(24.0), mean_home_night_per_pers=pl.lit(10.0),
+        n_persons=pl.lit(100.0), utility=pl.lit(0.0),
+    )
+    contexts = ScoringContexts(
+        demand_groups=pl.DataFrame({"demand_group_id": [1], "demand_subgroup_id": [0]}),
+        unit_map=pl.DataFrame({"demand_group_id": [1], "demand_subgroup_id": [0], "_score_context_id": [1]}),
+    )
+    updater = PlanUpdater()
+    scored_counts = []
+
+    def score(_current, _current_steps, candidates, *args, **kwargs):
+        scored_counts.append(candidates.height)
+        return candidates.lazy().with_columns(
+            activity_utility_scale=pl.lit(1.0), min_activity_time=pl.lit(1.0),
+            cost=pl.col("to").cast(pl.Float64) / 100.0,
+            time=pl.col("to").cast(pl.Float64) / 10.0 + 1.0,
+            distance=pl.col("to").cast(pl.Float64),
+            is_feasible=pl.col("to") != 11, _missing_cost_row=pl.col("to") == 11,
+            _invalid_cost_row=pl.lit(False),
+            mean_duration_per_pers=pl.col("duration_per_pers"), value_of_time=pl.lit(1.0),
+            k_saturation_utility=pl.lit(1.0), destination_shadow_price=pl.lit(0.0),
+        )
+
+    monkeypatch.setattr(updater, "get_possible_plan_steps", score)
+    parameters = GroupDayTripsParameters(plan_update={"update_plan_timings_from_modeled_travel_times": True})
+    args = dict(
+        current_plans=current, current_plan_steps=None, candidate_plan_steps=None,
+        demand_groups=contexts.demand_groups, transport_costs=None, destination_saturation=pl.DataFrame(),
+        activity_dur=pl.DataFrame(), home_night_dur=pl.DataFrame({
+            "country": ["fr"], "csp": ["worker"], "mean_home_night_per_pers": [10.0],
+        }), stay_home_plan=stay_home, transport_zones=None, iteration=1,
+        resolved_activity_parameters={"home": SimpleNamespace(value_of_time_stay_home=1.0)},
+        arrival_time_rigidity_by_activity={"work": 0.0, "home": 0.0},
+        destination_sequences=None, mode_sequences=SimpleNamespace(population_segments=[]),
+        previous_plan_id_index=index, parameters=parameters, compact_contexts=True,
+        scoring_contexts=contexts,
+    )
+    cache = InnerPlanCache(ScoringMemoryBudget(max_bytes=1024 * 1024))
+    initial = updater.evaluate_candidate_pool(
+        **args, shared_candidate_plan_steps=first, survey_plan_steps=_schedule(), inner_plan_cache=cache,
+    )
+    next_args = dict(
+        **args, shared_candidate_plan_steps=pl.concat([first, added]),
+        survey_plan_steps=initial.time_sequence_steps, compact_plan_id_index=initial.plan_id_index,
+    )
+    incremental = updater.evaluate_candidate_pool(**next_args, inner_plan_cache=cache)
+    assert scored_counts[-1] == 2  # Only the newly added complete plan.
+    reference = updater.evaluate_candidate_pool(**next_args)
+    keys = PLAN_KEY_COLS + ["seq_step_index"]
+    assert_frame_equal(incremental.candidate_plan_steps.sort(keys), reference.candidate_plan_steps.sort(keys))
+    assert_frame_equal(incremental.possible_plan_utility.sort(PLAN_KEY_COLS),
+                       reference.possible_plan_utility.sort(PLAN_KEY_COLS))
+    assert incremental.possible_plan_utility.filter(pl.col("dest_seq_id") == 2)["is_feasible"].to_list() == [False]
+    assert_frame_equal(incremental.possible_plan_steps.collect().sort(keys),
+                       reference.possible_plan_steps.collect().sort(keys))
+    assert_frame_equal(incremental.current_plans.sort(PLAN_KEY_COLS), reference.current_plans.sort(PLAN_KEY_COLS))
+
+    # The same plan key with changed trip content must be scored again.
+    changed_added = added.with_columns(pl.col("to") + 1, last_seen_iteration=pl.lit(2, dtype=pl.UInt16))
+    changed_args = {
+        **next_args, "shared_candidate_plan_steps": pl.concat([first, changed_added]),
+        "survey_plan_steps": incremental.time_sequence_steps,
+        "compact_plan_id_index": incremental.plan_id_index,
+    }
+    changed = updater.evaluate_candidate_pool(**changed_args, inner_plan_cache=cache)
+    assert scored_counts[-1] == 2
+    changed_reference = updater.evaluate_candidate_pool(**changed_args)
+    assert_frame_equal(changed.candidate_plan_steps.sort(keys), changed_reference.candidate_plan_steps.sort(keys))
+    assert_frame_equal(changed.possible_plan_utility.sort(PLAN_KEY_COLS),
+                       changed_reference.possible_plan_utility.sort(PLAN_KEY_COLS))
+
+    # A pool that removes the earlier plan must not keep its utility or steps.
+    removed = updater.evaluate_candidate_pool(
+        **{**changed_args, "shared_candidate_plan_steps": changed_added, "current_plans": current.head(0)},
+        inner_plan_cache=cache,
+    )
+    assert scored_counts[-1] == 0
+    assert removed.possible_plan_utility.filter(pl.col("mode_seq_id") != 0)["dest_seq_id"].to_list() == [2]
+
+    # A full cache budget falls back to the same complete calculation.
+    no_room = InnerPlanCache(ScoringMemoryBudget(max_bytes=0))
+    updater.evaluate_candidate_pool(
+        **args, shared_candidate_plan_steps=first, survey_plan_steps=_schedule(), inner_plan_cache=no_room,
+    )
+    assert no_room.plans is None
+    without_cache = updater.evaluate_candidate_pool(**next_args, inner_plan_cache=no_room)
+    assert scored_counts[-1] == 4
+    assert_frame_equal(without_cache.possible_plan_utility.sort(PLAN_KEY_COLS),
+                       reference.possible_plan_utility.sort(PLAN_KEY_COLS))
+
+    # Two distinct reference schedules can become the same modeled schedule.
+    # The reused and newly evaluated plans must still collapse to one result.
+    other_schedule = _schedule().with_columns(
+        pl.col("arrival_time") + 0.25, time_seq_id=pl.lit(2, dtype=pl.UInt32),
+    )
+    other_plan = first.with_columns(
+        pl.col("arrival_time") + 0.25, time_seq_id=pl.lit(2, dtype=pl.UInt32),
+        iteration=pl.lit(2, dtype=pl.UInt16),
+        first_seen_iteration=pl.lit(2, dtype=pl.UInt16),
+        last_seen_iteration=pl.lit(2, dtype=pl.UInt16),
+    )
+    occupied = first.with_columns(
+        last_seen_iteration=pl.lit(2, dtype=pl.UInt16),
+        last_active_iteration=pl.lit(2, dtype=pl.UInt16),
+    )
+    collision_cache = InnerPlanCache(ScoringMemoryBudget(max_bytes=1024 * 1024))
+    collision_initial = updater.evaluate_candidate_pool(
+        **args, shared_candidate_plan_steps=pl.concat([occupied, added]),
+        survey_plan_steps=pl.concat([_schedule(), other_schedule]), inner_plan_cache=collision_cache,
+    )
+    collision_args = {
+        **args, "shared_candidate_plan_steps": pl.concat([occupied, other_plan, added]),
+        "survey_plan_steps": collision_initial.time_sequence_steps,
+        "compact_plan_id_index": collision_initial.plan_id_index,
+    }
+    collision = updater.evaluate_candidate_pool(**collision_args, inner_plan_cache=collision_cache)
+    # Both existing plans are reused; only the new reference plan is scored.
+    assert scored_counts[-2:] == [6, 2]
+    collision_reference = updater.evaluate_candidate_pool(**collision_args)
+    assert collision.possible_plan_utility.filter(pl.col("mode_seq_id") != 0).height == 2
+    assert_frame_equal(collision.candidate_plan_steps.sort(keys), collision_reference.candidate_plan_steps.sort(keys))
+    assert_frame_equal(collision.possible_plan_utility.sort(PLAN_KEY_COLS),
+                       collision_reference.possible_plan_utility.sort(PLAN_KEY_COLS))
+    assert_frame_equal(collision.possible_plan_steps.collect().sort(keys),
+                       collision_reference.possible_plan_steps.collect().sort(keys))
+    merged = collision.candidate_plan_steps.filter(pl.col("dest_seq_id") == 1)
+    assert merged["iteration"].unique().to_list() == [1]
+    assert merged["first_seen_iteration"].unique().to_list() == [1]
+    assert merged["last_seen_iteration"].unique().to_list() == [2]
+    assert merged["last_active_iteration"].unique().to_list() == [2]
+
+    # Input order can change which reference history a modeled plan retains.
+    # Compare with a complete evaluation for each ordering of this choice set.
+    for ordered_plans in permutations([occupied, other_plan, added]):
+        reordered_args = {**collision_args, "shared_candidate_plan_steps": pl.concat(ordered_plans)}
+        reordered_cache = InnerPlanCache(ScoringMemoryBudget(max_bytes=1024 * 1024))
+        updater.evaluate_candidate_pool(
+            **args, shared_candidate_plan_steps=pl.concat([occupied, added]),
+            survey_plan_steps=pl.concat([_schedule(), other_schedule]), inner_plan_cache=reordered_cache,
+        )
+        reused = updater.evaluate_candidate_pool(**reordered_args, inner_plan_cache=reordered_cache)
+        fresh = updater.evaluate_candidate_pool(**reordered_args)
+        assert_frame_equal(reused.candidate_plan_steps.sort(keys), fresh.candidate_plan_steps.sort(keys))
+        assert_frame_equal(reused.possible_plan_steps.collect().sort(keys), fresh.possible_plan_steps.collect().sort(keys))
 
 def test_modeled_schedule_ids_survive_state_spill_and_restore(tmp_path):
     """Restoring a state must not forget ids already given to modeled timings."""
@@ -661,6 +993,11 @@ def test_pool_keeps_occupied_timing_when_previous_pool_has_only_survey_timing(mo
     left = compact_pool.candidate_plan_steps_by_run_key[1].collect().sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
     right = expanded_pool.candidate_plan_steps_by_run_key[1].collect().sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
     assert_frame_equal(left, right, check_exact=True)
+    shared, active = compact_pool.candidate_step_parts_by_run_key[1]
+    combined = pl.concat([shared, active.lazy()], how="vertical_relaxed").unique(
+        subset=CandidatePlanStepsAsset.DEDUPE_COLUMNS, keep="last"
+    ).collect().sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
+    assert_frame_equal(combined, left, check_exact=True)
 
 
 def test_pool_shares_scenarios_but_keeps_replication_choice_sets_separate(monkeypatch):
@@ -751,9 +1088,19 @@ def test_pool_shares_scenarios_but_keeps_replication_choice_sets_separate(monkey
     assert result.candidate_catalogue.plans.height == 3
     assert result.candidate_catalogue.steps.height == 6
     assert result.candidate_catalogue.membership.height == 8
+    last_batch = SharedCandidatePoolAsset(
+        sources=sources, iteration=1, compact=True, build_catalogue=False,
+    ).create_and_get_asset()
+    assert last_batch.candidate_catalogue is None
+    assert last_batch.candidate_ids == result.candidate_ids
+    assert_frame_equal(last_batch.candidate_replications, result.candidate_replications)
     for run_key, expected in [(1, {2, 3}), (2, {2, 3}), (3, {3, 4}), (4, {3, 4})]:
         steps = result.candidate_plan_steps_by_run_key[run_key].collect()
         assert set(steps.filter(pl.col("seq_step_index") == 1)["to"]) == expected
+        assert_frame_equal(
+            steps.sort(PLAN_KEY_COLS + ["seq_step_index"]),
+            last_batch.candidate_plan_steps_by_run_key[run_key].collect().sort(PLAN_KEY_COLS + ["seq_step_index"]),
+        )
 
     # With no new generation, each replication must carry forward its own pool.
     monkeypatch.setattr(CandidatePlanStepsAsset, "build_iteration_candidates", lambda **kwargs: original.head(0).lazy())
@@ -796,6 +1143,64 @@ def test_pool_shares_scenarios_but_keeps_replication_choice_sets_separate(monkey
     assert second_scenario.filter(pl.col("to") == 3)["last_seen_iteration"].to_list() == [1]
     other_seed = refreshed.candidate_plan_steps_by_run_key[3].collect().filter(pl.col("seq_step_index") == 1)
     assert other_seed["last_seen_iteration"].unique().to_list() == [1]
+
+    # At step 4, the plan generated in step 3 remains in both scenarios of
+    # seed 0; older unused plans expire independently in each seed.
+    monkeypatch.setattr(CandidatePlanStepsAsset, "build_iteration_candidates", lambda **kwargs: original.head(0).lazy())
+    pruned = SharedCandidatePoolAsset(
+        sources=sources, iteration=4, max_inactive_age=1, compact=True,
+        previous_catalogue=refreshed.candidate_catalogue,
+        previous_destination_indices=refreshed.destination_sequence_indices,
+        previous_mode_indices=refreshed.mode_sequence_indices,
+        previous_time_sequence_steps=refreshed.time_sequence_steps_by_run_key,
+    ).create_and_get_asset()
+    assert pruned.candidate_replications["replication"].to_list() == [0]
+    for run_key, expected in [(1, {2}), (2, {2}), (3, set()), (4, set())]:
+        steps = pruned.candidate_plan_steps_by_run_key[run_key]
+        if isinstance(steps, pl.LazyFrame):
+            steps = steps.collect()
+        assert set(steps.filter(pl.col("seq_step_index") == 1)["to"]) == expected
+
+    # Occupancy in one scenario protects the physical plan for that seed,
+    # but does not protect the same plan in another seed.
+    previous_rows = refreshed.candidate_plan_steps_by_run_key[2].collect()
+    occupied_keys = previous_rows.filter(
+        (pl.col("seq_step_index") == 1) & (pl.col("to") == 3)
+    ).select(PLAN_KEY_COLS)
+    occupied_steps = previous_rows.join(occupied_keys, on=PLAN_KEY_COLS, how="semi")
+    occupied_state = SimpleNamespace(**vars(state))
+    occupied_state.current_plans = occupied_steps.select(PLAN_KEY_COLS).unique()
+    occupied_state.candidate_plan_steps = occupied_steps
+    occupied_state.destination_sequence_index = refreshed.destination_sequence_indices[2]
+    occupied_state.mode_sequence_index = refreshed.mode_sequence_indices[2]
+    occupied_asset = InMemoryAsset({"test": "occupied choice set state"})
+    monkeypatch.setattr(occupied_asset, "get", lambda: occupied_state)
+    occupied_sources = [replace(source, previous_state=occupied_asset) if source.run_key == 2 else source
+                        for source in sources]
+    occupied = SharedCandidatePoolAsset(
+        sources=occupied_sources, iteration=4, max_inactive_age=1, compact=True,
+        previous_catalogue=refreshed.candidate_catalogue,
+        previous_destination_indices=refreshed.destination_sequence_indices,
+        previous_mode_indices=refreshed.mode_sequence_indices,
+        previous_time_sequence_steps=refreshed.time_sequence_steps_by_run_key,
+    ).create_and_get_asset()
+    for run_key, expected in [(1, {2, 3}), (2, {2, 3}), (3, set()), (4, set())]:
+        steps = occupied.candidate_plan_steps_by_run_key[run_key]
+        if isinstance(steps, pl.LazyFrame):
+            steps = steps.collect()
+        assert set(steps.filter(pl.col("seq_step_index") == 1)["to"]) == expected
+
+    capped = SharedCandidatePoolAsset(
+        sources=occupied_sources, iteration=4, max_inactive_age=1, max_shared_candidates=1, compact=True,
+        previous_catalogue=refreshed.candidate_catalogue,
+        previous_destination_indices=refreshed.destination_sequence_indices,
+        previous_mode_indices=refreshed.mode_sequence_indices,
+        previous_time_sequence_steps=refreshed.time_sequence_steps_by_run_key,
+    ).create_and_get_asset()
+    assert len(capped.candidate_ids) == 1
+    for run_key in (1, 2):
+        steps = capped.candidate_plan_steps_by_run_key[run_key].collect()
+        assert set(steps.filter(pl.col("seq_step_index") == 1)["to"]) == {3}
 
 
 def test_mode_replanning_allows_timing_adjustments_of_the_same_survey_schedule():

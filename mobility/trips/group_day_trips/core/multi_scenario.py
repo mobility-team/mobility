@@ -90,8 +90,29 @@ def represented_od_mode_flows(current_plan_steps: pl.DataFrame) -> pl.DataFrame:
         current_plan_steps
         .filter(pl.col("mode_seq_id") != 0)
         .group_by(OD_MODE_COLUMNS)
-        .agg(volume=pl.col("n_persons").sum())
+        .agg(volume=pl.col("n_persons").sort().implode().list.sum())
         .sort(OD_MODE_COLUMNS)
+    )
+
+
+@trace_simulation_step("aggregate inner allocation flows")
+def allocation_od_mode_flows(
+    allocation: pl.DataFrame, possible_plan_steps: pl.DataFrame | pl.LazyFrame,
+) -> pl.DataFrame:
+    """Reduce allocated plans to trip flows without building wide step rows."""
+    return (
+        allocation.lazy()
+        .filter(pl.col("mode_seq_id") != 0)
+        .select(PLAN_KEY_COLS + ["n_persons"])
+        .join(
+            possible_plan_steps.lazy().select(PLAN_KEY_COLS + OD_MODE_COLUMNS),
+            on=PLAN_KEY_COLS,
+            how="left",
+        )
+        .group_by(OD_MODE_COLUMNS)
+        .agg(volume=pl.col("n_persons").sort().implode().list.sum())
+        .sort(OD_MODE_COLUMNS)
+        .collect(engine="streaming")
     )
 
 
@@ -117,7 +138,7 @@ def normalized_flow_change(
         )
         .select((pl.col("current_volume") - pl.col("previous_volume")).pow(2).alias("squared_change"))
     )
-    squared_change = changes["squared_change"].sum()
+    squared_change = changes["squared_change"].sort().sum()
     return (float(squared_change or 0.0) ** 0.5) / represented_population
 
 
@@ -142,10 +163,10 @@ def normalized_base_gap_change(
     changes = (
         signed_flows
         .group_by(OD_MODE_COLUMNS)
-        .agg(change=pl.col("signed_volume").sum())
+        .agg(change=pl.col("signed_volume").sort().implode().list.sum())
         .select(pl.col("change").pow(2).alias("squared_change"))
     )
-    squared_change = changes["squared_change"].sum()
+    squared_change = changes["squared_change"].sort().sum()
     return (float(squared_change or 0.0) ** 0.5) / represented_population
 
 

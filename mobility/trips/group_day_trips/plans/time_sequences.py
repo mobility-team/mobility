@@ -1,5 +1,7 @@
 """Give modeled schedules stable ids while keeping their survey reference."""
 
+from dataclasses import dataclass
+
 import polars as pl
 
 from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
@@ -8,10 +10,20 @@ from .plan_ids import PLAN_KEY_COLS
 from .stable_key_index import StableKeyIndex, add_ordered_key_hashes
 
 
+@dataclass
+class TimeSequenceIndexCache:
+    """Reuse an index only for the exact schedule table that produced it."""
+
+    schedules: pl.DataFrame | None = None
+    index: pl.DataFrame | None = None
+
+
 @trace_simulation_step("index time sequences")
 def assign_time_sequence_ids(
     steps: pl.DataFrame,
     schedule_steps: pl.DataFrame,
+    *,
+    index_cache: TimeSequenceIndexCache | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Index complete timed schedules at the same second precision as surveys.
 
@@ -34,39 +46,35 @@ def assign_time_sequence_ids(
     # rounding can leave different scored durations at the same clock times.
     # Ordered integer hashes keep these joins compact without building text
     # representations for every schedule step.
-    seconds_columns = {column: f"_{column}_seconds" for column in time_columns}
-
-    def with_seconds(frame: pl.DataFrame) -> pl.DataFrame:
-        return frame.with_columns(
-            [
-                (pl.col(column).cast(pl.Float64) * 3600.0)
-                .round(0)
-                .cast(pl.Int64)
-                .alias(normalized_column)
-                for column, normalized_column in seconds_columns.items()
-            ]
-        )
-
+    # Hash seconds directly instead of keeping four additional full-length
+    # columns alongside the scored steps during schedule indexing.
     step_content = pl.struct(
         pl.col("activity").cast(pl.String),
-        *[pl.col(column) for column in seconds_columns.values()],
+        *[
+            (pl.col(column).cast(pl.Float64) * 3600.0)
+            .round(0).cast(pl.Int64).alias(f"_{column}_seconds")
+            for column in time_columns
+        ],
     )
     key_columns = ["time_key_1", "time_key_2"]
-    previous_index = add_ordered_key_hashes(
-        with_seconds(catalog),
-        group_cols=["time_seq_id"],
-        order_col="seq_step_index",
-        step_content=step_content,
-        key_prefix="time_key",
-    )
+    if index_cache is not None and index_cache.schedules is schedule_steps and index_cache.index is not None:
+        previous_index = index_cache.index
+    else:
+        previous_index = add_ordered_key_hashes(
+            catalog.select(["time_seq_id", "seq_step_index", "activity"] + time_columns),
+            group_cols=["time_seq_id"],
+            order_col="seq_step_index",
+            step_content=step_content,
+            key_prefix="time_key",
+        )
     schedules = add_ordered_key_hashes(
-        with_seconds(steps),
+        steps.select(group_columns + ["seq_step_index", "activity"] + time_columns),
         group_cols=group_columns,
         order_col="seq_step_index",
         step_content=step_content,
         key_prefix="time_key",
     ).rename({"time_seq_id": "previous_time_seq_id"})
-    schedules, _ = StableKeyIndex(key_columns, "time_seq_id").extend(
+    schedules, updated_index = StableKeyIndex(key_columns, "time_seq_id").extend(
         schedules,
         previous_index,
     )
@@ -96,8 +104,18 @@ def assign_time_sequence_ids(
 
     # Store one compact schedule, independent of zone, destination, and mode.
     # Eligibility lookup needs the activity flags as well as the timed steps.
+    # StableKeyIndex assigns new ids above the previous maximum. Use that
+    # boundary to select new schedules without joining every modeled step to
+    # the complete catalogue. Only schedule columns can be stored there.
+    schedule_columns = [
+        column for column in catalog.columns
+        if column in updated.columns and column != "step_count"
+    ]
+    previous_max_id = previous_index["time_seq_id"].max()
+    previous_max_id = int(previous_max_id) if previous_max_id is not None else -1
     new_schedules = (
-        updated.join(catalog.select("time_seq_id").unique(), on="time_seq_id", how="anti")
+        updated.select(schedule_columns)
+        .filter(pl.col("time_seq_id") > previous_max_id)
         .join(catalog.select("activity", "is_anchor").unique(), on="activity", how="left")
         .with_columns(step_count=pl.col("seq_step_index").max().over("time_seq_id"))
         .select(catalog.columns)
@@ -107,6 +125,9 @@ def assign_time_sequence_ids(
     catalog = pl.concat([catalog, new_schedules], how="vertical_relaxed").sort(
         ["time_seq_id", "seq_step_index"]
     )
+    if index_cache is not None:
+        index_cache.schedules = catalog
+        index_cache.index = updated_index
     if not reference_was_present:
         updated = updated.drop("reference_time_seq_id")
     return updated, catalog, mapping
