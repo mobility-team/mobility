@@ -40,8 +40,10 @@ class BehaviorChangePhase(BaseModel):
                 "destination plus mode sequences. `mode_replanning` keeps each "
                 "currently occupied non-stay-home motive and destination "
                 "sequence fixed and resamples mode sequences only. "
-                "`no_transitions` keeps each plan fixed and only refreshes its "
-                "costs and utility. Stay-home is frozen in restricted phases."
+                "`no_transitions` refreshes costs and utility without sampling "
+                "new plans or changing feasible occupied plans. An infeasible "
+                "plan can move to an existing feasible alternative or stay home. "
+                "Stay-home is frozen in restricted phases."
             ),
         ),
     ]

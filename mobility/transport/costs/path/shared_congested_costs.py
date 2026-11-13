@@ -4,6 +4,7 @@ import json
 import filecmp
 import hashlib
 import logging
+import os
 import pathlib
 from importlib import resources
 
@@ -15,6 +16,7 @@ from mobility.runtime.assets.resolver import get_current_asset_resolver
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.runtime.temporary import check_temporary_disk_limit, write_temporary_bytes
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
+from mobility.transport.costs.path.shared_road_worker import SharedRoadWorker
 from mobility.transport.modes.carpool.detailed.detailed_carpool_travel_costs import DetailedCarpoolTravelCosts
 
 
@@ -136,14 +138,38 @@ def prepare_shared_congested_costs(cost_assets):
             "Preparing shared congested path costs for %s scenarios using %s distinct flow tables.",
             len(entries), len(unique_flows),
         )
-        RScriptRunner(resources.files("mobility.transport.costs.path").joinpath(
-            "prepare_shared_congested_costs.R"
-        )).run(args=[
+        worker_args = [
             str(graph_path), str(travel_costs.transport_zones.cache_path), "True",
             str(manifest_path), str(cch_path), *(str(value) for value in key[-1]),
             str(output_path), str(travel_costs.routing_parameters.max_beeline_distance), str(graph_manifest_path),
             str(route_requests_path),
-        ])
+        ]
+        if int(os.environ.get("MOBILITY_R_IDLE_TIMEOUT_SECONDS") or "0") > 0:
+            # The standard runner owns the optional CPU-idle watchdog.
+            RScriptRunner(resources.files("mobility.transport.costs.path").joinpath(
+                "prepare_shared_congested_costs.R"
+            )).run(worker_args)
+        else:
+            # Retain one loaded network per execution. Different networks or
+            # assignment settings replace it so workers do not accumulate.
+            if resolver.shared_road_worker_key != key:
+                if resolver.shared_road_worker is not None:
+                    resolver.shared_road_worker.close()
+                resolver.shared_road_worker = None
+                resolver.shared_road_worker_key = None
+                resolver.shared_road_worker = SharedRoadWorker(worker_args)
+                resolver.shared_road_worker_key = key
+            try:
+                resolver.shared_road_worker.run(worker_args)
+            except BaseException:
+                failed_worker = resolver.shared_road_worker
+                resolver.shared_road_worker = None
+                resolver.shared_road_worker_key = None
+                try:
+                    failed_worker.close()
+                except Exception:
+                    logging.exception("Could not close the failed road worker.")
+                raise
 
         # R writes this file directly, so its size can only be checked once
         # the external process returns.

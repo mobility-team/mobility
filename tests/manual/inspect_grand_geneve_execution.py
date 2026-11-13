@@ -31,17 +31,21 @@ from mobility.runtime.temporary import managed_temporary_disk_usage
 import mobility.trips.group_day_trips.core.multi_scenario_run as coordinator_module
 from mobility.trips.group_day_trips.core.multi_scenario_run import MultiScenarioRunAsset
 from mobility.trips.group_day_trips.results.simulation_runner import SimulationRunner
-from mobility.trips.group_day_trips.core.performance_trace import _ACTIVE_TRACE, simulation_step, trace_simulation_step
+from mobility.trips.group_day_trips.core.performance_trace import (
+    SimulationPerformanceTrace, _ACTIVE_TRACE, simulation_step, trace_simulation_step,
+)
 from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePool
 from mobility.trips.group_day_trips.plans.plan_schedule_updater import PlanScheduleUpdater
 from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+from mobility.trips.group_day_trips.iterations.iterations import Iterations
 import mobility.trips.group_day_trips.plans.mode_sequence_search.mode_sequences as mode_sequences_module
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangePhase, BehaviorChangeScope
 from mobility.trips.group_day_trips.results.assets.metric import Metric
 from mobility.transport.costs.path.path_travel_costs import PathTravelCostsTable
+import mobility.transport.costs.path.shared_congested_costs as shared_road_module
 from mobility.transport.costs.transport_costs import TransportCosts
 from mobility.transport.costs.path.path_generalized_cost import PathGeneralizedCost
 from mobility.transport.modes.public_transport.public_transport_generalized_cost import PublicTransportGeneralizedCost
@@ -108,6 +112,9 @@ class CurrentStepNames(ast.NodeTransformer):
                 keys=[ast.Constant(value="max_search_batches")],
                 values=[ast.Constant(value=int(os.environ["MOBILITY_PROBE_BATCHES"]))],
             )))
+        if name == "GroupDayTripsOutputParameters" and "MOBILITY_PROBE_CHECKPOINT_DIR" in os.environ:
+            node.keywords = [keyword for keyword in node.keywords if keyword.arg != "checkpoint_each_step"]
+            node.keywords.append(ast.keyword(arg="checkpoint_each_step", value=ast.Constant(value=True)))
         if (
             isinstance(node.func, ast.Attribute)
             and node.func.attr == "by_scenario_and_step"
@@ -142,6 +149,31 @@ original_expand_evaluation = PlanUpdater.expand_context_evaluation
 original_gtfs_hash = GTFSData.file_sha256
 gtfs_hash_timings = {}
 mode_cost_timings = {}
+
+if "MOBILITY_PROBE_CHECKPOINT_DIR" in os.environ:
+    original_iterations_init = Iterations.__init__
+
+    def isolated_checkpoints(iterations, *, run_inputs_hash, is_weekday, base_folder):
+        return original_iterations_init(
+            iterations, run_inputs_hash=run_inputs_hash, is_weekday=is_weekday,
+            base_folder=Path(os.environ["MOBILITY_PROBE_CHECKPOINT_DIR"]),
+        )
+
+    Iterations.__init__ = isolated_checkpoints
+
+if os.environ.get("MOBILITY_PROBE_ONESHOT_ROAD") == "1":
+    class OneShotRoadWorker:
+        def __init__(self, args):
+            pass
+
+        def run(self, args):
+            script = Path(shared_road_module.__file__).with_name("prepare_shared_congested_costs.R")
+            RScriptRunner(script).run(args)
+
+        def close(self):
+            pass
+
+    shared_road_module.SharedRoadWorker = OneShotRoadWorker
 
 if os.environ.get("MOBILITY_PROBE_FORCE_FINAL_COSTS") == "1":
     original_final_requirements = SimulationRunner._final_requirements
@@ -735,6 +767,11 @@ def report_live_state(coordinator, iteration, states, **kwargs):
 
 def rebuild_without_downloads(resolver, asset, *args, **kwargs):
     allowed = (Metric, PathTravelCostsTable, CongestedPathGraph)
+    checkpoint_dir = os.environ.get("MOBILITY_PROBE_CHECKPOINT_DIR")
+    cache_path = getattr(asset, "cache_path", None)
+    if checkpoint_dir and isinstance(cache_path, (str, Path)):
+        if Path(cache_path).resolve().is_relative_to(Path(checkpoint_dir).resolve()):
+            return original_rebuild(resolver, asset, *args, **kwargs)
     if os.environ.get("MOBILITY_PROBE_BUILD_LOCAL_TRANSIT") == "1":
         # The router and graph can be built from cached feeds. Missing GTFSData
         # and source assets remain blocked, so this cannot start a download.
@@ -841,7 +878,9 @@ results = model.results(
     "weekday", scenarios=scenario_names,
     replication=replication if replications is None else None, replications=replications,
 )
-metric = results.metrics.trip_count(by_variable="mode", steps="all")
+metric = results.metrics.trip_count(
+    by_variable="mode", steps="last" if "MOBILITY_PROBE_CHECKPOINT_DIR" in os.environ else "all"
+)
 metric.cache_path = work / "trip-count.parquet"
 metric.hash_path = work / "trip-count.inputs-hash"
 diagnostics = results.tables.adaptive_search_diagnostics(
@@ -853,13 +892,32 @@ resource_samples = {
     "managed_temporary_peak_bytes": managed_temporary_disk_usage(),
     "peak_rss": 0, "peak_process_tree_rss": 0,
     "process_tree_incomplete": False,
+    "logical_cpus": psutil.cpu_count(),
+    "samples": [],
+    "trace_origins": [],
 }
+
+# Match the resource timeline to each trace even when an execution contains
+# several independent simulation lanes.
+original_trace_init = SimulationPerformanceTrace.__init__
+
+
+def record_trace_origin(trace, path):
+    original_trace_init(trace, path)
+    resource_samples["trace_origins"].append({
+        "run_id": trace.run_id, "monotonic_seconds": trace.started_at,
+    })
+
+
+SimulationPerformanceTrace.__init__ = record_trace_origin
 memory_setting = os.environ.get("MOBILITY_PROBE_MEMORY_LIMIT_GIB", "none")
 memory_limit = None if memory_setting.lower() == "none" else float(memory_setting) * 1024**3
 
 
 def monitor_resources():
     process = psutil.Process()
+    processes = {process.pid: process}
+    process.cpu_percent(None)
     count = 0
     while not stop_monitor.wait(2):
         count += 1
@@ -876,12 +934,30 @@ def monitor_resources():
             # file is full. Keep sampling the main process in that case.
             children = []
             resource_samples["process_tree_incomplete"] = True
+        active_ids = {process.pid}
+        tree_cpu = process.cpu_percent(None)
+        main_cpu = tree_cpu
         for child in children:
             try:
-                tree_rss += child.memory_info().rss
+                active_ids.add(child.pid)
+                if child.pid not in processes:
+                    processes[child.pid] = child
+                    child.cpu_percent(None)
+                monitored = processes[child.pid]
+                tree_rss += monitored.memory_info().rss
+                tree_cpu += monitored.cpu_percent(None)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
+        for pid in set(processes) - active_ids:
+            del processes[pid]
         resource_samples["peak_process_tree_rss"] = max(resource_samples["peak_process_tree_rss"], tree_rss)
+        resource_samples["samples"].append({
+            "monotonic_seconds": perf_counter(),
+            "python_rss_bytes": rss,
+            "process_tree_rss_bytes": tree_rss,
+            "python_cpu_percent": main_cpu,
+            "process_tree_cpu_percent": tree_cpu,
+        })
         if memory_limit is not None and (tree_rss > memory_limit or psutil.virtual_memory().available < 8 * 1024**3):
             print("STOPPING: the probe reached its memory safety limit.", flush=True)
             _thread.interrupt_main()
@@ -892,7 +968,8 @@ def monitor_resources():
             )
 
 
-threading.Thread(target=monitor_resources, daemon=True).start()
+monitor_thread = threading.Thread(target=monitor_resources, daemon=True)
+monitor_thread.start()
 try:
     requests = {"diagnostics": diagnostics}
     if os.environ.get("MOBILITY_PROBE_DIAGNOSTICS_ONLY") != "1":
@@ -900,10 +977,14 @@ try:
     outputs = results.get_all(**requests)
 finally:
     stop_monitor.set()
+    monitor_thread.join()
     print("PROJECT_MANAGED_TEMPORARY_PEAK_BYTES", resource_samples["managed_temporary_peak_bytes"], flush=True)
     print("SAMPLED_PROCESS_PEAK_BYTES", resource_samples["peak_rss"], flush=True)
     print("SAMPLED_PROCESS_TREE_RSS_PEAK_BYTES", resource_samples["peak_process_tree_rss"], flush=True)
     print("SAMPLED_PROCESS_TREE_INCOMPLETE", resource_samples["process_tree_incomplete"], flush=True)
+    (work / "resource-samples.json").write_text(
+        json.dumps(resource_samples), encoding="utf-8"
+    )
     if gtfs_hash_timings:
         print("GTFS_HASH_TIMINGS", sorted(
             ((name, count, round(seconds, 3)) for name, (count, seconds) in gtfs_hash_timings.items()),

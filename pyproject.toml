@@ -13,6 +13,7 @@ dependencies = [
   "requests>=2.32,<3",
   "shortuuid>=1.0,<2",
   "pyarrow>=23.0,<24",
+  "pymizu>=0.1.1,<0.2",
   "openpyxl>=3.1,<4",
   "py7zr>=1.1,<2",
   "rich>=14,<15",

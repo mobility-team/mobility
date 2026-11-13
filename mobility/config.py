@@ -454,6 +454,7 @@ def install_r_packages(r_packages, r_packages_force_reinstall, r_packages_downlo
             {'source': 'CRAN', 'name': 'nngeo'},
             {'source': 'CRAN', 'name': 'data.table'},
             {'source': 'CRAN', 'name': 'arrow'},
+            {'source': 'CRAN', 'name': 'mizu'},
             {'source': 'CRAN', 'name': 'lubridate'},
             {'source': 'CRAN', 'name': 'future.apply'},
             {

@@ -154,14 +154,14 @@ def build_generation_targets(
         activity_draw_count=pl.col("activity_draw_count").fill_null(0).cast(pl.UInt64),
         active_destination_count=pl.col("active_destination_count").fill_null(0).cast(pl.UInt64),
     )
+    generation_effort = (
+        pl.lit(0) if scope == BehaviorChangeScope.NO_TRANSITIONS else (
+            pl.col("activity_draw_count") * destination_draw_factor
+            + pl.col("active_destination_count")
+        ) * parameters.mode_sequences.k_mode_sequences
+    )
     requests = requests.with_columns(
-        generation_effort=(
-            (
-                pl.col("activity_draw_count") * destination_draw_factor
-                + pl.col("active_destination_count")
-            )
-            * parameters.mode_sequences.k_mode_sequences
-        ).cast(pl.UInt64)
+        generation_effort=generation_effort.cast(pl.UInt64),
     ).select(
         "home_zone_id",
         "utility_profile_id",

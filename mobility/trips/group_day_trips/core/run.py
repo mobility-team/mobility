@@ -156,7 +156,7 @@ class Run(InMemoryAsset):
         # Version changes invalidate results when candidate identity or
         # numerical calculations used by the model change.
         run_context_inputs = {
-            "version": 51,
+            "version": 52,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -192,7 +192,7 @@ class Run(InMemoryAsset):
         checkpoint_run_context = {
             **run_context_inputs,
             "parameters": checkpoint_parameters,
-            "checkpoint_version": 26,
+            "checkpoint_version": 27,
         }
         checkpoint_run_hash = hash_inputs(checkpoint_run_context)
         self.run_context = SimpleNamespace(

@@ -100,7 +100,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         super().__init__(
             {
                 # Congestion costs and state identities follow the whole search.
-                "version": 33,
+                "version": 34,
                 "run_contexts": [
                     {
                         "run_key": run_key,
@@ -472,6 +472,11 @@ class MultiScenarioRunAsset(InMemoryAsset):
         keep_inner_flows: bool = True,
     ) -> dict[int, Any]:
         """Expand and evaluate the shared pool while outer state stays fixed."""
+        generate_candidates = (
+            self.parameters.behavior_change.scope_at(iteration) != BehaviorChangeScope.NO_TRANSITIONS
+        )
+        if not generate_candidates:
+            max_search_batches = 1
         # A single batch cannot be compared with a preceding batch.
         estimate_allocation = (
             max_search_batches > 1
@@ -629,6 +634,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     previous_time_sequence_steps=time_sequence_steps,
                     compact=True,
                     build_catalogue=batch_index + 1 < max_search_batches,
+                    generate_candidates=generate_candidates,
                     time_index_caches=time_index_caches,
                 )
                 pool = pool_builder.build()
@@ -645,9 +651,10 @@ class MultiScenarioRunAsset(InMemoryAsset):
                         resolver = get_current_asset_resolver()
                         if resolver is not None:
                             resolver.release_in_memory_asset(generated_asset)
-                    rng_states[scenario] = seeds_by_scenario[scenario].get()[
-                        "rng_state_after_sampling"
-                    ]
+                    rng_states[scenario] = (
+                        seeds_by_scenario[scenario].get()["rng_state_after_sampling"]
+                        if generate_candidates else fixed_states[scenario].rng_state
+                    )
 
                     if logging.getLogger().isEnabledFor(logging.DEBUG):
                         logging.debug(

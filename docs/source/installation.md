@@ -199,6 +199,11 @@ The first call to `mobility.set_params(...)` installs the R packages used by Mob
 
 This can take time on a new computer. Later runs reuse the installed packages.
 
+The road-cost worker uses the R package `mizu` and the Python package `pymizu`.
+On Linux, installing `mizu` from source requires a C compiler compatible with
+the active R installation. If a suitable binary is available, it can be used
+instead.
+
 Use the default setup first. If a download fails on a company network, see the certificate and proxy notes in Common Problems.
 
 ## 6. Check the installation

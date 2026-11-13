@@ -889,6 +889,31 @@ def test_pool_keeps_occupied_timing_when_previous_pool_has_only_survey_timing(mo
     active_steps = pool.candidate_plan_steps_by_run_key[1].join(state.current_plans, on=PLAN_KEY_COLS)
     assert active_steps["last_active_iteration"].unique().to_list() == [2]
 
+    # A no-transition step reuses history without touching sampling assets.
+    original_mode_get, original_destination_get = modes.get, destinations.get
+    def reject_sampling():
+        raise AssertionError("A no-transition step must not generate alternatives")
+    monkeypatch.setattr(modes, "get", reject_sampling)
+    monkeypatch.setattr(destinations, "get", reject_sampling)
+    frozen_pool = SharedCandidatePool(
+        sources=[source], iteration=2, generate_candidates=False,
+        previous_candidates_by_run_key={1: original},
+        previous_time_sequence_steps={1: catalog},
+    ).build()
+    monkeypatch.setattr(modes, "get", original_mode_get)
+    monkeypatch.setattr(destinations, "get", original_destination_get)
+    assert frozen_pool.generated_mode_sequences_by_run_key[1] == 0
+    frozen_keys = frozen_pool.candidate_plan_steps_by_run_key[1].select(PLAN_KEY_COLS).unique()
+    assert state.current_plans.join(frozen_keys, on=PLAN_KEY_COLS, how="anti").height == 0
+
+    # The first step may also have no candidate history at all.
+    other_state.stay_home_plan = original
+    empty_pool = SharedCandidatePool(
+        sources=[other_source], iteration=1, generate_candidates=False,
+    ).build()
+    assert empty_pool.candidate_plan_steps_by_run_key[2].is_empty()
+    assert empty_pool.generated_mode_sequences_by_run_key[2] == 0
+
     # The same occupied state can occur in scenarios whose sampled histories
     # differ. Reconstruct its active plans once without merging those histories.
     same_state_source = replace(source, run_key=3, scenario="same-state")

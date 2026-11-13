@@ -133,7 +133,7 @@ def test_generation_weights_are_stable_when_demand_rows_are_reordered():
 @pytest.mark.parametrize(
     ("scope", "expected_effort"),
     [
-        (BehaviorChangeScope.NO_TRANSITIONS, 4),
+        (BehaviorChangeScope.NO_TRANSITIONS, 0),
         (BehaviorChangeScope.MODE_REPLANNING, 4),
         (BehaviorChangeScope.DESTINATION_REPLANNING, 16),
     ],

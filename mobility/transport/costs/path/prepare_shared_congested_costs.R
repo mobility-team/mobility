@@ -8,7 +8,9 @@ library(jsonlite)
 library(data.table)
 library(sf)
 
-args <- commandArgs(trailingOnly = TRUE)
+if (!exists("road_worker_channel", inherits = FALSE)) {
+  args <- commandArgs(trailingOnly = TRUE)
+}
 
 package_fp <- args[1]
 cppr_graph_fp <- args[2]
@@ -164,6 +166,7 @@ if (nzchar(route_requests_fp) && file.exists(route_requests_fp)) {
   }
 }
 
+run_shared_road_costs <- function(flows_fp, output_fp, graph_paths) {
 flow_paths <- unlist(fromJSON(flows_fp))
 wide <- NULL
 for (i in seq_along(flow_paths)) {
@@ -264,3 +267,20 @@ for (i in seq_along(flow_paths)) {
 }
 
 write_parquet(wide, output_fp)
+}
+
+if (exists("road_worker_channel", inherits = FALSE)) {
+  mizu::mizu_send(road_worker_channel, "ready")
+  repeat {
+    request <- mizu::mizu_recv(road_worker_channel)
+    if (inherits(request, "mizu_sentinel")) break
+    tryCatch({
+      run_shared_road_costs(request[[1]], request[[2]], unlist(fromJSON(request[[3]])))
+      mizu::mizu_send(road_worker_channel, "done")
+    }, error = function(error) {
+      mizu::mizu_send(road_worker_channel, paste0("ERROR: ", conditionMessage(error)))
+    })
+  }
+} else {
+  run_shared_road_costs(flows_fp, output_fp, graph_paths)
+}

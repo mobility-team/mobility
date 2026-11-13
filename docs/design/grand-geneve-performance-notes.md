@@ -1566,3 +1566,106 @@ diagnostics, the last congestion update disappeared: total runtime went from
 44.76 s to 37.22 s. The earlier run also recorded detailed road log timestamps,
 so the totals are not a perfectly controlled timing comparison. All seven trip
 counts matched within 4.2e-9 represented trips.
+
+### Persistent R road-worker prototype
+
+`tests/manual/benchmark_persistent_road_worker.py` compares the existing road
+script with a single pymizu/mizu R channel. The worker loads the graph and
+route requests once, then runs the same road calculation for successive flow
+files. It still exchanges parquet files; this first experiment did not change production code. Both
+packages were installed into a temporary directory for this experiment.
+
+Using two captured, different Geneva flow tables, both worker outputs matched
+the corresponding one-shot outputs exactly across 1,070,826 zone pairs. A
+third worker request repeated the first flow after the second and also matched
+exactly. In two single comparisons, one-shot updates took 7.06/6.65 s and
+10.85/10.50 s. Worker startup took 2.14 and 2.13 s; worker updates took
+4.91/4.86 s and 8.71/9.78/9.11 s. Sampled Python-plus-child peak RSS was
+1.01/1.02 GiB for one-shot and 1.17/1.16 GiB for the worker. These are isolated
+road calculations, not end-to-end simulations; the variation between runs is
+large, and the memory figures sum process RSS rather than unique memory.
+The following runs extended validation to full simulations and changing inputs.
+
+The manual Geneva probe was then used to test the worker. Two baseline and two worker runs each used
+one scenario, one seed, five outer steps, one draw per sampling dimension
+and one inner batch. The fifth step used the script's no-transition phase.
+No memory limit was applied. The runs still exchange parquet files.
+
+| Run | Full time | Congestion updates (steps 2–5) | Sampled process-tree peak |
+| --- | ---: | --- | ---: |
+| Baseline 1 | 86.19 s | 12.92, 7.03, 7.37, 7.07 s | not captured |
+| Worker 1 | 66.44 s | 8.30, 4.90, 4.88, 4.79 s | not captured |
+| Baseline 2 | 72.34 s | 8.12, 7.07, 7.14, 7.16 s | 6.14 GiB |
+| Worker 2 | 69.06 s | 8.44, 4.92, 5.25, 4.70 s | 6.26 GiB |
+
+The first worker update includes startup and graph loading. In both pairs,
+later updates were about two seconds faster, but whole-run times varied much
+more than that. Candidate IDs, final allocations, utilities and random states
+matched exactly at all five steps in both comparisons. In the second pair,
+all 19 trip totals matched within 1.9e-9 represented trips. Process-tree RSS is
+sampled every two seconds and sums process RSS, so it can miss short peaks and
+double-count shared memory.
+
+A three-step, two-scenario probe introduced a carbon tax at step two; step
+three assigned two distinct scenario flow tables. Candidate IDs, allocations,
+utilities and random states matched exactly at every step, and 22 trip totals
+matched within 2.8e-9 represented trips. The baseline and worker runs took
+67.88 s and 77.67 s; their shared road updates took 8.40/11.38 s and
+12.16/9.49 s respectively. Sampled process-tree peaks were 5.41 and 5.37 GiB.
+One comparison cannot establish a reliable speedup or memory difference.
+Separately, an invalid flow-file request returned an error and a subsequent
+valid request reproduced the one-shot road table exactly.
+
+The road worker is now used by the execution resolver. It retains one network
+at a time and closes it when routing or assignment inputs change, on failure,
+or when the execution ends. Distinct flow tables are still assigned sequentially.
+The ordinary R runner remains in use if its optional CPU-idle watchdog is
+explicitly enabled. The Python package `pymizu` and R package `mizu` are new
+dependencies; on Linux a C compiler may be needed to install the R package.
+
+With the production worker, a five-step one-scenario probe took 70.76 s; the
+previous one-shot run took 72.34 s. Their saved candidate IDs, plan allocations,
+utilities and random states matched exactly at every step. Production-worker
+congestion updates took 8.69, 5.30, 5.69 and 5.22 s, versus 8.12, 7.07, 7.14
+and 7.16 s for one-shot. A three-step, two-scenario run with a carbon-tax change
+also matched all saved state exactly. A checkpoint continuation reproduced the
+uninterrupted fourth-step state exactly, although the existing resume path did
+earlier-step work again. A copied graph with changed travel times produced the
+same outputs as one-shot routing on that graph; switching original/changed/
+original networks in the prototype preserved both results. A deliberately
+killed channel peer was detected and closed. These checks do not establish
+parallel-worker performance or a full Linux simulation benchmark.
+
+The manual Geneva probe now saves CPU and RAM samples together every two
+seconds in `resource-samples.json`, with trace origins for matching samples to
+simulation spans. CPU percentages sum the Python process and observed child
+processes, with 100% representing one logical CPU. A new child is primed on
+first observation, so work before that sample is not counted. A two-step
+worker smoke run on a 22-logical-CPU machine recorded a peak of 1,745% and a
+sample average of 479%; its step-two samples averaged 285%. These are coarse
+samples, not CPU-time accounting or evidence about a longer run.
+
+### High-effort, five-step run
+
+One default scenario and seed, six activity draws, two destination draws, six
+mode draws and three inner batches completed all five steps. The script's fifth
+step used its no-transition phase. The rough effort is 216 points per step,
+or 1,080 across five steps; all 15 inner batches ran. There was no memory
+limit. Total runtime was 760.16 s; preparation before step one took 25.82 s.
+
+| Step | Time | Candidates | Inner loop | Candidate evaluation | Pool generation | Road update | Python peak RSS | Process-tree peak RSS | Average CPU |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 55.10 s | 351,915 | 54.26 s | 29.32 s | 19.83 s | 0.00 s | 9.76 GiB | 9.76 GiB | 854% |
+| 2 | 154.66 s | 803,088 | 141.90 s | 84.13 s | 42.54 s | 10.02 s | 18.08 GiB | 17.43 GiB | 946% |
+| 3 | 171.85 s | 925,510 | 161.69 s | 95.36 s | 47.45 s | 5.59 s | 21.80 GiB | 19.84 GiB | 1,014% |
+| 4 | 213.00 s | 1,035,891 | 200.80 s | 112.16 s | 63.07 s | 6.63 s | 24.00 GiB | 24.47 GiB | 964% |
+| 5 | 139.52 s | 762,137 | 129.72 s | 65.04 s | 51.81 s | 6.37 s | 21.09 GiB | 20.34 GiB | 924% |
+
+Evaluation and pool generation are included in the inner-loop time. CPU
+percentages sum observed processes and 100% means one logical CPU; the machine
+has 22 logical CPUs. Whole-run sampled mean and maximum were 942% and 1,775%.
+The Python trace samples every 100 ms; the process-tree monitor samples every
+two seconds, so its peaks can be lower even when it includes the Python process.
+Summed process RSS can also count shared pages more than once. The tree sample
+reported complete process enumeration. This one run does not establish that
+20 iterations, additional seeds or additional scenarios fit in memory.

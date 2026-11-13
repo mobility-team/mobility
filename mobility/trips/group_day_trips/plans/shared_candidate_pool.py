@@ -75,6 +75,7 @@ class SharedCandidatePool:
         previous_time_sequence_steps: dict[int, pl.DataFrame] | None = None,
         compact: bool = False,
         build_catalogue: bool = True,
+        generate_candidates: bool = True,
         time_index_caches: dict[int, TimeSequenceIndexCache] | None = None,
     ) -> None:
         if not sources:
@@ -96,6 +97,7 @@ class SharedCandidatePool:
         self.time_sequence_steps_by_run_key: dict[int, pl.DataFrame] = {}
         self.compact = compact
         self.build_catalogue = build_catalogue
+        self.generate_candidates = generate_candidates
         self.time_index_caches = time_index_caches or {}
         self.compact_candidate_steps_by_run_key: dict[int, pl.DataFrame] = {}
         self.unordered_candidate_steps_by_run_key: dict[int, pl.LazyFrame] = {}
@@ -154,8 +156,9 @@ class SharedCandidatePool:
             source_candidate_frames: list[pl.DataFrame] = []
             source_history_frames: list[pl.DataFrame] = []
             previous_state = source.previous_state.get()
-            source.destination_sequences.get()
-            source.mode_sequences.get()
+            if self.generate_candidates:
+                source.destination_sequences.get()
+                source.mode_sequences.get()
             scenario = source.scenario
             run_key = source.run_key
 
@@ -381,70 +384,76 @@ class SharedCandidatePool:
                             previous_active_ids, previous_active_history,
                         )))
 
-            with simulation_step("generate scenario candidates", scenario=scenario):
-                generation_key = generation_keys[run_key]
-                cached = generated_by_source.get(generation_key)
-                if cached is None:
-                    profile_assignments, _ = source.mode_sequences.transport_costs.get_utility_profiles(
-                        previous_state.demand_groups,
-                        source.run.population.population_segments,
+            if self.generate_candidates:
+                with simulation_step("generate scenario candidates", scenario=scenario):
+                    generation_key = generation_keys[run_key]
+                    cached = generated_by_source.get(generation_key)
+                    if cached is None:
+                        profile_assignments, _ = source.mode_sequences.transport_costs.get_utility_profiles(
+                            previous_state.demand_groups,
+                            source.run.population.population_segments,
+                        )
+                        with simulation_step("generate and attach source candidates"):
+                            generated = CandidatePlanStepsAsset.build_iteration_candidates(
+                                destination_sequences=source.destination_sequences,
+                                mode_sequences=source.mode_sequences,
+                                survey_plan_steps=previous_state.schedule_steps,
+                                demand_groups=previous_state.demand_groups,
+                                profile_assignments=profile_assignments,
+                                compact_for_shared_pool=True,
+                            ).collect(engine="streaming")
+                        if logging.getLogger().isEnabledFor(logging.DEBUG):
+                            logging.debug(
+                                "Generated compact candidate steps | scenario=%s | step_rows=%d | "
+                                "plan_variants=%d | home_zones=%d",
+                                scenario, generated.height,
+                                generated.select(PLAN_KEY_COLS).unique().height,
+                                generated.filter(pl.col("seq_step_index") == 1)
+                                .select(pl.col("from").n_unique()).item(),
+                            )
+                        generated = generated.with_columns(
+                            first_seen_iteration=pl.lit(self.iteration, dtype=pl.UInt16),
+                            last_seen_iteration=pl.lit(self.iteration, dtype=pl.UInt16),
+                            last_active_iteration=pl.lit(None, dtype=pl.UInt16),
+                        )
+                        if generated.height:
+                            generated = self._attach_sequence_content_keys(
+                                add_candidate_ids(generated),
+                                source.destination_sequences.get_index(),
+                                source.mode_sequences.get_index(),
+                                previous_state.schedule_steps,
+                            )
+                            candidate_frames.append(generated)
+                            generated_ids = generated.select(CANDIDATE_ID_COLS).unique()
+                            generated_by_replication.append(
+                                generated_ids.with_columns(replication=pl.lit(source.run.replication, dtype=pl.UInt32))
+                            )
+                            generated_history = generated.select(history_keys + CandidatePlanStepsAsset.RETENTION_COLUMNS)
+                        else:
+                            generated_ids = generated_history = None
+                        cached = (profile_assignments, generated, generated_ids, generated_history,
+                                  int(source.mode_sequences.generated_mode_sequences))
+                        generated_by_source[generation_key] = cached
+                    profile_assignments, generated, generated_ids, generated_history, generated_count = cached
+                    profile_assignments_by_run_key[run_key] = profile_assignments
+                    empty_candidates_by_run_key.setdefault(
+                        run_key,
+                        generated.select(
+                            CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS
+                        ).head(0),
                     )
-                    with simulation_step("generate and attach source candidates"):
-                        generated = CandidatePlanStepsAsset.build_iteration_candidates(
-                            destination_sequences=source.destination_sequences,
-                            mode_sequences=source.mode_sequences,
-                            survey_plan_steps=previous_state.schedule_steps,
-                            demand_groups=previous_state.demand_groups,
-                            profile_assignments=profile_assignments,
-                            compact_for_shared_pool=True,
-                        ).collect(engine="streaming")
-                    if logging.getLogger().isEnabledFor(logging.DEBUG):
-                        logging.debug(
-                            "Generated compact candidate steps | scenario=%s | step_rows=%d | "
-                            "plan_variants=%d | home_zones=%d",
-                            scenario, generated.height,
-                            generated.select(PLAN_KEY_COLS).unique().height,
-                            generated.filter(pl.col("seq_step_index") == 1)
-                            .select(pl.col("from").n_unique()).item(),
-                        )
-                    generated = generated.with_columns(
-                        first_seen_iteration=pl.lit(self.iteration, dtype=pl.UInt16),
-                        last_seen_iteration=pl.lit(self.iteration, dtype=pl.UInt16),
-                        last_active_iteration=pl.lit(None, dtype=pl.UInt16),
-                    )
-                    if generated.height:
-                        generated = self._attach_sequence_content_keys(
-                            add_candidate_ids(generated),
-                            source.destination_sequences.get_index(),
-                            source.mode_sequences.get_index(),
-                            previous_state.schedule_steps,
-                        )
-                        candidate_frames.append(generated)
-                        generated_ids = generated.select(CANDIDATE_ID_COLS).unique()
-                        generated_by_replication.append(
-                            generated_ids.with_columns(replication=pl.lit(source.run.replication, dtype=pl.UInt32))
-                        )
-                        generated_history = generated.select(history_keys + CandidatePlanStepsAsset.RETENTION_COLUMNS)
-                    else:
-                        generated_ids = generated_history = None
-                    cached = (profile_assignments, generated, generated_ids, generated_history,
-                              int(source.mode_sequences.generated_mode_sequences))
-                    generated_by_source[generation_key] = cached
-                profile_assignments, generated, generated_ids, generated_history, generated_count = cached
-                profile_assignments_by_run_key[run_key] = profile_assignments
-                empty_candidates_by_run_key.setdefault(
-                    run_key,
-                    generated.select(
-                        CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS
-                    ).head(0),
+                    if generated_ids is not None:
+                        source_candidate_frames.append(generated_ids)
+                        source_history_frames.append(generated_history)
+                    generated_mode_sequences[run_key] += generated_count
+                    remaining_generation[generation_key] -= 1
+                    if not remaining_generation[generation_key]:
+                        del generated_by_source[generation_key]
+
+            else:
+                profile_assignments_by_run_key[run_key], _ = source.mode_sequences.transport_costs.get_utility_profiles(
+                    previous_state.demand_groups, source.run.population.population_segments,
                 )
-                if generated_ids is not None:
-                    source_candidate_frames.append(generated_ids)
-                    source_history_frames.append(generated_history)
-                generated_mode_sequences[run_key] += generated_count
-                remaining_generation[generation_key] -= 1
-                if not remaining_generation[generation_key]:
-                    del generated_by_source[generation_key]
 
             if source_candidate_frames:
                 # Scenarios share plans within a replication. Other replications
@@ -704,7 +713,23 @@ class SharedCandidatePool:
             mode_indices[run_key] = mode_index
 
             if replication_candidates.height == 0:
-                candidate_steps_by_run_key[run_key] = empty_candidates_by_run_key[run_key]
+                empty = empty_candidates_by_run_key.get(run_key)
+                if empty is None:
+                    state = source.previous_state.get()
+                    # A run can start with stay-home only and no saved pool.
+                    schema = {
+                        **state.schedule_steps.schema,
+                        **state.demand_groups.schema,
+                        **state.stay_home_plan.schema,
+                        **CandidatePlanStepsAsset.REQUIRED_SCHEMA,
+                        "last_active_iteration": pl.UInt16,
+                    }
+                    empty = pl.DataFrame(schema={
+                        column: schema.get(column, pl.Null)
+                        for column in CandidatePlanStepsAsset.STRUCTURAL_COLUMNS
+                        + CandidatePlanStepsAsset.RETENTION_COLUMNS
+                    })
+                candidate_steps_by_run_key[run_key] = empty
             else:
                 if attachment is None:
                     candidate_steps = self._build_scenario_candidate_steps(

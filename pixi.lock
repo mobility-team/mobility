@@ -240,6 +240,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c2/ea/84509533e0f6477960b8a9179d240d93c909c6543e4dd8209932026d7815/pytest_dependency-0.6.1.tar.gz
       - pypi: https://files.pythonhosted.org/packages/c4/13/680c54afe3e65767bed7ec1a15571e1a2f1257128733851ade24abcefbcc/kiwisolver-1.5.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/c7/0d/67e5b4109ea4a837e80daa87c2c696711955e40449a97e8926672534def2/click-8.4.1-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/c7/ff/e945e3d3b86d69d7d00001a7513f5f748114d941696f29c5e5a5fdd593b7/pymizu-0.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/c8/a9/8862616a85cf450d2822dbd4fff1fcaba90877907a6ff5bc2672cafe42f8/pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cc/8f/ec6289987824b29529d0dfda0d74a07cec60e54b9c92f3c9da4c0ac732de/contourpy-1.3.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
@@ -428,6 +429,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/35/48/b992b488d6f299dbe3f11a20b24d3dda3d46f1a635ede1c46b5b17a7b163/scipy-1.17.1-cp312-cp312-macosx_10_14_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/38/3d/2d244233ac4f76e38533cfcb2991c9eb4c7bf688ae0a036d30725b8faafe/importlib_metadata-9.0.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3a/13/547360d81e6d88d58492968ffda9f9542854f11310ee556fef14260cc886/zipp-4.1.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/3c/71/cec90a2b3171d533e04315cbd53b6b80aadb222f7d0174d28f589b309b5b/pymizu-0.1.1-cp312-cp312-macosx_10_15_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/3c/78/6a04792ace63a93e162f1305392d500ae8ddcb620e7eb88a22fd622b35bb/geopandas-1.1.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3d/b7/bdbb725ba02c5b42825b200c940f38b7a54fcad24627b7192f78f8110d76/coverage-7.14.1-cp312-cp312-macosx_10_13_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/44/a0/c815bea63117fa63e4e1c01f8a1110d2112fa003f838e6467094ec2432ce/fonttools-4.63.0-cp312-cp312-macosx_10_13_x86_64.whl
@@ -725,6 +727,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cf/3d/b16412745651e855f357e5e66930248688378853a6e2698a214e331fba1f/pandas-3.0.3-cp312-cp312-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/d5/d4/e696a46c74ec8cac6434764deaf72f7edcc2e91c2145a9b3f61900a7aa7a/polars-2.1.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/d6/23/cfb923b50a7a26bd23a0e31ecfebb2c098b8a6d5bd876c45a8512a6690d5/pymizu-0.1.1-cp312-cp312-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/d7/27/a58ddaf8c588a3ef080db9d0b7e0b97215cee3a45df74f3a94dbbf5c893a/pycodestyle-2.14.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d7/c1/eb8f9debc45d3b7918a32ab756658a0904732f75e555402972246b0b8e71/tenacity-9.1.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d8/95/0a351b9289c2b5cbde0bacd4a83ebc44023e835490a727b2a3bd60ddc0f4/pillow-12.2.0-cp312-cp312-macosx_11_0_arm64.whl
@@ -940,6 +943,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/d7/27/a58ddaf8c588a3ef080db9d0b7e0b97215cee3a45df74f3a94dbbf5c893a/pycodestyle-2.14.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d7/c1/eb8f9debc45d3b7918a32ab756658a0904732f75e555402972246b0b8e71/tenacity-9.1.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/dc/9b/47798a6c91d8bdb567fe2698fe81e0c6b7cb7ef4d13da4114b41d239f65d/typing_inspection-0.4.2-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/e4/f3/b4f66c0af14bd24bfa8614eafcb6f7ee3317997edac131165d574ca279f2/pymizu-0.1.1-cp312-cp312-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/e5/2f/a58a4443a4d052a4ea77557478336aefc26c7981f6408d37adba763aa758/matplotlib-3.11.0-cp312-cp312-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/e7/05/c19819d5e3d95294a6f5947fb9b9629efb316b96de511b418c53d245aae6/cycler-0.12.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ea/b7/0d511af853024241dc3192bea77e4753ea606187bd2dd777a8209a5b01bb/dash_cytoscape-1.0.2.tar.gz
@@ -6892,6 +6896,7 @@ packages:
   - requests>=2.32,<3
   - shortuuid>=1.0,<2
   - pyarrow>=23.0,<24
+  - pymizu>=0.1.1,<0.2
   - openpyxl>=3.1,<4
   - py7zr>=1.1,<2
   - rich>=14,<15
@@ -7493,6 +7498,30 @@ packages:
   version: 3.0.3
   sha256: d6dd0be5b5b189d31db7cda48b91d7e0a9795f31430b7f271219ab30f1d3ac9d
   requires_python: '>=3.9'
+- pypi: https://files.pythonhosted.org/packages/3c/71/cec90a2b3171d533e04315cbd53b6b80aadb222f7d0174d28f589b309b5b/pymizu-0.1.1-cp312-cp312-macosx_10_15_x86_64.whl
+  name: pymizu
+  version: 0.1.1
+  sha256: 80bda2169610cb4caa128e060142b994ca761c3a94d6c6dd53ff4cd760efcc2a
+  requires_dist:
+  - numpy ; extra == 'numpy'
+  - cloudpickle ; extra == 'cloudpickle'
+  - pytest>=9 ; extra == 'dev'
+  - coverage ; extra == 'dev'
+  - ruff==0.14.0 ; extra == 'dev'
+  - pyrefly ; extra == 'dev'
+  - build ; extra == 'dev'
+  - numpy ; extra == 'dev'
+  - cloudpickle ; extra == 'dev'
+  - pyarrow ; extra == 'dev'
+  - polars ; extra == 'dev'
+  - pandas ; extra == 'dev'
+  - duckdb ; extra == 'dev'
+  - numpy ; extra == 'docs'
+  - cloudpickle ; extra == 'docs'
+  - jupyter ; extra == 'docs'
+  - pyarrow ; extra == 'docs'
+  - pymizu[cloudpickle,numpy] ; extra == 'all'
+  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/3c/78/6a04792ace63a93e162f1305392d500ae8ddcb620e7eb88a22fd622b35bb/geopandas-1.1.3-py3-none-any.whl
   name: geopandas
   version: 1.1.3
@@ -9186,6 +9215,30 @@ packages:
   requires_dist:
   - colorama ; sys_platform == 'win32'
   requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/c7/ff/e945e3d3b86d69d7d00001a7513f5f748114d941696f29c5e5a5fdd593b7/pymizu-0.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+  name: pymizu
+  version: 0.1.1
+  sha256: 30080b083e7743538a5a715bcf7de995bafeb58ba84b6974d9ba1c0f84861835
+  requires_dist:
+  - numpy ; extra == 'numpy'
+  - cloudpickle ; extra == 'cloudpickle'
+  - pytest>=9 ; extra == 'dev'
+  - coverage ; extra == 'dev'
+  - ruff==0.14.0 ; extra == 'dev'
+  - pyrefly ; extra == 'dev'
+  - build ; extra == 'dev'
+  - numpy ; extra == 'dev'
+  - cloudpickle ; extra == 'dev'
+  - pyarrow ; extra == 'dev'
+  - polars ; extra == 'dev'
+  - pandas ; extra == 'dev'
+  - duckdb ; extra == 'dev'
+  - numpy ; extra == 'docs'
+  - cloudpickle ; extra == 'docs'
+  - jupyter ; extra == 'docs'
+  - pyarrow ; extra == 'docs'
+  - pymizu[cloudpickle,numpy] ; extra == 'all'
+  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/c8/a9/8862616a85cf450d2822dbd4fff1fcaba90877907a6ff5bc2672cafe42f8/pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
   name: pycryptodomex
   version: 3.23.0
@@ -9387,6 +9440,30 @@ packages:
   - cudf-polars-cu12 ; extra == 'gpu'
   - polars[async,cloudpickle,database,deltalake,excel,fsspec,graph,iceberg,numpy,pandas,plot,pyarrow,pydantic,style,timezone] ; extra == 'all'
   requires_python: '>=3.11'
+- pypi: https://files.pythonhosted.org/packages/d6/23/cfb923b50a7a26bd23a0e31ecfebb2c098b8a6d5bd876c45a8512a6690d5/pymizu-0.1.1-cp312-cp312-macosx_11_0_arm64.whl
+  name: pymizu
+  version: 0.1.1
+  sha256: 688b1c529eff24211e24ab20f019988a5b21b0669bd9fb1a5b7634e05900c9d6
+  requires_dist:
+  - numpy ; extra == 'numpy'
+  - cloudpickle ; extra == 'cloudpickle'
+  - pytest>=9 ; extra == 'dev'
+  - coverage ; extra == 'dev'
+  - ruff==0.14.0 ; extra == 'dev'
+  - pyrefly ; extra == 'dev'
+  - build ; extra == 'dev'
+  - numpy ; extra == 'dev'
+  - cloudpickle ; extra == 'dev'
+  - pyarrow ; extra == 'dev'
+  - polars ; extra == 'dev'
+  - pandas ; extra == 'dev'
+  - duckdb ; extra == 'dev'
+  - numpy ; extra == 'docs'
+  - cloudpickle ; extra == 'docs'
+  - jupyter ; extra == 'docs'
+  - pyarrow ; extra == 'docs'
+  - pymizu[cloudpickle,numpy] ; extra == 'all'
+  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/d7/27/a58ddaf8c588a3ef080db9d0b7e0b97215cee3a45df74f3a94dbbf5c893a/pycodestyle-2.14.0-py2.py3-none-any.whl
   name: pycodestyle
   version: 2.14.0
@@ -9470,6 +9547,30 @@ packages:
   name: pyarrow
   version: 23.0.1
   sha256: 7707d2b6673f7de054e2e83d59f9e805939038eebe1763fe811ee8fa5c0cd1a7
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/e4/f3/b4f66c0af14bd24bfa8614eafcb6f7ee3317997edac131165d574ca279f2/pymizu-0.1.1-cp312-cp312-win_amd64.whl
+  name: pymizu
+  version: 0.1.1
+  sha256: 1630794ef8327b79ab83cb6ce50ce74b72fb834a4520ba0bd67e8d19ae4173f1
+  requires_dist:
+  - numpy ; extra == 'numpy'
+  - cloudpickle ; extra == 'cloudpickle'
+  - pytest>=9 ; extra == 'dev'
+  - coverage ; extra == 'dev'
+  - ruff==0.14.0 ; extra == 'dev'
+  - pyrefly ; extra == 'dev'
+  - build ; extra == 'dev'
+  - numpy ; extra == 'dev'
+  - cloudpickle ; extra == 'dev'
+  - pyarrow ; extra == 'dev'
+  - polars ; extra == 'dev'
+  - pandas ; extra == 'dev'
+  - duckdb ; extra == 'dev'
+  - numpy ; extra == 'docs'
+  - cloudpickle ; extra == 'docs'
+  - jupyter ; extra == 'docs'
+  - pyarrow ; extra == 'docs'
+  - pymizu[cloudpickle,numpy] ; extra == 'all'
   requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/e5/2f/a58a4443a4d052a4ea77557478336aefc26c7981f6408d37adba763aa758/matplotlib-3.11.0-cp312-cp312-win_amd64.whl
   name: matplotlib

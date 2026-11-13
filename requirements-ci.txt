@@ -173,6 +173,7 @@ psutil==7.2.2
 py7zr==1.1.0
     # via mobility-tools (pyproject.toml)
 pyarrow==23.0.1
+pymizu==0.1.1
     # via mobility-tools (pyproject.toml)
 pybcj==1.0.7
     # via py7zr

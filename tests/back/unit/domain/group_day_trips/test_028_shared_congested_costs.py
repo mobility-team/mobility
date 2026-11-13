@@ -9,6 +9,7 @@ from mobility.runtime.assets.graph import asset_graph_key
 from mobility.runtime.assets.resolver import asset_resolution_context
 from mobility.transport.costs.path.path_travel_costs import PathTravelCosts
 from mobility.transport.costs.path.shared_congested_costs import prepare_shared_congested_costs
+from mobility.transport.costs.path.shared_road_worker import SharedRoadWorker
 from mobility.transport.modes.carpool.detailed.detailed_carpool_travel_costs import DetailedCarpoolTravelCostsTable
 
 
@@ -52,6 +53,35 @@ def make_iteration_costs(tmp_path, name, *, graph_id="graph", update=True, mode_
     return iteration, table
 
 
+def test_road_worker_sends_each_update_and_closes(monkeypatch):
+    requests = []
+    responses = iter(["ready", "done", "done"])
+    closed = []
+
+    class Channel:
+        def send(self, value):
+            requests.append(value)
+
+        def recv(self, timeout=None):
+            return next(responses)
+
+        def close(self):
+            closed.append(True)
+            return True
+
+    channel = Channel()
+    monkeypatch.setattr("mobility.transport.costs.path.shared_road_worker.pymizu.r_launcher", lambda **kwargs: lambda token, slot=None: None)
+    monkeypatch.setattr("mobility.transport.costs.path.shared_road_worker.pymizu.Channel.create", lambda *args, **kwargs: channel)
+    args = [str(index) for index in range(14)]
+    worker = SharedRoadWorker(args)
+    worker.run(args)
+    worker.run(args)
+    worker.close()
+    assert requests[0][1:] == args
+    assert requests[1:] == [["3", "10", "12"], ["3", "10", "12"]]
+    assert closed == [True]
+
+
 def test_shared_costs_keep_scenarios_and_missing_routes_separate(tmp_path, monkeypatch):
     """Two scenario columns become ordinary per-scenario costs in the resolver."""
     monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
@@ -68,7 +98,10 @@ def test_shared_costs_keep_scenarios_and_missing_routes_separate(tmp_path, monke
     calls = []
 
     class FakeRunner:
-        def __init__(self, path):
+        def __init__(self, args):
+            pass
+
+        def close(self):
             pass
 
         def run(self, args):
@@ -79,7 +112,7 @@ def test_shared_costs_keep_scenarios_and_missing_routes_separate(tmp_path, monke
                 "distance_1": [3.0, None], "time_1": [0.3, None],
             }).write_parquet(args[10])
 
-    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", FakeRunner)
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.SharedRoadWorker", FakeRunner)
     with asset_resolution_context() as resolver:
         prepare_shared_congested_costs([first, second])
         a = resolver.in_memory_values[asset_graph_key(first_table)]
@@ -104,7 +137,10 @@ def test_identical_flow_files_share_one_assignment(tmp_path, monkeypatch):
     calls = []
 
     class FakeRunner:
-        def __init__(self, path):
+        def __init__(self, args):
+            pass
+
+        def close(self):
             pass
 
         def run(self, args):
@@ -115,7 +151,7 @@ def test_identical_flow_files_share_one_assignment(tmp_path, monkeypatch):
                 "distance_1": [3.0], "time_1": [0.3],
             }).write_parquet(args[10])
 
-    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", FakeRunner)
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.SharedRoadWorker", FakeRunner)
     with asset_resolution_context() as resolver:
         prepare_shared_congested_costs([first, second, third])
         assert len(calls) == 1
@@ -145,22 +181,29 @@ def test_route_requests_are_shared_only_for_matching_routing_inputs(tmp_path, mo
     for name in ("first", "second", "third", "fourth", "fifth", "sixth"):
         (tmp_path / (name + ".parquet")).write_bytes(name.encode())
     route_paths = []
+    workers = []
 
     class FakeRunner:
-        def __init__(self, path):
+        def __init__(self, args):
+            workers.append(self)
+
+        def close(self):
             pass
 
         def run(self, args):
             route_paths.append(Path(args[-1]))
             pl.DataFrame({"from": [1], "to": [2], "distance_0": [1.0], "time_0": [0.1]}).write_parquet(args[10])
 
-    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", FakeRunner)
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.SharedRoadWorker", FakeRunner)
     with asset_resolution_context():
         for item in (first, second, different_graph, different_distance, different_zones, different_assignment):
             prepare_shared_congested_costs([item])
     assert route_paths[0] == route_paths[1]
     assert route_paths[0] == route_paths[5]
     assert len({route_paths[0], route_paths[2], route_paths[3], route_paths[4]}) == 4
+    # The first two updates have the same inputs and use one worker; later
+    # different routing or assignment inputs start a fresh one.
+    assert len(workers) == 5
 
 
 def test_incompatible_networks_are_not_batched(tmp_path, monkeypatch):
@@ -172,21 +215,80 @@ def test_incompatible_networks_are_not_batched(tmp_path, monkeypatch):
     (tmp_path / "first.parquet").write_bytes(b"first")
     (tmp_path / "second.parquet").write_bytes(b"second")
     calls = []
+    workers = []
+    closed = []
 
     class FakeRunner:
-        def __init__(self, path):
-            pass
+        def __init__(self, args):
+            workers.append(self)
+
+        def close(self):
+            closed.append(self)
 
         def run(self, args):
             calls.append(args)
             assert json.loads(Path(args[12]).read_text(encoding="utf-8")) == [""]
             pl.DataFrame({"from": [1], "to": [2], "distance_0": [1.0], "time_0": [0.1]}).write_parquet(args[10])
 
-    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", FakeRunner)
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.SharedRoadWorker", FakeRunner)
     with asset_resolution_context() as resolver:
         prepare_shared_congested_costs([first, second])
         assert len(calls) == 2
         assert len(resolver.in_memory_values) == 2
+        assert len(workers) == 2
+        assert closed == workers[:1]
+    assert closed == workers
+
+
+def test_failed_road_worker_is_closed_and_not_reused(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setattr(PathTravelCosts, "asset_for_flow_asset", lambda self, flow: SimpleNamespace(congested_costs=flow.table))
+    iteration, table = make_iteration_costs(tmp_path, "first")
+    (tmp_path / "first.parquet").write_bytes(b"flow")
+    closed = []
+
+    class FailedWorker:
+        def __init__(self, args):
+            pass
+
+        def run(self, args):
+            raise RuntimeError("road worker failed")
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.SharedRoadWorker", FailedWorker)
+    with asset_resolution_context() as resolver:
+        with pytest.raises(RuntimeError, match="road worker failed"):
+            prepare_shared_congested_costs([iteration])
+        assert resolver.shared_road_worker is None
+        assert resolver.shared_road_worker_key is None
+        assert asset_graph_key(table) not in resolver.in_memory_values
+    assert closed == [True]
+
+
+def test_idle_watchdog_uses_standard_r_runner(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setenv("MOBILITY_R_IDLE_TIMEOUT_SECONDS", "10")
+    monkeypatch.setattr(PathTravelCosts, "asset_for_flow_asset", lambda self, flow: SimpleNamespace(congested_costs=flow.table))
+    iteration, table = make_iteration_costs(tmp_path, "first")
+    (tmp_path / "first.parquet").write_bytes(b"flow")
+    calls = []
+
+    class Runner:
+        def __init__(self, script):
+            pass
+
+        def run(self, args):
+            calls.append(True)
+            pl.DataFrame({"from": [1], "to": [2], "distance_0": [1.0], "time_0": [0.1]}).write_parquet(args[10])
+
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", Runner)
+    with asset_resolution_context() as resolver:
+        prepare_shared_congested_costs([iteration])
+        assert resolver.shared_road_worker is None
+        assert asset_graph_key(table) in resolver.in_memory_values
+    assert calls == [True]
 
 
 def test_all_identical_flows_use_a_single_assignment(tmp_path, monkeypatch):
@@ -199,14 +301,17 @@ def test_all_identical_flows_use_a_single_assignment(tmp_path, monkeypatch):
     calls = []
 
     class FakeRunner:
-        def __init__(self, path):
+        def __init__(self, args):
+            pass
+
+        def close(self):
             pass
 
         def run(self, args):
             calls.append(json.loads(Path(args[3]).read_text(encoding="utf-8")))
             pl.DataFrame({"from": [1], "to": [2], "distance_0": [1.0], "time_0": [0.1]}).write_parquet(args[10])
 
-    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", FakeRunner)
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.SharedRoadWorker", FakeRunner)
     with asset_resolution_context() as resolver:
         prepare_shared_congested_costs([first, second])
         assert len(calls) == 1 and len(calls[0]) == 1
@@ -238,7 +343,10 @@ def test_single_scenario_shares_assigned_graph_with_carpool(tmp_path, monkeypatc
     calls = []
 
     class FakeRunner:
-        def __init__(self, path):
+        def __init__(self, args):
+            pass
+
+        def close(self):
             pass
 
         def run(self, args):
@@ -247,7 +355,7 @@ def test_single_scenario_shares_assigned_graph_with_carpool(tmp_path, monkeypatc
             graph_path.write_bytes(b"assigned graph")
             pl.DataFrame({"from": [1], "to": [2], "distance_0": [1.0], "time_0": [0.1]}).write_parquet(args[10])
 
-    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", FakeRunner)
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.SharedRoadWorker", FakeRunner)
     with asset_resolution_context() as resolver:
         prepare_shared_congested_costs([iteration])
         graph_path = car_costs.get_congested_graph_path(iteration.congestion_flows.get())
@@ -304,7 +412,10 @@ def test_only_carpool_scenario_writes_a_graph(tmp_path, monkeypatch):
     (tmp_path / "second.parquet").write_bytes(b"second")
 
     class FakeRunner:
-        def __init__(self, path):
+        def __init__(self, args):
+            pass
+
+        def close(self):
             pass
 
         def run(self, args):
@@ -316,7 +427,7 @@ def test_only_carpool_scenario_writes_a_graph(tmp_path, monkeypatch):
                 "distance_1": [2.0], "time_1": [0.2],
             }).write_parquet(args[10])
 
-    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", FakeRunner)
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.SharedRoadWorker", FakeRunner)
     with asset_resolution_context() as resolver:
         prepare_shared_congested_costs([first, second])
         assert len(resolver.congested_graph_paths) == 1
@@ -345,13 +456,16 @@ def test_missing_requested_graph_does_not_publish_costs(tmp_path, monkeypatch):
     (tmp_path / "first.parquet").write_bytes(b"flow")
 
     class FakeRunner:
-        def __init__(self, path):
+        def __init__(self, args):
+            pass
+
+        def close(self):
             pass
 
         def run(self, args):
             pl.DataFrame({"from": [1], "to": [2], "distance_0": [1.0], "time_0": [0.1]}).write_parquet(args[10])
 
-    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", FakeRunner)
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.SharedRoadWorker", FakeRunner)
     with asset_resolution_context() as resolver:
         with pytest.raises(RuntimeError, match="did not produce the requested graph"):
             prepare_shared_congested_costs([iteration])
