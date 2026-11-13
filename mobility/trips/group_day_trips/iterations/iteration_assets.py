@@ -628,12 +628,26 @@ class IterationTransportCostsAsset(InMemoryAsset):
         self._profile_costs_cache_key = None
 
     @trace_simulation_step("profile transport costs")
-    def get_profile_costs_by_od_and_mode(self, profiles, metrics):
+    def get_profile_costs_by_od_and_mode(self, profiles, metrics, *, od_pairs=None):
         """Return profile-specific costs with this iteration's congestion state."""
         cache_key = tuple(
             (profile_id, tuple(asset.inputs_hash for asset in assets))
             for profile_id, assets in sorted(profiles.items())
         )
+        if od_pairs is not None:
+            if self._profile_costs_cache_key == cache_key and self._profile_costs_cache is not None:
+                return self._profile_costs_cache.select(
+                    ["from", "to", "mode", "utility_profile_id"] + list(metrics)
+                ).join(od_pairs, on=["utility_profile_id", "from", "to"], how="semi")
+            road_flows = self.congestion_flows.get()
+            effective_transport_costs = self.transport_costs.asset_for_road_flows(road_flows)
+            default_costs = (
+                self.get_costs_by_od_and_mode(["cost", "distance", "time"])
+                if road_flows is not None else None
+            )
+            return effective_transport_costs.get_profile_costs_by_od_and_mode(
+                profiles, metrics, default_costs=default_costs, od_pairs=od_pairs,
+            )
         if self._profile_costs_cache_key != cache_key:
             road_flows = self.congestion_flows.get()
             effective_transport_costs = self.transport_costs.asset_for_road_flows(
@@ -717,7 +731,7 @@ class IterationStateAsset(Asset):
         self.coordinated_time_sequence_steps: pl.DataFrame | None = None
         inputs = {
             # State identity includes the shared search and full cohort.
-            "version": 28,
+            "version": 37,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,

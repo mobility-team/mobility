@@ -44,6 +44,9 @@ class Metric(FileAsset):
         self.planned_outputs = tuple(planned_outputs)
         self.selected_iterations = tuple(selected_iterations)
         self.compute_iteration = compute_iteration
+        # An explicitly step-scoped calculation reads live iteration tables,
+        # including at the final step, rather than post-update final costs.
+        self.step_scoped = False
         # Some metrics can retain small per-replication totals and combine
         # them only after every independent simulation lane has finished.
         self.compute_lane = None

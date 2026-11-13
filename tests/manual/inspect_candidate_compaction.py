@@ -76,7 +76,7 @@ if os.environ.get("MOBILITY_INSPECT_REFERENCE_HISTORY") == "1":
 
     def evaluate_without_reuse(updater, *args, **kwargs):
         return evaluate(updater, *args, **{
-            **kwargs, "inner_plan_cache": None, "compact_plan_id_index": None, "scoring_lookup": None,
+            **kwargs, "compact_plan_id_index": None, "scoring_lookup": None,
         })
 
     PlanUpdater.evaluate_candidate_pool = evaluate_without_reuse

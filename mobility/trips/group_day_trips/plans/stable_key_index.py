@@ -75,6 +75,8 @@ class StableKeyIndex:
         self,
         rows: pl.DataFrame | pl.LazyFrame,
         previous_index: pl.DataFrame | None,
+        *,
+        additional_keys: pl.DataFrame | None = None,
     ) -> tuple[pl.DataFrame | pl.LazyFrame, pl.DataFrame]:
         """Attach ids to rows and return the updated key-index table."""
         input_was_lazy = isinstance(rows, pl.LazyFrame)
@@ -83,7 +85,17 @@ class StableKeyIndex:
         # new IDs, in their usual sorted order.
         key_query = rows.select(self.key_cols).unique()
         key_frame = key_query.collect(engine="streaming") if input_was_lazy else key_query
-        if key_frame.null_count().row(0) != tuple([0] * len(self.key_cols)):
+        if additional_keys is not None:
+            # Assign IDs to the first set before the additional keys, just as
+            # two successive extensions would, while validating the index once.
+            extra = additional_keys.select(self.key_cols).unique().join(
+                key_frame, on=self.key_cols, how="anti"
+            )
+            key_frame = pl.concat([
+                key_frame.with_columns(_key_order=pl.lit(0, dtype=pl.UInt8)),
+                extra.with_columns(_key_order=pl.lit(1, dtype=pl.UInt8)),
+            ])
+        if key_frame.select(self.key_cols).null_count().row(0) != tuple([0] * len(self.key_cols)):
             raise ValueError(f"Index keys cannot contain nulls: {self.key_cols}")
 
         if previous_index is None:
@@ -96,7 +108,9 @@ class StableKeyIndex:
             previous_index.select(self.key_cols),
             on=self.key_cols,
             how="anti",
-        ).sort(self.key_cols)
+        ).sort((["_key_order"] if additional_keys is not None else []) + self.key_cols)
+        if additional_keys is not None:
+            missing_keys = missing_keys.drop("_key_order")
 
         max_index = previous_index[self.index_col].max()
         next_index = self.first_new_id if max_index is None else int(max_index) + 1

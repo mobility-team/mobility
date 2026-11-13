@@ -103,10 +103,10 @@ def allocation_od_mode_flows(
     return (
         allocation.lazy()
         .filter(pl.col("mode_seq_id") != 0)
-        .select(PLAN_KEY_COLS + ["n_persons"])
+        .select("plan_id", "n_persons")
         .join(
-            possible_plan_steps.lazy().select(PLAN_KEY_COLS + OD_MODE_COLUMNS),
-            on=PLAN_KEY_COLS,
+            possible_plan_steps.lazy().select(["plan_id"] + OD_MODE_COLUMNS),
+            on="plan_id",
             how="left",
         )
         .group_by(OD_MODE_COLUMNS)

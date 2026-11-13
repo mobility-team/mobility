@@ -300,6 +300,7 @@ class GroupDayTripsResultMetrics:
                 compute=compute,
                 compute_iteration=compute_iteration,
             )
+            metric.step_scoped = not self.results.uses_last_iteration(steps)
             # Keep one value per seed and group until all lanes have run. This
             # preserves zero-filled groups and paired scenario comparisons.
             reference_kind = self._reference_kind(reference)

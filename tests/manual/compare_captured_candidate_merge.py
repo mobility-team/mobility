@@ -19,7 +19,7 @@ import psutil
 
 from mobility.trips.group_day_trips.core.multi_scenario import CANDIDATE_ID_COLS
 from mobility.trips.group_day_trips.plans.candidate_plan_steps import CandidatePlanStepsAsset
-from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePoolAsset
+from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePool
 
 
 parser = argparse.ArgumentParser()
@@ -49,7 +49,7 @@ started = perf_counter()
 try:
     if args.method == "eager":
         frames = [pl.read_parquet(path) for path in paths]
-        pool = object.__new__(SharedCandidatePoolAsset)
+        pool = object.__new__(SharedCandidatePool)
         result = pool._merge_candidate_content(frames)
     else:
         group_columns = CANDIDATE_ID_COLS + [

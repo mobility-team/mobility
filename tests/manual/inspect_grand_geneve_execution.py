@@ -8,6 +8,7 @@ start a download; a missing input is reported instead.
 import ast
 import _thread
 import gc
+import hashlib
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ import shutil
 import sys
 import tempfile
 import threading
+from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 
@@ -23,18 +25,24 @@ import pandas as pd
 import psutil
 
 from mobility.runtime.assets.resolver import AssetResolver, get_current_asset_resolver
+from mobility.runtime.scenarios import Scenario, Scenarios
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.runtime.temporary import managed_temporary_disk_usage
 import mobility.trips.group_day_trips.core.multi_scenario_run as coordinator_module
 from mobility.trips.group_day_trips.core.multi_scenario_run import MultiScenarioRunAsset
+from mobility.trips.group_day_trips.results.simulation_runner import SimulationRunner
 from mobility.trips.group_day_trips.core.performance_trace import _ACTIVE_TRACE, simulation_step, trace_simulation_step
 from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
+from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePool
 from mobility.trips.group_day_trips.plans.plan_schedule_updater import PlanScheduleUpdater
+from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+import mobility.trips.group_day_trips.plans.mode_sequence_search.mode_sequences as mode_sequences_module
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangePhase, BehaviorChangeScope
 from mobility.trips.group_day_trips.results.assets.metric import Metric
 from mobility.transport.costs.path.path_travel_costs import PathTravelCostsTable
+from mobility.transport.costs.transport_costs import TransportCosts
 from mobility.transport.costs.path.path_generalized_cost import PathGeneralizedCost
 from mobility.transport.modes.public_transport.public_transport_generalized_cost import PublicTransportGeneralizedCost
 from mobility.transport.graphs.congested.congested_path_graph import CongestedPathGraph
@@ -100,6 +108,18 @@ class CurrentStepNames(ast.NodeTransformer):
                 keys=[ast.Constant(value="max_search_batches")],
                 values=[ast.Constant(value=int(os.environ["MOBILITY_PROBE_BATCHES"]))],
             )))
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "by_scenario_and_step"
+            and "MOBILITY_PROBE_SCENARIO_CHANGE_STEP" in os.environ
+        ):
+            for keyword in node.keywords:
+                if keyword.arg == "carbon_tax" and isinstance(keyword.value, ast.Dict):
+                    for index, key in enumerate(keyword.value.keys):
+                        if isinstance(key, ast.Constant) and key.value == 5:
+                            keyword.value.keys[index] = ast.Constant(
+                                value=int(os.environ["MOBILITY_PROBE_SCENARIO_CHANGE_STEP"])
+                            )
         if isinstance(node.func, ast.Attribute) and node.func.attr == "set_params":
             for keyword in node.keywords:
                 if keyword.arg == "logging_level":
@@ -122,6 +142,253 @@ original_expand_evaluation = PlanUpdater.expand_context_evaluation
 original_gtfs_hash = GTFSData.file_sha256
 gtfs_hash_timings = {}
 mode_cost_timings = {}
+
+if os.environ.get("MOBILITY_PROBE_FORCE_FINAL_COSTS") == "1":
+    original_final_requirements = SimulationRunner._final_requirements
+
+    def force_final_costs(requests, last_step):
+        _, flows = original_final_requirements(requests, last_step)
+        return True, flows
+
+    SimulationRunner._final_requirements = staticmethod(force_final_costs)
+
+if os.environ.get("MOBILITY_PROBE_NO_CATALOGUE_SHARING") == "1":
+    original_pool_build = SharedCandidatePool.build
+
+    def build_without_catalogue_sharing(pool):
+        result = original_pool_build(pool)
+        if result.candidate_catalogue is not None:
+            return replace(result, candidate_catalogue=replace(
+                result.candidate_catalogue, equivalent_runs=None,
+            ))
+        return result
+
+    SharedCandidatePool.build = build_without_catalogue_sharing
+
+if (os.environ.get("MOBILITY_PROBE_EVALUATION_GROUPS") == "1"
+        or os.environ.get("MOBILITY_PROBE_NO_EVALUATION_SHARING") == "1"):
+    original_group_candidate_evaluations = MultiScenarioRunAsset._group_candidate_evaluations
+
+    def inspect_evaluation_groups(coordinator, **kwargs):
+        groups = original_group_candidate_evaluations(coordinator, **kwargs)
+        print("CANDIDATE_EVALUATION_GROUPS", kwargs["iteration"], [
+            [coordinator.runs[run_key].scenario for run_key in group] for group in groups
+        ], flush=True)
+        if os.environ.get("MOBILITY_PROBE_EVALUATION_INPUTS") == "1":
+            pool = kwargs["pool"]
+            for key in coordinator.scenarios:
+                state = kwargs["states"][key]
+                parts = (pool.candidate_step_parts_by_run_key or {}).get(key)
+                history = state.candidate_plan_steps
+                print("CANDIDATE_EVALUATION_INPUTS", coordinator.runs[key].scenario, {
+                    "shared_steps": id(parts[0] if parts else pool.candidate_plan_steps_by_run_key[key]),
+                    "active_steps": id(parts[1] if parts else None),
+                    "factored_steps": id((pool.scoring_candidate_steps_by_run_key or {}).get(key)),
+                    "history": tuple(id(getattr(history, name, None)) for name in ("steps", "membership", "unit_map")),
+                    "current_plans": id(state.current_plans),
+                    "compact_index": id(kwargs["compact_indices"].get(key)),
+                    "contexts": id(kwargs["scoring_setups"][key][0]),
+                    "forced_contexts": id(kwargs["forced_contexts"].get(key)),
+                }, flush=True)
+        if os.environ.get("MOBILITY_PROBE_NO_EVALUATION_SHARING") == "1":
+            return [[run_key] for group in groups for run_key in group]
+        return groups
+
+    MultiScenarioRunAsset._group_candidate_evaluations = inspect_evaluation_groups
+
+if os.environ.get("MOBILITY_PROBE_POOL_ATTACHMENT_SHARING") == "1":
+    original_build_pool_for_attachment = SharedCandidatePool.build
+
+    def inspect_pool_attachments(pool):
+        result = original_build_pool_for_attachment(pool)
+        groups = {}
+        for source in pool.sources:
+            factored = (result.scoring_candidate_steps_by_run_key or {}).get(source.run_key)
+            if factored is not None:
+                groups.setdefault(id(factored), []).append(source.scenario)
+        print("POOL_ATTACHMENT_GROUPS", pool.iteration, list(groups.values()), flush=True)
+        return result
+
+    SharedCandidatePool.build = inspect_pool_attachments
+
+if os.environ.get("MOBILITY_PROBE_POOL_PROVENANCE") == "1":
+    original_build_pool_for_provenance = SharedCandidatePool.build
+
+    def inspect_pool_provenance(pool):
+        first = pool.sources[0]
+        for source in pool.sources:
+            key, first_key = source.run_key, first.run_key
+            print("POOL_PROVENANCE", pool.iteration, source.scenario, {
+                "previous_state_asset": source.previous_state.inputs_hash == first.previous_state.inputs_hash,
+                "destination_asset": source.destination_sequences.inputs_hash == first.destination_sequences.inputs_hash,
+                "mode_asset": source.mode_sequences.inputs_hash == first.mode_sequences.inputs_hash,
+                "previous_candidates": pool.previous_candidates_by_run_key.get(key) is pool.previous_candidates_by_run_key.get(first_key),
+                "destination_index": pool.previous_destination_indices.get(key) is pool.previous_destination_indices.get(first_key),
+                "mode_index": pool.previous_mode_indices.get(key) is pool.previous_mode_indices.get(first_key),
+                "schedule": pool.previous_time_sequence_steps.get(key) is pool.previous_time_sequence_steps.get(first_key),
+            }, flush=True)
+        return original_build_pool_for_provenance(pool)
+
+    SharedCandidatePool.build = inspect_pool_provenance
+
+if os.environ.get("MOBILITY_PROBE_POOL_IDENTITY_COST") == "1":
+    original_build_pool_for_identity = SharedCandidatePool.build
+
+    def measure_old_pool_identity(pool):
+        frames = [
+            *pool.previous_time_sequence_steps.values(),
+            *pool.previous_candidates_by_run_key.values(),
+            *pool.previous_destination_indices.values(),
+            *pool.previous_mode_indices.values(),
+        ]
+        if pool.previous_catalogue is not None:
+            frames.extend(getattr(pool.previous_catalogue, name) for name in (
+                "plans", "steps", "variants", "membership",
+            ))
+        tables = []
+        for frame in frames:
+            if isinstance(frame, CompactCandidateSteps):
+                tables.extend((frame.steps, frame.membership, frame.unit_map))
+            else:
+                tables.append(frame)
+        start = perf_counter()
+        for table in tables:
+            if table is not None:
+                digest = hashlib.sha256()
+                digest.update(repr(tuple((name, str(dtype)) for name, dtype in table.schema.items())).encode())
+                digest.update(table.hash_rows(seed=0).to_numpy().tobytes())
+                digest.digest()
+        print("OLD_POOL_IDENTITY_COST", pool.iteration,
+              "seconds", round(perf_counter() - start, 4),
+              "logical_bytes", sum(table.estimated_size() for table in tables if table is not None),
+              "tables", sum(table is not None for table in tables), flush=True)
+        return original_build_pool_for_identity(pool)
+
+    SharedCandidatePool.build = measure_old_pool_identity
+
+if os.environ.get("MOBILITY_PROBE_SCORING_LOOKUPS") == "1":
+    original_build_scoring_lookups = MultiScenarioRunAsset._build_scoring_lookups
+
+    def inspect_scoring_lookups(coordinator, *args, **kwargs):
+        lookups = original_build_scoring_lookups(coordinator, *args, **kwargs)
+        groups = {}
+        for run_key, lookup in lookups.items():
+            if lookup is not None:
+                groups.setdefault(id(lookup), []).append(coordinator.runs[run_key].scenario)
+        print("SCORING_LOOKUP_GROUPS", list(groups.values()), flush=True)
+        return lookups
+
+    MultiScenarioRunAsset._build_scoring_lookups = inspect_scoring_lookups
+
+if (os.environ.get("MOBILITY_PROBE_COMPARE_SCENARIO_EVALUATIONS") == "1"
+        or os.environ.get("MOBILITY_PROBE_SHARE_EQUAL_EVALUATIONS") == "1"):
+    original_evaluate_candidate_pool = PlanUpdater.evaluate_candidate_pool
+    evaluation_inputs_by_batch = {}
+    evaluation_results_by_batch = {}
+
+    def compare_scenario_inputs(updater, **kwargs):
+        active = _ACTIVE_TRACE.get()
+        labels = active[2] if active else {}
+        key = (labels.get("step"), labels.get("search_batch"))
+        factored = kwargs.get("factored_candidate_steps")
+        contexts = kwargs.get("scoring_contexts")
+        frames = {name: kwargs.get(name) for name in (
+            "current_plans", "shared_active_plan_steps", "demand_groups", "survey_plan_steps",
+            "destination_saturation", "activity_dur", "home_night_dur", "stay_home_plan",
+            "compact_plan_id_index",
+        )}
+        if factored is not None:
+            frames["physical_steps"] = factored.steps.sort(
+                [column for column in PLAN_KEY_COLS if column not in ("demand_group_id", "demand_subgroup_id")]
+                + ["seq_step_index"]
+            )
+            frames["membership"] = factored.membership.collect(engine="streaming").sort(
+                factored.membership.collect_schema().names()
+            )
+        if contexts is not None:
+            frames["context_object_groups"] = contexts.demand_groups
+            frames["context_object_units"] = contexts.unit_map
+            frames["context_groups"] = contexts.demand_groups.sort("demand_group_id", "demand_subgroup_id")
+            frames["context_units"] = contexts.unit_map.sort("demand_group_id", "demand_subgroup_id")
+        signature = (getattr(kwargs["transport_costs"], "inputs_hash", None), frames)
+        previous = evaluation_inputs_by_batch.setdefault(key, signature)
+        differences = [name for name, frame in frames.items() if not (
+            frame is previous[1].get(name) or
+            isinstance(frame, pl.DataFrame) and isinstance(previous[1].get(name), pl.DataFrame)
+            and frame.equals(previous[1][name])
+        )]
+        print("SCENARIO_EVALUATION_INPUTS", key, labels.get("scenario"),
+              "cost_identity_equal", signature[0] == previous[0], "different_tables", differences,
+              "same_objects", [name for name, frame in frames.items() if frame is previous[1].get(name)],
+              flush=True)
+        if (os.environ.get("MOBILITY_PROBE_SHARE_EQUAL_EVALUATIONS") == "1"
+                and key in evaluation_results_by_batch and signature[0] == previous[0]
+                and not differences and factored is not None
+                and kwargs.get("candidate_plan_steps") is None
+                and kwargs.get("shared_active_plan_steps") is None
+                and kwargs.get("reachable_scoring_scope") is None
+                and kwargs["resolved_activity_parameters"] == previous[2]
+                and kwargs["arrival_time_rigidity_by_activity"] == previous[3]
+                and kwargs["parameters"].plan_update == previous[4]):
+            print("SCENARIO_EVALUATION_REUSED", key, labels.get("scenario"), flush=True)
+            return evaluation_results_by_batch[key]
+        result = original_evaluate_candidate_pool(updater, **kwargs)
+        if key not in evaluation_results_by_batch:
+            evaluation_results_by_batch[key] = result
+            evaluation_inputs_by_batch[key] = (
+                signature[0], frames, kwargs["resolved_activity_parameters"],
+                kwargs["arrival_time_rigidity_by_activity"], kwargs["parameters"].plan_update,
+            )
+        return result
+
+    PlanUpdater.evaluate_candidate_pool = compare_scenario_inputs
+
+if os.environ.get("MOBILITY_PROBE_SCORING_COSTS") == "1":
+    original_scoring = PlanUpdater.compute_plan_steps_candidates_utility
+    original_profile_costs = TransportCosts.get_profile_costs_by_od_and_mode
+
+    def report_scoring_candidates(updater, **kwargs):
+        used = kwargs["candidates"].select("from", "to", "mode").unique().collect(engine="streaming")
+        print("SCORING_OD_MODES", used.height, flush=True)
+        return original_scoring(updater, **kwargs)
+
+    def report_profile_costs(costs, profiles, metrics, **kwargs):
+        result = original_profile_costs(costs, profiles, metrics, **kwargs)
+        active = _ACTIVE_TRACE.get()
+        labels = active[2] if active else {}
+        print("PROFILE_COST_ROWS", labels.get("step"), labels.get("search_batch"),
+              labels.get("scenario"), "profiles", len(profiles), "rows", result.height, flush=True)
+        return result
+
+    PlanUpdater.compute_plan_steps_candidates_utility = report_scoring_candidates
+    TransportCosts.get_profile_costs_by_od_and_mode = report_profile_costs
+
+if os.environ.get("MOBILITY_PROBE_MODE_REUSE_DIAGNOSTIC") == "1":
+    original_mode_search = mode_sequences_module.run_rust_mode_sequence_search
+    seen_mode_chains = {}
+
+    def report_mode_chains(**kwargs):
+        active = _ACTIVE_TRACE.get()
+        labels = active[2] if active else {}
+        key = (labels.get("step"), labels.get("scenario"))
+        chains = kwargs["unique_destination_chains"].select("utility_profile_id", "locations").unique()
+        previous = seen_mode_chains.get(key)
+        repeated = chains.join(previous, on=["utility_profile_id", "locations"], how="semi").height if previous is not None else 0
+        seen_mode_chains[key] = chains if previous is None else pl.concat([previous, chains]).unique()
+        print("MODE_CHAIN_REUSE", key, "batch", labels.get("search_batch"),
+              "input", kwargs["unique_destination_chains"].height,
+              "unique", chains.height, "previously_seen", repeated, flush=True)
+        return original_mode_search(**kwargs)
+
+    mode_sequences_module.run_rust_mode_sequence_search = report_mode_chains
+
+if os.environ.get("MOBILITY_PROBE_NO_DEST_PROBABILITY_REUSE") == "1":
+    original_destination_init = DestinationSequences.__init__
+
+    def destination_without_probability_reuse(asset, **kwargs):
+        original_destination_init(asset, **{**kwargs, "sampling_probabilities": None})
+
+    DestinationSequences.__init__ = destination_without_probability_reuse
 
 if os.environ.get("MOBILITY_PROBE_TRACE_SHARED_ROAD") == "1":
     original_record_r_output = RScriptRunner._record_output
@@ -166,6 +433,10 @@ if os.environ.get("MOBILITY_PROBE_CAPTURE_SHARED_ROAD") == "1":
         captured_args = list(map(str, args))
         captured_args[3] = str(manifest)
         captured_args[10] = str(captured / "output.parquet")
+        graph_manifest = captured / "graphs.json"
+        graph_manifest.write_text(Path(args[12]).read_text(encoding="utf-8"), encoding="utf-8")
+        captured_args[12] = str(graph_manifest)
+        captured_args[-1] = str(captured / "route-requests.parquet")
         (captured / "args.json").write_text(json.dumps(captured_args), encoding="utf-8")
         result = original_run_r_script(runner, args)
         shutil.copyfile(args[10], captured / "reference.parquet")
@@ -378,6 +649,16 @@ def report_candidate_pool(coordinator, *args, **kwargs):
 
 def report_live_state(coordinator, iteration, states, **kwargs):
     assets, next_states, search = original_advance(coordinator, iteration, states, **kwargs)
+    if os.environ.get("MOBILITY_PROBE_CAPTURE_STATE") == "1":
+        state_dir = work / "state-comparison"
+        state_dir.mkdir(exist_ok=True)
+        replication = coordinator.runs[next(iter(next_states))].replication
+        prefix = f"replication-{replication}-step-{iteration}"
+        search["pool"].candidate_ids.write_parquet(state_dir / f"{prefix}-candidate-ids.parquet")
+        for run_key, state in next_states.items():
+            state.current_plans.sort(PLAN_KEY_COLS).write_parquet(state_dir / f"{prefix}-run-{run_key}-plans.parquet")
+            digest = hashlib.sha256(repr(state.rng_state).encode("utf-8")).hexdigest()
+            (state_dir / f"{prefix}-run-{run_key}-rng.txt").write_text(digest, encoding="utf-8")
     for name in ("time_sequence_steps", "current_plans", "current_plan_steps", "plan_id_index",
                  "destination_sequence_index", "mode_sequence_index"):
         tables = [getattr(state, name) for state in next_states.values()
@@ -492,7 +773,9 @@ namespace = {"__file__": str(source_path), "__name__": "grand_geneve_probe"}
 exec(compile(tree, str(source_path), "exec"), namespace)
 
 model = namespace["pop_group_day_trips"]
-if "MOBILITY_PROBE_MODE_FROM_STEP" in os.environ:
+if os.environ.get("MOBILITY_PROBE_FULL_REPLANNING") == "1":
+    model.parameters.behavior_change.phases = None
+elif "MOBILITY_PROBE_MODE_FROM_STEP" in os.environ:
     model.parameters.behavior_change.phases = [BehaviorChangePhase(
         start_step=int(os.environ["MOBILITY_PROBE_MODE_FROM_STEP"]),
         scope=BehaviorChangeScope.MODE_REPLANNING,
@@ -519,9 +802,21 @@ if os.environ.get("MOBILITY_PROBE_EXPLAIN_FALLBACK") == "1":
     logging.getLogger("mobility.trips.group_day_trips.plans.scoring_contexts").setLevel(logging.DEBUG)
 scenario_names = os.environ.get("MOBILITY_PROBE_SCENARIOS", "default,carbon_tax").split(",")
 scenario_names = [name.strip() for name in scenario_names if name.strip()]
+extra_scenarios = int(os.environ.get("MOBILITY_PROBE_EXTRA_BASELINE_SCENARIOS", "0"))
+if extra_scenarios:
+    additions = [Scenario(name=f"probe_baseline_{index}") for index in range(1, extra_scenarios + 1)]
+    model.scenarios = Scenarios.for_setup(
+        Scenarios(list(model.scenarios) + additions), modes=model.modes,
+        activities=model.activities, parameters=model.parameters,
+    )
+    scenario_names.extend(scenario.name for scenario in additions)
 replication = int(os.environ.get("MOBILITY_PROBE_REPLICATION", "0"))
+replications = (
+    [int(value) for value in os.environ["MOBILITY_PROBE_REPLICATIONS"].split(",")]
+    if "MOBILITY_PROBE_REPLICATIONS" in os.environ else None
+)
 print("PROBE_SETTINGS", {
-    "scenarios": scenario_names, "replication": replication,
+    "scenarios": scenario_names, "replication": replication if replications is None else replications,
     "steps": model.parameters.run.n_steps,
     "activity_sequences": model.parameters.activity_sequences.k_activity_sequences,
     "destination_sequences": model.parameters.destination_sequences.k_destination_sequences,
@@ -536,15 +831,21 @@ print("PROBE_SETTINGS", {
     "trace": os.environ.get("MOBILITY_PROBE_TRACE", "1") == "1",
     "measure_existing_gtfs_hashes": os.environ.get("MOBILITY_PROBE_MEASURE_HASHES") == "1",
     "mode_from_step": os.environ.get("MOBILITY_PROBE_MODE_FROM_STEP"),
+    "full_replanning": os.environ.get("MOBILITY_PROBE_FULL_REPLANNING") == "1",
+    "scenario_change_step": os.environ.get("MOBILITY_PROBE_SCENARIO_CHANGE_STEP"),
+    "destination_probability_reuse": os.environ.get("MOBILITY_PROBE_NO_DEST_PROBABILITY_REUSE") != "1",
     "score_all_candidates": os.environ.get("MOBILITY_PROBE_SCORE_ALL") == "1",
     "late_history_compaction": os.environ.get("MOBILITY_PROBE_LATE_HISTORY") == "1",
 }, flush=True)
-results = model.results("weekday", scenarios=scenario_names, replication=replication)
+results = model.results(
+    "weekday", scenarios=scenario_names,
+    replication=replication if replications is None else None, replications=replications,
+)
 metric = results.metrics.trip_count(by_variable="mode", steps="all")
 metric.cache_path = work / "trip-count.parquet"
 metric.hash_path = work / "trip-count.inputs-hash"
 diagnostics = results.tables.adaptive_search_diagnostics(
-    columns=["scenario", "outer_step", "unique_pool_size"]
+    columns=["scenario", "replication", "outer_step", "unique_pool_size"]
 )
 started = perf_counter()
 stop_monitor = threading.Event()
@@ -593,7 +894,10 @@ def monitor_resources():
 
 threading.Thread(target=monitor_resources, daemon=True).start()
 try:
-    outputs = results.get_all(trips=metric, diagnostics=diagnostics)
+    requests = {"diagnostics": diagnostics}
+    if os.environ.get("MOBILITY_PROBE_DIAGNOSTICS_ONLY") != "1":
+        requests["trips"] = metric
+    outputs = results.get_all(**requests)
 finally:
     stop_monitor.set()
     print("PROJECT_MANAGED_TEMPORARY_PEAK_BYTES", resource_samples["managed_temporary_peak_bytes"], flush=True)
@@ -611,7 +915,8 @@ finally:
              in mode_cost_timings.items()), key=lambda row: -row[3],
         ), flush=True)
 elapsed = perf_counter() - started
-print("TRIP_COUNTS", outputs["trips"].to_dicts(), flush=True)
+if "trips" in outputs:
+    print("TRIP_COUNTS", outputs["trips"].to_dicts(), flush=True)
 print("CANDIDATE_POOL", outputs["diagnostics"].collect().to_dicts(), flush=True)
 outputs["diagnostics"].close()
 trace_path = work / "trace.jsonl"

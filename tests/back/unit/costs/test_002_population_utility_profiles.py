@@ -159,6 +159,28 @@ def test_profile_costs_reuse_provided_default_and_keep_segment_overrides():
     assert _GeneralizedCost.calls == 1  # The overridden profile still needs its own cost.
 
 
+def test_profile_costs_can_be_limited_to_requested_pairs():
+    transport_costs = _transport_costs(GeneralizedCostParameters(
+        cost_constant=ParameterValue.by_population_segment(default=1.0, segment_values={"pupils": 3.0}),
+        cost_of_distance=2.0,
+    ))
+    groups = pl.DataFrame({
+        "demand_group_id": [1, 2], "demand_subgroup_id": [0, 0],
+        "population_segments": [[], ["pupils"]],
+    }, schema={"demand_group_id": pl.UInt32, "demand_subgroup_id": pl.UInt32,
+               "population_segments": pl.List(pl.String)})
+    _, profiles = transport_costs.get_utility_profiles(groups, [PopulationSegment(name="pupils", csp="8a")])
+    pairs = pl.DataFrame({"utility_profile_id": [0, 1], "from": [9, 1], "to": [9, 2]},
+                         schema={"utility_profile_id": pl.UInt32, "from": pl.Int64, "to": pl.Int64})
+    full = transport_costs.get_profile_costs_by_od_and_mode(profiles, ["cost", "time"])
+    expected = full.join(pairs, on=["utility_profile_id", "from", "to"], how="semi")
+    actual = transport_costs.get_profile_costs_by_od_and_mode(profiles, ["cost", "time"], od_pairs=pairs)
+    assert_frame_equal(actual, expected)
+    assert actual["cost"].to_list() == [23.0]
+    empty = transport_costs.get_profile_costs_by_od_and_mode(profiles, ["cost", "time"], od_pairs=pairs.head(0))
+    assert_frame_equal(empty, expected.head(0))
+
+
 def test_congested_iteration_reuses_its_default_cost_table_for_profiles():
     defaults = pl.DataFrame({
         "from": [1], "to": [2], "mode": ["car"], "cost": [3.0], "distance": [4.0], "time": [5.0],
@@ -190,6 +212,43 @@ def test_congested_iteration_reuses_its_default_cost_table_for_profiles():
     rebuilt = asset.get_profile_costs_by_od_and_mode(profiles, ["cost", "time"])
     assert len(observed) == 2
     assert_frame_equal(rebuilt, result)
+
+
+def test_filtered_iteration_costs_do_not_replace_full_profile_cache():
+    defaults = pl.DataFrame({
+        "from": [1, 3], "to": [2, 4], "mode": ["car", "car"],
+        "cost": [3.0, 7.0], "distance": [4.0, 8.0], "time": [5.0, 9.0],
+    })
+    flow = object()
+    calls = []
+
+    def profile_costs(profiles, metrics, *, default_costs, od_pairs=None):
+        calls.append(od_pairs)
+        costs = default_costs.with_columns(utility_profile_id=pl.lit(0, dtype=pl.UInt32))
+        if od_pairs is not None:
+            costs = costs.join(od_pairs, on=["utility_profile_id", "from", "to"], how="semi")
+        return costs.select(["from", "to", "mode", "utility_profile_id"] + metrics)
+
+    asset = object.__new__(IterationTransportCostsAsset)
+    asset.congestion_flows = SimpleNamespace(get=lambda: flow)
+    asset.transport_costs = SimpleNamespace(asset_for_road_flows=lambda _: SimpleNamespace(
+        get_profile_costs_by_od_and_mode=profile_costs,
+    ))
+    asset.get_costs_by_od_and_mode = lambda metrics: defaults.select(["from", "to", "mode"] + metrics)
+    asset._profile_costs_cache = None
+    asset._profile_costs_cache_key = None
+    profiles = {0: []}
+    full = asset.get_profile_costs_by_od_and_mode(profiles, ["cost"])
+    pairs = pl.DataFrame({"utility_profile_id": [0], "from": [1], "to": [2]},
+                         schema={"utility_profile_id": pl.UInt32, "from": pl.Int64, "to": pl.Int64})
+    filtered = asset.get_profile_costs_by_od_and_mode(profiles, ["cost"], od_pairs=pairs)
+    assert filtered["cost"].to_list() == [3.0]
+    assert len(calls) == 1  # The matching full table can serve the narrower request.
+    assert_frame_equal(asset.get_profile_costs_by_od_and_mode(profiles, ["cost"]), full)
+    asset.release_profile_costs()
+    assert_frame_equal(asset.get_profile_costs_by_od_and_mode(profiles, ["cost"], od_pairs=pairs), filtered)
+    assert_frame_equal(asset.get_profile_costs_by_od_and_mode(profiles, ["cost"]), full)
+    assert len(calls) == 3  # A narrow result must never replace the full cache.
 
 
 def _transport_costs(parameters):

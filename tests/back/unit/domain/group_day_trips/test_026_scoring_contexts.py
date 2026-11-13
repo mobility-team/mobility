@@ -7,14 +7,131 @@ import polars as pl
 from polars.testing import assert_frame_equal
 import pytest
 
-from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts
+from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts, ScoringMemoryBudget
 from mobility.trips.group_day_trips.plans.plan_updater import CandidatePlanEvaluation, PlanUpdater
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS, add_plan_id
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from mobility.trips.group_day_trips.core.multi_scenario_run import MultiScenarioRunAsset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.trips.group_day_trips.plans.compact_candidate_steps import (
     CompactCandidateSteps, ScoringCandidateSteps, MEMBERSHIP_COLUMNS, PLAN_COLUMNS, STEP_COLUMNS,
 )
+
+
+def test_scoring_lookups_share_only_fixed_matching_inputs():
+    coordinator = object.__new__(MultiScenarioRunAsset)
+    coordinator.run_keys = list(range(8))
+    table = pl.DataFrame({"x": [1]})
+    state = SimpleNamespace(demand_groups=table, activity_dur=table, destination_saturation=table)
+    states = {i: state for i in coordinator.run_keys}
+    states[2] = SimpleNamespace(demand_groups=table, activity_dur=table, destination_saturation=table.clone())
+    costs = object()
+    state_assets = {
+        i: SimpleNamespace(iteration=1, transport_costs=costs, inputs={"resolved_activity_parameters": {"home": 1}})
+        for i in coordinator.run_keys
+    }
+    state_assets[3].inputs = {"resolved_activity_parameters": {"home": 2}}
+    population = SimpleNamespace(transport_zones=object(), population_segments=[])
+    update = SimpleNamespace(min_activity_time_constant=1.0, use_destination_shadow_prices=False)
+    coordinator.runs = {
+        i: SimpleNamespace(population=population, parameters=SimpleNamespace(plan_update=update))
+        for i in coordinator.run_keys
+    }
+    coordinator.runs[4] = SimpleNamespace(
+        population=population,
+        parameters=SimpleNamespace(plan_update=SimpleNamespace(
+            min_activity_time_constant=2.0, use_destination_shadow_prices=False,
+        )),
+    )
+    coordinator.runs[6] = SimpleNamespace(
+        population=SimpleNamespace(transport_zones=population.transport_zones, population_segments=["different"]),
+        parameters=SimpleNamespace(plan_update=update),
+    )
+    coordinator.runs[7] = SimpleNamespace(
+        population=population,
+        parameters=SimpleNamespace(plan_update=SimpleNamespace(
+            min_activity_time_constant=1.0, use_destination_shadow_prices=True,
+        )),
+    )
+    cost_assets = {i: costs for i in coordinator.run_keys}
+    cost_assets[5] = object()
+    budget = ScoringMemoryBudget(max_bytes=1000)
+    lookups = coordinator._build_scoring_lookups(states, state_assets, cost_assets, 1, 1, budget)
+    assert lookups[0] is lookups[1] and lookups[0] is not None
+    assert all(lookups[i] is None for i in (2, 3, 4, 5, 6, 7))
+    lookups = coordinator._build_scoring_lookups(states, state_assets, cost_assets, 1, 2, budget)
+    assert lookups[0] is lookups[1]
+    assert len({id(lookups[i]) for i in (0, 2, 3, 4, 5, 6, 7)}) == 7
+    cost_assets[0] = InMemoryAsset({"test": "matching costs"})
+    cost_assets[1] = InMemoryAsset({"test": "matching costs"})
+    lookups = coordinator._build_scoring_lookups(states, state_assets, cost_assets, 1, 1, budget)
+    assert lookups[0] is lookups[1] and lookups[0] is not None
+
+
+def test_candidate_evaluations_share_only_matching_inputs():
+    coordinator = object.__new__(MultiScenarioRunAsset)
+    coordinator.scenarios = list(range(5))
+    table = pl.DataFrame({"x": [1]})
+    state = SimpleNamespace(
+        candidate_plan_steps=None, current_plans=table, current_plan_steps=table,
+        demand_groups=table, destination_saturation=table, activity_dur=table,
+        home_night_dur=table, stay_home_plan=table,
+    )
+    states = {key: state for key in coordinator.scenarios}
+    costs = object()
+    state_assets = {
+        key: SimpleNamespace(
+            iteration=1, transport_costs=costs, updater=PlanUpdater(),
+            inputs={"resolved_activity_parameters": {"home": 1}, "arrival_time_rigidity_by_activity": {"home": 1}},
+        )
+        for key in coordinator.scenarios
+    }
+    zones = object()
+    plan_update = SimpleNamespace(min_activity_time_constant=1.0)
+    behavior = SimpleNamespace(scope_at=lambda _: BehaviorChangeScope.MODE_REPLANNING)
+    coordinator.runs = {
+        key: SimpleNamespace(
+            population=SimpleNamespace(transport_zones=zones),
+            parameters=SimpleNamespace(plan_update=plan_update, behavior_change=behavior),
+        )
+        for key in coordinator.scenarios
+    }
+    sources = {key: SimpleNamespace(mode_sequences=SimpleNamespace(population_segments=[]))
+               for key in coordinator.scenarios}
+    shared_steps, shared_factored = object(), object()
+    parts = {key: (shared_steps, None) for key in coordinator.scenarios}
+    factored = {key: shared_factored for key in coordinator.scenarios}
+    factored[2] = object()
+    pool = SimpleNamespace(
+        candidate_step_parts_by_run_key=parts, scoring_candidate_steps_by_run_key=factored,
+        candidate_plan_steps_by_run_key={}, time_sequence_steps_by_run_key={key: table for key in coordinator.scenarios},
+    )
+    contexts = object()
+    setups = {key: (contexts, table, table) for key in coordinator.scenarios}
+    state_assets[3].transport_costs = object()
+    state_assets[4].inputs = {
+        "resolved_activity_parameters": {"home": 2}, "arrival_time_rigidity_by_activity": {"home": 1},
+    }
+    args = dict(
+        pool=pool, states=states, state_assets=state_assets, sources=sources, cost_assets=None,
+        iteration=1, scoring_setups=setups, compact_indices={}, forced_contexts={}, restrict_scoring=False,
+    )
+    assert coordinator._group_candidate_evaluations(**args) == [[0, 1], [2], [3], [4]]
+    args["restrict_scoring"] = True
+    args["forced_contexts"] = {0: table, 1: table.clone()}
+    assert coordinator._group_candidate_evaluations(**args) == [[0], [1], [2], [3], [4]]
+    args["restrict_scoring"] = False
+    first_history = CompactCandidateSteps(table, table, ("x",), unit_map=table)
+    states[0] = SimpleNamespace(**{**vars(state), "candidate_plan_steps": first_history})
+    states[1] = SimpleNamespace(**{**vars(state), "candidate_plan_steps": replace(first_history)})
+    assert coordinator._group_candidate_evaluations(**args)[0] == [0, 1]
+    states[1].candidate_plan_steps = replace(first_history, membership=table.clone())
+    assert coordinator._group_candidate_evaluations(**args)[0] == [0]
+    states[1].candidate_plan_steps = first_history
+    custom_updater = SimpleNamespace()
+    state_assets[0].updater = custom_updater
+    state_assets[1].updater = custom_updater
+    assert coordinator._group_candidate_evaluations(**args)[:2] == [[0], [1]]
 
 
 def test_scenarios_share_only_identical_modeled_schedules():
@@ -176,6 +293,14 @@ def test_factored_candidates_preserve_active_history_and_reject_inconsistent_ste
             demand_group_id=pl.lit(0, dtype=pl.UInt32)
         ), tuple(rows.columns), unit_map=units,
     )
+    occupied = pl.concat([
+        current, current, current.with_columns(demand_group_id=pl.lit(2, dtype=pl.UInt32)),
+        current.with_columns(mode_seq_id=pl.lit(99, dtype=pl.UInt32)),
+    ]).lazy()
+    for history in (previous, shared_history):
+        expected = history.memberships().join(occupied, on=PLAN_KEY_COLS, how="semi").collect()
+        selected = history.memberships_for_plans(occupied).collect()
+        assert_frame_equal(selected.sort(PLAN_KEY_COLS), expected.sort(PLAN_KEY_COLS))
     from_shared_history = contexts.collapse_factored_step_rows(shared, active, shared_history, current)
     assert_frame_equal(from_shared_history.sort(keys), actual.sort(keys))
     other_steps = steps.with_columns(mode_seq_id=pl.lit(2, dtype=pl.UInt32), mode=pl.lit("walk"))

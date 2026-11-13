@@ -178,6 +178,15 @@ def test_plan_updater_prepares_destination_country_value_coefficient(unit_count)
     lookup = ScoringLookup(ScoringMemoryBudget(max_bytes=1024 * 1024))
     result = updater.compute_plan_steps_candidates_utility(**scoring_inputs, scoring_lookup=lookup).collect()
     assert lookup.scores.height == 2
+    reuse_only_costs = SimpleNamespace(
+        modes=scoring_inputs["transport_costs"].modes,
+        get_costs_by_od_and_mode=lambda *args, **kwargs: pytest.fail("Cached scores should not reload costs"),
+    )
+    same_scores = updater.compute_plan_steps_candidates_utility(
+        **{**scoring_inputs, "transport_costs": reuse_only_costs}, scoring_lookup=lookup,
+    ).collect()
+    assert_frame_equal(result.sort(["demand_group_id", "activity_seq_id", "to"]),
+                       same_scores.sort(["demand_group_id", "activity_seq_id", "to"]))
 
     coefficients_by_destination = dict(
         zip(result["to"].to_list(), result["activity_utility_scale"].to_list(), strict=True)
@@ -454,7 +463,7 @@ def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
     reused, reused_index = updater.get_possible_plan_utility(
         possible_plan_steps, home_night_dur, value_of_time_stay_home=1.0,
         stay_home_plan=stay_home_plan, min_activity_time_constant=1.0,
-        plan_id_index=plan_id_index, mobile_ids_already_indexed=True,
+        plan_id_index=expected_index, plan_ids_already_indexed=True,
     )
     assert_frame_equal(result.sort("plan_id"), reused.collect().sort("plan_id"))
     assert_frame_equal(expected_index, reused_index)

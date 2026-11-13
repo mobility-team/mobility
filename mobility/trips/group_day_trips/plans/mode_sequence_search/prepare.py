@@ -32,11 +32,7 @@ def build_location_chains(destination_steps: pl.DataFrame) -> tuple[pl.DataFrame
 
 def _validate_location_chains(trip_chains: pl.DataFrame) -> None:
     """Fail loudly when destination chains are structurally invalid."""
-    with_location_key = trip_chains.with_columns(
-        location_count=pl.col("locations").list.len(),
-        location_key=pl.col("locations").cast(pl.List(pl.String)).list.join("-"),
-    )
-    one_location_chains = with_location_key.filter(pl.col("location_count") < 2)
+    one_location_chains = trip_chains.filter(pl.col("locations").list.len() < 2)
     if one_location_chains.height > 0:
         raise ValueError(
             "Mode sequence search received destination chains with fewer than two locations. "
@@ -45,15 +41,15 @@ def _validate_location_chains(trip_chains: pl.DataFrame) -> None:
         )
 
     conflicting_destination_sequences = (
-        with_location_key
+        trip_chains
         .group_by(["utility_profile_id", "dest_seq_id"])
-        .agg(n_location_chains=pl.col("location_key").n_unique())
+        .agg(n_location_chains=pl.col("locations").n_unique())
         .filter(pl.col("n_location_chains") > 1)
     )
     if conflicting_destination_sequences.height > 0:
         sample_ids = conflicting_destination_sequences["dest_seq_id"].head(20).to_list()
         sample_chains = (
-            with_location_key
+            trip_chains
             .filter(pl.col("dest_seq_id").is_in(sample_ids))
             .sort(["dest_seq_id", "home_zone_id", "activity_seq_id", "time_seq_id"])
             .head(50)
@@ -66,6 +62,19 @@ def _validate_location_chains(trip_chains: pl.DataFrame) -> None:
         )
 
 
+def location_chain_legs(chains: pl.DataFrame) -> pl.DataFrame:
+    """List searched legs by profile, including each chain's return home."""
+    return (
+        chains.select(
+            "utility_profile_id",
+            pl.col("locations").alias("from"),
+            pl.concat_list(
+                pl.col("locations").list.slice(1), pl.col("locations").list.first(),
+            ).alias("to"),
+        )
+        .explode(["from", "to"])
+        .unique()
+    )
 def build_search_inputs(
     transport_costs: Any,
     *,

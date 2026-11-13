@@ -22,6 +22,51 @@ class _StubAsset(InMemoryAsset):
         return self.value
 
 
+def test_destination_probabilities_are_reused_only_within_the_same_profile(monkeypatch):
+    """A new profile or outer-step table must recompute its probabilities."""
+    parameters = GroupDayTripsParameters()
+    sequences = pl.DataFrame({
+        "home_zone_id": [1], "activity_seq_id": [1], "time_seq_id": [1],
+        "activity": ["work"], "is_anchor": [True], "seq_step_index": [1],
+        "step_count": [1], "departure_time": [8.0], "arrival_time": [8.5],
+        "next_departure_time": [17.0],
+    })
+    calls = []
+    probabilities = pl.DataFrame({"p_ij": [1.0]})
+
+    class StopAfterProbability(Exception):
+        pass
+
+    def build_probability(*args):
+        calls.append(True)
+        return probabilities
+
+    def stop_after_probability(*args):
+        raise StopAfterProbability
+
+    def sample(asset, profile):
+        pytest.raises(
+            StopAfterProbability, asset._run_for_utility_profile,
+            [], None, pl.DataFrame(), sequences, pl.DataFrame(), parameters, 0,
+            profile_id=profile,
+        )
+
+    asset = DestinationSequences(
+        is_weekday=True, iteration=1, activities=[], resolved_activity_parameters={},
+        parameters=parameters, sampling_probabilities={},
+    )
+    monkeypatch.setattr(asset, "_get_destination_probability_inputs", lambda *args: None)
+    monkeypatch.setattr(asset, "_get_destination_probability", build_probability)
+    monkeypatch.setattr(asset, "_spatialization_cost_views", stop_after_probability)
+    sample(asset, 0)
+    sample(asset, 0)
+    sample(asset, 1)
+    assert len(calls) == 2
+    asset.sampling_probabilities = {}  # A new outer step has its own tables.
+    sample(asset, 0)
+    assert len(calls) == 3
+
+
 @pytest.mark.parametrize("seed", [0, 1, 2])
 def test_grouped_destination_choices_match_per_request_races(seed):
     # Several schedule draws share a distribution, while another has a

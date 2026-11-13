@@ -11,7 +11,9 @@ import psutil
 import pytest
 from mobility.runtime.temporary import TemporaryDiskLimitExceeded
 from mobility.transport.modes.choice.compute_subtour_mode_probs_parallel_utilities import process_batch_serial
-from mobility.trips.group_day_trips.plans.mode_sequence_search.prepare import build_location_chains
+from mobility.trips.group_day_trips.plans.mode_sequence_search.prepare import (
+    build_location_chains, location_chain_legs,
+)
 from mobility.trips.group_day_trips.plans.mode_sequence_search.search_python import (
     run_python_mode_sequence_search,
     run_python_mode_sequence_search_subprocess,
@@ -544,3 +546,47 @@ def test_python_and_rust_mode_sequence_backends_match_on_same_inputs(tmp_path):
 
     sort_cols = ["dest_seq_id", "mode_seq_index", "seq_step_index", "location", "mode_index"]
     assert python_rows.sort(sort_cols).to_dict(as_series=False) == rust_rows.sort(sort_cols).to_dict(as_series=False)
+    filtered_costs = leg_mode_costs.with_columns(utility_profile_id=pl.lit(0, dtype=pl.UInt32)).join(
+        location_chain_legs(unique_destination_chains.with_columns(utility_profile_id=pl.lit(0, dtype=pl.UInt32))),
+        on=["utility_profile_id", "from", "to"], how="semi",
+    ).drop("utility_profile_id")
+    filtered_python_rows = run_python_mode_sequence_search(
+        iteration=1,
+        parameters=_mode_sequence_parameters(k_mode_sequences=3, mode_sequence_search_parallel=False),
+        unique_destination_chains=unique_destination_chains,
+        leg_mode_costs=filtered_costs,
+        modes_by_name=modes_by_name,
+        is_return_mode_by_id={0: False, 1: False},
+    )
+    assert filtered_python_rows.sort(sort_cols).equals(python_rows.sort(sort_cols))
+
+
+def test_mode_search_uses_only_chain_legs_for_each_profile():
+    """Filtering retains return legs and gives the same actual search results."""
+    chains = pl.DataFrame({
+        "utility_profile_id": [0, 1], "dest_seq_id": [1, 2],
+        "locations": [[1, 2, 3], [1, 3]],
+    })
+    costs = pl.DataFrame([
+        {"utility_profile_id": profile, "from": origin, "to": destination,
+         "mode_id": mode, "cost": float(origin + destination + mode + profile)}
+        for profile in (0, 1) for origin in (1, 2, 3, 4)
+        for destination in (1, 2, 3, 4) for mode in (0, 1)
+    ])
+    filtered = costs.join(location_chain_legs(chains), on=["utility_profile_id", "from", "to"], how="semi")
+    assert filtered.height == 10  # Three legs for profile 0 and two for profile 1, with two modes.
+    assert (0, 3, 1) in set(filtered.select("utility_profile_id", "from", "to").iter_rows())
+    assert (1, 3, 1) in set(filtered.select("utility_profile_id", "from", "to").iter_rows())
+    modes = {
+        name: {"vehicle": None, "multimodal": False, "is_return_mode": False, "return_mode": None}
+        for name in ("walk", "bike")
+    }
+    args = dict(
+        unique_destination_chains=chains, needs_vehicle_by_id={0: False, 1: False},
+        return_mode_id_by_id={0: None, 1: None}, is_return_mode_by_id={0: False, 1: False},
+        modes_by_name=modes, mode_name_by_id={0: "walk", 1: "bike"}, k_mode_sequences=3,
+    )
+    full = run_rust_mode_sequence_search(**args, leg_mode_costs=costs)
+    reduced = run_rust_mode_sequence_search(**args, leg_mode_costs=filtered)
+    keys = ["utility_profile_id", "dest_seq_id", "mode_seq_index", "seq_step_index"]
+    assert full.sort(keys).equals(reduced.sort(keys))

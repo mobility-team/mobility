@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 
-import hashlib
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,7 +11,7 @@ import polars as pl
 from mobility.trips.group_day_trips.core.performance_trace import simulation_step, trace_simulation_step
 
 from mobility.runtime.assets.asset import Asset
-from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.graph import asset_graph_key
 
 from .candidate_plan_steps import CandidatePlanStepsAsset
 from .compact_candidate_steps import (
@@ -25,21 +25,6 @@ from .stable_key_index import StableKeyIndex
 from .time_sequences import TimeSequenceIndexCache, assign_time_sequence_ids
 from .activity_profiles import get_schedules_by_activity_profile, get_survey_schedule_activities
 from ..core.multi_scenario import CANDIDATE_ID_COLS, add_candidate_ids
-
-
-def _frame_hash(frame: pl.DataFrame | CompactCandidateSteps | None) -> str | None:
-    """Return a compact value hash for transient Polars inputs."""
-    if frame is None:
-        return None
-    if isinstance(frame, CompactCandidateSteps):
-        return hashlib.sha256(repr((
-            _frame_hash(frame.steps), _frame_hash(frame.membership), _frame_hash(frame.unit_map), frame.columns,
-        )).encode()).hexdigest()
-    digest = hashlib.sha256()
-    schema = tuple((column, str(dtype)) for column, dtype in frame.schema.items())
-    digest.update(repr(schema).encode())
-    digest.update(frame.hash_rows(seed=0).to_numpy().tobytes())
-    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -63,7 +48,7 @@ class SharedCandidatePoolResult:
     destination_sequence_indices: dict[int, pl.DataFrame]
     mode_sequence_indices: dict[int, pl.DataFrame]
     generated_mode_sequences_by_run_key: dict[int, int]
-    candidate_ids: tuple[tuple[int, int], ...]
+    candidate_ids: pl.DataFrame
     time_sequence_steps_by_run_key: dict[int, pl.DataFrame]
     candidate_replications: pl.DataFrame
     candidate_catalogue: PlanCatalogue | None = None
@@ -73,7 +58,7 @@ class SharedCandidatePoolResult:
     scoring_candidate_steps_by_run_key: dict[int, ScoringCandidateSteps] | None = None
 
 
-class SharedCandidatePoolAsset(InMemoryAsset):
+class SharedCandidatePool:
     """Merge complete plans from every run context and translate local ids."""
 
     def __init__(
@@ -115,54 +100,9 @@ class SharedCandidatePoolAsset(InMemoryAsset):
         self.compact_candidate_steps_by_run_key: dict[int, pl.DataFrame] = {}
         self.unordered_candidate_steps_by_run_key: dict[int, pl.LazyFrame] = {}
         self.scoring_candidate_steps_by_run_key: dict[int, ScoringCandidateSteps] = {}
-        super().__init__(
-            {
-                "version": 16,
-                "compact": compact,
-                "build_catalogue": build_catalogue,
-                "iteration": iteration,
-                "time_sequence_hashes": {
-                    run_key: _frame_hash(frame)
-                    for run_key, frame in self.previous_time_sequence_steps.items()
-                },
-                "max_shared_candidates": max_shared_candidates,
-                "max_inactive_age": max_inactive_age,
-                "previous_candidate_hashes": {
-                    run_key: _frame_hash(frame)
-                    for run_key, frame in self.previous_candidates_by_run_key.items()
-                },
-                "previous_catalogue_hashes": (
-                    None if previous_catalogue is None else tuple(
-                        _frame_hash(getattr(previous_catalogue, name))
-                        for name in ("plans", "steps", "variants", "membership")
-                    )
-                ),
-                "previous_destination_index_hashes": {
-                    run_key: _frame_hash(frame)
-                    for run_key, frame in self.previous_destination_indices.items()
-                },
-                "previous_mode_index_hashes": {
-                    run_key: _frame_hash(frame)
-                    for run_key, frame in self.previous_mode_indices.items()
-                },
-                "run_sources": [
-                    {
-                        "run_key": source.run_key,
-                        "scenario": source.scenario,
-                        "sensitivity_case": source.run.sensitivity_case_id,
-                        "replication": source.run.replication,
-                        "run_context_hash": source.run.run_context.inputs_hash,
-                        "previous_state": source.previous_state,
-                        "destination_sequences": source.destination_sequences,
-                        "mode_sequences": source.mode_sequences,
-                    }
-                    for source in sources
-                ],
-            }
-        )
 
     @trace_simulation_step("shared pool generation and attachment")
-    def create_and_get_asset(self) -> SharedCandidatePoolResult:
+    def build(self) -> SharedCandidatePoolResult:
         """Collect candidate plans and merge them by canonical content."""
         candidate_frames: list[pl.DataFrame] = []
         merged_chunks: list[pl.DataFrame] = []
@@ -182,6 +122,33 @@ class SharedCandidatePoolAsset(InMemoryAsset):
             "destination_sequence_key_1", "destination_sequence_key_2",
             "mode_sequence_key_1", "mode_sequence_key_2",
         ]
+        # Equivalent scenarios can use exactly the same generation assets.
+        # Keep each generated table only until the last such source uses it.
+        generation_keys = {
+            source.run_key: (
+                source.run.replication, id(source.run.population),
+                asset_graph_key(source.previous_state),
+                asset_graph_key(source.destination_sequences),
+                asset_graph_key(source.mode_sequences),
+            )
+            for source in self.sources
+        }
+        remaining_generation = Counter(generation_keys.values())
+        generated_by_source = {}
+        state_keys = {
+            source.run_key: (source.run.replication, asset_graph_key(source.previous_state))
+            for source in self.sources
+        }
+        remaining_states = Counter(state_keys.values())
+        active_by_state = {}
+        previous_by_state = {}
+        history_by_state = {}
+        restored_catalogue = {}
+        catalogue_groups = (
+            self.previous_catalogue.equivalent_runs or {}
+            if self.previous_catalogue is not None else {}
+        )
+        catalogue_group_sizes = Counter(catalogue_groups.values())
 
         for source in self.sources:
             source_candidate_frames: list[pl.DataFrame] = []
@@ -207,16 +174,37 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                 )
 
                 if self.previous_catalogue is not None:
-                    previous_candidates = self.previous_catalogue.candidates_for_run(
-                        run_key, previous_destination_index, previous_mode_index,
+                    restore_key = (
+                        catalogue_groups.get(run_key, run_key),
+                        id(previous_destination_index), id(previous_mode_index),
                     )
+                    previous_candidates = restored_catalogue.get(restore_key)
+                    if previous_candidates is None:
+                        previous_candidates = self.previous_catalogue.candidates_for_run(
+                            run_key, previous_destination_index, previous_mode_index,
+                        )
+                        if catalogue_group_sizes[restore_key[0]] > 1:
+                            restored_catalogue[restore_key] = previous_candidates
                 else:
                     previous_candidates = self.previous_candidates_by_run_key.get(
                         run_key,
                         previous_state.candidate_plan_steps,
                     )
                 compact_previous = previous_candidates if isinstance(previous_candidates, CompactCandidateSteps) else None
-                if compact_previous is not None:
+                state_key = state_keys[run_key]
+                previous_inputs = (
+                    compact_previous if compact_previous is not None else previous_candidates,
+                    previous_destination_index, previous_mode_index,
+                    self.previous_time_sequence_steps.get(run_key, previous_state.schedule_steps),
+                    previous_state.current_plans,
+                )
+                shared_previous = compact_previous is not None or self.previous_catalogue is not None
+                previous_group = previous_by_state.setdefault(state_key, []) if shared_previous else []
+                previous_result = next((
+                    result for inputs, result in previous_group
+                    if all(left is right for left, right in zip(inputs, previous_inputs))
+                ), None)
+                if compact_previous is not None and previous_result is None:
                     # History is ultimately reduced by plan variant, not by
                     # demand unit. Reduce membership before joining steps so
                     # identical plans are not expanded once per person group.
@@ -255,66 +243,107 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                         .collect(engine="streaming")
                     )
                 if previous_candidates is not None:
-                    empty_candidates_by_run_key[run_key] = previous_candidates.head(0)
+                    empty_candidates_by_run_key[run_key] = (
+                        previous_result[0] if previous_result is not None else previous_candidates.select(
+                            CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS
+                        ).head(0)
+                    )
                     active_source = previous_state.candidate_plan_steps
                     if active_source is None:
                         active_source = compact_previous if compact_previous is not None else previous_candidates
-                    active_keys = (
-                        previous_state.current_plans.lazy()
-                        .filter(pl.col("mode_seq_id") != 0)
-                        .select(PLAN_KEY_COLS)
+                    state_key = state_keys[run_key]
+                    active_inputs = (
+                        active_source, previous_state.current_plans,
+                        previous_state.destination_sequence_index, previous_state.mode_sequence_index,
+                        previous_state.schedule_steps,
                     )
-                    if isinstance(active_source, CompactCandidateSteps):
-                        active_rows = (
-                            active_source.memberships()
-                            .join(active_keys, on=PLAN_KEY_COLS, how="inner")
-                            .join(active_source.steps.lazy(), on=PLAN_COLUMNS, how="inner")
-                            .select(active_source.columns)
-                            .sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
-                        )
-                    else:
-                        active_rows = active_source.lazy().join(active_keys, on=PLAN_KEY_COLS, how="inner")
-                    active_candidate_steps_by_run_key[run_key] = (
-                        active_rows
-                        .select(
-                            CandidatePlanStepsAsset.STRUCTURAL_COLUMNS
-                            + CandidatePlanStepsAsset.RETENTION_COLUMNS
-                        )
-                        .with_columns(last_active_iteration=pl.lit(self.iteration, dtype=pl.UInt16))
-                        .collect(engine="streaming")
+                    # The state's own history is already held for the whole
+                    # batch. A locally reconstructed fallback can differ by
+                    # run and should not be retained just for reuse.
+                    shared_history = (
+                        previous_state.candidate_plan_steps is not None
+                        or self.previous_catalogue is not None
                     )
-                    active_steps = active_candidate_steps_by_run_key[run_key]
-                    if active_steps.height:
-                        # Keep the actual occupied timings, even when the last
-                        # inner pool still contains the original survey timings.
-                        active_content = self._attach_sequence_content_keys(
-                            add_candidate_ids(active_steps),
-                            previous_state.destination_sequence_index,
-                            previous_state.mode_sequence_index,
-                            previous_state.schedule_steps,
+                    state_active = active_by_state.setdefault(state_key, []) if shared_history else []
+                    active_result = next((
+                        result for inputs, result in state_active
+                        if all(left is right for left, right in zip(inputs, active_inputs))
+                    ), None)
+                    if active_result is None:
+                        active_keys = (
+                            previous_state.current_plans.lazy()
+                            .filter(pl.col("mode_seq_id") != 0)
+                            .select(PLAN_KEY_COLS)
                         )
-                        candidate_frames.append(active_content)
-                        source_candidate_frames.append(active_content.select(CANDIDATE_ID_COLS).unique())
-                        source_history_frames.append(
-                            active_content.select(history_keys + CandidatePlanStepsAsset.RETENTION_COLUMNS)
+                        if isinstance(active_source, CompactCandidateSteps):
+                            active_rows = (
+                                active_source.memberships_for_plans(active_keys)
+                                .join(active_source.steps.lazy(), on=PLAN_COLUMNS, how="inner")
+                                .select(active_source.columns)
+                                .sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
+                            )
+                        else:
+                            active_rows = active_source.lazy().join(active_keys, on=PLAN_KEY_COLS, how="inner")
+                        active_steps = (
+                            active_rows
+                            .select(
+                                CandidatePlanStepsAsset.STRUCTURAL_COLUMNS
+                                + CandidatePlanStepsAsset.RETENTION_COLUMNS
+                            )
                             .with_columns(last_active_iteration=pl.lit(self.iteration, dtype=pl.UInt16))
+                            .collect(engine="streaming")
                         )
-                        active_candidate_id_frames.append(
-                            active_content.select(CANDIDATE_ID_COLS).unique()
+                        active_ids = active_history = None
+                        if active_steps.height:
+                            # Preserve the occupied timing even if the sampled
+                            # pool still contains its original survey timing.
+                            active_content = self._attach_sequence_content_keys(
+                                add_candidate_ids(active_steps),
+                                previous_state.destination_sequence_index,
+                                previous_state.mode_sequence_index,
+                                previous_state.schedule_steps,
+                            )
+                            candidate_frames.append(active_content)
+                            active_ids = active_content.select(CANDIDATE_ID_COLS).unique()
+                            active_history = active_content.select(
+                                history_keys + CandidatePlanStepsAsset.RETENTION_COLUMNS
+                            )
+                            active_candidate_id_frames.append(active_ids)
+                        active_result = (active_steps, active_ids, active_history)
+                        if shared_history and remaining_states[state_key] > 1:
+                            state_active.append((active_inputs, active_result))
+                    active_steps, active_ids, active_history = active_result
+                    active_candidate_steps_by_run_key[run_key] = active_steps
+                    if active_ids is not None:
+                        source_candidate_frames.append(active_ids)
+                        source_history_frames.append(active_history)
+                if previous_result is not None:
+                    _, previous_ids, previous_history, active_ids, active_history = previous_result
+                    source_candidate_frames.append(previous_ids)
+                    source_history_frames.append(previous_history)
+                    if active_ids is not None:
+                        active_candidate_id_frames.append(active_ids)
+                        source_history_frames.append(active_history)
+                elif previous_candidates is not None and previous_candidates.height:
+                    # The catalogue already stores the physical identity and
+                    # sequence keys. Only restored outer-step rows need them
+                    # computed again; inner batches can carry them forward.
+                    previous_content = (
+                        previous_candidates if self.previous_catalogue is not None
+                        else self._attach_sequence_content_keys(
+                            add_candidate_ids(previous_candidates),
+                            previous_destination_index,
+                            previous_mode_index,
+                            self.previous_time_sequence_steps.get(run_key, previous_state.schedule_steps),
                         )
-                if previous_candidates is not None and previous_candidates.height:
-                    previous_content = self._attach_sequence_content_keys(
-                        add_candidate_ids(previous_candidates),
-                        previous_destination_index,
-                        previous_mode_index,
-                        self.previous_time_sequence_steps.get(run_key, previous_state.schedule_steps),
                     )
                     candidate_frames.append(previous_content)
-                    source_candidate_frames.append(previous_content.select(CANDIDATE_ID_COLS).unique())
-                    source_history_frames.append(
-                        previous_content.select(history_keys + CandidatePlanStepsAsset.RETENTION_COLUMNS)
-                    )
+                    previous_ids = previous_content.select(CANDIDATE_ID_COLS).unique()
+                    previous_history = previous_content.select(history_keys + CandidatePlanStepsAsset.RETENTION_COLUMNS)
+                    source_candidate_frames.append(previous_ids)
+                    source_history_frames.append(previous_history)
 
+                    previous_active_ids = previous_active_history = None
                     if previous_state.current_plans.height:
                         # Only membership matters here: history is unique by
                         # content, even if several current rows match a plan.
@@ -322,8 +351,7 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                         active_join_columns = PLAN_KEY_COLS
                         if compact_previous is not None:
                             active_keys = (
-                                compact_previous.memberships()
-                                .join(active_keys, on=PLAN_KEY_COLS, how="semi")
+                                compact_previous.memberships_for_plans(active_keys)
                                 .select(PLAN_COLUMNS)
                                 .unique()
                             )
@@ -339,69 +367,84 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                             .unique()
                             .collect(engine="streaming")
                         )
-                        active_candidate_id_frames.append(active.select(CANDIDATE_ID_COLS).unique())
-                        source_history_frames.append(
-                            active.with_columns(
-                                first_seen_iteration=pl.lit(None, dtype=pl.UInt16),
-                                last_seen_iteration=pl.lit(None, dtype=pl.UInt16),
-                                last_active_iteration=pl.lit(self.iteration, dtype=pl.UInt16),
-                            )
+                        previous_active_ids = active.select(CANDIDATE_ID_COLS).unique()
+                        previous_active_history = active.with_columns(
+                            first_seen_iteration=pl.lit(None, dtype=pl.UInt16),
+                            last_seen_iteration=pl.lit(None, dtype=pl.UInt16),
+                            last_active_iteration=pl.lit(self.iteration, dtype=pl.UInt16),
                         )
+                        active_candidate_id_frames.append(previous_active_ids)
+                        source_history_frames.append(previous_active_history)
+                    if shared_previous and remaining_states[state_key] > 1:
+                        previous_group.append((previous_inputs, (
+                            empty_candidates_by_run_key[run_key], previous_ids, previous_history,
+                            previous_active_ids, previous_active_history,
+                        )))
 
             with simulation_step("generate scenario candidates", scenario=scenario):
-                profile_assignments, _ = source.mode_sequences.transport_costs.get_utility_profiles(
-                    previous_state.demand_groups,
-                    source.run.population.population_segments,
-                )
-                profile_assignments_by_run_key[run_key] = profile_assignments
-                with simulation_step("generate and attach source candidates"):
-                    generated = CandidatePlanStepsAsset.build_iteration_candidates(
-                        destination_sequences=source.destination_sequences,
-                        mode_sequences=source.mode_sequences,
-                        survey_plan_steps=previous_state.schedule_steps,
-                        demand_groups=previous_state.demand_groups,
-                        profile_assignments=profile_assignments,
-                        compact_for_shared_pool=True,
-                    ).collect(engine="streaming")
-                if logging.getLogger().isEnabledFor(logging.DEBUG):
-                    logging.debug(
-                        "Generated compact candidate steps | scenario=%s | step_rows=%d | "
-                        "plan_variants=%d | home_zones=%d",
-                        scenario,
-                        generated.height,
-                        generated.select(PLAN_KEY_COLS).unique().height,
-                        generated
-                        .filter(pl.col("seq_step_index") == 1)
-                        .select(pl.col("from").n_unique())
-                        .item(),
+                generation_key = generation_keys[run_key]
+                cached = generated_by_source.get(generation_key)
+                if cached is None:
+                    profile_assignments, _ = source.mode_sequences.transport_costs.get_utility_profiles(
+                        previous_state.demand_groups,
+                        source.run.population.population_segments,
                     )
-                generated = generated.with_columns(
-                    first_seen_iteration=pl.lit(self.iteration, dtype=pl.UInt16),
-                    last_seen_iteration=pl.lit(self.iteration, dtype=pl.UInt16),
-                    last_active_iteration=pl.lit(None, dtype=pl.UInt16),
-                )
-                empty_candidates_by_run_key.setdefault(run_key, generated.head(0))
-                if generated.height:
-                    generated = add_candidate_ids(generated)
-                    generated = self._attach_sequence_content_keys(
-                        generated,
-                        source.destination_sequences.get_index(),
-                        source.mode_sequences.get_index(),
-                        previous_state.schedule_steps,
-                    )
-                    candidate_frames.append(generated)
-                    source_candidate_frames.append(generated.select(CANDIDATE_ID_COLS).unique())
-                    source_history_frames.append(
-                        generated.select(history_keys + CandidatePlanStepsAsset.RETENTION_COLUMNS)
-                    )
-                    generated_by_replication.append(
-                        generated.select(CANDIDATE_ID_COLS).unique().with_columns(
-                            replication=pl.lit(source.run.replication, dtype=pl.UInt32)
+                    with simulation_step("generate and attach source candidates"):
+                        generated = CandidatePlanStepsAsset.build_iteration_candidates(
+                            destination_sequences=source.destination_sequences,
+                            mode_sequences=source.mode_sequences,
+                            survey_plan_steps=previous_state.schedule_steps,
+                            demand_groups=previous_state.demand_groups,
+                            profile_assignments=profile_assignments,
+                            compact_for_shared_pool=True,
+                        ).collect(engine="streaming")
+                    if logging.getLogger().isEnabledFor(logging.DEBUG):
+                        logging.debug(
+                            "Generated compact candidate steps | scenario=%s | step_rows=%d | "
+                            "plan_variants=%d | home_zones=%d",
+                            scenario, generated.height,
+                            generated.select(PLAN_KEY_COLS).unique().height,
+                            generated.filter(pl.col("seq_step_index") == 1)
+                            .select(pl.col("from").n_unique()).item(),
                         )
+                    generated = generated.with_columns(
+                        first_seen_iteration=pl.lit(self.iteration, dtype=pl.UInt16),
+                        last_seen_iteration=pl.lit(self.iteration, dtype=pl.UInt16),
+                        last_active_iteration=pl.lit(None, dtype=pl.UInt16),
                     )
-                generated_mode_sequences[run_key] += int(
-                    source.mode_sequences.generated_mode_sequences
+                    if generated.height:
+                        generated = self._attach_sequence_content_keys(
+                            add_candidate_ids(generated),
+                            source.destination_sequences.get_index(),
+                            source.mode_sequences.get_index(),
+                            previous_state.schedule_steps,
+                        )
+                        candidate_frames.append(generated)
+                        generated_ids = generated.select(CANDIDATE_ID_COLS).unique()
+                        generated_by_replication.append(
+                            generated_ids.with_columns(replication=pl.lit(source.run.replication, dtype=pl.UInt32))
+                        )
+                        generated_history = generated.select(history_keys + CandidatePlanStepsAsset.RETENTION_COLUMNS)
+                    else:
+                        generated_ids = generated_history = None
+                    cached = (profile_assignments, generated, generated_ids, generated_history,
+                              int(source.mode_sequences.generated_mode_sequences))
+                    generated_by_source[generation_key] = cached
+                profile_assignments, generated, generated_ids, generated_history, generated_count = cached
+                profile_assignments_by_run_key[run_key] = profile_assignments
+                empty_candidates_by_run_key.setdefault(
+                    run_key,
+                    generated.select(
+                        CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS
+                    ).head(0),
                 )
+                if generated_ids is not None:
+                    source_candidate_frames.append(generated_ids)
+                    source_history_frames.append(generated_history)
+                generated_mode_sequences[run_key] += generated_count
+                remaining_generation[generation_key] -= 1
+                if not remaining_generation[generation_key]:
+                    del generated_by_source[generation_key]
 
             if source_candidate_frames:
                 # Scenarios share plans within a replication. Other replications
@@ -412,15 +455,26 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                     )
                 )
             if source_history_frames:
-                history_by_run_key[run_key] = (
-                    pl.concat(source_history_frames, how="vertical_relaxed")
-                    .group_by(history_keys)
-                    .agg(
-                        pl.col("first_seen_iteration").min(),
-                        pl.col("last_seen_iteration").max(),
-                        pl.col("last_active_iteration").max(),
+                state_key = state_keys[run_key]
+                state_histories = history_by_state.setdefault(state_key, [])
+                history = next((
+                    result for inputs, result in state_histories
+                    if len(inputs) == len(source_history_frames)
+                    and all(left is right for left, right in zip(inputs, source_history_frames))
+                ), None)
+                if history is None:
+                    history = (
+                        pl.concat(source_history_frames, how="vertical_relaxed")
+                        .group_by(history_keys)
+                        .agg(
+                            pl.col("first_seen_iteration").min(),
+                            pl.col("last_seen_iteration").max(),
+                            pl.col("last_active_iteration").max(),
+                        )
                     )
-                )
+                    if remaining_states[state_key] > 1:
+                        state_histories.append((tuple(source_history_frames), history))
+                history_by_run_key[run_key] = history
                 if self.max_inactive_age is not None:
                     replication_history_frames.append(
                         history_by_run_key[run_key].select(
@@ -434,7 +488,19 @@ class SharedCandidatePoolAsset(InMemoryAsset):
             source_candidate_frames.clear()
             source_history_frames.clear()
             active_content = previous_content = previous_candidates = generated = None
+            cached = generated_ids = generated_history = None
+            active_result = active_steps = active_ids = active_history = state_active = None
+            active_inputs = active_source = None
+            previous_inputs = previous_result = previous_group = None
+            previous_ids = previous_history = previous_active_ids = previous_active_history = None
+            state_histories = history = None
             active = active_rows = membership = None
+            state_key = state_keys[run_key]
+            remaining_states[state_key] -= 1
+            if not remaining_states[state_key]:
+                active_by_state.pop(state_key, None)
+                previous_by_state.pop(state_key, None)
+                history_by_state.pop(state_key, None)
 
             # Merge small groups before collecting the whole cohort. Equivalent
             # plans from different runs then occupy one row in each chunk.
@@ -442,6 +508,7 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                 merged_chunks.append(self._merge_candidate_content(candidate_frames))
                 candidate_frames.clear()
 
+        restored_catalogue.clear()
         candidate_frames = merged_chunks + candidate_frames
         if candidate_frames:
             shared_candidates = self._merge_candidate_content(candidate_frames)
@@ -529,17 +596,51 @@ class SharedCandidatePoolAsset(InMemoryAsset):
         candidate_step_parts_by_run_key = {}
         destination_indices: dict[int, pl.DataFrame] = {}
         mode_indices: dict[int, pl.DataFrame] = {}
+        candidates_by_replication: dict[int, pl.DataFrame] = {}
+        refreshed_by_replication: dict[int, pl.DataFrame] = {}
+        remaining_sources = Counter(source.run.replication for source in self.sources)
+        history_keys_by_run = {
+            source.run_key: (source.run.replication, id(history_by_run_key.get(source.run_key)))
+            for source in self.sources
+        }
+        remaining_histories = Counter(history_keys_by_run.values())
+        candidates_by_history = {}
+        attachment_keys = {}
+        for source in self.sources:
+            run_key = source.run_key
+            previous_destination, previous_mode = previous_index_by_run_key[run_key]
+            attachment_keys[run_key] = (
+                history_keys_by_run[run_key], id(previous_destination), id(previous_mode),
+                state_keys[run_key], id(self.previous_time_sequence_steps.get(run_key)),
+                id(profile_assignments_by_run_key[run_key]),
+            )
+        remaining_attachments = Counter(attachment_keys.values())
+        shared_attachments = {}
+        shared_catalogues = {}
+        catalogue_group_by_attachment = {}
+        catalogue_equivalent_runs = {}
 
         for source in self.sources:
             scenario = source.scenario
             run_key = source.run_key
-            replication_candidates = shared_candidates.join(
-                candidate_replications.filter(pl.col("replication") == source.run.replication)
-                .select(CANDIDATE_ID_COLS),
-                on=CANDIDATE_ID_COLS,
-                how="semi",
-            )
-            if replication_candidates.height:
+            replication = source.run.replication
+            if replication not in candidates_by_replication:
+                # Scenarios in one replication draw from the same physical pool.
+                candidates_by_replication[replication] = shared_candidates.join(
+                    candidate_replications.filter(pl.col("replication") == replication)
+                    .select(CANDIDATE_ID_COLS),
+                    on=CANDIDATE_ID_COLS,
+                    how="semi",
+                )
+            replication_candidates = candidates_by_replication[replication]
+            remaining_sources[replication] -= 1
+            if not remaining_sources[replication]:
+                del candidates_by_replication[replication]
+            local_key = history_keys_by_run[run_key]
+            local_candidates = candidates_by_history.get(local_key)
+            if local_candidates is not None:
+                replication_candidates = local_candidates
+            elif replication_candidates.height:
                 # A shared plan can be active in one scenario and inactive in
                 # another. Keep its retention history local to this run.
                 replication_candidates = replication_candidates.drop(CandidatePlanStepsAsset.RETENTION_COLUMNS)
@@ -554,12 +655,13 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                         for column in CandidatePlanStepsAsset.RETENTION_COLUMNS
                     ])
                 if generated_candidates.height:
-                    refreshed = (
-                        generated_candidates
-                        .filter(pl.col("replication") == source.run.replication)
-                        .select(CANDIDATE_ID_COLS).unique()
-                        .with_columns(_refreshed=pl.lit(True))
-                    )
+                    if replication not in refreshed_by_replication:
+                        refreshed_by_replication[replication] = (
+                            generated_candidates.filter(pl.col("replication") == replication)
+                            .select(CANDIDATE_ID_COLS).unique()
+                            .with_columns(_refreshed=pl.lit(True))
+                        )
+                    refreshed = refreshed_by_replication[replication]
                     replication_candidates = replication_candidates.join(refreshed, on=CANDIDATE_ID_COLS, how="left")
                 else:
                     replication_candidates = replication_candidates.with_columns(_refreshed=pl.lit(False))
@@ -569,46 +671,66 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                     .then(pl.lit(self.iteration, dtype=pl.UInt16))
                     .otherwise(pl.col("last_seen_iteration").fill_null(self.iteration)),
                 ).drop("_refreshed")
+                if remaining_histories[local_key] > 1:
+                    candidates_by_history[local_key] = replication_candidates
+            remaining_histories[local_key] -= 1
+            if not remaining_histories[local_key]:
+                candidates_by_history.pop(local_key, None)
+            if not remaining_sources[replication]:
+                refreshed_by_replication.pop(replication, None)
             self.time_sequence_steps_by_run_key[run_key] = self.previous_time_sequence_steps.get(
                 run_key, source.previous_state.get().schedule_steps
             )
             previous_destination_index, previous_mode_index = previous_index_by_run_key[run_key]
+            attachment_key = attachment_keys[run_key]
+            attachment = shared_attachments.get(attachment_key)
             destination_key_cols = [
                 "destination_sequence_key_1",
                 "destination_sequence_key_2",
             ]
-            destination_index_rows = replication_candidates.select(destination_key_cols).unique()
-            _, destination_index = StableKeyIndex(
-                key_cols=destination_key_cols,
-                index_col="dest_seq_id",
-                first_new_id=1,
-            ).extend(
-                destination_index_rows,
-                previous_index=previous_destination_index,
-            )
             mode_key_cols = ["mode_sequence_key_1", "mode_sequence_key_2"]
-            mode_index_rows = replication_candidates.select(mode_key_cols).unique()
-            _, mode_index = StableKeyIndex(
-                key_cols=mode_key_cols,
-                index_col="mode_seq_id",
-                first_new_id=1,
-            ).extend(
-                mode_index_rows,
-                previous_index=previous_mode_index,
-            )
+            if attachment is None:
+                destination_index_rows = replication_candidates.select(destination_key_cols).unique()
+                _, destination_index = StableKeyIndex(
+                    key_cols=destination_key_cols, index_col="dest_seq_id", first_new_id=1,
+                ).extend(destination_index_rows, previous_index=previous_destination_index)
+                mode_index_rows = replication_candidates.select(mode_key_cols).unique()
+                _, mode_index = StableKeyIndex(
+                    key_cols=mode_key_cols, index_col="mode_seq_id", first_new_id=1,
+                ).extend(mode_index_rows, previous_index=previous_mode_index)
+            else:
+                destination_index, mode_index = attachment[:2]
             destination_indices[run_key] = destination_index
             mode_indices[run_key] = mode_index
 
             if replication_candidates.height == 0:
                 candidate_steps_by_run_key[run_key] = empty_candidates_by_run_key[run_key]
             else:
-                candidate_steps = self._build_scenario_candidate_steps(
-                    shared_candidates=replication_candidates,
-                    destination_index=destination_index,
-                    mode_index=mode_index,
-                    source=source,
-                    profile_assignments=profile_assignments_by_run_key[run_key] if self.compact else None,
-                )
+                if attachment is None:
+                    candidate_steps = self._build_scenario_candidate_steps(
+                        shared_candidates=replication_candidates,
+                        destination_index=destination_index,
+                        mode_index=mode_index,
+                        source=source,
+                        profile_assignments=profile_assignments_by_run_key[run_key] if self.compact else None,
+                    )
+                    if remaining_attachments[attachment_key] > 1:
+                        shared_attachments[attachment_key] = (
+                            destination_index, mode_index, candidate_steps,
+                            self.time_sequence_steps_by_run_key[run_key],
+                            self.unordered_candidate_steps_by_run_key.get(run_key),
+                            self.scoring_candidate_steps_by_run_key.get(run_key),
+                            self.compact_candidate_steps_by_run_key.get(run_key),
+                        )
+                else:
+                    _, _, candidate_steps, schedules, unordered, factored, compact_steps = attachment
+                    self.time_sequence_steps_by_run_key[run_key] = schedules
+                    if unordered is not None:
+                        self.unordered_candidate_steps_by_run_key[run_key] = unordered
+                    if factored is not None:
+                        self.scoring_candidate_steps_by_run_key[run_key] = factored
+                    if compact_steps is not None:
+                        self.compact_candidate_steps_by_run_key[run_key] = compact_steps
                 if logging.getLogger().isEnabledFor(logging.DEBUG):
                     logging.debug(
                         "Shared pool candidate attachment | scenario=%s | "
@@ -643,39 +765,57 @@ class SharedCandidatePoolAsset(InMemoryAsset):
 
             if self.compact and run_key in self.compact_candidate_steps_by_run_key:
                 compact_steps = self.compact_candidate_steps_by_run_key.pop(run_key)
-                if not self.build_catalogue:
-                    continue
-                content = self._attach_sequence_content_keys(
-                    add_candidate_ids(compact_steps), destination_index, mode_index,
-                    self.time_sequence_steps_by_run_key[run_key],
-                ).with_columns(
-                    run_id=pl.lit(run_key, dtype=pl.Int64),
-                    replication=pl.lit(source.run.replication, dtype=pl.UInt32),
+                catalogue_equivalent_runs[run_key] = catalogue_group_by_attachment.setdefault(
+                    attachment_key, run_key,
                 )
-                catalogue = PlanCatalogue.from_candidates(content)
-                if candidate_catalogues:
-                    first = candidate_catalogues[0]
-                    # Attachment often gives each scenario exactly the same
-                    # physical plans. Share their immutable tables immediately,
-                    # before the final merge can duplicate all those steps.
-                    if catalogue.steps.equals(first.steps):
-                        catalogue = PlanCatalogue(
-                            plans=first.plans,
-                            steps=first.steps,
-                            variants=(
-                                first.variants if catalogue.variants.equals(first.variants)
-                                else catalogue.variants
-                            ),
-                            membership=catalogue.membership,
-                        )
+                shared_catalogue = shared_catalogues.get(attachment_key)
+                if shared_catalogue is not None:
+                    catalogue = PlanCatalogue(
+                        plans=shared_catalogue.plans, steps=shared_catalogue.steps,
+                        variants=shared_catalogue.variants,
+                        membership=shared_catalogue.membership.with_columns(
+                            run_id=pl.lit(run_key, dtype=pl.Int64),
+                        ),
+                    )
+                else:
+                    content = compact_steps.with_columns(
+                        run_id=pl.lit(run_key, dtype=pl.Int64),
+                        replication=pl.lit(source.run.replication, dtype=pl.UInt32),
+                    )
+                    catalogue = PlanCatalogue.from_candidates(content)
+                    if candidate_catalogues:
+                        first = candidate_catalogues[0]
+                        # Share physical tables across other equal attachments.
+                        if catalogue.steps.equals(first.steps):
+                            catalogue = PlanCatalogue(
+                                plans=first.plans,
+                                steps=first.steps,
+                                variants=(
+                                    first.variants if catalogue.variants.equals(first.variants)
+                                    else catalogue.variants
+                                ),
+                                membership=catalogue.membership,
+                            )
+                    if remaining_attachments[attachment_key] > 1:
+                        shared_catalogues[attachment_key] = catalogue
                 candidate_catalogues.append(catalogue)
 
-        candidate_ids = tuple(
-            shared_candidates.select(CANDIDATE_ID_COLS)
+            remaining_attachments[attachment_key] -= 1
+            if not remaining_attachments[attachment_key]:
+                shared_attachments.pop(attachment_key, None)
+                shared_catalogues.pop(attachment_key, None)
+
+        candidate_ids = (
+            candidate_replications.select(CANDIDATE_ID_COLS)
             .unique()
             .sort(CANDIDATE_ID_COLS)
-            .iter_rows()
         )
+        catalogue = PlanCatalogue.merge(candidate_catalogues) if candidate_catalogues else None
+        if catalogue is not None:
+            catalogue = PlanCatalogue(
+                catalogue.plans, catalogue.steps, catalogue.variants, catalogue.membership,
+                catalogue_equivalent_runs,
+            )
         return SharedCandidatePoolResult(
             candidate_plan_steps_by_run_key=candidate_steps_by_run_key,
             destination_sequence_indices=destination_indices,
@@ -684,7 +824,7 @@ class SharedCandidatePoolAsset(InMemoryAsset):
             candidate_ids=candidate_ids,
             time_sequence_steps_by_run_key=self.time_sequence_steps_by_run_key,
             candidate_replications=candidate_replications,
-            candidate_catalogue=PlanCatalogue.merge(candidate_catalogues) if candidate_catalogues else None,
+            candidate_catalogue=catalogue,
             candidate_step_parts_by_run_key=candidate_step_parts_by_run_key,
             scoring_candidate_steps_by_run_key=self.scoring_candidate_steps_by_run_key,
         )
@@ -925,9 +1065,23 @@ class SharedCandidatePoolAsset(InMemoryAsset):
                 f"to scenario '{source.scenario}'."
             )
         if getattr(self, "compact", False):
-            self.compact_candidate_steps_by_run_key[run_key] = plan_rows.select(
-                CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS
-            )
+            # Different reference schedules can become the same modeled time
+            # sequence. Use the reference retained by the time catalogue, as
+            # later behavioral restrictions also use that catalogue.
+            if getattr(self, "build_catalogue", True):
+                self.compact_candidate_steps_by_run_key[run_key] = (
+                    plan_rows.drop("reference_time_seq_id").join(
+                        schedule_steps.select(
+                            "activity_seq_id", "time_seq_id", "reference_time_seq_id"
+                        ).unique(), on=["activity_seq_id", "time_seq_id"], how="left",
+                    ).select(
+                        CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS
+                        + CANDIDATE_ID_COLS + [
+                            "reference_time_seq_id", "destination_sequence_key_1", "destination_sequence_key_2",
+                            "mode_sequence_key_1", "mode_sequence_key_2",
+                        ]
+                    )
+                )
             self.unordered_candidate_steps_by_run_key[run_key] = candidate_steps
             return candidate_steps.sort(PLAN_KEY_COLS + ["seq_step_index"])
         # The eager path remains available to standalone callers and tests.

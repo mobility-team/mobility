@@ -338,7 +338,7 @@ def test_cohort_step_uses_all_pre_step_states_before_updating_scenarios(monkeypa
         asset.get = update
 
     pool = SharedCandidatePoolResult(
-        candidate_plan_steps_by_run_key={}, generated_mode_sequences_by_run_key={}, candidate_ids=(),
+        candidate_plan_steps_by_run_key={}, generated_mode_sequences_by_run_key={}, candidate_ids=pl.DataFrame(),
         time_sequence_steps_by_run_key={}, candidate_replications=pl.DataFrame(),
         destination_sequence_indices={key: None for key in states},
         mode_sequence_indices={key: None for key in states},
@@ -443,7 +443,8 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
     pool = SharedCandidatePoolResult(
         candidate_plan_steps_by_run_key={}, generated_mode_sequences_by_run_key={},
         time_sequence_steps_by_run_key={}, candidate_replications=pl.DataFrame(),
-        candidate_ids=((1, 2),), destination_sequence_indices={0: pl.DataFrame()},
+        candidate_ids=pl.DataFrame({"candidate_id_1": [1], "candidate_id_2": [2]}),
+        destination_sequence_indices={0: pl.DataFrame()},
         mode_sequence_indices={0: pl.DataFrame()},
     )
 
@@ -568,7 +569,7 @@ def test_stable_replications_complete_the_configured_outer_iterations(monkeypatc
         coordinator = MultiScenarioRunAsset({replication: run})
         key = replication
         pool = SharedCandidatePoolResult(
-            candidate_plan_steps_by_run_key={}, generated_mode_sequences_by_run_key={}, candidate_ids=(),
+            candidate_plan_steps_by_run_key={}, generated_mode_sequences_by_run_key={}, candidate_ids=pl.DataFrame(),
             time_sequence_steps_by_run_key={}, candidate_replications=pl.DataFrame(),
             destination_sequence_indices={key: None}, mode_sequence_indices={key: None},
         )

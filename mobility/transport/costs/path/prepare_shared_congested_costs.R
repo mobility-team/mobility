@@ -7,7 +7,6 @@ library(duckdb)
 library(jsonlite)
 library(data.table)
 library(sf)
-library(FNN)
 
 args <- commandArgs(trailingOnly = TRUE)
 
@@ -24,6 +23,7 @@ congestion_assignment_max_gap <- args[10]
 congestion_assignment_retained_volume_share <- args[11]
 output_fp <- args[12]
 graph_paths <- if (length(args) >= 14) unlist(fromJSON(args[14])) else character()
+route_requests_fp <- if (length(args) >= 15) args[15] else ""
 
 
 source(file.path(package_fp, "transport", "graphs", "core", "cpprouting_io.R"))
@@ -88,6 +88,9 @@ od_vertex_map <- as.data.table(read_parquet(od_vertex_map_fp))
     stop("OD vertex map is incomplete for the current buildings sample.")
   }
 
+  # Keep the original building order for route requests. Assignment also
+  # needs graph coordinates, which are attached separately below.
+  buildings_sample <- buildings[, .(building_id, transport_zone_id, n_clusters, weight, vertex_id)]
   buildings <- merge(buildings[, list(building_id, transport_zone_id, n_clusters, weight, vertex_id)], vertices, by = "vertex_id")
   info(logger, paste0("Attached graph coordinates to buildings, ", format(nrow(buildings), big.mark = ","), " rows."))
 
@@ -95,87 +98,71 @@ cch_hash <- strsplit(basename(cch_graph_fp), "-")[[1]][1]
 cch <- read_cppr_cch(dirname(cch_graph_fp), cch_hash, graph = cppr_graph)
 # Prepare the travel-time OD requests once for every scenario.
 max_beeline_distance <- as.numeric(args[13])
-buildings_sample_fp <- buildings_fp
-transport_zones <- st_read(transport_zones_fp)
-transport_zones <- as.data.table(st_drop_geometry(transport_zones))
-
-buildings_sample <- as.data.table(read_parquet(buildings_sample_fp))
-buildings_sample[, building_id := 1:.N]
-
-# Compute crowfly distances between transport zones to choose how many
-# representative buildings to use inside each origin and destination zone.
-travel_costs <- CJ(
-  from = transport_zones$transport_zone_id,
-  to = transport_zones$transport_zone_id
-)
-
-travel_costs <- merge(travel_costs, transport_zones[, list(transport_zone_id, x, y)], by.x = "from", by.y = "transport_zone_id")
-travel_costs <- merge(travel_costs, transport_zones[, list(transport_zone_id, x, y)], by.x = "to", by.y = "transport_zone_id", suffixes = c("_from", "_to"))
-
-travel_costs[, distance := sqrt((x_from - x_to)^2 + (y_from - y_to)^2)]
-travel_costs <- travel_costs[distance < max_beeline_distance * 1000]
-
-travel_costs[, n_clusters := round(1 + 4*exp(-distance/1000/2))]
-
-travel_costs <- merge(
-  travel_costs,
-  buildings_sample[, list(transport_zone_id, n_clusters, building_id, x, y, weight)],
-  by.x = c("from", "n_clusters"),
-  by.y = c("transport_zone_id", "n_clusters"),
-  all.x = TRUE,
-  allow.cartesian = TRUE
-)
-
-travel_costs <- merge(
-  travel_costs,
-  buildings_sample[, list(transport_zone_id, n_clusters, building_id, x, y, weight)],
-  by.x = c("to", "n_clusters"),
-  by.y = c("transport_zone_id", "n_clusters"),
-  all.x = TRUE,
-  suffixes = c("_from_cluster", "_to_cluster"),
-  allow.cartesian = TRUE
-)
-
-travel_costs <- travel_costs[building_id_from_cluster != building_id_to_cluster]
-
-# Match buildings with graph vertices. The OD vertex map is the normal path;
-# nearest-neighbour fallback is kept for older graph caches without that map.
-if (!is.null(od_vertex_map)) {
-  buildings_sample <- merge(
-    buildings_sample,
-    od_vertex_map[, list(building_id, vertex_id)],
-    by = "building_id",
-    all.x = TRUE,
-    sort = FALSE
-  )
-
-  if (any(is.na(buildings_sample$vertex_id))) {
-      stop("OD vertex map is incomplete for travel-cost preparation.")
-  }
+if (nzchar(route_requests_fp) && file.exists(route_requests_fp)) {
+  info(logger, "Reusing road route requests for this simulation.")
+  travel_costs <- as.data.table(read_parquet(route_requests_fp))
 } else {
-  knn <- get.knnx(
-    vertices[, list(x, y)],
-    buildings_sample[, list(x, y)],
-    k = 1
+  transport_zones <- st_read(transport_zones_fp)
+  transport_zones <- as.data.table(st_drop_geometry(transport_zones))
+
+  # Compute crowfly distances between transport zones to choose how many
+  # representative buildings to use inside each origin and destination zone.
+  travel_costs <- CJ(
+    from = transport_zones$transport_zone_id,
+    to = transport_zones$transport_zone_id
   )
 
-  buildings_sample[, vertex_id := vertices$vertex_id[knn$nn.index]]
+  travel_costs <- merge(travel_costs, transport_zones[, list(transport_zone_id, x, y)], by.x = "from", by.y = "transport_zone_id")
+  travel_costs <- merge(travel_costs, transport_zones[, list(transport_zone_id, x, y)], by.x = "to", by.y = "transport_zone_id", suffixes = c("_from", "_to"))
+
+  travel_costs[, distance := sqrt((x_from - x_to)^2 + (y_from - y_to)^2)]
+  travel_costs <- travel_costs[distance < max_beeline_distance * 1000]
+
+  travel_costs[, n_clusters := round(1 + 4*exp(-distance/1000/2))]
+
+  travel_costs <- merge(
+    travel_costs,
+    buildings_sample[, list(transport_zone_id, n_clusters, building_id, weight)],
+    by.x = c("from", "n_clusters"),
+    by.y = c("transport_zone_id", "n_clusters"),
+    all.x = TRUE,
+    allow.cartesian = TRUE
+  )
+
+  travel_costs <- merge(
+    travel_costs,
+    buildings_sample[, list(transport_zone_id, n_clusters, building_id, weight)],
+    by.x = c("to", "n_clusters"),
+    by.y = c("transport_zone_id", "n_clusters"),
+    all.x = TRUE,
+    suffixes = c("_from_cluster", "_to_cluster"),
+    allow.cartesian = TRUE
+  )
+
+  travel_costs <- travel_costs[building_id_from_cluster != building_id_to_cluster]
+
+  graph_refs <- as.character(cppr_graph$dict$ref)
+  buildings_sample[, vertex_id := as.character(vertex_id)]
+  if (any(!buildings_sample$vertex_id %in% graph_refs)) {
+    stop("Some building vertex ids are missing from the graph dictionary.")
+  }
+
+  travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, vertex_id)], by.x = "building_id_from_cluster", by.y = "building_id")
+  travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, vertex_id)], by.x = "building_id_to_cluster", by.y = "building_id", suffixes = c("_from", "_to"))
+
+  # The route and zone aggregation need only these fields. Drop building and
+  # coordinate details before routing the same requests for each scenario.
+  travel_costs <- travel_costs[, .(
+    from, to, vertex_id_from, vertex_id_to, weight_from_cluster, weight_to_cluster
+  )]
+  if (nzchar(route_requests_fp)) {
+    # Publish only a complete file; a failed R process must not leave a partial
+    # parquet file for the next cost update to read.
+    partial_fp <- paste0(route_requests_fp, ".partial")
+    write_parquet(travel_costs, partial_fp)
+    if (!file.rename(partial_fp, route_requests_fp)) stop("Could not save road route requests.")
+  }
 }
-
-graph_refs <- as.character(cppr_graph$dict$ref)
-buildings_sample[, vertex_id := as.character(vertex_id)]
-if (any(!buildings_sample$vertex_id %in% graph_refs)) {
-  stop("Some building vertex ids are missing from the graph dictionary.")
-}
-
-travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, vertex_id)], by.x = "building_id_from_cluster", by.y = "building_id")
-travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, vertex_id)], by.x = "building_id_to_cluster", by.y = "building_id", suffixes = c("_from", "_to"))
-
-# The route and zone aggregation need only these fields. Drop building and
-# coordinate details before routing the same requests for each scenario.
-travel_costs <- travel_costs[, .(
-  from, to, vertex_id_from, vertex_id_to, weight_from_cluster, weight_to_cluster
-)]
 
 flow_paths <- unlist(fromJSON(flows_fp))
 wide <- NULL

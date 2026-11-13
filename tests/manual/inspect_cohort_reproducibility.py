@@ -88,7 +88,7 @@ def test_independent_cohort_executions_keep_state_and_candidate_ids(test_data, m
         state_assets, states, search = advance(coordinator, iteration, current_states, **kwargs)
         step_records.append((
             iteration,
-            tuple(sorted(search["pool"].candidate_ids)),
+            tuple(search["pool"].candidate_ids.iter_rows()),
             {key: (state.rng_state, state.current_plans.clone()) for key, state in states.items()},
         ))
         step_frames.append({key: state.current_plan_steps.clone() for key, state in states.items()})

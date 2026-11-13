@@ -221,6 +221,7 @@ class TransportCosts(InMemoryAsset):
         metrics: list[str],
         *,
         default_costs: pl.DataFrame | None = None,
+        od_pairs: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
         """Compute OD-by-mode costs once for every distinct utility profile."""
         profile_costs = []
@@ -238,6 +239,11 @@ class TransportCosts(InMemoryAsset):
                 metrics,
                 detail_distances=False,
             )
+        if od_pairs is not None:
+            # Profiles need costs only for ODs used by their current candidates.
+            # Filter before copying the default table for each profile.
+            all_pairs = od_pairs.select("from", "to").unique()
+            default_costs = default_costs.join(all_pairs, on=["from", "to"], how="semi")
 
         # Cache by generalized-cost asset, not by population profile. Profiles
         # that inherit one mode's default coefficients reuse its existing OD
@@ -252,6 +258,10 @@ class TransportCosts(InMemoryAsset):
             )
         }
         for profile_id, generalized_costs in profiles.items():
+            profile_pairs = (
+                od_pairs.filter(pl.col("utility_profile_id") == profile_id).select("from", "to").unique()
+                if od_pairs is not None else None
+            )
             for mode, generalized_cost in zip(self.modes, generalized_costs):
                 costs = costs_by_generalized_cost.get(generalized_cost.inputs_hash)
                 if costs is None:
@@ -263,7 +273,11 @@ class TransportCosts(InMemoryAsset):
                             road_flow_asset=self.inputs["road_flow_asset"],
                         )
                     )
+                    if od_pairs is not None:
+                        costs = costs.join(all_pairs, on=["from", "to"], how="semi")
                     costs_by_generalized_cost[generalized_cost.inputs_hash] = costs
+                if profile_pairs is not None:
+                    costs = costs.join(profile_pairs, on=["from", "to"], how="semi")
                 profile_costs.append(
                     costs.with_columns(
                         utility_profile_id=pl.lit(profile_id, dtype=pl.UInt32),

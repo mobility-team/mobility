@@ -49,6 +49,24 @@ class CompactCandidateSteps:
             .select(MEMBERSHIP_COLUMNS)
         )
 
+    def memberships_for_plans(self, plans: pl.LazyFrame) -> pl.LazyFrame:
+        """Find occupied memberships without expanding the entire history."""
+        plans = plans.select(PLAN_KEY_COLS)
+        if self.unit_map is None:
+            return self.membership.lazy().join(plans, on=PLAN_KEY_COLS, how="semi")
+        # Start with the occupied unit/plan pairs. Each pair identifies its
+        # stored context membership without joining all plans to all units in
+        # that context first.
+        return (
+            plans.unique().join(self.unit_map.lazy(), on=DEMAND_UNIT_COLS, how="inner")
+            .join(
+                self.membership.lazy().drop("demand_subgroup_id")
+                .rename({"demand_group_id": "_score_context_id"}),
+                on=["_score_context_id"] + PLAN_COLUMNS, how="inner",
+            )
+            .select(MEMBERSHIP_COLUMNS)
+        )
+
     def lazy(self) -> pl.LazyFrame:
         """Reconstruct candidate rows only when an operation needs them."""
         return (

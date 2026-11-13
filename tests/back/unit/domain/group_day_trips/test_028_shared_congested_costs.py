@@ -130,6 +130,39 @@ def test_identical_flow_files_share_one_assignment(tmp_path, monkeypatch):
         assert b["distance"].tolist() == [1.0]
 
 
+def test_route_requests_are_shared_only_for_matching_routing_inputs(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setattr(PathTravelCosts, "asset_for_flow_asset", lambda self, flow: SimpleNamespace(congested_costs=flow.table))
+    first, _ = make_iteration_costs(tmp_path, "first")
+    second, _ = make_iteration_costs(tmp_path, "second")
+    different_graph, _ = make_iteration_costs(tmp_path, "third", graph_id="other")
+    different_distance, _ = make_iteration_costs(tmp_path, "fourth")
+    different_zones, _ = make_iteration_costs(tmp_path, "fifth")
+    different_assignment, _ = make_iteration_costs(tmp_path, "sixth")
+    different_distance.modes[0].inputs["generalized_cost"].inputs["travel_costs"].routing_parameters.max_beeline_distance = 20.0
+    different_zones.modes[0].inputs["generalized_cost"].inputs["travel_costs"].transport_zones.inputs_hash = "other-zones"
+    different_assignment.modes[0].inputs["generalized_cost"].inputs["travel_costs"].congested_path_graph.inputs["congestion_assignment_max_iterations"] = 5
+    for name in ("first", "second", "third", "fourth", "fifth", "sixth"):
+        (tmp_path / (name + ".parquet")).write_bytes(name.encode())
+    route_paths = []
+
+    class FakeRunner:
+        def __init__(self, path):
+            pass
+
+        def run(self, args):
+            route_paths.append(Path(args[-1]))
+            pl.DataFrame({"from": [1], "to": [2], "distance_0": [1.0], "time_0": [0.1]}).write_parquet(args[10])
+
+    monkeypatch.setattr("mobility.transport.costs.path.shared_congested_costs.RScriptRunner", FakeRunner)
+    with asset_resolution_context():
+        for item in (first, second, different_graph, different_distance, different_zones, different_assignment):
+            prepare_shared_congested_costs([item])
+    assert route_paths[0] == route_paths[1]
+    assert route_paths[0] == route_paths[5]
+    assert len({route_paths[0], route_paths[2], route_paths[3], route_paths[4]}) == 4
+
+
 def test_incompatible_networks_are_not_batched(tmp_path, monkeypatch):
     """Different road networks are computed separately, including singleton groups."""
     monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))

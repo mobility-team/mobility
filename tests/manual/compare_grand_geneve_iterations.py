@@ -31,7 +31,7 @@ from mobility.trips.group_day_trips.iterations.iteration_assets import InitialIt
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps
-from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePoolAsset
+from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePool
 from mobility.trips.group_day_trips.core.multi_scenario import CANDIDATE_ID_COLS
 from mobility.trips.group_day_trips.plans.candidate_plan_steps import CandidatePlanStepsAsset
 from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
@@ -89,8 +89,8 @@ original_rebuild = AssetResolver._rebuild_asset
 original_inner_loop = MultiScenarioRunAsset._run_inner_loop
 original_state = IterationStateAsset.get
 original_initial_state = InitialIterationStateAsset.get
-original_pool = SharedCandidatePoolAsset.create_and_get_asset
-original_merge = SharedCandidatePoolAsset._merge_candidate_content
+original_pool = SharedCandidatePool.build
+original_merge = SharedCandidatePool._merge_candidate_content
 original_destination_sequences = DestinationSequences.create_and_get_asset
 original_mode_sequences = mode_module.ModeSequences.create_and_get_asset
 original_search_inputs = mode_module.build_search_inputs
@@ -138,7 +138,7 @@ def report_candidate_pool(coordinator, *args, **kwargs):
     if kwargs["iteration"] > stop_after:
         raise ComparisonComplete()
     result = original_inner_loop(coordinator, *args, **kwargs)
-    candidates = sorted(result["pool"].candidate_ids)
+    candidates = list(result["pool"].candidate_ids.iter_rows())
     digest = hashlib.sha256(json.dumps(candidates, separators=(",", ":")).encode()).hexdigest()
     print("COMPARE", json.dumps({
         "kind": "candidates", "step": kwargs["iteration"],
@@ -161,7 +161,7 @@ def report_candidate_batch(asset):
                 requests.write_parquet(work / f"step-2-{source.scenario}-generation-requests.parquet")
     result = original_pool(asset)
     if asset.iteration == 2:
-        candidates = sorted(result.candidate_ids)
+        candidates = list(result.candidate_ids.iter_rows())
         digest = hashlib.sha256(json.dumps(candidates, separators=(",", ":")).encode()).hexdigest()
         print("COMPARE_BATCH", json.dumps({
             "step": asset.iteration, "batch": batch, "count": len(candidates), "sha256": digest,
@@ -284,11 +284,11 @@ if (os.environ.get("MOBILITY_COMPARE_BATCH_DETAILS") == "1"
         or os.environ.get("MOBILITY_COMPARE_STOP_AFTER_MODE_INPUTS") == "1"
         or os.environ.get("MOBILITY_COMPARE_STOP_AFTER_MODE_SEARCH") == "1"
         or os.environ.get("MOBILITY_COMPARE_CAPTURE_MERGE") == "1"):
-    SharedCandidatePoolAsset.create_and_get_asset = report_candidate_batch
+    SharedCandidatePool.build = report_candidate_batch
 if os.environ.get("MOBILITY_COMPARE_CAPTURE_MERGE") == "1":
-    SharedCandidatePoolAsset._merge_candidate_content = capture_candidate_merge
+    SharedCandidatePool._merge_candidate_content = capture_candidate_merge
 elif os.environ.get("MOBILITY_COMPARE_STREAM_MERGE") == "1":
-    SharedCandidatePoolAsset._merge_candidate_content = stream_candidate_merge
+    SharedCandidatePool._merge_candidate_content = stream_candidate_merge
 if (os.environ.get("MOBILITY_COMPARE_GENERATION_INPUTS") == "1"
         or os.environ.get("MOBILITY_COMPARE_STOP_AFTER_MODE_INPUTS") == "1"
         or os.environ.get("MOBILITY_COMPARE_STOP_AFTER_MODE_SEARCH") == "1"):

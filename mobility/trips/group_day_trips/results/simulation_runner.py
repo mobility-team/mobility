@@ -167,14 +167,20 @@ class SimulationRunner:
             not (
                 isinstance(request, ScopedRunTable)
                 and (
-                    request.table_name in {"plans", "demand_groups", "opportunities", "iteration_metrics", "mnl_od_mode_flows"}
+                    request.table_name in {
+                        "plans", "demand_groups", "opportunities", "iteration_metrics",
+                        "mnl_od_mode_flows", "adaptive_search_diagnostics", "transitions",
+                    }
                     or request.table_name in {"plan_steps", "costs"} and not request.uses_last_iteration
                 )
                 or isinstance(request, Metric)
                 and request.compute_lane is not None
                 and request.finish_lanes is not None
                 and request.selected_iterations
-                and all(step < last_step for step in request.selected_iterations)
+                and (
+                    request.step_scoped
+                    or all(step < last_step for step in request.selected_iterations)
+                )
             )
             for request in required_requests
         )
@@ -333,10 +339,18 @@ class SimulationRunner:
                 if iteration == last_step:
                     if needs_final_outputs:
                         final_states = coordinator._finalize_cohort(
-                            iteration, current_states, current_state_assets, diagnostics
+                            iteration, current_states, current_state_assets
                         )
                     else:
                         final_states = current_states
+                    for run_key, state in final_states.items():
+                        state.adaptive_search_diagnostics = pl.DataFrame(
+                            [
+                                {key: value for key, value in row.items() if key != "_run_key"}
+                                for row in diagnostics if row["_run_key"] == run_key
+                            ],
+                            infer_schema_length=None,
+                        )
                 # Result assets read the current state without recursively
                 # starting a second cohort execution.
                 coordinator._active_result = CoordinatedRunResult(

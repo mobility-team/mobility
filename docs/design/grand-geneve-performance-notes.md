@@ -1,5 +1,182 @@
 # Grand Genève performance notes
 
+## Current experiments
+
+All timings below are single runs. The reported Python RSS is a sampled process
+peak, not memory attributed to one operation. Pool counts matched in the
+before/after comparisons, and reported trip totals differed by less than
+9e-9 persons.
+
+The separate complete-plan scores-and-timings cache was removed after it showed
+no whole-run advantage in these samples. The shared physical candidate pool
+and smaller step-scoring lookup remain. At 54 rough effort points, disabling
+complete-plan reuse changed runtime from 101.67 to 100.96 s and peak RSS from
+7.08 to 6.60 GiB. At 108 points, runtime was 116.58 versus 116.74 s and peak
+RSS was 10.23 versus 8.72 GiB. The 108-point comparison preceded a small
+plan-ID flow-join change. Older measurements of result reassembly below refer
+to the removed path.
+
+Evaluation now asks for profile costs only for OD pairs present in its new
+scoring inputs. In a one-point probe, the profile cost table fell from
+4,024,443 rows to 42,448. At 108 points, the scoring span took 4.06 versus
+3.08 s, evaluation 37.98 versus 35.74 s, and the whole run 113.62 versus
+106.24 s; peak RSS was similar. Pool counts matched and trip totals differed
+by at most 6.52e-9 persons. These are single runs and the whole-run change
+includes normal variation. Filtering during mode-cost construction was slower
+at both 54 and 108 points, so mode search keeps the existing full cost cache
+and filters immediately before building its search index.
+In the divergent two-scenario 72-point run, evaluation took 26.36 versus
+25.91 s, pool counts matched, and trip totals differed by at most 5.59e-9
+persons. Peak RSS was essentially unchanged in this single comparison.
+For two divergent scenarios and two sequential seeds at 16 points, pool counts
+matched and trip means differed by at most 4.66e-9 persons; total time was
+130.78 versus 134.16 s and traced peak RSS was 8.73 versus 8.56 GiB.
+
+Fresh evaluation now collects scored steps once for coverage and modeled
+timing, and assigns persistent plan IDs only after timing. At 108 points,
+collecting once changed evaluation time from 37.03 to 36.29 s and peak RSS from
+8.72 to 8.73 GiB. Plan IDs can change, so run and checkpoint identities were
+updated. The shared catalogue also carries existing physical IDs between
+batches, and keeps the ID list in columns rather than Python tuples. In an
+isolated 400,000-ID check, the columns occupied 6.4 MB and conversion to
+Python tuples allocated about 48 MB; this is not a whole-run memory estimate.
+Scenarios within a seed now share the filtered physical candidate table and
+refreshed-ID table during attachment. In the divergent two-scenario eight-point
+probe, pool counts matched and trip totals differed by at most 6.52e-9 persons.
+Pool preparation took 21.48 versus 20.12 s, and peak RSS was 6.35 versus
+6.53 GiB. These are single runs; larger scenario cohorts are needed to assess
+the tradeoff.
+
+Mode-search validation compares integer location lists directly rather than
+building strings. In a synthetic one-million-row check, the validation group
+count took 0.209 s with strings and 0.069 s with lists; counts matched. This is
+an isolated check, not a measured full-run speedup.
+An opt-in `MOBILITY_PROBE_MODE_REUSE_DIAGNOSTIC=1` measures repeated
+profile-and-location chains within an outer step. In a one-step, 54-point
+probe, all 65,812 input chains were distinct within their batches; the third
+batch repeated 3,079 chains from earlier batches, or 4.7% of all searches.
+No mode-result cache was added on this evidence.
+
+Mode search now builds its cost index only for legs in the sampled location
+chains, including the return to the starting location. In a two-point probe,
+each batch went from 1,341,481 available cost rows to about 24,000 needed
+rows; mode search took 1.49 versus 0.32 s across the two batches. At 54
+points, mode search took 3.97 versus 1.13 s; at 108 points, 7.00 versus
+3.07 s. Pool counts matched, and trip totals differed by at most 4.66e-9
+persons. Whole-run comparisons varied and do not establish the same saving
+for the entire run. The filtering is tested against actual Rust search output
+for multiple profiles and closing legs.
+In the divergent two-scenario 72-point probe, mode search took 5.37 versus
+1.48 s and pool preparation 26.82 versus 23.71 s. Counts matched and trip
+totals differed by at most 7.46e-9 persons; peak RSS was approximately
+6.84 versus 6.82 GiB. These are single-run comparisons.
+In the divergent two-scenario, two-seed 16-point probe, mode search took
+9.03 versus 1.79 s across 12 calls; total time was 132.93 versus 130.78 s.
+Pool counts matched and mean trip totals differed by at most 3.26e-9 persons.
+
+Destination probabilities are retained per utility profile, scenario and
+outer step; OD cost tables are not retained. At 108 points, destination
+sampling took 19.02 versus 16.39 s, whole-run time was 115.07 versus 110.64 s,
+and peak RSS was 8.73 versus 8.79 GiB. At 54 points, sampling time was
+essentially unchanged. Two scenarios and two seeds at low effort took 110.57
+versus 113.72 s, with peaks of 7.18 versus 7.27 GiB. The cache helps when
+profiles recur, but may cost time and memory when they do not. The manual
+probe accepts `MOBILITY_PROBE_NO_DEST_PROBABILITY_REUSE=1` for comparisons.
+
+For scenario scaling, two scenarios and two sequential seeds, with two steps,
+one draw per dimension and two batches (16 rough effort points), took 110.57 s
+and peaked at 7.18 GiB. The carbon-tax change in the Grand Genève script starts
+at step five, so these short runs have identical scenario costs. Moving the tax
+to step two with `MOBILITY_PROBE_SCENARIO_CHANGE_STEP=2` produced genuinely
+different scenarios: the corresponding run took 132.93 s, peaked at 8.68 GiB,
+and ended with 19,644 and 19,726 shared plans for the two seeds. These are
+different workloads, not a controlled incremental-cost comparison. The probe
+accepts `MOBILITY_PROBE_REPLICATIONS=0,1` to select multiple seeds.
+
+With three activity draws, three mode draws, two steps and two batches, one
+scenario (36 points) took 68.59 s, while two divergent scenarios (72 points)
+took 107.17 s. The latter ended with 136,522 shared plans and peaked at
+6.87 GiB. Inner loops totaled 29.56 versus 60.87 s; pool preparation 16.70
+versus 30.53 s; scenario evaluation 11.59 versus 27.19 s; and road preparation
+15.02 versus 20.19 s. These are single runs and spans overlap their parents.
+In a repeated 72-point probe, restoring previous catalogue candidates took
+0.13 s across four scenario restorations and building catalogues took 0.26 s;
+the enclosing pool-preparation spans totaled 26.82 s. This does not rule out
+larger catalogue costs at higher effort or with more scenarios, but suggests
+that generation and evaluation deserve priority at this size.
+
+The shared road calculation reuses its existing building-to-vertex table. An
+isolated one-flow comparison produced exactly equal costs for 1,070,826 zone
+pairs; the single-run timings, 7.69 and 7.77 s, do not demonstrate a speedup.
+
+## Higher-effort single-scenario probe
+
+A five-step, single-scenario, seed-0 probe used full replanning, six activity
+draws, one destination draw, three mode draws and up to three inner batches.
+All 15 batches ran: 270 rough effort points. It completed in 379.48 s without
+a memory limit. The traced Python RSS peak was 14.75 GiB, and the two-second
+process-tree sampler observed 13.31 GiB; their peaks use different intervals.
+The shared pool grew from 127,967 plans after step one to 386,487 after step
+five. Inner-loop seconds and Python RSS peaks by step were 27.5 / 6.59 GiB,
+56.3 / 10.64 GiB, 66.7 / 12.55 GiB, 74.9 / 13.47 GiB, and 82.4 / 14.75 GiB.
+
+Across the 15 batches, scenario evaluation took 180.3 s inclusive, and shared
+pool generation and attachment took 120.7 s inclusive. Road-cost preparation
+took 40.1 s, including final costs. Evaluation includes recursive calls: do not
+add nested spans to it. Reassembling reused plan results accounted for 20.1 s
+of self time (37.5 s inclusive), and the highest RSS occurred in that operation
+in the last batch. These are process peaks, not memory owned by the operation.
+This single run identifies where to investigate next; it does not establish
+how a multi-scenario or longer run will scale.
+
+The same five-step workload was repeated with complete-plan reuse disabled in
+every batch; the compact scoring lookup remained enabled. The fresh-evaluation
+run took 399.03 versus 379.48 s with reuse, and traced peak Python RSS was
+12.29 versus 14.75 GiB. The five final candidate-pool counts matched, and all
+20 represented trip-count rows matched within 5.59e-9. The scenario evaluation
+spans totaled 175.6 versus 180.3 s, while shared pool preparation was 137.2
+versus 120.7 s and road-cost preparation 45.9 versus 40.1 s. These individual
+runs do not establish a whole-run time advantage for either path. They show a
+memory tradeoff in this sample, not exact equality of every modeled choice.
+The diagnostic switch used for this comparison has since been removed along
+with the complete-plan reuse path.
+
+## Five full-replanning steps: mode-sampling comparison
+
+Two single-scenario, seed-0 probes used one activity draw, one destination
+draw, one inner batch and three versus six mode draws, with full replanning on
+all five steps. Both included the opt-in step-five evaluation query diagnostic.
+The three-mode run took 94.24 s and finished with 61,318 physical candidates;
+the six-mode run took 109.90 s and finished with 129,765. Peak traced Python
+RSS was 6.53 and 6.74 GiB, including initialization. Road-cost preparation took
+39.13 and 40.76 s; candidate evaluation took 7.73 and 13.35 s, including
+modeled-timing materialization and indexing at 2.28 and 5.04 s.
+
+At step five, the compact scoring lookup produced 472,398 versus 543,154 rows,
+while the timed, scored step table contained 1,975,137 versus 4,308,836 rows
+(estimated 183.7 versus 400.7 MiB). Its collection took 0.205 versus 0.396 s;
+the following time-sequence indexing took 0.344 versus 0.897 s. These are
+single instrumented runs: their process RSS includes other live buffers, and
+the timings do not establish scaling at other effort settings. The query plans,
+trace and collected table summaries were written to the probe folders.
+
+A subsequent capture of the six-mode step-five input had 4,308,836 step rows,
+1,015,976 context-plan combinations and 129,765 physical plan keys. The 543,514
+physical-plan step keys each had exactly one combination of activity, reference
+times and modeled travel time in this capture. Hashing complete timing inputs
+gave 129,765 distinct two-hash signatures. This does not prove the same
+physical plan always has the same timing in every configuration.
+
+Two isolated experiments used this capture. Updating timings on the deduplicated
+physical steps and joining the results back produced an exactly equal table, but
+took 0.71 versus 0.45 s and peaked at 3.12 versus 2.69 GiB sampled process RSS.
+Hashing deduplicated physical schedules and then joining hashes back produced an
+exactly equal mapping in 0.25 versus 0.38 s, with 1.43 versus 1.51 GiB sampled
+RSS. These single runs include the deduplication and join, but the latter only
+works for this no-conflict input and does not measure full schedule indexing.
+Neither experiment has been incorporated into production: the first regressed,
+and the second's small isolated saving does not establish a safe general win.
+
 These measurements are diagnostic runs, not forecasts for a full experiment.
 The later single-scenario road-path comparison found an older cached congestion
 graph that did not match a fresh assignment for the same observed flows. The
@@ -997,6 +1174,272 @@ the scenarios. Any such cache must preserve source ordering and content
 identity and must still choose the service date jointly across all feeds; a
 per-feed choice of date could change the model.
 
+## Candidate attachment check
+
+An attachment experiment checked whether each shared candidate had an eligible
+activity profile using one row per candidate instead of candidate step rows.
+With two scenarios, one seed, one outer step, three activity draws, one
+destination draw, three mode draws and two batches (36 rough effort points),
+the pool reached 44,958 candidates. Summed attachment time was 0.78 s before
+and 0.82 s after; full-run time was 45.81 versus 46.38 s. Eight trip-count
+rows matched within 5.6e-9 represented trips. These single runs do not rule
+out a benefit for much larger late-step pools, but they show no benefit here;
+the rewrite was removed. Scenario transit feeds were disabled in this probe.
+
+Sharing destination and mode sequence indexes across scenarios with the same
+previous index removed eight stable-index extensions from a five-scenario,
+one-step, minimum-effort probe. All 15 trip-count rows matched the reference
+within 1.9e-9 represented trips; total runtime was 39.10 versus 40.30 s,
+which is too small a difference to attribute to this change. The earlier
+13-step trace spent only 1.51 s in these pool-level index extensions across
+140 calls, compared with 46.01 s extending indexes during modeled-timing
+materialization and 41.45 s in candidate evaluation. The extra sharing code
+was removed: those larger evaluation costs deserve priority. These times are
+nested trace spans, not independent components of the total runtime.
+
+Evaluation now adds mobile and stay-home plans in one index extension, keeping
+the former assignment order: new mobile IDs first, then new stay-home IDs.
+This avoids validating and sorting the existing index a second time. In a
+two-scenario, one-step, two-batch probe with three activity and three mode
+draws (36 rough effort points), all eight trip-count rows matched within
+9.4e-10 represented trips. The run took 45.81 s before and 45.81 s after;
+the indexed tables are small at this effort. A synthetic 600,000-row previous
+index and 600,000 mobile keys took 0.099-0.141 s for two extensions versus
+0.083-0.116 s combined across three runs; this is not a full simulation
+benchmark. A two-step probe with the carbon-tax change at step two matched all
+14 trip-count rows within 3.8e-9. Stay-home IDs are now available earlier in
+evaluation, so run and checkpoint identities were changed. No conclusion is
+claimed about the memory or runtime of a full high-effort run.
+
+## Selecting occupied candidate history
+
+Context-shared candidate history is now joined from occupied unit/plan pairs,
+instead of expanding all history to every unit before selecting occupied plans.
+The optimized Polars plan for the earlier query showed the full context-to-unit
+join before the occupied-plan semi-join. A synthetic example with 100 contexts,
+100 units per context and 500 plans per context returned the same 10,000 rows:
+the old query took 0.022-0.048 s and the new query 0.009-0.011 s over three
+runs. This is a focused query measurement, not a whole-simulation benchmark.
+A two-scenario, two-step minimum-effort Geneva probe with carbon tax starting
+at step two matched all 14 reference trip-count rows within 3.8e-9. Its full
+runtime was 55.69 s versus 58.99 s for the earlier run, and the factored
+scoring spans totaled 0.267 versus 0.273 s; ordinary run-to-run variation
+prevents attributing the overall difference to this change.
+
+## Sharing step scores between scenarios
+
+Scenarios with the same fixed scoring inputs now share the existing bounded
+step-score lookup. The grouping uses asset identity for transport costs and
+shared table objects for population, activity durations and destination
+saturation; activity settings, population segments and the utility settings
+must also match. It does not hash the large tables. If every requested score
+is already present, scoring reuses the lookup without rebuilding cost tables.
+The lookup remains scoped to the outer step and the existing shared 512 MiB
+retention budget. Different scenario costs or settings use separate lookups.
+
+In a five-scenario, one-step probe with one activity and destination draw,
+three mode draws and one batch (15 rough effort points), all five scenarios
+shared scores. Summed step-scoring time fell from 2.10 to 0.63 s and the
+coordinated run from 40.80 to 39.39 s. The 15 trip-count rows matched within
+2.4e-9 represented trips. Scenario transit feeds were disabled, and the tax
+change had not yet occurred. A two-step minimum-effort probe with carbon tax
+starting at step two shared scores in step one and used separate lookups in
+step two; all 14 trip-count rows matched within 4.7e-9.
+
+A two-scenario, two-step probe with three activity draws, three mode draws and
+two batches (72 points) completed in 102.62 s with a 6.68 GiB traced Python
+RSS peak. Earlier matching runs ranged from 97.01 to 107.04 s and 6.82 to
+6.87 GiB; all 16 trip-count rows matched within 7.5e-9. This comparison shows
+no clear overall speedup, and does not establish scaling at 20 steps or with
+real scenario transit feeds. Run and checkpoint identities were updated for
+the changed scoring execution.
+
+An additional two-step, five-scenario diagnostic found equal physical steps,
+memberships, scoring contexts, modeled schedule tables and transport-cost
+identities across the five scenarios at each step. It did not establish that
+all history and evaluation inputs were equal, so it does not by itself justify
+sharing complete evaluations. It does show where a common representation may
+avoid more duplicated timing work.
+
+## Reusing road route requests
+
+Road congestion updates now reuse the static route-request table within one
+simulation. It is keyed by the road graph, routing graph, transport zones and
+maximum routing distance; different traffic-assignment settings can still use
+the same requests. A temporary parquet file is renamed only after it is fully
+written, so an interrupted write cannot be used as a completed table.
+
+In a one-scenario, two-step minimum-effort probe, the two road preparations
+took 7.82 and 7.41 s before, versus 8.19 and 6.70 s after. The first call
+builds and saves the requests; the second reads them. These single runs do not
+establish a full-run speedup. In a two-scenario, two-step probe with different
+carbon-tax flows, all 14 trip-count rows matched within 1.4e-9. Replaying the
+captured two-flow road inputs produced exactly equal tables for freshly built
+and reused requests: 1,070,826 rows and both scenarios' distance and time
+columns matched the original calculation exactly. The temporary request file
+was about 3.1 MB in this probe.
+
+## Building the shared pool directly
+
+The shared candidate pool is now an ordinary batch-local builder. Previously it
+was registered as an in-memory asset, so its constructor hashed each previous
+history, schedule and sequence-index table, and the coordinator immediately
+released the resulting asset after its one use. Building directly removes those
+full-table hashes and the unused asset registration. This does not remove the
+integer candidate IDs or the identities used for saved simulation state.
+
+An opt-in reconstruction of the old table-hashing work in a five-scenario,
+two-step, minimum-effort probe took 0.015 s for five tables in step one and
+0.032 s for 30 tables in step two, representing 29 and 47 MB of logical table
+sizes respectively. The table estimates can include shared buffers and are not
+unique physical memory. This excludes the old asset registration and other
+identity construction overhead; it is not a high-effort measurement.
+
+In the 72-point two-scenario, two-step, two-batch comparison, all 16 trip-count
+rows matched within 5.6e-9. The coordinated run took 98.19 s versus 102.62 s
+in the earlier run, with traced Python RSS peaks of 6.65 and 6.68 GiB. The
+earlier run also lacked road-request reuse, so this does not isolate the impact
+of removing pool hashing. Focused integration checks also covered two-batch
+candidate IDs, allocations, random state and checkpoint continuation.
+
+## Sharing generated candidates
+
+Within one shared pool, scenarios now generate and attach their new candidate
+steps once when they use the same population, replication, previous-state
+asset, destination-generation asset and mode-generation asset. Existing
+asset identities establish that these inputs match; no candidate-table hash or
+comparison is needed. Each scenario still merges its own candidate history.
+The extra reuse reference is released after its last matching source.
+Different replications or generation inputs are handled separately.
+
+In a five-scenario, five-step, minimum-effort probe (25 rough effort points),
+generation ran six times rather than 25: once per step while all scenarios had
+matching inputs, and twice at step five when carbon-tax inputs differed.
+Summed generation time fell from 2.53 to 0.57 s and shared-pool preparation
+from 24.42 to 21.13 s. The coordinated run took 106.68 versus 109.30 s; the
+traced Python RSS peaks were 6.46 and 6.47 GiB. All 95 trip-count rows matched
+within 1.2e-8 represented trips. These are single runs with scenario transit
+feeds disabled and do not establish performance at 20 steps or high sampling.
+Unit comparisons also cover separate scenario histories and replications.
+
+## Sharing occupied-plan reconstruction
+
+Scenarios that refer to the same fixed previous state now reconstruct its
+occupied plan rows and content IDs once per shared pool. Each scenario still
+combines those rows with its own sampled history. Reuse requires the actual
+history, allocation, sequence-index and schedule objects to match; locally
+reconstructed fallback histories are not retained for this purpose. The extra
+reuse references are released after the last matching state is processed.
+
+In the same five-scenario, five-step minimum-effort probe, calls that assign
+candidate-content IDs fell from 46 to 30, taking 1.74 versus 0.58 s in total.
+Shared-pool preparation took 21.13 versus 19.61 s, while the coordinated run
+took 106.68 versus 106.72 s. Traced Python RSS peaks were 6.46 and 6.31 GiB,
+and all 95 trip-count rows matched within 7.5e-9 represented trips. These are
+single runs and do not isolate a whole-run memory or runtime improvement.
+
+A 72-point, two-scenario, two-step, two-batch run with a carbon-tax divergence
+completed in 92.48 s with a 6.66 GiB traced Python peak; all 16 trip-count
+rows matched the earlier run within 4.7e-9. The earlier run took 98.19 s and
+also predates shared generation, so the difference includes both changes.
+Unit comparisons cover different scenario histories with the same occupied
+state; integration checks cover random state and checkpoint continuation.
+
+## Sharing compact-history reconstruction
+
+When scenarios use the same compact history, sequence indexes, schedule and
+current allocations, pool construction now reduces that history and assigns
+its physical content IDs once. Each scenario receives its own history summary.
+The reuse keeps only narrow ID and history tables until the last matching
+scenario; it does not retain the reconstructed wide step table. Histories that
+differ, including per-run catalogue histories, continue to be processed
+separately.
+
+In the five-scenario, five-step minimum-effort probe, candidate-content ID
+calls fell from 30 to 14 and pool-preparation time from 19.61 to 17.62 s.
+Coordinated runtime was 104.58 versus 106.72 s, with traced Python RSS peaks
+of 6.33 and 6.31 GiB. All 95 trip-count rows matched within 1.1e-8. A
+72-point, two-scenario, two-step, two-batch comparison took 92.94 versus
+92.48 s; all 16 trip-count rows matched within 3.8e-9. These single runs do
+not establish high-effort or 20-step performance. Focused tests compare shared
+and independent reconstruction, including histories with different dates.
+
+## Sharing candidate attachment
+
+When scenarios contribute the same history tables, pool construction now
+merges that history once and reuses the resulting local candidate table. If
+their previous-state asset, sequence indexes, schedule and profile assignments
+also match, it attaches and indexes the candidates once. Multi-batch runs can
+also reuse the resulting catalogue's physical tables while keeping a separate
+membership for each run. Different histories or indexes remain separate. The
+sharing uses existing asset and object identities; it does not hash or compare
+complete candidate tables to detect a match.
+
+In the five-scenario, five-step minimum-effort probe, candidate attachment ran
+six times instead of 25 and took 0.94 versus 3.66 s in total. Shared-pool
+preparation took 15.20 versus 17.62 s and the coordinated run 103.39 versus
+104.58 s. The traced Python RSS peak was 6.56 versus 6.33 GiB; inner-loop
+peaks varied by step, so these single runs do not establish the memory effect.
+All 95 trip-count rows matched within 9.4e-9. In a 72-point, two-scenario,
+two-step, two-batch run, attachment was shared in the first batch and separate
+in the later batches, whose inputs did not share the required identities. All
+16 trip-count rows matched within 8.4e-9; runtime was 91.95 versus 92.94 s,
+with traced peaks of 6.78 versus 6.54 GiB. Real scenario transit feeds were
+disabled in both probes.
+
+## Sharing complete candidate evaluations
+
+Scenarios now share a complete candidate evaluation when their attached
+candidate tables, compact history, state tables, cost asset, scoring context,
+schedule and evaluation settings match. The grouping uses existing asset and
+object identities and compares the small settings; it does not hash or compare
+candidate tables. Matching scenarios are evaluated together, so at most one
+complete evaluation is retained for reuse at a time. A completed, compacted
+evaluation is also shared when the behavioral scope matches. Different inputs
+or scopes keep their own results. Run and checkpoint identities were updated.
+
+In the five-scenario, five-step minimum-effort probe, complete evaluations
+fell from 25 to six: one per step until carbon-tax inputs diverged, then two.
+Summed candidate-evaluation time fell from 16.29 to 6.04 s; coordinated runtime
+fell from 103.39 to 97.24 s. Traced Python peak RSS was 6.66 GiB with sharing
+versus 6.56 GiB without; inner-loop peaks were lower in the shared run. All 95
+trip-count rows matched within 8.4e-9 represented trips. This comparison
+predates sharing completed history compaction, so it measures
+complete-evaluation reuse only.
+
+With ten scenarios and one minimum-effort step, evaluation and completed
+history compaction each ran once instead of ten times. The coordinated run
+took 37.17 versus 41.22 s and the traced Python peak was 6.53 versus 6.44 GiB.
+All 30 trip-count rows matched within 3.3e-9. Five scenarios were synthetic
+copies of the baseline, and the five declared scenarios also had identical
+inputs at that step because added transit feeds were disabled and the tax had
+not started. This measures scaling across equivalent scenarios, not ten
+distinct production scenarios.
+
+The same ten scenarios over five minimum-effort steps (50 rough effort
+points) required six evaluations and six completed-history compactions with
+sharing, versus 50 of each without. Summed candidate-evaluation time fell from
+29.01 to 5.74 s, and coordinated runtime from 122.05 to 99.44 s. All 190
+trip-count rows matched within 2.0e-8 and candidate-pool sizes matched at
+every step. Traced Python peak RSS was 6.54 GiB with sharing versus 6.26 GiB
+without; step-five inner-loop peaks were 3.95 and 4.74 GiB respectively. The
+whole-process peak includes initialization and allocator-retained memory, so
+these single runs do not establish the change's peak-memory effect. The five
+synthetic scenarios and disabled additional transit feeds have the same limits
+as the one-step comparison above.
+
+A 72-point, two-scenario, two-step, two-batch probe with carbon tax diverging
+at step two took 90.89 versus 91.76 s, with traced Python peaks of 6.66 and
+6.67 GiB. Candidate IDs, plan IDs, allocations, utilities and random states
+matched exactly at both steps; all 16 trip-count rows matched within 2.8e-9.
+This comparison predates sharing completed history compaction. A separate
+two-scenario, two-seed, one-step probe exercised that compaction sharing:
+candidate IDs, plan IDs, allocations, utilities and random states matched
+exactly for both seeds, whose candidate sets differed from each other. Its
+coordinated runtimes totaled 52.84 versus 53.51 s and traced peaks were 7.60
+versus 7.79 GiB. These single runs do not establish 20-step or high-effort
+performance, and scenario transit feeds were disabled.
+
 ## Sensitivity to a small change in effort
 
 For context, comparing the *default scenario at step 2* in the two
@@ -1031,3 +1474,95 @@ UInt32, zone IDs and iteration numbers are UInt16, step positions are UInt8,
 times are Float32, and country, occupation, activity and mode are encoded
 enums. Do not narrow IDs based solely on the current dataset: later steps,
 other populations or other projects can exceed the observed range.
+
+### Inner allocation sharing at minimum effort
+
+Two identical scenarios, one seed, one outer step, one activity, destination
+and mode draw, and two inner batches give four rough effort points. Sharing
+the allocation and its flows when the complete evaluation and behavior scope
+matched reduced reachable-allocation calls from four to three and flow
+aggregation calls from four to three. Their measured totals fell from 0.107 s
+to 0.097 s and from 0.031 s to 0.024 s respectively; the full runs took 40.02 s
+and 39.21 s. Candidate IDs, final allocations, utilities and random states
+matched exactly. The extra bookkeeping was removed: the measured saving does
+not justify the added complexity at this effort level.
+
+The first inner batch shared evaluation, but the second did not. Its current
+plans, scoring contexts and compact indexes were shared; its candidate step
+tables were distinct objects. The intermediate catalogue reconstructs each
+run's previous candidates separately, so investigate whether equivalent
+catalogue memberships can stay shared by construction across batches. Do not
+assume the candidates are equal merely because scenarios started alike:
+adaptive requests and per-run history can differ.
+
+The catalogue now carries which runs were built from the same attachment, so
+the next batch can reuse their reconstructed candidate rows and history. This
+uses the existing construction inputs, not a comparison of plan contents.
+Runs with different history or indexes remain separate. In the four-point
+probe, candidate evaluations fell from three to two, and saved candidates,
+allocations, utilities and random states matched exactly.
+
+With ten equivalent scenarios, one seed, one outer step, one draw of each
+kind and two inner batches (20 rough points), candidate evaluations fell from
+11 to 2 and their measured time from 3.85 s to 1.43 s. Catalogue restorations
+fell from ten to one. The full runs took 49.45 s and 50.32 s, so they do not
+establish an end-to-end improvement at this scale. All ten saved allocations,
+utilities and random states, and the candidate IDs, matched exactly. Five of
+these scenarios were synthetic baseline copies and the real policy changes
+were inactive in this one-step probe; this is an upper-bound sharing case.
+
+A separate eight-point probe used two scenarios and two outer steps, with the
+carbon tax introduced at step two. Candidates, allocations, utilities and
+random states matched exactly at both steps; the scenarios were evaluated
+separately after the tax took effect. The baseline and sharing runs took
+73.71 s and 71.20 s, with traced peak process RSS of 6.48 and 6.68 GiB. These
+single measurements are not a reliable estimate of the overall speedup or
+memory difference.
+
+A higher-sampling probe used five scenarios, one seed, one outer step, two
+activity draws, one destination draw, two mode draws and two inner batches
+(40 rough points). It generated 23,370 candidates. The catalogue change
+reduced evaluations from six to two (5.02 s to 1.88 s), pool generation and
+attachment from 6.60 s to 5.04 s, and the inner loop from 16.69 s to 10.91 s.
+Total runtime was 49.92 s versus 43.35 s, and traced process peak RSS was
+6.50 GiB versus 6.62 GiB. Candidate IDs, all five saved allocation and utility
+tables, and all random states matched exactly. These are single runs, and the
+scenario changes were not active at this step.
+
+At 90 rough points (five scenarios, one seed and step, three activity draws,
+one destination draw, three mode draws and two inner batches), the pool held
+44,958 candidates. Evaluations fell from six to two and from 8.01 s to 2.62 s;
+the inner loop fell from 20.17 s to 11.99 s, and total time from 53.09 s to
+44.23 s. Traced peak process RSS rose from 6.31 GiB to 6.70 GiB in these
+single runs. All saved candidate IDs, plan allocations, utilities and random
+states matched exactly. The scenarios were equivalent at this first step, so
+the timing gain should not be extrapolated to later, diverging scenarios.
+Both whole-run peaks occurred during initial survey-plan preparation, before
+the changed inner-loop work. The inner-loop peaks were 4.81 and 4.73 GiB.
+
+### Final costs for diagnostic-only requests
+
+In a one-scenario, one-step, minimum-effort probe requesting only adaptive
+search diagnostics, the old execution also computed final post-update road
+costs. That update took 9.0 s in the trace and was unnecessary for the
+diagnostic. The demand-driven path skips it; the complete runs took 50.31 s
+and 46.11 s respectively, so startup and measurement variation obscure part
+of the saving. An integration comparison verifies that search diagnostics and
+transitions are unchanged when final costs are requested separately.
+
+In a separate two-step minimum-effort road trace, the traffic assignment took
+about 0.7 s per update, while routing the full set of zone pairs took about
+2.5–2.7 s. The second update reused the route requests, avoiding their initial
+construction. These timings describe a single scenario; larger flows and
+distinct scenario networks can change the balance.
+
+Metrics requested for explicit steps, including `steps="all"`, read those
+steps' live plan and cost tables. The result planner now recognizes that the
+last selected step also needs no post-update final costs. A two-scenario
+integration comparison confirmed equal trip counts and travel distances with
+and without an additional final-cost request. In a one-scenario, two-step
+minimum-effort Geneva probe requesting all-step trip counts and search
+diagnostics, the last congestion update disappeared: total runtime went from
+44.76 s to 37.22 s. The earlier run also recorded detailed road log timestamps,
+so the totals are not a perfectly controlled timing comparison. All seven trip
+counts matched within 4.2e-9 represented trips.

@@ -179,17 +179,12 @@ def test_intermediate_restricted_scoring_preserves_reachable_flows(test_data, mo
     scored_scopes = []
 
     def compare(updater, **kwargs):
-        cache = kwargs.get("inner_plan_cache")
-        previous_cache = cache.plans if cache is not None else None
         result = evaluate(updater, **kwargs)
         scope = kwargs.get("reachable_scoring_scope")
         if scope is not None:
-            signature_keys = PLAN_KEY_COLS + ["_scored_plan_1", "_scored_plan_2"]
-            assert previous_cache is not None and cache.plans is not None
-            assert previous_cache.join(cache.plans.select(signature_keys), on=signature_keys, how="anti").is_empty()
             reference = evaluate(updater, **{
                 **kwargs, "reachable_scoring_scope": None, "forced_scoring_contexts": None,
-                "scoring_lookup": None, "inner_plan_cache": None, "time_index_cache": None,
+                "scoring_lookup": None, "time_index_cache": None,
             })
             update = kwargs["parameters"].plan_update
             settings = dict(
@@ -228,17 +223,16 @@ def test_intermediate_restricted_scoring_preserves_reachable_flows(test_data, mo
     assert {"all", "reachable"}.issubset(scored_scopes)
 
 
-def test_single_search_batch_does_not_build_reuse_caches(test_data, monkeypatch):
+def test_single_scenario_and_batch_do_not_build_reuse_caches(test_data, monkeypatch):
     setup = make_setup(test_data, n_steps=1)
     setup.parameters.adaptive_search.max_search_batches = 1
 
     def unexpected_cache(*args, **kwargs):
         raise AssertionError("A single batch has no later batch to reuse scores.")
 
-    monkeypatch.setattr(PlanUpdater, "_plan_signatures", staticmethod(unexpected_cache))
     monkeypatch.setattr(ScoringLookup, "retain", unexpected_cache)
     monkeypatch.setattr(PlanCatalogue, "from_candidates", classmethod(unexpected_cache))
-    experiment = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
+    experiment = setup.experiment("weekday", scenarios=["default"], replication=0)
     with asset_resolution_context():
         experiment.run("weekday").coordinated_run_asset.get(step_consumer=lambda step: None)
 
@@ -299,7 +293,7 @@ def test_time_index_reuse_preserves_cohort_results_and_random_state(test_data, m
 
     def record_state(coordinator, iteration, current_states, **kwargs):
         assets, next_states, search = advance(coordinator, iteration, current_states, **kwargs)
-        states.append((search["pool"].candidate_ids, {
+        states.append((tuple(search["pool"].candidate_ids.iter_rows()), {
             key: (state.rng_state, state.current_plans.clone()) for key, state in next_states.items()
         }))
         return assets, next_states, search
@@ -429,166 +423,6 @@ def test_result_and_cohort_identity_include_other_scenario_road(test_data, tmp_p
     assert all(old != new for old, new in zip(before[1:], after[1:]))
 
 
-def test_inner_reuse_matches_fresh_evaluation_for_each_batch(test_data, monkeypatch):
-    """Reusing scores must leave the whole choice set and its allocation intact."""
-    setup = make_setup(test_data, n_steps=2)
-    evaluate = PlanUpdater.evaluate_candidate_pool
-    assemble = PlanUpdater._assemble_incremental_evaluation
-    collapse_factored = ScoringContexts.collapse_factored_step_rows
-    checked = []
-    reused = []
-    factored = []
-    factored_active = []
-    pool_limits = []
-    init_pool = shared_pool_module.SharedCandidatePoolAsset.__init__
-
-    def record_pool_limit(pool, *args, **kwargs):
-        pool_limits.append((kwargs["iteration"], kwargs.get("max_inactive_age")))
-        init_pool(pool, *args, **kwargs)
-
-    def record_factored(contexts, *args, **kwargs):
-        result = collapse_factored(contexts, *args, **kwargs)
-        if result is not None:
-            factored.append(True)
-            if args[2] is not None:
-                factored_active.append(True)
-        return result
-
-    def record_assembly(updater, *args, **kwargs):
-        result = assemble(updater, *args, **kwargs)
-        if result is not None:
-            reused.append(True)
-        return result
-
-    def compare_evaluation(updater, *args, **kwargs):
-        cache = kwargs.get("inner_plan_cache")
-        if cache is None or cache.plans is None:
-            return evaluate(updater, *args, **kwargs)
-        shared = kwargs["shared_candidate_plan_steps"].lazy().sort(
-            CandidatePlanStepsAsset.DEDUPE_COLUMNS
-        )
-        active = kwargs.get("shared_active_plan_steps")
-        if active is not None and active.height:
-            shared = pl.concat([shared, active.lazy()], how="vertical_relaxed").unique(
-                subset=CandidatePlanStepsAsset.DEDUPE_COLUMNS, keep="last", maintain_order=True,
-            ).sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
-        fresh = evaluate(updater, *args, **{
-            **kwargs, "shared_candidate_plan_steps": shared, "shared_active_plan_steps": None,
-            "factored_candidate_steps": None, "inner_plan_cache": None, "scoring_lookup": None,
-        })
-        result = evaluate(updater, *args, **kwargs)
-        keys = ["demand_group_id", "demand_subgroup_id", "activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]
-        step_keys = keys + ["seq_step_index"]
-        assert_frame_equal(result.candidate_plan_steps.sort(step_keys), fresh.candidate_plan_steps.sort(step_keys))
-        assert_frame_equal(result.possible_plan_utility.sort(keys), fresh.possible_plan_utility.sort(keys),
-                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
-        assert_frame_equal(result.possible_plan_steps.collect().sort(step_keys),
-                           fresh.possible_plan_steps.collect().sort(step_keys),
-                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
-        assert_frame_equal(result.time_sequence_steps.sort(["time_seq_id", "seq_step_index"]),
-                           fresh.time_sequence_steps.sort(["time_seq_id", "seq_step_index"]))
-        mapping_keys = ["previous_time_seq_id" if col == "time_seq_id" else col for col in keys]
-        assert_frame_equal(result.time_mapping.sort(mapping_keys), fresh.time_mapping.sort(mapping_keys))
-        assert_frame_equal(result.current_plans.sort(keys), fresh.current_plans.sort(keys),
-                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
-        result_allocation, result_steps = updater.estimate_mnl_allocation(
-            result, kwargs["demand_groups"], logit_scale=kwargs["parameters"].plan_update.transition_logit_scale,
-        )
-        fresh_allocation, fresh_steps = updater.estimate_mnl_allocation(
-            fresh, kwargs["demand_groups"], logit_scale=kwargs["parameters"].plan_update.transition_logit_scale,
-        )
-        assert_frame_equal(result_allocation.sort(keys), fresh_allocation.sort(keys),
-                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
-        assert_frame_equal(result_steps.sort(step_keys), fresh_steps.sort(step_keys),
-                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
-        flow_keys = ["from", "to", "mode"]
-        assert_frame_equal(represented_od_mode_flows(result_steps).sort(flow_keys),
-                           represented_od_mode_flows(fresh_steps).sort(flow_keys),
-                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
-        assert_frame_equal(allocation_od_mode_flows(result_allocation, result.possible_plan_steps),
-                           represented_od_mode_flows(result_steps).sort(flow_keys),
-                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
-        checked.append(True)
-        return result
-
-    monkeypatch.setattr(PlanUpdater, "_assemble_incremental_evaluation", record_assembly)
-    monkeypatch.setattr(shared_pool_module.SharedCandidatePoolAsset, "__init__", record_pool_limit)
-    monkeypatch.setattr(ScoringContexts, "collapse_factored_step_rows", record_factored)
-    monkeypatch.setattr(PlanUpdater, "evaluate_candidate_pool", compare_evaluation)
-    result = setup.experiment("weekday", scenarios=["default"], replication=0).run("weekday").get()
-    assert result.current_plans.height
-    assert checked and reused and factored and factored_active
-    assert [limit for step, limit in pool_limits if step == 1] == [None] * sum(
-        step == 1 for step, _ in pool_limits
-    )
-    second_step_limits = [limit for step, limit in pool_limits if step == 2]
-    assert second_step_limits[0] == setup.parameters.plan_update.max_inactive_age
-    assert all(limit is None for limit in second_step_limits[1:])
-
-
-def test_inner_reuse_preserves_search_and_random_state(test_data, monkeypatch):
-    """Each batch must make the same search decisions as a fresh evaluation."""
-    evaluate = PlanUpdater.evaluate_candidate_pool
-    allocate = PlanUpdater.estimate_mnl_allocation
-    run_inner = MultiScenarioRunAsset._run_inner_loop
-    build_sources = MultiScenarioRunAsset._build_candidate_sources
-    observations = []
-    batch_random_states = []
-
-    def record_sources(coordinator, *args, **kwargs):
-        result = build_sources(coordinator, *args, **kwargs)
-        batch_random_states.append((
-            kwargs["iteration"], kwargs["batch_index"],
-            {key: seeds.get()["rng_state_after_sampling"] for key, seeds in result[2].items()},
-        ))
-        return result
-
-    def record_inner(coordinator, *args, **kwargs):
-        result = run_inner(coordinator, *args, **kwargs)
-        observations.append({
-            "diagnostics": pl.DataFrame(result["diagnostics"]),
-            "candidate_ids": result["pool"].candidate_ids,
-            "flows": result["flows_by_scenario"],
-            "rng_states": result["rng_states"],
-            "stop_reason": result["stop_reason"],
-        })
-        return result
-
-    def evaluate_fresh(updater, *args, **kwargs):
-        return evaluate(updater, *args, **{
-            **kwargs, "inner_plan_cache": None, "scoring_lookup": None,
-            "compact_plan_id_index": None, "factored_candidate_steps": None,
-        })
-
-    def allocate_with_expanded_steps(updater, *args, **kwargs):
-        return allocate(updater, *args, **{**kwargs, "include_plan_steps": True})
-
-    monkeypatch.setattr(MultiScenarioRunAsset, "_run_inner_loop", record_inner)
-    monkeypatch.setattr(MultiScenarioRunAsset, "_build_candidate_sources", record_sources)
-    setup = make_setup(test_data, n_steps=2)
-    setup.experiment("weekday", scenarios=["default", "project"], replication=0).run("weekday").get()
-    reused = observations[:]
-    reused_random_states = batch_random_states[:]
-    observations.clear()
-    batch_random_states.clear()
-    monkeypatch.setattr(PlanUpdater, "evaluate_candidate_pool", evaluate_fresh)
-    monkeypatch.setattr(PlanUpdater, "estimate_mnl_allocation", allocate_with_expanded_steps)
-    setup.experiment("weekday", scenarios=["default", "project"], replication=0).run("weekday").get()
-    assert len(reused) == len(observations) == 2
-    assert len(reused_random_states) > len(reused)
-    assert reused_random_states == batch_random_states
-    for actual, fresh in zip(reused, observations):
-        assert actual["candidate_ids"] == fresh["candidate_ids"]
-        assert actual["rng_states"] == fresh["rng_states"]
-        assert actual["stop_reason"] == fresh["stop_reason"]
-        assert_frame_equal(actual["diagnostics"], fresh["diagnostics"],
-                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
-        assert actual["flows"].keys() == fresh["flows"].keys()
-        for key in actual["flows"]:
-            assert_frame_equal(actual["flows"][key], fresh["flows"][key],
-                               check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
-
-
 def test_live_results_match_complete_cohort(test_data, monkeypatch, tmp_path):
     """Selected results must preserve the cohort's behavior and random path."""
     setup = make_setup(test_data, record_events=True)
@@ -634,7 +468,7 @@ def test_live_results_match_complete_cohort(test_data, monkeypatch, tmp_path):
     def record_step(coordinator, iteration, current_states, **kwargs):
         assets, states, search = advance(coordinator, iteration, current_states, **kwargs)
         steps.append((
-            tuple(sorted(search["pool"].candidate_ids)),
+            tuple(search["pool"].candidate_ids.iter_rows()),
             {key: (state.rng_state, state.current_plans.clone(), state.current_plan_steps.clone())
              for key, state in states.items()},
         ))
@@ -908,7 +742,7 @@ def test_raw_tables_stream_independent_replication_lanes(test_data, monkeypatch,
     def record_step(coordinator, iteration, current_states, **kwargs):
         assets, states, search = advance(coordinator, iteration, current_states, **kwargs)
         observed.append((
-            tuple(sorted(search["pool"].candidate_ids)),
+            tuple(search["pool"].candidate_ids.iter_rows()),
             {key: state.rng_state for key, state in states.items()},
         ))
         return assets, states, search
@@ -1566,7 +1400,7 @@ def test_cached_metric_does_not_trigger_unneeded_final_costs(test_data, monkeypa
     values["steps"].close()
 
 
-def test_step_and_inner_flow_tables_do_not_build_final_costs(test_data, monkeypatch):
+def test_step_and_inner_flow_tables_do_not_build_final_costs(test_data, monkeypatch, tmp_path):
     """These tables use live step data and do not need post-update costs."""
     setup = make_setup(test_data)
     finalized = []
@@ -1583,14 +1417,25 @@ def test_step_and_inner_flow_tables_do_not_build_final_costs(test_data, monkeypa
             "steps": results.tables.plan_steps(steps=2),
             "costs": results.tables.costs(steps=2),
             "diagnostics": results.tables.step_metrics(steps=2),
+            "search": results.tables.adaptive_search_diagnostics(),
+            "transitions": results.tables.transitions(),
             "flows": results.tables.mnl_od_mode_flows(),
         }
+        for name in ("trip_count", "travel_distance"):
+            metric = getattr(results.metrics, name)(by_variable="mode", steps="all")
+            metric.cache_path = tmp_path / f"{name}-{include_final_costs}.parquet"
+            metric.hash_path = tmp_path / f"{name}-{include_final_costs}.hash"
+            requests[name] = metric
         if include_final_costs:
             requests["final_costs"] = results.tables.costs()
         tables = results.get_all(**requests)
-        values = {name: table.collect() for name, table in tables.items()}
+        values = {
+            name: table if isinstance(table, pl.DataFrame) else table.collect()
+            for name, table in tables.items()
+        }
         for table in tables.values():
-            table.close()
+            if not isinstance(table, pl.DataFrame):
+                table.close()
         return values
 
     actual = request_tables(setup.experiment(
@@ -1664,7 +1509,7 @@ def test_direct_final_state_matches_full_cohort(test_data, monkeypatch):
         assets, next_states, search = advance(coordinator, iteration, states, **kwargs)
         if len(records) < 2:
             first_steps.append({key: state.current_plan_steps.clone() for key, state in next_states.items()})
-        records.append((tuple(sorted(search["pool"].candidate_ids)), {
+        records.append((tuple(search["pool"].candidate_ids.iter_rows()), {
             key: state.rng_state for key, state in next_states.items()
         }))
         return assets, next_states, search
@@ -1832,7 +1677,7 @@ def test_cohort_checkpoint_continuation_preserves_random_path(test_data, monkeyp
     def record_step(coordinator, iteration, states, **kwargs):
         assets, next_states, search = advance(coordinator, iteration, states, **kwargs)
         observed.append((
-            tuple(sorted(search["pool"].candidate_ids)),
+            tuple(search["pool"].candidate_ids.iter_rows()),
             {key: (state.rng_state, state.current_plans.clone()) for key, state in next_states.items()},
         ))
         return assets, next_states, search
@@ -1957,7 +1802,7 @@ def test_filtered_sensitivity_and_cached_metric_keep_full_cohort(test_data, monk
         assets, next_states, search = advance(coordinator, iteration, states, **kwargs)
         records.append((
             {(run.scenario, run.sensitivity_case_id) for run in coordinator.runs.values()},
-            tuple(sorted(search["pool"].candidate_ids)),
+            tuple(search["pool"].candidate_ids.iter_rows()),
             {key: state.rng_state for key, state in next_states.items()},
         ))
         return assets, next_states, search

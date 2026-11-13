@@ -10,6 +10,7 @@ from importlib import resources
 import polars as pl
 
 from mobility.runtime.assets.graph import asset_graph_key
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.assets.resolver import get_current_asset_resolver
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
 from mobility.runtime.temporary import check_temporary_disk_limit, write_temporary_bytes
@@ -113,6 +114,10 @@ def prepare_shared_congested_costs(cost_assets):
         manifest_path = resolver.temporary_asset_path(entries[0][1], suffix="-shared-flows.json")
         output_path = resolver.temporary_asset_path(entries[0][1], suffix="-shared-costs.parquet")
         graph_manifest_path = resolver.temporary_asset_path(entries[0][1], suffix="-shared-graphs.json")
+        # Route requests depend on the network and zones, not on current flow.
+        # Keep them only for this resolver so later cost updates can reuse them.
+        route_requests_asset = InMemoryAsset({"road_routing_inputs": key[:4]})
+        route_requests_path = resolver.temporary_asset_path(route_requests_asset, suffix="-route-requests.parquet")
         write_temporary_bytes(json.dumps(flow_paths).encode("utf-8"), manifest_path)
         graph_paths = []
         for _, _, graphs in unique_flows:
@@ -137,6 +142,7 @@ def prepare_shared_congested_costs(cost_assets):
             str(graph_path), str(travel_costs.transport_zones.cache_path), "True",
             str(manifest_path), str(cch_path), *(str(value) for value in key[-1]),
             str(output_path), str(travel_costs.routing_parameters.max_beeline_distance), str(graph_manifest_path),
+            str(route_requests_path),
         ])
 
         # R writes this file directly, so its size can only be checked once

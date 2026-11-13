@@ -38,7 +38,7 @@ class ScoringMemoryBudget:
 
 @dataclass
 class ScoringLookup:
-    """Keep fixed step-level scoring inputs and results for later batches."""
+    """Keep step scores while their scenario inputs remain fixed."""
 
     budget: ScoringMemoryBudget
     scores: pl.DataFrame | None = None
@@ -47,18 +47,6 @@ class ScoringLookup:
         """Retain a lookup only while all scenarios fit the shared budget."""
         # A later batch can recompute scores that do not fit in the budget.
         self.scores = self.budget.retain(self.scores, scores)
-
-
-@dataclass
-class InnerPlanCache:
-    """Retain complete-plan results only during one fixed outer step."""
-
-    budget: ScoringMemoryBudget
-    plans: pl.DataFrame | None = None
-
-    def retain(self, plans: pl.DataFrame) -> None:
-        """Respect the shared limit; a later batch can always recompute."""
-        self.plans = self.budget.retain(self.plans, plans)
 
 
 @dataclass(frozen=True)
@@ -147,9 +135,7 @@ class ScoringContexts:
             memberships.append(active_members.lazy())
             physical.append(active_steps)
         if previous is not None:
-            active_members = previous.memberships().join(
-                current_plans.lazy().select(PLAN_KEY_COLS), on=PLAN_KEY_COLS, how="semi"
-            ).collect(engine="streaming")
+            active_members = previous.memberships_for_plans(current_plans.lazy()).collect(engine="streaming")
             active_steps = previous.steps.join(
                 active_members.select(PLAN_COLUMNS).unique(), on=PLAN_COLUMNS, how="semi"
             )

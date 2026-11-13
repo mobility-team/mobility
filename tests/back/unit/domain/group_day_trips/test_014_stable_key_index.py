@@ -80,6 +80,25 @@ def test_lazy_index_collects_keys_without_evaluating_wide_values():
     assert len(calls) == 3
 
 
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("lazy", [False, True])
+def test_additional_keys_keep_the_same_ids_as_two_extensions(existing, lazy):
+    indexer = StableKeyIndex(["group", "plan"], "plan_id", first_new_id=0)
+    previous = pl.DataFrame({"group": [3, 1], "plan": [2, 8], "plan_id": [7, 2]}).with_columns(
+        pl.col("plan_id").cast(pl.UInt32)
+    ) if existing else None
+    mobile = pl.DataFrame({"group": [2, 1, 3, 1], "plan": [4, 2, 2, 2], "value": [1, 2, 3, 4]})
+    home = pl.DataFrame({"group": [2, 1, 2, 1], "plan": [0, 0, 4, 0]})
+    rows = mobile.lazy() if lazy else mobile
+    old_rows, first_index = indexer.extend(rows, previous)
+    _, expected_index = indexer.extend(home, first_index)
+    new_rows, actual_index = indexer.extend(rows, previous, additional_keys=home)
+    assert_frame_equal(actual_index, expected_index)
+    if lazy:
+        old_rows, new_rows = old_rows.collect(), new_rows.collect()
+    assert_frame_equal(old_rows.sort("value"), new_rows.sort("value"))
+
+
 def test_lazy_index_still_rejects_null_keys():
     indexer = StableKeyIndex(key_cols=["key"], index_col="plan_id")
     with pytest.raises(ValueError, match="cannot contain nulls"):

@@ -56,12 +56,14 @@ def test_base_gap_change_ignores_equal_changes_in_both_scenarios():
 def test_inner_flow_reduction_matches_expanded_steps():
     """Count repeated trips and demand groups without expanding wide steps."""
     allocation = pl.DataFrame({
+        "plan_id": [1, 2, 0],
         "demand_group_id": [1, 2, 1], "demand_subgroup_id": [0, 0, 0],
         "activity_seq_id": [1, 1, 0], "time_seq_id": [1, 1, 0],
         "dest_seq_id": [1, 1, 0], "mode_seq_id": [1, 1, 0],
         "n_persons": [2.5, 4.5, 10.0],
     })
     steps = pl.DataFrame({
+        "plan_id": [1, 1, 2, 2],
         "demand_group_id": [1, 1, 2, 2], "demand_subgroup_id": [0, 0, 0, 0],
         "activity_seq_id": [1, 1, 1, 1], "time_seq_id": [1, 1, 1, 1],
         "dest_seq_id": [1, 1, 1, 1], "mode_seq_id": [1, 1, 1, 1],
@@ -79,13 +81,14 @@ def test_inner_flow_reduction_matches_expanded_steps():
 def test_inner_flows_do_not_depend_on_row_order():
     """Small contributions must not disappear when plans arrive in another order."""
     steps = pl.DataFrame({
+        "plan_id": [1, 2, 3],
         "demand_group_id": [1, 2, 3], "demand_subgroup_id": [0, 0, 0],
         "activity_seq_id": [1, 1, 1], "time_seq_id": [1, 1, 1],
         "dest_seq_id": [1, 1, 1], "mode_seq_id": [1, 1, 1],
         "from": [10, 10, 10], "to": [20, 20, 20], "mode": ["car"] * 3,
         "n_persons": [1.0, 2**-53, 2**-53],
     })
-    allocation = steps.select(PLAN_KEY_COLS + ["n_persons"])
+    allocation = steps.select(["plan_id"] + PLAN_KEY_COLS + ["n_persons"])
     choices = steps.drop("n_persons")
     forward = represented_od_mode_flows(steps)
     assert_frame_equal(forward, represented_od_mode_flows(steps.reverse()))

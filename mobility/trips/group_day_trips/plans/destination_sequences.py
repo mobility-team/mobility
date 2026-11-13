@@ -77,6 +77,7 @@ class DestinationSequences(InMemoryAsset):
         costs: pl.DataFrame | None = None,
         parameters: Any = None,
         seed: int | None = None,
+        sampling_probabilities: dict[int, pl.DataFrame] | None = None,
     ) -> None:
         self.previous_state = previous_state
         self.previous_sequence_index: pl.DataFrame | None = None
@@ -110,6 +111,8 @@ class DestinationSequences(InMemoryAsset):
         self.costs = costs
         self.parameters = parameters
         self.seed = seed
+        # Costs and opportunities stay fixed during one inner search.
+        self.sampling_probabilities = sampling_probabilities
         self.spatialization_context_columns = ["home_zone_id"]
         generation_request_profile_pairs = (
             tuple(
@@ -502,6 +505,7 @@ class DestinationSequences(InMemoryAsset):
                 sampled_profiles.append(self._run_for_utility_profile(
                     activities, transport_zones, destination_saturation,
                     profile_sequences, profile_costs, parameters, profile_seed,
+                    profile_id=profile_id,
                 ))
                 self.previous_sequence_index = self.sequence_index
                 del mode_costs, profile_costs
@@ -526,6 +530,7 @@ class DestinationSequences(InMemoryAsset):
         costs: pl.DataFrame,
         parameters: Any,
         seed: int,
+        *, profile_id: int | None = None,
     ) -> pl.DataFrame:
         """Compute destination sequences for one iteration."""
         activity_sequences = activity_sequences.filter(pl.col("activity_seq_id") != 0)
@@ -552,17 +557,24 @@ class DestinationSequences(InMemoryAsset):
             ]
         )
         source_activity_sequences = activity_sequences
-        utility_inputs = self._get_destination_probability_inputs(
-            destination_saturation,
-            costs,
-            parameters.destination_sequences.cost_uncertainty_sd,
+        destination_probability = (
+            self.sampling_probabilities.get(profile_id)
+            if self.sampling_probabilities is not None and profile_id is not None else None
         )
-        destination_probability = self._get_destination_probability(
-            utility_inputs,
-            activities,
-            self.resolved_activity_parameters,
-            parameters.destination_sequences.dest_prob_cutoff,
-        )
+        if destination_probability is None:
+            utility_inputs = self._get_destination_probability_inputs(
+                destination_saturation,
+                costs,
+                parameters.destination_sequences.cost_uncertainty_sd,
+            )
+            destination_probability = self._get_destination_probability(
+                utility_inputs,
+                activities,
+                self.resolved_activity_parameters,
+                parameters.destination_sequences.dest_prob_cutoff,
+            )
+            if self.sampling_probabilities is not None and profile_id is not None:
+                self.sampling_probabilities[profile_id] = destination_probability
         cost_views = self._spatialization_cost_views(costs)
         anchor_spatialized_sequences = self._spatialize_anchor_activities(
             source_activity_sequences,

@@ -27,7 +27,7 @@ from .assemble import (
     finalize_mode_sequence_rows,
 )
 from .debug_logs import log_location_chain_diagnostics
-from .prepare import build_location_chains, build_search_inputs
+from .prepare import build_location_chains, build_search_inputs, location_chain_legs
 from .search_python import run_python_mode_sequence_search
 from .search_rust import run_rust_mode_sequence_search
 
@@ -297,6 +297,8 @@ class ModeSequences(InMemoryAsset):
             )
 
         search_k = self.parameters.mode_sequences.k_mode_sequences
+        # Search only looks up adjacent locations, including the return home.
+        needed_legs = location_chain_legs(unique_destination_chains)
         if utility_profiles is None:
             profile_costs = self.transport_costs.get_costs_by_od_and_mode(
                 ["cost"],
@@ -307,6 +309,9 @@ class ModeSequences(InMemoryAsset):
                 utility_profiles,
                 ["cost"],
             )
+        profile_costs = profile_costs.join(
+            needed_legs, on=["utility_profile_id", "from", "to"], how="semi",
+        )
         search_inputs = build_search_inputs(
             self.transport_costs,
             leg_mode_costs=profile_costs,

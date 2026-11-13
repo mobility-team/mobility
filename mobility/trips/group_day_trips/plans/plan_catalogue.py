@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import polars as pl
 
 from mobility.trips.group_day_trips.core.multi_scenario import CANDIDATE_ID_COLS, PLAN_CONTENT_COLUMNS
+from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
 from .candidate_plan_steps import CandidatePlanStepsAsset
 
 
@@ -38,11 +39,15 @@ class PlanCatalogue:
     steps: pl.DataFrame
     variants: pl.DataFrame
     membership: pl.DataFrame
+    # Runs built from the same attachment have identical membership and history.
+    # This is transient provenance, not a comparison of catalogue contents.
+    equivalent_runs: dict[int, int] | None = None
 
+    @trace_simulation_step("restore catalogue candidates for run")
     def candidates_for_run(
         self, run_id: int, destination_index: pl.DataFrame, mode_index: pl.DataFrame,
     ) -> pl.DataFrame:
-        """Rebuild compact candidate steps with one run's sequence IDs and history."""
+        """Attach a run's sequence IDs and history to the stored plan content."""
         destination_keys = ["destination_sequence_key_1", "destination_sequence_key_2"]
         mode_keys = ["mode_sequence_key_1", "mode_sequence_key_2"]
         members = self.membership.filter(pl.col("run_id") == run_id)
@@ -61,11 +66,16 @@ class PlanCatalogue:
                 demand_subgroup_id=pl.lit(0, dtype=pl.UInt32),
                 country=pl.lit(""), csp=pl.lit(""),
             )
-            .select(CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS)
+            .select(
+                CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS
+                + CANDIDATE_ID_COLS + [column for column in VARIANT_COLUMNS
+                                       if column not in ("activity_seq_id", "time_seq_id")]
+            )
             .sort(["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id", "seq_step_index"])
         )
 
     @classmethod
+    @trace_simulation_step("merge plan catalogues")
     def merge(cls, catalogues: list["PlanCatalogue"]) -> "PlanCatalogue":
         """Combine batches without expanding their plans back into wide rows."""
         if not catalogues:
@@ -115,6 +125,7 @@ class PlanCatalogue:
         return cls(plans=plans, steps=steps, variants=variants, membership=membership)
 
     @classmethod
+    @trace_simulation_step("build plan catalogue")
     def from_candidates(cls, candidates: pl.DataFrame) -> "PlanCatalogue":
         """Build a catalogue from complete, content-keyed candidate steps.
 
