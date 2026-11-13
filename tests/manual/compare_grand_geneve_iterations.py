@@ -55,7 +55,7 @@ class CurrentStepNames(ast.NodeTransformer):
         "n_iterations": "n_steps", "n_iter_per_cost_update": "n_steps_per_cost_update",
         "cache_iteration_events": "cache_step_events", "checkpoint_each_iteration": "checkpoint_each_step",
         "start_iteration": "start_step", "n_warmup_iterations": "n_warmup_steps",
-        "plan_probability_pruning_min_iteration": "plan_probability_pruning_min_step",
+        "plan_probability_pruning_min_iteration": "plan_pruning_start_step",
         "by_scenario_and_iteration": "by_scenario_and_step",
     }
 
@@ -104,20 +104,6 @@ stop_after_batch = int(os.environ.get("MOBILITY_COMPARE_STOP_AFTER_BATCH", "0"))
 
 class ComparisonComplete(Exception):
     """Stop before starting an unrequested step in this opt-in diagnostic."""
-
-
-def capture_pruning_inputs(updater, transitions, *, retained_share):
-    """Save selected groups' transition mass before pruning, then stop."""
-    groups = [int(value) for value in os.environ["MOBILITY_COMPARE_PRUNING_GROUPS"].split(",")]
-    transitions.filter(pl.col("demand_group_id").is_in(groups)).collect(engine="streaming").write_parquet(
-        work / "pruning-inputs.parquet"
-    )
-    print("PRUNING_INPUTS_CAPTURED", groups, "retained_share", retained_share, flush=True)
-    raise ComparisonComplete()
-
-
-if os.environ.get("MOBILITY_COMPARE_PRUNING_GROUPS"):
-    PlanUpdater.build_low_probability_target_map = capture_pruning_inputs
 
 
 def report_initial_state(asset):

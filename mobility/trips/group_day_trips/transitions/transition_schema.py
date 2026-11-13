@@ -21,6 +21,11 @@ TRANSITION_EVENT_SCHEMA: dict[str, pl.DataType] = {
     "time_seq_id_trans": pl.UInt32,
     "dest_seq_id_trans": pl.UInt32,
     "mode_seq_id_trans": pl.UInt32,
+    # The choice can differ from the final target after allocation pruning.
+    "chosen_activity_seq_id": pl.UInt32,
+    "chosen_time_seq_id": pl.UInt32,
+    "chosen_dest_seq_id": pl.UInt32,
+    "chosen_mode_seq_id": pl.UInt32,
     "n_persons_moved": pl.Float64,
     "utility_prev_from": pl.Float64,
     "utility_prev_to": pl.Float64,

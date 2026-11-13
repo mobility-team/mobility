@@ -731,7 +731,7 @@ class IterationStateAsset(Asset):
         self.coordinated_time_sequence_steps: pl.DataFrame | None = None
         inputs = {
             # State identity includes the shared search and full cohort.
-            "version": 38,
+            "version": 39,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,

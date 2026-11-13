@@ -1669,3 +1669,373 @@ two seconds, so its peaks can be lower even when it includes the Python process.
 Summed process RSS can also count shared pages more than once. The tree sample
 reported complete process enumeration. This one run does not establish that
 20 iterations, additional seeds or additional scenarios fit in memory.
+
+
+## Repeated candidate evaluation within an inner loop
+
+An exploratory diagnostic fingerprinted ordered scoring inputs before modeled
+timings were updated. It compared the complete
+physical timing inputs and the scoring values within each scoring context;
+it did not change the inputs passed to the simulation. Two seeded hashes
+were used for each ordered sequence, so the counts carry the negligible
+possibility of a hash collision. Timing fingerprints include mode and OD as
+well as travel times, activity and the input schedule. Distinct timing inputs
+are therefore a conservative count of potentially shareable calculations.
+
+A cache-only Grand Geneve probe used one default scenario and seed, two outer
+steps, two activity draws, one destination draw, two mode draws and two inner
+batches: 8 rough effort points per step. On step two, both batches used full
+replanning and shared the same outer state and transport costs.
+
+| Step 2 | Batch 1 | Batch 2 |
+| --- | ---: | ---: |
+| Scored step rows | 1,447,550 | 1,778,547 |
+| Context-plan combinations | 355,164 | 440,184 |
+| Distinct physical timing inputs | 44,088 | 54,346 |
+| Context/score inputs also seen in batch 1 | ? | 355,164 |
+| New context/score inputs | 355,164 | 85,020 |
+
+Thus 80.7% of the second batch's distinct context/score inputs had already
+been evaluated in batch one. It contained 8.1 context-plan combinations per
+distinct physical timing input. These are opportunities, not measured
+speedups: preserving plan identities, history, infeasibility and allocation
+still requires work, and retained results consume memory. This one modest run
+does not establish the same ratios at higher effort or with other inputs.
+The diagnostic fingerprints and extra grouping affect time and RAM, so its
+57.23-second runtime and sampled peak are not a performance benchmark.
+
+### Physical timing factoring experiment
+
+An isolated prototype grouped scored plan rows by their physical plan and
+ordered timing inputs, updated and indexed one representative per group,
+then restored all context rows and their schedule mappings. On an existing
+683,800-row captured table, it reduced the input to 84,264 representative
+rows and took 0.25 s versus 0.48 s for the existing timing and indexing path.
+On another previously captured 4,308,836-row table, it reduced the input to
+543,514 rows but took 1.35 s versus 1.34 s. Both comparisons used a schedule
+catalogue reconstructed from the capture; the catalogue, mappings and complete
+row multisets matched exactly in each comparison. These are single isolated
+measurements, not full-simulation performance results.
+
+A temporary production implementation completed a five-step, one-scenario
+minimum-effort Geneva probe. All five saved candidate-ID and plan tables and
+the final random state matched the earlier run exactly. Its summed timing and
+indexing spans were 0.97 s versus 1.13 s before, while whole-run times were
+85.08 versus 83.18 s and traced Python peak RSS was 6.71 versus 6.40 GiB.
+The runs were not controlled benchmarks. The implementation was removed:
+the larger isolated comparison did not show a gain sufficient to justify
+the extra grouping, joins and implementation complexity.
+
+On the 4.3-million-row capture, three isolated passes grouping by existing
+plan keys took 0.150?0.158 s; computing two ordered step-content fingerprints
+and grouping by the same keys took 0.360?0.422 s. The comparison includes
+ordered list aggregation and hashing together, and ordinary group-by itself
+may use hashing internally. It does not isolate the cost of the hash function
+or the subsequent joins. It does show that constructing new sequence identity
+was a material part of this prototype.
+
+## Scope of plan and sequence identities
+
+The existing `StableKeyIndex` assigns persistent integer IDs to distinct key
+rows, but those IDs do not all have experiment-wide scope. Survey activity
+and survey timing sequences use persisted survey indexes shared by the
+experiment's runs. Each run separately extends destination and mode sequence
+indexes from pairs of ordered-content hashes. Each run also extends its own
+modeled-time catalogue and demand-unit plan index. `plan_id` includes the
+demand group and subgroup and is therefore not a physical-plan ID.
+
+Within an inner search, `PlanCatalogue` shares physical candidate steps keyed
+by two content hashes. It separates physical content, sequence variants, and
+run-local membership/history. `variant_id` is assigned within the catalogue
+and rebuilt when catalogues merge. At the end of the search the catalogue is
+discarded; checkpoint/spill state instead retains run-local candidate history,
+plan and sequence indexes, modeled-time schedules and random state. Thus a
+new experiment-wide physical index would need a coordinated lifetime and
+checkpoint representation, rather than simply persisting current variant IDs.
+
+A physical key must preserve ordered activity, timings, destinations and
+modes. A plan starts and ends at home, so its final destination identifies
+the first origin; each later origin is the preceding destination. Generated
+destination steps follow this rule, and survey preparation makes the final
+activity home. The ordered destination sequence therefore contains the
+origins as well. Different survey reference variants can still map to the
+same physical content and need distinct variant/history records.
+
+An exact shared index could assign integer IDs to canonical typed sequence
+contents, and identify a plan using those shared component IDs. Full key equality avoids
+content-fingerprint collisions, although its memory and lookup cost need
+measurement. Assigning consecutive IDs in sorted batches is repeatable for a
+fixed processing order and resumable when the index is checkpointed; the
+numbers are not automatically invariant to changing batch or scenario order.
+Achieving both immutable sequential IDs and order-independent assignment
+requires a stronger design than the existing incremental index.
+
+A low-risk first investigation is to carry the existing physical candidate
+identity from the shared catalogue into scoring, without changing persistent
+IDs or rehashing expanded context rows. This can test whether a physical
+identity actually removes evaluation work and how much memory its reuse costs.
+It retains the current two-hash collision properties; replacing them with
+exact canonical keys is a separate change.
+
+### Using existing plan keys for timing reuse
+
+Before adding a new shared integer, the existing run-local physical sequence
+keys were checked against the two captured scoring tables used above. Grouped
+by activity, time, destination and mode IDs and step index, the 683,800-row
+capture contained 84,264 distinct step keys; the 4,308,836-row capture
+contained 543,514. In both, every key had exactly one set of activity, OD,
+mode, input timing and modeled travel-time values. This is an observation
+about these captures, not a guarantee for every input or the expanded fallback
+path.
+
+An isolated variant of the previous representative-timing experiment used
+those existing keys directly, without extra ordered-content fingerprints.
+Including restoration of all context rows and modeled schedule mappings,
+it took 0.20 s versus 0.45 s for the current path on the smaller capture
+and 1.26 s versus 1.62 s on the larger one. Both comparisons used reconstructed
+schedule catalogues and matched the catalogue, mappings and complete row
+multisets. These are single measurements, not a full-run benchmark.
+
+The reuse diagnostic now also records utility profiles. In a lowest-effort
+Geneva probe with two outer steps and two inner batches, step 2 batch 2 had
+128,937 context-plan combinations, 15,686 distinct physical sequence-key
+combinations and 29,451 distinct combinations of physical keys and utility
+profile. No physical key, or physical-key/profile pair, had more than one
+timing input in this run. The first batch's 102,449 context/score inputs
+were all present in batch 2. Profile-aware factoring could therefore have
+processed 29,451 timing inputs instead of 128,937 context-plan inputs in
+this example; different generalized-cost profiles can in principle yield
+different travel times, so this result does not justify ignoring profile.
+
+The current factored scoring path already checks that each local physical
+plan key maps to one set of steps before attaching contexts; its expanded
+fallback does not provide that guarantee. No new production identity or
+evaluation cache was introduced in this experiment. Carrying a shared
+physical identity across batches remains a separate change and must also
+handle run-local index translation, modeled timing changes and history.
+
+## Incremental candidate-evaluation prototype
+
+An exploratory benchmark compared timing,
+schedule indexing, plan scoring and synthetic choice/flow calculations on a
+previously captured, already-scored Geneva step table. It splits the distinct
+context-plan keys deterministically into an 80% existing pool and 20% new
+plans, reconstructs a starting schedule catalogue, and holds costs and step
+inputs fixed. It is an isolated prototype, not the production inner loop: it
+does not measure candidate attachment, transport scoring, behavioral
+transitions, real demand weights, checkpoint handling or a full simulation.
+
+On the 683,800-row capture (140,926 existing and 35,232 new context-plan
+keys), three isolated process runs took 0.48?0.57 s to update and index
+all timings, score all plans and calculate synthetic choices/flows, versus
+0.25?0.33 s when retaining existing timings, mappings and plan scores and
+processing only new plans. The cached tables' estimated sizes total 60.5 MB
+(57.7 MiB); some buffers may be shared. Choices are recalculated over the
+whole pool, and flow calculations still read all steps.
+
+Exact comparisons matched the scored step-row multisets, schedule catalogue
+and ID mappings; synthetic choice probabilities and flows matched to 1e-12.
+The original split had no old/new modeled-key overlap. A separate run added
+one deliberately constructed pair of input schedules that became the same
+modeled plan; the prototype recalculated the overlapping plan and passed the
+same checks. This does not establish how common or expensive such merges are
+in a real growing candidate pool.
+
+In separately started processes, sampled Python peak RSS during the second
+batch was 2.29 GiB for full reevaluation and 1.91 GiB for incremental
+evaluation. These single samples include the input and allocator-retained
+memory and are not a comparison of full-simulation peaks. The retained
+cache has a real cost even though the incremental sample was lower. No
+production code was changed. Before integration, a prototype using actual
+consecutive batch inputs must account for changing histories, compact context
+membership and index persistence, and compare real allocations and flows.
+
+### Consecutive real inner batches
+
+An exploratory diagnostic recorded scored input steps, run-local timing
+catalogue, scoring inputs and evaluation outputs for each inner batch. It
+substituted the prototype utility table in a second call to the transition
+allocation and compared allocation and OD-mode flows, without changing the
+production result.
+
+A lowest-effort Geneva run used one scenario and seed, two outer steps and
+two inner batches. In step two, the first batch's 102,449 context-plan keys
+and 393,069 step rows were all present in batch two with identical input
+values, including retention history. Batch two added 26,488 plan keys and
+96,899 step rows. Their modeled plans did not merge with existing ones in
+this run. Reusing the first batch's utility rows and scoring only the new
+rows reproduced the actual second-batch utility table, timing mappings and
+catalogue exactly. The real transition algorithm produced exactly matching
+37,672 allocation rows and 14,122 OD-mode flow rows. The prototype used
+the existing complete step table for transition/flow evaluation; this is not
+yet a test of an incremental step-table implementation.
+
+Three offline comparisons of timing/indexing and utility aggregation starting
+from the captured already-scored step rows took 0.54?0.58 s for the full
+second batch and 0.18?0.23 s for the incremental calculation. They exclude
+candidate construction, cost lookup, transition allocation, flows and the
+extra validation/capture work, so they are not full-run speedups. Those
+initial timings did not include maintaining candidate histories or detecting
+changes; the following section reports a more complete comparison.
+
+### Inner-batch updates and history
+
+The real-batch prototype now uses plan membership to find additions and
+removals; it does not compare the steps of existing plans. This relies on the
+inner-loop invariant that transport costs and scoring inputs stay fixed. It
+retains existing utilities, evaluates newly added plans, keeps one utility
+when a new input becomes an existing modeled plan, and merges history using
+the existing earliest/latest rules. An explicit history change or removal
+rebuilds only the affected modeled plan's history. The manual test constructs
+one example each of a modeled-plan merge, a history change and a removal; in
+all three cases utilities, candidate steps and histories, schedule mappings
+and catalogues matched a full reevaluation exactly. These examples are not
+evidence of how often those cases occur.
+
+In three comparisons on the unchanged captured batches, including candidate
+history materialization, the full calculation from already-scored step rows
+took 0.52?0.54 s and the prototype took 0.27?0.29 s. The prototype derives
+plan membership from the captured rows; in a production implementation the
+pool could supply its additions, removals and history updates directly. The
+comparison excludes candidate generation, cost lookup, transitions and flows
+and is not a full-simulation benchmark.
+
+`max_shared_candidates` is an optional pool-size cap, defaulting to `None`;
+the Geneva script does not set it. Its inactivity limit is separate and is
+applied at the start of an outer step. There was no pool-size cap in these
+runs. Production integration, multiple scenarios, checkpoint/resume and
+peak-memory effects still require validation.
+
+### High-effort incremental-evaluation experiment
+
+A temporary, opt-in implementation was connected to the actual inner loop
+and tested on the same Geneva setup as the earlier high-effort run: one
+default scenario and seed, five outer steps, six activity draws, two
+destination draws, six mode draws and up to three inner batches. There was
+no memory limit. It retained timed context-plan rows, timing mappings and
+utilities within each outer step, updated retention history, and scored
+new plans before recalculating allocation over the whole pool. This was a
+manual experiment, not a production implementation.
+
+| Outer step | Earlier run | Incremental experiment | Earlier candidate evaluation | Incremental candidate evaluation | Earlier Python peak | Incremental Python peak |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 55.10 s | 54.44 s | 29.32 s | 28.30 s | 9.76 GiB | 10.13 GiB |
+| 2 | 154.66 s | 177.22 s | 84.13 s | 99.66 s | 18.08 GiB | 20.78 GiB |
+| 3 | 171.85 s | 189.14 s | 95.36 s | 107.77 s | 21.80 GiB | 24.65 GiB |
+| 4 | 213.00 s | 217.26 s | 112.16 s | 124.42 s | 24.00 GiB | 27.65 GiB |
+
+For steps 1?4, elapsed step time rose from 594.61 to 638.06 s and candidate
+evaluation from 320.97 to 360.15 s. The overall traced Python peak rose from
+24.00 to 27.65 GiB; sampled process-tree peak rose from 24.47 to 27.51 GiB.
+CPU sample averages were approximately 942% in both runs, where 100% means one
+logical CPU. These are two individual runs, not a controlled benchmark.
+Candidate counts for steps 1?4 matched, and all 20 trip-count outputs across
+the five steps matched within 6.6e-9 represented trips. Other saved state was
+not compared in the high-effort run.
+
+The fifth step is not comparable: since the earlier run, no-transition
+steps were changed to avoid generating candidates. In the incremental run,
+step five took 45.17 s with a 15.86 GiB traced Python peak and 20.73 s in
+candidate evaluation. The total run took 710.26 s, but its shorter fifth
+step should not be credited to incremental evaluation.
+
+The experimental implementation still expanded context-plan rows and
+rejoined wide tables to refresh history and restore timing IDs. Its extra
+materialization, joins and retained data appear to outweigh the avoided
+calculations in this workload. Trace spans overlap and individual operations
+were not independently isolated, so this is not a precise attribution. The
+experimental implementation was removed; the captured-table diagnostic
+scripts remain.
+
+### Scale check for a 0.1-person global allocation floor
+
+The saved five-step, lowest-effort Geneva run represented 2,341,382 people.
+Its saved allocations had already used the existing 95% per-unit pruning
+starting at step 2. As a descriptive scale check, mobile allocations were
+summed across demand units by the run-local activity, modeled-time,
+destination and mode sequence IDs. These component keys are a proxy for
+physical plans within this run; no new floor was applied to the simulation.
+
+| Outer step | Mobile plan keys | Keys below 0.1 person | People on those keys | Unit-plan rows |
+| --- | ---: | ---: | ---: | ---: |
+| 2 | 5,112 | 13 | 0.673 | 34 |
+| 3 | 7,023 | 14 | 0.782 | 29 |
+| 4 | 8,456 | 14 | 0.830 | 36 |
+
+For comparison, a 1.0-person floor at step 4 selects 150 keys carrying
+64.13 people and 448 unit-plan rows. These counts describe a pool already
+subject to the current pruning policy. They do not predict a replacement
+global floor's effects on an unpruned allocation, flows, future steps or
+high-effort memory. Step 5 was not included because the proposed floor is
+skipped on a no-transition step. Threshold effects also depend on absolute
+study-area population; evaluate small studies as well as Geneva.
+
+### Global volume floor: low-effort model comparison
+
+A manual experiment compared the existing per-unit 95% retained-share rule,
+no low-mass pruning, and global floors of 0.1 and 1.0 represented person per
+physical plan. Each run used one scenario and seed, five outer steps, one
+activity/destination/mode draw and two inner batches: two rough effort points
+per replanning step. All used the same initial inputs and had no memory limit.
+The global floor was applied to each inner estimate and the final behavioral
+allocation from step 2 onward; removed mobile volume was redirected to the
+same demand unit's stay-home plan. The floor was skipped on the no-transition
+fifth step. The floor code was an opt-in manual prototype; it does not support
+transition-event output and is not production behavior.
+
+| Policy | Step 4 allocated unit-plan rows | Step 4 mobile physical keys | Step 4 total trips | Difference from no pruning |
+| --- | ---: | ---: | ---: | ---: |
+| Existing 95% | 239,805 | 10,922 | 8,900,492 | +21,787 |
+| No low-mass pruning | 266,708 | 11,908 | 8,878,706 | reference |
+| Global floor 0.1 | 266,519 | 11,842 | 8,879,179 | +473 |
+| Global floor 1 | 264,922 | 11,440 | 8,879,341 | +635 |
+
+These later-step trip differences reflect the whole simulated trajectory,
+including changed inner allocations and subsequent candidate sampling. They
+are not the number of trips removed directly by that step's floor. In the
+outer allocation, the 0.1 floor redirected 0.873, 1.525 and 2.754 persons at
+steps 2, 3 and 4, removing 18, 22 and 40 physical keys respectively. The 1.0
+floor redirected 66.104, 96.829 and 138.984 persons, removing 139, 175 and
+223 keys. These are represented-person weights; the same person-equivalent
+can appear in successive outer steps. Unit-level population was conserved to
+within 4.3e-14 persons in all four runs.
+
+For a same-origin check, separate two-step runs captured OD/mode flows at
+step 2. Relative to no pruning, the 0.1 floor removed 3.129 represented trips
+across 49 OD/mode cells above 1e-8 difference; the largest cell decrease was
+0.173 trip. The 1.0 floor removed 236.569 trips across 397 such cells; the
+largest cell decrease was 3.957 trips. No OD/mode cell increased in these
+two-step comparisons. Some small cells became zero; the floor is on plan
+volume, so several removed plans can contribute to the same OD/mode cell.
+
+Wall times for the no-pruning, 0.1 and 1.0 runs were 104.5, 98.6 and 111.2 s;
+their traced Python peaks were 6.26, 6.49 and 6.34 GiB. The separate
+two-second process-tree samples peaked at 6.12, 5.32 and 5.37 GiB. These runs are
+not controlled performance measurements; the floor prototype also performs
+extra state/index and step reconstruction after the outer update. They do not
+establish that either floor is faster. This low-effort sample shows that both
+floors remove far fewer allocated rows than the current per-unit rule; a
+higher-effort or longer run could differ. A 1-person floor is an interpretable
+candidate, not yet a validated performance default.
+
+The comparison uncovered a separate no-transition bug in the existing 95%
+path: unit-level target pruning still moved people after self-transitions.
+Before correction, step 5 redistributed about 13,684 represented people
+between mobile plan identities even though no-transition was configured. The
+corrected run disables that target pruning during no-transition steps; its
+step-4 and step-5 mobile allocations matched after ignoring timing-ID changes.
+Focused unit tests also cover a 99/1 allocation and the inner estimate. The
+corrected 95% run overlapped the separate OD-capture runs, so its wall time is
+not a fair performance comparison.
+
+
+### Per-subgroup allocation floor: low-effort run
+
+After replacing retained-share pruning with a floor of one represented person
+per plan and demand subgroup, a cache-only Geneva run completed in 129.2 s.
+It used one scenario and seed, five outer steps, one activity, destination
+and mode draw, and two search batches per replanning step. No memory limit was
+set; sampled process-tree peak RSS was 5.07 GiB. The last step used no
+transitions and produced the same trip totals as step 4 to floating-point
+precision. This checks that the run completes, not whether the floor is
+accurate enough for a particular study.

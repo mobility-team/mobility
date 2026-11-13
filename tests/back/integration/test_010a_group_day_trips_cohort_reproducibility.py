@@ -193,8 +193,8 @@ def test_intermediate_restricted_scoring_preserves_reachable_flows(test_data, mo
                 transition_logit_scale=update.transition_logit_scale,
                 transition_utility_pruning_delta=update.transition_utility_pruning_delta,
                 min_transition_utility_gain=update.min_transition_utility_gain,
-                plan_probability_pruning_retained_share=update.plan_probability_pruning_retained_share,
-                plan_probability_pruning_min_step=update.plan_probability_pruning_min_step,
+                min_plan_persons=update.min_plan_persons,
+                plan_pruning_start_step=update.plan_pruning_start_step,
             )
             actual = updater.estimate_reachable_allocation(
                 result, kwargs["current_plans"], kwargs["iteration"], scope, **settings,

@@ -74,6 +74,14 @@ Destination sampling makes `k_destination_sequences` draws per sampled schedule 
 
 During candidate evaluation, identical plan steps with the same country, CSP, and utility profile share cost and activity-value calculations. Fresh inner-loop allocation shares are calculated once for each identical set of feasible plans and utilities, then multiplied by each demand unit's population. Units with different alternatives or utilities keep separate shares. Behavioral transitions still use each unit's current plan. Scored step queries stay lazy until allocation needs their step details.
 
+By default, from step 2, a mobile plan allocated to fewer than one represented
+person in a demand subgroup is removed from that subgroup's current allocation.
+Its people are allocated to the subgroup's stay-home plan. This limits small
+allocations but changes model results; the threshold is not a probability.
+Set `plan_update.min_plan_persons` to another number of people, or to zero to
+disable it. `plan_update.plan_pruning_start_step` changes the first step where
+it applies. A no-transition step does not apply the floor.
+
 ## Coordinated Search Limits
 
 Each simulation step can run up to `adaptive_search.max_search_batches`

@@ -132,15 +132,16 @@ print("CONTEXT_STEP_SELECTION", "EXACT", probability_ids.height, "STRUCTURAL", s
       "EXACT_SECONDS", round(probability_seconds, 3), "STRUCTURAL_SECONDS", round(structural_seconds, 3), flush=True)
 
 
-def estimate(origins, options, retained_share):
+def estimate(origins, options, min_persons):
     started = perf_counter()
     probabilities = updater.get_transition_probabilities(
         origins, options.lazy(), pl.DataFrame(), scope, transport_zones=None, **parameters,
     )
     allocation, _ = updater.apply_transitions(
         origins, probabilities, iteration=6,
-        plan_probability_pruning_retained_share=retained_share,
-        plan_probability_pruning_min_step=2,
+        min_plan_persons=min_persons,
+        stay_home_plans=options.filter(pl.col("mode_seq_id") == 0).select(DEMAND_UNIT_COLS + ["plan_id", "utility"]),
+        plan_pruning_start_step=2,
     )
     return allocation, probabilities.height, perf_counter() - started
 
@@ -164,28 +165,28 @@ def aggregate_contexts(allocation):
 
 print("UNITS", units.height, "CONTEXTS", context_sizes.height,
       "UNIT_CHOICES", choices.height, "CONTEXT_CHOICES", context_choices.height, flush=True)
-for retained_share in (1.0, 0.95):
-    unit_allocation, unit_pairs, unit_seconds = estimate(current, choices, retained_share)
+for min_persons in (0.0, 1.0):
+    unit_allocation, unit_pairs, unit_seconds = estimate(current, choices, min_persons)
     started = perf_counter()
     reachable = updater.estimate_reachable_allocation(
         compact, current, 6, scope, transport_zones=None,
-        plan_probability_pruning_retained_share=retained_share,
-        plan_probability_pruning_min_step=2, **parameters,
+        min_plan_persons=min_persons,
+        plan_pruning_start_step=2, **parameters,
     )
     reachable_seconds = perf_counter() - started
     expected_reachable = aggregate_units(unit_allocation)
     actual_reachable = aggregate_contexts(reachable)
     assert_frame_equal(actual_reachable, expected_reachable, check_exact=False, rel_tol=1e-10, abs_tol=1e-8)
-    print("REACHABLE_ALLOCATION_MATCH", retained_share, "SECONDS", round(reachable_seconds, 3), flush=True)
-    context_allocation, context_pairs, context_seconds = estimate(context_origins, context_choices, retained_share)
+    print("REACHABLE_ALLOCATION_MATCH", min_persons, "SECONDS", round(reachable_seconds, 3), flush=True)
+    context_allocation, context_pairs, context_seconds = estimate(context_origins, context_choices, min_persons)
     actual = aggregate_units(unit_allocation)
     compact_allocation = aggregate_contexts(context_allocation)
     joined = actual.join(compact_allocation, on=["_score_context_id"] + PLAN_COLUMNS, how="full", coalesce=True).with_columns(
         pl.col("n_persons").fill_null(0.0), pl.col("n_persons_right").fill_null(0.0),
     )
     moved = (joined["n_persons"] - joined["n_persons_right"]).abs().sum() / 2.0
-    if retained_share == 1.0:
+    if min_persons == 0.0:
         assert_frame_equal(actual, compact_allocation, check_exact=False, rel_tol=1e-10, abs_tol=1e-8)
-    print("RETAINED_SHARE", retained_share, "UNIT_PAIRS", unit_pairs, "CONTEXT_PAIRS", context_pairs,
+    print("MIN_PLAN_PERSONS", min_persons, "UNIT_PAIRS", unit_pairs, "CONTEXT_PAIRS", context_pairs,
           "UNIT_SECONDS", round(unit_seconds, 3), "CONTEXT_SECONDS", round(context_seconds, 3),
           "REALLOCATION_DIFFERENCE", round(moved, 6), flush=True)

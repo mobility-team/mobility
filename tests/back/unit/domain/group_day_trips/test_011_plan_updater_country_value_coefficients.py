@@ -29,7 +29,7 @@ def test_plan_steps_are_collected_when_transitions_need_them(monkeypatch, distan
         transition_revision_probability=1.0, transition_logit_scale=1.0,
         transition_utility_pruning_delta=3.0, min_transition_utility_gain=0.0,
         transition_distance_friction=0.0, plan_embedding_dimension_weights=None,
-        plan_probability_pruning_retained_share=1.0, plan_probability_pruning_min_step=1,
+        min_plan_persons=0.0, plan_pruning_start_step=1,
     )
     parameters = SimpleNamespace(
         plan_update=settings, behavior_change=SimpleNamespace(scope_at=lambda _: None),

@@ -547,23 +547,22 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
             description="Optional weights used when computing distances between plans.",
         ),
     ]
-    plan_probability_pruning_retained_share: Annotated[
+    min_plan_persons: Annotated[
         float,
         Field(
             default=1.0,
-            gt=0.0,
-            le=1.0,
-            title="Current-plan retained probability share",
-            description="Share of transition probability kept as separate target plans.",
+            ge=0.0,
+            title="Minimum persons per plan",
+            description="Allocations below this number per demand subgroup and plan are moved to stay home. Set to zero to disable.",
         ),
     ]
-    plan_probability_pruning_min_step: Annotated[
+    plan_pruning_start_step: Annotated[
         int,
         Field(
             default=2,
             ge=1,
-            title="Current-plan probability pruning start iteration",
-            description="First iteration where low-probability target plans may be merged.",
+            title="Plan pruning start step",
+            description="First step where small plan allocations are moved to stay home.",
         ),
     ]
 

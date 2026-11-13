@@ -122,7 +122,12 @@ class PlanUpdater:
                 .select(DEMAND_UNIT_COLS + target_columns)
                 .rename({column + "_trans": column for column in PLAN_COLUMNS})
             )
-            needed_keys = pl.concat([origins.select(PLAN_KEY_COLS), target_keys]).unique()
+            needed_keys = [origins.select(PLAN_KEY_COLS), target_keys]
+            if behavior_change_scope != BehaviorChangeScope.NO_TRANSITIONS:
+                needed_keys.append(origins.select(DEMAND_UNIT_COLS).unique().with_columns(
+                    **{column: pl.lit(0, dtype=pl.UInt32) for column in PLAN_COLUMNS}
+                ))
+            needed_keys = pl.concat(needed_keys).unique()
             _, plan_id_index = add_plan_id(needed_keys, previous_index=previous_plan_id_index)
             utilities = utilities.join(plan_id_index.lazy(), on=PLAN_KEY_COLS, how="inner")
         else:
@@ -229,8 +234,8 @@ class PlanUpdater:
     def estimate_reachable_allocation(
         self, evaluation: CandidatePlanEvaluation, current_plans: pl.DataFrame,
         iteration: int, scope: BehaviorChangeScope, *, transport_zones: Any,
-        plan_probability_pruning_retained_share: float = 1.0,
-        plan_probability_pruning_min_step: int = 2, **transition_parameters: Any,
+        min_plan_persons: float = 0.0,
+        plan_pruning_start_step: int = 2, **transition_parameters: Any,
     ) -> pl.DataFrame:
         """Estimate the next allocation without changing the outer state.
 
@@ -251,7 +256,9 @@ class PlanUpdater:
             and isinstance(steps, pl.LazyFrame)
         ):
             steps = steps.collect(engine="streaming")
-        if plan_probability_pruning_retained_share >= 1.0 or iteration < plan_probability_pruning_min_step:
+        if (scope == BehaviorChangeScope.NO_TRANSITIONS
+                or min_plan_persons <= 0.0
+                or iteration < plan_pruning_start_step):
             # Without per-unit pruning, population weights can be summed by
             # context and occupied origin before applying the same transition.
             context_origins = evaluation.current_plans
@@ -309,6 +316,9 @@ class PlanUpdater:
             unit_pairs.select(DEMAND_UNIT_COLS + target_keys).rename(
                 {column + "_trans": column for column in PLAN_COLUMNS}
             ),
+            origins.select(DEMAND_UNIT_COLS).unique().with_columns(
+                **{column: pl.lit(0, dtype=pl.UInt32) for column in PLAN_COLUMNS}
+            ),
         ]).unique().sort(PLAN_KEY_COLS).with_row_index("plan_id")
         unit_origins = origins.drop("_score_context_id").join(temporary_keys, on=PLAN_KEY_COLS)
         unit_pairs = (
@@ -319,8 +329,13 @@ class PlanUpdater:
         )
         allocation, _ = self.apply_transitions(
             unit_origins, unit_pairs, iteration,
-            plan_probability_pruning_retained_share=plan_probability_pruning_retained_share,
-            plan_probability_pruning_min_step=plan_probability_pruning_min_step,
+            min_plan_persons=min_plan_persons,
+            plan_pruning_start_step=plan_pruning_start_step,
+            stay_home_plans=(
+                contexts.expand_step_rows(evaluation.possible_plan_utility.filter(pl.col("mode_seq_id") == 0))
+                .drop("plan_id").join(temporary_keys.lazy(), on=PLAN_KEY_COLS)
+                .select(DEMAND_UNIT_COLS + ["plan_id", "utility"])
+            ),
             include_events=False,
         )
         return (
@@ -482,8 +497,11 @@ class PlanUpdater:
             current_plans,
             transition_prob,
             iteration,
-            plan_probability_pruning_retained_share=parameters.plan_update.plan_probability_pruning_retained_share,
-            plan_probability_pruning_min_step=parameters.plan_update.plan_probability_pruning_min_step,
+            min_plan_persons=parameters.plan_update.min_plan_persons,
+            plan_pruning_start_step=parameters.plan_update.plan_pruning_start_step,
+            stay_home_plans=evaluation.possible_plan_utility.lazy().filter(pl.col("mode_seq_id") == 0)
+                .select(DEMAND_UNIT_COLS + ["plan_id", "utility"]),
+            behavior_change_scope=parameters.behavior_change.scope_at(iteration),
             include_events=parameters.outputs.cache_step_events,
         )
         log_memory_checkpoint(
@@ -1871,12 +1889,17 @@ class PlanUpdater:
         transition_probabilities: pl.DataFrame,
         iteration: int,
         *,
-        plan_probability_pruning_retained_share: float = 1.0,
-        plan_probability_pruning_min_step: int = 2,
+        min_plan_persons: float = 0.0,
+        plan_pruning_start_step: int = 2,
+        stay_home_plans: pl.DataFrame | pl.LazyFrame | None = None,
+        behavior_change_scope: BehaviorChangeScope | None = None,
         include_events: bool = True,
     ) -> tuple[pl.DataFrame, pl.LazyFrame | None]:
         """Apply transition probabilities and emit transition events."""
         plan_cols = PLAN_KEY_COLS
+        # A no-transition step must not move people merely to shrink the state.
+        if behavior_change_scope == BehaviorChangeScope.NO_TRANSITIONS:
+            min_plan_persons = 0.0
 
         transitions = (
             current_plans.lazy()
@@ -1898,13 +1921,32 @@ class PlanUpdater:
             )
             .with_columns(n_persons_moved=pl.col("n_persons") * pl.col("p_transition"))
         )
+        if include_events:
+            # Choice probabilities describe the original target, even when a
+            # small allocation is subsequently reassigned to stay home.
+            transitions = transitions.with_columns(
+                **{"chosen_" + column: pl.col(column + "_trans") for column in PLAN_COLUMNS}
+            )
 
-        transitions = self.remap_low_probability_transition_targets(
-            transitions,
-            retained_share=plan_probability_pruning_retained_share,
-            min_iteration=plan_probability_pruning_min_step,
-            iteration=iteration,
-        )
+        if min_plan_persons > 0 and iteration >= plan_pruning_start_step:
+            if stay_home_plans is None:
+                raise ValueError("Stay-home plans are required to merge small allocations.")
+            target_volumes = transitions.group_by(DEMAND_UNIT_COLS + ["plan_id_trans"]).agg(
+                pl.col("n_persons_moved").sort().implode().list.sum().alias("_target_persons")
+            )
+            home = stay_home_plans.lazy().select(
+                DEMAND_UNIT_COLS + [pl.col("plan_id").alias("_home_id"), pl.col("utility").alias("_home_utility")]
+            )
+            transitions = transitions.join(target_volumes, on=DEMAND_UNIT_COLS + ["plan_id_trans"]).join(
+                home, on=DEMAND_UNIT_COLS, how="left"
+            ).with_columns(
+                _small_target=(pl.col("mode_seq_id_trans") != 0) & (pl.col("_target_persons") < min_plan_persons)
+            ).with_columns(
+                plan_id_trans=pl.when(pl.col("_small_target")).then(pl.col("_home_id")).otherwise(pl.col("plan_id_trans")),
+                utility_trans=pl.when(pl.col("_small_target")).then(pl.col("_home_utility")).otherwise(pl.col("utility_trans")),
+                **{column + "_trans": pl.when(pl.col("_small_target")).then(pl.lit(0)).otherwise(pl.col(column + "_trans"))
+                   for column in PLAN_COLUMNS},
+            ).drop("_target_persons", "_home_id", "_home_utility", "_small_target")
         transition_events = None
         if include_events:
             event_transitions = self.attach_previous_target_utility(current_plans, transitions)
@@ -1931,194 +1973,6 @@ class PlanUpdater:
         )
 
         return new_states, transition_events
-
-    def remap_low_probability_transition_targets(
-        self,
-        transitions: pl.LazyFrame,
-        *,
-        retained_share: float,
-        min_iteration: int,
-        iteration: int,
-    ) -> pl.LazyFrame:
-        """Merge low-mass target plans into the largest retained plan per demand group."""
-        if retained_share >= 1.0 or iteration < min_iteration:
-            return transitions
-
-        target_map = self.build_low_probability_target_map(
-            transitions,
-            retained_share=retained_share,
-        )
-        if target_map is None:
-            return transitions
-
-        raw_plan_count = int(target_map["raw_plan_count"][0])
-        retained_plan_count = int(target_map["retained_plan_count"][0])
-        dropped_person_share = float(target_map["dropped_person_share"][0])
-        logging.debug(
-            "Low-probability current-plan pruning check: iteration=%s retained_share=%s target_plans=%s retained_plans=%s dropped_person_share=%s",
-            str(iteration),
-            str(retained_share),
-            str(raw_plan_count),
-            str(retained_plan_count),
-            str(round(dropped_person_share, 6)),
-        )
-        if retained_plan_count == raw_plan_count:
-            return transitions
-
-        mapping = target_map.drop(["raw_plan_count", "retained_plan_count", "dropped_person_share"])
-        return (
-            transitions
-            .join(mapping.lazy(), on="plan_id_trans", how="left")
-            .with_columns(
-                plan_id_trans=pl.coalesce([pl.col("plan_id_trans_final"), pl.col("plan_id_trans")]),
-                activity_seq_id_trans=pl.coalesce(
-                    [pl.col("activity_seq_id_trans_final"), pl.col("activity_seq_id_trans")]
-                ),
-                time_seq_id_trans=pl.coalesce([pl.col("time_seq_id_trans_final"), pl.col("time_seq_id_trans")]),
-                dest_seq_id_trans=pl.coalesce([pl.col("dest_seq_id_trans_final"), pl.col("dest_seq_id_trans")]),
-                mode_seq_id_trans=pl.coalesce([pl.col("mode_seq_id_trans_final"), pl.col("mode_seq_id_trans")]),
-                utility_trans=pl.coalesce([pl.col("utility_trans_final"), pl.col("utility_trans")]),
-            )
-            .drop(
-                [
-                    "plan_id_trans_final",
-                    "activity_seq_id_trans_final",
-                    "time_seq_id_trans_final",
-                    "dest_seq_id_trans_final",
-                    "mode_seq_id_trans_final",
-                    "utility_trans_final",
-                ]
-            )
-        )
-
-    def build_low_probability_target_map(
-        self,
-        transitions: pl.LazyFrame,
-        *,
-        retained_share: float,
-    ) -> pl.DataFrame | None:
-        """Build a raw-target to retained-target map from transition mass."""
-        target_cols = [
-            "plan_id_trans",
-            "demand_group_id",
-            "demand_subgroup_id",
-            "activity_seq_id_trans",
-            "time_seq_id_trans",
-            "dest_seq_id_trans",
-            "mode_seq_id_trans",
-            "utility_trans",
-        ]
-        target_states = (
-            transitions
-            .group_by(target_cols)
-            # A tiny rounding difference can reverse the order of equally
-            # popular targets and send all pruned people to a different plan.
-            .agg(n_persons=pl.col("n_persons_moved").sort().implode().list.sum())
-            .with_columns(is_stay_home_target=pl.col("mode_seq_id_trans") == 0)
-            .collect(engine="streaming")
-        )
-        if target_states.height == 0:
-            return None
-
-        ranked = (
-            target_states
-            .sort(
-                [
-                    "demand_group_id",
-                    "demand_subgroup_id",
-                    "is_stay_home_target",
-                    "n_persons",
-                    "activity_seq_id_trans",
-                    "time_seq_id_trans",
-                    "dest_seq_id_trans",
-                    "mode_seq_id_trans",
-                ],
-                descending=[False, False, False, True, False, False, False, False],
-            )
-            .with_columns(
-                group_n_persons=(
-                    pl.col("n_persons").sort().implode().list.sum()
-                    .over(DEMAND_UNIT_COLS + ["is_stay_home_target"])
-                ),
-                cumulative_n_persons=pl.col("n_persons").cum_sum().over(DEMAND_UNIT_COLS + ["is_stay_home_target"]),
-                group_rank=pl.col("n_persons").cum_count().over(DEMAND_UNIT_COLS + ["is_stay_home_target"]),
-            )
-            .with_columns(
-                previous_cumulative_share=(
-                    (pl.col("cumulative_n_persons") - pl.col("n_persons"))
-                    / pl.col("group_n_persons").clip(1e-12)
-                )
-            )
-            .with_columns(
-                is_retained=(pl.col("group_rank") == 1) | (pl.col("previous_cumulative_share") < retained_share)
-            )
-        )
-        fallback_targets = (
-            ranked
-            .filter(pl.col("is_retained"))
-            .filter(
-                pl.col("group_rank")
-                == pl.col("group_rank").min().over(DEMAND_UNIT_COLS + ["is_stay_home_target"])
-            )
-            .select(
-                [
-                    "demand_group_id",
-                    "demand_subgroup_id",
-                    "is_stay_home_target",
-                    pl.col("plan_id_trans").alias("fallback_plan_id_trans"),
-                    pl.col("activity_seq_id_trans").alias("fallback_activity_seq_id_trans"),
-                    pl.col("time_seq_id_trans").alias("fallback_time_seq_id_trans"),
-                    pl.col("dest_seq_id_trans").alias("fallback_dest_seq_id_trans"),
-                    pl.col("mode_seq_id_trans").alias("fallback_mode_seq_id_trans"),
-                    pl.col("utility_trans").alias("fallback_utility_trans"),
-                ]
-            )
-        )
-        mapping = (
-            ranked
-            .join(fallback_targets, on=DEMAND_UNIT_COLS + ["is_stay_home_target"], how="left")
-            .with_columns(
-                plan_id_trans_final=pl.when(pl.col("is_retained"))
-                .then(pl.col("plan_id_trans"))
-                .otherwise(pl.col("fallback_plan_id_trans")),
-                activity_seq_id_trans_final=pl.when(pl.col("is_retained"))
-                .then(pl.col("activity_seq_id_trans"))
-                .otherwise(pl.col("fallback_activity_seq_id_trans")),
-                time_seq_id_trans_final=pl.when(pl.col("is_retained"))
-                .then(pl.col("time_seq_id_trans"))
-                .otherwise(pl.col("fallback_time_seq_id_trans")),
-                dest_seq_id_trans_final=pl.when(pl.col("is_retained"))
-                .then(pl.col("dest_seq_id_trans"))
-                .otherwise(pl.col("fallback_dest_seq_id_trans")),
-                mode_seq_id_trans_final=pl.when(pl.col("is_retained"))
-                .then(pl.col("mode_seq_id_trans"))
-                .otherwise(pl.col("fallback_mode_seq_id_trans")),
-                utility_trans_final=pl.when(pl.col("is_retained"))
-                .then(pl.col("utility_trans"))
-                .otherwise(pl.col("fallback_utility_trans")),
-            )
-        )
-
-        raw_plan_count = target_states.height
-        retained_plan_count = mapping.filter(pl.col("is_retained")).height
-
-        dropped_persons = mapping.filter(~pl.col("is_retained")).select(pl.col("n_persons").sum()).item()
-        total_persons = mapping.select(pl.col("n_persons").sum()).item()
-
-        return mapping.select(
-            [
-                "plan_id_trans",
-                "plan_id_trans_final",
-                "activity_seq_id_trans_final",
-                "time_seq_id_trans_final",
-                "dest_seq_id_trans_final",
-                "mode_seq_id_trans_final",
-                "utility_trans_final",
-                pl.lit(raw_plan_count, dtype=pl.UInt32).alias("raw_plan_count"),
-                pl.lit(retained_plan_count, dtype=pl.UInt32).alias("retained_plan_count"),
-                pl.lit(float(dropped_persons) / max(float(total_persons), 1e-12)).alias("dropped_person_share"),
-            ]
-        )
 
     def attach_previous_target_utility(
         self,

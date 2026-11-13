@@ -100,7 +100,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         super().__init__(
             {
                 # Congestion costs and state identities follow the whole search.
-                "version": 34,
+                "version": 35,
                 "run_contexts": [
                     {
                         "run_key": run_key,
@@ -933,8 +933,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 min_transition_utility_gain=update.min_transition_utility_gain,
                                 transition_distance_friction=update.transition_distance_friction,
                                 plan_embedding_dimension_weights=update.plan_embedding_dimension_weights,
-                                plan_probability_pruning_retained_share=update.plan_probability_pruning_retained_share,
-                                plan_probability_pruning_min_step=update.plan_probability_pruning_min_step,
+                                min_plan_persons=update.min_plan_persons,
+                                plan_pruning_start_step=update.plan_pruning_start_step,
                             )
                             if logging.getLogger().isEnabledFor(logging.DEBUG):
                                 current_steps = state_asset.updater.get_current_plan_steps(

@@ -77,7 +77,7 @@ class CurrentStepNames(ast.NodeTransformer):
         "checkpoint_each_iteration": "checkpoint_each_step",
         "start_iteration": "start_step",
         "n_warmup_iterations": "n_warmup_steps",
-        "plan_probability_pruning_min_iteration": "plan_probability_pruning_min_step",
+        "plan_probability_pruning_min_iteration": "plan_pruning_start_step",
         "by_scenario_and_iteration": "by_scenario_and_step",
     }
 
@@ -859,6 +859,7 @@ print("PROBE_SETTINGS", {
     "destination_sequences": model.parameters.destination_sequences.k_destination_sequences,
     "mode_sequences": model.parameters.mode_sequences.k_mode_sequences,
     "max_batches": model.parameters.adaptive_search.max_search_batches,
+    "min_plan_persons": model.parameters.plan_update.min_plan_persons,
     "real_scenario_gtfs": os.environ.get("MOBILITY_PROBE_REAL_GTFS") == "1",
     "build_local_transit": os.environ.get("MOBILITY_PROBE_BUILD_LOCAL_TRANSIT") == "1",
     "temporary_disk_limit_gb": float(os.environ["MOBILITY_PROBE_TEMP_GB"])

@@ -36,6 +36,10 @@ def build_transition_events_lazy(transitions: pl.LazyFrame, *, iteration: int) -
             "time_seq_id_trans",
             "dest_seq_id_trans",
             "mode_seq_id_trans",
+            "chosen_activity_seq_id",
+            "chosen_time_seq_id",
+            "chosen_dest_seq_id",
+            "chosen_mode_seq_id",
             "n_persons_moved",
             "utility_prev_from",
             "utility_prev_to",
@@ -163,7 +167,7 @@ class TransitionEventsAsset(FileAsset):
     ) -> None:
         self.transition_events = transition_events
         inputs = {
-            "version": 2,
+            "version": 3,
             "run_key": run_key,
             "is_weekday": is_weekday,
             "step": iteration,
