@@ -128,7 +128,7 @@ class InitialIterationStateAsset(InMemoryAsset):
             sensitivity_case=sensitivity_case,
         )
         inputs = {
-            "version": 9,
+            "version": 10,
             "is_weekday": is_weekday,
             "sensitivity_case": sensitivity_case,
             "population": population,
@@ -608,7 +608,10 @@ class IterationTransportCostsAsset(InMemoryAsset):
     def get_costs_by_od(self, metrics: list) -> pl.DataFrame:
         """Aggregate cached costs to the OD-only view used by destination choice."""
         costs = self.get_costs_by_od_and_mode(metrics, detail_distances=False)
-        costs = costs.with_columns((pl.col("cost").neg().exp()).alias("prob"))
+        # Keep the mode weights well scaled for highly congested OD pairs.
+        costs = costs.with_columns(
+            (pl.col("cost").min().over("from", "to") - pl.col("cost")).exp().alias("prob")
+        )
         costs = costs.with_columns(
             (pl.col("prob") / pl.col("prob").sum().over(["from", "to"])).alias("prob")
         )
@@ -731,7 +734,7 @@ class IterationStateAsset(Asset):
         self.coordinated_time_sequence_steps: pl.DataFrame | None = None
         inputs = {
             # State identity includes the shared search and full cohort.
-            "version": 39,
+            "version": 41,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -1066,6 +1069,7 @@ class IterationStateAsset(Asset):
                 current_plan_steps,
                 previous.opportunities,
                 resolved_activity_parameters,
+                enable_opportunity_congestion=self.parameters.plan_update.enable_opportunity_congestion,
             )
             state = RunState(
                 survey_plans=previous.survey_plans,

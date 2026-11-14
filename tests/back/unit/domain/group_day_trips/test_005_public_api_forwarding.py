@@ -140,6 +140,7 @@ def test_group_day_trips_wrapper_uses_explicit_nested_parameters(monkeypatch):
                 transition_revision_probability=0.4,
                 transition_logit_scale=0.75,
                 use_destination_shadow_prices=True,
+                enable_opportunity_congestion=False,
                 min_transition_utility_gain=0.1,
                 min_plan_persons=2.5,
                 plan_pruning_start_step=3,
@@ -163,6 +164,7 @@ def test_group_day_trips_wrapper_uses_explicit_nested_parameters(monkeypatch):
     assert parameters.plan_update.transition_revision_probability == 0.4
     assert parameters.plan_update.transition_logit_scale == 0.75
     assert parameters.plan_update.use_destination_shadow_prices is True
+    assert parameters.plan_update.enable_opportunity_congestion is False
     assert parameters.plan_update.min_transition_utility_gain == 0.1
     assert parameters.plan_update.min_plan_persons == 2.5
     assert parameters.plan_update.plan_pruning_start_step == 3

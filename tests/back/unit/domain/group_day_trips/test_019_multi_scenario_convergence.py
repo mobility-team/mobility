@@ -9,6 +9,8 @@ from polars.testing import assert_frame_equal
 from mobility.trips.group_day_trips.core.multi_scenario import (
     InnerLoopConvergence,
     allocation_od_mode_flows,
+    flow_change_breakdown,
+    flow_change_index,
     normalized_base_gap_change,
     represented_od_mode_flows,
 )
@@ -53,6 +55,24 @@ def test_base_gap_change_ignores_equal_changes_in_both_scenarios():
     assert normalized_base_gap_change(previous, previous, current, current, 100.0) == 0.0
 
 
+def test_flow_change_index_accounts_for_non_overlapping_flows():
+    flows = pl.DataFrame({"from": [1, 2], "to": [2, 3], "mode": ["car", "walk"],
+                          "activity": ["work", "home"], "volume": [100.0, 50.0]})
+    changed = pl.DataFrame({"from": [1, 4], "to": [2, 5], "mode": ["car", "walk"],
+                            "activity": ["work", "home"], "volume": [50.0, 50.0]})
+    assert flow_change_index(flows, flows.reverse()) == 0.0
+    assert flow_change_index(flows, changed) == pytest.approx(150 / 250)
+    assert flow_change_index(changed, flows) == pytest.approx(150 / 250)
+    assert flow_change_index(flows.clear(), flows.clear()) == 0.0
+    assert flow_change_index(flows, flows.clear()) == 1.0
+    modes = {row["category"]: row for row in flow_change_breakdown(flows, changed, "mode")}
+    assert modes["car"]["trips"] == 50.0
+    assert modes["car"]["flow_change_index"] == pytest.approx(1 / 3)
+    assert modes["walk"]["flow_change_index"] == 1.0
+    first = flow_change_breakdown(None, flows, "activity")
+    assert all(row["flow_change_index"] is None for row in first)
+
+
 def test_inner_flow_reduction_matches_expanded_steps():
     """Count repeated trips and demand groups without expanding wide steps."""
     allocation = pl.DataFrame({
@@ -68,13 +88,17 @@ def test_inner_flow_reduction_matches_expanded_steps():
         "activity_seq_id": [1, 1, 1, 1], "time_seq_id": [1, 1, 1, 1],
         "dest_seq_id": [1, 1, 1, 1], "mode_seq_id": [1, 1, 1, 1],
         "from": [10, 10, 10, 20], "to": [20, 20, 20, 10],
-        "mode": ["car", "car", "car", "walk"],
+        "mode": ["car", "car", "car", "walk"], "activity": ["work", "work", "work", "home"],
     })
     expanded = allocation.join(steps, on=PLAN_KEY_COLS, how="left")
 
     assert_frame_equal(
         allocation_od_mode_flows(allocation, steps.lazy()),
         represented_od_mode_flows(expanded),
+    )
+    assert_frame_equal(
+        allocation_od_mode_flows(allocation, steps.lazy(), include_activity=True),
+        represented_od_mode_flows(expanded, include_activity=True),
     )
 
 

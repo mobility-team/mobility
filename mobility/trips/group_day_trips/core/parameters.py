@@ -319,6 +319,12 @@ class GroupDayTripsDestinationSequenceParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    sampling_method: Literal["radiation", "utility"] = Field(
+        default="radiation",
+        title="Destination sampling method",
+        description="Use radiation or an approximate utility based on the fastest and cheapest travel options.",
+    )
+
     k_destination_sequences: Annotated[
         int,
         Field(
@@ -463,6 +469,14 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
             default=False,
             title="Update plan timings from modeled travel times",
             description="Whether to adjust plan timings with modeled travel times at each iteration.",
+        ),
+    ]
+    enable_opportunity_congestion: Annotated[
+        bool,
+        Field(
+            default=True,
+            title="Enable opportunity congestion",
+            description="Whether destination occupation affects activity utility and destination sampling.",
         ),
     ]
     use_destination_shadow_prices: Annotated[

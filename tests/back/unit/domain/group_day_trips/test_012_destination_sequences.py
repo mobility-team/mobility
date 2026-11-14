@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import math
 
 import polars as pl
 import pytest
@@ -11,6 +12,7 @@ from mobility.trips.group_day_trips import (
 )
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+from mobility.trips.group_day_trips.plans.plan_schedule_updater import PlanScheduleUpdater
 
 
 class _StubAsset(InMemoryAsset):
@@ -139,6 +141,392 @@ def test_batched_destination_race_handles_no_reachable_candidates():
         output_cols=["home_zone_id", "to"],
     )
     assert sampled.collect().is_empty()
+
+
+def test_utility_sampling_trades_travel_cost_against_activity_time():
+    """A short activity can favor a fast trip even at a larger destination."""
+    steps = pl.DataFrame({
+        "home_zone_id": [1] * 100, "from": [1] * 100, "activity": ["shopping"] * 100,
+        "anchor_to": [4] * 100, "activity_draw_id": list(range(100)),
+        "activity_seq_id": [1] * 100, "time_seq_id": [1] * 100, "dest_draw_id": [0] * 100,
+        "departure_time": [8.0] * 100, "arrival_time": [8.5] * 100,
+        "next_departure_time": [9.0] * 100,
+    })
+    probabilities = pl.DataFrame({
+        "from": [1, 1], "activity": ["shopping", "shopping"], "to": [2, 3],
+        "p_ij": [1.0, 1000000.0], "activity_saturation": [1.0, 1.0], "activity_shadow_price": [0.0, 0.0],
+        "country_value_coefficient": [1.0, 1.0],
+    })
+    origin = pl.DataFrame({
+        "candidate_from": [1, 1], "candidate_to": [2, 3], "cost_to_candidate": [1.0, 1.0],
+        "candidate_fastest_cost": [2.0, 10.0], "candidate_fastest_time": [0.1, 0.9],
+        "candidate_cheapest_cost": [1.0, 1.0], "candidate_cheapest_time": [2.0, 2.0],
+    })
+    onward = pl.DataFrame({
+        "anchor_from": [2, 3], "anchor_to_cost": [4, 4],
+        "cost_to_anchor": [0.0, 0.0], "onward_cheapest_cost": [0.0, 0.0],
+    })
+    args = dict(
+        steps_lf=steps.lazy(), destination_probability_lf=probabilities.lazy(),
+        origin_cost_lf=origin.lazy(), onward_cost_lf=onward.lazy(),
+        onward_left_on=["to", "anchor_to"], onward_right_on=["anchor_from", "anchor_to_cost"],
+        onward_cost_col="cost_to_anchor", alpha=0.5, sequence_context_columns=["home_zone_id"],
+        seed=3, output_cols=["activity_draw_id", "to"], utility_values={"shopping": 20.0},
+        min_activity_time_constant=2.0, logit_scale=1.0,
+    )
+    sampled = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    assert sampled.height == 100
+    assert sampled.filter(pl.col("to") == 2).height > 95
+    repeated = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    assert_frame_equal(sampled.sort("activity_draw_id"), repeated.sort("activity_draw_id"))
+
+
+def test_utility_sampling_keeps_each_modes_cost_and_time_together():
+    modes = pl.DataFrame({
+        "from": [1, 1, 1, 1], "to": [2, 2, 2, 2], "mode": ["fast", "cheap", "invalid", "unknown"],
+        "time": [0.5, 2.0, 0.01, None], "cost": [10.0, 1.0, float("inf"), 2.0],
+    })
+    options = DestinationSequences._travel_options(modes).row(0, named=True)
+    assert (options["fastest_cost"], options["fastest_time"]) == (10.0, 0.5)
+    assert (options["cheapest_cost"], options["cheapest_time"]) == (1.0, 2.0)
+    assert options["has_unknown_time"] is True
+    assert_frame_equal(DestinationSequences._travel_options(modes), DestinationSequences._travel_options(modes.reverse()))
+
+
+def test_utility_sampling_values_the_next_anchor_and_its_timing():
+    steps = pl.DataFrame({
+        "home_zone_id": [1] * 50, "from": [1] * 50, "activity": ["shopping"] * 50,
+        "anchor_to": [4] * 50, "activity_draw_id": list(range(50)), "activity_seq_id": [1] * 50,
+        "time_seq_id": [1] * 50, "dest_draw_id": [0] * 50,
+        "departure_time": [8.0] * 50, "arrival_time": [8.5] * 50, "next_departure_time": [9.0] * 50,
+        "_next_activity": ["work"] * 50, "_next_departure": [9.0] * 50, "_next_arrival": [9.5] * 50,
+        "_next_next_departure": [17.0] * 50, "_next_is_direct": [True] * 50,
+    })
+    probabilities = pl.DataFrame({
+        "from": [1, 1, 2], "activity": ["shopping", "shopping", "work"], "to": [2, 3, 4],
+        "p_ij": [1.0, 1.0, 1.0], "activity_saturation": [1.0, 1.0, 1.0],
+        "activity_shadow_price": [0.0, 0.0, 0.0], "country_value_coefficient": [1.0, 1.0, 1.0],
+    })
+    origin = pl.DataFrame({
+        "candidate_from": [1, 1], "candidate_to": [2, 3], "cost_to_candidate": [1.0, 1.0],
+        "candidate_fastest_cost": [1.0, 1.0], "candidate_fastest_time": [0.5, 0.5],
+        "candidate_cheapest_cost": [1.0, 1.0], "candidate_cheapest_time": [0.5, 0.5],
+    })
+    onward = pl.DataFrame({
+        "anchor_from": [2, 3], "anchor_to_cost": [4, 4], "cost_to_anchor": [1.0, 1.0],
+        "onward_cheapest_cost": [1.0, 1.0], "onward_cheapest_time": [0.25, 2.0],
+        "onward_fastest_cost": [1.0, 1.0], "onward_fastest_time": [0.25, 2.0],
+    })
+    args = dict(
+        steps_lf=steps.lazy(), destination_probability_lf=probabilities.lazy(),
+        origin_cost_lf=origin.lazy(), onward_cost_lf=onward.lazy(),
+        onward_left_on=["to", "anchor_to"], onward_right_on=["anchor_from", "anchor_to_cost"],
+        onward_cost_col="cost_to_anchor", alpha=0.5, sequence_context_columns=["home_zone_id"],
+        seed=3, output_cols=["activity_draw_id", "to"], utility_values={"shopping": 1.0, "work": 100.0},
+        mean_durations={"shopping": 1.0, "work": 8.0}, arrival_rigidity={"shopping": 0.0, "work": 0.0},
+        min_activity_time_constant=2.0, logit_scale=1.0, use_next_timing=True,
+    )
+    sampled = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    assert sampled.height == 50
+    assert sampled["to"].to_list() == [2] * 50
+    # If the following activity is not direct, its timing is irrelevant and
+    # evaluating only the cheapest onward trip must keep the seeded choices.
+    args["steps_lf"] = steps.with_columns(pl.lit(False).alias("_next_is_direct")).lazy()
+    args["onward_cost_lf"] = onward.with_columns(pl.lit(2.0).alias("onward_fastest_cost")).lazy()
+    reference = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    args["use_next_timing"] = False
+    simplified = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    assert_frame_equal(reference.sort("activity_draw_id"), simplified.sort("activity_draw_id"))
+
+
+def test_utility_sampling_filters_only_proven_timing_conflicts():
+    steps = pl.DataFrame({
+        "home_zone_id": [1], "from": [1], "activity": ["shopping"], "anchor_to": [4],
+        "activity_draw_id": [0], "activity_seq_id": [1], "time_seq_id": [1], "dest_draw_id": [0],
+        "departure_time": [8.0], "arrival_time": [8.5], "next_departure_time": [8.75],
+        "_next_activity": ["work"], "_next_departure": [8.75], "_next_arrival": [9.25],
+        "_next_next_departure": [17.0], "_next_is_direct": [True],
+    })
+    probabilities = pl.DataFrame({
+        "from": [1, 1], "activity": ["shopping", "shopping"], "to": [2, 3],
+        "p_ij": [1.0, 1.0], "activity_saturation": [1.0, 1.0],
+        "activity_shadow_price": [0.0, 0.0], "country_value_coefficient": [1.0, 1.0],
+    })
+    origin = pl.DataFrame({
+        "candidate_from": [1, 1], "candidate_to": [2, 3], "cost_to_candidate": [1.0, 1.0],
+        "candidate_fastest_cost": [1.0, 1.0], "candidate_fastest_time": [0.5, 1.0],
+        "candidate_cheapest_cost": [1.0, 1.0], "candidate_cheapest_time": [0.5, 1.0],
+        "candidate_has_unknown_time": [False, False],
+    })
+    onward = pl.DataFrame({
+        "anchor_from": [2, 3], "anchor_to_cost": [4, 4], "cost_to_anchor": [1.0, 1.0],
+        "onward_cheapest_cost": [1.0, 1.0], "onward_cheapest_time": [0.5, 0.5],
+        "onward_fastest_cost": [1.0, 1.0], "onward_fastest_time": [0.5, 0.5],
+        "onward_has_unknown_time": [False, False],
+    })
+    args = dict(
+        steps_lf=steps.lazy(), destination_probability_lf=probabilities.lazy(),
+        origin_cost_lf=origin.lazy(), onward_cost_lf=onward.lazy(),
+        onward_left_on=["to", "anchor_to"], onward_right_on=["anchor_from", "anchor_to_cost"],
+        onward_cost_col="cost_to_anchor", alpha=0.5, sequence_context_columns=["home_zone_id"],
+        seed=3, output_cols=["to"], utility_values={"shopping": 1.0, "work": 1.0},
+        arrival_rigidity={"shopping": 0.0, "work": 0.0}, min_activity_time_constant=1.0,
+        use_next_timing=True, filter_infeasible=True,
+    )
+    assert DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()["to"].to_list() == [2]
+    args["destination_probability_lf"] = probabilities.filter(pl.col("to") == 3).lazy()
+    assert DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect().is_empty()
+    args["origin_cost_lf"] = origin.with_columns(candidate_has_unknown_time=pl.lit(True)).lazy()
+    assert DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()["to"].to_list() == [3]
+    args["origin_cost_lf"] = origin.lazy()
+    args["steps_lf"] = steps.with_columns(_next_is_direct=pl.lit(False)).lazy()
+    assert DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()["to"].to_list() == [3]
+    args["steps_lf"] = steps.lazy()
+    args["arrival_rigidity"] = {"shopping": 1.0, "work": 0.0}
+    assert DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()["to"].to_list() == [3]
+    # A rounding-sized overlap must be left to the final second-level check.
+    args["arrival_rigidity"] = {"shopping": 0.0, "work": 0.0}
+    args["origin_cost_lf"] = origin.with_columns(
+        pl.when(pl.col("candidate_to") == 3).then(0.7503).otherwise(pl.col("candidate_fastest_time"))
+        .alias("candidate_fastest_time")
+    ).lazy()
+    assert DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()["to"].to_list() == [3]
+
+
+def test_utility_sampling_accounts_for_previous_activity_and_home_time():
+    steps = pl.DataFrame({
+        "home_zone_id": [1] * 50, "from": [1] * 50, "activity": ["work"] * 50,
+        "anchor_to": [4] * 50, "activity_draw_id": list(range(50)), "activity_seq_id": [1] * 50,
+        "time_seq_id": [1] * 50, "dest_draw_id": [0] * 50,
+        "departure_time": [8.0] * 50, "arrival_time": [8.5] * 50, "next_departure_time": [17.0] * 50,
+        "_previous_activity": ["shopping"] * 50, "_previous_arrival": [6.0] * 50,
+        "_previous_is_anchor": [False] * 50, "_previous_is_first": [False] * 50,
+        "_home_night_reference": [8.0] * 50,
+    })
+    probabilities = pl.DataFrame({
+        "from": [1, 1, 4], "activity": ["work", "work", "shopping"], "to": [2, 3, 1],
+        "p_ij": [1.0] * 3, "activity_saturation": [1.0] * 3,
+        "activity_shadow_price": [0.0] * 3, "country_value_coefficient": [1.0] * 3,
+    })
+    origin = pl.DataFrame({
+        "candidate_from": [1, 1], "candidate_to": [2, 3], "cost_to_candidate": [1.0, 1.0],
+        "candidate_fastest_cost": [1.0, 1.0], "candidate_fastest_time": [0.5, 2.0],
+        "candidate_cheapest_cost": [1.0, 1.0], "candidate_cheapest_time": [0.5, 2.0],
+    })
+    onward = pl.DataFrame({
+        "anchor_from": [2, 3], "anchor_to_cost": [4, 4], "cost_to_anchor": [1.0, 1.0],
+        "onward_cheapest_cost": [1.0, 1.0],
+    })
+    args = dict(
+        steps_lf=steps.lazy(), destination_probability_lf=probabilities.lazy(),
+        origin_cost_lf=origin.lazy(), onward_cost_lf=onward.lazy(),
+        onward_left_on=["to", "anchor_to"], onward_right_on=["anchor_from", "anchor_to_cost"],
+        onward_cost_col="cost_to_anchor", alpha=0.5, sequence_context_columns=["home_zone_id"],
+        seed=3, output_cols=["activity_draw_id", "to"], utility_values={"shopping": 20.0, "work": 1.0},
+        mean_durations={"shopping": 2.0, "work": 8.0}, arrival_rigidity={"work": 1.0},
+        min_activity_time_constant=2.0, logit_scale=1.0, use_previous_timing=True,
+        mean_home_duration=8.0, home_value=20.0,
+    )
+    sampled = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    assert sampled.height == 50 and sampled["to"].to_list() == [2] * 50
+    args["steps_lf"] = steps.with_columns(_previous_is_first=pl.lit(True)).lazy()
+    sampled = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    assert sampled.height == 50 and sampled["to"].to_list() == [2] * 50
+    args["update_timings"] = False
+    sampled = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    assert sampled["to"].n_unique() == 2
+
+
+def test_utility_sampling_uses_known_preceding_trip_for_previous_activity():
+    steps = pl.DataFrame({
+        "home_zone_id": [1] * 300, "from": [1] * 300, "activity": ["work"] * 300,
+        "anchor_to": [4] * 300, "activity_draw_id": list(range(300)), "activity_seq_id": [1] * 300,
+        "time_seq_id": [1] * 300, "dest_draw_id": [0] * 300,
+        "departure_time": [8.0] * 300, "arrival_time": [8.5] * 300, "next_departure_time": [17.0] * 300,
+        "_previous_activity": ["shopping"] * 300, "_previous_arrival": [6.0] * 300,
+        "_previous_departure": [5.5] * 300, "_previous_origin": [0] * 300,
+        "_previous_origin_known": [True] * 300, "_previous_is_anchor": [False] * 300,
+        "_previous_is_first": [False] * 300, "_home_night_reference": [8.0] * 300,
+    })
+    probabilities = pl.DataFrame({
+        "from": [1, 1, 4], "activity": ["work", "work", "shopping"], "to": [2, 3, 1],
+        "p_ij": [1.0] * 3, "activity_saturation": [1.0] * 3,
+        "activity_shadow_price": [0.0] * 3, "country_value_coefficient": [1.0] * 3,
+    })
+    origin = pl.DataFrame({
+        "candidate_from": [1, 1, 0], "candidate_to": [2, 3, 1], "cost_to_candidate": [1.0, 1.0, 0.0],
+        "candidate_fastest_cost": [1.0, 1.0, 0.0], "candidate_fastest_time": [0.5, 2.0, 0.75],
+        "candidate_cheapest_cost": [1.0, 1.0, 0.0], "candidate_cheapest_time": [0.5, 2.0, 0.75],
+        "candidate_has_unknown_time": [False, False, False],
+    })
+    onward = pl.DataFrame({
+        "anchor_from": [2, 3], "anchor_to_cost": [4, 4], "cost_to_anchor": [1.0, 1.0],
+        "onward_cheapest_cost": [1.0, 1.0],
+    })
+    args = dict(
+        steps_lf=steps.lazy(), destination_probability_lf=probabilities.lazy(),
+        origin_cost_lf=origin.lazy(), onward_cost_lf=onward.lazy(),
+        onward_left_on=["to", "anchor_to"], onward_right_on=["anchor_from", "anchor_to_cost"],
+        onward_cost_col="cost_to_anchor", alpha=0.5, sequence_context_columns=["home_zone_id"],
+        seed=3, output_cols=["activity_draw_id", "to"], utility_values={"shopping": 2.0, "work": 1.0},
+        mean_durations={"shopping": 2.0, "work": 8.0}, arrival_rigidity={"shopping": 0.0, "work": 1.0},
+        min_activity_time_constant=2.0, logit_scale=0.5, use_previous_timing=True,
+    )
+    reference = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    args["model_previous_arrival"] = True
+    modeled = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    assert modeled.filter(pl.col("to") == 2).height > reference.filter(pl.col("to") == 2).height
+    args["origin_cost_lf"] = origin.with_columns(
+        pl.when(pl.col("candidate_from") == 0).then(0.5).otherwise(pl.col("candidate_fastest_time"))
+        .alias("candidate_fastest_time"),
+        pl.when(pl.col("candidate_from") == 0).then(100.0).otherwise(pl.col("candidate_fastest_cost"))
+        .alias("candidate_fastest_cost"),
+    ).lazy()
+    expensive_fast = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    assert_frame_equal(modeled.sort("activity_draw_id"), expensive_fast.sort("activity_draw_id"))
+    args["origin_cost_lf"] = origin.lazy()
+    args["steps_lf"] = steps.with_columns(_previous_origin_known=pl.lit(False)).lazy()
+    fallback = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    assert_frame_equal(reference.sort("activity_draw_id"), fallback.sort("activity_draw_id"))
+    args["steps_lf"] = steps.lazy()
+    args["origin_cost_lf"] = origin.with_columns(
+        (pl.col("candidate_from") == 0).alias("candidate_has_unknown_time")
+    ).lazy()
+    fallback = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
+    assert_frame_equal(reference.sort("activity_draw_id"), fallback.sort("activity_draw_id"))
+
+
+def test_anchor_sampling_uses_last_known_location_for_an_intervening_stop(monkeypatch):
+    parameters = GroupDayTripsParameters(
+        destination_sequences={"sampling_method": "utility", "k_destination_sequences": 1},
+        plan_update={"update_plan_timings_from_modeled_travel_times": True},
+    )
+    activities = [SimpleNamespace(name="work", is_anchor=True), SimpleNamespace(name="studies", is_anchor=True)]
+    asset = DestinationSequences(
+        is_weekday=True, iteration=1, activities=[], parameters=parameters, resolved_activity_parameters={},
+    )
+    asset.activities = activities
+    asset.resolved_activity_parameters = {"work": SimpleNamespace(value_of_time=1.0),
+                                          "studies": SimpleNamespace(value_of_time=1.0)}
+    sequences = pl.DataFrame({
+        "home_zone_id": [1] * 4, "activity_seq_id": [1] * 4, "time_seq_id": [1] * 4,
+        "activity": ["work", "shopping", "studies", "home"], "is_anchor": [True, False, True, True],
+        "seq_step_index": [1, 2, 3, 4], "step_count": [4] * 4,
+        "departure_time": [8.0, 10.0, 11.0, 17.0], "arrival_time": [8.5, 10.25, 11.5, 17.5],
+        "next_departure_time": [10.0, 11.0, 17.0, 24.0],
+    }).with_columns(pl.col("seq_step_index", "step_count").cast(pl.UInt8))
+    observed = []
+    observed_timing = []
+
+    def sample(**kwargs):
+        steps = kwargs["steps_lf"].collect()
+        observed_timing.append(kwargs["use_next_timing"])
+        observed.extend(steps.select("activity", "from", "_previous_origin", "_previous_is_anchor").to_dicts())
+        result = steps.with_columns(
+            pl.when(pl.col("activity") == "work").then(pl.lit(2)).otherwise(pl.lit(3))
+            .cast(pl.UInt16).alias("to")
+        ).select(kwargs["output_cols"])
+        return None, None, None, result.lazy()
+
+    monkeypatch.setattr(asset, "_sample_sequence_aware_destinations", sample)
+    asset._spatialize_anchor_activities(
+        sequences, pl.DataFrame(), 0.5, 0, {"to_candidate": pl.DataFrame().lazy(), "to_home": pl.DataFrame().lazy()},
+    )
+    assert observed == [
+        {"activity": "work", "from": 1, "_previous_origin": 1, "_previous_is_anchor": False},
+        {"activity": "studies", "from": 2, "_previous_origin": 2, "_previous_is_anchor": False},
+    ]
+    assert observed_timing == [False, True]
+    # Even with an explicit first home activity, the first trip leaves home.
+    observed.clear()
+    home_first = pl.DataFrame({
+        "home_zone_id": [1] * 3, "activity_seq_id": [2] * 3, "time_seq_id": [2] * 3,
+        "activity": ["home", "work", "home"], "is_anchor": [True] * 3,
+        "seq_step_index": [1, 2, 3], "step_count": [3] * 3,
+        "departure_time": [4.0, 8.0, 17.0], "arrival_time": [4.25, 8.5, 17.5],
+        "next_departure_time": [8.0, 17.0, 24.0],
+    }).with_columns(pl.col("seq_step_index", "step_count").cast(pl.UInt8))
+    asset._spatialize_anchor_activities(
+        home_first, pl.DataFrame(), 0.5, 0, {"to_candidate": pl.DataFrame().lazy(), "to_home": pl.DataFrame().lazy()},
+    )
+    assert observed == [{"activity": "work", "from": 1, "_previous_origin": 1, "_previous_is_anchor": True}]
+
+
+def test_other_sampling_carries_actual_previous_origin(monkeypatch):
+    parameters = GroupDayTripsParameters(destination_sequences={"sampling_method": "utility"})
+    asset = DestinationSequences(is_weekday=True, iteration=1, parameters=parameters)
+    sequences = pl.DataFrame({
+        "home_zone_id": [1] * 3, "activity_draw_id": [0] * 3, "activity_seq_id": [1] * 3,
+        "time_seq_id": [1] * 3, "dest_draw_id": [0] * 3, "seq_step_index": [1, 2, 3],
+        "is_anchor": [True, False, False],
+    })
+    observed = []
+    keys = ["home_zone_id", "activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"]
+
+    def spatialize(step, current, *args, **kwargs):
+        observed.append(current.select("from", "_previous_origin", "_previous_origin_known").row(0))
+        return current.select(keys + ["from"]).with_columns(to=pl.lit(step + 1, dtype=pl.Int64))
+
+    monkeypatch.setattr(asset, "_spatialize_sequence_step", spatialize)
+    asset._spatialize_other_activities(sequences, pl.DataFrame(), pl.DataFrame(), 0.5, 0, {})
+    assert observed == [(1, 1, False), (2, 1, True), (3, 2, True)]
+
+
+@pytest.mark.parametrize("rigidity", [0.0, 0.5, 1.0])
+def test_previous_activity_utility_change_matches_full_schedule_timing(rigidity):
+    """With the previous arrival fixed, the guide matches plan scoring."""
+    steps = pl.DataFrame({
+        "demand_group_id": [1, 1], "demand_subgroup_id": [0, 0], "activity_seq_id": [1, 1],
+        "time_seq_id": [1, 1], "dest_seq_id": [1, 1], "mode_seq_id": [1, 1],
+        "seq_step_index": [1, 2], "activity": ["shopping", "work"],
+        "departure_time": [6.5, 8.0], "arrival_time": [7.0, 8.5],
+        "next_departure_time": [8.0, 17.0], "duration_per_pers": [1.0, 8.5], "time": [0.5, 1.0],
+    })
+    modeled = PlanScheduleUpdater().update_plan_timings(
+        steps.lazy(), arrival_time_rigidity_by_activity={"shopping": 0.0, "work": rigidity}, enabled=True,
+    ).collect()
+    actual_duration = modeled.filter(pl.col("activity") == "shopping")["duration_per_pers"].item()
+    actual_delta = 20.0 * 2.0 * (
+        max(0.0, math.log(actual_duration / (2.0 * math.exp(-2.0))))
+        - max(0.0, math.log(1.0 / (2.0 * math.exp(-2.0))))
+    )
+    predicted = pl.select(DestinationSequences._activity_utility_delta(
+        pl.lit(1.0), pl.lit(1.0 - rigidity * 0.5), pl.lit(2.0), pl.lit(20.0), 2.0,
+    )).item()
+    assert predicted == pytest.approx(actual_delta)
+
+
+@pytest.mark.parametrize("rigidity", [0.0, 0.5, 1.0])
+def test_first_departure_home_utility_change_matches_full_plan(rigidity):
+    steps = pl.DataFrame({
+        "demand_group_id": [1, 1], "demand_subgroup_id": [0, 0], "activity_seq_id": [1, 1],
+        "time_seq_id": [1, 1], "dest_seq_id": [1, 1], "mode_seq_id": [1, 1],
+        "seq_step_index": [1, 2], "activity": ["work", "home"],
+        "departure_time": [8.0, 17.0], "arrival_time": [9.0, 18.0],
+        "next_departure_time": [17.0, 24.0], "duration_per_pers": [8.0, 6.0], "time": [1.5, 1.0],
+    })
+    modeled = PlanScheduleUpdater().update_plan_timings(
+        steps.lazy(), arrival_time_rigidity_by_activity={"work": rigidity, "home": 0.0}, enabled=True,
+    ).collect()
+    actual_home = 24.0 - modeled["duration_per_pers"].sum() - modeled["time"].sum()
+    actual_delta = 2.0 * 8.0 * (
+        max(0.0, math.log(actual_home / (8.0 * math.exp(-1.0))))
+        - max(0.0, math.log(8.0 / (8.0 * math.exp(-1.0))))
+    )
+    predicted = pl.select(DestinationSequences._activity_utility_delta(
+        pl.lit(8.0), pl.lit(8.0 - rigidity * 0.5), pl.lit(8.0), pl.lit(2.0), 1.0,
+    )).item()
+    assert predicted == pytest.approx(actual_delta)
+
+
+def test_utility_sampling_cache_includes_utility_settings():
+    parameters = GroupDayTripsParameters(destination_sequences={"sampling_method": "utility"})
+    asset = DestinationSequences(is_weekday=True, iteration=1, parameters=parameters)
+    assert asset.inputs["destination_sequence_parameters"].sampling_method == "utility"
+    assert asset.inputs["utility_sampling_parameters"] == (
+        parameters.plan_update.min_activity_time_constant, parameters.plan_update.transition_logit_scale,
+        parameters.plan_update.update_plan_timings_from_modeled_travel_times,
+    )
 
 
 def test_destination_alpha_is_part_of_cache_key():

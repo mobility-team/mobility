@@ -1543,6 +1543,12 @@ def test_direct_final_state_matches_full_cohort(test_data, monkeypatch):
 
     diagnostics = run.table("adaptive_search_diagnostics")
     expected_diagnostics = actual.adaptive_search_diagnostics
+    outer = expected_diagnostics.filter(pl.col("phase") == "outer").sort("outer_step")
+    assert outer["flow_change_index"][0] is None
+    assert 0.0 <= outer["flow_change_index"][1] <= 1.0
+    later_batches = expected_diagnostics.filter((pl.col("phase") == "inner") & (pl.col("search_batch") > 1))
+    assert later_batches.height > 0
+    assert later_batches["flow_change_index"].null_count() == 0
     assert_frame_equal(diagnostics.sort(diagnostics.columns),
                        expected_diagnostics.sort(expected_diagnostics.columns),
                        check_exact=False, rel_tol=1e-12, abs_tol=1e-9)

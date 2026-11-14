@@ -294,7 +294,7 @@ def behavioral_state(active_people):
         "utility": [1.0, 0.0], "plan_id": [1, 0],
     })
     steps = pl.DataFrame({
-        "from": [1], "to": [2], "mode": ["car"],
+        "from": [1], "to": [2], "mode": ["car"], "activity": ["work"],
         "mode_seq_id": [1], "n_persons": [float(active_people)],
     })
     return RunState(
@@ -602,5 +602,9 @@ def test_stable_replications_complete_the_configured_outer_iterations(monkeypatc
     diagnostics = fast.final_states_by_run_key[0].adaptive_search_diagnostics
     assert "outer_converged" not in diagnostics.columns
     assert diagnostics["stop_reason"].to_list() == ["step_continues", "step_continues", "completed_steps"]
+    assert diagnostics["flow_change_index"].to_list() == [None, 0.0, 0.0]
+    changing = slow.final_states_by_run_key[1].adaptive_search_diagnostics["flow_change_index"].to_list()
+    assert changing[0] is None
+    assert changing[1:] == pytest.approx([10 / 70, 10 / 90])
     assert fast.final_states_by_run_key[0].current_plans["n_persons"][0] == 20
     assert slow.final_states_by_run_key[1].current_plans["n_persons"][0] == 50

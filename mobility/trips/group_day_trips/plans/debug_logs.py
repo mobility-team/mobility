@@ -79,7 +79,7 @@ def log_incomplete_destination_draws(
         return
 
     logging.warning(
-        "Dropping %s incomplete destination draws at iteration %s because one or more steps disappeared during spatialization. "
+        "Dropping %s incomplete destination draws at iteration %s because one or more steps had no reachable or time-feasible sampled destination. "
         "Sample draws: %s",
         incomplete_draws.height,
         iteration,

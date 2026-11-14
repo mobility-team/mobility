@@ -375,6 +375,15 @@ def test_destination_saturation_computes_shadow_price_above_soft_capacity():
     assert overloaded["destination_sampling_attraction_factor"] == pytest.approx(0.5)
     assert below_soft_capacity["destination_shadow_price"] == pytest.approx(0.0)
     assert below_soft_capacity["destination_sampling_attraction_factor"] == pytest.approx(1.0)
+    neutral = updater.get_destination_saturation(
+        current_plan_steps, opportunities, resolved_activity_parameters,
+        enable_opportunity_congestion=False,
+    ).sort("to")
+    assert neutral["opportunity_occupation"].to_list() == result["opportunity_occupation"].to_list()
+    assert neutral["capacity_ratio"].to_list() == result["capacity_ratio"].to_list()
+    assert neutral["k_saturation_utility"].to_list() == [1.0, 1.0]
+    assert neutral["destination_shadow_price"].to_list() == [0.0, 0.0]
+    assert neutral["destination_sampling_attraction_factor"].to_list() == [1.0, 1.0]
 
 
 def test_destination_occupation_is_stable_when_step_rows_are_reordered():

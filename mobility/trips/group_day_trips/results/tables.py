@@ -66,6 +66,12 @@ class GroupDayTripsResultTables:
         ``scored_candidate_scope`` says whether all candidates or only reachable
         candidates were scored. Feasibility and cost-error counts cover that
         scored scope; ``unique_pool_size`` still describes the complete pool.
+        ``flow_change_index`` compares OD, mode and activity trip flows with
+        the previous search batch or completed outer step, according to
+        ``phase``. It ranges from 0 to 1 and is null for the first comparison.
+        The separate ``flow_change`` column is the existing search-stop measure.
+        ``flow_change_by_mode`` and ``flow_change_by_activity`` give the same
+        index and current trip total for each category.
         """
         return self._table(
             "adaptive_search_diagnostics",

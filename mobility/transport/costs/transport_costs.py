@@ -385,7 +385,11 @@ class TransportCosts(InMemoryAsset):
             An OD-only expected generalized-cost table.
         """
         costs = self.get_costs_by_od_and_mode(metrics, detail_distances=False)
-        costs = costs.with_columns((pl.col("cost").neg().exp()).alias("prob"))
+        # Subtract the cheapest mode before exponentiating. The common shift
+        # cancels out when normalizing, even for very large finite costs.
+        costs = costs.with_columns(
+            (pl.col("cost").min().over("from", "to") - pl.col("cost")).exp().alias("prob")
+        )
         costs = costs.with_columns(
             (pl.col("prob") / pl.col("prob").sum().over(["from", "to"])).alias("prob")
         )
@@ -408,7 +412,7 @@ class TransportCosts(InMemoryAsset):
 
         prob = (
             costs
-            .with_columns(exp_u=pl.col("cost").neg().exp())
+            .with_columns(exp_u=(pl.col("cost").min().over("from", "to") - pl.col("cost")).exp())
             .with_columns(prob=pl.col("exp_u") / pl.col("exp_u").sum().over(["from", "to"]))
             .sort(["prob"], descending=True)
             .with_columns(

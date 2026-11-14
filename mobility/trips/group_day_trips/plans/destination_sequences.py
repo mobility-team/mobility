@@ -2,6 +2,7 @@ import pathlib
 import shutil
 import tempfile
 import logging
+import math
 from typing import Any
 
 import polars as pl
@@ -27,6 +28,30 @@ from mobility.activities.activity import resolve_activity_parameters
 from mobility.runtime.parameter_values import SensitivityCase
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from .demand_subgroups import DEMAND_UNIT_COLS
+
+
+class TravelOptionsCache:
+    """Retain a limited amount of travel options during one inner search."""
+
+    def __init__(self, max_bytes: int):
+        self.max_bytes = max_bytes
+        self.used_bytes = 0
+        self.tables: dict[tuple, pl.DataFrame] = {}
+
+    def get(self, key: tuple) -> pl.DataFrame | None:
+        return self.tables.get(key)
+
+    def retain(self, key: tuple, table: pl.DataFrame) -> None:
+        if key in self.tables:
+            return
+        size = table.estimated_size()
+        if self.used_bytes + size <= self.max_bytes:
+            self.tables[key] = table
+            self.used_bytes += size
+
+    def clear(self) -> None:
+        self.tables.clear()
+        self.used_bytes = 0
 
 
 class DestinationSequences(InMemoryAsset):
@@ -78,6 +103,8 @@ class DestinationSequences(InMemoryAsset):
         parameters: Any = None,
         seed: int | None = None,
         sampling_probabilities: dict[int, pl.DataFrame] | None = None,
+        travel_options_cache: TravelOptionsCache | None = None,
+        travel_options_run_key: int | None = None,
     ) -> None:
         self.previous_state = previous_state
         self.previous_sequence_index: pl.DataFrame | None = None
@@ -108,11 +135,15 @@ class DestinationSequences(InMemoryAsset):
         self.current_plan_steps = current_plan_steps
         self.destination_saturation = destination_saturation
         self.demand_groups = demand_groups
+        self.activity_dur: pl.DataFrame | None = None
+        self.home_night_dur: pl.DataFrame | None = None
         self.costs = costs
         self.parameters = parameters
         self.seed = seed
         # Costs and opportunities stay fixed during one inner search.
         self.sampling_probabilities = sampling_probabilities
+        self.travel_options_cache = travel_options_cache
+        self.travel_options_run_key = travel_options_run_key
         self.spatialization_context_columns = ["home_zone_id"]
         generation_request_profile_pairs = (
             tuple(
@@ -127,7 +158,8 @@ class DestinationSequences(InMemoryAsset):
             else None
         )
         inputs = {
-            "version": 19,
+            "version": (26 if parameters is not None and parameters.destination_sequences.sampling_method == "utility"
+                        else 24),
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -147,6 +179,13 @@ class DestinationSequences(InMemoryAsset):
             "plan_update_shadow_price_flag": (
                 parameters.plan_update.use_destination_shadow_prices
                 if parameters is not None
+                else None
+            ),
+            "utility_sampling_parameters": (
+                (parameters.plan_update.min_activity_time_constant,
+                 parameters.plan_update.transition_logit_scale,
+                 parameters.plan_update.update_plan_timings_from_modeled_travel_times)
+                if parameters is not None and parameters.destination_sequences.sampling_method == "utility"
                 else None
             ),
             "behavior_change_scope": (
@@ -232,6 +271,8 @@ class DestinationSequences(InMemoryAsset):
                 self.current_plan_steps = None
                 self.destination_saturation = None
                 self.demand_groups = None
+                self.activity_dur = None
+                self.home_night_dur = None
                 self.costs = None
                 self.previous_sequence_index = None
 
@@ -250,9 +291,14 @@ class DestinationSequences(InMemoryAsset):
             self.destination_saturation = state.destination_saturation
         if self.demand_groups is None:
             self.demand_groups = state.demand_groups
-        if self.costs is None and self.transport_costs is not None:
+        if self.parameters.destination_sequences.sampling_method == "utility":
+            self.activity_dur = state.activity_dur
+            self.home_night_dur = state.home_night_dur
+        if self.costs is None and self.transport_costs is not None and self.demand_groups is None:
+            # Profile-based sampling builds its own OD costs and never uses
+            # this aggregate. Avoid rebuilding it in every inner batch.
             self.costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
-        elif self.costs is None:
+        elif self.costs is None and self.transport_costs is None:
             self.costs = state.costs
 
     def _build_destination_sequences_for_scope(self, scope: BehaviorChangeScope) -> pl.DataFrame:
@@ -435,7 +481,7 @@ class DestinationSequences(InMemoryAsset):
         transport_zones: Any,
         destination_saturation: pl.DataFrame,
         activity_sequences: pl.DataFrame,
-        costs: pl.DataFrame,
+        costs: pl.DataFrame | None,
         parameters: Any,
         seed: int,
     ) -> pl.DataFrame:
@@ -451,6 +497,11 @@ class DestinationSequences(InMemoryAsset):
             self._cache_empty_destination_sequence_index()
             return self._empty_destination_sequences()
         if self.transport_costs is None or self.demand_groups is None:
+            if parameters.destination_sequences.sampling_method == "utility" and self.transport_costs is not None:
+                mode_costs = self.transport_costs.get_costs_by_od_and_mode(
+                    ["cost", "time"], detail_distances=False,
+                )
+                costs = costs.join(self._travel_options(mode_costs), on=["from", "to"], how="inner")
             return self._run_for_utility_profile(
                 activities, transport_zones, destination_saturation,
                 activity_sequences, costs, parameters, seed,
@@ -459,6 +510,33 @@ class DestinationSequences(InMemoryAsset):
         assignments, profiles = self.transport_costs.get_utility_profiles(
             self.demand_groups, self.population_segments,
         )
+        profile_activity_durations = {}
+        profile_home_durations = {}
+        if parameters.destination_sequences.sampling_method == "utility" and self.activity_dur is not None:
+            profile_population = (
+                assignments.join(self.demand_groups.select(DEMAND_UNIT_COLS + ["country", "csp", "n_persons"]),
+                                 on=DEMAND_UNIT_COLS)
+                .group_by("utility_profile_id", "country", "csp")
+                .agg(pl.col("n_persons").sort().implode().list.sum())
+            )
+            profile_means = (
+                profile_population
+                .join(self.activity_dur, on=["country", "csp"])
+                .group_by("utility_profile_id", "activity")
+                .agg(((pl.col("mean_duration_per_pers") * pl.col("n_persons")).sort().implode().list.sum()
+                      / pl.col("n_persons").sort().implode().list.sum()).alias("mean_duration_per_pers"))
+            )
+            for profile, activity, duration in profile_means.iter_rows():
+                profile_activity_durations.setdefault(profile, {})[str(activity)] = duration
+            if self.home_night_dur is not None:
+                home_means = (
+                    profile_population.join(self.home_night_dur, on=["country", "csp"])
+                    .group_by("utility_profile_id")
+                    .agg(((pl.col("mean_home_night_per_pers") * pl.col("n_persons"))
+                          .sort().implode().list.sum() / pl.col("n_persons").sort().implode().list.sum())
+                         .alias("mean_home_night_per_pers"))
+                )
+                profile_home_durations = dict(home_means.iter_rows())
         zone_profiles = assignments.join(
             self.demand_groups.select(DEMAND_UNIT_COLS + ["home_zone_id"]),
             on=DEMAND_UNIT_COLS,
@@ -485,27 +563,51 @@ class DestinationSequences(InMemoryAsset):
                 )
                 if profile_sequences.is_empty():
                     continue
-                mode_costs = self.transport_costs.get_profile_costs_by_od_and_mode(
-                    {profile_id: profiles[profile_id]}, ["cost"],
-                )
-                # Match TransportCosts.get_costs_by_od: expected generalized
-                # cost across modes, with probabilities proportional to exp(-cost).
-                # Subtracting the OD minimum keeps the exponentials well scaled.
-                profile_costs = (
-                    mode_costs.with_columns(
-                        probability=(pl.col("cost").min().over("from", "to") - pl.col("cost")).exp()
+                utility_sampling = parameters.destination_sequences.sampling_method == "utility"
+                cache_key = None
+                options = None
+                if (utility_sampling and self.travel_options_cache is not None
+                        and self.travel_options_run_key is not None
+                        and isinstance(self.transport_costs, Asset)
+                        and all(isinstance(asset, Asset) for asset in profiles[profile_id])):
+                    # Profile IDs alone are not stable identities: include the
+                    # scenario, its fixed cost asset and resolved mode costs.
+                    cache_key = (
+                        self.travel_options_run_key, asset_graph_key(self.transport_costs),
+                        tuple(asset_graph_key(asset) for asset in profiles[profile_id]),
                     )
-                    .with_columns(
-                        weighted_cost=pl.col("cost") * pl.col("probability")
-                        / pl.col("probability").sum().over("from", "to")
+                    options = self.travel_options_cache.get(cache_key)
+                mode_costs = None
+                if options is None:
+                    mode_costs = self.transport_costs.get_profile_costs_by_od_and_mode(
+                        {profile_id: profiles[profile_id]}, ["cost", "time"] if utility_sampling else ["cost"],
                     )
-                    .group_by("from", "to").agg(cost=pl.col("weighted_cost").sum())
-                )
+                if utility_sampling:
+                    # Keep each option's cost and time together, with mode as a
+                    # stable tie-breaker. Both legs may use different modes.
+                    if options is None:
+                        options = self._travel_options(mode_costs)
+                        if cache_key is not None:
+                            self.travel_options_cache.retain(cache_key, options)
+                    profile_costs = options.with_columns(cost=pl.col("cheapest_cost"))
+                else:
+                    # Match TransportCosts.get_costs_by_od's expected cost.
+                    profile_costs = (
+                        mode_costs.with_columns(
+                            probability=(pl.col("cost").min().over("from", "to") - pl.col("cost")).exp()
+                        )
+                        .with_columns(
+                            weighted_cost=pl.col("cost") * pl.col("probability")
+                            / pl.col("probability").sum().over("from", "to")
+                        )
+                        .group_by("from", "to").agg(cost=pl.col("weighted_cost").sum())
+                    )
                 profile_seed = int(pl.Series([profile_id], dtype=pl.UInt32).hash(seed=seed)[0])
                 sampled_profiles.append(self._run_for_utility_profile(
                     activities, transport_zones, destination_saturation,
                     profile_sequences, profile_costs, parameters, profile_seed,
-                    profile_id=profile_id,
+                    profile_id=profile_id, mean_durations=profile_activity_durations.get(profile_id),
+                    mean_home_duration=profile_home_durations.get(profile_id),
                 ))
                 self.previous_sequence_index = self.sequence_index
                 del mode_costs, profile_costs
@@ -520,6 +622,38 @@ class DestinationSequences(InMemoryAsset):
         finally:
             self.previous_sequence_index = previous_index
 
+    @staticmethod
+    def _travel_options(mode_costs: pl.DataFrame) -> pl.DataFrame:
+        """Keep matching cost and time for the cheapest and fastest modes."""
+        valid_time = pl.col("time").is_finite().fill_null(False)
+        unknown_times = (
+            mode_costs.filter(pl.col("cost").is_finite() & ~valid_time)
+            .select("from", "to").unique()
+        )
+        options = (
+            mode_costs.filter(pl.col("cost").is_finite() & valid_time)
+            .group_by("from", "to")
+            .agg(
+                cheapest_cost=pl.col("cost").sort_by(["cost", "time", "mode"]).first(),
+                cheapest_time=pl.col("time").sort_by(["cost", "time", "mode"]).first(),
+                fastest_cost=pl.col("cost").sort_by(["time", "cost", "mode"]).first(),
+                fastest_time=pl.col("time").sort_by(["time", "cost", "mode"]).first(),
+            )
+        )
+        if unknown_times.is_empty():
+            return options.with_columns(has_unknown_time=pl.lit(False))
+        return options.join(
+            unknown_times.with_columns(has_unknown_time=pl.lit(True)), on=["from", "to"], how="left"
+        ).with_columns(has_unknown_time=pl.col("has_unknown_time").fill_null(False))
+
+    def _sampling_rigidity(self) -> dict[str, float]:
+        anchors = {activity.name: getattr(activity, "is_anchor", False) for activity in self.activities or []}
+        rigidity = {}
+        for name, parameters in self.resolved_activity_parameters.items():
+            value = getattr(parameters, "arrival_time_rigidity", None)
+            rigidity[name] = float(value if value is not None else anchors.get(name, False))
+        return rigidity
+
     @trace_simulation_step("destination sampling per profile")
     def _run_for_utility_profile(
         self,
@@ -530,7 +664,8 @@ class DestinationSequences(InMemoryAsset):
         costs: pl.DataFrame,
         parameters: Any,
         seed: int,
-        *, profile_id: int | None = None,
+        *, profile_id: int | None = None, mean_durations: dict[str, float] | None = None,
+        mean_home_duration: float | None = None,
     ) -> pl.DataFrame:
         """Compute destination sequences for one iteration."""
         activity_sequences = activity_sequences.filter(pl.col("activity_seq_id") != 0)
@@ -562,17 +697,18 @@ class DestinationSequences(InMemoryAsset):
             if self.sampling_probabilities is not None and profile_id is not None else None
         )
         if destination_probability is None:
-            utility_inputs = self._get_destination_probability_inputs(
-                destination_saturation,
-                costs,
-                parameters.destination_sequences.cost_uncertainty_sd,
-            )
-            destination_probability = self._get_destination_probability(
-                utility_inputs,
-                activities,
-                self.resolved_activity_parameters,
-                parameters.destination_sequences.dest_prob_cutoff,
-            )
+            if parameters.destination_sequences.sampling_method == "utility":
+                destination_probability = self._get_utility_destination_opportunities(
+                    destination_saturation, costs, parameters.destination_sequences.dest_prob_cutoff,
+                )
+            else:
+                utility_inputs = self._get_destination_probability_inputs(
+                    destination_saturation, costs, parameters.destination_sequences.cost_uncertainty_sd,
+                )
+                destination_probability = self._get_destination_probability(
+                    utility_inputs, activities, self.resolved_activity_parameters,
+                    parameters.destination_sequences.dest_prob_cutoff,
+                )
             if self.sampling_probabilities is not None and profile_id is not None:
                 self.sampling_probabilities[profile_id] = destination_probability
         cost_views = self._spatialization_cost_views(costs)
@@ -582,6 +718,8 @@ class DestinationSequences(InMemoryAsset):
             parameters.destination_sequences.alpha,
             seed,
             cost_views,
+            mean_durations=mean_durations,
+            mean_home_duration=mean_home_duration,
         )
         spatialized_activity_sequences = self._spatialize_other_activities(
             anchor_spatialized_sequences,
@@ -590,6 +728,8 @@ class DestinationSequences(InMemoryAsset):
             parameters.destination_sequences.alpha,
             seed,
             cost_views,
+            mean_durations=mean_durations,
+            mean_home_duration=mean_home_duration,
         )
         complete_activity_sequences = self._drop_incomplete_destination_draws(
             activity_sequences=spatialized_activity_sequences,
@@ -660,6 +800,69 @@ class DestinationSequences(InMemoryAsset):
             destination_sequences=destination_sequences,
         )
         return destination_sequences.select(self.OUTPUT_COLUMNS)
+
+    def _get_utility_destination_opportunities(
+        self, opportunities: pl.DataFrame, costs: pl.DataFrame, cutoff: float,
+    ) -> pl.DataFrame:
+        """Keep promising OD destinations using a cheap first-leg approximation.
+
+        The final sampling weights also depend on the schedule and onward leg.
+        This preliminary cutoff bounds the size of those two-leg joins.
+        """
+        if "cheapest_cost" not in costs.columns:
+            raise ValueError("Utility destination sampling requires per-mode travel cost and time.")
+        use_shadow_prices = self.parameters.plan_update.use_destination_shadow_prices
+        if use_shadow_prices and "destination_sampling_attraction_factor" in opportunities.columns:
+            factor = pl.col("destination_sampling_attraction_factor").fill_null(1.0)
+        elif "k_saturation_utility" in opportunities.columns:
+            factor = pl.col("k_saturation_utility").fill_null(1.0)
+        else:
+            factor = pl.lit(1.0)
+        saturation = (
+            pl.col("k_saturation_utility").fill_null(1.0)
+            if not use_shadow_prices and "k_saturation_utility" in opportunities.columns else pl.lit(1.0)
+        )
+        shadow_price = (
+            pl.col("destination_shadow_price").fill_null(0.0)
+            if use_shadow_prices and "destination_shadow_price" in opportunities.columns else pl.lit(0.0)
+        )
+        country_values = [
+            {"activity": name, "destination_country": country, "country_value_coefficient": value}
+            for name, parameters in self.resolved_activity_parameters.items()
+            for country, value in (getattr(parameters, "country_value_coefficients", None) or {}).items()
+        ]
+        if country_values and self.transport_zones is not None:
+            zones = pl.from_pandas(
+                self.transport_zones.get().drop("geometry", axis=1, errors="ignore")[["transport_zone_id", "country"]]
+            ).select(pl.col("transport_zone_id").cast(opportunities.schema["to"]).alias("to"),
+                     pl.col("country").cast(pl.String).alias("destination_country"))
+            coefficients = pl.from_dicts(country_values).with_columns(
+                pl.col("activity").cast(opportunities.schema["activity"]),
+            )
+            opportunities = (opportunities.join(zones, on="to", how="left")
+                             .join(coefficients, on=["activity", "destination_country"], how="left"))
+        else:
+            opportunities = opportunities.with_columns(country_value_coefficient=pl.lit(1.0))
+        return (
+            costs.lazy().select("from", "to", "cheapest_cost")
+            .join(opportunities.lazy().with_columns(
+                attraction=(pl.col("opportunity_capacity") * factor).clip(0.0),
+                activity_saturation=saturation,
+                activity_shadow_price=shadow_price,
+                country_value_coefficient=pl.col("country_value_coefficient").fill_null(1.0),
+            ).select("to", "activity", "attraction", "activity_saturation", "activity_shadow_price",
+                     "country_value_coefficient"), on="to")
+            .filter((pl.col("attraction") > 0) & pl.col("cheapest_cost").is_finite())
+            .with_columns(_score=pl.col("attraction").log() - pl.col("cheapest_cost"))
+            .with_columns(_weight=(pl.col("_score") - pl.col("_score").max().over("from", "activity")).exp())
+            .with_columns(_weight=pl.col("_weight") / pl.col("_weight").sum().over("from", "activity"))
+            .sort(["from", "activity", "_weight", "to"], descending=[False, False, True, False])
+            .with_columns(_before=pl.col("_weight").cum_sum().over("from", "activity") - pl.col("_weight"))
+            .filter(pl.col("_before") < cutoff)
+            .select("from", "activity", "to", pl.col("attraction").alias("p_ij"),
+                    "activity_saturation", "activity_shadow_price", "country_value_coefficient")
+            .collect(engine="streaming")
+        )
 
     def _get_destination_probability_inputs(
         self,
@@ -791,13 +994,20 @@ class DestinationSequences(InMemoryAsset):
     @staticmethod
     def _spatialization_cost_views(costs: pl.DataFrame) -> dict[str, pl.LazyFrame]:
         """Build the cost projections reused by each destination spatialization step."""
+        if "cheapest_cost" in costs.columns and "has_unknown_time" not in costs.columns:
+            # A caller supplying its own options has not established whether
+            # other modes have unknown times, so do not use them to exclude stops.
+            costs = costs.with_columns(has_unknown_time=pl.lit(True))
         costs_lf = costs.lazy()
-        return {
+        options = (["cheapest_cost", "cheapest_time", "fastest_cost", "fastest_time", "has_unknown_time"]
+                   if "cheapest_cost" in costs.columns else [])
+        views = {
             "to_candidate": costs_lf.select(
                 [
                     pl.col("from").alias("candidate_from"),
                     pl.col("to").alias("candidate_to"),
                     pl.col("cost").alias("cost_to_candidate"),
+                    *[pl.col(column).alias(f"candidate_{column}") for column in options],
                 ]
             ),
             "to_anchor": costs_lf.select(
@@ -805,6 +1015,7 @@ class DestinationSequences(InMemoryAsset):
                     pl.col("from").alias("anchor_from"),
                     pl.col("to").alias("anchor_to_cost"),
                     pl.col("cost").alias("cost_to_anchor"),
+                    *[pl.col(column).alias(f"onward_{column}") for column in options],
                 ]
             ),
             "to_home": costs_lf.select(
@@ -812,6 +1023,7 @@ class DestinationSequences(InMemoryAsset):
                     pl.col("from").alias("home_return_from"),
                     pl.col("to").alias("home_return_to"),
                     pl.col("cost").alias("cost_to_home"),
+                    *[pl.col(column).alias(f"onward_{column}") for column in options],
                 ]
             ),
             "anchor_leg_pairs": costs_lf.select(
@@ -821,7 +1033,43 @@ class DestinationSequences(InMemoryAsset):
                 ]
             ).unique(),
         }
+        return views
 
+
+    @staticmethod
+    def _filter_impossible_timing(
+        choices: pl.LazyFrame, arrival_rigidity: dict[str, float], update_timings: bool,
+    ) -> pl.LazyFrame:
+        """Drop a stop only when even its fastest two legs cannot fit."""
+        rigidity = pl.col("activity").cast(pl.String).replace_strict(arrival_rigidity, default=0.0)
+        next_rigidity = pl.col("_next_activity").cast(pl.String).replace_strict(arrival_rigidity, default=0.0)
+        incoming_reference = (pl.col("arrival_time") - pl.col("departure_time")).clip(0.0, 24.0)
+        onward_reference = (pl.col("_next_arrival") - pl.col("_next_departure")).clip(0.0, 24.0)
+        earliest_arrival = pl.col("arrival_time") + float(update_timings) * (1.0 - rigidity) * (
+            pl.col("candidate_fastest_time") - incoming_reference
+        )
+        latest_departure = pl.col("_next_departure") - float(update_timings) * next_rigidity * (
+            pl.col("onward_fastest_time") - onward_reference
+        )
+        # Final modeled schedules are rounded to seconds. Keep a generous
+        # two-second margin for that rounding and Float32 time calculations.
+        return choices.filter(
+            ~pl.col("_next_is_direct")
+            | pl.col("candidate_has_unknown_time") | pl.col("onward_has_unknown_time")
+            | (latest_departure - earliest_arrival >= -2.0 / 3600.0)
+        )
+
+    @staticmethod
+    def _activity_utility_delta(
+        reference_duration: pl.Expr, modeled_duration: pl.Expr, typical_duration: pl.Expr,
+        value: pl.Expr, min_activity_time_constant: float,
+    ) -> pl.Expr:
+        """Estimate the change in the same duration utility used for plans."""
+        minimum = typical_duration * math.exp(-min_activity_time_constant)
+        return value * typical_duration * (
+            (modeled_duration / minimum).log().clip(0.0)
+            - (reference_duration / minimum).log().clip(0.0)
+        )
 
     @staticmethod
     def _sample_sequence_aware_destinations(
@@ -837,6 +1085,19 @@ class DestinationSequences(InMemoryAsset):
         sequence_context_columns: list[str],
         seed: int,
         output_cols: list[str],
+        utility_values: dict[str, float] | None = None,
+        min_activity_time_constant: float = 0.0,
+        logit_scale: float = 1.0,
+        mean_durations: dict[str, float] | None = None,
+        arrival_rigidity: dict[str, float] | None = None,
+        use_next_timing: bool = False,
+        update_timings: bool = True,
+        filter_infeasible: bool = False,
+        use_previous_timing: bool = False,
+        anchor_sampling: bool = False,
+        mean_home_duration: float | None = None,
+        home_value: float = 0.0,
+        model_previous_arrival: bool = False,
     ) -> tuple[pl.LazyFrame, pl.LazyFrame, pl.LazyFrame, pl.LazyFrame]:
         """Sample destinations while checking both legs around the candidate zone."""
         active_probability = destination_probability_lf.join(
@@ -861,7 +1122,34 @@ class DestinationSequences(InMemoryAsset):
         context_columns = list(dict.fromkeys(
             ["from", "activity"] + [column for column in onward_left_on if column != "to"]
         ))
+        if utility_values is not None:
+            context_columns += ["departure_time", "arrival_time", "next_departure_time"]
+            if use_next_timing:
+                context_columns += ["_next_activity", "_next_departure", "_next_arrival",
+                                    "_next_next_departure", "_next_is_direct"]
+            if use_previous_timing:
+                context_columns += ["_previous_activity", "_previous_arrival", "_previous_is_anchor",
+                                    "_previous_is_first", "_home_night_reference"]
+                if model_previous_arrival:
+                    context_columns += ["_previous_departure", "_previous_origin", "_previous_origin_known"]
         choice_contexts = steps_lf.select(context_columns).unique()
+        if utility_values is not None:
+            # These values depend on the schedule, not the destination. Build
+            # them before each context is joined to its destination options.
+            reference_duration = (pl.col("next_departure_time") - pl.col("arrival_time")).clip(0.001)
+            choice_contexts = choice_contexts.with_columns(
+                _sampling_typical_duration=(
+                    pl.col("activity").cast(pl.String).replace_strict(mean_durations, default=None)
+                    .fill_null(reference_duration) if mean_durations else reference_duration
+                ).clip(0.001),
+                _sampling_activity_value=pl.col("activity").cast(pl.String)
+                .replace_strict(utility_values, default=0.0),
+                _sampling_rigidity=(
+                    pl.col("activity").cast(pl.String).replace_strict(arrival_rigidity, default=0.0)
+                    if arrival_rigidity else pl.lit(0.0)
+                ),
+                _sampling_incoming_reference=(pl.col("arrival_time") - pl.col("departure_time")).clip(0.0, 24.0),
+            )
         weighted_choices = (
             choice_contexts.join(destination_probability_lf, on=["from", "activity"])
             .join(
@@ -874,19 +1162,183 @@ class DestinationSequences(InMemoryAsset):
                 left_on=onward_left_on,
                 right_on=onward_right_on,
             )
-            .with_columns(
-                sequence_cost_via_candidate=pl.col("cost_to_candidate") + pl.col(onward_cost_col),
-            )
-            .with_columns(
-                p_ij=(
-                    (
-                        pl.col("p_ij").clip(1e-18).log()
-                        - alpha * pl.col("sequence_cost_via_candidate")
-                    ).exp()
-                ),
-            )
-            .select(context_columns + ["to", "p_ij"])
         )
+        if filter_infeasible and utility_values is not None and use_next_timing:
+            # The previous location and the next anchor are actual neighbouring
+            # stops only for non-anchor activities immediately before an anchor.
+            # The fastest mode on each leg gives the widest possible activity
+            # window, even if those two modes cannot form a usable chain.
+            weighted_choices = DestinationSequences._filter_impossible_timing(
+                weighted_choices, arrival_rigidity or {}, update_timings,
+            )
+        if utility_values is None:
+            weighted_choices = weighted_choices.with_columns(
+                p_ij=(pl.col("p_ij").clip(1e-18).log() - alpha * (
+                    pl.col("cost_to_candidate") + pl.col(onward_cost_col)
+                )).exp(),
+            )
+        else:
+            if use_previous_timing:
+                if model_previous_arrival:
+                    preceding_costs = origin_cost_lf.select(
+                        pl.col("candidate_from").alias("_previous_origin"),
+                        pl.col("candidate_to").alias("from"),
+                        *[pl.col(f"candidate_{name}").alias(f"_preceding_{name}") for name in
+                          ("fastest_time", "fastest_cost", "cheapest_time", "cheapest_cost", "has_unknown_time")],
+                    )
+                    weighted_choices = weighted_choices.join(
+                        preceding_costs, on=["_previous_origin", "from"], how="left",
+                    )
+                previous_values = destination_probability_lf.select(
+                    pl.col("to").alias("from"), pl.col("activity").alias("_previous_activity"),
+                    pl.col("activity_saturation").alias("_previous_saturation"),
+                    pl.col("activity_shadow_price").alias("_previous_shadow_price"),
+                    pl.col("country_value_coefficient").alias("_previous_country_value"),
+                )
+                previous_values = previous_values.unique(subset=["from", "_previous_activity"])
+                weighted_choices = weighted_choices.join(
+                    previous_values, on=["from", "_previous_activity"], how="left",
+                ).with_columns(
+                    pl.col("_previous_saturation", "_previous_country_value").fill_null(1.0),
+                    pl.col("_previous_shadow_price").fill_null(0.0),
+                )
+            if use_next_timing and "anchor_to" in context_columns:
+                anchor_values = destination_probability_lf.select(
+                    pl.col("to").alias("anchor_to"), pl.col("activity").alias("_next_activity"),
+                    pl.col("activity_saturation").alias("_next_saturation"),
+                    pl.col("activity_shadow_price").alias("_next_shadow_price"),
+                    pl.col("country_value_coefficient").alias("_next_country_value"),
+                )
+                anchor_values = anchor_values.unique(subset=["anchor_to", "_next_activity"])
+                weighted_choices = weighted_choices.join(
+                    anchor_values, on=["anchor_to", "_next_activity"], how="left",
+                ).with_columns(
+                    pl.col("_next_saturation", "_next_country_value").fill_null(1.0),
+                    pl.col("_next_shadow_price").fill_null(0.0),
+                )
+            else:
+                weighted_choices = weighted_choices.with_columns(
+                    _next_saturation=pl.lit(1.0), _next_country_value=pl.lit(1.0), _next_shadow_price=pl.lit(0.0),
+                )
+            # Use the reference activity duration as a proxy for its typical
+            # duration; exact population-specific utility is scored later.
+            typical_duration = pl.col("_sampling_typical_duration")
+            minimum_duration = typical_duration * math.exp(-min_activity_time_constant)
+            activity_value = pl.col("_sampling_activity_value")
+            rigidity = pl.col("_sampling_rigidity")
+            incoming_reference = pl.col("_sampling_incoming_reference")
+            alternatives = []
+            for incoming in ("fastest", "cheapest"):
+                incoming_delta = pl.col(f"candidate_{incoming}_time") - incoming_reference
+                arrival = (pl.col("arrival_time") + (1.0 - rigidity) * (
+                    incoming_delta
+                )) if update_timings else pl.col("arrival_time")
+                previous_delta = pl.lit(0.0)
+                if use_previous_timing:
+                    previous_reference = (pl.col("departure_time") - pl.col("_previous_arrival")).clip(0.001)
+                    previous_typical = (
+                        pl.col("_previous_activity").cast(pl.String)
+                        .replace_strict(mean_durations, default=None).fill_null(previous_reference)
+                        if mean_durations else previous_reference
+                    ).clip(0.001)
+                    previous_duration = (previous_reference - float(update_timings) * rigidity * incoming_delta).clip(0.001)
+                    previous_value = (pl.col("_previous_activity").cast(pl.String)
+                                      .replace_strict(utility_values, default=0.0))
+                    previous_location_known = (
+                        pl.col("_previous_is_anchor") if anchor_sampling and not model_previous_arrival
+                        else pl.lit(True)
+                    )
+                    previous_value = (
+                        previous_value * pl.when(previous_location_known)
+                        .then(pl.col("_previous_country_value") * pl.col("_previous_saturation")).otherwise(1.0)
+                        + pl.when(previous_location_known).then(pl.col("_previous_shadow_price")).otherwise(0.0)
+                    )
+                    previous_delta = DestinationSequences._activity_utility_delta(
+                        previous_reference, previous_duration, previous_typical, previous_value,
+                        min_activity_time_constant,
+                    )
+                    if model_previous_arrival:
+                        previous_rigidity = (
+                            pl.col("_previous_activity").cast(pl.String)
+                            .replace_strict(arrival_rigidity or {}, default=0.0)
+                        )
+                        previous_travel_reference = (
+                            pl.col("_previous_arrival") - pl.col("_previous_departure")
+                        ).clip(0.0, 24.0)
+                        modeled_previous = []
+                        for preceding in ("fastest", "cheapest"):
+                            preceding_time = pl.col(f"_preceding_{preceding}_time")
+                            preceding_arrival = pl.col("_previous_arrival") + (1.0 - previous_rigidity) * (
+                                preceding_time - previous_travel_reference
+                            )
+                            modeled_duration = (
+                                pl.col("departure_time") - rigidity * incoming_delta - preceding_arrival
+                            ).clip(0.001)
+                            modeled_previous.append(
+                                DestinationSequences._activity_utility_delta(
+                                    previous_reference, modeled_duration, previous_typical, previous_value,
+                                    min_activity_time_constant,
+                                ) - pl.col(f"_preceding_{preceding}_cost")
+                            )
+                        previous_delta = pl.when(
+                            pl.col("_previous_origin_known") & pl.lit(update_timings)
+                            & ~pl.col("_preceding_has_unknown_time").fill_null(True)
+                            & pl.col("_preceding_fastest_time").is_not_null()
+                        ).then(pl.max_horizontal(modeled_previous)).otherwise(previous_delta)
+                    home_reference = pl.col("_home_night_reference").clip(0.001)
+                    home_typical = pl.lit(mean_home_duration) if mean_home_duration is not None else home_reference
+                    home_typical = home_typical.clip(0.001)
+                    home_duration = (home_reference - float(update_timings) * rigidity * incoming_delta).clip(0.001)
+                    home_delta = DestinationSequences._activity_utility_delta(
+                        home_reference, home_duration, home_typical, pl.lit(home_value),
+                        min_activity_time_constant,
+                    )
+                    previous_delta = pl.when(pl.col("_previous_is_first")).then(home_delta).otherwise(previous_delta)
+                for onward in (("fastest", "cheapest") if use_next_timing else ("cheapest",)):
+                    if use_next_timing:
+                        next_rigidity = (pl.col("_next_activity").cast(pl.String)
+                                         .replace_strict(arrival_rigidity or {}, default=0.0))
+                        next_reference = (pl.col("_next_arrival") - pl.col("_next_departure")).clip(0.0, 24.0)
+                        departure = pl.when(pl.col("_next_is_direct") & pl.lit(update_timings)).then(
+                            pl.col("_next_departure") - next_rigidity * (
+                                pl.col(f"onward_{onward}_time") - next_reference
+                            )
+                        ).otherwise(pl.col("next_departure_time"))
+                        next_arrival = pl.col("_next_arrival") + float(update_timings) * (1.0 - next_rigidity) * (
+                            pl.col(f"onward_{onward}_time") - next_reference
+                        )
+                        next_reference_duration = (pl.col("_next_next_departure") - pl.col("_next_arrival")).clip(0.001)
+                        next_typical = (
+                            pl.col("_next_activity").cast(pl.String)
+                            .replace_strict(mean_durations, default=None).fill_null(next_reference_duration)
+                            if mean_durations else next_reference_duration
+                        ).clip(0.001)
+                        next_value = pl.col("_next_activity").cast(pl.String).replace_strict(utility_values, default=0.0)
+                        next_duration = (pl.col("_next_next_departure") - next_arrival).clip(0.001)
+                        next_utility = pl.when(pl.col("_next_is_direct") & (pl.col("_next_activity") != "home"))
+                        next_utility = next_utility.then(
+                            (next_value * pl.col("_next_country_value") * pl.col("_next_saturation")
+                             + pl.col("_next_shadow_price")) * next_typical
+                            * (next_duration / (next_typical * math.exp(-min_activity_time_constant))).log().clip(0.0)
+                        ).otherwise(0.0)
+                    else:
+                        departure = pl.col("next_departure_time")
+                        next_utility = pl.lit(0.0)
+                    duration = (departure - arrival).clip(0.001)
+                    alternatives.append(
+                        (activity_value * pl.col("country_value_coefficient") * pl.col("activity_saturation")
+                         + pl.col("activity_shadow_price"))
+                        * typical_duration * (duration / minimum_duration).log().clip(0.0)
+                        - pl.col(f"candidate_{incoming}_cost") - pl.col(f"onward_{onward}_cost")
+                        + next_utility + previous_delta
+                    )
+            weighted_choices = (
+                weighted_choices.with_columns(
+                    _utility=pl.max_horizontal(alternatives) * logit_scale,
+                )
+                .with_columns(p_ij=(pl.col("_utility") - pl.col("_utility").max().over(context_columns)).exp())
+            )
+        weighted_choices = weighted_choices.select(context_columns + ["to", "p_ij"])
         draw_columns = sequence_context_columns + [
             "activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"
         ]
@@ -966,6 +1418,8 @@ class DestinationSequences(InMemoryAsset):
         alpha: float,
         seed: int,
         cost_views: dict[str, pl.LazyFrame],
+        *, mean_durations: dict[str, float] | None = None,
+        mean_home_duration: float | None = None,
     ) -> pl.DataFrame:
         """Choose the anchor destinations of each daily tour.
 
@@ -1035,6 +1489,28 @@ class DestinationSequences(InMemoryAsset):
                 )
             )
         )
+        utility_sampling = self.parameters.destination_sequences.sampling_method == "utility"
+        if utility_sampling:
+            schedule_keys = self.spatialization_context_columns + ["activity_draw_id", "activity_seq_id", "time_seq_id"]
+            sequences = sequences.with_columns(
+                _next_activity=pl.col("activity").shift(-1).over(schedule_keys),
+                _next_departure=pl.col("departure_time").shift(-1).over(schedule_keys),
+                _next_arrival=pl.col("arrival_time").shift(-1).over(schedule_keys),
+                _next_next_departure=pl.col("next_departure_time").shift(-1).over(schedule_keys),
+                _next_anchor=pl.col("is_anchor").shift(-1).over(schedule_keys).fill_null(False),
+                _previous_activity=pl.col("activity").shift(1).over(schedule_keys).fill_null("home"),
+                _previous_departure=pl.col("departure_time").shift(1).over(schedule_keys).fill_null(0.0),
+                _previous_arrival=pl.col("arrival_time").shift(1).over(schedule_keys).fill_null(0.0),
+                _previous_is_anchor=pl.col("is_anchor").shift(1).over(schedule_keys).fill_null(False),
+                _previous_is_first=(pl.col("seq_step_index") == pl.col("seq_step_index").min().over(schedule_keys)),
+                _home_night_reference=(24.0 - (pl.col("next_departure_time") - pl.col("departure_time"))
+                                      .sum().over(schedule_keys)).clip(0.0),
+            ).with_columns(
+                # During anchor sampling the proxy onward location is home;
+                # during other sampling it is the known next anchor.
+                _next_is_direct=(pl.col("_next_anchor") &
+                                 (~pl.col("is_anchor") | (pl.col("_next_activity") == "home"))).fill_null(False),
+            )
 
         expanded_anchor_steps = (
             sequences
@@ -1063,6 +1539,10 @@ class DestinationSequences(InMemoryAsset):
             .unique()
             .with_columns(pl.col("home_zone_id").alias("from"))
         )
+        if utility_sampling:
+            current_locations = current_locations.with_columns(
+                pl.col("home_zone_id").alias("_previous_origin"),
+            )
 
         sampled_anchor_steps_by_position: list[pl.DataFrame] = []
 
@@ -1073,6 +1553,14 @@ class DestinationSequences(InMemoryAsset):
                 .filter(pl.col("seq_step_index") == seq_step_index)
                 .join(current_locations, on=sequence_key_cols)
             )
+            if utility_sampling:
+                # If an intervening stop is not known yet, use the last known
+                # anchor as its provisional location and preceding origin.
+                anchor_steps_at_position = anchor_steps_at_position.with_columns(
+                    _previous_origin=pl.when(pl.col("_previous_is_anchor"))
+                    .then(pl.col("_previous_origin")).otherwise(pl.col("from")),
+                    _previous_origin_known=~pl.col("_previous_is_first"),
+                )
             if anchor_steps_at_position.height == 0:
                 continue
 
@@ -1093,6 +1581,15 @@ class DestinationSequences(InMemoryAsset):
                 sampled_anchor_steps = home_anchor_steps.head(0)
             else:
                 non_home_anchor_steps_lf = non_home_anchor_steps.lazy()
+                rigidity = self._sampling_rigidity() if utility_sampling else {}
+                score_previous = (
+                    utility_sampling and self.parameters.plan_update.update_plan_timings_from_modeled_travel_times
+                    and any(rigidity.get(str(activity), 0.0) != 0.0
+                            for activity in non_home_anchor_steps["activity"].unique().to_list())
+                )
+                # The first trip changes home-night time; there is no earlier
+                # trip whose arrival or travel cost needs to be estimated.
+                model_previous = score_previous and not non_home_anchor_steps["_previous_is_first"].all()
 
                 # Keep anchor candidates that can be reached from the previous
                 # anchor and can then return home: previous anchor -> candidate
@@ -1109,6 +1606,21 @@ class DestinationSequences(InMemoryAsset):
                     sequence_context_columns=self.spatialization_context_columns,
                     seed=seed,
                     output_cols=anchor_output_cols,
+                    utility_values=({name: p.value_of_time for name, p in self.resolved_activity_parameters.items()}
+                                    if self.parameters.destination_sequences.sampling_method == "utility" else None),
+                    min_activity_time_constant=self.parameters.plan_update.min_activity_time_constant,
+                    logit_scale=self.parameters.plan_update.transition_logit_scale,
+                    mean_durations=mean_durations,
+                    arrival_rigidity=rigidity if utility_sampling else None,
+                    # If no next stop is directly modeled, its timing cannot
+                    # affect the choice. The cheapest onward cost is enough.
+                    use_next_timing=utility_sampling and non_home_anchor_steps["_next_is_direct"].any(),
+                    update_timings=self.parameters.plan_update.update_plan_timings_from_modeled_travel_times,
+                    use_previous_timing=score_previous,
+                    anchor_sampling=True,
+                    mean_home_duration=mean_home_duration,
+                    home_value=getattr(self.resolved_activity_parameters.get("home"), "value_of_time_stay_home", 0.0),
+                    model_previous_arrival=model_previous,
                 )
                 sampled_anchor_steps = sampled_anchor_steps_lf.collect(engine="streaming")
 
@@ -1122,8 +1634,8 @@ class DestinationSequences(InMemoryAsset):
 
             next_anchor_locations = (
                 pl.concat([home_anchor_steps, sampled_anchor_steps], how="vertical_relaxed")
-                .select(sequence_key_cols + ["to"])
-                .rename({"to": "next_from"})
+                .select(sequence_key_cols + ["to"] + (["from"] if utility_sampling else []))
+                .rename({"to": "next_from", **({"from": "_next_previous_origin"} if utility_sampling else {})})
             )
             if next_anchor_locations.height > 0:
                 current_locations = (
@@ -1134,6 +1646,10 @@ class DestinationSequences(InMemoryAsset):
                     )
                     .drop("next_from")
                 )
+                if utility_sampling:
+                    current_locations = current_locations.with_columns(
+                        pl.coalesce("_next_previous_origin", "_previous_origin").alias("_previous_origin")
+                    ).drop("_next_previous_origin")
         sampled_anchor_steps = (
             pl.concat(sampled_anchor_steps_by_position, how="vertical_relaxed")
             if sampled_anchor_steps_by_position
@@ -1163,10 +1679,19 @@ class DestinationSequences(InMemoryAsset):
             )
             .drop(["from", "to", "next_anchor_seq_step_index"])
         )
-        return pl.concat(
+        result = pl.concat(
             [spatialized_anchor_steps, spatialized_non_anchor_steps],
             how="vertical_relaxed",
         )
+        if utility_sampling:
+            result = result.join(
+                sequences.select(schedule_keys + ["seq_step_index", "_next_activity", "_next_departure",
+                    "_next_arrival", "_next_next_departure", "_next_is_direct", "_previous_activity",
+                    "_previous_departure", "_previous_arrival", "_previous_is_anchor", "_previous_is_first",
+                    "_home_night_reference"]),
+                on=schedule_keys + ["seq_step_index"],
+            )
+        return result
 
 
     @trace_simulation_step("other destination sampling")
@@ -1178,6 +1703,8 @@ class DestinationSequences(InMemoryAsset):
         alpha: float,
         seed: int,
         cost_views: dict[str, pl.LazyFrame],
+        *, mean_durations: dict[str, float] | None = None,
+        mean_home_duration: float | None = None,
     ) -> pl.DataFrame:
         """Sample destinations for non-anchor activities step by step."""
         logging.debug("Spatializing other activities...")
@@ -1186,6 +1713,12 @@ class DestinationSequences(InMemoryAsset):
             .filter(pl.col("seq_step_index") == 1)
             .with_columns(pl.col("home_zone_id").alias("from"))
         )
+        utility_sampling = self.parameters.destination_sequences.sampling_method == "utility"
+        if utility_sampling:
+            sequence_step = sequence_step.with_columns(
+                pl.col("home_zone_id").alias("_previous_origin"),
+                _previous_origin_known=pl.lit(False),
+            )
         seq_step_index = 1
         spatialized_sequences: list[pl.DataFrame] = []
         while sequence_step.height > 0:
@@ -1213,6 +1746,8 @@ class DestinationSequences(InMemoryAsset):
                     cost_views,
                     non_anchor_count,
                     anchor_count,
+                    mean_durations=mean_durations,
+                    mean_home_duration=mean_home_duration,
                 )
                 .with_columns(seq_step_index=pl.lit(seq_step_index).cast(pl.UInt8))
             )
@@ -1223,16 +1758,17 @@ class DestinationSequences(InMemoryAsset):
                 .filter(pl.col("seq_step_index") == seq_step_index)
                 .join(
                     spatialized_step.lazy()
-                    .select(
-                        self.spatialization_context_columns
-                        + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"]
-                    )
+                    .select(self.spatialization_context_columns
+                            + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id", "to"]
+                            + ([pl.col("from").alias("_previous_origin")] if utility_sampling else []))
                     .rename({"to": "from"}),
                     on=self.spatialization_context_columns
                     + ["activity_draw_id", "activity_seq_id", "time_seq_id", "dest_draw_id"],
                 )
                 .collect(engine="streaming")
             )
+            if utility_sampling:
+                sequence_step = sequence_step.with_columns(_previous_origin_known=pl.lit(True))
         return pl.concat(spatialized_sequences)
 
 
@@ -1247,6 +1783,8 @@ class DestinationSequences(InMemoryAsset):
         cost_views: dict[str, pl.LazyFrame],
         non_anchor_count: int,
         anchor_count: int,
+        *, mean_durations: dict[str, float] | None = None,
+        mean_home_duration: float | None = None,
     ) -> pl.DataFrame:
         """Sample destinations for one step between anchors."""
         if "activity_draw_id" not in sequence_step.columns:
@@ -1279,6 +1817,16 @@ class DestinationSequences(InMemoryAsset):
 
         if non_anchor_count > 0:
             non_anchor_steps = sequence_step_lf.filter(pl.col("is_anchor").not_())
+            utility_sampling = self.parameters.destination_sequences.sampling_method == "utility"
+            rigidity = self._sampling_rigidity() if utility_sampling else {}
+            score_previous = (
+                utility_sampling and self.parameters.plan_update.update_plan_timings_from_modeled_travel_times
+                and any(rigidity.get(str(activity), 0.0) != 0.0 for activity in
+                        sequence_step.filter(pl.col("is_anchor").not_())["activity"].unique().to_list())
+            )
+            model_previous = score_previous and not sequence_step.filter(
+                pl.col("is_anchor").not_()
+            )["_previous_is_first"].all()
 
             # Keep non-anchor candidates that fit between the current location
             # and the next anchor: current location -> candidate -> next anchor.
@@ -1299,6 +1847,19 @@ class DestinationSequences(InMemoryAsset):
                 sequence_context_columns=self.spatialization_context_columns,
                 seed=seed,
                 output_cols=output_cols,
+                utility_values=({name: p.value_of_time for name, p in self.resolved_activity_parameters.items()}
+                                if self.parameters.destination_sequences.sampling_method == "utility" else None),
+                min_activity_time_constant=self.parameters.plan_update.min_activity_time_constant,
+                logit_scale=self.parameters.plan_update.transition_logit_scale,
+                mean_durations=mean_durations,
+                arrival_rigidity=rigidity if utility_sampling else None,
+                use_next_timing=utility_sampling,
+                update_timings=self.parameters.plan_update.update_plan_timings_from_modeled_travel_times,
+                filter_infeasible=utility_sampling,
+                use_previous_timing=score_previous,
+                mean_home_duration=mean_home_duration,
+                home_value=getattr(self.resolved_activity_parameters.get("home"), "value_of_time_stay_home", 0.0),
+                model_previous_arrival=model_previous,
             )
             step_frames.append(sampled_non_anchor_steps)
             log_step_dropout_diagnostics(

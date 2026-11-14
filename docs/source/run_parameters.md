@@ -47,6 +47,11 @@ A project run usually needs more steps. The model runs the configured number of 
 
 `n_steps_per_cost_update` controls how often travel costs are refreshed during the loop. Setting it to `0` disables congestion feedback. If congestion is part of the study question, document this value with the other supply assumptions.
 
+`plan_update.enable_opportunity_congestion` controls whether occupied
+opportunities affect activity utility and destination sampling. It defaults
+to `True`; setting it to `False` disables both effects while still reporting
+opportunity occupation. This is independent of transport congestion.
+
 ```python
 parameters = mobility.GroupDayTripsParameters(
     run=mobility.GroupDayTripsRunParameters(
@@ -71,6 +76,12 @@ parameters = mobility.GroupDayTripsParameters(
 During full replanning, Mobility samples three survey schedules per activity profile in each home zone by default. An activity profile is a set of allowed activities shared by demand groups. Each profile draws with replacement from its compatible schedules, using survey weights. For example, a zone with two profiles makes six draws with the default `k_activity_sequences=3`. Draws can repeat a schedule, so the number of distinct schedules can be smaller. The default `activity_support_threshold=0.02` includes an activity in a CSP's allowed set when at least 2% of its survey-weighted schedules include it. Set `k_activity_sequences=None` to use every eligible schedule.
 
 Destination sampling makes `k_destination_sequences` draws per sampled schedule and utility profile present in the home zone (three by default). A utility profile groups demand units with identical resolved transport-cost parameters, including population-segment overrides. Each profile uses its own expected travel costs across modes to rank destinations and check the legs around each stop. Identical destination chains drawn by several profiles are stored once and shared with compatible demand units. Mode search then evaluates destination chains using each utility profile's costs.
+
+Set `destination_sequences.sampling_method` to `"utility"` to try an alternative to the default `"radiation"` sampler. It samples anchors first, then other activities using the known next anchor as the onward destination. For each stop it compares fastest and cheapest travel options on both legs, estimating activity utility with arrival-time rigidity, destination effects, and typical activity durations averaged across people with the same travel-cost profile. When the next stop is the anchor, it also estimates the effect on the anchor's activity utility. Full evaluation still calculates individual context utilities, feasible mode chains and complete plan timing; the guide may combine modes that cannot be used together. A preliminary cost-and-capacity cutoff limits the destinations considered, so this method is a sampling guide, not an exact choice model. The utility method uses `dest_prob_cutoff` for this shortlist; `alpha`, `cost_uncertainty_sd`, and activity `radiation_lambda` apply only to radiation sampling.
+
+When a non-anchor activity is immediately followed by its known anchor, the utility sampler skips a destination if even the fastest available travel on both legs would make the activity finish before it starts. The check accounts for arrival-time rigidity and allows for time rounding. If no destination in the shortlist passes, that destination-sequence draw is dropped; other draws and existing plans remain available.
+
+The guide also estimates how an earlier incoming departure changes the preceding activity's utility, or home-night utility for the first trip. Where the preceding trip's locations are known, it estimates arrival using its fastest and cheapest travel options. During anchor-first sampling, an unknown intervening destination is approximated by the last known location. Full plan evaluation later determines the actual mode chain and arrival times.
 
 During candidate evaluation, identical plan steps with the same country, CSP, and utility profile share cost and activity-value calculations. Fresh inner-loop allocation shares are calculated once for each identical set of feasible plans and utilities, then multiplied by each demand unit's population. Units with different alternatives or utilities keep separate shares. Behavioral transitions still use each unit's current plan. Scored step queries stay lazy until allocation needs their step details.
 
@@ -100,6 +111,21 @@ activity profiles with active plans. The search stops at the search-batch
 limit, when it converges, or when there is no generation work left. The
 `adaptive_search_diagnostics` table reports requested effort, coverage counts,
 and the stop reason for each batch.
+
+Request `results.tables.adaptive_search_diagnostics()` to also calculate
+`flow_change_index` for successive search batches and completed steps. It is
+the sum of absolute changes in represented trips by origin, destination, mode
+and activity, divided by the sum of trips in the two flow tables. It is zero
+when flows match, one when they do not overlap, and null when no previous
+batch or step is available. Multiply by 100 for a percentage. Batch values
+compare estimates from the same pre-step state; outer values compare completed
+behavioral allocations. This diagnostic does not change the search stopping
+rule, which uses the separate `flow_change` measure. Calculating the index
+requires extra flow aggregation; request only the diagnostic columns needed
+to avoid this work when the index is not needed.
+`flow_change_by_mode` and `flow_change_by_activity` contain the current trip
+totals and the same index within each category, including on the first batch
+or step when the change is not yet available.
 
 To trace simulation time and RAM, set `MOBILITY_SIMULATION_TRACE` to a JSONL output path before running Python. For example, in PowerShell: `$env:MOBILITY_SIMULATION_TRACE='D:/data/mobility/simulation-trace.jsonl'`. Tracing is disabled when this variable is unset. Each coordinated run appends records with a unique run id. Records identify the nested operation, scenario, simulation step, search batch, wall time, starting/ending RSS, and sampled peak RSS. The `operation` field names the measured operation; `step` and `search_batch` identify the simulation step and search batch. An `asset_step` can identify an asset associated with a different step. RAM is sampled every 100 ms for the Python process, including its native threads; child processes are excluded. Short spikes may be missed. Parent times include child steps, so do not add all recorded durations together. RAM changes measure retained process memory, not bytes allocated by that step alone. Cached result reads do not create another run trace.
 

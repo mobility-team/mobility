@@ -13,6 +13,9 @@ from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.graph import asset_graph_key, build_asset_graph
 from mobility.trips.group_day_trips.core.performance_trace import simulation_step, trace_simulation_run
 from mobility.trips.group_day_trips.core.run_state import RunState
+from mobility.trips.group_day_trips.core.multi_scenario import (
+    flow_change_breakdown, flow_change_index, represented_od_mode_flows,
+)
 
 from .assets.metric import Metric, MetricLaneResult
 from .assets.scoped_tables import ScopedRunTable, release_scoped_run_tables
@@ -227,6 +230,14 @@ class SimulationRunner:
                     asset._loaded_checkpoint = False
         last_step = coordinator.parameters.run.n_steps
         needs_final_outputs, needs_mnl_flows = self._final_requirements(self.requests, last_step)
+        track_flow_change = not self.requests or any(
+            isinstance(output, ScopedRunTable)
+            and output.table_name == "adaptive_search_diagnostics"
+            and (output.columns is None or any(column in output.columns for column in (
+                "flow_change_index", "flow_change_by_mode", "flow_change_by_activity",
+            )))
+            for request in self.requests for output in (request, *request.planned_outputs)
+        )
         current_state_assets = {
             run_key: run.initial_iteration_state
             for run_key, run in coordinator.runs.items()
@@ -259,12 +270,14 @@ class SimulationRunner:
         mnl_od_mode_flows: dict[int, pl.DataFrame] | None = None
         actual_outer_iterations = 0
         final_states: dict[int, RunState] | None = None
+        previous_activity_flows: dict[int, pl.DataFrame] = {}
 
         for iteration in range(1, coordinator.parameters.run.n_steps + 1):
             with simulation_step("simulation step", phase="outer", step=iteration):
                 state_assets, next_states, inner_result = coordinator._advance_cohort_step(
                     iteration, current_states,
                     keep_inner_flows=iteration == last_step and needs_mnl_flows,
+                    **({"track_flow_change": True} if track_flow_change else {}),
                 )
                 diagnostics.extend(inner_result["diagnostics"])
 
@@ -288,6 +301,20 @@ class SimulationRunner:
                 for run_key in coordinator.run_keys:
                     run = coordinator.runs[run_key]
                     convergence = inner_result["convergence_by_run_key"][run_key]
+                    outer_flow_change = None
+                    outer_breakdowns = {}
+                    if track_flow_change:
+                        current_flows = represented_od_mode_flows(
+                            next_states[run_key].current_plan_steps, include_activity=True,
+                        )
+                        previous_flows = previous_activity_flows.get(run_key)
+                        if previous_flows is not None:
+                            outer_flow_change = flow_change_index(previous_flows, current_flows)
+                        outer_breakdowns = {
+                            category: flow_change_breakdown(previous_flows, current_flows, category)
+                            for category in ("mode", "activity")
+                        }
+                        previous_activity_flows[run_key] = current_flows
                     diagnostics.append(
                         {
                             "_run_key": run_key,
@@ -316,6 +343,9 @@ class SimulationRunner:
                             "missing_cost_row_candidate_count": inner_result["missing_cost_row_counts"][run_key],
                             "invalid_cost_row_candidate_count": inner_result["invalid_cost_row_counts"][run_key],
                             "flow_change": convergence.flow_changes.get(run_key),
+                            "flow_change_index": outer_flow_change,
+                            "flow_change_by_mode": outer_breakdowns.get("mode"),
+                            "flow_change_by_activity": outer_breakdowns.get("activity"),
                             "base_gap_change": convergence.base_gap_changes.get(run_key),
                             "inner_converged": convergence.converged,
                             "stop_reason": outer_stop_reason,

@@ -681,6 +681,41 @@ def report_candidate_pool(coordinator, *args, **kwargs):
 
 def report_live_state(coordinator, iteration, states, **kwargs):
     assets, next_states, search = original_advance(coordinator, iteration, states, **kwargs)
+    if os.environ.get("MOBILITY_PROBE_EFFORT_METRICS") == "1":
+        metrics_dir = work / "effort-metrics"
+        metrics_dir.mkdir(exist_ok=True)
+        for run_key, state in next_states.items():
+            # These IDs identify modeled plans within this run; they are not
+            # compared across runs because their local indices can differ.
+            physical_plan = ["activity_seq_id", "time_seq_id", "dest_seq_id", "mode_seq_id"]
+            mobile = state.current_plans.filter(pl.col("mode_seq_id") != 0)
+            plan_volumes = mobile.group_by(physical_plan).agg(pl.col("n_persons").sum())
+            summary = {
+                "step": iteration,
+                "scenario": coordinator.runs[run_key].scenario,
+                "candidate_pool": len(search["pool"].candidate_ids),
+                "allocated_unit_plans": mobile.height,
+                "mobile_plans": plan_volumes.height,
+                "mobile_plans_over_1_person": plan_volumes.filter(pl.col("n_persons") > 1).height,
+                "mobile_plans_over_10_persons": plan_volumes.filter(pl.col("n_persons") > 10).height,
+                "mobile_persons": mobile["n_persons"].sum(),
+                "total_persons": state.current_plans["n_persons"].sum(),
+            }
+            (metrics_dir / f"step-{iteration}-run-{run_key}.json").write_text(
+                json.dumps(summary), encoding="utf-8"
+            )
+            if os.environ.get("MOBILITY_PROBE_CAPTURE_PRESSURE") == "1":
+                state.costs.write_parquet(metrics_dir / f"step-{iteration}-run-{run_key}-costs.parquet")
+                state.destination_saturation.write_parquet(
+                    metrics_dir / f"step-{iteration}-run-{run_key}-saturation.parquet"
+                )
+            (
+                state.current_plan_steps.filter(pl.col("mode_seq_id") != 0)
+                .group_by(["from", "to", "mode", "activity"])
+                .agg(pl.col("n_persons").sum().alias("trips"))
+                .sort(["from", "to", "mode", "activity"])
+                .write_parquet(metrics_dir / f"step-{iteration}-run-{run_key}-flows.parquet")
+            )
     if os.environ.get("MOBILITY_PROBE_CAPTURE_STATE") == "1":
         state_dir = work / "state-comparison"
         state_dir.mkdir(exist_ok=True)
@@ -810,6 +845,161 @@ namespace = {"__file__": str(source_path), "__name__": "grand_geneve_probe"}
 exec(compile(tree, str(source_path), "exec"), namespace)
 
 model = namespace["pop_group_day_trips"]
+if os.environ.get("MOBILITY_PROBE_NO_ROAD_CONGESTION") == "1":
+    model.parameters.run.n_steps_per_cost_update = 0
+if os.environ.get("MOBILITY_PROBE_NO_OPPORTUNITY_CONGESTION") == "1":
+    model.parameters.plan_update.enable_opportunity_congestion = False
+if "MOBILITY_PROBE_REVISION_PROBABILITY" in os.environ:
+    model.parameters.plan_update.transition_revision_probability = float(os.environ["MOBILITY_PROBE_REVISION_PROBABILITY"])
+if "MOBILITY_PROBE_DESTINATION_SAMPLING" in os.environ:
+    model.parameters.destination_sequences.sampling_method = os.environ["MOBILITY_PROBE_DESTINATION_SAMPLING"]
+if "MOBILITY_PROBE_DESTINATION_CUTOFF" in os.environ:
+    model.parameters.destination_sequences.dest_prob_cutoff = float(os.environ["MOBILITY_PROBE_DESTINATION_CUTOFF"])
+if os.environ.get("MOBILITY_PROBE_DISABLE_TRAVEL_OPTIONS_CACHE") == "1":
+    from mobility.trips.group_day_trips.plans.destination_sequences import TravelOptionsCache
+    TravelOptionsCache.retain = lambda self, key, table: None
+if os.environ.get("MOBILITY_PROBE_TRAVEL_CACHE_IDENTITIES") == "1":
+    from mobility.trips.group_day_trips.plans.destination_sequences import TravelOptionsCache
+    original_retain = TravelOptionsCache.retain
+
+    def record_travel_cache_identity(self, key, table):
+        original_retain(self, key, table)
+        print("TRAVEL_CACHE_IDENTITY", json.dumps({
+            "run": key[0], "cost": str(key[1]), "profile": str(key[2]),
+            "bytes": table.estimated_size(), "retained": key in self.tables,
+            "content_digest": hashlib.blake2b(
+                table.sort("from", "to").hash_rows(seed=0).to_numpy().tobytes(), digest_size=16,
+            ).hexdigest(),
+        }), flush=True)
+
+    TravelOptionsCache.retain = record_travel_cache_identity
+if os.environ.get("MOBILITY_PROBE_TIMING_FILTER_COUNTS") == "1":
+    from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+    original_filter = DestinationSequences._filter_impossible_timing
+
+    def count_timing_filter(choices, rigidity, update_timings):
+        filtered = original_filter(choices, rigidity, update_timings)
+        before = choices.group_by("activity", "_next_is_direct").len(name="before").collect(engine="streaming")
+        after = filtered.group_by("activity", "_next_is_direct").len(name="after").collect(engine="streaming")
+        counts = before.join(after, on=["activity", "_next_is_direct"], how="left").with_columns(
+            pl.col("after").fill_null(0),
+        )
+        print("TIMING_FILTER_COUNTS", json.dumps(counts.to_dicts()), flush=True)
+        return filtered
+
+    DestinationSequences._filter_impossible_timing = staticmethod(count_timing_filter)
+if os.environ.get("MOBILITY_PROBE_TRAVEL_OPTION_COUNTS") == "1":
+    from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+    original_travel_options = DestinationSequences._travel_options
+
+    def measure_travel_options(mode_costs):
+        started = perf_counter()
+        options = original_travel_options(mode_costs)
+        print("TRAVEL_OPTION_COUNTS", json.dumps({
+            "mode_rows": mode_costs.height, "mode_bytes": mode_costs.estimated_size(),
+            "option_rows": options.height, "option_bytes": options.estimated_size(),
+            "unknown_time_ods": options["has_unknown_time"].sum() if "has_unknown_time" in options.columns else None,
+            "seconds": perf_counter() - started,
+        }), flush=True)
+        return options
+
+    DestinationSequences._travel_options = staticmethod(measure_travel_options)
+if os.environ.get("MOBILITY_PROBE_CAPTURE_TRAVEL_OPTIONS") == "1":
+    from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+    original_travel_options = DestinationSequences._travel_options
+
+    def capture_travel_options(mode_costs):
+        options = original_travel_options(mode_costs)
+        profiles = mode_costs["utility_profile_id"].unique().to_list()
+        if len(profiles) != 1:
+            raise RuntimeError("Travel-option capture requires one profile at a time.")
+        options.write_parquet(work / f"travel-options-profile-{profiles[0]}.parquet")
+        return options
+
+    DestinationSequences._travel_options = staticmethod(capture_travel_options)
+if os.environ.get("MOBILITY_PROBE_PREVIOUS_LOCATION_COUNTS") == "1":
+    from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+    original_sample_destinations = DestinationSequences._sample_sequence_aware_destinations
+
+    def count_previous_locations(**kwargs):
+        if kwargs.get("model_previous_arrival"):
+            counts = (kwargs["steps_lf"].group_by("_previous_is_first", "_previous_is_anchor")
+                      .len().collect(engine="streaming"))
+            print("PREVIOUS_LOCATION_COUNTS", json.dumps({
+                "anchor_sampling": kwargs.get("anchor_sampling", False), "counts": counts.to_dicts(),
+            }), flush=True)
+        return original_sample_destinations(**kwargs)
+
+    DestinationSequences._sample_sequence_aware_destinations = staticmethod(count_previous_locations)
+if os.environ.get("MOBILITY_PROBE_ANCHOR_COLLECT_TIMES") == "1":
+    from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+    original_anchor_sampling = DestinationSequences._spatialize_anchor_activities
+    original_collect = pl.LazyFrame.collect
+    anchor_profile = {"active": False, "explained": False}
+
+    def timed_anchor_sampling(self, *args, **kwargs):
+        anchor_profile["active"] = True
+        try:
+            return original_anchor_sampling(self, *args, **kwargs)
+        finally:
+            anchor_profile["active"] = False
+
+    def timed_collect(query, *args, **kwargs):
+        if not anchor_profile["active"]:
+            return original_collect(query, *args, **kwargs)
+        if os.environ.get("MOBILITY_PROBE_EXPLAIN_ANCHOR") == "1" and not anchor_profile["explained"]:
+            columns = query.collect_schema().names()
+            if "p_ij" in columns and "to" in columns:
+                (work / "anchor-weights-plan.txt").write_text(query.explain(optimized=True), encoding="utf-8")
+                anchor_profile["explained"] = True
+        started = perf_counter()
+        result = original_collect(query, *args, **kwargs)
+        elapsed = perf_counter() - started
+        columns = result.columns
+        if "p_ij" in columns and "to" in columns:
+            kind = "destination_weights"
+        elif any(column.startswith("_race_winner_") for column in columns):
+            kind = "draw_winners"
+        else:
+            kind = "other"
+        print("ANCHOR_COLLECT", json.dumps({
+            "kind": kind, "seconds": elapsed, "rows": result.height,
+            "columns": len(columns), "bytes": result.estimated_size(),
+        }), flush=True)
+        return result
+
+    DestinationSequences._spatialize_anchor_activities = timed_anchor_sampling
+    pl.LazyFrame.collect = timed_collect
+if os.environ.get("MOBILITY_PROBE_CACHE_TRAVEL_OPTIONS") == "1":
+    from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+    original_travel_options = DestinationSequences._travel_options
+    cached_travel_options = {}
+
+    def cache_travel_options(mode_costs):
+        active = _ACTIVE_TRACE.get()
+        labels = active[2] if active else {}
+        profiles = mode_costs["utility_profile_id"].unique().to_list()
+        if len(profiles) != 1 or labels.get("scenario") is None or labels.get("step") is None:
+            raise RuntimeError("Travel-option probe requires one identified scenario, step and profile.")
+        key = (labels["scenario"], labels["step"], profiles[0])
+        if key not in cached_travel_options:
+            cached_travel_options[key] = original_travel_options(mode_costs)
+            print("TRAVEL_OPTION_CACHE", json.dumps({
+                "key": key, "entries": len(cached_travel_options),
+                "bytes": sum(table.estimated_size() for table in cached_travel_options.values()),
+            }), flush=True)
+        return cached_travel_options[key]
+
+    DestinationSequences._travel_options = staticmethod(cache_travel_options)
+if os.environ.get("MOBILITY_PROBE_EFFORT_METRICS") == "1":
+    from effort_diagnostics import install_effort_diagnostics
+    install_effort_diagnostics(work / "effort-metrics", model.parameters.plan_update.transition_revision_probability)
+if os.environ.get("MOBILITY_PROBE_MNL_BATCHES") == "1":
+    from inspect_mnl_batches import install_mnl_batch_probe
+    # Retain the normal scheduler but prevent its existing convergence rule
+    # from stopping this comparison before the requested batch limit.
+    model.parameters.adaptive_search.inner_consecutive_passes = model.parameters.adaptive_search.max_search_batches
+    install_mnl_batch_probe(work / "mnl-batches", model.parameters.plan_update.transition_logit_scale)
 if os.environ.get("MOBILITY_PROBE_FULL_REPLANNING") == "1":
     model.parameters.behavior_change.phases = None
 elif "MOBILITY_PROBE_MODE_FROM_STEP" in os.environ:
@@ -857,9 +1047,13 @@ print("PROBE_SETTINGS", {
     "steps": model.parameters.run.n_steps,
     "activity_sequences": model.parameters.activity_sequences.k_activity_sequences,
     "destination_sequences": model.parameters.destination_sequences.k_destination_sequences,
+    "destination_sampling_method": model.parameters.destination_sequences.sampling_method,
     "mode_sequences": model.parameters.mode_sequences.k_mode_sequences,
     "max_batches": model.parameters.adaptive_search.max_search_batches,
     "min_plan_persons": model.parameters.plan_update.min_plan_persons,
+    "revision_probability": model.parameters.plan_update.transition_revision_probability,
+    "road_congestion": os.environ.get("MOBILITY_PROBE_NO_ROAD_CONGESTION") != "1",
+    "opportunity_congestion": os.environ.get("MOBILITY_PROBE_NO_OPPORTUNITY_CONGESTION") != "1",
     "real_scenario_gtfs": os.environ.get("MOBILITY_PROBE_REAL_GTFS") == "1",
     "build_local_transit": os.environ.get("MOBILITY_PROBE_BUILD_LOCAL_TRANSIT") == "1",
     "temporary_disk_limit_gb": float(os.environ["MOBILITY_PROBE_TEMP_GB"])
@@ -872,6 +1066,7 @@ print("PROBE_SETTINGS", {
     "full_replanning": os.environ.get("MOBILITY_PROBE_FULL_REPLANNING") == "1",
     "scenario_change_step": os.environ.get("MOBILITY_PROBE_SCENARIO_CHANGE_STEP"),
     "destination_probability_reuse": os.environ.get("MOBILITY_PROBE_NO_DEST_PROBABILITY_REUSE") != "1",
+    "destination_probability_cutoff": model.parameters.destination_sequences.dest_prob_cutoff,
     "score_all_candidates": os.environ.get("MOBILITY_PROBE_SCORE_ALL") == "1",
     "late_history_compaction": os.environ.get("MOBILITY_PROBE_LATE_HISTORY") == "1",
 }, flush=True)
@@ -884,9 +1079,10 @@ metric = results.metrics.trip_count(
 )
 metric.cache_path = work / "trip-count.parquet"
 metric.hash_path = work / "trip-count.inputs-hash"
-diagnostics = results.tables.adaptive_search_diagnostics(
-    columns=["scenario", "replication", "outer_step", "unique_pool_size"]
-)
+diagnostic_columns = ["scenario", "replication", "outer_step", "unique_pool_size"]
+if os.environ.get("MOBILITY_PROBE_EFFORT_METRICS") == "1" or os.environ.get("MOBILITY_PROBE_MNL_BATCHES") == "1":
+    diagnostic_columns += ["phase", "search_batch", "flow_change_index", "flow_change_by_mode", "flow_change_by_activity"]
+diagnostics = results.tables.adaptive_search_diagnostics(columns=diagnostic_columns)
 started = perf_counter()
 stop_monitor = threading.Event()
 resource_samples = {
@@ -999,7 +1195,12 @@ finally:
 elapsed = perf_counter() - started
 if "trips" in outputs:
     print("TRIP_COUNTS", outputs["trips"].to_dicts(), flush=True)
-print("CANDIDATE_POOL", outputs["diagnostics"].collect().to_dicts(), flush=True)
+diagnostic_rows = outputs["diagnostics"].collect()
+if os.environ.get("MOBILITY_PROBE_EFFORT_METRICS") == "1":
+    diagnostic_rows.write_parquet(work / "effort-metrics" / "search-diagnostics.parquet")
+if os.environ.get("MOBILITY_PROBE_MNL_BATCHES") == "1":
+    diagnostic_rows.write_parquet(work / "mnl-batches" / "search-diagnostics.parquet")
+print("CANDIDATE_POOL", diagnostic_rows.select("scenario", "replication", "outer_step", "unique_pool_size").to_dicts(), flush=True)
 outputs["diagnostics"].close()
 trace_path = work / "trace.jsonl"
 if trace_path.exists():

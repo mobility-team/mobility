@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import math
 
 import pandas as pd
 import polars as pl
@@ -282,3 +283,19 @@ def _transport_costs(parameters):
         ).select(["from", "to", "mode"] + metrics)
     )
     return transport_costs
+
+
+def test_expected_od_cost_handles_very_large_finite_costs():
+    """A congested OD must not produce 0/0 when every mode has a large cost."""
+    costs = pl.DataFrame({
+        "from": [1, 2, 2], "to": [2, 3, 3],
+        "mode": ["car", "car", "walk"], "cost": [1727.65, 1000.0, 1001.0],
+    })
+    expected = 1000.0 + math.exp(-1.0) / (1.0 + math.exp(-1.0))
+    for cls in (TransportCosts, IterationTransportCostsAsset):
+        asset = object.__new__(cls)
+        asset.get_costs_by_od_and_mode = lambda metrics, **kwargs: costs
+        result = asset.get_costs_by_od(["cost"]).sort("from")
+        assert result["cost"].is_finite().all()
+        assert abs(result["cost"][0] - 1727.65) < 1e-10
+        assert abs(result["cost"][1] - expected) < 1e-10

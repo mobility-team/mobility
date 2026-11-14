@@ -156,7 +156,7 @@ class Run(InMemoryAsset):
         # Version changes invalidate results when candidate identity or
         # numerical calculations used by the model change.
         run_context_inputs = {
-            "version": 53,
+            "version": 60 if parameters.destination_sequences.sampling_method == "utility" else 55,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -192,7 +192,7 @@ class Run(InMemoryAsset):
         checkpoint_run_context = {
             **run_context_inputs,
             "parameters": checkpoint_parameters,
-            "checkpoint_version": 28,
+            "checkpoint_version": 35 if parameters.destination_sequences.sampling_method == "utility" else 30,
         }
         checkpoint_run_hash = hash_inputs(checkpoint_run_context)
         self.run_context = SimpleNamespace(
@@ -936,7 +936,7 @@ class RunTableAsset(InMemoryAsset):
             dependencies = (run.final_iteration_state,)
         super().__init__(
             {
-                "version": 5,
+                "version": 6 if table_name == "adaptive_search_diagnostics" else 5,
                 # Members share a coordinator but return different rows.
                 "scenario": run.scenario,
                 "sensitivity_case": run.sensitivity_case,

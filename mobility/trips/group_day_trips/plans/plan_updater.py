@@ -720,6 +720,19 @@ class PlanUpdater:
                 timed_scored_steps, survey_plan_steps, index_cache=time_index_cache,
             )
             del timed_scored_steps
+            # A person cannot leave an intermediate activity before arriving.
+            # Check the indexed, second-rounded times so plans merged under one
+            # schedule ID have the same feasibility. The final home step has
+            # no subsequent departure and its end time is only a placeholder.
+            timed_steps = timed_steps.with_columns(
+                is_feasible=(
+                    pl.col("is_feasible")
+                    & (
+                        (pl.col("seq_step_index") == pl.col("seq_step_index").max().over(PLAN_KEY_COLS))
+                        | (pl.col("next_departure_time") >= pl.col("arrival_time"))
+                    )
+                ).fill_null(False)
+            )
             timed_steps, plan_id_index = add_plan_id(
                 timed_steps, previous_index=previous_plan_id_index,
                 additional_keys=stay_home_plan.select(PLAN_KEY_COLS),
@@ -2062,6 +2075,8 @@ class PlanUpdater:
         current_plan_steps,
         opportunities,
         resolved_activity_parameters: dict[str, Any],
+        *,
+        enable_opportunity_congestion: bool = True,
     ):
         """Recompute destination saturation per (activity, destination).
 
@@ -2170,6 +2185,14 @@ class PlanUpdater:
             ])
         )
 
+        if not enable_opportunity_congestion:
+            # Preserve occupation for reporting, but remove its effects on
+            # utility and on the choice of candidate destinations.
+            destination_saturation = destination_saturation.with_columns(
+                k_saturation_utility=pl.lit(1.0),
+                destination_shadow_price=pl.lit(0.0),
+                destination_sampling_attraction_factor=pl.lit(1.0),
+            )
         return destination_saturation
 
     @staticmethod

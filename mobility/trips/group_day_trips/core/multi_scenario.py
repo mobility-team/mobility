@@ -76,9 +76,10 @@ def add_candidate_ids(candidate_plan_steps: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def represented_od_mode_flows(current_plan_steps: pl.DataFrame) -> pl.DataFrame:
+def represented_od_mode_flows(current_plan_steps: pl.DataFrame, *, include_activity: bool = False) -> pl.DataFrame:
     """Aggregate represented trips into an OD-by-mode flow vector."""
-    required = set(OD_MODE_COLUMNS + ["n_persons", "mode_seq_id"])
+    columns = OD_MODE_COLUMNS + (["activity"] if include_activity else [])
+    required = set(columns + ["n_persons", "mode_seq_id"])
     missing = required.difference(current_plan_steps.columns)
     if missing:
         raise ValueError(
@@ -89,30 +90,73 @@ def represented_od_mode_flows(current_plan_steps: pl.DataFrame) -> pl.DataFrame:
     return (
         current_plan_steps
         .filter(pl.col("mode_seq_id") != 0)
-        .group_by(OD_MODE_COLUMNS)
+        .group_by(columns)
         .agg(volume=pl.col("n_persons").sort().implode().list.sum())
-        .sort(OD_MODE_COLUMNS)
+        .sort(columns)
     )
 
 
 @trace_simulation_step("aggregate inner allocation flows")
 def allocation_od_mode_flows(
-    allocation: pl.DataFrame, possible_plan_steps: pl.DataFrame | pl.LazyFrame,
+    allocation: pl.DataFrame, possible_plan_steps: pl.DataFrame | pl.LazyFrame, *, include_activity: bool = False,
 ) -> pl.DataFrame:
     """Reduce allocated plans to trip flows without building wide step rows."""
+    columns = OD_MODE_COLUMNS + (["activity"] if include_activity else [])
     return (
         allocation.lazy()
         .filter(pl.col("mode_seq_id") != 0)
         .select("plan_id", "n_persons")
         .join(
-            possible_plan_steps.lazy().select(["plan_id"] + OD_MODE_COLUMNS),
+            possible_plan_steps.lazy().select(["plan_id"] + columns),
             on="plan_id",
             how="left",
         )
-        .group_by(OD_MODE_COLUMNS)
+        .group_by(columns)
         .agg(volume=pl.col("n_persons").sort().implode().list.sum())
-        .sort(OD_MODE_COLUMNS)
+        .sort(columns)
         .collect(engine="streaming")
+    )
+
+
+def flow_change_index(previous: pl.DataFrame, current: pl.DataFrame) -> float:
+    """Return symmetric absolute flow change, from 0 (same) to 1 (no overlap)."""
+    keys = OD_MODE_COLUMNS + ["activity"]
+    changes = previous.select(keys + [pl.col("volume").alias("previous")]).join(
+        current.select(keys + [pl.col("volume").alias("current")]),
+        on=keys, how="full", coalesce=True,
+    ).with_columns(pl.col("previous", "current").fill_null(0.0))
+    totals = changes.select(
+        (pl.col("current") - pl.col("previous")).abs().sort().implode().list.sum().alias("difference"),
+        (pl.col("current") + pl.col("previous")).sort().implode().list.sum().alias("total"),
+    ).row(0, named=True)
+    return float(totals["difference"] or 0.0) / float(totals["total"]) if totals["total"] else 0.0
+
+
+def flow_change_breakdown(
+    previous: pl.DataFrame | None, current: pl.DataFrame, category: str,
+) -> list[dict]:
+    """Report trips and flow change separately for each mode or activity."""
+    keys = OD_MODE_COLUMNS + ["activity"]
+    current = current.with_columns(pl.col(category).cast(pl.String))
+    if previous is None:
+        return (
+            current.group_by(category).agg(pl.col("volume").sum().alias("trips"))
+            .sort(category).with_columns(pl.lit(None, dtype=pl.Float64).alias("flow_change_index"))
+            .rename({category: "category"}).to_dicts()
+        )
+    previous = previous.with_columns(pl.col(category).cast(pl.String))
+    changes = previous.select(keys + [pl.col("volume").alias("previous")]).join(
+        current.select(keys + [pl.col("volume").alias("current")]), on=keys, how="full", coalesce=True,
+    ).with_columns(pl.col("previous", "current").fill_null(0.0))
+    return (
+        changes.group_by(category).agg(
+            pl.col("current").sort().implode().list.sum().alias("trips"),
+            (pl.col("current") - pl.col("previous")).abs().sort().implode().list.sum().alias("difference"),
+            (pl.col("current") + pl.col("previous")).sort().implode().list.sum().alias("total"),
+        ).with_columns(
+            pl.when(pl.col("total") > 0).then(pl.col("difference") / pl.col("total"))
+            .otherwise(0.0).alias("flow_change_index")
+        ).select(pl.col(category).alias("category"), "trips", "flow_change_index").sort("category").to_dicts()
     )
 
 

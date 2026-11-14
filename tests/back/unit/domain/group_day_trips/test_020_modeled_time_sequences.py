@@ -653,11 +653,12 @@ def test_shared_attachment_merges_histories_for_identical_modeled_plans():
         assert attached["last_active_iteration"].to_list() == [3, 3]
 
 
-def test_evaluation_remaps_current_plans_after_modeled_travel_changes_timings(monkeypatch):
+@pytest.mark.parametrize("travel_time, feasible", [(2.0, True), (10.0, False)])
+def test_evaluation_remaps_current_plans_after_modeled_travel_changes_timings(monkeypatch, travel_time, feasible):
     """New schedule and plan ids must still identify every transition origin."""
     steps = _plan_steps().with_columns(
         activity_utility_scale=pl.lit(1.0), min_activity_time=pl.lit(1.0),
-        cost=pl.lit(0.0), time=pl.lit(2.0), distance=pl.lit(1.0),
+        cost=pl.lit(0.0), time=pl.lit(travel_time), distance=pl.lit(1.0),
         is_feasible=pl.lit(True), _missing_cost_row=pl.lit(False), _invalid_cost_row=pl.lit(False),
         mean_duration_per_pers=pl.col("duration_per_pers"), value_of_time=pl.lit(1.0),
         k_saturation_utility=pl.lit(1.0), destination_shadow_price=pl.lit(0.0),
@@ -693,6 +694,14 @@ def test_evaluation_remaps_current_plans_after_modeled_travel_changes_timings(mo
         evaluation.possible_plan_utility, on=PLAN_KEY_COLS, how="anti"
     ).height == 0
     assert evaluation.candidate_plan_steps["time_seq_id"].n_unique() == 1
+    mobile = evaluation.possible_plan_utility.filter(pl.col("mode_seq_id") != 0)
+    assert mobile["is_feasible"].item() is feasible
+    demand = pl.DataFrame({"demand_group_id": [1], "demand_subgroup_id": [0], "n_persons": [100.0]}).with_columns(
+        pl.col("demand_group_id", "demand_subgroup_id").cast(pl.UInt32)
+    )
+    allocation, _ = updater.estimate_mnl_allocation(evaluation, demand, logit_scale=1.0, include_plan_steps=False)
+    assert allocation["n_persons"].sum() == pytest.approx(100.0)
+    assert (allocation.filter(pl.col("mode_seq_id") != 0).height > 0) is feasible
 
 
 def test_modeled_plan_history_merges_when_schedules_converge(monkeypatch):

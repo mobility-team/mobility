@@ -28,7 +28,7 @@ from mobility.trips.group_day_trips.core.progress import get_group_day_trips_pro
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from mobility.trips.group_day_trips.iterations.iteration_assets import IterationSeedsAsset
 from mobility.trips.group_day_trips.plans.activity_sequences import ActivitySequences
-from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences
+from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences, TravelOptionsCache
 from mobility.trips.group_day_trips.plans.demand_subgroups import DEMAND_UNIT_COLS
 from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps
 from mobility.trips.group_day_trips.plans.mode_sequence_search.mode_sequences import ModeSequences
@@ -54,6 +54,8 @@ from mobility.trips.group_day_trips.core.multi_scenario import (
     InnerLoopConvergence,
     add_candidate_ids,
     allocation_od_mode_flows,
+    flow_change_index,
+    flow_change_breakdown,
     represented_od_mode_flows,
 )
 from mobility.trips.group_day_trips.core.run_state import RunState
@@ -100,7 +102,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         super().__init__(
             {
                 # Congestion costs and state identities follow the whole search.
-                "version": 35,
+                "version": 37,
                 "run_contexts": [
                     {
                         "run_key": run_key,
@@ -207,7 +209,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
         return final_states
 
     def _advance_cohort_step(
-        self, iteration: int, current_states: dict[int, RunState], *, keep_inner_flows: bool = False
+        self, iteration: int, current_states: dict[int, RunState], *, keep_inner_flows: bool = False,
+        track_flow_change: bool = False,
     ) -> tuple[dict[int, Any], dict[int, RunState], dict[str, Any]]:
         """Advance the whole cohort from one fixed pre-step state."""
         get_group_day_trips_progress().iteration_step(
@@ -233,6 +236,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
             required_passes=self.parameters.adaptive_search.inner_consecutive_passes,
             initial_pool=None,
             keep_inner_flows=keep_inner_flows,
+            track_flow_change=track_flow_change,
         )
         # The completed evaluations own the data needed by the outer update.
         # Drop the pool's attachment queries and active-step tables before
@@ -470,6 +474,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         generation_previous_states: dict[int, Any] | None = None,
         phase: str = "inner",
         keep_inner_flows: bool = True,
+        track_flow_change: bool = False,
     ) -> dict[int, Any]:
         """Expand and evaluate the shared pool while outer state stays fixed."""
         generate_candidates = (
@@ -480,6 +485,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         # A single batch cannot be compared with a preceding batch.
         estimate_allocation = (
             max_search_batches > 1
+            or track_flow_change
             or logging.getLogger().isEnabledFor(logging.DEBUG)
         )
         adaptive = self.parameters.adaptive_search
@@ -582,14 +588,24 @@ class MultiScenarioRunAsset(InMemoryAsset):
         previous_allocations: dict[int, pl.DataFrame | None] = {
             scenario: None for scenario in self.scenarios
         }
+        previous_activity_flows: dict[int, pl.DataFrame] = {}
         forced_scoring_contexts = {}
         scored_candidate_scope = {scenario: "all" for scenario in self.scenarios}
         destination_probabilities = {
             scenario: {} for scenario in self.scenarios
         } if max_search_batches > 1 else None
+        # Costs stay fixed within this inner search. Bound retained OD tables
+        # across the entire scenario cohort and release them after this step.
+        travel_options_cache = (
+            TravelOptionsCache(max_bytes=256 * 1024 * 1024)
+            if max_search_batches > 1 and self.parameters.destination_sequences.sampling_method == "utility"
+            else None
+        )
 
         while batch_index < max_search_batches:
             with simulation_step("search batch", search_batch=batch_index + 1):
+                batch_flow_changes: dict[int, float | None] = {}
+                batch_flow_breakdowns: dict[int, dict[str, list[dict]]] = {}
                 generation_requests = scheduler.select_requests(
                     batch_index=batch_index,
                     covered_cells_by_scenario=covered_cells_by_scenario,
@@ -617,6 +633,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     cost_assets=cost_assets,
                     generation_previous_states=generation_previous_states,
                     destination_probabilities=destination_probabilities,
+                    travel_options_cache=travel_options_cache,
                 )
                 pool_builder = SharedCandidatePool(
                     sources=sources,
@@ -1011,6 +1028,19 @@ class MultiScenarioRunAsset(InMemoryAsset):
                             flows_by_scenario[scenario] = allocation_od_mode_flows(
                                 allocation, evaluation.possible_plan_steps,
                             )
+                        if track_flow_change and allocation is not None:
+                            activity_flows = allocation_od_mode_flows(
+                                allocation, evaluation.possible_plan_steps, include_activity=True,
+                            )
+                            previous = previous_activity_flows.get(scenario)
+                            batch_flow_changes[scenario] = (
+                                None if previous is None else flow_change_index(previous, activity_flows)
+                            )
+                            batch_flow_breakdowns[scenario] = {
+                                category: flow_change_breakdown(previous, activity_flows, category)
+                                for category in ("mode", "activity")
+                            }
+                            previous_activity_flows[scenario] = activity_flows
                         # A completed evaluation can remain live while other
                         # scenarios are scored. Store its history in factored
                         # form before retaining it when this may be the last batch.
@@ -1152,6 +1182,9 @@ class MultiScenarioRunAsset(InMemoryAsset):
                             "missing_cost_row_candidate_count": missing_cost_row_counts[scenario],
                             "invalid_cost_row_candidate_count": invalid_cost_row_counts[scenario],
                             "flow_change": convergence.flow_changes.get(scenario),
+                            "flow_change_index": batch_flow_changes.get(scenario),
+                            "flow_change_by_mode": batch_flow_breakdowns.get(scenario, {}).get("mode"),
+                            "flow_change_by_activity": batch_flow_breakdowns.get(scenario, {}).get("activity"),
                             "base_gap_change": convergence.base_gap_changes.get(scenario),
                             "inner_consecutive_passes": convergence.consecutive_passes,
                             "inner_converged": convergence.converged,
@@ -1169,6 +1202,9 @@ class MultiScenarioRunAsset(InMemoryAsset):
 
         if pool is None or not final_convergence_by_run_key:
             raise RuntimeError("The shared candidate loop did not evaluate a candidate pool.")
+
+        if travel_options_cache is not None:
+            travel_options_cache.clear()
 
         if batch_diagnostics and stop_reason != "continue_search":
             for row in batch_diagnostics[-len(self.scenarios):]:
@@ -1474,6 +1510,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         cost_assets: dict[int, Any] | None,
         generation_previous_states: dict[int, Any] | None,
         destination_probabilities: dict[int, dict[int, pl.DataFrame]] | None,
+        travel_options_cache: TravelOptionsCache | None,
     ) -> tuple[
         list[ScenarioCandidateSource],
         dict[int, ScenarioCandidateSource],
@@ -1535,6 +1572,8 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     destination_probabilities[scenario]
                     if destination_probabilities is not None else None
                 ),
+                travel_options_cache=travel_options_cache,
+                travel_options_run_key=scenario,
             )
             mode_sequences = ModeSequences(
                 is_weekday=run.is_weekday,

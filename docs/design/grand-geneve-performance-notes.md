@@ -2039,3 +2039,910 @@ set; sampled process-tree peak RSS was 5.07 GiB. The last step used no
 transitions and produced the same trip totals as step 4 to floating-point
 precision. This checks that the run completes, not whether the floor is
 accurate enough for a particular study.
+
+
+### Effort comparison with five full-replanning steps
+
+An initial comparison used one Geneva scenario and seed, five full-replanning
+steps and the one-person per-subgroup allocation floor. The minimum run used
+one activity, destination and mode draw and one batch (one rough effort point
+per step); the larger run used two activity draws, one destination draw, two
+mode draws and two batches (eight points per step). Both reused input caches,
+used eight Polars threads and had no memory limit. The probe also saved
+aggregated flows and counts, so timings include that instrumentation.
+
+| Measure at step 5 | Minimum | Larger |
+| --- | ---: | ---: |
+| Whole run | 106.8 s | 177.9 s |
+| Sampled process-tree peak RSS | 5.16 GiB | 5.06 GiB |
+| Candidate pool | 17,961 | 93,734 |
+| Allocated mobile plan keys | 10,000 | 22,598 |
+| Mobile plan keys with over 10 people | 8,543 | 16,904 |
+| Mobile demand-unit plan rows | 174,705 | 332,936 |
+
+Candidate identities and modeled allocation keys describe different things;
+their counts are not a share. To compare flows, use the sum of the absolute
+differences in each cell divided by the larger run's total trips, including
+cells absent from either run. Results over all five steps were:
+
+| Step | Mode totals | Activity totals | OD and mode | OD, mode and activity |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 21.6% | 21.3% | 147.1% | 162.5% |
+| 2 | 19.8% | 19.2% | 143.3% | 161.6% |
+| 3 | 18.5% | 17.9% | 139.1% | 159.1% |
+| 4 | 17.8% | 16.5% | 133.7% | 155.8% |
+| 5 | 16.1% | 15.7% | 131.0% | 153.1% |
+
+| Step | Minimum candidates | Larger candidates | Minimum allocated mobile plans | Larger allocated mobile plans |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 4,024 | 23,370 | 2,571 | 6,269 |
+| 2 | 8,972 | 54,346 | 4,993 | 11,667 |
+| 3 | 13,131 | 71,389 | 6,940 | 16,421 |
+| 4 | 15,938 | 84,156 | 8,526 | 20,108 |
+| 5 | 17,961 | 93,734 | 10,000 | 22,598 |
+
+Mobile plans carrying more than 10 people numbered 2,426, 4,563, 6,222,
+7,472 and 8,543 in the minimum run, and 5,196, 9,552, 12,992, 15,446 and
+16,904 in the larger run, respectively.
+
+The difference measure can exceed 100%. The detailed cells are sparse; neither the larger
+run nor one seed establishes the true distribution. The results indicate a
+need to examine spatial aggregation, additional seeds and a heavier reference
+before treating the differences as convergence or model accuracy.
+
+Set `MOBILITY_PROBE_FULL_REPLANNING=1` and `MOBILITY_PROBE_EFFORT_METRICS=1`
+to reproduce the capture. The probe prints its output folder; compare its
+`effort-metrics` directories with `tests/manual/compare_effort_metrics.py`.
+The optional measurements add runtime and can increase peak memory. In that
+folder, `search-diagnostics.parquet` includes the overall and per-mode and
+per-activity flow-change indices and trip totals for each batch and step.
+`transitions.jsonl` records people who changed modeled plans, were reassigned
+because their original plan was infeasible, or were reassigned by the floor.
+These categories can overlap. Forced reassignments cannot be separated using
+the event adjustment factor when the revision probability is 1, so that
+field is null in that case.
+
+`candidate-batches.jsonl` counts candidate identities first observed in the
+current step; the first batch also contains plans retained from earlier steps.
+`allocated-options.jsonl` shows, at each batch, how many context-and-plan
+allocations and how many represented people belong to options first allocated
+in each batch. First-batch allocations also include previously occupied plans.
+These are separate measurements: modeled timings can merge candidate identities
+and the allocated volume cannot be attributed reliably to individual newly
+generated candidates from these tables. Search estimates do not apply another
+behavioral transition to the outer state.
+
+
+### 81-point effort reference
+
+A third run used one scenario and seed with five full-replanning steps and
+three activity, destination and mode draws and three search batches: 81 rough
+effort points per step. It reused input caches, used eight Polars threads and
+no memory limit, and recorded the same flow and plan-pool metrics. It completed
+in 525.6 s with 12.12 GiB sampled process-tree peak RSS. Mean sampled
+process-tree CPU was 493% (100% is one logical CPU). Per-step wall times were
+33.2, 102.6, 121.1, 121.5 and 120.7 s; initialization took about 26.5 s.
+
+| Step | 1 vs 81: mode | 8 vs 81: mode | 1 vs 81: OD/mode/activity | 8 vs 81: OD/mode/activity |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 32.6% | 13.8% | 149.9% | 151.3% |
+| 2 | 31.6% | 13.9% | 150.4% | 149.1% |
+| 3 | 30.3% | 13.8% | 147.4% | 143.0% |
+| 4 | 28.3% | 11.9% | 146.6% | 140.8% |
+| 5 | 26.0% | 11.0% | 145.3% | 138.8% |
+
+At step 5, relative absolute differences versus the 81-point run were 21.2%
+and 8.7% for activity totals and 124.8% and 112.7% for OD-by-mode flows, for
+the 1- and 8-point runs respectively. The reference candidate pool was
+485,174 candidate identities; 39,916 modeled mobile plan keys carried
+people, of which 25,629 carried more than 10. These are different identities
+and their counts are not a percentage used. Total represented trips at step 5
+were 8.56, 9.82 and 10.56 million for 1, 8 and 81 points respectively.
+
+This is one seed, not a converged or validated ground truth. Changes in
+sampling also affect later congestion and allocations, while very sparse OD
+cells make exact OD agreement demanding. Comparing several seeds and coarser
+zone aggregations is needed before drawing conclusions about convergence.
+
+
+### Three effort runs with convergence diagnostics
+
+All cases used one scenario, one seed, five full-replanning steps, a 40%
+revision probability and the one-person allocation floor. Input caches were
+reused, Polars used eight threads, and no memory limit was set. Diagnostics
+were enabled, so the times include their additional aggregation and capture.
+
+| Effort per step | Runtime | Sampled process-tree peak | Step 5 candidate pool | Step 5 allocated mobile plan keys |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 78.9 s | 4.96 GiB | 17,961 | 10,000 |
+| 8 | 145.7 s | 5.30 GiB | 93,734 | 22,598 |
+| 81 | 521.5 s | 12.98 GiB | 485,174 | 39,916 |
+
+The symmetric OD/mode/activity flow-change index is the sum of absolute
+cell changes divided by the combined flow volume. Inner values compare
+successive estimates from the fixed pre-step state; outer values compare
+successive completed behavioral allocations.
+
+| Step | Outer 1 point | Outer 8 points | Outer 81 points | 8 points batch 1 to 2 | 81 points batch 1 to 2 | 81 points batch 2 to 3 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | ? | ? | ? | 45.87% | 38.93% | 21.14% |
+| 2 | 41.73% | 43.33% | 44.89% | 17.31% | 11.49% | 9.45% |
+| 3 | 31.39% | 34.27% | 36.28% | 9.61% | 6.96% | 5.76% |
+| 4 | 27.63% | 30.29% | 34.11% | 7.44% | 4.69% | 3.96% |
+| 5 | 26.74% | 28.94% | 33.65% | 5.29% | 4.01% | 3.23% |
+
+At step 5, the 81-point run's last batch changed flows by 4.23% for bicycle,
+3.30% for car, 2.97% for walk and 3.41% for public transport. The shares of
+people changing modeled plans in steps 1?5 were 38.86%, 35.19%, 32.75%,
+31.15%, 30.54% at 1 point; 39.98%, 37.82%, 36.42%, 35.35%, 35.22% at
+8 points; and 40.00%, 39.49%, 39.04%, 39.77%, 40.17% at 81 points.
+Floor reassignment in step 5 involved 0.45%, 1.52% and 4.41% of the
+population respectively, and can overlap with plan changes. No forced
+reassignments were recorded.
+
+At step 5, batch 3 of the 81-point run had 50,467 candidate identities not
+previously seen in that step. Modeled options first allocated in batch 3
+accounted for 80,696 people in its estimate, about 4.1% of the 1,966,565
+mobile people. These are distinct measures: candidate identities can merge
+when modeled timings are applied and cannot be attributed directly from the
+captured data. The 81-point flow outputs matched the previous run at all five
+steps to the displayed precision. A single seed does not establish convergence.
+
+
+### Ten-step revision-probability comparison
+
+Two cache-only Geneva runs used one scenario, seed 0, ten full-replanning
+steps, one activity/destination/mode draw, one search batch and a one-person
+plan floor. Their only intended model parameter difference was revision
+probability, 0.4 versus 1.0. Both used eight Polars threads and no memory
+limit; the probe saved diagnostics, costs and saturation each step. Runtimes
+were 139.1 and 134.2 s; sampled process-tree peaks were 5.20 and 5.33 GiB.
+
+The symmetric OD/mode/activity flow index is shown as a percentage below.
+One-step compares consecutive completed steps; two-step compares steps two
+apart. The latter can reveal alternation but zero is not guaranteed in an
+unstable system with sampling.
+
+| Step | 0.4: one-step | 0.4: two-step | 1.0: one-step | 1.0: two-step |
+| --- | ---: | ---: | ---: | ---: |
+| 2 | 41.73 | ? | 94.33 | ? |
+| 3 | 31.39 | 56.81 | 91.61 | 75.53 |
+| 4 | 27.63 | 42.79 | 93.66 | 64.73 |
+| 5 | 26.74 | 36.45 | 94.01 | 57.24 |
+| 6 | 24.90 | 32.39 | 93.21 | 58.07 |
+| 7 | 24.93 | 30.22 | 93.11 | 49.57 |
+| 8 | 24.18 | 28.50 | 92.69 | 50.46 |
+| 9 | 24.52 | 27.42 | 93.49 | 44.15 |
+| 10 | 24.82 | 27.70 | 93.86 | 46.95 |
+
+At revision 1.0, represented car trips alternated between 7.53 million at
+step 9 and 1.12 million at step 10; walk trips changed from 2.85 to 5.52
+million. At 0.4, car trips were 4.57 million at both steps 9 and 10, and walk
+trips were 3.97 and 4.08 million. Step-10 mode-total flow change was 0.76%
+at 0.4 and 54.05% at 1.0. At the same step, the 0.4 and 1.0 distributions
+differed by 32.93% across mode totals and 80.95% across OD/mode/activity.
+These normalized symmetric indices are not accuracy measures.
+
+The saved OD generalized-cost table at revision 1.0 contained NaN values
+for 1,434, 715, 1,413 and 1,667 of 1,070,826 OD rows at steps 4, 6, 8 and
+10 respectively; none were found in this table for the 0.4 run. The cost
+table is not a direct measure of road congestion alone. The oscillation and
+non-finite values merit separate investigation before interpreting this
+run as a stable model result or attributing them to a specific feedback.
+
+
+### Intermediate revision rate and non-finite OD costs
+
+A matching lowest-effort, one-scenario, ten-step run at revision probability
+0.7 took 130.8 s with a 5.23 GiB sampled process-tree peak. Step-10 symmetric
+OD/mode/activity change from the previous step was 51.60%, compared with
+24.82% at revision 0.4 and 93.86% at 1.0. Its step-8-to-10 change was
+39.14%, and its mode-total change from step 9 to 10 was 6.27%. The 0.7 run
+also showed alternating car volumes: 5.06 million trips at step 9 and
+4.39 million at step 10. Its saved OD cost tables contained no NaNs. All
+three comparisons were run before the numerical fix below and use one seed.
+
+A targeted four-step replay of revision 1.0 inspected OD 634 to 495 at step 4.
+Its only available mode was car with a finite generalized cost of 1727.65.
+The unshifted `exp(-cost)` underflowed to zero, so normalizing the weights
+produced 0/0. Both OD expected-cost implementations and the standalone mode
+probability method now shift by the minimum OD cost before exponentiating,
+matching the stable calculation already used for profile-based destination
+sampling. Run, checkpoint and destination-sequence identities were changed to
+prevent reuse of outputs computed under the old calculation. This fix removes
+the demonstrated numerical failure; it does not establish the cause or remove
+the observed congestion oscillation.
+
+A four-step, lowest-effort replay of revision 1.0 after the fix returned a
+finite cost of 1727.65 for OD 634?495 at step 4, with zero NaNs in its saved
+OD cost tables for all four steps. Its OD/mode/activity flows matched the
+pre-fix run through step 4 to floating-point precision, including the
+alternation. This does not prove that the fix cannot affect later steps.
+
+
+### Where the 0.4 revision run still changes
+
+Using the saved ten-step, one-point Geneva run, the symmetric flow-change
+index from step 9 to 10 was 0.46% for total trips, 0.76% by mode, 0.91% by
+activity, 9.42% by origin, 9.42% by destination, 21.71% by OD, 22.27% by
+OD/mode, 24.51% by OD/activity, and 24.82% by OD/mode/activity. The OD-only
+change therefore remains large without any mode or activity distinction.
+These nested aggregates are not a causal decomposition of individual moves.
+
+Replacing both zone IDs by their local administrative unit reduces the
+step-9-to-10 index to 13.53% for OD and 18.51% for OD/mode/activity.
+Replacing them by the 5 km grid cell containing each zone centroid gives
+9.82% and 15.68% respectively. The 1,110 transport zones map to 753
+administrative units and 372 occupied grid cells. Aggregation allows changes
+within the same area to cancel; it does not measure the distance between the
+old and new destinations. Zone mapping was complete for these flows.
+
+The OD-only series from steps 1 to 10 was 38.67%, 28.29%, 24.61%, 23.74%,
+21.98%, 21.89%, 21.09%, 21.52% and 21.71% for successive changes.
+Thus the detailed change had flattened over the last few observed steps.
+Total opportunity occupation changed from 15.26 to 15.51 million hours; its
+activity-by-zone symmetric change was 22.50%. Across all available OD pairs,
+the mean expected generalized cost was 7.46 at step 9 and 7.52 at step 10.
+The mean absolute change was 0.40 unweighted, or 0.057 when weighted by the
+average trip volume of each OD over those two steps. Those expected costs
+combine modes and do not isolate the impact of road congestion.
+
+The saved outputs cannot attribute changes between new candidate sampling,
+road congestion, opportunity feedback and the 40% revision rule. A controlled
+comparison that holds candidate generation or costs fixed is needed. This
+analysis describes the original pre-numerical-fix 0.4 run and one seed.
+
+
+### Twenty-step lowest-effort trajectory
+
+A cache-only Geneva run used one scenario, seed 0, 20 full-replanning
+steps, revision probability 0.4, one activity/destination/mode draw and one
+search batch. It used eight Polars threads and no memory limit. The run took
+259.2 s with a 5.31 GiB sampled process-tree peak, including diagnostics.
+The first ten steps reproduce the earlier lowest-effort run to the displayed
+precision.
+
+| Step | Detailed flow change | OD flow change | Mode-total change | People changing plans | Candidate pool |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 5 | 26.74% | 23.74% | 3.45% | 30.54% | 17,961 |
+| 10 | 24.82% | 21.71% | 0.76% | 29.98% | 23,088 |
+| 15 | 24.26% | 21.00% | 0.48% | 29.62% | 24,386 |
+| 20 | 24.18% | 20.73% | 0.61% | 29.79% | 24,778 |
+
+Flow changes compare consecutive completed steps using the symmetric index.
+Detailed OD/mode/activity change fluctuated between 24.16% and 24.74%
+through steps 11?20; it did not trend toward zero. Mode-total change stayed
+below 1.5%, but represented trips still increased from 9.48 million at
+step 10 to 10.24 million at step 20. Candidate generation, congestion,
+opportunity feedback and behavioral revision all remained active; this run
+does not identify which causes the persistent detailed change. One seed and
+one effort setting do not support fitting a general effort/convergence law.
+
+
+### Road and opportunity feedback at low effort
+
+Four one-scenario, seed-0 cases used five full-replanning steps, revision
+probability 0.4, one activity/destination/mode draw and one search batch.
+The both-enabled case uses the first five steps of the 20-step post-fix run.
+All used cached inputs and eight Polars threads, with no memory limit.
+Road feedback was disabled with `n_steps_per_cost_update=0`. Opportunity
+feedback was disabled by neutralizing utility and sampling effects while
+continuing to calculate occupation. The newer public switch
+`plan_update.enable_opportunity_congestion=False` reproduced the neutralized
+both-off run's OD/mode/activity flows to displayed precision for all steps.
+
+| Step | Both off | Road only | Opportunity only | Both on |
+| --- | ---: | ---: | ---: | ---: |
+| 2 | 32.77% | 33.30% | 42.99% | 41.73% |
+| 3 | 19.85% | 22.09% | 33.12% | 31.39% |
+| 4 | 15.38% | 16.55% | 29.22% | 27.63% |
+| 5 | 12.73% | 14.25% | 27.60% | 26.74% |
+
+Values are the symmetric OD/mode/activity flow-change index versus the
+previous completed step. Shares of people changing plans at step 5 were
+18.18%, 20.00%, 31.40% and 30.54%, respectively. Represented step-5 car
+trips were 9.71m, 5.03m, 8.41m and 4.66m; walk trips were 0.98m, 3.78m,
+0.76m and 3.12m. Thus road feedback greatly changes mode totals even when it
+adds less to this particular stability index. Opportunity feedback is
+associated with much greater continuing flow movement in these cases, but
+the cases have different trajectories and candidate sets; these results do
+not identify a single underlying mechanism or establish long-run convergence.
+
+The three new runs took 49.9, 72.9 and 49.5 seconds respectively, including
+diagnostic capture. A separate both-off verification using the new public
+switch took 51.1 seconds.
+
+
+### Fixed-state fresh-MNL batch experiment
+
+A cache-only Geneva probe used one default scenario and seed, the initial
+stay-home state, one outer step, fixed initial costs and opportunities, and
+one activity/destination/mode draw per batch. It ran ten batches, preventing
+the existing convergence rule from stopping the search early. The normal
+adaptive scheduler still used reachable allocation to select requests; this
+is an observational comparison, not a replacement production algorithm.
+The fresh MNL estimate was evaluated after each batch without applying
+revision, minimum utility gain or the per-subgroup allocation floor.
+
+| Batch | Candidate pool | Fresh-MNL flow change | Fresh-MNL plan allocation change | Reachable flow change | Fresh-MNL flow difference from batch 10 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 4,024 | ? | ? | ? | 74.80% |
+| 2 | 7,213 | 43.35% | 48.88% | 43.43% | 61.09% |
+| 3 | 10,395 | 25.29% | 29.88% | 25.71% | 52.42% |
+| 4 | 13,560 | 18.97% | 22.89% | 19.18% | 45.18% |
+| 5 | 16,706 | 15.38% | 18.57% | 15.24% | 37.43% |
+| 6 | 19,869 | 14.11% | 16.67% | 14.42% | 29.13% |
+| 7 | 23,061 | 11.91% | 14.15% | 12.38% | 21.17% |
+| 8 | 26,233 | 9.70% | 11.93% | 9.97% | 13.95% |
+| 9 | 29,441 | 8.27% | 10.45% | 8.04% | 6.82% |
+| 10 | 32,578 | 6.82% | 8.55% | 6.76% | 0.00% |
+
+Percentages use the symmetric absolute-change index, with OD/mode/activity
+flows or context-and-modeled-plan allocations as appropriate. The last column
+uses batch 10 of this same trajectory as a comparison, not as ground truth.
+The 0.4 revision setting and initial stay-home state make the reachable and
+fresh relative flow changes similar in this particular probe; they need not
+agree in later steps or restricted behavior phases.
+
+The experiment took 67.5 s with a 5.11 GiB sampled process-tree peak,
+including extra allocation calculations and saved diagnostic tables. Fresh
+MNL allocation alone took about 0.018?0.096 s per batch, and the reachable
+allocation about 0.025?0.048 s; those are not complete alternatives for
+the whole search, and this starting state has just one occupied plan per
+demand unit. The test does not establish a general performance advantage.
+
+Fresh MNL allocated about 97.7% of people to mobile plans in batch 1 and
+99.994% by batch 10. Adding sampled alternatives can mechanically change
+MNL probabilities, and stability of successive batches does not demonstrate
+that the sampled plan set represents the complete distribution. Evaluate
+several seeds, larger pools, mature states, and sampling/choice-set bias
+before replacing the production stopping rule.
+
+Set `MOBILITY_PROBE_MNL_BATCHES=1` to capture the diagnostics; the probe
+sets the required convergence passes to the batch limit but may still stop
+if generation requests are exhausted. It saves per-batch flows and
+context-plan allocations in its printed temporary output folder.
+
+
+### Higher effort per fixed-state search batch
+
+The fresh-MNL experiment was repeated with the same one-step initial state,
+default scenario and seed, but two activity, two destination and two mode
+draws in each of ten batches (eight rough points per batch, versus one).
+Both runs used eight Polars threads and no memory limit; both retained the
+production scheduler, whose generation priorities use reachable allocation.
+The higher-effort diagnostic run took 118.9 s with a 5.31 GiB sampled
+process-tree peak, including saved flows and plan tables.
+
+| Batch | Low: candidates | High: candidates | Low: fresh flow change | High: fresh flow change | Low: plan change | High: plan change |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 7,213 | 44,594 | 43.35% | 40.51% | 48.88% | 48.02% |
+| 4 | 13,560 | 82,364 | 18.97% | 18.19% | 22.89% | 23.40% |
+| 6 | 19,869 | 120,120 | 14.11% | 9.84% | 16.67% | 13.91% |
+| 8 | 26,233 | 157,736 | 9.70% | 9.55% | 11.93% | 12.65% |
+| 10 | 32,578 | 195,305 | 6.82% | 5.94% | 8.55% | 8.32% |
+
+Changes use the symmetric absolute-change index relative to the preceding
+batch, and are not monotonic. The high batch-10 pool is not an established
+truth. Comparing the two final flow tables gives 3.83% by mode totals, 4.41%
+by activity totals, 53.65% by OD, and 68.43% by OD/mode/activity. Using
+local administrative units for both ends gives 42.44% for OD/mode/activity;
+using 5 km zone-centroid cells gives 30.18%. These comparisons do not match
+local plan IDs across runs. Aggregation permits within-area changes to cancel
+and does not measure how far trips moved. One seed cannot separate sampling
+noise from systematic effort effects.
+
+The observed reduction in consecutive-batch change with higher batch effort
+is modest compared with its cost and does not establish convergence. Modeled
+flow distributions still differ sharply at detailed OD level. With a changing
+candidate pool, a small next-batch change alone is not evidence that all
+important options were sampled.
+
+
+### Contributors to fresh-MNL batch-to-batch flow change
+
+This analysis uses the one-step, lowest-effort, ten-batch fixed-state probe
+above. For each transition between batches, each OD/mode/activity cell
+contributes `abs(new volume - previous volume)` to the numerator of the
+symmetric flow-change index. The denominator is the sum of both flow totals.
+The table reports shares of the numerator, not percentages of all trips.
+
+| New batch | Flow change | Largest 10 cells' share | Largest 100 cells' share | New flow cells' share | Car cells' share |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 43.35% | 2.48% | 12.98% | 46.3% | 90.4% |
+| 3 | 25.29% | 3.02% | 14.62% | 39.5% | 90.7% |
+| 4 | 18.97% | 4.27% | 18.59% | 31.0% | 91.4% |
+| 5 | 15.38% | 4.33% | 20.51% | 26.1% | 86.4% |
+| 6 | 14.11% | 5.27% | 23.96% | 25.6% | 89.1% |
+| 7 | 11.91% | 4.03% | 20.77% | 21.7% | 90.3% |
+| 8 | 9.70% | 4.39% | 22.80% | 23.4% | 90.0% |
+| 9 | 8.27% | 5.59% | 22.90% | 20.9% | 90.5% |
+| 10 | 6.82% | 4.56% | 20.22% | 17.8% | 92.1% |
+
+At batch 10, 82.2% of absolute change was in previously nonzero flow cells,
+and 17.8% in newly nonzero cells. A flow cell is not a plan: new plans can
+change existing cells, and existing plans can lose weight when MNL is
+renormalized. Car accounted for 92.1% of the absolute change while car made
+up about 88.4% of the batch-10 flow volume. By destination activity, the
+change shares were home 36.7%, other 20.3%, shopping 20.0%, leisure 16.8%,
+studies 5.4% and work 0.8%. The largest 10 origin zones accounted for 11.4%
+of the numerator. Origin means a trip leg origin, not necessarily home.
+
+The largest cell at batch 10 was a new 13,347-person-trip car/home flow from
+zone 909 to 907, both in Le Grand-Saconnex; it accounted for 0.74% of the
+numerator. A new 10,010-person-trip car/shopping flow in the reverse
+direction was next. These are changes to aggregate expected trips; the output
+does not trace which individual plans or populations caused them. About 33.3%
+of the batch-10 absolute change was intrazonal, versus 39.1% of flow volume.
+The expected work-trip total decreased from about 771,000 at batch 2 to
+336,000 at batch 10, while total trips rose from 11.09 to 13.30 million.
+These findings describe one seed and a fixed initial state and do not prove
+the sampler's behavior at other states or scenarios.
+
+
+### Largest-subgroup fresh-MNL plan trace
+
+A repeat of the one-step, lowest-effort, ten-batch run captured one
+largest demand subgroup. Several subgroups tie near the 100-person cap; the
+selection was deterministic by size and IDs. It selected demand group 8665,
+subgroup 0, representing 99.999986 people, in home zone 328
+(Injoux-G?nissiat). Its shared scoring context 2946 represents 174.54 people;
+the percentages below are shared-context MNL probabilities, scaled to this
+subgroup when expressed as persons. They are target shares, not actual outer
+transitions.
+
+| Final rank | Plan ID | Utility | First batch | Share batch 1 | Share batch 5 | Share batch 10 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 10612 | 97.048 | 1 | 62.03% | 49.71% | 31.54% |
+| 2 | 10611 | 95.001 | 1 | 37.18% | 29.80% | 18.91% |
+| 3 | 210570 | 93.344 | 8 | ? | ? | 12.49% |
+| 4 | 157573 | 91.294 | 6 | ? | ? | 7.48% |
+| 5 | 183987 | 88.711 | 7 | ? | ? | 3.92% |
+| 6 | 104853 | 87.926 | 4 | ? | 5.08% | 3.22% |
+| 7 | 183988 | 87.924 | 7 | ? | ? | 3.22% |
+| 8 | 131355 | 87.129 | 5 | ? | 4.16% | 2.64% |
+| 9 | 210571 | 86.992 | 8 | ? | ? | 2.55% |
+| 10 | 78469 | 86.744 | 3 | ? | 3.78% | 2.40% |
+
+All 31 mobile plans in batch 10 used car; the 32nd option was stay-home,
+with 0.015% of the target. This run requested one mode sequence per chain,
+so the result does not establish the full mode-choice distribution. The top
+ten account for 88.39% of MNL probability. No previously available plan
+disappeared and the utilities of shared plans stayed exactly constant in
+this trace. The top two were already present in batch 1; their joint share
+fell from 99.21% to 50.45% as additional alternatives entered the MNL
+normalization. In batch 8, three first-seen plans together took 16.24% of
+probability; the new rank-3 plan alone took 13.16% initially.
+
+The trace also exposed a schedule-feasibility issue. Rank-3 plan 210570's
+fourth step is shopping: its next departure is 2.83 minutes before modeled
+arrival. Rank-9 plan 210571's first shopping step departs 20.83 minutes
+before modeled arrival. The schedule updater floors activity duration at
+0.001 hours, rounded in the saved timings to four seconds, rather than
+rejecting or repairing these overlapping schedules. Feasibility in the
+scoring path checks finite travel costs, not this timing conflict. Across
+all 32 choices, eight plans have at least one negative raw duration for a
+non-home activity and together carry 17.64% of this subgroup's fresh-MNL
+probability. The final home step's zero duration is a separate convention
+and was excluded from that count. This is a trace of one tied subgroup,
+not an estimate of prevalence across the population.
+
+### Utility-guided destination sampling experiment
+
+After fixing the schedule feasibility check, we compared the default radiation
+sampler with the optional fastest/cheapest utility guide. Both used one Geneva
+scenario, one full-replanning step, ten inner batches, one activity,
+destination and mode draw per batch, seed 0, eight Polars threads and disabled
+road and opportunity congestion. The same diagnostic work was enabled in both.
+
+| After batch 10 | Radiation | Utility guide |
+| --- | ---: | ---: |
+| Mobile candidate rows across scoring contexts | 271,286 | 271,351 |
+| Infeasible candidate rows | 19.8% | 15.6% |
+| Feasible rows below 1% of their context's best feasible mobile plan weight | 49.3% | 53.3% |
+| Flow change from batch 9 to 10 | 7.09% | 7.80% |
+| Choice change from batch 9 to 10 | 8.84% | 9.26% |
+| Destination sampling, summed across batches | 18.21 s | 27.41 s |
+| Whole probe wall time | 67.23 s | 75.93 s |
+| Peak process RSS | 5.76 GiB | 5.42 GiB |
+
+Rows count a candidate once per scoring context, not once per physical plan or
+represented person. The low-weight measure is relative to each run's best
+feasible mobile plan in the same context; its increase does not by itself prove
+that absolute utilities are lower. The final fresh MNL OD/mode/activity flow
+change index between the two methods was 36.79%, so their candidate pools lead
+to materially different results at this effort. This single seed does not
+establish which distribution is closer to a well-sampled reference.
+
+The guide uses the reference activity duration as a proxy for the population's
+usual duration and keeps only a preliminary cost-and-capacity shortlist. It is
+optimistic about onward mode choice and does not enforce vehicle continuity.
+These approximations, and sampling modes only after destinations, can explain
+remaining infeasible and low-weight candidates. Neither result supports making
+the guide the default without further study.
+
+### Anchor-first utility guide with actual activity-duration profiles
+
+We revised the optional utility guide to use population-weighted typical
+activity durations by travel-cost profile, destination-country coefficients,
+arrival-time rigidity and the impact on the next activity when it is the next
+anchor. It compares fastest and cheapest modes for both legs. Other activities
+are still drawn toward their already sampled next anchor. While drawing anchors,
+the onward proxy remains home because later anchors are not yet known. A
+capacity-and-cost shortlist still bounds work, but the utility-guided draw no
+longer multiplies its weight by capacity, which is not a direct plan-utility
+term. We removed redundant OD joins and the unused expected-mode-cost calculation.
+
+Using the same one-step, one-scenario, ten-batch fixed-congestion setup as
+above, with seed 0 and one draw of each type per batch:
+
+| After batch 10 | Radiation | Revised utility guide |
+| --- | ---: | ---: |
+| Mobile candidate rows across scoring contexts | 271,286 | 271,180 |
+| Infeasible candidate rows | 19.81% | 11.28% |
+| Feasible rows below 1% of their context's best feasible mobile plan weight | 49.26% | 57.96% |
+| Population-weighted best feasible utility, including stay-home | 110.16 | 111.23 |
+| Population-weighted fresh-MNL mean utility | 107.52 | 108.57 |
+| Flow change from batch 9 to 10 | 7.09% | 7.55% |
+| Destination sampling, summed across batches | 15.20 s | 19.76 s |
+| Whole probe wall time | 60.68 s | 62.82 s |
+| Peak process RSS | 5.75 GiB | 5.76 GiB |
+
+For 44.2% of represented people, the best feasible utility was higher by more
+than 0.01; for 29.1% it was lower by more than 0.01, and 26.7% were within
+0.01. This comparison joins the same scoring contexts across both runs. The
+low-weight share is relative to each method's own best mobile plan, so a
+higher share can reflect discovering better plans rather than worse absolute
+utilities. The two batch-10 fresh-MNL OD/mode/activity distributions differed
+by 50.49% on the flow-change index. Neither is a known reference: higher best
+utility alone does not prove better coverage of the whole choice distribution.
+
+One earlier version retained a destination-capacity multiplier in the draw;
+it produced 14.91% infeasible rows and a mean best utility of 109.89. Removing
+that multiplier improved these two measures in this run. An optimization that
+removed the unused expected-cost calculation reproduced all 250,493 batch-10
+choice rows and allocated volumes exactly. A final repeat after deterministic
+duration aggregation also reproduced those rows and volumes. Timings are
+single-run measurements and vary between repetitions.
+
+### Rigidity-aware timing filter
+
+For utility-guided sampling, a non-anchor stop directly before its known anchor
+can be checked before computing destination utilities. Using the fastest
+available incoming and onward travel times and both activities' arrival-time
+rigidities gives an optimistic activity window. If even that window ends more
+than two seconds before it starts, the destination is excluded. The margin
+protects modeled second-level rounding. The check is skipped when the next
+stop is not the known anchor or a mode with finite cost has an unknown time.
+It does not constrain anchor sampling, where intervening stops are not yet known.
+
+In a separate first-batch diagnostic, the check removed 446,181 of 1,554,028
+stop/destination/context combinations (28.7%) before utility scoring. For
+stops immediately before an anchor, the reduction was 50.3% for shopping,
+42.4% for other activities and 22.4% for leisure. These are combinations
+examined by the sampler, not distinct complete plans or represented people.
+
+| After ten batches | Utility guide before filter | With timing filter |
+| --- | ---: | ---: |
+| Mobile candidate rows across scoring contexts | 271,180 | 264,723 |
+| Infeasible candidate rows | 11.28% | 3.66% |
+| Population-weighted best feasible utility | 111.23 | 111.29 |
+| Population-weighted fresh-MNL mean utility | 108.57 | 108.58 |
+| Flow change from batch 9 to 10 | 7.55% | 7.55% |
+| Destination sampling, summed across batches | 19.76 s | 20.36 s |
+| Whole probe wall time | 62.82 s | 64.66 s |
+
+The batch-10 flow change index between the two methods was 2.21%. The filter
+did not reduce measured runtime in this single comparison: it still joins
+both legs before it can filter and adds a check. Across ten batches, 614
+incomplete destination-sequence draws were dropped when some stop had no
+candidate left in its shortlist. This does not prove the schedule is globally
+infeasible: another destination outside the shortlist, another anchor choice or
+another travel-cost profile might work. The shared pool also means a plan not
+sampled for one profile can otherwise be useful to another.
+
+A separate manual probe retained fastest/cheapest OD options across batches,
+keyed by scenario, step and profile. It reproduced all 264,945 batch-10 choice
+rows and allocations exactly, and destination sampling fell from 20.33 to
+17.73 seconds in those two runs. Three profiles retained 128.5 MB (decimal)
+in one scenario.
+
+The utility sampler now reuses these tables during each inner search. The cache
+is shared across the scenario cohort, retains at most 256 MiB, and uses the
+scenario, iteration transport-cost asset and resolved profile assets as its
+key. If a table will not fit, it is recomputed; the simulation is not stopped.
+The cache is cleared at the end of the inner search, before the next outer step
+or a congestion update. Cache contents do not enter simulation identity.
+
+In the same ten-batch run, the production cache built three option tables
+instead of fifteen and reduced destination sampling from 20.36 to 17.29 seconds;
+all 264,945 batch-10 choice rows and allocated volumes matched exactly. Whole
+run time was 64.66 seconds without the cache and 61.95 seconds with it. These
+are single timings. In a separate two-step, two-batch run with road and
+opportunity congestion enabled, the cache was rebuilt after the road-cost
+update. Cached and uncached batch-2 choice and flow tables matched exactly;
+trip counts differed by at most 1.9e-9 due to floating-point aggregation.
+
+### Earlier departures and scenario cache sharing
+
+The utility guide now adds the change in preceding-activity utility caused by
+an incoming travel-time change. For the first trip it estimates the change in
+home-night utility. Both terms use the current activity's arrival rigidity and
+profile-average typical durations. The preceding activity's arrival is held at
+its reference time; when sampling anchors before intermediate stops, the
+preceding destination can be unknown. The term is skipped for zero-rigidity
+activities or when modeled timing updates are disabled. This shortcut exactly
+reproduced 265,089 batch-10 choice rows and volumes in the fixed-cost probe.
+
+| After ten batches | Previous guide | Including preceding activity |
+| --- | ---: | ---: |
+| Infeasible mobile candidate rows | 3.66% | 3.62% |
+| Population-weighted best feasible utility | 111.292 | 111.355 |
+| Population-weighted fresh-MNL mean utility | 108.579 | 108.645 |
+| Flow change from batch 9 to 10 | 7.55% | 7.50% |
+| Destination sampling, summed across batches | 17.29 s | 19.82 s |
+| Whole probe wall time | 61.95 s | 65.19 s |
+
+The batch-10 OD/mode/activity flow change index between these runs was 1.35%.
+For 1.82% of represented people the best feasible utility increased by more
+than 0.01, for 0.29% it decreased by more than 0.01, and 97.89% were within
+0.01. These are one seed and one fixed-cost scenario; they do not establish
+which candidate distribution is closer to a complete reference.
+
+An earlier diagnostic compared the preceding-activity estimate with the
+original survey schedule. That comparison is not reliable after a candidate
+has already acquired modeled timings: the incoming schedule for a later batch
+can differ from its survey reference. The corrected diagnostic uses the
+evaluation's incoming-to-modeled time mapping and excludes ambiguous mappings.
+
+A separate two-batch, three-scenario probe compared the default scenario, an
+identical baseline copy and a carbon-tax scenario changed from step 1. The
+identical scenarios shared candidate generation at the asset level; two cost
+scenarios built four distinct 42.8 MB option tables across their active
+profiles in that probe. Identical table contents were not observed across the
+different cost scenarios. Thus a one-step lifetime alone would not bound peak
+memory, and this small experiment does not justify removing the shared 256 MiB
+retention limit. It also does not predict sharing across all possible scenarios.
+
+### Estimated preceding arrival
+
+The guide now estimates the arrival at the preceding activity using fastest
+and cheapest options for its incoming trip, including their travel costs.
+Sequential non-anchor sampling carries the previously sampled origin and
+destination. During anchor-first sampling an intervening non-anchor location
+is not yet known, so the last known anchor is used as a provisional location.
+The first trip always starts at home; its home-night estimate does not require
+a preceding-trip lookup. Unknown route times or unavailable OD options retain
+the previous reference-arrival approximation. Mode continuity is still checked
+only when the complete plan is evaluated.
+
+Using the same one-scenario, one-step, ten-batch fixed-cost setup as above:
+
+| After ten batches | Reference preceding arrival | Estimated preceding arrival |
+| --- | ---: | ---: |
+| Infeasible mobile candidate rows | 3.615% | 3.619% |
+| Population-weighted best feasible utility | 111.355317 | 111.355315 |
+| Population-weighted fresh-MNL mean utility | 108.645325 | 108.645902 |
+| Flow change from batch 9 to 10 | 7.503% | 7.514% |
+| Destination sampling, summed across batches | 19.82 s | 20.43 s |
+| Whole probe wall time | 65.19 s | 64.69 s |
+
+The flow-change index between the two batch-10 distributions was 0.036%.
+These single-seed results do not establish whether either distribution is
+closer to a fully sampled reference. Skipping the nonexistent preceding-trip
+lookup for first trips preserved all 265,093 batch-10 choice rows and volumes
+exactly in a repeat.
+
+The first trip always departs from the home zone, including when the schedule
+contains an explicit home activity. A separate cleanup stopped recomputing an
+aggregate OD table that profile-based destination sampling does not use. It
+removed ten expected-OD calculations totaling 1.44 seconds from the preceding
+run's trace; all 265,093 batch-10 choice rows and volumes matched exactly. The
+table above uses the run after this cleanup. Whole-run timings remain noisy.
+
+For one work-heavy scoring context, the corrected diagnostic matched six
+chosen plan/activity pairs to unambiguous incoming schedules. It compares
+preceding-activity timing using the final context's utility coefficients and
+the actual current-trip time, so it isolates the preceding-arrival estimate;
+it is not the complete error in the sampler's profile-average score. Across
+these pairs the person-weighted mean absolute duration discrepancy fell from
+1.48 to 0.039 minutes, and the corresponding utility discrepancy fell from
+0.0585 to 0.0016 units. The reconstructed location proxy matched the eventual
+preceding OD in five of six pairs, representing 97.6% of their pair-weighted
+volume. This is one selected context, not a population-wide accuracy estimate.
+The diagnostic requires `MOBILITY_PROBE_RIGID_UTILITY_BATCH=10` and
+`MOBILITY_PROBE_CAPTURE_TRAVEL_OPTIONS=1`.
+
+In a separate first-batch location diagnostic, 1,097 rigid-anchor draws were
+first trips, 257 had an anchor as their preceding activity and 319 had an
+intervening non-anchor activity whose location was not yet sampled. These are
+draw counts rather than people, and do not show how geographically close the
+provisional and eventual locations are.
+
+### Current radiation and utility runtimes
+
+After removing the unused aggregate OD calculation from both paths, a fresh
+one-scenario, one-step, ten-batch fixed-cost run measured:
+
+| Timing | Radiation | Utility guide |
+| --- | ---: | ---: |
+| Destination sampling | 13.00 s | 20.43 s |
+| Inner search | 34.08 s | 41.73 s |
+| Candidate evaluation | 7.57 s | 7.57 s |
+| Whole probe | 56.31 s | 64.69 s |
+
+These steps overlap: destination sampling and candidate evaluation are part
+of the inner search, which is part of the whole run. Both runs used one draw
+of each type per batch, one seed, eight Polars threads and disabled road and
+opportunity congestion. They are single timings with manual diagnostics
+enabled. The batch-10 infeasible mobile candidate share was 19.81% with
+radiation and 3.62% with the utility guide; this alone does not establish which
+choice distribution is more accurate.
+
+### Anchor-sampling collection diagnostic
+
+A separate one-batch, one-scenario probe timed individual lazy-frame
+collections inside anchor sampling. Both methods processed the same 1,097
+requests at the first non-home anchor. Across all anchor positions:
+
+| Collected work | Radiation | Utility guide |
+| --- | ---: | ---: |
+| Context–destination weight rows | 44,650 | 259,805 |
+| Weight-building collections | 0.071 s | 1.111 s |
+| Draw-winner collections | 0.020 s | 0.040 s |
+| Other collections | 0.013 s | 0.011 s |
+
+At the first anchor alone, radiation materialized 27,548 weight rows with
+five columns in 0.009 s; the utility guide materialized 170,188 rows with
+18 columns in 0.260 s. This probe includes instrumentation and is a single
+timing. The radiation and utility methods use different shortlist rules,
+and the utility method also separates contexts by timing and preceding-activity
+information. Its weight calculation includes the modeled trip and activity
+utilities. The trace does not break down the time among those joins, grouping
+and arithmetic operations. Weight-row counts are not distinct physical plans.
+
+### Destination sampling: useful plans per second
+
+A fixed-state Geneva probe compared radiation and utility-based sampling with one scenario,
+one outer step, ten inner batches, one draw of each kind, one seed, eight Polars threads,
+and both road and opportunity congestion disabled. The pooled best utility for each
+scoring context is the better of the two runs' ten-batch best values. This is a finite
+sample benchmark, not the true best possible plan. The probe excludes its own diagnostic
+work from the inner-search times below; full run times include initialization and diagnostics.
+
+At an equal 32.9-second search budget, radiation completed ten batches and utility sampling
+completed eight. Radiation had 60,651 feasible mobile plan-context combinations whose
+unnormalized choice weight was at least 1% of the pooled best, versus 65,795 for utility
+sampling. The population-weighted mean gap from that pooled best was 1.985 utility units
+for radiation and 1.918 for utility sampling. These are plan-context combinations, not
+unique physical plans or allocated people. The 1% cutoff is a relative utility threshold,
+not a prediction that every qualifying plan receives a 1% choice probability.
+
+At ten batches, radiation needed 32.9 seconds of search and utility sampling 42.3 seconds;
+the latter reached a mean best-utility gap of 0.786. Radiation produced 53,729 infeasible
+mobile plan-context combinations out of 271,286 (19.8%); utility produced 9,582 out of
+264,777 (3.6%). Total process times were 57.2 and 67.0 seconds; peak process RSS was
+5.89 and 5.69 GiB, respectively. These are single runs and do not establish variability
+or how either method performs under congestion or other effort settings.
+
+An experiment cached destination/activity values across batches to avoid repeatedly
+extracting them from the OD table. It produced identical final allocations to the earlier
+utility run, but destination sampling took 21.1 seconds versus 20.4 seconds before, so
+the cache was removed. The comparison probe can be reproduced using
+`tests/manual/compare_destination_sampling.py` and the `MOBILITY_PROBE_UTILITY_POOLS`
+option of the Geneva manual probe.
+
+### A simpler anchor score and a tighter shortlist
+
+When none of the sampled anchors has a directly modeled next activity, the
+onward travel time has no effect on the approximate utility. The sampler now
+uses only the cheapest onward cost and does not group requests by unused next
+activity timing. With the same seed and 0.9 shortlist cutoff, all final choice
+rows and allocated volumes matched exactly in the ten-batch Geneva probe.
+Anchor sampling took 8.64 seconds versus 9.22 seconds before; total destination
+sampling took 20.25 versus 21.11 seconds. These are single timings, so the
+size of the gain is uncertain.
+
+A separate run kept the same model and sampling effort but reduced the existing
+first-leg shortlist cutoff from 0.9 to 0.5. The cutoff is cumulative preliminary
+weight, not a percentage of destinations. At ten batches, inner search excluding
+diagnostic work took 38.91 versus 40.23 seconds, and destination sampling took
+18.88 versus 20.25 seconds. Against the combined ten-batch best utility per
+scoring context, the population-weighted best-utility gap was 0.603 versus
+1.807 utility units. At a 38.91-second budget, the tighter cutoff completed ten
+batches and retained 83,140 qualifying plan-context combinations; the original
+completed nine and retained 66,722. Qualifying means feasible and within 1% of
+the combined best's unnormalized choice weight, as above.
+
+This does not establish that the tighter shortlist gives a better choice
+distribution. Its ten-batch OD/mode/activity flow-change index versus the 0.9
+run was 0.568; the radiation-versus-0.9 utility comparison was 0.506. These are
+one-seed, fixed-state, low-effort runs, and a different sample naturally changes
+flows. Check more seeds and distribution coverage before changing a default.
+The manual probe accepts `MOBILITY_PROBE_DESTINATION_CUTOFF` for this comparison.
+
+### Four utility-sampling optimization experiments
+
+These probes used one Geneva scenario, seed 0, one outer step, ten inner
+batches, one draw of each kind, eight Polars threads, and fixed costs with
+road and opportunity congestion disabled. Timings are individual runs;
+the diagnostic output is enabled for all comparisons and total search times
+below exclude its separately measured work.
+
+1. A first-trip-only score omitted the general preceding-activity join and
+   calculation when every request was the first trip. Batch-10 allocations
+   matched exactly. Anchor sampling was 8.56 seconds versus 8.64 seconds
+   before, and total destination sampling was 20.88 versus 20.25 seconds.
+   The extra branch was removed because the run did not show a useful gain.
+2. The optimized Polars plan used common-subexpression elimination, but still
+   performed several schedule-only activity lookups after joining each
+   schedule to destination options. Moving typical duration, activity value,
+   rigidity and reference travel time before that join preserved all batch-10
+   allocations exactly. Destination sampling fell from 20.25 to 18.96 seconds;
+   inner search fell from 40.23 to 39.16 seconds. This change was retained.
+3. In saved Geneva OD tables, fastest and cheapest had the same time and cost
+   for 97.4%, 97.4% and 93.1% of rows across the three utility profiles.
+   Splitting identical and different options allowed the first set to be
+   scored once and preserved batch-10 allocations. However, destination
+   sampling increased from 18.96 to 22.43 seconds. Sharing and splitting the
+   rows cost more than the saved arithmetic, so the split was removed.
+4. An experimental first-pass cap retained the first eight destinations per
+   origin/activity in the existing preliminary ranking before detailed utility
+   scoring. This is an approximation, not an optimistic utility bound. It
+   reduced destination sampling from 18.96 to 15.99 seconds and search from
+   39.16 to 35.96 seconds. Against the combined ten-batch best per context,
+   the population-weighted best-utility gap was 0.480 versus 1.601 for the
+   uncapped run. At an equal 35.96-second budget it completed ten batches
+   versus nine and retained 83,674 versus 69,514 qualifying plan-context
+   combinations, using the 1% unnormalized weight threshold described above.
+   The batch-10 OD/mode/activity flow-change index between the two runs was
+   0.493. A better best utility does not prove the narrower sample represents
+   the full choice distribution well. Do not change the default based on one
+   seed and one fixed-state case. The one-off shortlist experiment was removed
+   after measurement; it is not part of the sampler.
+
+### What the eight-destination shortlist changes
+
+A closer look compared the fixed-state seed-0, ten-batch utility runs above
+with and without the eight-destination cap. All results in this section are
+fresh MNL target allocations, not realized transition flows; both congestion
+feedbacks were off. A separate uncapped seed-1 run provides a sampling-noise
+comparison. Its 9,898 scoring contexts and their populations matched seed 0.
+
+For one inspected profile, the existing 0.9 cumulative preliminary cutoff
+retained 1,047,435 origin/activity/destination rows; the eight-destination cap
+reduced this to 44,400 (4.2%). All 5,550 origin/activity groups were truncated,
+and the original largest shortlist per activity ranged from 163 to 362. The
+preliminary ordering uses `log(attraction) - cheapest_cost`; final detailed
+sampling uses the subsequent utility score. The cap can therefore discard a
+destination that the detailed score would prefer.
+
+At batch ten, the uncapped and capped seed-0 targets had 13.73 and 13.93
+million represented daily trips. Their symmetric flow-change index was 0.493
+for OD/mode/activity, but only 0.0117 for mode totals and 0.0104 for activity
+totals. The uncapped seed-0 versus uncapped seed-1 comparison had a much
+larger detailed index of 0.763 (mode 0.0076, activity 0.0102). Thus a large
+detailed index alone is not evidence that the cap caused worse results;
+finite sampling and seed differences are already very large.
+
+Geography showed a more directional difference. Volume-weighted straight-line
+zone-centre distances, using the zone internal-distance proxy for intrazonal
+trips, were 2.74 km for uncapped seed 0, 2.70 km for uncapped seed 1, and
+2.13 km for capped seed 0. The seed-0 share under 2 km rose from 56.5% to
+64.1%; represented trips with a proxy distance over 20 km fell from 107,227
+to 14,041. These are geographic proxies, not network route distances. Work
+trips' mean proxy fell from 6.44 to 3.83 km and their detailed flow-change
+index was 0.897, though work accounts for a small share of the target trips.
+Walking volume rose from 0.917 to 1.179 million and car volume fell from
+12.768 to 12.710 million. Cross-border volume fell from 153,491 to 121,311,
+but uncapped seed 1 had 111,449, so this comparison cannot establish a
+systematic cross-border effect.
+
+The cap's batch-10 mean best utility was 112.476 versus 111.355; mean chosen
+utility was 109.756 versus 108.646. By represented population, the capped run
+had a best utility higher by more than 0.01 for 48.9%, lower by more than 0.01
+for 20.3%, and within 0.01 for 30.8%. The uncapped seed-1 means were 111.385
+and 108.647. This supports the hypothesis that the cap targets attractive
+short trips, but one paired seed does not establish that it improves coverage
+of the full choice distribution. More seeds and heavier search, especially
+for work and longer-distance travel, are needed before using it as a default.
