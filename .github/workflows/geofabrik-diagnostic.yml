@@ -1,0 +1,16 @@
+name: Geofabrik connectivity diagnostic
+on:
+  push:
+    branches: [test/geofabrik-connectivity]
+permissions:
+  contents: read
+jobs:
+  connectivity:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test runner network
+        run: bash .github/workflows/geofabrik-diagnostic.sh
+      - name: Test container network on the same runner
+        run: |
+          docker run --rm -v "$PWD/.github/workflows/geofabrik-diagnostic.sh:/diagnostic.sh:ro" --entrypoint sh curlimages/curl:8.12.1 /diagnostic.sh
