@@ -133,15 +133,6 @@ def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files
             gtfs_sources_folder=gtfs_sources_folder,
             # These resources have no archive before the test's reference date.
             excluded_gtfs_sources=["transport_data_gouv:83830", "transport_data_gouv:84253"],
-            # Prefer the regional feed, then the other overlapping feeds.
-            gtfs_feed_priority=[
-                "transport_data_gouv:82321",
-                "transport_data_gouv:82340",
-                "transport_data_gouv:82348",
-                "transport_data_gouv:83194",
-                "transport_data_gouv:83582",
-                "transport_data_gouv:83675",
-            ],
             additional_gtfs_files=additional_gtfs_files,
             max_traveltime=10.0,
             max_perceived_time=10.0,
