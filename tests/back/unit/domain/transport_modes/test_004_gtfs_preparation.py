@@ -42,6 +42,199 @@ def write_feed(path, files):
     return path
 
 
+def test_spatiotemporal_overlap_requires_priority_and_reports_feeds(tmp_path, feed_files, zones, route_types):
+    other = dict(feed_files)
+    other["agency"] = other["agency"].replace("Test,", "Another operator,")
+    other["agency"] += "b,Outside study area,https://example.com,Europe/Paris\n"
+    other["trips"] = other["trips"].replace("r,s,t", "r,s,other")
+    other["stop_times"] = other["stop_times"].replace("\nt,", "\nother,")
+    paths = [write_feed(tmp_path / "first.zip", feed_files), write_feed(tmp_path / "second.zip", other)]
+    ids = {str(paths[0]): "test:first", str(paths[1]): "test:second"}
+    with pytest.raises(ValueError, match="test:first.*test:second") as error:
+        GTFSTimetable(paths, zones, route_types, source_ids=ids).prepare()
+    assert "All agencies listed in each affected feed" in str(error.value)
+    assert "matched operators:" not in str(error.value)
+    assert "Another operator [a]" in str(error.value)
+    assert "Outside study area [b]" in str(error.value)
+    tables, metadata = GTFSTimetable(paths, zones, route_types, source_ids=ids,
+                                     feed_priority=["test:first", "test:second"]).prepare()
+    assert tables["trips"].trip_id.tolist() == ["1-t"]
+    assert metadata["spatiotemporal_overlap_pairs"] == 1
+    assert metadata["trip_overlaps"][["left_trip_id", "right_trip_id"]].values.tolist() == [["1-t", "2-other"]]
+    assert metadata["trip_overlaps"].removed_trip_id.tolist() == ["2-other"]
+    router = object.__new__(GTFSRouter)
+    router.cache_path = {"stops_and_lines": tmp_path / "report.gpkg"}
+    router.write_stops_and_lines(tables, metadata)
+    import pyogrio
+    report = pyogrio.read_dataframe(router.cache_path["stops_and_lines"], layer="trip_overlaps")
+    assert report[["left_trip_id", "right_trip_id"]].values.tolist() == [["1-t", "2-other"]]
+
+
+@pytest.mark.parametrize("exact,expected_pairs", [("0", 0), ("1", 1), ("", 0)])
+def test_frequency_departures_are_only_matched_when_exact(tmp_path, feed_files, zones, route_types, exact, expected_pairs):
+    other = dict(feed_files)
+    other["agency"] = other["agency"].replace("Test,", "Another operator,")
+    other["frequencies"] = "trip_id,start_time,end_time,headway_secs,exact_times\nt,08:00:00,08:01:00,600," + exact + "\n"
+    paths = [write_feed(tmp_path / "first.zip", feed_files), write_feed(tmp_path / "second.zip", other)]
+    tables, metadata = GTFSTimetable(paths, zones, route_types, feed_priority=[str(p) for p in paths]).prepare()
+    assert len(tables["trips"]) == 2 - expected_pairs
+    assert "_frequency_kind" not in tables["trips"]
+    assert metadata["spatiotemporal_overlap_pairs"] == expected_pairs
+    assert metadata["headway_generated_trips"] == (0 if exact == "1" else 1)
+
+
+def test_overlap_compares_only_selected_day(tmp_path, feed_files, zones, route_types):
+    other = dict(feed_files)
+    other["agency"] = other["agency"].replace("Test,", "Another operator,")
+    other["calendar_dates"] = "service_id,date,exception_type\ns,20260908,2\n"
+    paths = [write_feed(tmp_path / "first.zip", feed_files), write_feed(tmp_path / "second.zip", other)]
+    tables, metadata = GTFSTimetable(paths, zones, route_types, "2026-09-08", "2026-09-08").prepare()
+    assert metadata["selected_date"] == "2026-09-08"
+    assert len(tables["trips"]) == 1
+    assert metadata["spatiotemporal_overlap_pairs"] == 0
+
+
+def test_trips_diverging_outside_study_area_match_locally(tmp_path, feed_files, zones, route_types):
+    first, second = dict(feed_files), dict(feed_files)
+    first["stops"] += "outside1,Far north,49.0,-1.68\n"
+    second["stops"] += "outside2,Far east,48.11,-0.5\n"
+    first["stop_times"] += "t,09:00:00,09:00:00,outside1,3\n"
+    second["stop_times"] += "t,09:00:00,09:00:00,outside2,3\n"
+    paths = [write_feed(tmp_path / "first.zip", first), write_feed(tmp_path / "second.zip", second)]
+    tables, metadata = GTFSTimetable(paths, zones, route_types, feed_priority=[str(p) for p in paths]).prepare()
+    assert metadata["spatiotemporal_overlap_pairs"] == 1
+    assert tables["trips"].trip_id.tolist() == ["1-t"]
+    assert len(tables["stop_times"]) == 2
+
+
+@pytest.mark.parametrize("column", ["pickup_type", "drop_off_type"])
+def test_different_boarding_rules_preserve_both_feeds(tmp_path, feed_files, zones, route_types, column):
+    other = dict(feed_files)
+    other["agency"] = other["agency"].replace("Test,", "Another operator,")
+    other["stop_times"] = other["stop_times"].replace("stop_sequence\n", f"stop_sequence,{column}\n")
+    other["stop_times"] = other["stop_times"].replace(",a,1\n", ",a,1,0\n").replace(",b,2\n", ",b,2,1\n")
+    paths = [write_feed(tmp_path / "first.zip", feed_files), write_feed(tmp_path / "second.zip", other)]
+    tables, metadata = GTFSTimetable(paths, zones, route_types).prepare()
+    assert metadata["spatiotemporal_overlap_pairs"] == 0
+    assert set(tables["trips"].trip_id) == {"1-t", "2-t"}
+
+
+def test_duplicate_trips_within_feed_are_removed_with_warning(tmp_path, feed_files, zones, route_types, caplog):
+    feed_files["trips"] += "r,s,u\n"
+    feed_files["stop_times"] += "u,08:00:00,08:00:00,a,1\nu,08:10:00,08:10:00,b,2\n"
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    tables, metadata = GTFSTimetable([path], zones, route_types,
+                                     source_ids={str(path): "test:feed"}).prepare()
+    assert tables["trips"].trip_id.tolist() == ["1-t"]
+    assert metadata["within_feed_deduplicated_trips"] == 1
+    assert metadata["within_feed_overlaps"].removed_trip_id.tolist() == ["1-u"]
+    assert "within GTFS feed test:feed" in caplog.text
+
+
+def test_identical_headway_intervals_require_priority_and_remove_one_interval(tmp_path, feed_files, zones, route_types):
+    first, second = dict(feed_files), dict(feed_files)
+    first["frequencies"] = "trip_id,start_time,end_time,headway_secs,exact_times\nt,08:00:00,09:00:00,600,0\n"
+    second["frequencies"] = first["frequencies"]
+    second["agency"] = second["agency"].replace("Test,", "Other,")
+    paths = [write_feed(tmp_path / "first.zip", first), write_feed(tmp_path / "second.zip", second)]
+    with pytest.raises(ValueError, match="Potential overlapping GTFS headway intervals"):
+        GTFSTimetable(paths, zones, route_types).prepare()
+    tables, metadata = GTFSTimetable(paths, zones, route_types, feed_priority=[str(p) for p in paths]).prepare()
+    assert len(tables["trips"]) == 6
+    assert metadata["headway_interval_pairs"] == 1
+    assert metadata["deduplicated_headway_intervals"] == 1
+    assert metadata["deduplicated_trips"] == 6
+    assert all(trip.startswith("1-") for trip in tables["trips"].trip_id)
+
+
+def test_partially_overlapping_headway_intervals_stop_for_review(tmp_path, feed_files, zones, route_types):
+    first, second = dict(feed_files), dict(feed_files)
+    first["frequencies"] = "trip_id,start_time,end_time,headway_secs,exact_times\nt,08:00:00,09:00:00,600,0\n"
+    second["frequencies"] = first["frequencies"].replace("08:00:00,09:00:00", "08:30:00,09:30:00")
+    second["agency"] = second["agency"].replace("Test,", "Other,")
+    paths = [write_feed(tmp_path / "first.zip", first), write_feed(tmp_path / "second.zip", second)]
+    with pytest.raises(ValueError, match="different service windows or headways") as error:
+        GTFSTimetable(paths, zones, route_types, feed_priority=[str(p) for p in paths]).prepare()
+    assert str(paths[0]) in str(error.value)
+    assert str(paths[1]) in str(error.value)
+    assert "All agencies listed in each affected feed" in str(error.value)
+
+
+def test_identical_headway_intervals_within_feed_are_removed_with_warning(tmp_path, feed_files, zones, route_types, caplog):
+    feed_files["trips"] += "r,s,second\n"
+    feed_files["stop_times"] += "second,08:00:00,08:00:00,a,1\nsecond,08:10:00,08:10:00,b,2\n"
+    feed_files["frequencies"] = ("trip_id,start_time,end_time,headway_secs,exact_times\n"
+                                 "t,08:00:00,09:00:00,600,0\nsecond,08:00:00,09:00:00,600,0\n")
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    tables, metadata = GTFSTimetable([path], zones, route_types).prepare()
+    assert len(tables["trips"]) == 6
+    assert metadata["within_feed_deduplicated_headway_intervals"] == 1
+    assert metadata["within_feed_deduplicated_trips"] == 6
+    assert "identical headway intervals" in caplog.text
+
+
+@pytest.mark.parametrize("other_window,other_headway,expected", [
+    ("23:30:00,25:30:00", "600", "matched"),
+    ("25:30:00,26:30:00", "600", "separate"),
+    ("23:30:00,25:30:00", "900", "partial"),
+])
+def test_headway_windows_across_midnight(tmp_path, feed_files, zones, route_types, other_window, other_headway, expected):
+    first, second = dict(feed_files), dict(feed_files)
+    first["frequencies"] = "trip_id,start_time,end_time,headway_secs,exact_times\nt,23:30:00,25:30:00,600,0\n"
+    second["frequencies"] = f"trip_id,start_time,end_time,headway_secs,exact_times\nt,{other_window},{other_headway},0\n"
+    second["agency"] = second["agency"].replace("Test,", "Other,")
+    paths = [write_feed(tmp_path / "first.zip", first), write_feed(tmp_path / "second.zip", second)]
+    model = GTFSTimetable(paths, zones, route_types, feed_priority=[str(p) for p in paths])
+    if expected == "partial":
+        with pytest.raises(ValueError, match="different service windows or headways"):
+            model.prepare()
+    else:
+        tables, metadata = model.prepare()
+        assert metadata["headway_interval_pairs"] == (1 if expected == "matched" else 0)
+        assert len(tables["trips"]) == (12 if expected == "matched" else 18)
+
+
+def test_headway_windows_are_aligned_at_first_retained_stop(tmp_path, feed_files, zones, route_types):
+    first, second = dict(feed_files), dict(feed_files)
+    for feed in (first, second):
+        feed["stops"] += "outside,Outside area,49.0,-1.68\n"
+    first["stop_times"] += "t,07:50:00,07:50:00,outside,0\n"
+    second["stop_times"] += "t,07:55:00,07:55:00,outside,0\n"
+    first["frequencies"] = "trip_id,start_time,end_time,headway_secs,exact_times\nt,08:00:00,09:00:00,600,0\n"
+    second["frequencies"] = "trip_id,start_time,end_time,headway_secs,exact_times\nt,08:05:00,09:05:00,600,0\n"
+    paths = [write_feed(tmp_path / "first.zip", first), write_feed(tmp_path / "second.zip", second)]
+    tables, metadata = GTFSTimetable(paths, zones, route_types, feed_priority=[str(p) for p in paths]).prepare()
+    assert len(tables["trips"]) == 6
+    assert metadata["headway_interval_pairs"] == 1
+    assert metadata["headway_overlaps"].identical_interval.tolist() == [True]
+
+
+def test_headway_boarding_differences_preserve_both_intervals(tmp_path, feed_files, zones, route_types):
+    first, second = dict(feed_files), dict(feed_files)
+    first["frequencies"] = "trip_id,start_time,end_time,headway_secs,exact_times\nt,08:00:00,09:00:00,600,0\n"
+    second["frequencies"] = first["frequencies"]
+    second["agency"] = second["agency"].replace("Test,", "Other,")
+    second["stop_times"] = second["stop_times"].replace("stop_sequence\n", "stop_sequence,pickup_type\n")
+    second["stop_times"] = second["stop_times"].replace(",a,1\n", ",a,1,0\n").replace(",b,2\n", ",b,2,1\n")
+    paths = [write_feed(tmp_path / "first.zip", first), write_feed(tmp_path / "second.zip", second)]
+    tables, metadata = GTFSTimetable(paths, zones, route_types).prepare()
+    assert metadata["headway_interval_pairs"] == 0
+    assert len(tables["trips"]) == 12
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_priority_keeps_unmatched_trips_and_preferred_feed(tmp_path, feed_files, zones, route_types, reverse):
+    other = dict(feed_files)
+    other["agency"] = other["agency"].replace("Test,", "Another operator,")
+    other["trips"] += "r,s,unique\n"
+    other["stop_times"] += "unique,10:00:00,10:00:00,a,1\nunique,10:10:00,10:10:00,b,2\n"
+    paths = [write_feed(tmp_path / "first.zip", feed_files), write_feed(tmp_path / "second.zip", other)]
+    priority = [str(paths[1]), str(paths[0])] if reverse else [str(paths[0]), str(paths[1])]
+    tables, metadata = GTFSTimetable(paths, zones, route_types, feed_priority=priority).prepare()
+    assert set(tables["trips"].trip_id) == ({"2-t", "2-unique"} if reverse else {"1-t", "2-unique"})
+    assert metadata["deduplicated_trips"] == 1
+
+
 @pytest.fixture
 def zones():
     return gpd.GeoDataFrame(geometry=[box(-1.69, 48.10, -1.67, 48.12)], crs=4326)
@@ -199,9 +392,9 @@ def test_disjoint_tuesdays_produce_a_coverage_report(tmp_path, feed_files, zones
 
 def test_possible_overlapping_replacements_are_reported(tmp_path, feed_files, zones, route_types):
     second = {**feed_files, "calendar": feed_files["calendar"].replace("20260915", "20260922")}
+    paths = [write_feed(tmp_path / "first.zip", feed_files), write_feed(tmp_path / "second.zip", second)]
     _, metadata = GTFSTimetable(
-        [write_feed(tmp_path / "first.zip", feed_files), write_feed(tmp_path / "second.zip", second)],
-        zones, route_types, "2026-09-01", "2026-09-28",
+        paths, zones, route_types, "2026-09-01", "2026-09-28", feed_priority=[str(p) for p in paths],
     ).prepare()
     assert metadata["overlapping_trip_ids"] == 2
     assert [source["overlapping_trip_ids"] for source in metadata["sources"]] == [1, 1]
@@ -439,8 +632,12 @@ def test_version_changes_invalidate_timetable_graph_and_downstream_assets(
         old_graph = graph_module.PublicTransportGraph(zones, parameters)
 
     graph = graph_module.PublicTransportGraph(zones, parameters)
+    changed_priority = graph_module.PublicTransportGraph(
+        zones, parameters.model_copy(update={"gtfs_feed_priority": [str(tmp_path / "feed.zip")]})
+    )
     assert graph.inputs["version"] == "3"
-    assert graph.gtfs_router.inputs["version"] == "7"
+    assert graph.gtfs_router.inputs["version"] == "12"
+    assert graph.gtfs_router.cache_path != changed_priority.gtfs_router.cache_path
     assert graph.cache_path != old_graph.cache_path
     assert graph.gtfs_router.cache_path != old_graph.gtfs_router.cache_path
     assert (
@@ -685,7 +882,7 @@ def test_frequency_periods_keep_unique_ids_and_scheduled_trips(
 ):
     """Multiple periods share one ID sequence and leave scheduled trips intact."""
     feed_files["trips"] += "r,s,scheduled\n"
-    feed_files["stop_times"] += "scheduled,08:00:00,08:00:00,a,1\nscheduled,08:10:00,08:10:00,b,2\n"
+    feed_files["stop_times"] += "scheduled,08:15:00,08:15:00,a,1\nscheduled,08:25:00,08:25:00,b,2\n"
     feed_files["frequencies"] = (
         "trip_id,start_time,end_time,headway_secs,exact_times\n"
         "t,25:00:00,25:20:00,600,1\nt,08:00:00,08:10:00,600,1\n"
@@ -702,7 +899,7 @@ def test_frequency_periods_keep_unique_ids_and_scheduled_trips(
     }
     first_stops = tables["stop_times"].query("stop_sequence == 1").set_index("trip_id")
     assert first_stops.departure_time.to_dict() == {
-        "1-scheduled": 28800,
+        "1-scheduled": 29700,
         "1-t:frequency:0": 90000,
         "1-t:frequency:1": 90600,
         "1-t:frequency:2": 28800,

@@ -68,6 +68,7 @@ class PublicTransportGraph(FileAsset):
             gtfs_sources=gtfs_sources,
             additional_gtfs_files=parameters.additional_gtfs_files,
             expected_agencies=parameters.expected_agencies,
+            gtfs_feed_priority=parameters.gtfs_feed_priority,
         )
 
         # R needs routing settings; source assets stay in the router.
@@ -198,6 +199,10 @@ class PublicTransportRoutingParameters(PublicTransportRoutingSettings):
         Field(default=None),
     ]
     expected_agencies: Annotated[list[str] | None, Field(default=None)]
+    gtfs_feed_priority: Annotated[
+        list[str],
+        Field(default_factory=list, description="Ordered overlapping feed IDs, highest priority first."),
+    ]
     excluded_gtfs_sources: Annotated[
         list[str],
         Field(default_factory=list, description="Feeds deliberately omitted, as provider:resource_id."),
@@ -252,6 +257,8 @@ class PublicTransportRoutingParameters(PublicTransportRoutingSettings):
 
     @model_validator(mode="after")
     def validate_sources(self) -> "PublicTransportRoutingParameters":
+        if len(self.gtfs_feed_priority) != len(set(self.gtfs_feed_priority)):
+            raise ValueError("gtfs_feed_priority must not contain duplicate feed IDs.")
         if self.additional_gtfs_files == []:
             self.additional_gtfs_files = None
         if self.gtfs_reference_date is None:

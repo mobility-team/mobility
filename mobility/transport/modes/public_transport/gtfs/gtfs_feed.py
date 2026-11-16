@@ -37,6 +37,7 @@ class GTFSFeed:
         self.path = Path(path)
         self.folder = folder
         self.diagnostics: dict[str, int] = {}
+        self.agency_inventory = ""
 
     def read(self, boundary: BaseGeometry, calendar: pd.DataFrame, exceptions: pd.DataFrame) -> dict[str, pd.DataFrame] | None:
         """Return trips with two local stop visits, or None if none can be retained."""
@@ -314,6 +315,14 @@ class GTFSFeed:
             "frequencies",
             columns=("trip_id", "start_time", "end_time", "headway_secs", "exact_times"),
         )
+        # Keep the original interval on generated trips. For headway-based
+        # service, the generated departures are only a routing approximation;
+        # overlap checks must compare the original windows and headways.
+        trips = trips.copy()
+        trips["_frequency_kind"] = "scheduled"
+        trips["_frequency_template"] = ""
+        for column in ("_frequency_start", "_frequency_end", "_frequency_headway", "_frequency_departure"):
+            trips[column] = 0
         if frequencies.empty:
             return trips, times
 
@@ -336,6 +345,9 @@ class GTFSFeed:
         for column in ("start_time", "end_time"):
             frequencies[column] = self.time_seconds(frequencies[column]).astype("int64")
         frequencies["headway_secs"] = frequencies.headway_secs.astype("int64")
+        if "exact_times" not in frequencies:
+            frequencies["exact_times"] = "0"
+        frequencies["exact_times"] = frequencies["exact_times"].replace("", "0")
         if (frequencies.headway_secs <= 0).any() or (
             frequencies.end_time <= frequencies.start_time
         ).any():
@@ -348,6 +360,10 @@ class GTFSFeed:
             pl.from_pandas(frequencies)
             .select(
                 "trip_id",
+                "exact_times",
+                "start_time",
+                "end_time",
+                "headway_secs",
                 pl.int_ranges("start_time", "end_time", "headway_secs").alias("departure"),
             )
             .explode("departure", empty_as_null=False)
@@ -357,17 +373,28 @@ class GTFSFeed:
         departures["new_trip_id"] = departures.trip_id + ":frequency:" + sequence
         if departures.new_trip_id.isin(trips.trip_id.unique()).any():
             raise ValueError("Generated frequency trip_id already exists in trips.txt")
-        departures["offset"] = departures.pop("departure") - departures.trip_id.map(starts)
+        departures["offset"] = departures.departure - departures.trip_id.map(starts)
 
         # Reuse the departure list for both tables. Only stop times need a time
         # offset; every generated trip keeps its original route and calendar.
         expanded_tables = []
         for table, shift_times in ((trips, False), (times, True)):
-            expanded = table.merge(departures, on="trip_id")
             if shift_times:
+                # Stop times are much larger than trips. They only need the
+                # generated ID and offset, not the interval metadata.
+                expanded = table.merge(departures[["trip_id", "new_trip_id", "offset"]], on="trip_id")
                 expanded[["arrival_time", "departure_time"]] += expanded.offset.to_numpy()[:, None]
+                expanded = expanded.drop(columns="offset")
+            else:
+                expanded = table.merge(departures, on="trip_id")
+                expanded["_frequency_kind"] = expanded["exact_times"].map({"0": "headway", "1": "exact"})
+                expanded["_frequency_template"] = expanded["trip_id"]
+                expanded["_frequency_start"] = expanded["start_time"]
+                expanded["_frequency_end"] = expanded["end_time"]
+                expanded["_frequency_headway"] = expanded["headway_secs"]
+                expanded["_frequency_departure"] = expanded["departure"]
+                expanded = expanded.drop(columns=["offset", "exact_times", "start_time", "end_time", "headway_secs", "departure"])
             expanded["trip_id"] = expanded.pop("new_trip_id")
-            expanded = expanded.drop(columns="offset")
             scheduled = table.loc[~table.trip_id.isin(frequencies.trip_id.unique())]
             expanded_tables.append(pd.concat([scheduled, expanded], ignore_index=True))
 
@@ -443,10 +470,17 @@ class GTFSFeed:
             ("agency_name",),
             columns=("agency_name", "agency_id"),
         )
-        if "agency_id" not in agency:
+        has_agency_id = "agency_id" in agency
+        if not has_agency_id:
             if len(agency) != 1:
                 raise ValueError("Multiple agencies require agency_id")
             agency["agency_id"] = "agency"
+        # Record the complete feed inventory before filtering to local routes.
+        # A regional aggregate can contain many operators outside this study.
+        self.agency_inventory = "\n".join(sorted(
+            f"{row.agency_name} [{row.agency_id}]" if has_agency_id else row.agency_name
+            for row in agency.itertuples(index=False)
+        ))
         for name, frame, key in (
             ("stops", stops, "stop_id"),
             ("routes", routes, "route_id"),
