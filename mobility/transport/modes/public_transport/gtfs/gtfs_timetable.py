@@ -18,6 +18,17 @@ from .gtfs_feed import GTFSFeed
 from .gtfs_overlap import find_headway_overlaps, find_trip_overlaps, find_within_feed_duplicates
 
 
+def format_agency_inventories(sources, feed_ids, involved):
+    """List the full agency inventory for the affected feed IDs."""
+    lines = []
+    for source in sources:
+        feed = feed_ids.get(source.get("feed_id"))
+        if feed in involved:
+            inventory = source.get("agency_inventory") or "unavailable"
+            lines.append(f"- {feed}:\n    " + inventory.replace("\n", "\n    "))
+    return "\n".join(lines)
+
+
 class GTFSTimetable:
     """Combine local vehicle trips, select a Tuesday and prepare transfers.
 
@@ -117,12 +128,7 @@ class GTFSTimetable:
                         f"<-> {feed_ids[row.right_source]} ({row.right_trip_id}, "
                         f"{row.right_interval_start:g}–{row.right_interval_end:g}s, headway {row.right_headway:g}s)"
                     )
-                involved = set(partial.left_source) | set(partial.right_source)
-                inventories = []
-                for source in sources:
-                    if source.get("feed_id") in involved:
-                        inventory = source.get("agency_inventory") or "unavailable"
-                        inventories.append(f"- {feed_ids[source['feed_id']]}:\n    " + inventory.replace("\n", "\n    "))
+                involved = {feed_ids[source] for source in set(partial.left_source) | set(partial.right_source)}
                 raise ValueError(
                     f"Found {len(partial)} overlapping headway intervals with different service windows or "
                     "headways. Mobility cannot safely split or deduplicate these intervals automatically. "
@@ -131,7 +137,7 @@ class GTFSTimetable:
                     + "\n".join(lines)
                     + ("\nOnly the first 10 candidate pairs are shown." if len(partial) > 10 else "")
                     + "\n\nAll agencies listed in each affected feed (including outside the study area):\n"
-                    + "\n".join(inventories)
+                    + format_agency_inventories(sources, feed_ids, involved)
                 )
             removed_intervals = self.resolve_trip_overlaps(headway_overlaps, identities, sources, date, item_kind="headway intervals")
             removed_trips.update(headway_members.loc[
@@ -249,19 +255,11 @@ class GTFSTimetable:
                     f"{group.right_trip_id.nunique()} distinct trips; "
                     f"{ambiguous_left} / {ambiguous_right} trips have multiple candidates"
                 )
-            inventories = []
-            for source in sources:
-                if "feed_id" not in source:
-                    continue
-                feed = source_ids[source["feed_id"]]
-                if feed in involved:
-                    inventory = source.get("agency_inventory") or "unavailable"
-                    inventories.append(f"- {feed}:\n    " + inventory.replace("\n", "\n    "))
             raise ValueError(
                 f"Potential overlapping GTFS {item_kind} on {date.date()}:\n"
                 + "\n".join(report)
                 + "\n\nAll agencies listed in each affected feed (including outside the study area):\n"
-                + "\n".join(inventories)
+                + format_agency_inventories(sources, source_ids, involved)
                 + "\n\nReview the feed pairs, then set gtfs_feed_priority in "
                 "PublicTransportRoutingParameters, listing every overlapping feed ID "
                 "in preference order, highest first. Example:\n"

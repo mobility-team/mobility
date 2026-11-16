@@ -218,11 +218,10 @@ class GTFSRouter(FileAsset):
         report_layers = ("sources", "tuesdays", "trip_overlaps", "within_feed_overlaps",
                          "headway_overlaps", "within_feed_headway_overlaps")
         for name in report_layers:
-            if name not in ("sources", "tuesdays") and metadata[name].empty:
+            report = pd.DataFrame(metadata[name])
+            if name not in ("sources", "tuesdays") and report.empty:
                 continue
-            pyogrio.write_dataframe(
-                pd.DataFrame(metadata[name]), temporary, layer=name, driver="GPKG"
-            )
+            pyogrio.write_dataframe(report, temporary, layer=name, driver="GPKG")
         summary = {
             key: value for key, value in metadata.items() if key not in report_layers
         }
