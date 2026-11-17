@@ -92,7 +92,7 @@ class Run(FileAsset):
             else sensitivity_case.case_id
         )
         run_context_inputs = {
-            "version": 18,
+            "version": 19,
             "population": population,
             "activities": activities,
             "modes": modes,
