@@ -1,11 +1,13 @@
 import os
 import pathlib
 import logging
+from io import StringIO
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Polygon
 
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.io.http import request_url
 
 class GeofabrikRegions(FileAsset):
     """
@@ -87,8 +89,9 @@ class GeofabrikRegions(FileAsset):
             
             logging.info("Fetching region boundary : " + region_url)
         
-            #Grabs 
-            region = pd.read_table(region_url, skiprows=1, skipfooter=2, engine="python")
+            # Use the shared HTTP settings and retries for each boundary.
+            with request_url(region_url) as response:
+                region = pd.read_table(StringIO(response.text), skiprows=1, skipfooter=2, engine="python")
             
             region = pd.DataFrame({
                 "x": region.iloc[:, 0].str.split("   ").str[1],

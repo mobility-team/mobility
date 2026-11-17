@@ -36,8 +36,17 @@ def _build_group_day_trips(test_data, gtfs_sources_folder):
         routing_parameters=mobility.PublicTransportRoutingParameters(
             gtfs_reference_date="2026-01-01",
             gtfs_sources_folder=gtfs_sources_folder,
-            # This resource has no archive before the test's reference date.
-            excluded_gtfs_sources=["transport_data_gouv:83830"],
+            # These resources have no archive before the test's reference date.
+            excluded_gtfs_sources=["transport_data_gouv:83830", "transport_data_gouv:84253"],
+            # Prefer the regional feed, then the other overlapping feeds.
+            gtfs_feed_priority=[
+                "transport_data_gouv:82321",
+                "transport_data_gouv:82340",
+                "transport_data_gouv:82348",
+                "transport_data_gouv:83194",
+                "transport_data_gouv:83582",
+                "transport_data_gouv:83675",
+            ],
         ),
     )
 
