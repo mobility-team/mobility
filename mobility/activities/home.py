@@ -55,7 +55,7 @@ class HomeParameters(ActivityParameters):
 
     value_of_time_stay_home: Annotated[
         float | ParameterValue | SensitivityValue,
-        Field(default=0.0),
+        Field(default=1.45),
     ]
 
     saturation_fun_ref_level: Annotated[
