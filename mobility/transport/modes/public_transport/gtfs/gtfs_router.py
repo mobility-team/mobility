@@ -77,7 +77,7 @@ class GTFSRouter(FileAsset):
                     continue
                 additional_hashes[path] = GTFSData.file_sha256(path)
         inputs = {
-            "version": "12",
+            "version": "13",
             "transport_zones": transport_zones,
             "gtfs_sources": gtfs_sources,
             "gtfs_sources_sha256": sources_hash,

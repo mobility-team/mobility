@@ -46,8 +46,8 @@ def find_trip_overlaps(
     """Return candidate pairs with the same number of ordered stop visits.
 
     Names and source identifiers do not participate in matching, other than
-    requiring different sources. Every arrival and departure must be close in
-    time, every corresponding stop close in space, and boarding and alighting
+    requiring different sources. Every departure must be close in time, every
+    corresponding stop close in space, and boarding and alighting
     rules identical at every stop. Trips expanded from non-exact frequency
     service are excluded: their departure times are only approximations.
     This function reports pairs; it does not remove service.
@@ -56,7 +56,7 @@ def find_trip_overlaps(
         "left_trip_id": pl.String, "right_trip_id": pl.String,
         "left_source": pl.String, "right_source": pl.String,
         "stop_count": pl.UInt32, "max_distance_m": pl.Float64,
-        "max_time_difference_s": pl.Float64,
+        "max_time_difference_s": pl.Float64, "max_arrival_difference_s": pl.Float64,
     }
     if distance_m <= 0 or time_seconds < 0 or batch_size <= 0:
         raise ValueError("distance_m and batch_size must be positive and time_seconds nonnegative")
@@ -165,6 +165,8 @@ def find_trip_overlaps(
             .with_columns(
                 (dx ** 2 + dy ** 2).sqrt().alias("distance"),
                 pl.max_horizontal(arrival_difference, departure_difference).alias("time_difference"),
+                arrival_difference.alias("arrival_difference"),
+                departure_difference.alias("departure_difference"),
                 (same_pickup & same_dropoff).alias("same_boarding"),
             )
             .group_by("trip_id", "trip_id_r", "source", "source_r")
@@ -172,10 +174,12 @@ def find_trip_overlaps(
                 pl.len().alias("stop_count"),
                 pl.col("distance").max().alias("max_distance_m"),
                 pl.col("time_difference").max().alias("max_time_difference_s"),
+                pl.col("arrival_difference").max().alias("max_arrival_difference_s"),
+                pl.col("departure_difference").max().alias("max_departure_difference_s"),
                 pl.col("same_boarding").all().alias("same_boarding"),
             )
             .filter((pl.col("max_distance_m") <= distance_m)
-                    & (pl.col("max_time_difference_s") <= time_seconds)
+                    & (pl.col("max_departure_difference_s") <= time_seconds)
                     & pl.col("same_boarding"))
             .rename({"trip_id": "left_trip_id", "trip_id_r": "right_trip_id",
                      "source": "left_source", "source_r": "right_source"})

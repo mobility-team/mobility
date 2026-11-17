@@ -164,6 +164,9 @@ class GTFSFeed:
         # selected when present, so valid GTFS variants remain supported.
         with path.open("r", encoding="utf-8-sig") as source:
             available = next(csv.reader(source), [])
+        if not available and not required:
+            logging.warning("Ignoring empty optional GTFS table %s", path)
+            return pd.DataFrame()
         selected = [column for column in available if column.strip() in columns] or None
         table = pl.read_csv(
             path,

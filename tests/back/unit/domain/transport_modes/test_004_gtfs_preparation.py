@@ -93,6 +93,30 @@ def test_frequency_departures_are_only_matched_when_exact(tmp_path, feed_files, 
     assert metadata["headway_generated_trips"] == (0 if exact == "1" else 1)
 
 
+@pytest.mark.parametrize("headway", [False, True])
+def test_overlap_with_different_arrivals_keeps_preferred_timetable(tmp_path, feed_files, zones, route_types, headway):
+    first, second = dict(feed_files), dict(feed_files)
+    first["stop_times"] = first["stop_times"].replace("08:10:00,08:10:00,b", "08:09:00,08:10:00,b")
+    if headway:
+        first["frequencies"] = second["frequencies"] = frequency()
+    paths = write_feed_pair(tmp_path, first, second)
+    with pytest.raises(ValueError, match="maximum arrival difference 60 s"):
+        GTFSTimetable(paths, zones, route_types).prepare()
+    tables, metadata = GTFSTimetable(paths, zones, route_types, feed_priority=[str(p) for p in paths]).prepare()
+    overlaps = metadata["headway_overlaps" if headway else "trip_overlaps"]
+    assert overlaps.max_arrival_difference_s.tolist() == [60.0]
+    assert all(trip.startswith("1-") for trip in tables["trips"].trip_id)
+    assert (tables["stop_times"].departure_time - tables["stop_times"].arrival_time).max() == 60
+
+
+def test_different_arrivals_within_feed_are_not_removed(tmp_path, feed_files, zones, route_types):
+    feed_files["trips"] += "r,s,u\n"
+    feed_files["stop_times"] += "u,08:00:00,08:00:00,a,1\nu,08:09:00,08:10:00,b,2\n"
+    tables, metadata = GTFSTimetable([write_feed(tmp_path / "feed.zip", feed_files)], zones, route_types).prepare()
+    assert len(tables["trips"]) == 2
+    assert metadata["within_feed_deduplicated_trips"] == 0
+
+
 def test_overlap_compares_only_selected_day(tmp_path, feed_files, zones, route_types):
     other = dict(feed_files)
     other["agency"] = other["agency"].replace("Test,", "Another operator,")
@@ -286,6 +310,14 @@ def test_padded_csv_lines_match_unpadded_feed(tmp_path, feed_files, zones, route
     padded["calendar_dates"] = "service_id,date,exception_type    \n"
     expected, _ = GTFSTimetable([write_feed(tmp_path / "plain.zip", feed_files)], zones, route_types).prepare()
     actual, _ = GTFSTimetable([write_feed(tmp_path / "padded.zip", padded)], zones, route_types).prepare()
+    for table in expected:
+        pd.testing.assert_frame_equal(actual[table], expected[table])
+
+
+def test_empty_optional_calendar_dates_uses_weekly_calendar(tmp_path, feed_files, zones, route_types):
+    expected, _ = GTFSTimetable([write_feed(tmp_path / "plain.zip", feed_files)], zones, route_types).prepare()
+    feed_files["calendar_dates"] = ""
+    actual, _ = GTFSTimetable([write_feed(tmp_path / "empty.zip", feed_files)], zones, route_types).prepare()
     for table in expected:
         pd.testing.assert_frame_equal(actual[table], expected[table])
 
@@ -638,7 +670,7 @@ def test_version_changes_invalidate_timetable_graph_and_downstream_assets(
         zones, parameters.model_copy(update={"gtfs_feed_priority": [str(tmp_path / "feed.zip")]})
     )
     assert graph.inputs["version"] == "3"
-    assert graph.gtfs_router.inputs["version"] == "12"
+    assert graph.gtfs_router.inputs["version"] == "13"
     assert graph.gtfs_router.cache_path != changed_priority.gtfs_router.cache_path
     assert graph.cache_path != old_graph.cache_path
     assert graph.gtfs_router.cache_path != old_graph.gtfs_router.cache_path

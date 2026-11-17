@@ -253,7 +253,8 @@ class GTFSTimetable:
                     f"- {left}  <->  {right} : "
                     f"{len(group)} candidate pairs, {group.left_trip_id.nunique()} / "
                     f"{group.right_trip_id.nunique()} distinct trips; "
-                    f"{ambiguous_left} / {ambiguous_right} trips have multiple candidates"
+                    f"{ambiguous_left} / {ambiguous_right} trips have multiple candidates; "
+                    f"maximum arrival difference {group.max_arrival_difference_s.max():g} s"
                 )
             raise ValueError(
                 f"Potential overlapping GTFS {item_kind} on {date.date()}:\n"

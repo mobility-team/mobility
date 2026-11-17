@@ -64,7 +64,9 @@ One trip can match several trips from another feed. Mobility pairs them one-to-o
 
 ## How trips are compared
 
-For scheduled trips, Mobility compares the stops kept in the study area and its buffer. Trips are candidates when they have the same number of stops in the same order, corresponding stops are within 10 metres, arrival and departure times are identical, and pickup and drop-off rules match. Route names and IDs are not used for matching across feeds.
+For scheduled trips, Mobility compares the stops kept in the study area and its buffer. Trips are candidates when they have the same number of stops in the same order, corresponding stops are within 10 metres, departure times are identical, and pickup and drop-off rules match. Route names and IDs are not used for matching across feeds.
+
+Arrival times may differ even for the same vehicle. For example, an aggregated feed may record arrival and departure at the same time, while the original feed records an earlier arrival. The overlap error reports the largest arrival difference for each feed pair, and `trip_overlaps` records it for each candidate. Since arrival times affect travel times and connections, review these differences and rank the feed whose full timetable you want to keep first.
 
 This check can miss a copy if one feed has an extra or missing stop. It can also match two separate vehicles, or trips that follow the same path locally but diverge outside the area. Transfer rules are not compared, so inspect the result before relying on it; a count of matching pairs is not necessarily a count of duplicate trips.
 
@@ -72,7 +74,7 @@ Within one feed, Mobility automatically removes scheduled trips only when their 
 
 ## Services described by frequency
 
-Some feeds describe a service as running every few minutes rather than giving exact departures. Mobility compares these services by their stop pattern, travel times, operating window and *headway*—the time between vehicles. The window is measured at the first stop kept inside the study area and buffer.
+Some feeds describe a service as running every few minutes rather than giving exact departures. Mobility compares these services by their stop pattern, relative departure times, operating window and *headway*—the time between vehicles. The window is measured at the first stop kept inside the study area and buffer. Arrival-time differences are reported for these candidates too.
 
 When two feeds describe the same window and headway, Mobility asks for a feed priority and removes the lower-priority interval. It removes identical intervals within one feed with a warning. If matching patterns have overlapping windows but different times or headways, Mobility stops for review rather than splitting the intervals. Resolved cases appear in the `headway_overlaps` and `within_feed_headway_overlaps` tables.
 
