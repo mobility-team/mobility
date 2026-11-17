@@ -43,6 +43,7 @@ buildings_sample_fp <- file.path(
 )
 
 source(file.path(package_path, "transport", "graphs", "core", "cpprouting_io.R"))
+source(file.path(package_path, "transport", "modes", "public_transport", "path_edge_attributes.R"))
 
 logger <- logger(appenders = console_appender())
 
@@ -202,6 +203,7 @@ if (nrow(od_pairs) == 0) {
     as.data.table(intermodal_graph$data)[, list(from, to, perceived_time = dist)],
     as.data.table(intermodal_graph$attrib)[, list(distance = start_distance + mid_distance + last_distance, real_time = real_time)]
   )
+  attrib <- select_shortest_path_edges(attrib)
   
   attrib <- merge(
     attrib,
