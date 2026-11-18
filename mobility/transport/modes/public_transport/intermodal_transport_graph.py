@@ -39,6 +39,7 @@ class IntermodalTransportGraph(FileAsset):
         public_transport_graph = PublicTransportGraph(transport_zones, parameters)
 
         inputs = {
+            "version": 2,
             "transport_zones": transport_zones,
             "public_transport_graph": public_transport_graph,
             "first_leg_graph": first_leg_travel_costs.active_routing_graph,
@@ -82,7 +83,7 @@ class IntermodalTransportGraph(FileAsset):
 
     def create_and_get_asset(self) -> pd.DataFrame:
         """Build and persist the intermodal graph marker path."""
-        self.prepare_intermodal_graph(**self.inputs)
+        self.prepare_intermodal_graph(**{key: value for key, value in self.inputs.items() if key != "version"})
         return self.cache_path
 
     

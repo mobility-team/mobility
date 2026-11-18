@@ -61,6 +61,7 @@ source(file.path(package_path, "transport", "graphs", "congested", "initialize_t
 source(file.path(package_path, "transport", "graphs", "modified", "concatenate_graphs.R"))
 source(file.path(package_path, "transport", "graphs", "simplified", "create_graph_from_travel_costs.R"))
 source(file.path(package_path, "transport", "graphs", "core", "cpprouting_io.R"))
+source(file.path(package_path, "transport", "modes", "public_transport", "filter_early_arrivals.R"))
 
 logger <- logger(appenders = console_appender())
 
@@ -393,8 +394,7 @@ wait_edges <- wait_edges[v_id %in% valid_v_ids]
 
 # Remove arrivals that are so early that the user is guaranteed to wait at least 
 # a certain amount of time to reach any of the destinations
-wait_edges[, min_out_time := min(time[edge_type == "out"]), by = v_id]
-wait_edges <- wait_edges[time > min_out_time - parameters[["max_wait_time_at_destination"]]*60.0]
+wait_edges <- filter_early_arrivals(wait_edges, parameters[["max_wait_time_at_destination"]])
 
 # Remove duplicate exit nodes
 wait_edges <- unique(wait_edges[, list(v_id, v_id_with_time, time)])
