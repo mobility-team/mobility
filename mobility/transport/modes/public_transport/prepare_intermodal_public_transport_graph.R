@@ -62,6 +62,7 @@ source(file.path(package_path, "transport", "graphs", "modified", "concatenate_g
 source(file.path(package_path, "transport", "graphs", "simplified", "create_graph_from_travel_costs.R"))
 source(file.path(package_path, "transport", "graphs", "core", "cpprouting_io.R"))
 source(file.path(package_path, "transport", "modes", "public_transport", "filter_early_arrivals.R"))
+source(file.path(package_path, "transport", "modes", "public_transport", "connect_destinations.R"))
 
 logger <- logger(appenders = console_appender())
 
@@ -299,17 +300,13 @@ last_leg$time <- last_leg_values$cost
 last_leg$distance <- last_leg_values$distance
 last_leg <- last_leg[time < last_modal_shift$max_travel_time*3600.0]
 
-last_leg[, from := paste0("l1-", from)]
-last_leg[, to := paste0("l2-", to)]
-
-# Compute the max departure time from the last public transport stop by going 
-# backward in time from the target time
-# (ie if the target time is 8:00 and it takes 10 min to walk from the stop, 
-# the user has to be at the station at maximum 7:50)
-last_leg[, max_time_at_station := parameters[["target_time"]]*3600.0 - time]
-last_leg[, max_time_at_station := round(max_time_at_station/60.0)*60.0]
-last_leg[, from_with_time := paste0(from, "-", max_time_at_station)]
-
+# Connect each representative destination to its nearest road vertex that can
+# be reached from a PT stop. Including this final connection here means its
+# travel time is considered when selecting a service before the target time.
+destination_connections <- connect_destinations(last_leg, last_verts, buildings_sample,
+                                                 last_modal_shift, parameters[["target_time"]])
+last_leg <- destination_connections$legs
+destinations <- destination_connections$vertices
 
 # Compute the arrival times to the last public transport stops of the journeys
 hash <- strsplit(basename(pt_graph_fp), "-")[[1]][1]
@@ -447,7 +444,7 @@ all_verts <- rbindlist(
     start_verts[, list(vertex_id = paste0("s2-", vertex_id), x, y)],
     mid_verts[, list(vertex_id = paste0("m", vertex_id), x, y)],
     time_exp_exit_verts[, list(vertex_id, x, y)],
-    last_verts[, list(vertex_id = paste0("l2-", vertex_id), x, y)]
+    destinations[, list(vertex_id, x, y)]
   )
 )
 

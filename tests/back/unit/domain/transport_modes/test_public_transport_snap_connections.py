@@ -50,3 +50,49 @@ def test_snap_connections_are_charged_and_complete_limits_are_applied(tmp_path):
     result = subprocess.run([rscript, str(script), str(helper)], capture_output=True,
                             text=True, encoding="utf-8", errors="replace")
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_destination_snap_is_included_before_selecting_arrival(tmp_path):
+    rscript = shutil.which("Rscript")
+    if rscript is None:
+        pytest.skip("Rscript is required for the public transport router")
+    helper = Path(__file__).resolve().parents[5] / "mobility/transport/modes/public_transport/connect_destinations.R"
+    script = tmp_path / "destinations.R"
+    script.write_text(
+        """
+        library(data.table)
+        source(commandArgs(trailingOnly=TRUE)[1])
+        # Both buildings use the same road vertex. A four-minute walk from the
+        # stop reaches the first one; the second needs six more minutes.
+        legs <- data.table(from="stop", to="road", time=240, distance=300)
+        vertices <- data.table(vertex_id="road", x=0, y=0)
+        buildings <- data.table(building_id=c(1L, 2L), x=c(0, 500), y=0)
+        transfer <- list(average_speed=5, max_travel_time=20/60)
+        result <- connect_destinations(legs, vertices, buildings, transfer, 8)
+        first <- result$legs[to == "l2-b1"]
+        second <- result$legs[to == "l2-b2"]
+        stopifnot(first$time == 240, first$max_time_at_station == 7*3600+56*60)
+        stopifnot(second$time == 600, second$distance == 800,
+                  second$max_time_at_station == 7*3600+50*60)
+        # A service arriving at 07:53 can reach only the first building on time.
+        stopifnot(7*3600+53*60 <= first$max_time_at_station,
+                  7*3600+53*60 > second$max_time_at_station)
+        # Waiting edges only move forwards. A passenger arriving at 07:53 can
+        # reach building 1's 07:56 exit, but not building 2's 07:50 exit.
+        library(cppRoutingCCH)
+        edges <- data.frame(from=c("vehicle", "l1-stop-28200", "l1-stop-28380",
+                                   first$from_with_time, second$from_with_time),
+                            to=c("l1-stop-28380", "l1-stop-28380", "l1-stop-28560",
+                                 first$to, second$to),
+                            dist=c(0, 180, 180, first$time, second$time))
+        graph <- makegraph(edges)
+        distances <- get_distance_matrix(graph, from="vehicle", to=c("l2-b1", "l2-b2"))
+        stopifnot(is.finite(distances["vehicle", "l2-b1"]))
+        stopifnot(is.na(distances["vehicle", "l2-b2"]) ||
+                  !is.finite(distances["vehicle", "l2-b2"]))
+        """,
+        encoding="utf-8",
+    )
+    result = subprocess.run([rscript, str(script), str(helper)], capture_output=True,
+                            text=True, encoding="utf-8", errors="replace")
+    assert result.returncode == 0, result.stdout + result.stderr

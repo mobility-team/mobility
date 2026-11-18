@@ -109,23 +109,15 @@ knn_start <- get.knnx(
 buildings_sample[, vertex_id_from := start_verts$vertex_id[knn_start$nn.index]]
 buildings_sample[, vertex_id_from_dist := knn_start$nn.dist[,1]]
 
-last_verts <- intermodal_verts[grepl("l2-", vertex_id), list(vertex_id, x, y)]
+# The graph includes a destination vertex for each representative building;
+# its last leg already includes the building-to-road connection.
+buildings_sample[, vertex_id_to := paste0("l2-b", building_id)]
+buildings_sample <- buildings_sample[vertex_id_to %in% intermodal_verts$vertex_id]
+buildings_sample[, vertex_id_to_dist := 0.0]
 
-knn_last <- get.knnx(
-  last_verts[, list(x, y)],
-  buildings_sample[, list(x, y)],
-  k = 1
-)
-
-buildings_sample[, vertex_id_to := last_verts$vertex_id[knn_last$nn.index]]
-buildings_sample[, vertex_id_to_dist := knn_last$nn.dist[,1]]
-
-# Keep only buildings that are close enough of starting and end points on the intermodal graph
-# TO DO
-# Check if the filtering logic is OK here, as we already do some filtering when creating
-# the intermodal graph.
+# Keep buildings whose origin connection fits the access limit. The graph
+# already includes and checks the complete destination connection.
 buildings_sample <- buildings_sample[vertex_id_from_dist/1000/first_modal_transfer$average_speed < first_modal_transfer$max_travel_time]
-buildings_sample <- buildings_sample[vertex_id_to_dist/1000/last_modal_transfer$average_speed < last_modal_transfer$max_travel_time]
 
 
 travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_from = weight, vertex_id_from, vertex_id_from_dist)], by.x = "building_id_from_cluster", by.y = "building_id")

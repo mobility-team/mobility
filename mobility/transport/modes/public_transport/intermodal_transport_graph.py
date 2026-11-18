@@ -39,7 +39,7 @@ class IntermodalTransportGraph(FileAsset):
         public_transport_graph = PublicTransportGraph(transport_zones, parameters)
 
         inputs = {
-            "version": 2,
+            "version": 3,
             "transport_zones": transport_zones,
             "public_transport_graph": public_transport_graph,
             "first_leg_graph": first_leg_travel_costs.active_routing_graph,

@@ -430,7 +430,7 @@ def test_version_changes_invalidate_timetable_graph_and_downstream_assets(
 
     def use_previous_version(self, inputs, cache_path):
         previous_inputs = dict(inputs)
-        previous_inputs["version"] = "7" if isinstance(self, GTFSRouter) else "3"
+        previous_inputs["version"] = "7" if isinstance(self, GTFSRouter) else "4"
         file_asset_init(self, previous_inputs, cache_path)
 
     with monkeypatch.context() as previous:
@@ -438,7 +438,7 @@ def test_version_changes_invalidate_timetable_graph_and_downstream_assets(
         old_graph = graph_module.PublicTransportGraph(zones, parameters)
 
     graph = graph_module.PublicTransportGraph(zones, parameters)
-    assert graph.inputs["version"] == "4"
+    assert graph.inputs["version"] == "5"
     assert graph.gtfs_router.inputs["version"] == "8"
     assert graph.cache_path != old_graph.cache_path
     assert graph.gtfs_router.cache_path != old_graph.gtfs_router.cache_path
@@ -462,6 +462,7 @@ def test_version_changes_invalidate_timetable_graph_and_downstream_assets(
         "opposite_patterns",
         "opposite_patterns_forbidden",
         "loop_visits",
+        "shared_remaining_stops",
     ],
 )
 def test_r_graph_reads_parquet_and_respects_direction(
@@ -542,6 +543,17 @@ def test_r_graph_reads_parquet_and_respects_direction(
             del feed_files["transfers"]
     if case == "loop_visits":
         del feed_files["transfers"]
+    if case == "shared_remaining_stops":
+        feed_files["stops"] += "c,C,48.11,-1.6798\nd,D,48.11,-1.6797\ne,E,48.11,-1.6796\n"
+        feed_files["trips"] = "route_id,service_id,trip_id\nr,s,t1\nr,s,t2\nr,s,t3\nr,s,t4\n"
+        feed_files["stop_times"] = (
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
+            "t1,08:00:00,08:00:00,a,1\nt1,08:10:00,08:10:00,b,2\nt1,08:20:00,08:20:00,c,3\n"
+            "t2,08:10:00,08:10:00,d,1\nt2,08:20:00,08:20:00,b,2\nt2,08:30:00,08:30:00,c,3\n"
+            "t3,08:05:00,08:05:00,a,1\nt3,08:15:00,08:15:00,b,2\nt3,08:25:00,08:25:00,e,3\n"
+            "t4,08:00:00,08:00:00,a,1\nt4,08:10:00,08:10:00,b,2\nt4,08:20:00,08:20:00,c,3\n"
+        )
+        del feed_files["transfers"]
     tables, metadata = GTFSTimetable(
         [write_feed(tmp_path / "feed.zip", feed_files)], zones, route_types
     ).prepare()
@@ -552,7 +564,21 @@ def test_r_graph_reads_parquet_and_respects_direction(
         "prepare_public_transport_graph.R"
     )
     script = script_path.read_text()
-    if case.startswith("opposite_patterns"):
+    if case == "shared_remaining_stops":
+        script += """
+# Trips to C can be boarded at B; the trip to E cannot. Two vehicles
+# departing together do not shorten the interval to the next departure.
+boarding <- stops_routes[gtfs_stop_id == "1-b" & stop_type == "departure"]
+stopifnot(nrow(boarding) == 2)
+pooled <- boarding[stop_index %in% headway_times[average_headway == 600, to]]
+stopifnot(nrow(pooled) == 1)
+stopifnot(setequal(departures[to == pooled$stop_index, departure_time], c(29400, 30000)))
+stopifnot(nrow(headway_times[to != pooled$stop_index & to %in% boarding$stop_index &
+                            is.na(average_headway)]) == 1)
+# Distinct incoming segments at B retain separate arrival events.
+stopifnot(nrow(stops_routes[gtfs_stop_id == "1-b" & stop_type == "arrival"]) == 3)
+"""
+    elif case.startswith("opposite_patterns"):
         script += """
 outbound <- stops_routes[gtfs_stop_id == "1-b" & stop_type == "arrival", stop_index]
 inbound <- stops_routes[gtfs_stop_id == "1-a" & stop_type == "arrival", stop_index]

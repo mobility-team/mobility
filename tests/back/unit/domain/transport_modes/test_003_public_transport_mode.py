@@ -66,7 +66,7 @@ def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
         # Old graphs must not be reused after changing their waiting window.
         old_inputs = {key: value for key, value in intermodal.inputs.items() if key != "version"}
         assert intermodal.inputs_hash != hash_inputs(old_inputs)
-        old_cost_inputs = {**resolved.travel_costs.inputs, "version": "1"}
+        old_cost_inputs = {**resolved.travel_costs.inputs, "version": "2"}
         assert resolved.travel_costs.inputs_hash != hash_inputs(old_cost_inputs)
         graphs[scenario, iteration] = graph
         settings = graph.inputs["parameters"]

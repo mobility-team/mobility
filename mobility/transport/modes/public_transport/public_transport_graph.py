@@ -76,7 +76,7 @@ class PublicTransportGraph(FileAsset):
             for name in PublicTransportRoutingSettings.model_fields
         })
         inputs = {
-            "version": "4",
+            "version": "5",
             "transport_zones": transport_zones,
             "gtfs_router": gtfs_router,
             "parameters": settings
