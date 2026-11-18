@@ -30,10 +30,19 @@ router <- lapply(gtfs_table_paths, function(path) {
 # Prepare travel time between consecutive stops, and wait times between the 
 # arrival and the departure of the vehicle at each stop
 
-stop_times <- router$stop_times[order(trip_id, stop_sequence)]
+visits <- router$stop_times[order(trip_id, stop_sequence)]
+visits[, position := seq_len(.N), by = trip_id]
+# Length prefixes make the sequence unambiguous even if stop IDs contain separators.
+patterns <- visits[, list(pattern = paste0(nchar(stop_id), ":", stop_id, collapse = "")), by = trip_id]
+patterns <- merge(patterns, router$trips[, list(trip_id, route_id)], by = "trip_id")
+patterns[, pattern_id := .GRP, by = list(route_id, pattern)]
+visits <- merge(visits, patterns[, list(trip_id, route_id, pattern_id)], by = "trip_id")
+setorder(visits, trip_id, position)
+stop_times <- copy(visits)
 
 stop_times[, previous_stop_id := shift(stop_id, type = "lag", n = 1), by = trip_id]
 stop_times[, previous_departure_time := shift(departure_time, type = "lag", n = 1), by = trip_id]
+stop_times[, previous_position := shift(position, type = "lag", n = 1), by = trip_id]
 
 stop_times <- stop_times[!is.na(previous_stop_id)]
 
@@ -47,15 +56,12 @@ stop_times[, wait_time := as.double(departure_time - arrival_time)]
 
 
 
-stop_times <- merge(stop_times, router$trips[, list(trip_id, route_id)], by = "trip_id")
-
-
-
-# Identify uniquely stops (differentiating between routes)
+# Identify each visit within a route's ordered stop pattern. A loop can visit
+# the same physical stop more than once, so position is part of the key.
 stops_routes <- rbindlist(
   list(
-    stop_times[, list(gtfs_stop_id = from_stop_id, route_id)],
-    stop_times[, list(gtfs_stop_id = to_stop_id, route_id)]
+    stop_times[, list(gtfs_stop_id = from_stop_id, route_id, pattern_id, position = previous_position)],
+    stop_times[, list(gtfs_stop_id = to_stop_id, route_id, pattern_id, position)]
   )
 )
 
@@ -63,23 +69,20 @@ stops_routes <- unique(stops_routes)
 
 # Keep onboard travel through restricted stops, but only allow ordinary
 # boarding/alighting where the selected timetable explicitly permits it.
-permissions <- merge(
-  router$stop_times[departure_time > parameters$start_time_min*3600 &
-                    departure_time < parameters$start_time_max*3600],
-  router$trips[, list(trip_id, route_id)], by = "trip_id"
-)
+permissions <- visits[departure_time > parameters$start_time_min*3600 &
+                      departure_time < parameters$start_time_max*3600]
 permissions <- permissions[, list(can_board = any(pickup_type == 0), can_alight = any(drop_off_type == 0)),
-                           by = list(route_id, gtfs_stop_id = stop_id)]
+                           by = list(route_id, pattern_id, position, gtfs_stop_id = stop_id)]
 
 stops_routes <- rbindlist(
   list(
-    stops_routes[, list(stop_type = "arrival", gtfs_stop_id, route_id)],
-    stops_routes[, list(stop_type = "departure", gtfs_stop_id, route_id)]
+    stops_routes[, list(stop_type = "arrival", gtfs_stop_id, route_id, pattern_id, position)],
+    stops_routes[, list(stop_type = "departure", gtfs_stop_id, route_id, pattern_id, position)]
   )
 )
-stops_routes <- merge(stops_routes, permissions, by = c("route_id", "gtfs_stop_id"))
+stops_routes <- merge(stops_routes, permissions, by = c("route_id", "pattern_id", "position", "gtfs_stop_id"))
 
-stops_routes[, stop_index := as.numeric(factor(paste(stop_type, route_id, gtfs_stop_id)))]
+stops_routes[, stop_index := .GRP, by = list(stop_type, pattern_id, position)]
 
 # Prepare the graph vertices coordinates
 verts <- router$stops[, list(stop_id, stop_lon, stop_lat)]
@@ -117,23 +120,23 @@ stops_routes <- merge(
 
 stop_times <- merge(
   stop_times,
-  stops_routes[stop_type == "departure", list(route_id, gtfs_stop_id, prev_dep_stop_index = stop_index)],
-  by.x = c("route_id", "from_stop_id"),
-  by.y = c("route_id", "gtfs_stop_id")
+  stops_routes[stop_type == "departure", list(pattern_id, position, gtfs_stop_id, prev_dep_stop_index = stop_index)],
+  by.x = c("pattern_id", "previous_position", "from_stop_id"),
+  by.y = c("pattern_id", "position", "gtfs_stop_id")
 )
 
 stop_times <- merge(
   stop_times,
-  stops_routes[stop_type == "arrival", list(route_id, gtfs_stop_id, arrival_stop_index = stop_index)],
-  by.x = c("route_id", "to_stop_id"),
-  by.y = c("route_id", "gtfs_stop_id")
+  stops_routes[stop_type == "arrival", list(pattern_id, position, gtfs_stop_id, arrival_stop_index = stop_index)],
+  by.x = c("pattern_id", "position", "to_stop_id"),
+  by.y = c("pattern_id", "position", "gtfs_stop_id")
 )
 
 stop_times <- merge(
   stop_times,
-  stops_routes[stop_type == "departure", list(route_id, gtfs_stop_id, next_dep_stop_index = stop_index)],
-  by.x = c("route_id", "to_stop_id"),
-  by.y = c("route_id", "gtfs_stop_id"),
+  stops_routes[stop_type == "departure", list(pattern_id, position, gtfs_stop_id, next_dep_stop_index = stop_index)],
+  by.x = c("pattern_id", "position", "to_stop_id"),
+  by.y = c("pattern_id", "position", "gtfs_stop_id"),
 )
 
 # Add route types
@@ -162,16 +165,13 @@ stops_routes <- stops_routes[
 
 # Departure events must include each trip's first stop. The segment table above
 # starts at the second stop and cannot supply all boarding or transfer times.
-departures <- merge(
-  router$stop_times[pickup_type == 0 & departure_time > parameters$start_time_min*3600 &
-                    departure_time < parameters$start_time_max*3600,
-                    list(trip_id, stop_id, departure_time)],
-  router$trips[, list(trip_id, route_id)], by = "trip_id"
-)
+departures <- visits[pickup_type == 0 & departure_time > parameters$start_time_min*3600 &
+                     departure_time < parameters$start_time_max*3600,
+                     list(pattern_id, position, stop_id, departure_time)]
 departures <- merge(
   departures,
-  stops_routes[stop_type == "departure", list(route_id, stop_id = gtfs_stop_id, to = stop_index)],
-  by = c("route_id", "stop_id")
+  stops_routes[stop_type == "departure", list(pattern_id, position, stop_id = gtfs_stop_id, to = stop_index)],
+  by = c("pattern_id", "position", "stop_id")
 )
 
 info(logger, "Computing average travel times between stops...")

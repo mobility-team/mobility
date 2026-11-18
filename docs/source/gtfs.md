@@ -37,6 +37,20 @@ Archive age is unrestricted by default: an old ZIP can still contain valid servi
 
 These counts describe the prepared day, before the routing graph's time restrictions. Possible overlapping feeds are reported for review.
 
+## How trips become a graph
+
+Mobility groups trips on the same route when they visit the same stops in the
+same order. Opposite directions and different stopping patterns therefore have
+separate graph nodes. If a trip returns to a stop, each visit has its own node.
+Passengers can transfer between patterns when the stop and GTFS transfer rules
+allow it.
+
+This graph is an approximation, not a full timetable router. Travel times are
+averaged across trips with the same pattern, so a path does not necessarily
+correspond to one vehicle journey from start to finish. Waiting times are also
+estimated separately for each pattern, even where several patterns share part
+of a route.
+
 (gtfs-scenario-timetable)=
 ## Add a scenario feed
 
