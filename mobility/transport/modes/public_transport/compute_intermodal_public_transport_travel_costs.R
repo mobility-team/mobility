@@ -44,6 +44,7 @@ buildings_sample_fp <- file.path(
 
 source(file.path(package_path, "transport", "graphs", "core", "cpprouting_io.R"))
 source(file.path(package_path, "transport", "modes", "public_transport", "path_edge_attributes.R"))
+source(file.path(package_path, "transport", "modes", "public_transport", "add_snap_connections.R"))
 
 logger <- logger(appenders = console_appender())
 
@@ -127,8 +128,8 @@ buildings_sample <- buildings_sample[vertex_id_from_dist/1000/first_modal_transf
 buildings_sample <- buildings_sample[vertex_id_to_dist/1000/last_modal_transfer$average_speed < last_modal_transfer$max_travel_time]
 
 
-travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_from = weight, vertex_id_from)], by.x = "building_id_from_cluster", by.y = "building_id")
-travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_to = weight, vertex_id_to)], by.x = "building_id_to_cluster", by.y = "building_id")
+travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_from = weight, vertex_id_from, vertex_id_from_dist)], by.x = "building_id_from_cluster", by.y = "building_id")
+travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_to = weight, vertex_id_to, vertex_id_to_dist)], by.x = "building_id_to_cluster", by.y = "building_id")
 
 
 # Compute the travel costs
@@ -290,7 +291,7 @@ if (nrow(od_pairs) == 0) {
   
   travel_costs <- merge(
     travel_costs,
-    od_pairs[, list(vertex_id_from, vertex_id_to)],
+    od_pairs[, list(vertex_id_from, vertex_id_to, perceived_time)],
     by = c("vertex_id_from", "vertex_id_to")
   )
   
@@ -299,6 +300,9 @@ if (nrow(od_pairs) == 0) {
     paths,
     by = c("vertex_id_from", "vertex_id_to")
   )
+
+  travel_costs <- add_snap_connections(travel_costs, first_modal_transfer, last_modal_transfer,
+                                       parameters, modal_transfer_time)
   
   travel_costs[, prob := weight_from*weight_to]
   travel_costs[, prob := prob/sum(prob), list(from, to)]

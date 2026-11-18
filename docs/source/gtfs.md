@@ -51,6 +51,13 @@ correspond to one vehicle journey from start to finish. Waiting times are also
 estimated separately for each pattern, even where several patterns share part
 of a route.
 
+Representative buildings are connected to the nearest graph vertices using
+straight-line distances and the configured access and egress speeds. These
+connections are included in the leg distances and travel times. The complete
+access and egress legs must each fit their configured time limit. Mobility
+checks the selected graph path; it does not search for another path if that
+path exceeds a limit after adding a building connection.
+
 (gtfs-scenario-timetable)=
 ## Add a scenario feed
 
