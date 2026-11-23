@@ -107,15 +107,8 @@ knn_start <- get.knnx(
 buildings_sample[, vertex_id_from := start_verts$vertex_id[knn_start$nn.index]]
 
 
-last_verts <- intermodal_verts[grepl("l2-", vertex_id), list(vertex_id, x, y)]
-
-knn_last <- get.knnx(
-  last_verts[, list(x, y)],
-  buildings_sample[, list(x, y)],
-  k = 1
-)
-
-buildings_sample[, vertex_id_to := last_verts$vertex_id[knn_last$nn.index]]
+buildings_sample[, vertex_id_to := paste0("l2-b", building_id)]
+buildings_sample <- buildings_sample[vertex_id_to %in% intermodal_verts$vertex_id]
 
 
 travel_costs <- merge(travel_costs, buildings_sample[, list(building_id, weight_from = weight, vertex_id_from)], by.x = "building_id_from_cluster", by.y = "building_id")

@@ -37,6 +37,31 @@ Archive age is unrestricted by default: an old ZIP can still contain valid servi
 
 These counts describe the prepared day, before the routing graph's time restrictions. Possible overlapping feeds are reported for review.
 
+## How trips become a graph
+
+Mobility groups trips on the same route when they visit the same remaining
+stops in the same order. For example, two trips that join at a stop and then
+follow the same route share their departures and estimated headway from that
+stop. Arrivals into the stop remain separate when the trips came from different
+stops. If a trip returns to a stop, each visit has its own node. Passengers
+can transfer between patterns when the stop and GTFS transfer rules allow it.
+
+This graph is an approximation, not a full timetable router. Travel times are
+averaged across trips with the same pattern, so a path does not necessarily
+correspond to one vehicle journey from start to finish. Trips that share an
+initial section but later go to different stops remain separate. The model
+therefore does not combine their frequencies when a passenger could take either
+trip along that shared section.
+
+Representative buildings are connected to the nearest graph vertices using
+straight-line distances and the configured access and egress speeds. These
+connections are included in the leg distances and travel times. The final
+connection is also included when checking the target arrival time, rounded to
+the graph's one-minute time steps. The complete
+access and egress legs must each fit their configured time limit. Mobility
+checks the selected graph path; it does not search for another path if that
+path exceeds a limit after adding a building connection.
+
 (gtfs-scenario-timetable)=
 ## Add a scenario feed
 
