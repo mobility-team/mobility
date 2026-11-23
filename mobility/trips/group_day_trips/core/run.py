@@ -556,6 +556,16 @@ class Run(FileAsset):
         self._raise_if_disabled()
         return {key: pl.scan_parquet(path) for key, path in self.cache_path.items()}
 
+    def table(self, table_name: str, *, iteration: int | None = None) -> pl.LazyFrame:
+        """Return a lazy reader for a named run table or iteration."""
+        if iteration is not None:
+            return self.iteration_table(table_name, iteration)
+        tables = self.get()
+        if table_name not in tables:
+            raise ValueError(f"Unknown run output table `{table_name}`.")
+        table = tables[table_name]
+        return table.lazy() if isinstance(table, pl.DataFrame) else table
+
     def iteration_table(self, table_name: str, iteration: int) -> pl.LazyFrame:
         """Return one table saved after a completed model iteration."""
         if table_name not in {"plan_steps", "costs"}:
