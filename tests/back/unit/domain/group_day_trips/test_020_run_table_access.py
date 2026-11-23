@@ -25,6 +25,25 @@ def test_run_table_reads_a_selected_iteration(monkeypatch):
     assert table.collect()["iteration"].to_list() == [2]
 
 
+def test_run_table_can_reuse_saved_output_without_checking_upstream(tmp_path, monkeypatch):
+    run = object.__new__(Run)
+    path = tmp_path / "plan_steps.parquet"
+    pl.DataFrame({"plan_id": [3]}).write_parquet(path)
+    run.cache_path = {"plan_steps": path}
+    monkeypatch.setattr(run, "get_cached_asset", lambda: {"plan_steps": pl.scan_parquet(path)})
+    monkeypatch.setattr(run, "get", lambda: pytest.fail("Saved output should be reused"))
+
+    assert run.table("plan_steps", reuse_saved=True).collect()["plan_id"].to_list() == [3]
+
+
+def test_run_table_builds_missing_saved_output(tmp_path, monkeypatch):
+    run = object.__new__(Run)
+    run.cache_path = {"plan_steps": tmp_path / "missing.parquet"}
+    monkeypatch.setattr(run, "get", lambda: {"plan_steps": pl.DataFrame({"plan_id": [4]}).lazy()})
+
+    assert run.table("plan_steps", reuse_saved=True).collect()["plan_id"].to_list() == [4]
+
+
 def test_observed_diagnostics_read_plan_steps_through_table_interface(tmp_path, monkeypatch):
     monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
 
