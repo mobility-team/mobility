@@ -11,8 +11,10 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import geopandas as gpd
 
 from mobility.spatial.osm.geofabrik_regions import GeofabrikRegions
+from mobility.spatial.osm.geofabrik_extract import GeofabrikExtract
 
 EXTRACT_DATE = "260101"
+EXTRACT_URL = "https://download.geofabrik.de/europe/france/limousin/limousin-260101.osm.pbf"
 
 
 def digest(data):
@@ -32,7 +34,7 @@ def validate_regions(path):
         raise ValueError("Unexpected Geofabrik extract URLs")
 
 
-def create(output, source_cache=None):
+def create(output, source_cache=None, osm_extract=None):
     # Generate in a fresh directory: do not accidentally package stale local data.
     with tempfile.TemporaryDirectory() as temp:
         asset = asset_in(temp)
@@ -60,10 +62,19 @@ def create(output, source_cache=None):
             "source": "https://download.geofabrik.de/europe/",
             "provenance": provenance,
         }
+        files = {asset.cache_path.name: data, asset.hash_path.name: marker}
+        if osm_extract is not None:
+            extract = GeofabrikExtract(EXTRACT_URL)
+            extract_name = "osm/" + extract.cache_path.name
+            extract_marker = "osm/" + extract.hash_path.name
+            files[extract_name] = Path(osm_extract).read_bytes()
+            files[extract_marker] = extract.hash_path.read_bytes()
+            manifest["osm_url"] = EXTRACT_URL
+            manifest["files"].update({name: digest(files[name]) for name in (extract_name, extract_marker)})
         with ZipFile(output, "w", ZIP_DEFLATED) as bundle:
             bundle.writestr("manifest.json", json.dumps(manifest, indent=2) + "\n")
-            bundle.writestr(asset.cache_path.name, data)
-            bundle.writestr(asset.hash_path.name, marker)
+            for name, content in files.items():
+                bundle.writestr(name, content)
     print(f"Created {output}")
 
 
@@ -73,6 +84,12 @@ def restore(bundle_path, destination):
         asset = asset_in(temp)
         manifest = json.loads(bundle.read("manifest.json"))
         expected = {asset.cache_path.name, asset.hash_path.name}
+        extract = None
+        if manifest.get("osm_url") is not None:
+            if manifest["osm_url"] != EXTRACT_URL:
+                raise ValueError("Input bundle extract URL is incompatible")
+            extract = GeofabrikExtract(EXTRACT_URL)
+            expected.update({"osm/" + extract.cache_path.name, "osm/" + extract.hash_path.name})
         if (manifest.get("format") != 1 or manifest.get("asset") != "GeofabrikRegions"
                 or manifest.get("extract_date") != EXTRACT_DATE
                 or manifest.get("inputs_hash") != asset.inputs_hash
@@ -84,11 +101,14 @@ def restore(bundle_path, destination):
             raise ValueError("Input bundle checksum mismatch")
         if contents[asset.hash_path.name].decode().strip() != asset.inputs_hash:
             raise ValueError("Input bundle cache marker does not match")
+        if extract is not None and contents["osm/" + extract.hash_path.name].decode().strip() != extract.inputs_hash:
+            raise ValueError("Input bundle extract cache marker does not match")
         candidate = Path(temp) / asset.cache_path.name
         candidate.write_bytes(contents[asset.cache_path.name])
         validate_regions(candidate)
         destination.mkdir(parents=True, exist_ok=True)
         for name, data in contents.items():
+            (destination / name).parent.mkdir(parents=True, exist_ok=True)
             (destination / name).write_bytes(data)
     print(f"Restored Geofabrik regions to {destination}")
 
@@ -99,12 +119,13 @@ def main():
     create_parser = commands.add_parser("create")
     create_parser.add_argument("bundle", type=Path)
     create_parser.add_argument("--source-cache", type=Path, help="Use a validated existing Mobility cache")
+    create_parser.add_argument("--osm-extract", type=Path, help="Include the Limousin OSM extract")
     restore_parser = commands.add_parser("restore")
     restore_parser.add_argument("bundle", type=Path)
     restore_parser.add_argument("destination", type=Path)
     args = parser.parse_args()
     if args.command == "create":
-        create(args.bundle, args.source_cache)
+        create(args.bundle, args.source_cache, args.osm_extract)
     else:
         restore(args.bundle, args.destination)
 
