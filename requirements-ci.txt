@@ -138,7 +138,7 @@ packaging==26.0
     #   pyogrio
     #   pytest
     #   wheel
-pandas==3.0.1
+pandas==3.0.6
     # via
     #   mobility-tools (pyproject.toml)
     #   geopandas
@@ -215,7 +215,7 @@ python-dateutil==2.9.0.post0
     #   pandas
 python-dotenv==1.2.2
     # via mobility-tools (pyproject.toml)
-requests==2.32.5
+requests==2.34.2
     # via
     #   mobility-tools (pyproject.toml)
     #   dash
