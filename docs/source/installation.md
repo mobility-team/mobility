@@ -383,3 +383,8 @@ Ask your IT team for the company certificate file if the default mamba setup can
 ### You need help with a new error
 
 Check the [open bug reports](https://github.com/mobility-team/mobility/issues?q=is%3Aissue%20state%3Aopen%20label%3Abug). If no open issue matches the problem, open a new issue with the command you ran and the full error message.
+
+Mobility stores some temporary files, including GTFS preparation files, in the
+`temporary` folder inside `MOBILITY_PROJECT_DATA_FOLDER`. They are normally
+removed when the operation finishes. Files left after an interrupted process
+can be removed when no Mobility process is using them.
