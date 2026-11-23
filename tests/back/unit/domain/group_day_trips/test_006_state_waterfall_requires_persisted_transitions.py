@@ -9,14 +9,14 @@ from mobility.trips.group_day_trips.transitions.transition_schema import TRANSIT
 def test_state_waterfall_reads_car_counts_from_values(categorical):
     groups = pl.DataFrame({
         "demand_group_id": [1, 2], "home_zone_id": [1, 1],
-        "csp": ["worker", "worker"], "n_cars": ["2", "0"],
+        "csp": ["worker", "worker"], "n_cars": ["2+", "0"],
         "n_persons": [1.0, 1.0],
     })
     if categorical:
         groups = groups.with_columns(pl.col("n_cars").cast(pl.Categorical))
 
     keys = _load_demand_group_keys(groups.lazy(), demand_group_ids=None)
-    assert keys["n_cars"].to_list() == [2, 0]
+    assert keys["n_cars"].to_list() == ["2+", "0"]
 
 
 def test_state_waterfall_requires_persisted_transition_events():
@@ -72,7 +72,8 @@ class _SimpleTransportZones:
         )
 
 
-def test_state_waterfall_state_pair_uses_activity_time_destination_and_mode_sequences():
+@pytest.mark.parametrize("car_value", [1, "2+"])
+def test_state_waterfall_state_pair_uses_activity_time_destination_and_mode_sequences(car_value):
     transitions = pl.DataFrame(
         [
             {
@@ -115,11 +116,13 @@ def test_state_waterfall_state_pair_uses_activity_time_destination_and_mode_sequ
                 "demand_group_id": 1,
                 "home_zone_id": 10,
                 "csp": "worker",
-                "n_cars": 1,
+                "n_cars": car_value,
                 "n_persons": 3.0,
             }
         ]
     )
+    if isinstance(car_value, str):
+        demand_groups = demand_groups.with_columns(pl.col("n_cars").cast(pl.Categorical))
 
     _, state_pairs = state_waterfall(
         transitions=transitions.lazy(),
