@@ -198,7 +198,7 @@ class InitialIterationStateAsset(FileAsset):
             sensitivity_case=sensitivity_case,
         )
         inputs = {
-            "version": 4,
+            "version": 5,
             "is_weekday": is_weekday,
             "sensitivity_case": sensitivity_case,
             "population": population,

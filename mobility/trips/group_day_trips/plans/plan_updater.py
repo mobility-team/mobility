@@ -475,7 +475,7 @@ class PlanUpdater:
                     utility=(
                         value_of_time_stay_home
                         * pl.col("mean_home_night_per_pers")
-                        * (pl.col("mean_home_night_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
+                        * (pl.lit(24.0) / pl.col("min_activity_time")).log().clip(0.0)
                     )
                 )
                 .select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "mode_seq_id", "dest_seq_id", "utility"]),
