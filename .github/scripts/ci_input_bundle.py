@@ -1,5 +1,6 @@
 """Create and restore the small, versioned CI input bundle."""
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -51,6 +52,7 @@ def create(output, source_cache=None):
         marker = asset.hash_path.read_bytes()
         manifest = {
             "format": 1,
+            "created_utc": datetime.now(timezone.utc).isoformat(),
             "asset": "GeofabrikRegions",
             "extract_date": EXTRACT_DATE,
             "inputs_hash": asset.inputs_hash,
