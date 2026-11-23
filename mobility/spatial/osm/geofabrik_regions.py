@@ -87,8 +87,11 @@ class GeofabrikRegions(FileAsset):
             
             logging.info("Fetching region boundary : " + region_url)
         
-            #Grabs 
-            region = pd.read_table(region_url, skiprows=1, skipfooter=2, engine="python")
+            # Boundaries now live inside each region directory. Keep the
+            # existing extract URL below so the saved data stays compatible.
+            region_name = region_url.rsplit("/", 1)[-1]
+            boundary_url = region_url.removesuffix(".poly") + "/" + region_name
+            region = pd.read_table(boundary_url, skiprows=1, skipfooter=2, engine="python")
             
             region = pd.DataFrame({
                 "x": region.iloc[:, 0].str.split("   ").str[1],

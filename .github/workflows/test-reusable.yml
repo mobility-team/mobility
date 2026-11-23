@@ -57,9 +57,9 @@ jobs:
     - name: Restore CI input bundle
       shell: bash
       run: |
-        curl --fail --location --retry 3 --output /tmp/mobility-ci-geofabrik-v1.zip https://github.com/mobility-team/mobility/releases/download/ci-inputs-geofabrik-v1/mobility-ci-geofabrik-v1.zip
-        echo "bf37dbf2b9bb3aaae3c57c5a236878cbfe21e6ef3f22f76f221ccc289a1ba771  /tmp/mobility-ci-geofabrik-v1.zip" | sha256sum --check
-        python .github/scripts/ci_input_bundle.py restore /tmp/mobility-ci-geofabrik-v1.zip "${HOME}/.mobility/data"
+        curl --fail --location --retry 3 --output /tmp/mobility-ci-geofabrik-v2.zip https://github.com/mobility-team/mobility/releases/download/ci-inputs-geofabrik-v2/mobility-ci-geofabrik-v2.zip
+        echo "51441319deda6d992313f9380da6b6bdd063804974ed6e3c46c6c487d56e64b1  /tmp/mobility-ci-geofabrik-v2.zip" | sha256sum --check
+        python .github/scripts/ci_input_bundle.py restore /tmp/mobility-ci-geofabrik-v2.zip "${HOME}/.mobility/data"
 
     - name: Lint with flake8
       if: ${{ !inputs.use_min_dep_versions }}
