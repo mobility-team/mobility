@@ -299,7 +299,7 @@ def test_seen_untracked_file_becomes_tracked_cache_file(tmp_path, monkeypatch):
     asset.create_and_get_asset()
 
     first_report = cache.untracked_files_preview()
-    assert first_report.untracked_files_count == 2
+    assert first_report.untracked_files_count == 1
 
     cache.register_cache_source("kept notebook")
     asset.get()
@@ -370,3 +370,17 @@ def test_untracked_files_preview_logs_debug_scan_details(tmp_path, monkeypatch, 
     assert any("Project cache cleanup finished" in message for message in messages)
 
 
+
+
+def test_removing_a_file_asset_forgets_its_cache_registry_entries(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    cache = ProjectCache()
+    cache.register_cache_source("model script")
+    asset = _TextFileAsset(name="temporary", cache_folder=tmp_path / "cache")
+    asset.get()
+    assert str(asset.cache_path.resolve()) in _asset_paths(tmp_path)
+
+    asset.remove()
+
+    assert str(asset.cache_path.resolve()) not in _asset_paths(tmp_path)
+    assert not asset.cache_path.exists()

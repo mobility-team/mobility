@@ -272,7 +272,7 @@ def test_build_asset_graph_reports_missing_cached_and_stale_assets(tmp_path):
         cache_folder=tmp_path,
     )
 
-    cached.create_and_get_asset()
+    cached.get()
     stale.create_and_get_asset()
     stale.hash_path.write_text("old-inputs", encoding="utf-8")
 
@@ -311,7 +311,7 @@ def test_asset_graph_cytoscape_elements_can_be_filtered(tmp_path):
         children=[missing, cached],
         cache_folder=tmp_path,
     )
-    cached.create_and_get_asset()
+    cached.get()
 
     graph = build_asset_graph(parent)
     elements = asset_graph_cytoscape_elements(graph)
