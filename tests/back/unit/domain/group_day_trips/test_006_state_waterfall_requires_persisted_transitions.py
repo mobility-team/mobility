@@ -1,8 +1,22 @@
 import polars as pl
 import pytest
 
-from mobility.trips.group_day_trips.transitions.transition_metrics import state_waterfall
+from mobility.trips.group_day_trips.transitions.transition_metrics import _load_demand_group_keys, state_waterfall
 from mobility.trips.group_day_trips.transitions.transition_schema import TRANSITION_EVENT_SCHEMA
+
+
+@pytest.mark.parametrize("categorical", [False, True])
+def test_state_waterfall_reads_car_counts_from_values(categorical):
+    groups = pl.DataFrame({
+        "demand_group_id": [1, 2], "home_zone_id": [1, 1],
+        "csp": ["worker", "worker"], "n_cars": ["2", "0"],
+        "n_persons": [1.0, 1.0],
+    })
+    if categorical:
+        groups = groups.with_columns(pl.col("n_cars").cast(pl.Categorical))
+
+    keys = _load_demand_group_keys(groups.lazy(), demand_group_ids=None)
+    assert keys["n_cars"].to_list() == [2, 0]
 
 
 def test_state_waterfall_requires_persisted_transition_events():

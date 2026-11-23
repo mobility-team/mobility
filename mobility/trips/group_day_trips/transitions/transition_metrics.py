@@ -188,7 +188,8 @@ def _load_demand_group_keys(
             subgroup_expr,
             pl.col("home_zone_id").cast(pl.Int32),
             pl.col("csp").cast(pl.String),
-            pl.col("n_cars").cast(pl.Int32),
+            # Cast category labels, not their internal category codes.
+            pl.col("n_cars").cast(pl.String).cast(pl.Int32),
             pl.col("n_persons").cast(pl.Float64),
         )
         .collect(engine="streaming")
