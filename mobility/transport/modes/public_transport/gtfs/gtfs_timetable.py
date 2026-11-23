@@ -10,9 +10,23 @@ from typing import Any
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import min_weight_full_bipartite_matching
 from scipy.spatial import cKDTree
 
 from .gtfs_feed import GTFSFeed
+from .gtfs_overlap import find_headway_overlaps, find_trip_overlaps, find_within_feed_duplicates
+
+
+def format_agency_inventories(sources, feed_ids, involved):
+    """List the full agency inventory for the affected feed IDs."""
+    lines = []
+    for source in sources:
+        feed = feed_ids.get(source.get("feed_id"))
+        if feed in involved:
+            inventory = source.get("agency_inventory") or "unavailable"
+            lines.append(f"- {feed}:\n    " + inventory.replace("\n", "\n    "))
+    return "\n".join(lines)
 
 
 class GTFSTimetable:
@@ -29,21 +43,45 @@ class GTFSTimetable:
         route_types_path: str | Path,
         service_start_date: str | None = None,
         service_end_date: str | None = None,
+        source_ids: dict[str, str] | None = None,
+        feed_priority: list[str] | None = None,
     ) -> None:
         self.paths = paths
         self.transport_zones = transport_zones
         self.route_types_path = route_types_path
         self.service_start = dt.date.fromisoformat(service_start_date) if service_start_date else None
         self.service_end = dt.date.fromisoformat(service_end_date) if service_end_date else None
+        self.source_ids = source_ids or {}
+        self.feed_priority = feed_priority or []
+        if len(self.feed_priority) != len(set(self.feed_priority)):
+            raise ValueError("gtfs_feed_priority must not contain duplicate feed IDs.")
+        known = {self.source_ids.get(str(path), str(path)) for path in paths}
+        unknown = set(self.feed_priority) - known
+        if unknown:
+            raise ValueError(f"Unknown gtfs_feed_priority IDs: {sorted(unknown)}. Use IDs from the overlap error.")
         self.tables: dict[str, pd.DataFrame] = {}
 
     def prepare(self) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
         """Return the selected timetable and a summary of dates and source coverage."""
         self.tables, sources = self.read_feeds()
         tables = self.tables
+        feed_ids = {source["feed_id"]: self.source_ids.get(str(source["path"]), str(source["path"]))
+                    for source in sources if "feed_id" in source}
         date, services, tuesday_counts = self.select_tuesday()
         trips = tables["trips"]
         tables["trips"] = trips.loc[trips.service_id.isin(services)].copy()
+        # The overlap checks only need stop visits for the selected day.
+        stop_times = tables["stop_times"]
+        tables["stop_times"] = stop_times.loc[stop_times.trip_id.isin(tables["trips"].trip_id)].copy()
+        within_feed = find_within_feed_duplicates(tables["trips"], tables["stop_times"]).to_pandas()
+        within_removed = set(within_feed.removed_trip_id)
+        if within_removed:
+            within_feed["feed_id"] = within_feed.source.map(feed_ids)
+            counts = within_feed.groupby("feed_id").size()
+            for feed, count in counts.items():
+                logging.warning("Removed %s identical scheduled trips within GTFS feed %s; "
+                                "distinct simultaneous vehicles can have identical schedules.", count, feed)
+            tables["trips"] = tables["trips"].loc[~tables["trips"].trip_id.isin(within_removed)].copy()
         # Shared IDs can indicate overlapping replacements. Do not guess which
         # operator feed to remove: it may also contain complementary lines.
         identities = tables["trips"].merge(tables["routes"], on="route_id").merge(tables["agency"], on="agency_id")
@@ -58,6 +96,55 @@ class GTFSTimetable:
                 "%s selected GTFS trips share operator, route and trip IDs across feeds. "
                 "Review overlapping_trip_ids in the source report before using the result.", len(overlapping),
             )
+
+        trip_overlaps = find_trip_overlaps(tables["trips"], tables["stop_times"], tables["stops"])
+        headway_trips = int((tables["trips"]["_frequency_kind"] == "headway").sum())
+        if headway_trips:
+            logging.warning("Headway-to-scheduled overlaps and partially overlapping headway "
+                            "intervals within one feed are not checked.")
+        trip_overlaps = trip_overlaps.to_pandas()
+        removed_trips = self.resolve_trip_overlaps(trip_overlaps, identities, sources, date)
+        headway_overlaps, headway_members, within_headway = find_headway_overlaps(
+            tables["trips"], tables["stop_times"], tables["stops"]
+        )
+        if not within_headway.empty:
+            within_headway["feed_id"] = within_headway.source.map(feed_ids)
+            removed_headway_members = headway_members.loc[
+                headway_members.representative_trip_id.isin(within_headway.removed_trip_id), "trip_id"
+            ]
+            within_removed.update(removed_headway_members)
+            for feed, count in within_headway.groupby("feed_id").size().items():
+                logging.warning("Removed %s identical headway intervals within GTFS feed %s; "
+                                "distinct parallel services can have identical intervals.", count, feed)
+        removed_intervals = set()
+        if not headway_overlaps.empty:
+            partial = headway_overlaps.loc[~headway_overlaps.identical_interval]
+            if not partial.empty:
+                lines = []
+                for row in partial.head(10).itertuples(index=False):
+                    lines.append(
+                        f"- {feed_ids[row.left_source]} ({row.left_trip_id}, "
+                        f"{row.left_interval_start:g}–{row.left_interval_end:g}s, headway {row.left_headway:g}s) "
+                        f"<-> {feed_ids[row.right_source]} ({row.right_trip_id}, "
+                        f"{row.right_interval_start:g}–{row.right_interval_end:g}s, headway {row.right_headway:g}s)"
+                    )
+                involved = {feed_ids[source] for source in set(partial.left_source) | set(partial.right_source)}
+                raise ValueError(
+                    f"Found {len(partial)} overlapping headway intervals with different service windows or "
+                    "headways. Mobility cannot safely split or deduplicate these intervals automatically. "
+                    "Times are seconds on the selected service day at the first retained stop. "
+                    "Review the affected feeds and use excluded_gtfs_sources if appropriate.\n"
+                    + "\n".join(lines)
+                    + ("\nOnly the first 10 candidate pairs are shown." if len(partial) > 10 else "")
+                    + "\n\nAll agencies listed in each affected feed (including outside the study area):\n"
+                    + format_agency_inventories(sources, feed_ids, involved)
+                )
+            removed_intervals = self.resolve_trip_overlaps(headway_overlaps, identities, sources, date, item_kind="headway intervals")
+            removed_trips.update(headway_members.loc[
+                headway_members.representative_trip_id.isin(removed_intervals), "trip_id"
+            ])
+        if removed_trips or within_removed:
+            tables["trips"] = tables["trips"].loc[~tables["trips"].trip_id.isin(removed_trips | within_removed)].copy()
 
         # Keep stop visits, routes and agencies used by the selected vehicle trips.
         for name, key, parent in (
@@ -89,20 +176,19 @@ class GTFSTimetable:
             if "feed_id" in source:
                 prefix = source["feed_id"] + "-"
                 source["selected_trips"] = int(tables["trips"].trip_id.str.startswith(prefix).sum())
+                source["deduplicated_trips"] = sum(trip.startswith(prefix) for trip in removed_trips)
+                source["within_feed_deduplicated_trips"] = sum(trip.startswith(prefix) for trip in within_removed)
                 source["overlapping_trip_ids"] = int(overlapping.trip_id.str.startswith(prefix).sum())
                 active_dates = self.service_dates_by_source.get(source["feed_id"], [])
                 source["active_service_dates"] = ",".join(day.strftime("%Y-%m-%d") for day in active_dates)
                 if not source["selected_trips"]:
-                    source["status"] = (
+                    source["status"] = ("deduplicated" if source["deduplicated_trips"] else
                         "no_service_in_window" if not active_dates else
                         "no_tuesday_service" if not any(day.weekday() == 1 for day in active_dates) else
                         "no_service_on_selected_date"
                     )
-                    logging.warning(
-                        "GTFS %s has no service on selected Tuesday %s",
-                        source["path"],
-                        date.date(),
-                    )
+                    if source["status"] != "deduplicated":
+                        logging.warning("GTFS %s has no service on selected Tuesday %s", source["path"], date.date())
         feed_count = sum(any(day.weekday() == 1 for day in dates) for dates in self.service_dates_by_source.values())
         common_tuesday = any(row["feeds_with_service"] == feed_count for row in tuesday_counts)
         if not common_tuesday:
@@ -115,15 +201,124 @@ class GTFSTimetable:
             "date_alignment": False,
             "common_tuesday_available": common_tuesday,
             "overlapping_trip_ids": len(overlapping),
+            "spatiotemporal_overlap_pairs": len(trip_overlaps),
+            "deduplicated_trips": len(removed_trips),
+            "within_feed_deduplicated_trips": len(within_removed),
+            "headway_generated_trips": headway_trips,
+            "headway_interval_pairs": len(headway_overlaps),
+            "deduplicated_headway_intervals": len(removed_intervals),
+            "within_feed_deduplicated_headway_intervals": len(within_headway),
+            "trip_overlaps": trip_overlaps,
+            "headway_overlaps": headway_overlaps,
+            "within_feed_overlaps": within_feed,
+            "within_feed_headway_overlaps": within_headway,
             "sources": sources,
             "tuesdays": tuesday_counts,
             "frequency_assumption": "regular departures also approximate exact_times=0",
             "interpolation": "linear by stop_sequence between timed endpoints",
         }
+        tables["trips"] = tables["trips"].drop(columns=[column for column in tables["trips"] if column.startswith("_frequency_")])
         return {
             key: tables[key]
             for key in ("agency", "routes", "stops", "trips", "stop_times", "transfers")
         }, metadata
+
+    def resolve_trip_overlaps(self, pairs, identities, sources, date, item_kind="trips"):
+        """Use feed priority to decide which matching trips to remove.
+
+        First show an error if a modeller has not ranked every affected feed.
+        For each pair of ranked feeds, match trips one-to-one, preferring trips
+        with closer times and stop locations. This prevents a single preferred
+        trip from removing several trips. Unmatched trips stay in the model.
+        """
+        if pairs.empty:
+            return set()
+        source_ids = {source["feed_id"]: self.source_ids.get(str(source["path"]), str(source["path"]))
+                      for source in sources if "feed_id" in source}
+        pairs["left_feed"] = pairs.left_source.map(source_ids)
+        pairs["right_feed"] = pairs.right_source.map(source_ids)
+        operators = identities.set_index("trip_id")["agency_name"]
+        pairs["left_operator"] = pairs.left_trip_id.map(operators).fillna("unknown")
+        pairs["right_operator"] = pairs.right_trip_id.map(operators).fillna("unknown")
+        pairs["selected_for_removal"] = False
+        pairs["removed_trip_id"] = ""
+        involved = set(pairs.left_feed) | set(pairs.right_feed)
+        if not involved.issubset(self.feed_priority):
+            report = []
+            grouped = pairs.groupby(["left_feed", "right_feed"], sort=True)
+            for (left, right), group in grouped:
+                ambiguous_left = int((group.groupby("left_trip_id").size() > 1).sum())
+                ambiguous_right = int((group.groupby("right_trip_id").size() > 1).sum())
+                report.append(
+                    f"- {left}  <->  {right} : "
+                    f"{len(group)} candidate pairs, {group.left_trip_id.nunique()} / "
+                    f"{group.right_trip_id.nunique()} distinct trips; "
+                    f"{ambiguous_left} / {ambiguous_right} trips have multiple candidates; "
+                    f"maximum arrival difference {group.max_arrival_difference_s.max():g} s"
+                )
+            raise ValueError(
+                f"Potential overlapping GTFS {item_kind} on {date.date()}:\n"
+                + "\n".join(report)
+                + "\n\nAll agencies listed in each affected feed (including outside the study area):\n"
+                + format_agency_inventories(sources, source_ids, involved)
+                + "\n\nReview the feed pairs, then set gtfs_feed_priority in "
+                "PublicTransportRoutingParameters, listing every overlapping feed ID "
+                "in preference order, highest first. Example:\n"
+                "    gtfs_feed_priority=['<preferred feed ID>', '<other feed ID>']\n"
+                f"Matched {item_kind} from lower-priority feeds will be removed one-to-one; "
+                f"unmatched {item_kind} are retained."
+            )
+        ambiguous_left = int((pairs.groupby(["left_trip_id", "right_feed"]).size() > 1).sum())
+        ambiguous_right = int((pairs.groupby(["right_trip_id", "left_feed"]).size() > 1).sum())
+        if ambiguous_left or ambiguous_right:
+            logging.warning(
+                "%s / %s GTFS %s have multiple candidate matches in another feed; "
+                "review the chosen matches in the overlap report.", ambiguous_left, ambiguous_right, item_kind,
+            )
+        removed = set()
+        # Process feeds in priority order. For each feed pair, choose as many
+        # one-to-one matches as possible, then prefer the closest matches.
+        for lower_rank in range(1, len(self.feed_priority)):
+            lower = self.feed_priority[lower_rank]
+            for higher in self.feed_priority[:lower_rank]:
+                direct = pairs.loc[(pairs.left_feed == higher) & (pairs.right_feed == lower)].copy()
+                reversed_pairs = pairs.loc[(pairs.left_feed == lower) & (pairs.right_feed == higher)].copy()
+                if not reversed_pairs.empty:
+                    reversed_pairs = reversed_pairs.rename(columns={"left_trip_id": "right_trip_id", "right_trip_id": "left_trip_id"})
+                edges = pd.concat([direct, reversed_pairs])
+                if edges.empty:
+                    continue
+                edges = edges.loc[~edges.left_trip_id.isin(removed) & ~edges.right_trip_id.isin(removed)]
+                if edges.empty:
+                    continue
+                high_ids = pd.Index(sorted(edges.left_trip_id.unique()))
+                low_ids = pd.Index(sorted(edges.right_trip_id.unique()))
+                # Each preferred trip gets its own "unmatched" option. Its
+                # cost is larger than all real match costs combined, so the
+                # solver first maximizes the number of matches. Among those,
+                # it prefers smaller time and distance differences.
+                cost = (edges.max_time_difference_s.to_numpy() +
+                        edges.max_distance_m.to_numpy() / 101.0 + 1.0)
+                unmatched_cost = (cost.max() + 1) * (min(len(high_ids), len(low_ids)) + 1)
+                rows = np.concatenate([high_ids.get_indexer(edges.left_trip_id), np.arange(len(high_ids))])
+                columns = np.concatenate([low_ids.get_indexer(edges.right_trip_id),
+                                          len(low_ids) + np.arange(len(high_ids))])
+                graph = csr_matrix((np.concatenate([cost, np.full(len(high_ids), unmatched_cost)]),
+                                    (rows, columns)), shape=(len(high_ids), len(low_ids) + len(high_ids)))
+                row_indices, column_indices = min_weight_full_bipartite_matching(graph)
+                matched = column_indices < len(low_ids)
+                high_matches = high_ids.take(row_indices[matched])
+                low_matches = low_ids.take(column_indices[matched])
+                selected_pairs = pd.MultiIndex.from_arrays([high_matches, low_matches])
+                direct_mask = pd.MultiIndex.from_frame(pairs[["left_trip_id", "right_trip_id"]]).isin(selected_pairs)
+                reverse_mask = pd.MultiIndex.from_frame(pairs[["right_trip_id", "left_trip_id"]]).isin(selected_pairs)
+                pairs.loc[direct_mask | reverse_mask, "selected_for_removal"] = True
+                pairs.loc[direct_mask, "removed_trip_id"] = pairs.loc[direct_mask, "right_trip_id"]
+                pairs.loc[reverse_mask, "removed_trip_id"] = pairs.loc[reverse_mask, "left_trip_id"]
+                removed.update(low_matches)
+        logging.warning("Removed %s matched lower-priority GTFS %s; unmatched %s are retained.",
+                        len(removed), item_kind, item_kind)
+        return removed
 
     def read_feeds(self) -> tuple[dict[str, pd.DataFrame], list[dict[str, Any]]]:
         """Read each distinct timetable once, retaining its original dates."""
@@ -171,6 +366,7 @@ class GTFSTimetable:
                         source["status"] = "no usable trips in area"
                         continue
                     source.update(reader.diagnostics)
+                    source["agency_inventory"] = reader.agency_inventory
 
                 source["status"] = "prepared"
                 source["feed_id"] = str(len(feeds) + 1)
@@ -293,13 +489,10 @@ class GTFSTimetable:
         coordinates = np.column_stack([points.x, points.y])
         pairs = cKDTree(coordinates).query_pairs(200, output_type="ndarray")
         pairs = np.concatenate([pairs, pairs[:, ::-1]], axis=0)
-        # Different lines can share one stop. Include these connections before
-        # applying declared rules, so same-stop prohibitions still take priority.
-        visits = tables["stop_times"][["trip_id", "stop_id"]].merge(
-            tables["trips"][["trip_id", "route_id"]], on="trip_id"
-        )
-        lines_per_stop = visits.groupby("stop_id").route_id.nunique()
-        shared_stops = np.flatnonzero(active.stop_id.isin(lines_per_stop[lines_per_stop > 1].index))
+        # Trips of the same route can follow different stop patterns. Include
+        # same-stop connections before applying declared transfer restrictions.
+        visit_counts = tables["stop_times"].groupby("stop_id").size()
+        shared_stops = np.flatnonzero(active.stop_id.isin(visit_counts[visit_counts > 1].index))
         pairs = np.concatenate([pairs, np.column_stack([shared_stops, shared_stops])], axis=0)
         distance = np.linalg.norm(coordinates[pairs[:, 0]] - coordinates[pairs[:, 1]], axis=1)
         ids = active.stop_id.to_numpy()

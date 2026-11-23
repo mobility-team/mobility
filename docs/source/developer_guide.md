@@ -6,6 +6,8 @@ You do not need to be a professional software developer to make useful contribut
 
 The development workflow is meant to stay simple and explicit.
 
+CI maintainers can find input bundle generation and refresh instructions in `docs/design/ci-input-bundle.md`.
+
 ## Install For Development
 
 Install the development version when you want to change Mobility code, run tests, or open a pull request.

@@ -42,6 +42,7 @@ class GTFSRouter(FileAsset):
             | str | pathlib.Path | CustomGTFS | None
         ) = None,
         expected_agencies: list[str] | None = None,
+        gtfs_feed_priority: list[str] | None = None,
     ) -> None:
         """Reuse saved timetables only when sources and additional files are unchanged."""
         additional_hashes = {}
@@ -76,13 +77,14 @@ class GTFSRouter(FileAsset):
                     continue
                 additional_hashes[path] = GTFSData.file_sha256(path)
         inputs = {
-            "version": "7",
+            "version": "14",
             "transport_zones": transport_zones,
             "gtfs_sources": gtfs_sources,
             "gtfs_sources_sha256": sources_hash,
             "gtfs_data": gtfs_data,
             "additional_gtfs_files": additional_gtfs_files,
             "expected_agencies": expected_agencies,
+            "gtfs_feed_priority": gtfs_feed_priority or [],
             "additional_gtfs_hashes": additional_hashes,
         }
 
@@ -125,14 +127,17 @@ class GTFSRouter(FileAsset):
         gtfs_files: list[str | pathlib.Path],
     ) -> None:
         """Save the selected timetable and a GeoPackage with stops, lines and preparation information."""
+        source_assets = {str(asset.cache_path["zip"]): asset for asset in self.gtfs_data}
+        source_ids = {path: f"{asset.provider}:{asset.resource_id}" for path, asset in source_assets.items()}
         tables, metadata = GTFSTimetable(
             gtfs_files,
             transport_zones.get(),
             resources.files("mobility.runtime.resources").joinpath("gtfs/gtfs_route_types.csv"),
             service_start_date=self.gtfs_sources.gtfs_service_start_date if self.gtfs_sources else None,
             service_end_date=self.gtfs_sources.gtfs_service_end_date if self.gtfs_sources else None,
+            source_ids=source_ids,
+            feed_priority=self.inputs["gtfs_feed_priority"],
         ).prepare()
-        source_assets = {str(asset.cache_path["zip"]): asset for asset in self.gtfs_data}
         for source in metadata["sources"]:
             asset = source_assets.get(source["path"])
             if asset is not None:
@@ -210,12 +215,15 @@ class GTFSRouter(FileAsset):
         temporary.unlink(missing_ok=True)
         stops.to_file(temporary, layer="stops", driver="GPKG", index=False)
         lines.to_file(temporary, layer="lines", driver="GPKG", index=False)
-        for name in ("sources", "tuesdays"):
-            pyogrio.write_dataframe(
-                pd.DataFrame(metadata[name]), temporary, layer=name, driver="GPKG"
-            )
+        report_layers = ("sources", "tuesdays", "trip_overlaps", "within_feed_overlaps",
+                         "headway_overlaps", "within_feed_headway_overlaps")
+        for name in report_layers:
+            report = pd.DataFrame(metadata[name])
+            if name not in ("sources", "tuesdays") and report.empty:
+                continue
+            pyogrio.write_dataframe(report, temporary, layer=name, driver="GPKG")
         summary = {
-            key: value for key, value in metadata.items() if key not in ("sources", "tuesdays")
+            key: value for key, value in metadata.items() if key not in report_layers
         }
         pyogrio.write_dataframe(pd.DataFrame([summary]), temporary, layer="summary", driver="GPKG")
         temporary.replace(path)

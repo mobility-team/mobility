@@ -68,6 +68,7 @@ class PublicTransportGraph(FileAsset):
             gtfs_sources=gtfs_sources,
             additional_gtfs_files=parameters.additional_gtfs_files,
             expected_agencies=parameters.expected_agencies,
+            gtfs_feed_priority=parameters.gtfs_feed_priority,
         )
 
         # R needs routing settings; source assets stay in the router.
@@ -76,7 +77,7 @@ class PublicTransportGraph(FileAsset):
             for name in PublicTransportRoutingSettings.model_fields
         })
         inputs = {
-            "version": "3",
+            "version": "5",
             "transport_zones": transport_zones,
             "gtfs_router": gtfs_router,
             "parameters": settings
@@ -172,7 +173,17 @@ class PublicTransportRoutingSettings(BaseModel):
     transfer_time_coeff: Annotated[float, Field(default=2.0, gt=0.0)]
     no_show_perceived_prob: Annotated[float, Field(default=0.2, ge=0.0, le=1.0)]
     target_time: Annotated[float, Field(default=8.0, ge=0.0, le=24.0)]
-    max_wait_time_at_destination: Annotated[float, Field(default=0.25, ge=0.0)]
+    max_wait_time_at_destination: Annotated[
+        float,
+        Field(
+            default=0.25,
+            ge=0.0,
+            description=(
+                "Early-arrival allowance in hours used to filter stop arrivals "
+                "before connecting them to destinations; 0.25 means 15 minutes."
+            ),
+        ),
+    ]
     max_perceived_time: Annotated[float, Field(default=2.0, gt=0.0)]
     max_beeline_distance: Annotated[
         float,
@@ -198,6 +209,10 @@ class PublicTransportRoutingParameters(PublicTransportRoutingSettings):
         Field(default=None),
     ]
     expected_agencies: Annotated[list[str] | None, Field(default=None)]
+    gtfs_feed_priority: Annotated[
+        list[str],
+        Field(default_factory=list, description="Ordered overlapping feed IDs, highest priority first."),
+    ]
     excluded_gtfs_sources: Annotated[
         list[str],
         Field(default_factory=list, description="Feeds deliberately omitted, as provider:resource_id."),
@@ -252,6 +267,8 @@ class PublicTransportRoutingParameters(PublicTransportRoutingSettings):
 
     @model_validator(mode="after")
     def validate_sources(self) -> "PublicTransportRoutingParameters":
+        if len(self.gtfs_feed_priority) != len(set(self.gtfs_feed_priority)):
+            raise ValueError("gtfs_feed_priority must not contain duplicate feed IDs.")
         if self.additional_gtfs_files == []:
             self.additional_gtfs_files = None
         if self.gtfs_reference_date is None:
