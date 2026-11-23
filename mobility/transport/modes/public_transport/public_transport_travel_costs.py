@@ -65,7 +65,7 @@ class PublicTransportTravelCosts(TravelCostsBase, FileAsset):
         )
 
         inputs = {
-            "version": "1",
+            "version": "2",
             "intermodal_graph": intermodal_graph,
             "transport_zones": transport_zones,
             "first_modal_transfer": first_modal_transfer,
