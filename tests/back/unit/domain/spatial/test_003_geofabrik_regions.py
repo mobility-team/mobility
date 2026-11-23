@@ -1,19 +1,23 @@
-import pandas as pd
+﻿from unittest.mock import MagicMock
 
 from mobility.spatial.osm.geofabrik_regions import GeofabrikRegions
 
 
-def test_region_boundaries_use_the_current_geofabrik_path(tmp_path, monkeypatch):
+def test_geofabrik_boundaries_use_current_paths_and_shared_http_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("MOBILITY_PACKAGE_DATA_FOLDER", str(tmp_path))
-    urls = []
+    response = MagicMock()
+    response.__enter__.return_value.text = (
+        "region\n1\n   1.0   2.0\n   2.0   2.0\n   2.0   3.0\nEND\nEND\n"
+    )
+    request = MagicMock(return_value=response)
+    monkeypatch.setattr("mobility.spatial.osm.geofabrik_regions.request_url", request)
 
-    def read_boundary(url, **kwargs):
-        urls.append(url)
-        return pd.DataFrame({"coordinates": ["   1.0   1.0", "   2.0   1.0", "   1.0   2.0"]})
+    regions = GeofabrikRegions("260101").get()
 
-    monkeypatch.setattr(pd, "read_table", read_boundary)
-    regions = GeofabrikRegions().get()
     assert len(regions) == 23
-    assert urls[0] == "https://download.geofabrik.de/europe/france/alsace/alsace.poly"
-    assert urls[-1] == "https://download.geofabrik.de/europe/switzerland/switzerland.poly"
-    assert regions.iloc[0]["url"] == "https://download.geofabrik.de/europe/france/alsace/alsace-260101.osm.pbf"
+    assert regions.geometry.iloc[0].area == 0.5
+    assert regions.url.iloc[0] == "https://download.geofabrik.de/europe/france/alsace/alsace-260101.osm.pbf"
+    assert request.call_args_list[0].args[0] == "https://download.geofabrik.de/europe/france/alsace/alsace.poly"
+    assert request.call_args_list[-1].args[0] == "https://download.geofabrik.de/europe/switzerland/switzerland.poly"
+    assert request.call_count == 23
+    assert response.__exit__.call_count == 23
