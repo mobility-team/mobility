@@ -299,7 +299,7 @@ def test_seen_untracked_file_becomes_tracked_cache_file(tmp_path, monkeypatch):
     asset.create_and_get_asset()
 
     first_report = cache.untracked_files_preview()
-    assert first_report.untracked_files_count == 2
+    assert first_report.untracked_files_count == 1
 
     cache.register_cache_source("kept notebook")
     asset.get()

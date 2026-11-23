@@ -51,7 +51,8 @@ def create(output, source_cache=None, osm_extract=None):
             provenance = "Existing Mobility cache; source download date unknown"
         validate_regions(asset.cache_path)
         data = asset.cache_path.read_bytes()
-        marker = asset.hash_path.read_bytes()
+        # The bundled marker is written only after validating the input data.
+        marker = asset.inputs_hash.encode("utf-8")
         manifest = {
             "format": 1,
             "created_utc": datetime.now(timezone.utc).isoformat(),
@@ -68,7 +69,7 @@ def create(output, source_cache=None, osm_extract=None):
             extract_name = "osm/" + extract.cache_path.name
             extract_marker = "osm/" + extract.hash_path.name
             files[extract_name] = Path(osm_extract).read_bytes()
-            files[extract_marker] = extract.hash_path.read_bytes()
+            files[extract_marker] = extract.inputs_hash.encode("utf-8")
             manifest["osm_url"] = EXTRACT_URL
             manifest["files"].update({name: digest(files[name]) for name in (extract_name, extract_marker)})
         with ZipFile(output, "w", ZIP_DEFLATED) as bundle:

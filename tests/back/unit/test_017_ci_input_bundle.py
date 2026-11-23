@@ -26,6 +26,7 @@ def test_bundle_restores_a_usable_cache_without_downloading(tmp_path, monkeypatc
         {"url": [f"https://example.test/{i}-260101.osm.pbf" for i in range(23)]},
         geometry=[Point(i, i) for i in range(23)], crs=4326,
     ).to_file(asset.cache_path)
+    asset.update_hash(asset.inputs_hash)
     archive = tmp_path / "bundle.zip"
     extract_file = tmp_path / "limousin.osm.pbf"
     extract_file.write_bytes(b"fixture extract")

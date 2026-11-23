@@ -151,6 +151,22 @@ def iter_asset_dependencies(
             return
         visited_assets.add(asset_id)
 
+        # Execution-scoped files are scratch handoffs, not reusable cache
+        # outputs. Their absence must not invalidate a durable result. Keep
+        # walking through them so changes to their durable inputs still
+        # invalidate downstream assets.
+        if (
+            file_assets_only
+            and getattr(value, "is_execution_scoped_cost_asset", False)
+        ):
+            for nested in value.inputs.values():
+                yield from iter_asset_dependencies(
+                    nested,
+                    file_assets_only=file_assets_only,
+                    visited_assets=visited_assets,
+                )
+            return
+
         if not file_assets_only or is_file_asset(value):
             yield value
             return
@@ -255,10 +271,10 @@ def asset_cache_status(asset: Asset) -> str:
     if not is_file_asset(asset):
         return "not_file_asset"
 
-    if asset.inputs_changed():
-        return "stale"
     if asset.assets_missing():
         return "missing"
+    if asset.inputs_changed():
+        return "stale"
     return "cached"
 
 

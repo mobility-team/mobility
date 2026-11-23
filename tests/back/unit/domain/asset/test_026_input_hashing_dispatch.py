@@ -28,8 +28,8 @@ def test_dependency_hash_is_stable_when_disk_cache_needs_repair(tmp_path):
     child = File({"value": 1}, tmp_path / "child.txt")
     child.cache_path.write_text("output")
     parent_hash = hash_inputs({"child": child})
-    assert normalize_for_hash(child) == {"__asset__": child.get_cached_hash()}
-    assert not child.is_update_needed()
+    assert normalize_for_hash(child) == {"__asset__": child.inputs_hash}
+    assert child.is_update_needed()
 
     child.hash_path.write_text("outdated")
     assert child.is_update_needed()
