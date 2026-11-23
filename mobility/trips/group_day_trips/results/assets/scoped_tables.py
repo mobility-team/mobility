@@ -116,17 +116,7 @@ class ScopedRunTable(FileAsset):
 
         scoped_tables: list[pl.LazyFrame] = []
         for run_context in self.run_contexts:
-            self._ensure_run_output_available(run_context, self.table_name)
-            cached = run_context.run.get_cached_asset()
-            if self.table_name not in cached:
-                raise KeyError(
-                    f"Run output table `{self.table_name}` is not available. "
-                    f"Available tables: {sorted(cached)}."
-                )
-
-            table = cached[self.table_name]
-            if isinstance(table, pl.DataFrame):
-                table = table.lazy()
+            table = run_context.run.table(self.table_name, reuse_saved=True)
             if self.table_name == "iteration_metrics":
                 table = table.filter(pl.col("iteration") == self.results.last_iteration)
                 iteration_expr = pl.col("iteration").cast(pl.Int32)
@@ -228,28 +218,13 @@ class ScopedRunTable(FileAsset):
     ) -> pl.LazyFrame:
         """Return one saved iteration table for a run."""
         run = run_context.run
-        if not callable(getattr(run, "iteration_table", None)):
-            raise TypeError(
-                "Iteration-scoped result tables need runs exposing "
-                "`iteration_table(table_name, iteration)`."
-            )
-
-        table = run.iteration_table(table_name, iteration)
-        if isinstance(table, pl.DataFrame):
-            return table.lazy()
-        return table
+        return run.table(table_name, iteration=iteration)
 
     def _iteration_demand_groups(self) -> list[pl.LazyFrame]:
         """Return demand groups repeated for each selected iteration."""
         scoped_tables = []
         for run_context in self.run_contexts:
-            self._ensure_run_output_available(run_context, "demand_groups")
-            cached = run_context.run.get_cached_asset()
-            if "demand_groups" not in cached:
-                raise KeyError("Run output table `demand_groups` is not available.")
-            table = cached["demand_groups"]
-            if isinstance(table, pl.DataFrame):
-                table = table.lazy()
+            table = run_context.run.table("demand_groups", reuse_saved=True)
             for iteration in self.selected_iterations:
                 scoped_tables.append(
                     self._select_columns(
@@ -268,13 +243,7 @@ class ScopedRunTable(FileAsset):
         """Return iteration diagnostics filtered to the selected iterations."""
         scoped_tables = []
         for run_context in self.run_contexts:
-            self._ensure_run_output_available(run_context, "iteration_metrics")
-            cached = run_context.run.get_cached_asset()
-            if "iteration_metrics" not in cached:
-                raise KeyError("Run output table `iteration_metrics` is not available.")
-            table = cached["iteration_metrics"]
-            if isinstance(table, pl.DataFrame):
-                table = table.lazy()
+            table = run_context.run.table("iteration_metrics", reuse_saved=True)
             scoped_tables.append(
                 self._select_columns(
                     table
@@ -297,14 +266,4 @@ class ScopedRunTable(FileAsset):
         schema = table.collect_schema().names()
         columns = [column for column in self.columns if column in schema]
         return table.select(columns)
-
-    @staticmethod
-    def _ensure_run_output_available(run_context: "ResultRun", table_name: str) -> None:
-        """Materialize a run only when the requested final output is missing."""
-        run = run_context.run
-        cache_path = getattr(run, "cache_path", {})
-        if isinstance(cache_path, dict) and table_name in cache_path:
-            if pathlib.Path(cache_path[table_name]).exists():
-                return
-        run.get()
 

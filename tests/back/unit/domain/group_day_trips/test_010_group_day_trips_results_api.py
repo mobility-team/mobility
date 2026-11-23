@@ -82,6 +82,8 @@ class _FakeRun(FileAsset):
             frame.write_parquet(path)
         return self.get_cached_asset()
 
+    table = Run.table
+
     def _get_expected_diagnostics_inputs(self):
         """Return the fake survey reference asset expected by new diagnostics."""
         return SimpleNamespace(
