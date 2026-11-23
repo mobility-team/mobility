@@ -77,7 +77,7 @@ class PublicTransportGraph(FileAsset):
             for name in PublicTransportRoutingSettings.model_fields
         })
         inputs = {
-            "version": "3",
+            "version": "5",
             "transport_zones": transport_zones,
             "gtfs_router": gtfs_router,
             "parameters": settings
@@ -173,7 +173,17 @@ class PublicTransportRoutingSettings(BaseModel):
     transfer_time_coeff: Annotated[float, Field(default=2.0, gt=0.0)]
     no_show_perceived_prob: Annotated[float, Field(default=0.2, ge=0.0, le=1.0)]
     target_time: Annotated[float, Field(default=8.0, ge=0.0, le=24.0)]
-    max_wait_time_at_destination: Annotated[float, Field(default=0.25, ge=0.0)]
+    max_wait_time_at_destination: Annotated[
+        float,
+        Field(
+            default=0.25,
+            ge=0.0,
+            description=(
+                "Early-arrival allowance in hours used to filter stop arrivals "
+                "before connecting them to destinations; 0.25 means 15 minutes."
+            ),
+        ),
+    ]
     max_perceived_time: Annotated[float, Field(default=2.0, gt=0.0)]
     max_beeline_distance: Annotated[
         float,
