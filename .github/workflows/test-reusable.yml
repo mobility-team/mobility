@@ -52,6 +52,15 @@ jobs:
         python -m pip install "pytest>=8,<10"
       shell: bash
 
+    # Each job starts with a fresh container. Restore the pinned external input
+    # once so the unit and integration tests can share it.
+    - name: Restore CI input bundle
+      shell: bash
+      run: |
+        curl --fail --location --retry 3 --output /tmp/mobility-ci-geofabrik-v4.zip https://github.com/mobility-team/mobility/releases/download/ci-inputs-geofabrik-v4/mobility-ci-geofabrik-v4.zip
+        echo "57edb0899673b7cc07e9b49df4c7670be907fe3bbde732ab976d19e419f44097  /tmp/mobility-ci-geofabrik-v4.zip" | sha256sum --check
+        python .github/scripts/ci_input_bundle.py restore /tmp/mobility-ci-geofabrik-v4.zip "${HOME}/.mobility/data"
+
     - name: Lint with flake8
       if: ${{ !inputs.use_min_dep_versions }}
       run: |
@@ -62,13 +71,13 @@ jobs:
     - name: Test unit with pytest
       if: ${{ !inputs.use_min_dep_versions }}
       run: |
-        python -m pytest tests/back/unit --cov=mobility --cov-config=.coveragerc --cov-append --log-cli-level=INFO --clear_inputs
+        python -m pytest tests/back/unit --cov=mobility --cov-config=.coveragerc --cov-append --log-cli-level=INFO
       shell: bash
 
     - name: Test integration with pytest
       if: ${{ !inputs.use_min_dep_versions }}
       run: |
-        python -m pytest tests/back/integration --cov=mobility --cov-config=.coveragerc --cov-append --log-cli-level=INFO --clear_inputs
+        python -m pytest tests/back/integration --cov=mobility --cov-config=.coveragerc --cov-append --log-cli-level=INFO
       shell: bash
 
     - name: Build coverage report
@@ -80,7 +89,7 @@ jobs:
     - name: Test with pytest without coverage
       if: ${{ inputs.use_min_dep_versions }}
       run: |
-        python -m pytest --log-cli-level=INFO --clear_inputs
+        python -m pytest --log-cli-level=INFO
       shell: bash
 
     - name: Build and check wheel
