@@ -556,6 +556,26 @@ class Run(FileAsset):
         self._raise_if_disabled()
         return {key: pl.scan_parquet(path) for key, path in self.cache_path.items()}
 
+    def table(
+        self, table_name: str, *, iteration: int | None = None, reuse_saved: bool = False
+    ) -> pl.LazyFrame:
+        """Return a lazy reader for a named run table or iteration.
+
+        With reuse_saved, an existing output is read without checking upstream
+        assets. This is useful when inspecting a previously completed run.
+        """
+        if iteration is not None:
+            return self.iteration_table(table_name, iteration)
+        cache_path = getattr(self, "cache_path", {})
+        if reuse_saved and table_name in cache_path and cache_path[table_name].exists():
+            tables = self.get_cached_asset()
+        else:
+            tables = self.get()
+        if table_name not in tables:
+            raise ValueError(f"Unknown run output table `{table_name}`.")
+        table = tables[table_name]
+        return table.lazy() if isinstance(table, pl.DataFrame) else table
+
     def iteration_table(self, table_name: str, iteration: int) -> pl.LazyFrame:
         """Return one table saved after a completed model iteration."""
         if table_name not in {"plan_steps", "costs"}:

@@ -19,6 +19,11 @@ The returned object gives access to:
 
 Use `population_trips.run(...)` when you need to execute or inspect one concrete run. Use `population_trips.results(...)` when you want indicators.
 
+For one run, `run.table("plan_steps")` returns a lazy Polars table. You can
+filter or select columns before calling `.collect()`. To inspect a saved
+iteration, pass `iteration=1` (available for plan steps and costs).
+If the run has not been saved yet, calling `run.table(...)` starts the run.
+
 Most result metrics are population-weighted. Trip counts sum the represented people attached to simulated trips. Distance, time, cost, and emissions multiply each trip quantity by the represented-person weight before aggregation. When several replications are selected, metric values are averaged across replications and standard-deviation columns describe the spread across replications.
 
 ## Common Indicators
