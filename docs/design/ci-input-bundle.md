@@ -10,7 +10,7 @@ the cache identity, file hashes and contents before writing the files. Test
 jobs start in fresh containers; they do not clear the input folder between the
 unit and integration tests.
 
-The pinned v2 bundle was freshly downloaded on 2026-11-23. Its 23 boundaries
+The pinned v3 bundle was freshly downloaded on 2026-11-23. Its 23 boundaries
 and extract URLs were validated before publication. The source is Geofabrik and OpenStreetMap contributors. Keep this
 provenance in the release notes when replacing the bundle.
 
@@ -18,8 +18,8 @@ To build a new snapshot in the Pixi environment on a machine that can reach
 Geofabrik:
 
 ```sh
-pixi run python .github/scripts/ci_input_bundle.py create mobility-ci-geofabrik-v3.zip
-pixi run python .github/scripts/ci_input_bundle.py restore mobility-ci-geofabrik-v3.zip /tmp/mobility-ci-input-check
+pixi run python .github/scripts/ci_input_bundle.py create mobility-ci-geofabrik-v4.zip
+pixi run python .github/scripts/ci_input_bundle.py restore mobility-ci-geofabrik-v4.zip /tmp/mobility-ci-input-check
 ```
 
 To recover a snapshot from a trusted existing package-data folder, add
