@@ -91,8 +91,9 @@ class Run(FileAsset):
             if sensitivity_case is None
             else sensitivity_case.case_id
         )
+        # Polars 2 changes seeded hashes used in saved plan identities.
         run_context_inputs = {
-            "version": 19,
+            "version": 20,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -177,7 +178,7 @@ class Run(FileAsset):
         )
 
         inputs = {
-            "version": 19,
+            "version": 20,
             "run_context_hash": run_context_hash,
             "final_iteration_state": self.final_iteration_state,
         }

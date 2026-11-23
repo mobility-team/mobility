@@ -34,6 +34,12 @@ jobs:
         echo "Using pre-installed Python dependencies from ${python_env}"
       shell: bash
 
+    # The shared CI image can lag behind dependency changes in a pull request.
+    - name: Synchronise Python dependencies
+      run: |
+        uv pip sync --python "${VIRTUAL_ENV}/bin/python" "${{ inputs.requirements_file }}"
+      shell: bash
+
     - name: Install current package
       run: |
         uv pip install --python "${VIRTUAL_ENV}/bin/python" -e . --no-deps
