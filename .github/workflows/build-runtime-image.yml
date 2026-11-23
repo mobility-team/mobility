@@ -9,6 +9,7 @@ on:
       - "mobility/**"
       - "examples/quickstart-fr-ci.py"
       - ".github/docker/runtime/Dockerfile"
+      - ".github/scripts/ci_input_bundle.py"
       - ".github/workflows/build-runtime-image.yml"
   workflow_dispatch:
     inputs:
@@ -62,6 +63,13 @@ jobs:
           docker run --rm mobility-runtime:test python -c "import mobility; mobility.set_params(package_data_folder_path='/tmp/mobility-data', project_data_folder_path='/tmp/mobility-project', debug=True)"
         shell: bash
 
+      - name: Download CI input bundle
+        if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_quickstart) }}
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --output /tmp/mobility-ci-geofabrik-v3.zip https://github.com/mobility-team/mobility/releases/download/ci-inputs-geofabrik-v3/mobility-ci-geofabrik-v3.zip
+          echo "63b6435976a0e9d9ad0142505f4c9228264709799432d67ff52b568c2884e89e  /tmp/mobility-ci-geofabrik-v3.zip" | sha256sum --check
+
       - name: Run quickstart
         if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_quickstart) }}
         run: |
@@ -69,7 +77,9 @@ jobs:
             -e MOBILITY_PACKAGE_DATA_FOLDER=/tmp/mobility-data \
             -e MOBILITY_PROJECT_DATA_FOLDER=/tmp/mobility-project \
             -v "${GITHUB_WORKSPACE}/examples:/app/examples:ro" \
+            -v "${GITHUB_WORKSPACE}/.github/scripts/ci_input_bundle.py:/tmp/ci_input_bundle.py:ro" \
+            -v "/tmp/mobility-ci-geofabrik-v3.zip:/tmp/ci-inputs.zip:ro" \
             -w /app \
             mobility-runtime:test \
-            bash -lc "mkdir -p /tmp/mobility-data /tmp/mobility-project && python examples/quickstart-fr-ci.py"
+            bash -lc "mkdir -p /tmp/mobility-data /tmp/mobility-project && python /tmp/ci_input_bundle.py restore /tmp/ci-inputs.zip /tmp/mobility-data && python examples/quickstart-fr-ci.py"
         shell: bash
