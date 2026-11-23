@@ -113,7 +113,7 @@ numpy==2.0.0
     #   scikit-learn
     #   scipy
     #   shapely
-openpyxl==3.1.0
+openpyxl==3.1.5
     # via mobility-tools (pyproject.toml)
 orjson==3.11.7
     # via kaleido
