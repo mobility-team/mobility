@@ -446,7 +446,7 @@ class CongestionFlowsAsset(InMemoryAsset):
             else None
         )
         inputs = {
-            "version": 5,
+            "version": 6,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "previous_congestion_flows": self.previous_congestion_flows,

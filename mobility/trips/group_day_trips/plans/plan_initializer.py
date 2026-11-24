@@ -398,7 +398,7 @@ class PlanInitializer:
                     value_of_time_stay_home
                     * pl.col("mean_home_night_per_pers")
                     * (
-                        pl.col("mean_home_night_per_pers")
+                        pl.col("duration_per_pers")
                         / pl.col("mean_home_night_per_pers")
                         / math.exp(-min_activity_time_constant)
                     )

@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.input_hashing import hash_inputs
 from mobility.runtime.parameter_values import ParameterValue
 from mobility.transport.costs.parameters.generalized_cost_parameters import (
     GeneralizedCostParameters,
@@ -81,7 +82,13 @@ def test_additional_gtfs_files_are_selected_for_each_scenario_and_iteration(
     graphs = {}
     for scenario, iteration in [("default", 5), ("serm", 1), ("serm", 4), ("serm", 5), ("serm", 6)]:
         resolved = mode.for_iteration(iteration, scenario=scenario)
-        graph = resolved.travel_costs.intermodal_graph.public_transport_graph
+        intermodal = resolved.travel_costs.intermodal_graph
+        graph = intermodal.public_transport_graph
+        # Old graphs must not be reused after changing their waiting window.
+        old_inputs = {key: value for key, value in intermodal.inputs.items() if key != "version"}
+        assert intermodal.inputs_hash != hash_inputs(old_inputs)
+        old_cost_inputs = {**resolved.travel_costs.inputs, "version": "2"}
+        assert resolved.travel_costs.inputs_hash != hash_inputs(old_cost_inputs)
         graphs[scenario, iteration] = graph
         settings = graph.inputs["parameters"]
         assert "additional_gtfs_files" not in type(settings).model_fields

@@ -675,7 +675,7 @@ class PlanUpdater:
             min_activity_time=pl.col("mean_home_night_per_pers") * math.exp(-min_activity_time_constant),
         ).with_columns(
             utility=home_value * pl.col("mean_home_night_per_pers")
-            * (pl.col("mean_home_night_per_pers") / pl.col("min_activity_time")).log().clip(0.0),
+            * (pl.lit(24.0) / pl.col("min_activity_time")).log().clip(0.0),
             is_feasible=pl.lit(True), missing_cost_row_count=pl.lit(0, dtype=pl.UInt32),
             invalid_cost_row_count=pl.lit(0, dtype=pl.UInt32),
         ).sort(PLAN_KEY_COLS).with_row_index("plan_id", offset=mobile.height).select(utility_columns))
@@ -1791,7 +1791,7 @@ class PlanUpdater:
                 utility=(
                     value_of_time_stay_home
                     * pl.col("mean_home_night_per_pers")
-                    * (pl.col("mean_home_night_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
+                    * (pl.lit(24.0) / pl.col("min_activity_time")).log().clip(0.0)
                 ),
                 is_feasible=pl.lit(True),
                 missing_cost_row_count=pl.lit(0, dtype=pl.UInt32),

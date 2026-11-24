@@ -45,6 +45,8 @@ class FileAsset(Asset):
             
             self.cache_path = {k: cp.parent / (self.inputs_hash + "-" + cp.name) for k, cp in cache_path.items()}
             self.hash_path = self.cache_path[list(self.cache_path.keys())[0]].with_suffix(".inputs-hash")
+            for path in self.cache_path.values():
+                path.parent.mkdir(parents=True, exist_ok=True)
             
         else:
             
@@ -54,6 +56,8 @@ class FileAsset(Asset):
             cache_path = cache_path.parent / filename
             self.cache_path = cache_path.parent / filename
             self.hash_path = cache_path.with_suffix(".inputs-hash")
+            # Asset builders can write directly to their cache path.
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
             
     
     @abstractmethod

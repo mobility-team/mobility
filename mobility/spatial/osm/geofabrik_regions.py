@@ -1,11 +1,13 @@
 import os
 import pathlib
 import logging
+from io import StringIO
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Polygon
 
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.io.http import request_url
 
 class GeofabrikRegions(FileAsset):
     """
@@ -18,7 +20,7 @@ class GeofabrikRegions(FileAsset):
     """
         
     def __init__(self, extract_date: str = "260101"): 
-        inputs = {"extract_date": extract_date}
+        inputs = {"extract_date": extract_date, "version": "2"}
         cache_path = pathlib.Path(os.environ["MOBILITY_PACKAGE_DATA_FOLDER"]) / "geofabrik_regions.gpkg"
         super().__init__(inputs, cache_path)
         
@@ -87,8 +89,12 @@ class GeofabrikRegions(FileAsset):
             
             logging.info("Fetching region boundary : " + region_url)
         
-            #Grabs 
-            region = pd.read_table(region_url, skiprows=1, skipfooter=2, engine="python")
+            # Boundaries and extracts now live inside each region directory.
+            region_name = region_url.rsplit("/", 1)[-1]
+            boundary_url = region_url.removesuffix(".poly") + "/" + region_name
+            # Use the shared HTTP settings and retries for each boundary.
+            with request_url(boundary_url) as response:
+                region = pd.read_table(StringIO(response.text), skiprows=1, skipfooter=2, engine="python")
             
             region = pd.DataFrame({
                 "x": region.iloc[:, 0].str.split("   ").str[1],
@@ -98,7 +104,7 @@ class GeofabrikRegions(FileAsset):
             region = Polygon(zip(region["x"], region["y"]))
             region = gpd.GeoDataFrame(geometry=[region], crs=4326)
             
-            region["url"] = region_url.replace(".poly", "-" + self.inputs["extract_date"] + ".osm.pbf")
+            region["url"] = boundary_url.replace(".poly", "-" + self.inputs["extract_date"] + ".osm.pbf")
             
             regions.append(region)
             

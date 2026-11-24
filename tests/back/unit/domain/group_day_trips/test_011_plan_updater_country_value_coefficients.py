@@ -9,6 +9,7 @@ import pytest
 from mobility.trips.group_day_trips.plans.plan_ids import add_plan_id
 from mobility.trips.group_day_trips.plans.plan_updater import CandidatePlanEvaluation, PlanUpdater
 from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringLookup, ScoringMemoryBudget
+from mobility.trips.group_day_trips.plans.plan_initializer import PlanInitializer
 
 
 @pytest.mark.parametrize("distance_model", [False, True])
@@ -448,16 +449,21 @@ def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
             "mean_home_night_per_pers": [10.0],
         }
     )
-    stay_home_plan = pl.DataFrame(
-        {
-            "demand_group_id": [1],
-            "demand_subgroup_id": [0],
-            "activity_seq_id": [0],
-            "time_seq_id": [0],
-            "mode_seq_id": [0],
-            "dest_seq_id": [0],
-            "mean_home_night_per_pers": [10.0],
-        }
+    stay_home_plan, initial_states, _ = PlanInitializer().get_stay_home_state(
+        demand_groups=pl.DataFrame({
+            "demand_group_id": [1], "demand_subgroup_id": [0],
+            "country": ["fr"], "csp": ["worker"], "n_persons": [1.0], "home_zone_id": [1],
+        }),
+        home_night_dur=home_night_dur,
+        home_activity_parameters=SimpleNamespace(value_of_time_stay_home=1.0),
+        min_activity_time_constant=1.0,
+        modes=[],
+    )
+    expected_stay_home = 10.0 * math.log(24.0 / (10.0 * math.exp(-1.0)))
+    assert stay_home_plan["utility"].item() == pytest.approx(expected_stay_home)
+    assert initial_states["utility"].item() == pytest.approx(expected_stay_home)
+    stay_home_plan = stay_home_plan.with_columns(
+        pl.col("activity_seq_id", "time_seq_id", "mode_seq_id", "dest_seq_id").cast(pl.Int64)
     )
 
     result, expected_index = updater.get_possible_plan_utility(
@@ -477,6 +483,7 @@ def test_possible_plan_utility_subtracts_travel_time_from_home_night(tmp_path):
     assert_frame_equal(result.sort("plan_id"), reused.collect().sort("plan_id"))
     assert_frame_equal(expected_index, reused_index)
 
+    assert result.filter(pl.col("mode_seq_id") == 0)["utility"].item() == pytest.approx(expected_stay_home)
     mobile_utility = result.filter(pl.col("mode_seq_id") != 0)["utility"].item()
     expected_home_night_utility = 10.0 * math.log(14.0 / (10.0 * math.exp(-1.0)))
     assert mobile_utility == pytest.approx(5.0 + expected_home_night_utility)
