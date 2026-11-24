@@ -121,6 +121,8 @@ def test_shared_costs_keep_scenarios_and_missing_routes_separate(tmp_path, monke
         assert a["distance"].tolist() == [1.0, 2.0]
         assert b["distance"].tolist() == [3.0]
         assert b["time"].tolist() == [0.3]
+        for index in (3, 10, 12):
+            assert not Path(calls[0][index]).exists()
         prepare_shared_congested_costs([first, second])
         assert len(calls) == 1
 

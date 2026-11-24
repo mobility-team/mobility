@@ -385,7 +385,19 @@ class Iterations:
         """Return and log the effective resume iteration for this run."""
         resume_iteration = self._find_latest_completed_iteration()
         if resume_iteration is not None:
-            resume_iteration = min(int(resume_iteration), int(n_steps))
+            # Later markers do not guarantee that an earlier checkpoint is
+            # present or still has all of its input-hash markers.
+            resume_iteration = next(
+                (
+                    iteration
+                    for iteration in range(min(resume_iteration, n_steps), 0, -1)
+                    if all(
+                        not asset.is_update_needed()
+                        for asset in self.iteration(iteration).checkpoint_assets().values()
+                    )
+                ),
+                None,
+            )
 
         if resume_iteration is None:
             logging.debug(

@@ -197,3 +197,9 @@ def prepare_shared_congested_costs(cost_assets):
                 resolver.in_memory_assets[table_key] = table
             for graph in graphs:
                 resolver.congested_graph_paths[asset_graph_key(graph)] = pathlib.Path(graph_path)
+        # The worker has finished with the manifests and the result is in memory.
+        for path in (manifest_path, graph_manifest_path, output_path):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logging.warning("Could not remove temporary routing handoff %s; it will be removed at run close.", path)
