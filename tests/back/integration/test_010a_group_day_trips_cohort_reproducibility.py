@@ -223,14 +223,14 @@ def test_intermediate_restricted_scoring_preserves_reachable_flows(test_data, mo
     assert {"all", "reachable"}.issubset(scored_scopes)
 
 
-def test_single_scenario_and_batch_do_not_build_reuse_caches(test_data, monkeypatch):
+def test_single_scenario_and_batch_do_not_build_a_reusable_plan_catalogue(test_data, monkeypatch):
     setup = make_setup(test_data, n_steps=1)
     setup.parameters.adaptive_search.max_search_batches = 1
 
     def unexpected_cache(*args, **kwargs):
-        raise AssertionError("A single batch has no later batch to reuse scores.")
+        raise AssertionError("A single batch has no later batch to reuse a plan catalogue.")
 
-    monkeypatch.setattr(ScoringLookup, "retain", unexpected_cache)
+    # Section scoring still needs a compact score lookup during this batch.
     monkeypatch.setattr(PlanCatalogue, "from_candidates", classmethod(unexpected_cache))
     experiment = setup.experiment("weekday", scenarios=["default"], replication=0)
     with asset_resolution_context():

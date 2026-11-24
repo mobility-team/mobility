@@ -127,7 +127,9 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data, gtf
     dynamic_run = dynamic.run("weekday")
 
     assert dynamic_run.initial_iteration_state.inputs_hash == static_run.initial_iteration_state.inputs_hash
-    assert dynamic_run.iteration_state_assets[0].inputs_hash == static_run.iteration_state_assets[0].inputs_hash
+    # The coordinated run identity includes the full scenario and its future
+    # parameter values, even when their first-step values are identical.
+    assert dynamic_run.iteration_state_assets[0].inputs_hash != static_run.iteration_state_assets[0].inputs_hash
     assert dynamic_run.iteration_state_assets[1].inputs_hash != static_run.iteration_state_assets[1].inputs_hash
 
     static_plan_steps = static_run.table("plan_steps")

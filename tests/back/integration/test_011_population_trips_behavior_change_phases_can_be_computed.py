@@ -94,14 +94,22 @@ def test_011_population_trips_behavior_change_phases_can_be_computed(test_data):
     bad_mode = weekday_transitions.filter(
         (pl.col("step") == 2)
         & (
-            (pl.col("activity_seq_id") != pl.col("activity_seq_id_trans"))
-            | (pl.col("dest_seq_id") != pl.col("dest_seq_id_trans"))
+            (pl.col("activity_seq_id") != pl.col("chosen_activity_seq_id"))
+            | (pl.col("dest_seq_id") != pl.col("chosen_dest_seq_id"))
         )
     )
     bad_destination = weekday_transitions.filter(
         (pl.col("step") == 3)
-        & (pl.col("activity_seq_id") != pl.col("activity_seq_id_trans"))
+        & (pl.col("activity_seq_id") != pl.col("chosen_activity_seq_id"))
     )
+
+    # Small final allocations can be reassigned to stay home after the choice.
+    reassigned = weekday_transitions.filter(
+        (pl.col("chosen_activity_seq_id") != pl.col("activity_seq_id_trans"))
+        | (pl.col("chosen_dest_seq_id") != pl.col("dest_seq_id_trans"))
+        | (pl.col("chosen_mode_seq_id") != pl.col("mode_seq_id_trans"))
+    )
+    assert reassigned.filter(pl.col("activity_seq_id_trans") != 0).height == 0
 
     mode_replanning_dest_keys = (
         destination_sequences_2
