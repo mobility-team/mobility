@@ -10,6 +10,7 @@ from mobility.runtime.assets.resolver import (
 from mobility.runtime.parameter_values import DEFAULT_SCENARIO, SensitivityCase
 from mobility.runtime.scenarios import Scenarios
 from mobility.runtime.temporary import managed_temporary_disk_usage, temporary_disk_limit
+from mobility.trips.group_day_trips.core.coordinated_run_result import current_coordinated_result
 
 from .assets.metric import Metric
 from .assets.scoped_tables import ScopedRunTable
@@ -282,6 +283,9 @@ class GroupDayTripsResults:
         """Return the number of outer states completed by one run context."""
         coordinated_run_asset = getattr(run, "coordinated_run_asset", None)
         if coordinated_run_asset is not None:
+            current = current_coordinated_result(coordinated_run_asset)
+            if current is not None:
+                return current.current_iteration
             if (
                 hasattr(coordinated_run_asset, "_advance_cohort_step")
                 and not getattr(coordinated_run_asset, "_is_running", False)

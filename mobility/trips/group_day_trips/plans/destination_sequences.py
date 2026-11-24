@@ -217,12 +217,7 @@ class DestinationSequences(InMemoryAsset):
 
 
     def _get_with_resolver(self, resolver, *args, **kwargs) -> pl.DataFrame:
-        sequences = resolver.get_in_memory_asset(
-            self,
-            lambda: self.create_and_get_asset(*args, **kwargs),
-            spill_to_disk=self._spill_sequences,
-            load_from_disk=self._load_spilled_sequences,
-        )
+        sequences = self._resolve_value(resolver, *args, **kwargs)
         # Equivalent scenario assets can share one cached table in the resolver.
         # Their sequence index lives on the canonical asset instance, so copy it
         # onto this instance before callers ask for the matching index.
@@ -232,7 +227,7 @@ class DestinationSequences(InMemoryAsset):
         return sequences
 
 
-    def _spill_sequences(self, sequences: pl.DataFrame, path: pathlib.Path) -> None:
+    def spill_execution_value(self, sequences: pl.DataFrame, path: pathlib.Path) -> None:
         """Spill sampled rows and their stable index together."""
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
@@ -247,7 +242,7 @@ class DestinationSequences(InMemoryAsset):
             shutil.rmtree(temporary_path, ignore_errors=True)
 
 
-    def _load_spilled_sequences(self, path: pathlib.Path) -> pl.DataFrame:
+    def load_execution_value(self, path: pathlib.Path) -> pl.DataFrame:
         """Restore sampled rows and their matching stable index."""
         index_path = path / "sequence_index.parquet"
         self.sequence_index = pl.read_parquet(index_path) if index_path.exists() else None

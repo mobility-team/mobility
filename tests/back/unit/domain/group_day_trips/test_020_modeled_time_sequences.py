@@ -1,6 +1,7 @@
 """Keep modeled schedules distinct without losing complete shared plans."""
 
 from dataclasses import replace
+import logging
 import random
 import weakref
 from pathlib import Path
@@ -28,7 +29,9 @@ from mobility.trips.group_day_trips.plans.compact_candidate_steps import (
 from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts, ScoringLookup, ScoringMemoryBudget
 from mobility.trips.group_day_trips.core.parameters import GroupDayTripsParameters, BehaviorChangeScope
 from mobility.trips.group_day_trips.core.run_state import RunState
-from mobility.trips.group_day_trips.iterations.iteration_assets import InitialIterationStateAsset, IterationStateAsset
+from mobility.trips.group_day_trips.iterations.iteration_assets import (
+    CandidateCheckpointAsset, InitialIterationStateAsset, IterationStateAsset,
+)
 
 
 def _schedule():
@@ -51,6 +54,39 @@ def _plan_steps():
         iteration=pl.lit(1, dtype=pl.UInt16), first_seen_iteration=pl.lit(1, dtype=pl.UInt16),
         last_seen_iteration=pl.lit(1, dtype=pl.UInt16), last_active_iteration=pl.lit(None, dtype=pl.UInt16),
     ).with_columns(pl.Series("from", [1, 2], dtype=pl.Int32), pl.Series("to", [2, 1], dtype=pl.Int32))
+
+
+@pytest.mark.parametrize("storage", ["expanded", "lazy", "compact", "sectioned", "mapped"])
+def test_candidate_checkpoint_restores_candidate_history(tmp_path, storage):
+    rows = _plan_steps()
+    if storage == "expanded":
+        candidates = rows
+    elif storage == "lazy":
+        candidates = rows.lazy()
+    else:
+        steps = rows.select(STEP_COLUMNS).unique()
+        if storage == "sectioned":
+            steps = SectionedPhysicalSteps.from_steps(steps, {"work"})
+        membership = rows.select(MEMBERSHIP_COLUMNS).unique()
+        unit_map = None
+        if storage == "mapped":
+            unit_map = membership.select("demand_group_id", "demand_subgroup_id").with_columns(
+                _score_context_id=pl.col("demand_group_id")
+            )
+        candidates = CompactCandidateSteps(steps, membership, tuple(rows.columns), unit_map)
+    args = dict(run_key="test", is_weekday=True, iteration=1, base_folder=tmp_path)
+    saved = CandidateCheckpointAsset(**args, candidate_plan_steps=candidates)
+    saved.get()
+    restored = CandidateCheckpointAsset(**args).get()
+    actual = restored.lazy().collect() if isinstance(restored, CompactCandidateSteps) else restored
+    assert_frame_equal(actual.sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS),
+                       rows.sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS))
+    if storage in {"compact", "sectioned", "mapped"}:
+        assert pl.read_parquet(saved.cache_path["expanded"]).is_empty()
+        assert isinstance(restored, CompactCandidateSteps)
+        assert (restored.unit_map is not None) == (storage == "mapped")
+    saved.cache_path["membership"].unlink()
+    assert CandidateCheckpointAsset(**args).assets_missing()
 
 
 def test_physical_candidate_ids_match_ids_repeated_across_contexts():
@@ -151,7 +187,7 @@ def test_current_plan_coverage_accepts_plan_keys_and_rejects_missing_active_plan
     updater._assert_current_plans_covered_by_possible_plan_steps(stay_home, current.head(0).lazy(), 1)
 
 
-def test_shared_generation_keeps_plan_content_without_expanding_demand_units():
+def test_shared_generation_keeps_plan_content_without_expanding_demand_units(caplog):
     """Compact generation retains the same complete plans as unit expansion."""
     steps = _plan_steps()
     mode_rows = steps.select(
@@ -179,9 +215,16 @@ def test_shared_generation_keeps_plan_content_without_expanding_demand_units():
         candidate_pruner=None, stage="test",
     )
     expanded = CandidatePlanStepsAsset._attach_candidates_to_demand_units(**arguments).collect()
-    compact = CandidatePlanStepsAsset._attach_candidates_to_demand_units(
-        **arguments, compact_for_shared_pool=True,
-    ).collect()
+    with caplog.at_level(logging.INFO):
+        compact = CandidatePlanStepsAsset._attach_candidates_to_demand_units(
+            **arguments, compact_for_shared_pool=True,
+        ).collect()
+    with caplog.at_level(logging.DEBUG):
+        debug_compact = CandidatePlanStepsAsset._attach_candidates_to_demand_units(
+            **arguments, compact_for_shared_pool=True,
+        ).collect()
+    assert_frame_equal(compact.sort(compact.columns), debug_compact.sort(compact.columns))
+    assert "Plan attachment contexts" in caplog.text
     assert expanded.height == 6
     assert compact.height == 2
     expanded_ids = add_candidate_ids(expanded).select(CANDIDATE_ID_COLS).unique()
@@ -327,17 +370,23 @@ def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path, monk
     asset.iteration = 1
     asset.initial_state = SimpleNamespace(get=lambda: initial)
     asset.transport_costs = SimpleNamespace(get_costs_by_od=lambda metrics: empty)
-    asset._spill_state(initial, tmp_path / "state")
+    asset.spill_execution_value(initial, tmp_path / "state")
     with pytest.raises(FileExistsError):
-        asset._spill_state(initial, tmp_path / "state")
+        asset.spill_execution_value(initial, tmp_path / "state")
     assert (tmp_path / "state" / "candidate_steps.parquet").exists() is not sectioned
     assert (tmp_path / "state" / "candidate_sections.parquet").exists() is sectioned
     assert (tmp_path / "state" / "candidate_section_references.parquet").exists() is sectioned
     assert (tmp_path / "state" / "candidate_membership.parquet").exists()
     assert (tmp_path / "state" / "candidate_unit_map.parquet").exists() == shared_context
     assert not (tmp_path / "state" / "candidate_plan_steps.parquet").exists()
-    restored = asset._load_spilled_state(tmp_path / "state")
+    restored = asset.load_execution_value(tmp_path / "state")
     assert isinstance(restored.candidate_plan_steps, CompactCandidateSteps)
+    InitialIterationStateAsset.spill_execution_value(initial, tmp_path / "initial-state")
+    restored_initial = InitialIterationStateAsset.load_execution_value(tmp_path / "initial-state")
+    assert isinstance(restored_initial.candidate_plan_steps, CompactCandidateSteps)
+    assert_frame_equal(restored_initial.candidate_plan_steps.lazy().collect(), compact.lazy().collect(),
+                       check_exact=True)
+    assert_frame_equal(restored_initial.time_sequence_steps, initial.time_sequence_steps, check_exact=True)
     assert restored.rng_state == initial.rng_state
     resumed_rng = random.Random()
     resumed_rng.setstate(restored.rng_state)
@@ -366,12 +415,12 @@ def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path, monk
     managed = tmp_path / "temporary" / "mobility-shared-assets-test"
     managed.mkdir(parents=True)
     monkeypatch.setenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", "100000000")
-    asset._spill_state(initial, managed / "state")
-    limited_restore = asset._load_spilled_state(managed / "state")
+    asset.spill_execution_value(initial, managed / "state")
+    limited_restore = asset.load_execution_value(managed / "state")
     assert limited_restore.rng_state == initial.rng_state
     monkeypatch.setenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", "1")
     with pytest.raises(TemporaryDiskLimitExceeded):
-        asset._spill_state(initial, managed / "failed")
+        asset.spill_execution_value(initial, managed / "failed")
     assert not (managed / "failed.tmp").exists()
     assert not (managed / "failed").exists()
     assert (managed / "state").exists()
@@ -380,7 +429,7 @@ def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path, monk
     # Publishing failure or cancellation must remove staging data without
     # touching an already available state spill.
     monkeypatch.delenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES")
-    for spill in (asset._spill_state, InitialIterationStateAsset._spill_state):
+    for spill in (asset.spill_execution_value, InitialIterationStateAsset.spill_execution_value):
         for error in (OSError("publish failed"), KeyboardInterrupt()):
             def fail_publish(source, destination):
                 raise error
@@ -935,8 +984,8 @@ def test_modeled_schedule_ids_survive_state_spill_and_restore(tmp_path):
     asset.initial_state = SimpleNamespace(get=lambda: initial)
     asset.transport_costs = SimpleNamespace(get_costs_by_od=lambda metrics: empty)
 
-    asset._spill_state(state, tmp_path / "state")
-    restored = asset._load_spilled_state(tmp_path / "state")
+    asset.spill_execution_value(state, tmp_path / "state")
+    restored = asset.load_execution_value(tmp_path / "state")
     repeated, repeated_catalog, _ = assign_time_sequence_ids(steps, restored.schedule_steps)
 
     assert_frame_equal(catalog, restored.time_sequence_steps)

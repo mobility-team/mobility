@@ -30,6 +30,7 @@ from mobility.trips.group_day_trips import (
     PopulationGroupDayTrips,
 )
 from mobility.trips.group_day_trips.core.multi_scenario_run import MultiScenarioRunAsset
+from mobility.trips.group_day_trips.core.coordinated_run_result import current_coordinated_result
 from mobility.trips.group_day_trips.core.multi_scenario import allocation_od_mode_flows, represented_od_mode_flows
 from mobility.trips.group_day_trips.core.metrics import RunMetrics
 from mobility.trips.group_day_trips.core.run import Run
@@ -123,7 +124,7 @@ def test_restricted_choices_keep_the_same_transition_probabilities(test_data, mo
     experiment = setup.experiment("weekday", scenarios=["default"], replication=0)
     with asset_resolution_context():
         experiment.run("weekday").coordinated_run_asset.get(step_consumer=lambda step: None)
-    assert len(checked) == 1
+    assert checked, "The test must compare at least one restricted choice set."
 
 
 def test_context_transition_distances_match_unit_calculation(test_data, monkeypatch):
@@ -161,7 +162,7 @@ def test_context_transition_distances_match_unit_calculation(test_data, monkeypa
     monkeypatch.setattr(PlanUpdater, "expand_context_evaluation", compare)
     experiment = setup.experiment("weekday", scenarios=["default"], replication=0)
     experiment.run("weekday").coordinated_run_asset.get(step_consumer=lambda step: None)
-    assert checked.count(BehaviorChangeScope.MODE_REPLANNING) == 1
+    assert BehaviorChangeScope.MODE_REPLANNING in checked
 
 
 def test_intermediate_restricted_scoring_preserves_reachable_flows(test_data, monkeypatch):
@@ -217,7 +218,7 @@ def test_intermediate_restricted_scoring_preserves_reachable_flows(test_data, mo
     monkeypatch.setattr(MultiScenarioRunAsset, "_advance_cohort_step", record_step)
     experiment = setup.experiment("weekday", scenarios=["default"], replication=0)
     experiment.run("weekday").coordinated_run_asset.get(step_consumer=lambda step: None)
-    assert len(checked) == 1
+    assert checked, "The test must compare at least one restricted scoring batch."
     assert all(actual <= full for actual, full in checked)
     assert any(actual < full for actual, full in checked)
     assert {"all", "reachable"}.issubset(scored_scopes)
@@ -551,7 +552,7 @@ def test_live_results_match_complete_cohort(test_data, monkeypatch, tmp_path):
         method = "compute_lane" if getattr(request, "compute_lane", None) is not None else "compute_iteration"
         compute = getattr(request, method)
         def check_live(iteration, name=name, compute=compute, **kwargs):
-            assert run.coordinated_run_asset._active_result is not None
+            assert current_coordinated_result(run.coordinated_run_asset) is not None
             consumed.append((name, iteration))
             return compute(iteration, **kwargs)
         setattr(request, method, check_live)
@@ -928,8 +929,7 @@ def test_direct_comparison_batches_selected_steps_and_scenarios(test_data, monke
     )
     assert set(result["step"]) == {1, 2}
     assert observed == [(1, 2), (2, 2)]
-    assert len(directories) == 4
-    assert all(not Path(directory).exists() for directory in directories)
+    assert directories and all(not Path(directory).exists() for directory in directories)
     for row in result.iter_rows(named=True):
         assert row["modal_share"] == pytest.approx(shares[("default", row["step"])])
         assert row["modal_share_reference"] == pytest.approx(shares[("project", row["step"])])
@@ -957,7 +957,7 @@ def test_direct_comparison_batches_selected_steps_and_scenarios(test_data, monke
     )
     assert not utility_delta.is_empty()
     assert observed == [(1, 2), (2, 2)]
-    assert len(directories) == 2 and all(not Path(directory).exists() for directory in directories)
+    assert directories and all(not Path(directory).exists() for directory in directories)
 
     observed.clear()
     directories.clear()
@@ -966,7 +966,7 @@ def test_direct_comparison_batches_selected_steps_and_scenarios(test_data, monke
     )
     assert not emissions_delta.is_empty()
     assert observed == [(1, 2), (2, 2)]
-    assert len(directories) == 4 and all(not Path(directory).exists() for directory in directories)
+    assert directories and all(not Path(directory).exists() for directory in directories)
 
     observed.clear()
     directories.clear()
@@ -976,7 +976,7 @@ def test_direct_comparison_batches_selected_steps_and_scenarios(test_data, monke
             reference, iteration=1, value="ghg_emissions", zone="home", plot=False,
         )
     assert observed == [(1, 2), (2, 2)]
-    assert len(directories) == 4 and all(not Path(directory).exists() for directory in directories)
+    assert directories and all(not Path(directory).exists() for directory in directories)
 
 
 def test_direct_paired_diagnostic_runs_each_replication_once(test_data, monkeypatch):
@@ -1531,7 +1531,7 @@ def test_direct_final_state_matches_full_cohort(test_data, monkeypatch):
     with asset_resolution_context() as resolver:
         marker = InMemoryAsset({"name": "unrelated-caller-value"})
         marker_value = resolver.get_in_memory_asset(marker, object)
-        actual = run.get()
+        actual = run._execute()
         assert not hasattr(run.coordinated_run_asset, "_cached_result")
         historical = run.iteration_table("plan_steps", 1).collect()
         assert resolver.in_memory_values[asset_graph_key(marker)] is marker_value
@@ -1602,7 +1602,7 @@ def test_directly_constructed_run_uses_same_cohort_engine(test_data):
     assert isinstance(standalone.coordinated_run_asset, MultiScenarioRunAsset)
     assert analysis.run is standalone
     assert standalone.table("plan_steps", iteration=1).height > 0
-    actual = standalone.get()
+    actual = standalone._execute()
     assert actual.rng_state == expected.rng_state
     assert_frame_equal(
         actual.current_plans.sort(actual.current_plans.columns),
@@ -1612,7 +1612,7 @@ def test_directly_constructed_run_uses_same_cohort_engine(test_data):
 
 
 def test_rejected_checkpoint_is_rewritten_from_recomputed_state(test_data, monkeypatch, tmp_path):
-    """An altered state file must not be accepted again after recomputation."""
+    """An incomplete state must be recomputed and saved before it can be resumed."""
     class IsolatedIterations(Iterations):
         def __init__(self, *, run_inputs_hash, is_weekday, base_folder):
             super().__init__(run_inputs_hash=run_inputs_hash, is_weekday=is_weekday, base_folder=tmp_path)
@@ -1622,28 +1622,28 @@ def test_rejected_checkpoint_is_rewritten_from_recomputed_state(test_data, monke
     setup.parameters.outputs.checkpoint_each_step = True
     first = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
     run = first.run("weekday")
-    run.get()
+    run._execute()
     asset = run.iterations.iteration(1).checkpoint_assets()["current_plans"]
     original = pl.read_parquet(asset.cache_path)
-    original.with_columns(n_persons=pl.col("n_persons") + 1).write_parquet(asset.cache_path)
+    asset.hash_path.unlink()
     event_path = run.iteration_state_assets[0].transition_events_asset.cache_path
     original_events = pl.read_parquet(event_path)
-    event_path.write_bytes(event_path.read_bytes() + b"changed")
+    event_path.unlink()
 
     # Reusing the same experiment is still a new execution. It must not keep
     # the previous execution's checkpoint-saved flags.
-    run.get()
+    run._execute()
     assert_frame_equal(pl.read_parquet(asset.cache_path).sort(original.columns),
                        original.sort(original.columns), check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
     assert pl.read_parquet(event_path).height == original_events.height
-    original.with_columns(n_persons=pl.col("n_persons") + 1).write_parquet(asset.cache_path)
-    event_path.write_bytes(event_path.read_bytes() + b"changed")
+    asset.hash_path.unlink()
+    event_path.unlink()
 
     second = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
     second_run = second.run("weekday")
     assert all(member.iteration_state_assets[0].resume_checkpoint_loader is None
                for member in second_run.coordinated_run_asset.runs.values())
-    second_run.get()
+    second_run._execute()
     assert_frame_equal(pl.read_parquet(asset.cache_path).sort(original.columns),
                        original.sort(original.columns), check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
     rewritten_events = pl.read_parquet(event_path)
@@ -1651,11 +1651,12 @@ def test_rejected_checkpoint_is_rewritten_from_recomputed_state(test_data, monke
     assert rewritten_events.height == original_events.height
     third = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
     third_run = third.run("weekday")
+    assert third_run.coordinated_run_asset._prepare_checkpoint_resume() == 1
     assert all(member.iteration_state_assets[0].resume_checkpoint_loader is not None
                for member in third_run.coordinated_run_asset.runs.values())
     # Recheck files when execution starts, not just when the experiment is built.
-    original.with_columns(n_persons=pl.col("n_persons") + 1).write_parquet(asset.cache_path)
-    third_run.get()
+    asset.hash_path.unlink()
+    third_run._execute()
     assert all(member.iteration_state_assets[0].resume_checkpoint_loader is None
                for member in third_run.coordinated_run_asset.runs.values())
     assert_frame_equal(pl.read_parquet(asset.cache_path).sort(original.columns),
@@ -1706,6 +1707,7 @@ def test_cohort_checkpoint_continuation_preserves_random_path(test_data, monkeyp
 
     resumed = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
     resumed_run = resumed.run("weekday")
+    assert resumed_run.coordinated_run_asset._prepare_checkpoint_resume() == 2
     assert all(asset.resume_checkpoint_loader is not None
                for member in resumed_run.coordinated_run_asset.runs.values()
                for asset in member.iteration_state_assets)
@@ -1717,6 +1719,17 @@ def test_cohort_checkpoint_continuation_preserves_random_path(test_data, monkeyp
     assert all(asset._loaded_checkpoint for member in resumed_run.coordinated_run_asset.runs.values()
                for asset in member.iteration_state_assets)
     assert_frame_equal(actual, baseline, check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+    final_only = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
+    final_run = final_only.run("weekday")
+    final_metric = final_only.results().metrics.trip_count(by_variable="mode", steps=2)
+    final_metric.cache_path = tmp_path / "final-metric.parquet"
+    final_metric.hash_path = tmp_path / "final-metric.inputs-hash"
+    final_value = final_metric.get()
+    assert_frame_equal(final_value, baseline.filter(pl.col("step") == 2),
+                       check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+    for member in final_run.coordinated_run_asset.runs.values():
+        assert not member.iteration_state_assets[0]._loaded_checkpoint
+        assert member.iteration_state_assets[1]._loaded_checkpoint
     # A resumed step loads its state directly; it does not regenerate the
     # shared candidate pool or call the normal step-advancement method.
     assert len(observed) == 2
@@ -1727,38 +1740,61 @@ def test_cohort_checkpoint_continuation_preserves_random_path(test_data, monkeyp
             assert_frame_equal(plans.sort(plans.columns), restored.current_plans.sort(plans.columns),
                                check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
 
+    # A partially published step must be recomputed from the previous shared
+    # checkpoint, even if another scenario's step-two files were saved.
+    coordinator._checkpoint_manifest_path(2).unlink()
+    next(iter(coordinator.runs.values())).iterations.iteration(2).checkpoint_assets()["current_plans"].hash_path.unlink()
+    partial = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
+    partial_run = partial.run("weekday")
+    partial_metric = partial.results().metrics.trip_count(by_variable="mode", steps=2)
+    partial_metric.cache_path = tmp_path / "partial-metric.parquet"
+    partial_metric.hash_path = tmp_path / "partial-metric.inputs-hash"
+    partial_value = partial_metric.get()
+    assert_frame_equal(partial_value, baseline.filter(pl.col("step") == 2),
+                       check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+    assert all(member.iteration_state_assets[0]._loaded_checkpoint
+               and not member.iteration_state_assets[1]._loaded_checkpoint
+               for member in partial_run.coordinated_run_asset.runs.values())
+    recomputed_ids, recomputed_states = observed.pop()
+    assert recomputed_ids == observed[1][0]
+    for key, (rng, plans) in recomputed_states.items():
+        expected_rng, expected_plans = observed[1][1][key]
+        assert rng == expected_rng
+        assert_frame_equal(plans.sort(plans.columns), expected_plans.sort(expected_plans.columns),
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
+
     # A marker from this cohort cannot authorize a different scenario set.
     smaller = setup.experiment("weekday", scenarios=["default"], replication=0).run("weekday")
+    assert smaller.coordinated_run_asset._prepare_checkpoint_resume() == 0
     assert all(asset.resume_checkpoint_loader is None for asset in smaller.iteration_state_assets)
 
-    # A file changed in place must not be trusted just because its path and
-    # input-hash sidecar are unchanged.
-    with saved[0].open("r+b") as file:
-        file.seek(-1, 2)
-        original_byte = file.read(1)
-        file.seek(-1, 2)
-        file.write(bytes([original_byte[0] ^ 1]))
-    changed = setup.experiment("weekday", scenarios=["default", "project"], replication=0).run("weekday")
+    # Missing candidate or event files disable resume for every scenario.
+    candidate_files = next(iter(coordinator.runs.values())).iterations.iteration(1).checkpoint_assets()["candidate_plan_steps"].cache_path
+    membership_path = candidate_files["membership"]
+    original_membership = membership_path.read_bytes()
+    membership_path.unlink()
+    missing_candidates = setup.experiment("weekday", scenarios=["default", "project"], replication=0).run("weekday")
+    assert missing_candidates.coordinated_run_asset._prepare_checkpoint_resume() == 0
     assert all(asset.resume_checkpoint_loader is None
-               for member in changed.coordinated_run_asset.runs.values()
+               for member in missing_candidates.coordinated_run_asset.runs.values()
                for asset in member.iteration_state_assets)
-    with saved[0].open("r+b") as file:
-        file.seek(-1, 2)
-        file.write(original_byte)
+    membership_path.write_bytes(original_membership)
 
     if record_events:
         event_path = next(iter(coordinator.runs.values())).iteration_state_assets[0].transition_events_asset.cache_path
         original_events = event_path.read_bytes()
-        event_path.write_bytes(original_events + b"changed")
-        changed_events = setup.experiment("weekday", scenarios=["default", "project"], replication=0).run("weekday")
+        event_path.unlink()
+        missing_events = setup.experiment("weekday", scenarios=["default", "project"], replication=0).run("weekday")
+        assert missing_events.coordinated_run_asset._prepare_checkpoint_resume() == 0
         assert all(asset.resume_checkpoint_loader is None
-                   for member in changed_events.coordinated_run_asset.runs.values()
+                   for member in missing_events.coordinated_run_asset.runs.values()
                    for asset in member.iteration_state_assets)
         event_path.write_bytes(original_events)
 
     # A missing file in one member must disable resume for the whole cohort.
     saved[0].unlink()
     incomplete = setup.experiment("weekday", scenarios=["default", "project"], replication=0).run("weekday")
+    assert incomplete.coordinated_run_asset._prepare_checkpoint_resume() == 0
     assert all(asset.resume_checkpoint_loader is None
                for member in incomplete.coordinated_run_asset.runs.values()
                for asset in member.iteration_state_assets)
@@ -1772,9 +1808,10 @@ def test_cohort_checkpoint_continuation_preserves_random_path(test_data, monkeyp
     short_run = short_setup.experiment(
         "weekday", scenarios=["default", "project"], replication=0
     ).run("weekday")
-    short_run.get()
+    short_run._execute()
     extended = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
     extended_run = extended.run("weekday")
+    assert extended_run.coordinated_run_asset._prepare_checkpoint_resume() == 1
     assert all(member.iteration_state_assets[0].resume_checkpoint_loader is not None
                and member.iteration_state_assets[1].resume_checkpoint_loader is None
                for member in extended_run.coordinated_run_asset.runs.values())

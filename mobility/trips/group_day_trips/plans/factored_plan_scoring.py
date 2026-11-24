@@ -5,89 +5,17 @@ from typing import Any
 
 import polars as pl
 
-from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
+from mobility.trips.group_day_trips.core.performance_trace import simulation_step, trace_simulation_step
 from .demand_subgroups import DEMAND_UNIT_COLS
 from .factored_plan_timing import FactoredPlanTimings
 from .plan_ids import PLAN_KEY_COLS
 
 
 @dataclass(frozen=True)
-class FactoredPlanScores:
-    """Context utilities and shared scored steps before population expansion."""
-
-    utilities: pl.DataFrame
-    profile_steps: pl.DataFrame
-    context_plans: pl.DataFrame
-
-
-@trace_simulation_step("score shared physical candidates")
-def score_factored_candidates(
-    timings: FactoredPlanTimings,
-    contexts: pl.DataFrame,
-    score_lookup: pl.DataFrame,
-    home_night_durations: pl.DataFrame,
-    *,
-    value_of_time_stay_home: float,
-    min_activity_time_constant: float,
-) -> FactoredPlanScores:
-    """Calculate mobile-plan utility by profile before attaching contexts.
-
-    The compact lookup must contain every scored trip used by these plans.
-    Missing or conflicting entries raise an error rather than changing route
-    feasibility. Timings were indexed separately using the current travel times.
-    """
-    profile_columns = ["country", "csp", "utility_profile_id"]
-    profile_key = profile_columns + ["_timing_plan"]
-    score_keys = profile_columns + ["activity", "from", "to", "mode"]
-    score_values = ["cost", "time", "distance", "is_feasible", "_missing_cost_row", "_invalid_cost_row",
-                    "min_activity_time", "activity_utility_scale"]
-    if score_lookup.select(score_keys).n_unique() != score_lookup.height:
-        raise ValueError("The scoring lookup has conflicting entries for the same profile and trip.")
-    context_plans = timings.contexts_with_profiles(contexts, profile_columns)
-    if context_plans["utility_profile_id"].null_count():
-        raise ValueError("A candidate context is missing its scoring profile.")
-    classes = context_plans.select(profile_key).unique(maintain_order=True)
-    # Actual travel time belongs to the profile lookup. It is compared with the
-    # time used for the timing class, and never borrowed from another profile.
-    physical = timings.steps.rename({"time": "_timing_travel_time"})
-    scored = (classes.join(physical, on="_timing_plan", how="inner")
-              .join(score_lookup.select(score_keys + score_values).with_columns(_score_present=pl.lit(True)),
-                    on=score_keys, how="left"))
-    if scored["_score_present"].null_count():
-        raise ValueError("A candidate step is missing from the scoring lookup.")
-    if scored.filter(~pl.col("time").eq_missing(pl.col("_timing_travel_time"))).height:
-        raise ValueError("A candidate was timed with a different transport profile's travel time.")
-    scored = (scored.drop("_score_present", "_timing_travel_time")
-              .with_columns(is_feasible=(pl.col("is_feasible") & (
-                  (pl.col("seq_step_index") == pl.col("seq_step_index").max().over(profile_key))
-                  | (pl.col("next_departure_time") >= pl.col("arrival_time")))).fill_null(False),
-                  utility=(pl.col("activity_utility_scale")
-                           * (pl.col("duration_per_pers") / pl.col("min_activity_time")).log().clip(0.0)
-                           - pl.col("cost"))))
-    class_utility = (scored.group_by(profile_key).agg(
-        utility=pl.col("utility").sort().implode().list.sum(),
-        is_feasible=pl.col("is_feasible").all(),
-        missing_cost_row_count=pl.col("_missing_cost_row").sum(),
-        invalid_cost_row_count=pl.col("_invalid_cost_row").sum(),
-        home_night_per_pers=(24.0 - pl.col("duration_per_pers").cast(pl.Float64).sort().implode().list.sum()
-                             - pl.col("time").fill_null(0.0).cast(pl.Float64).sort().implode().list.sum()).clip(0.0),
-    ).join(home_night_durations, on=["country", "csp"], how="inner")
-      .with_columns(min_activity_time=pl.col("mean_home_night_per_pers") * math.exp(-min_activity_time_constant))
-      .with_columns(utility=pl.col("utility") + value_of_time_stay_home * pl.col("mean_home_night_per_pers")
-                    * (pl.col("home_night_per_pers") / pl.col("min_activity_time")).log().clip(0.0)))
-    utilities = (context_plans.join(class_utility, on=profile_key, how="inner")
-                 .select(PLAN_KEY_COLS + ["utility", "is_feasible", "missing_cost_row_count", "invalid_cost_row_count"])
-                 .unique(subset=PLAN_KEY_COLS, keep="first", maintain_order=True))
-    return FactoredPlanScores(utilities, scored, context_plans)
-
-
-@dataclass(frozen=True)
 class FactoredSectionScores:
-    """Plan utilities with the shared section scores and their references."""
+    """Plan utilities and their mapping to scoring contexts."""
 
     utilities: pl.DataFrame
-    section_scores: pl.DataFrame
-    plan_sections: pl.DataFrame
     context_plans: pl.DataFrame
 
 
@@ -243,32 +171,34 @@ def score_factored_sections(
         .with_columns(utility=pl.col("utility") + value_of_time_stay_home * pl.col("mean_home_night_per_pers")
                       * (pl.col("home_night_per_pers") / pl.col("min_activity_time")).log().clip(0.0))
         .select(profile_key + ["utility", "is_feasible", "missing_cost_row_count", "invalid_cost_row_count"]))
-    del class_parts, score_parts, plan_scores, plan_home_night, classes
-    # Every scoring context has one profile, so modeled-plan collisions can
-    # be resolved within each profile without building one large wide join.
-    utility_columns = ["utility", "is_feasible", "missing_cost_row_count", "invalid_cost_row_count"]
-    utility_parts = []
-    for profile in class_utility.select(profile_columns).unique(maintain_order=True).iter_rows():
-        profile_filter = pl.all_horizontal([
-            pl.col(name).eq_missing(pl.lit(value)) for name, value in zip(profile_columns, profile)
-        ])
-        context_part = context_plans.filter(profile_filter).select(PLAN_KEY_COLS + ["_timing_plan"])
-        # Keep all alternatives from one context together while limiting the
-        # number of rows in a join. One exceptionally large context can still
-        # exceed the target, since its collisions must be resolved together.
-        batches = (context_part.group_by("demand_group_id").len().sort("demand_group_id")
-                   .with_columns(_context_batch=((pl.col("len").cast(pl.UInt64).cum_sum()
-                                                   - pl.col("len")) // 100_000))
-                   .select("demand_group_id", "_context_batch"))
-        context_part = context_part.join(batches, on="demand_group_id")
-        score_part = class_utility.filter(profile_filter).select(["_timing_plan"] + utility_columns)
-        for batch in context_part.partition_by("_context_batch", maintain_order=True):
-            # All alternatives for one context remain together, including
-            # modeled plans that originated from different reference times.
-            batch_scores = score_part.join(batch.select("_timing_plan").unique(),
-                                           on="_timing_plan", how="semi")
-            utility_parts.append(batch.join(batch_scores, on="_timing_plan", how="inner")
-                                 .select(PLAN_KEY_COLS + utility_columns)
-                                 .unique(subset=PLAN_KEY_COLS, keep="first", maintain_order=True))
-    utilities = pl.concat(utility_parts)
-    return FactoredSectionScores(utilities, section_scores, plan_sections, context_plans)
+    del class_parts, score_parts, plan_scores, plan_home_night, classes, section_scores, plan_sections
+    del profile_classes, profile_scores, batch
+    with simulation_step("join scoring contexts"):
+        # Every scoring context has one profile, so modeled-plan collisions can
+        # be resolved within each profile without building one large wide join.
+        utility_columns = ["utility", "is_feasible", "missing_cost_row_count", "invalid_cost_row_count"]
+        # Group narrow row references once instead of scanning all context plans
+        # for every profile. The references retain the original collision order.
+        context_rows = context_plans.with_row_index("_row").select(profile_columns + ["_row"])
+        context_parts = context_rows.partition_by(profile_columns, as_dict=True, maintain_order=True)
+        utility_by_profile = class_utility.partition_by(profile_columns, as_dict=True, maintain_order=True)
+        utility_parts = []
+        for profile, profile_utility in utility_by_profile.items():
+            context_part = context_plans[context_parts[profile]["_row"]].select(PLAN_KEY_COLS + ["_timing_plan"])
+            # Keep all alternatives from one context together while limiting the
+            # number of rows in a join. One exceptionally large context can still
+            # exceed the target, since its collisions must be resolved together.
+            batches = (context_part.group_by("demand_group_id").len().sort("demand_group_id")
+                       .with_columns(_context_batch=((pl.col("len").cast(pl.UInt64).cum_sum()
+                                                       - pl.col("len")) // 100_000))
+                       .select("demand_group_id", "_context_batch"))
+            context_part = context_part.join(batches, on="demand_group_id")
+            score_part = profile_utility.select(["_timing_plan"] + utility_columns)
+            for batch in context_part.partition_by("_context_batch", maintain_order=True):
+                # All alternatives for one context remain together, including
+                # modeled plans that originated from different reference times.
+                utility_parts.append(batch.join(score_part, on="_timing_plan", how="inner")
+                                     .select(PLAN_KEY_COLS + utility_columns)
+                                     .unique(subset=PLAN_KEY_COLS, keep="first", maintain_order=True))
+        utilities = pl.concat(utility_parts)
+    return FactoredSectionScores(utilities, context_plans)

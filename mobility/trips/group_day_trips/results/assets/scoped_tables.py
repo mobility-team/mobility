@@ -227,7 +227,7 @@ class ScopedRunTable(InMemoryAsset):
             ):
                 # Transition events are already saved per step when enabled.
                 # Scan them directly instead of collecting their full history.
-                run_context.run.get()
+                run_context.run._execute()
                 transitions = run_context.run._build_transitions()
                 table = transitions.lazy() if isinstance(transitions, pl.DataFrame) else transitions
             else:

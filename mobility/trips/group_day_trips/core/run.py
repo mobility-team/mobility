@@ -45,6 +45,7 @@ from .progress import (
 )
 from .results import RunResults
 from .run_state import RunState
+from .coordinated_run_result import current_coordinated_result
 from .multi_scenario_run import MultiScenarioRunAsset
 from ..results.simulation_runner import SimulationRunner
 from ..results.results import GroupDayTripsResults
@@ -122,8 +123,8 @@ class ExpectedDiagnosticsInputs:
     trip_pattern_distribution: PopulationWeightedTripPatternDistribution
 
 
-class Run(InMemoryAsset):
-    """Single day-type PopulationGroupDayTrips asset."""
+class Run:
+    """One day-type, scenario and replication of PopulationGroupDayTrips."""
 
     def __init__(
         self,
@@ -194,7 +195,8 @@ class Run(InMemoryAsset):
         checkpoint_run_context = {
             **run_context_inputs,
             "parameters": checkpoint_parameters,
-            "checkpoint_version": 37 if parameters.destination_sequences.sampling_method == "utility" else 32,
+            # Compact candidate checkpoints use a different set of files.
+            "checkpoint_version": 38 if parameters.destination_sequences.sampling_method == "utility" else 33,
         }
         checkpoint_run_hash = hash_inputs(checkpoint_run_context)
         self.run_context = SimpleNamespace(
@@ -265,27 +267,6 @@ class Run(InMemoryAsset):
             cohort_state_identity=cohort_state_identity if cohort_state_identity is not None else cohort_identity,
         )
         if parameters.outputs.checkpoint_each_step:
-            resume_iteration = self.iterations.get_resume_iteration(
-                parameters.run.n_steps
-            )
-
-            # Transition events are a separate requested output. A checkpoint
-            # cannot recreate them, so restart from the beginning if any saved
-            # iteration event file is missing.
-            if (
-                resume_iteration is not None
-                and parameters.outputs.cache_step_events
-                and any(
-                    not state_asset.transition_events_asset.cache_path.exists()
-                    for state_asset in self.iteration_state_assets
-                    if state_asset.iteration <= resume_iteration
-                )
-            ):
-                logging.info(
-                    "Some saved transition events are missing; recomputing the run from the start."
-                )
-                resume_iteration = None
-
             for state_asset in self.iteration_state_assets:
                 checkpoint = self.iterations.iteration(state_asset.iteration)
                 state_asset.checkpoint_callback = (
@@ -293,8 +274,6 @@ class Run(InMemoryAsset):
                         checkpoint.save_state(state, rng_state)
                     )
                 )
-                if resume_iteration is not None and state_asset.iteration <= resume_iteration:
-                    state_asset.resume_checkpoint_loader = checkpoint.load_state
 
         self.final_iteration_state = (
             self.iteration_state_assets[-1]
@@ -302,12 +281,11 @@ class Run(InMemoryAsset):
             else self.initial_iteration_state
         )
 
-        inputs = {
+        self.inputs_hash = hash_inputs({
             "version": 23,
             "run_context_hash": run_context_hash,
             "final_iteration_state": self.final_iteration_state,
-        }
-        super().__init__(inputs)
+        })
 
     def _validate_external_inputs(self) -> None:
         """Reject a run whose declared external files have changed in place."""
@@ -322,8 +300,8 @@ class Run(InMemoryAsset):
                 "Create a new experiment and result request to use the changed input."
             )
 
-    def get(self, *args, **kwargs) -> RunState:
-        """Resolve the final iteration state while reporting run progress."""
+    def _execute(self) -> RunState:
+        """Run the simulation and return its final state."""
         self._raise_if_disabled()
         self._ensure_coordinator()
         direct_request = not getattr(self.coordinated_run_asset, "_is_running", False)
@@ -340,20 +318,20 @@ class Run(InMemoryAsset):
                     label=label, total_iterations=self.parameters.run.n_steps,
                 ):
                     return SimulationRunner(requests=[], resolver=resolver).execute_final_state(self)
-        if is_group_day_trips_progress_active():
-            coordinated = self.coordinated_run_asset.get()
-        else:
-            day_type = "weekday" if self.is_weekday else "weekend"
-            label = (
-                f"GroupDayTrips {day_type} coordinated runs="
-                f"{len(self.coordinated_run_asset.run_keys)}"
-            )
-            with GroupDayTripsProgressReporter(
-                label=label,
-                total_iterations=self.parameters.run.n_steps,
-            ):
-                coordinated = self.coordinated_run_asset.get()
-        return coordinated.final_states_by_run_key[self.coordinated_run_key]
+        coordinated = current_coordinated_result(self.coordinated_run_asset)
+        if coordinated is None:
+            raise RuntimeError("No completed simulation step is available to this result.")
+        state = coordinated.final_states_by_run_key.get(self.coordinated_run_key)
+        if state is None:
+            raise RuntimeError("The final simulation state is only available after the last step.")
+        return state
+
+    def get(self):
+        """Explain how to migrate from the former asset interface."""
+        raise RuntimeError(
+            "Run.get() is no longer available. Use run.table('plan_steps') "
+            "for a result table, or run.results() for analysis."
+        )
 
     def _ensure_coordinator(self) -> None:
         """Give a directly constructed run the same engine as an experiment."""
@@ -460,10 +438,6 @@ class Run(InMemoryAsset):
             previous_state = state_asset
 
         return state_assets
-
-    def create_and_get_asset(self) -> RunState:
-        """Run values must be requested through the simulation runner."""
-        raise RuntimeError("Request a run with run.get() so its cohort is simulated together.")
 
     def _raise_if_disabled(self) -> None:
         """Fail fast when callers try to access a disabled run."""
@@ -580,7 +554,7 @@ class Run(InMemoryAsset):
             return pl.DataFrame(schema=TRANSITION_EVENT_SCHEMA)
 
         coordinator = getattr(self, "coordinated_run_asset", None)
-        active_result = getattr(coordinator, "_active_result", None)
+        active_result = current_coordinated_result(coordinator)
         completed_steps = (
             active_result.current_iteration if active_result is not None
             else len(self.iteration_state_assets)
@@ -781,9 +755,11 @@ class Run(InMemoryAsset):
             and not getattr(self.coordinated_run_asset, "_is_running", False)
         ):
             return self.table(table_name, iteration=iteration).lazy()
-        coordinated = self.coordinated_run_asset.get()
+        coordinated = current_coordinated_result(self.coordinated_run_asset)
+        if coordinated is None:
+            raise RuntimeError("No simulation step is currently available.")
         live_iteration = coordinated.current_iteration
-        if not live_iteration or coordinated.current_state_assets is None:
+        if not live_iteration or coordinated.current_states_by_run_key is None:
             raise RuntimeError("No simulation step is currently available.")
         if iteration < 1 or iteration > live_iteration:
             raise ValueError(
@@ -799,7 +775,7 @@ class Run(InMemoryAsset):
                 ["cost", "distance", "time", "ghg_emissions_per_trip"]
             ).lazy()
 
-        state = coordinated.current_state_assets[self.coordinated_run_key].get()
+        state = coordinated.current_states_by_run_key[self.coordinated_run_key]
         if table_name == "plans":
             return state.current_plans.lazy()
         if state.current_plan_steps is None:
@@ -968,11 +944,12 @@ class RunTableAsset(InMemoryAsset):
         if self.iteration is not None:
             if self.table_name == "iteration_metrics":
                 builder = self.run._build_iteration_metrics_builder()
-                coordinated = self.run.coordinated_run_asset.get()
+                coordinated = current_coordinated_result(self.run.coordinated_run_asset)
+                if coordinated is None:
+                    raise RuntimeError("No simulation step is currently available.")
                 if self.iteration != coordinated.current_iteration:
                     raise RuntimeError("Only the current simulation step is available during execution.")
-                state_asset = coordinated.current_state_assets[self.run.coordinated_run_key]
-                state = state_asset.get()
+                state = coordinated.current_states_by_run_key[self.run.coordinated_run_key]
                 row = builder.history_row(
                     iteration=self.iteration,
                     current_plans=state.current_plans,
@@ -1014,7 +991,7 @@ class RunTableAsset(InMemoryAsset):
         if self.table_name == "iteration_metrics":
             raise RuntimeError("Request step diagnostics through the simulation runner.")
         if self.table_name == "adaptive_search_diagnostics":
-            state = self.run.get()
+            state = self.run._execute()
             if state.adaptive_search_diagnostics is None:
                 return pl.DataFrame()
             return state.adaptive_search_diagnostics
@@ -1025,7 +1002,7 @@ class RunTableAsset(InMemoryAsset):
                 else self.run.initial_iteration_state.initial_transport_costs
             )
             try:
-                state = self.run.get()
+                state = self.run._execute()
                 return self.run._build_final_plan_steps(
                     state,
                     self.run._build_final_costs(),
@@ -1033,7 +1010,6 @@ class RunTableAsset(InMemoryAsset):
             finally:
                 resolver = get_current_asset_resolver()
                 if resolver is not None:
-                    resolver.release_in_memory_asset(self.run)
                     resolver.release_in_memory_asset(self.run.final_iteration_state)
                     resolver.release_in_memory_asset(
                         self.run.coordinated_final_transport_cost_asset
@@ -1048,7 +1024,7 @@ class RunTableAsset(InMemoryAsset):
             )
             try:
                 if self.run.coordinated_run_asset is not None:
-                    self.run.get()
+                    self.run._execute()
                 return self.run._build_final_costs()
             finally:
                 resolver = get_current_asset_resolver()
@@ -1061,11 +1037,10 @@ class RunTableAsset(InMemoryAsset):
         if self.table_name == "transitions":
             if self.run.coordinated_run_asset is not None or self.run.parameters.outputs.cache_step_events:
                 try:
-                    self.run.get()
+                    self.run._execute()
                 finally:
                     resolver = get_current_asset_resolver()
                     if resolver is not None:
-                        resolver.release_in_memory_asset(self.run)
                         resolver.release_in_memory_asset(self.run.final_iteration_state)
             transitions = self.run._build_transitions()
             return transitions.collect(engine="streaming") if isinstance(
@@ -1074,7 +1049,10 @@ class RunTableAsset(InMemoryAsset):
         if self.table_name == "mnl_od_mode_flows":
             if self.run.coordinated_run_asset is None:
                 raise ValueError("MNL flow diagnostics require a coordinated simulation.")
-            return self.run.coordinated_run_asset.get().mnl_od_mode_flows_by_run_key[
+            coordinated = current_coordinated_result(self.run.coordinated_run_asset)
+            if coordinated is None:
+                raise RuntimeError("No simulation step is currently available.")
+            return coordinated.mnl_od_mode_flows_by_run_key[
                 self.run.coordinated_run_key
             ]
         raise ValueError(f"Unknown run output table `{self.table_name}`.")

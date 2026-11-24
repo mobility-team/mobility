@@ -75,24 +75,29 @@ def test_file_hash_is_not_written_before_success(tmp_path):
 
 def test_shared_custom_state_is_saved_and_restored(tmp_path, monkeypatch):
     monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
-    state = _TransientValue()
-    roots = [InMemoryAsset({"name": name, "dependency": state}) for name in ("first", "second")]
     calls = []
 
-    def save(value, path):
-        calls.append("save")
-        path.write_text(str(value), encoding="utf-8")
+    class SharedState(InMemoryAsset):
+        def create_and_get_asset(self):
+            return 42
 
-    def load(path):
-        calls.append("load")
-        return int(path.read_text(encoding="utf-8"))
+        def spill_execution_value(self, value, path):
+            calls.append("save")
+            path.write_text(str(value), encoding="utf-8")
+
+        def load_execution_value(self, path):
+            calls.append("load")
+            return int(path.read_text(encoding="utf-8"))
+
+    state = SharedState({"name": "state"})
+    roots = [InMemoryAsset({"name": name, "dependency": state}) for name in ("first", "second")]
 
     with asset_resolution_context() as resolver:
         resolver.retain_assets_shared_by_roots(roots)
-        assert resolver.get_in_memory_asset(state, lambda: 42, spill_to_disk=save, load_from_disk=load) == 42
+        assert state.get() == 42
         assert Path(resolver._spill_directory.name).parent == tmp_path / "temporary"
         resolver.release_transient_values()
-        assert resolver.get_in_memory_asset(state, lambda: -1, spill_to_disk=save, load_from_disk=load) == 42
+        assert state.get() == 42
         assert calls == ["save", "load"]
 
 

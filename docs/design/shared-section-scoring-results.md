@@ -200,6 +200,16 @@ set within a scoring profile, and each profile/timing-plan combination occurred
 in only one context. Whole-choice-set sharing would therefore not compress this
 capture. This does not rule out shared subsets in other populations or runs.
 
+A later generated-data benchmark compared the current profile-by-profile
+filter with indexing context row numbers once and joining each batch directly
+to its profile's scores. With 8 million input rows and 32 profiles, the
+current join took 1.11 s and peaked at 1,074 MiB of process memory; the index
+took 0.93 s and peaked at 1,157 MiB. The 4 million output rows matched exactly.
+These are single measurements of the join, including the process memory peak
+from input preparation; generated data cannot establish the effect on a real
+simulation. The production scorer now uses the indexed join, accepting the
+extra memory for its potential speed gain.
+
 Different incoming schedules nevertheless sometimes converged to the same
 modeled plan: 1,253,553 rows mapped to 369,135 repeated modeled plans in that
 capture. Their utility and feasibility values agreed exactly. An experiment
@@ -241,8 +251,7 @@ modeled departure, arrival, next-departure and duration values matched exactly.
 Building, caching and reattaching windows took 1.13 s in batch two, compared
 with 0.22 s for the existing updater. This does not establish the performance
 of generating sections directly and never rebuilding full timed rows, but the
-prototype itself is slower and was not added to the production path. Reproduce
-it with `tests/manual/benchmark_timing_windows.py` using captured timing inputs.
+prototype itself is slower and was not added to the production path.
 
 A compressed context-to-timing mapping was measured on a captured large batch.
 The original 8,144,287-row table, including plan keys and profile columns,
@@ -257,3 +266,12 @@ Captured-batch checks and a two-step 3 x 3 x 3 run matched saved candidate IDs,
 allocations, utilities and random states exactly. That run took 129.8 s and
 peaked at 7.05 GiB versus 121.9 s and 8.11 GiB in an earlier run; unit checks
 ran concurrently with the newer run, so the timing is not a clean comparison.
+
+Releasing section-score and plan-section tables before joining utilities back
+to contexts was checked on a captured batch with 940,065 context-plan rows.
+In separate processes with four Polars threads, the join sampled 1.16 GiB
+before and 1.15 GiB after; overall process peaks were 1.20 and 1.19 GiB.
+The scoring outputs matched exactly after sorting by plan keys. Raw utility
+row order also varied between two runs of the unchanged scorer; the caller
+sorts these rows before assigning plan IDs. These single measurements do not
+establish a meaningful peak-memory reduction.

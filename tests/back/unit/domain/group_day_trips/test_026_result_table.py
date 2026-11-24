@@ -180,20 +180,20 @@ def test_sequence_spills_obey_limit_and_publish_only_complete_files(tmp_path, mo
     monkeypatch.setenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", str(sample.stat().st_size + 64))
     path = folder / "sequences"
     with pytest.raises(TemporaryDiskLimitExceeded):
-        asset._spill_sequences(sequences, path)
+        asset.spill_execution_value(sequences, path)
     assert not path.exists()
     assert not list(folder.iterdir())
     assert managed_temporary_disk_usage() == 0
 
     monkeypatch.delenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES")
-    asset._spill_sequences(sequences, path)
-    assert_frame_equal(asset._load_spilled_sequences(path), sequences)
+    asset.spill_execution_value(sequences, path)
+    assert_frame_equal(asset.load_execution_value(path), sequences)
     assert_frame_equal(asset.sequence_index, pl.DataFrame({"id": list(range(100))}))
     if asset_class is ModeSequences:
         assert asset.generated_mode_sequences == 17
     existing = (path / "sequences.parquet").read_bytes()
     with pytest.raises(FileExistsError):
-        asset._spill_sequences(sequences, path)
+        asset.spill_execution_value(sequences, path)
     assert (path / "sequences.parquet").read_bytes() == existing
 
     original_write = write_temporary_parquet
@@ -206,7 +206,7 @@ def test_sequence_spills_obey_limit_and_publish_only_complete_files(tmp_path, mo
     monkeypatch.setattr(f"{module}.write_temporary_parquet", interrupt_index)
     interrupted_path = folder / "interrupted"
     with pytest.raises(KeyboardInterrupt):
-        asset._spill_sequences(sequences, interrupted_path)
+        asset.spill_execution_value(sequences, interrupted_path)
     assert not interrupted_path.exists()
     assert list(folder.iterdir()) == [path]
 
@@ -227,8 +227,8 @@ def test_shared_sequence_spill_limit_fails_without_leaving_a_partial_asset(tmp_p
         with pytest.raises(TemporaryDiskLimitExceeded):
             resolver.get_in_memory_asset(
                 asset, lambda: pl.DataFrame({"value": [1]}),
-                spill_to_disk=asset._spill_sequences,
-                load_from_disk=asset._load_spilled_sequences,
+                spill_to_disk=asset.spill_execution_value,
+                load_from_disk=asset.load_execution_value,
             )
         assert key not in resolver.in_memory_values
         assert not list(Path(resolver._spill_directory.name).iterdir())

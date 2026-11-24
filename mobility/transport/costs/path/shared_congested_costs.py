@@ -1,8 +1,6 @@
 """Prepare compatible scenario road costs in one R execution."""
 
 import json
-import filecmp
-import hashlib
 import logging
 import os
 import pathlib
@@ -85,27 +83,17 @@ def prepare_shared_congested_costs(cost_assets):
         if not entries:
             continue
 
-        # Different scenario assets can write identical sorted OD flows. Only
-        # assign each identical file once, but publish its result to every
-        # scenario's normal asset key. Compare bytes after hashing so a hash
-        # collision cannot cause different flows to share a result.
+        # Flow assets with the same inputs represent the same assignment.
+        # Different input identities stay separate even if their files happen
+        # to contain the same values.
         unique_flows = []
-        groups_by_hash = {}
+        groups_by_identity = {}
         for flow, table, graph in entries:
-            flow_path = flow.get()
-            file = open(flow_path, "rb")
-            try:
-                digest = hashlib.file_digest(file, "sha256").digest()
-            finally:
-                file.close()
-            match = next(
-                (group for group in groups_by_hash.get(digest, [])
-                 if filecmp.cmp(flow_path, group[0], shallow=False)),
-                None,
-            )
+            flow_key = asset_graph_key(flow)
+            match = groups_by_identity.get(flow_key)
             if match is None:
-                match = (flow_path, [], [])
-                groups_by_hash.setdefault(digest, []).append(match)
+                match = (flow.get(), [], [])
+                groups_by_identity[flow_key] = match
                 unique_flows.append(match)
             match[1].append(table)
             if graph is not None:

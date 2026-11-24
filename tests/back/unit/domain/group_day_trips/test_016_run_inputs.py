@@ -3,8 +3,10 @@ from types import SimpleNamespace
 from pydantic import BaseModel
 
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.graph import build_asset_graph
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.input_hashing import hash_inputs
 from mobility.trips.group_day_trips.iterations import iteration_assets
 from mobility.trips.group_day_trips.core import run as run_module
 from mobility.trips.group_day_trips.core.parameters import (
@@ -101,12 +103,13 @@ def test_run_inputs_keep_context_objects_out_of_direct_dependencies(tmp_path, mo
     assert run.modes == [mode]
     assert run.surveys == [survey]
     assert run.survey_plan_assets is survey_plan_assets
-    assert set(run.inputs) == {"version", "run_context_hash", "final_iteration_state"}
-
-    graph = build_asset_graph(run)
-    direct_parents = set(graph.predecessors(run))
-
-    assert direct_parents == {final_state}
+    assert not isinstance(run, Asset)
+    assert run.final_iteration_state is final_state
+    assert run.inputs_hash == hash_inputs({
+        "version": 23,
+        "run_context_hash": run.run_context.inputs_hash,
+        "final_iteration_state": final_state,
+    })
 
 
 def test_initial_state_inputs_keep_full_modes_out_of_dependencies(tmp_path, monkeypatch):

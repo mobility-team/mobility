@@ -712,7 +712,8 @@ def test_raw_tables_stream_one_replication_lane_at_a_time(tmp_path, monkeypatch)
         def __init__(self, replication):
             super().__init__({"replication": replication})
             self.replication = replication
-            self.parameters = SimpleNamespace(run=SimpleNamespace(n_steps=2))
+            self.parameters = SimpleNamespace(run=SimpleNamespace(n_steps=2),
+                                              outputs=SimpleNamespace(checkpoint_each_step=False))
             self._cached_result = None
             self.current_step = 0
 
@@ -722,13 +723,13 @@ def test_raw_tables_stream_one_replication_lane_at_a_time(tmp_path, monkeypatch)
         def create_and_get_asset(self):
             raise AssertionError("The test coordinator must use its live callback.")
 
-        def get(self, *, step_consumer=None, runner=None):
+        def get(self, *, step_consumer=None, requirements=None):
             if step_consumer is None:
                 return SimpleNamespace(current_iteration=self.current_step)
             for step in (1, 2):
                 self.current_step = step
                 events.append((self.replication, step))
-                step_consumer(step)
+                step_consumer(step, None)
             return None
 
     coordinators = {replication: FakeCoordinator(replication) for replication in (0, 1)}

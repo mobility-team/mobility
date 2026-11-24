@@ -5,6 +5,8 @@ from polars.testing import assert_frame_equal
 
 from mobility.trips.group_day_trips.core.parameters import GroupDayTripsParameters
 from mobility.trips.group_day_trips.plans.activity_sequences import ActivitySequences
+from mobility.trips.group_day_trips.plans.activity_schedule_pool import ActivitySchedulePoolAsset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 
 
 def test_each_profile_gets_k_draws_in_each_zone():
@@ -63,23 +65,43 @@ def test_replications_share_choice_table_but_keep_their_seeded_draws():
     })
     parameters = GroupDayTripsParameters(activity_sequences={"k_activity_sequences": 10})
     shared = {}
+    draws = []
     for seed in (0, 1, 2):
         cached = ActivitySequences(
             is_weekday=True, iteration=1, seed=seed, parameters=parameters,
             shared_sampling_tables=shared,
-        )._sample_schedules_with_replacement(schedules, zones)
+        )._sample_schedules_with_replacement(schedules, zones, sampling_table_key=("pool", (1, 2)))
         independent = ActivitySequences(
             is_weekday=True, iteration=1, seed=seed, parameters=parameters,
         )._sample_schedules_with_replacement(schedules, zones)
         assert_frame_equal(cached, independent)
+        draws.append(cached["time_seq_id"].to_list())
     assert len(shared) == 1
+    assert draws[0] != draws[1]
 
     # Different requested zones must not reuse a table with a different draw order.
     ActivitySequences(
         is_weekday=True, iteration=1, seed=0, parameters=parameters,
         shared_sampling_tables=shared,
-    )._sample_schedules_with_replacement(schedules, zones.head(1))
+    )._sample_schedules_with_replacement(schedules, zones.head(1), sampling_table_key=("pool", (1,)))
     assert len(shared) == 2
+
+
+def test_schedule_pool_identity_uses_only_eligibility_inputs():
+    inputs = {
+        "population": "population", "survey_plan_assets": "survey",
+        "demand_group_parameters": {"max_persons": 100}, "activity_support_threshold": 0.01,
+        "run_seed": 1, "initial_transport_costs": "first-costs",
+    }
+    first = ActivitySchedulePoolAsset(initial_state=InMemoryAsset(inputs), is_weekday=True)
+    other_seed = ActivitySchedulePoolAsset(initial_state=InMemoryAsset({
+        **inputs, "run_seed": 2, "initial_transport_costs": "other-costs",
+    }), is_weekday=True)
+    other_demand = ActivitySchedulePoolAsset(initial_state=InMemoryAsset({
+        **inputs, "demand_group_parameters": {"max_persons": 200},
+    }), is_weekday=True)
+    assert first.inputs_hash == other_seed.inputs_hash
+    assert first.inputs_hash != other_demand.inputs_hash
 
 
 def test_all_schedules_are_kept_once_when_k_is_none():

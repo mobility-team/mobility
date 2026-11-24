@@ -2,35 +2,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Sequence
-from contextlib import nullcontext
-from dataclasses import dataclass
-import json
-import logging
-from typing import Any
 
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.graph import asset_graph_key, build_asset_graph
-from mobility.trips.group_day_trips.core.performance_trace import simulation_step, trace_simulation_run
-from mobility.trips.group_day_trips.core.run_state import RunState
-from mobility.trips.group_day_trips.core.multi_scenario import (
-    flow_change_breakdown, flow_change_index, represented_od_mode_flows,
-)
+from mobility.trips.group_day_trips.core.coordinated_run_result import SimulationRequirements
 
 from .assets.metric import Metric, MetricLaneResult
 from .assets.scoped_tables import ScopedRunTable, release_scoped_run_tables
 from .result_table import ResultTable
-
-
-@dataclass(frozen=True)
-class CoordinatedRunResult:
-    """Per-run outer state, behavior and latest inner estimates."""
-
-    final_states_by_run_key: dict[int, RunState]
-    mnl_od_mode_flows_by_run_key: dict[int, pl.DataFrame]
-    current_iteration: int = 0
-    current_state_assets: dict[int, Any] | None = None
 
 
 class SimulationRunner:
@@ -209,29 +190,13 @@ class SimulationRunner:
         )
         return needs_final_outputs, needs_mnl_flows
 
-    @trace_simulation_run
-    def _run_cohort(self, coordinator, step_consumer) -> CoordinatedRunResult:
-        """Run the nested candidate and behavior loops in lockstep."""
-        resolver = self.resolver
-        if step_consumer is None:
-            step_consumer = lambda iteration: None
-        resume_iteration = 0
-        if coordinator.parameters.outputs.checkpoint_each_step:
-            # Runs can be executed again after their previous transient state
-            # is released. A saved flag belongs to one execution, not the run
-            # object, and files selected for resume may have changed meanwhile.
-            if any(
-                asset.resume_checkpoint_loader is not None
-                for run in coordinator.runs.values()
-                for asset in run.iteration_state_assets
-            ):
-                resume_iteration = coordinator._prepare_checkpoint_resume()
-            for run in coordinator.runs.values():
-                for asset in run.iteration_state_assets:
-                    asset._checkpoint_saved = False
-                    asset._loaded_checkpoint = False
+    def _simulation_requirements(self, coordinator, *, required_iterations=None,
+                                 needs_mnl_flows_override=None) -> SimulationRequirements:
+        """Describe the steps and final calculations needed by these results."""
         last_step = coordinator.parameters.run.n_steps
         needs_final_outputs, needs_mnl_flows = self._final_requirements(self.requests, last_step)
+        if needs_mnl_flows_override is not None:
+            needs_mnl_flows = needs_mnl_flows_override
         track_flow_change = coordinator.parameters.outputs.checkpoint_each_step or not self.requests or any(
             isinstance(output, ScopedRunTable)
             and output.table_name == "adaptive_search_diagnostics"
@@ -240,225 +205,9 @@ class SimulationRunner:
             )))
             for request in self.requests for output in (request, *request.planned_outputs)
         )
-        current_state_assets = {
-            run_key: run.initial_iteration_state
-            for run_key, run in coordinator.runs.items()
-        }
-        current_states = {
-            run_key: run.initial_iteration_state.get()
-            for run_key, run in coordinator.runs.items()
-        }
-        for run_key, state in current_states.items():
-            run = coordinator.runs[run_key]
-            logging.info(
-                "Coordinated run input | scenario=%s | sensitivity=%s | replication=%d | "
-                "population_sample_size=%s | steps=%d",
-                run.scenario,
-                run.sensitivity_case_id,
-                run.replication,
-                run.population.parameters.sample_size,
-                coordinator.parameters.run.n_steps,
-            )
-            coordinator._log_plan_distribution(
-                stage="initial state",
-                scenario=run.scenario,
-                iteration=0,
-                demand_groups=state.demand_groups,
-                plans=state.current_plans,
-                plan_steps=state.current_plan_steps,
-                level=logging.INFO,
-            )
-        diagnostics: list[dict[str, Any]] = []
-        mnl_od_mode_flows: dict[int, pl.DataFrame] | None = None
-        actual_outer_iterations = 0
-        final_states: dict[int, RunState] | None = None
-        previous_activity_flows: dict[int, pl.DataFrame] = {}
-
-        for iteration in range(1, coordinator.parameters.run.n_steps + 1):
-            with simulation_step("simulation step", phase="outer", step=iteration):
-                if iteration <= resume_iteration:
-                    state_assets = {
-                        run_key: run.iteration_state_assets[iteration - 1]
-                        for run_key, run in coordinator.runs.items()
-                    }
-                    next_states = {run_key: asset.get() for run_key, asset in state_assets.items()}
-                    manifest = json.loads(coordinator._checkpoint_manifest_path(iteration).read_text(encoding="utf-8"))
-                    diagnostics.extend(manifest["diagnostics"])
-                    if track_flow_change:
-                        previous_activity_flows = {
-                            run_key: represented_od_mode_flows(state.current_plan_steps, include_activity=True)
-                            for run_key, state in next_states.items()
-                        }
-                    if iteration > 1:
-                        for previous_asset in current_state_assets.values():
-                            if resolver is not None:
-                                resolver.release_in_memory_asset(previous_asset)
-                            coordinator._clear_step_inputs(previous_asset)
-                    current_states = next_states
-                    current_state_assets = state_assets
-                    actual_outer_iterations = iteration
-                    if iteration == last_step:
-                        mnl_od_mode_flows = {
-                            int(key): pl.read_parquet(item["path"])
-                            for key, item in manifest["mnl_flows"].items()
-                        }
-                        if needs_mnl_flows and not mnl_od_mode_flows:
-                            raise RuntimeError("Checkpoint is missing final inner-flow results.")
-                        final_states = (coordinator._finalize_cohort(iteration, current_states, current_state_assets)
-                                        if needs_final_outputs else current_states)
-                        for run_key, state in final_states.items():
-                            state.adaptive_search_diagnostics = pl.DataFrame(
-                                [{key: value for key, value in row.items() if key != "_run_key"}
-                                 for row in diagnostics if row["_run_key"] == run_key], infer_schema_length=None,
-                            )
-                    coordinator._active_result = CoordinatedRunResult(
-                        final_states_by_run_key=final_states or {},
-                        mnl_od_mode_flows_by_run_key=mnl_od_mode_flows or {},
-                        current_iteration=iteration, current_state_assets=current_state_assets,
-                    )
-                    try:
-                        with (resolver.pin_in_memory_assets(list(state_assets.values()))
-                              if resolver is not None else nullcontext()):
-                            step_consumer(iteration)
-                    finally:
-                        coordinator._active_result = None
-                    continue
-                state_assets, next_states, inner_result = coordinator._advance_cohort_step(
-                    iteration, current_states,
-                    keep_inner_flows=iteration == last_step and (needs_mnl_flows or coordinator.parameters.outputs.checkpoint_each_step),
-                    **({"track_flow_change": True} if track_flow_change else {}),
-                )
-                diagnostics.extend(inner_result["diagnostics"])
-
-                for run_key, state in next_states.items():
-                    run = coordinator.runs[run_key]
-                    coordinator._log_plan_distribution(
-                        stage="after behavior update",
-                        scenario=run.scenario,
-                        iteration=iteration,
-                        demand_groups=state.demand_groups,
-                        plans=state.current_plans,
-                        plan_steps=state.current_plan_steps,
-                    )
-                actual_outer_iterations = iteration
-                outer_stop_reason = (
-                    "completed_steps"
-                    if iteration == coordinator.parameters.run.n_steps
-                    else "step_continues"
-                )
-                for run_key in coordinator.run_keys:
-                    run = coordinator.runs[run_key]
-                    convergence = inner_result["convergence_by_run_key"][run_key]
-                    outer_flow_change = None
-                    outer_breakdowns = {}
-                    if track_flow_change:
-                        current_flows = represented_od_mode_flows(
-                            next_states[run_key].current_plan_steps, include_activity=True,
-                        )
-                        previous_flows = previous_activity_flows.get(run_key)
-                        if previous_flows is not None:
-                            outer_flow_change = flow_change_index(previous_flows, current_flows)
-                        outer_breakdowns = {
-                            category: flow_change_breakdown(previous_flows, current_flows, category)
-                            for category in ("mode", "activity")
-                        }
-                        previous_activity_flows[run_key] = current_flows
-                    diagnostics.append(
-                        {
-                            "_run_key": run_key,
-                            "scenario": run.scenario,
-                            "sensitivity_case": run.sensitivity_case_id,
-                            "replication": run.replication,
-                            "phase": "outer",
-                            "outer_step": iteration,
-                            "search_batch": None,
-                            "search_batches": inner_result["search_batches"],
-                            "generation_effort_used": inner_result["generation_effort_used"],
-                            "activity_profile_cell_count": (
-                                inner_result["activity_profile_cell_count_by_scenario"][run_key]
-                            ),
-                            "covered_activity_profile_cell_count": (
-                                inner_result["covered_activity_profile_cell_count_by_scenario"][run_key]
-                            ),
-                            "uncovered_activity_profile_cell_count": max(
-                                0,
-                                inner_result["activity_profile_cell_count_by_scenario"][run_key]
-                                - inner_result["covered_activity_profile_cell_count_by_scenario"][run_key],
-                            ),
-                            "unique_pool_size": len(inner_result["pool"].candidate_ids),
-                            "scored_candidate_scope": inner_result["scored_candidate_scope_by_scenario"][run_key],
-                            "infeasible_candidate_count": inner_result["infeasible_counts"][run_key],
-                            "missing_cost_row_candidate_count": inner_result["missing_cost_row_counts"][run_key],
-                            "invalid_cost_row_candidate_count": inner_result["invalid_cost_row_counts"][run_key],
-                            "flow_change": convergence.flow_changes.get(run_key),
-                            "flow_change_index": outer_flow_change,
-                            "flow_change_by_mode": outer_breakdowns.get("mode"),
-                            "flow_change_by_activity": outer_breakdowns.get("activity"),
-                            "base_gap_change": convergence.base_gap_changes.get(run_key),
-                            "inner_converged": convergence.converged,
-                            "stop_reason": outer_stop_reason,
-                        }
-                    )
-
-                coordinator._write_checkpoint_manifest(
-                    iteration,
-                    diagnostics=[row for row in diagnostics if row["outer_step"] == iteration],
-                    mnl_flows=inner_result["mnl_od_mode_flows"] if iteration == last_step else None,
-                )
-
-                # This diagnostic describes the final search estimate, before
-                # the behavioral update and its post-update transport costs.
-                if iteration == last_step:
-                    mnl_od_mode_flows = inner_result["mnl_od_mode_flows"]
-                if iteration > 1:
-                    # This step has finished using the preceding state, and
-                    # its requested outputs were reduced during that step.
-                    for run_key, previous_asset in current_state_assets.items():
-                        if resolver is not None:
-                            resolver.release_in_memory_asset(previous_asset)
-                        coordinator._clear_step_inputs(previous_asset)
-                current_states = next_states
-                current_state_assets = state_assets
-                del inner_result
-                if iteration == last_step:
-                    if needs_final_outputs:
-                        final_states = coordinator._finalize_cohort(
-                            iteration, current_states, current_state_assets
-                        )
-                    else:
-                        final_states = current_states
-                    for run_key, state in final_states.items():
-                        state.adaptive_search_diagnostics = pl.DataFrame(
-                            [
-                                {key: value for key, value in row.items() if key != "_run_key"}
-                                for row in diagnostics if row["_run_key"] == run_key
-                            ],
-                            infer_schema_length=None,
-                        )
-                # Result assets read the current state without recursively
-                # starting a second cohort execution.
-                coordinator._active_result = CoordinatedRunResult(
-                    final_states_by_run_key=final_states or {},
-                    mnl_od_mode_flows_by_run_key=mnl_od_mode_flows or {},
-                    current_iteration=iteration,
-                    current_state_assets=current_state_assets,
-                )
-                try:
-                    with (
-                        resolver.pin_in_memory_assets(list(state_assets.values()))
-                        if resolver is not None else nullcontext()
-                    ):
-                        step_consumer(iteration)
-                finally:
-                    coordinator._active_result = None
-
-        if not actual_outer_iterations or mnl_od_mode_flows is None or final_states is None:
-            raise RuntimeError("The coordinated run completed no outer iterations.")
-
-        return CoordinatedRunResult(
-            final_states_by_run_key=final_states,
-            mnl_od_mode_flows_by_run_key=mnl_od_mode_flows,
-            current_iteration=actual_outer_iterations,
+        return SimulationRequirements(
+            steps=None if required_iterations is None else frozenset(required_iterations),
+            final_outputs=needs_final_outputs, mnl_flows=needs_mnl_flows, flow_change=track_flow_change,
         )
 
     def execute_final_state(self, run):
@@ -467,7 +216,9 @@ class SimulationRunner:
         self.validate_external_inputs([run])
         self.resolver.shared_asset_keys.discard(asset_graph_key(coordinator))
         self.resolver.release_in_memory_asset(coordinator)
-        result = coordinator.get(step_consumer=lambda iteration: None, runner=self)
+        requirements = self._simulation_requirements(coordinator, required_iterations=set(),
+                                                      needs_mnl_flows_override=False)
+        result = coordinator.get(requirements=requirements)
         self.resolver.shared_asset_keys.discard(asset_graph_key(coordinator))
         self.resolver.release_in_memory_asset(coordinator)
         return result.final_states_by_run_key[run.coordinated_run_key]
@@ -651,7 +402,7 @@ class SimulationRunner:
                         # turn this request into a read of discarded history.
                         self.resolver.shared_asset_keys.discard(asset_graph_key(coordinator))
                         self.resolver.release_in_memory_asset(coordinator)
-                        def consume_lane_step(iteration):
+                        def consume_lane_step(iteration, step_result):
                             previous_coordinator = getattr(self.resolver, "result_coordinator", None)
                             previous_tables = getattr(self.resolver, "lane_scoped_tables", None)
                             self.resolver.result_coordinator = coordinator
@@ -692,7 +443,15 @@ class SimulationRunner:
                                 self.resolver.lane_scoped_tables = previous_tables
                                 release_scoped_run_tables(iteration, [*scoped_tables, *used_tables])
 
-                        coordinator.get(step_consumer=consume_lane_step, runner=self)
+                        required_iterations = {
+                            iteration
+                            for request in [*live_requests, *table_dependencies.values()]
+                            for iteration in request.selected_iterations
+                        }
+                        requirements = self._simulation_requirements(
+                            coordinator, required_iterations=required_iterations,
+                        )
+                        coordinator.get(step_consumer=consume_lane_step, requirements=requirements)
                         self.resolver.shared_asset_keys.discard(asset_graph_key(coordinator))
                         self.resolver.release_in_memory_asset(coordinator)
                     for request in live_requests:

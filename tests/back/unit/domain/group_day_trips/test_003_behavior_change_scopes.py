@@ -82,6 +82,18 @@ def test_shared_context_transitions_keep_unit_origins_and_history(scope, monkeyp
     expected = updater.get_transition_probabilities(
         origins, expanded_choices.join(times, on="time_seq_id").lazy(), pl.DataFrame(), scope, **settings,
     )
+    # History compaction keeps eligible targets even when nobody revises.
+    allowed_ids = updater.build_allowed_plan_transitions(
+        origins, expanded_choices.join(times, on="time_seq_id").lazy(), scope,
+        min_transition_utility_gain=0.1,
+    ).select("plan_id_trans").unique().collect().sort("plan_id_trans")
+    for revision_probability in (0.0, 1.0):
+        probabilities = updater.get_transition_probabilities(
+            origins, expanded_choices.join(times, on="time_seq_id").lazy(), pl.DataFrame(), scope,
+            transport_zones=None, transition_revision_probability=revision_probability,
+            min_transition_utility_gain=0.1,
+        )
+        assert_frame_equal(allowed_ids, probabilities.select("plan_id_trans").unique().sort("plan_id_trans"))
     actual = updater.get_context_transition_probabilities(evaluation, scope, **settings)
     keys = ["plan_id_from", "plan_id_trans"]
     assert_frame_equal(actual.select(expected.columns).sort(keys), expected.sort(keys))
@@ -100,6 +112,21 @@ def test_shared_context_transitions_keep_unit_origins_and_history(scope, monkeyp
         reachable = updater.estimate_reachable_allocation(
             compact, origins, iteration, scope, min_plan_persons=min_persons, **settings,
         )
+        with_ids, target_ids = updater.estimate_reachable_allocation(
+            compact, origins, iteration, scope, min_plan_persons=min_persons,
+            include_reachable_ids=True, **settings,
+        )
+        assert_frame_equal(with_ids.sort(PLAN_KEY_COLS), reachable.sort(PLAN_KEY_COLS), check_exact=True)
+        if scope == BehaviorChangeScope.NO_TRANSITIONS or min_persons <= 0 or iteration < 2:
+            context_probabilities = updater.get_transition_probabilities(
+                compact.current_plans, choices.join(times, on="time_seq_id").lazy(),
+                pl.DataFrame(), scope, **settings,
+            )
+            assert_frame_equal(target_ids.sort("plan_id"), context_probabilities.select(
+                pl.col("plan_id_trans").alias("plan_id")
+            ).unique().sort("plan_id"))
+        else:
+            assert target_ids is None
         compare_columns = [column for column in expected_context.columns if column != "utility"]
         assert_frame_equal(reachable.select(compare_columns).sort(PLAN_KEY_COLS),
                            expected_context.select(compare_columns).sort(PLAN_KEY_COLS))

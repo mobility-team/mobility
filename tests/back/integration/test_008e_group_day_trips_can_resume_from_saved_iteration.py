@@ -89,7 +89,7 @@ def test_008e_group_day_trips_resumes_from_saved_iteration_checkpoint(test_data,
     run = pop_trips.run("weekday")
     run.remove()
 
-    run.get()
+    run._execute()
     first_plan_steps = run.table("plan_steps")
     first_transitions = run.table("transitions")
     first_iteration_metrics = run.table("iteration_metrics")
@@ -107,7 +107,7 @@ def test_008e_group_day_trips_resumes_from_saved_iteration_checkpoint(test_data,
     rerun = _build_group_day_trips(test_data, gtfs_sources_folder).run("weekday")
     assert rerun.final_iteration_state.inputs_hash == run.final_iteration_state.inputs_hash
 
-    rerun.get()
+    rerun._execute()
     plan_steps = rerun.table("plan_steps")
     transitions = rerun.table("transitions")
     iteration_metrics = rerun.table("iteration_metrics")

@@ -20,12 +20,19 @@ class BehaviorChangePhase(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def explain_renamed_start_iteration(cls, data):
+        if isinstance(data, dict) and "start_iteration" in data:
+            raise ValueError("`start_iteration` was renamed to `start_step` in BehaviorChangePhase.")
+        return data
+
     start_step: Annotated[
         int,
         Field(
             ge=1,
-            title="Start iteration",
-            description="First simulation iteration where this behavior-change phase applies.",
+            title="Start step",
+            description="First simulation step where this behavior-change phase applies.",
         ),
     ]
     scope: Annotated[
@@ -54,14 +61,26 @@ class GroupDayTripsRunParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def explain_renamed_iteration_settings(cls, data):
+        if isinstance(data, dict):
+            for old, new in (
+                ("n_iterations", "n_steps"),
+                ("n_iter_per_cost_update", "n_steps_per_cost_update"),
+            ):
+                if old in data:
+                    raise ValueError(f"`{old}` was renamed to `{new}` in GroupDayTripsRunParameters.")
+        return data
+
     n_steps: Annotated[
         int,
         Field(
             default=1,
             ge=1,
-            title="Number of iterations",
+            title="Number of simulation steps",
             description=(
-                "Number of simulation iterations used to compute the population "
+                "Number of simulation steps used to compute the population "
                 "trips."
             ),
         ),
@@ -74,7 +93,7 @@ class GroupDayTripsRunParameters(BaseModel):
             title="Travel costs update period",
             description=(
                 "The simulation updates travel costs every n_steps_per_cost_update "
-                "iterations. Set it to zero to ignore congestion feedback."
+                "steps. Set it to zero to ignore congestion feedback."
             ),
         ),
     ]
@@ -200,18 +219,25 @@ class GroupDayTripsPeriodParameters(BaseModel):
 
 
 class GroupDayTripsOutputParameters(BaseModel):
-    """Settings for optional saved outputs from the iteration loop."""
+    """Settings for optional saved simulation outputs."""
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def explain_renamed_iteration_events(cls, data):
+        if isinstance(data, dict) and "cache_iteration_events" in data:
+            raise ValueError("`cache_iteration_events` was renamed to `cache_step_events` in GroupDayTripsOutputParameters.")
+        return data
 
     cache_step_events: Annotated[
         bool,
         Field(
             default=False,
-            title="Cache iteration events",
+            title="Cache step events",
             description=(
                 "Whether to cache detailed transition events for each model "
-                "iteration and include them in the final transitions output."
+                "step and include them in the final transitions output."
             ),
         ),
     ]
@@ -219,10 +245,10 @@ class GroupDayTripsOutputParameters(BaseModel):
         bool,
         Field(
             default=False,
-            title="Save iteration checkpoints",
+            title="Save step checkpoints",
             description=(
-                "Whether to save the minimal changing state after each iteration "
-                "so a later run can resume from the latest completed iteration. "
+                "Whether to save the minimal changing state after each step "
+                "so a later run can resume from the latest completed step. "
                 "When disabled, intermediate run states stay in memory and are "
                 "not saved as restart points."
             ),
@@ -231,7 +257,7 @@ class GroupDayTripsOutputParameters(BaseModel):
 
 
 class GroupDayTripsBehaviorChangeParameters(BaseModel):
-    """Per-iteration behavior-change policy."""
+    """Behavior-change policy for simulation steps."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -241,8 +267,8 @@ class GroupDayTripsBehaviorChangeParameters(BaseModel):
             default=None,
             title="Behavior change phases",
             description=(
-                "Optional per-iteration adaptation policy. If omitted, all "
-                "iterations use full replanning."
+                "Optional adaptation policy for each step. If omitted, all "
+                "steps use full replanning."
             ),
         ),
     ]
@@ -352,7 +378,7 @@ class GroupDayTripsDestinationSequenceParameters(BaseModel):
         Field(
             default=False,
             title="Refresh active mode alternatives",
-            description="Whether to append active destination chains to the iteration candidates.",
+            description="Whether to append active destination chains to the step's candidates.",
         ),
     ]
     dest_prob_cutoff: Annotated[
@@ -433,13 +459,32 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def explain_renamed_step_settings(cls, data):
+        if isinstance(data, dict):
+            if "n_warmup_iterations" in data:
+                raise ValueError("`n_warmup_iterations` was renamed to `n_warmup_steps`.")
+            if "plan_probability_pruning_min_iteration" in data:
+                raise ValueError(
+                    "`plan_probability_pruning_min_iteration` was replaced by "
+                    "`plan_pruning_start_step`; review `min_plan_persons` because pruning now "
+                    "uses the number of represented people rather than transition probability."
+                )
+            if "plan_probability_pruning_retained_share" in data:
+                raise ValueError(
+                    "`plan_probability_pruning_retained_share` was replaced by `min_plan_persons`; "
+                    "the new setting uses the number of represented people rather than a probability share."
+                )
+        return data
+
     n_warmup_steps: Annotated[
         int,
         Field(
             default=1,
             ge=0,
-            title="Candidate memory warm-up iterations",
-            description="Number of first iterations where inactive candidate plans are not removed.",
+            title="Candidate memory warm-up steps",
+            description="Number of initial steps where inactive candidate plans are not removed.",
         ),
     ]
     max_inactive_age: Annotated[
@@ -468,7 +513,7 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
         Field(
             default=False,
             title="Update plan timings from modeled travel times",
-            description="Whether to adjust plan timings with modeled travel times at each iteration.",
+            description="Whether to adjust plan timings with modeled travel times at each step.",
         ),
     ]
     enable_opportunity_congestion: Annotated[
@@ -511,7 +556,7 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
             ge=0.0,
             le=1.0,
             title="Transition revision probability",
-            description="Share of persons who reconsider their plan at each iteration.",
+            description="Share of persons who reconsider their plan at each step.",
         ),
     ]
     transition_logit_scale: Annotated[
@@ -591,7 +636,7 @@ class GroupDayTripsAdaptiveSearchParameters(BaseModel):
         Field(
             default=5,
             ge=1,
-            title="Maximum inner iterations",
+            title="Maximum search batches",
             description="Hard limit on candidate generation and allocation batches per inner loop.",
         ),
     ]

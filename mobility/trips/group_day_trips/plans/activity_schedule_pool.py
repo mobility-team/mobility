@@ -104,9 +104,15 @@ class ActivitySchedulePoolAsset(InMemoryAsset):
     ) -> None:
         self.initial_state = initial_state
         self.is_weekday = is_weekday
+        initial_inputs = initial_state.inputs
         inputs = {
-            "version": 2,
-            "initial_state": initial_state,
+            "version": 3,
+            # Schedule eligibility does not depend on the run seed, initial
+            # travel costs or opportunity values held by the full state.
+            "population": initial_inputs["population"],
+            "survey_plan_assets": initial_inputs["survey_plan_assets"],
+            "demand_group_parameters": initial_inputs["demand_group_parameters"],
+            "activity_support_threshold": initial_inputs["activity_support_threshold"],
             "is_weekday": is_weekday,
         }
         super().__init__(inputs)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 import json
-import hashlib
+from contextlib import nullcontext
 import logging
 import math
 import os
@@ -13,7 +13,7 @@ from typing import Any
 
 import polars as pl
 
-from mobility.trips.group_day_trips.core.performance_trace import simulation_step, trace_simulation_step
+from mobility.trips.group_day_trips.core.performance_trace import simulation_step, trace_simulation_step, trace_simulation_run
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.assets.asset import Asset
@@ -61,7 +61,7 @@ from mobility.trips.group_day_trips.core.multi_scenario import (
     represented_od_mode_flows,
 )
 from mobility.trips.group_day_trips.core.run_state import RunState
-from mobility.trips.group_day_trips.results.simulation_runner import CoordinatedRunResult, SimulationRunner
+from mobility.trips.group_day_trips.core.coordinated_run_result import CoordinatedRunResult, SimulationRequirements
 from mobility.transport.costs.path.shared_congested_costs import prepare_shared_congested_costs
 from mobility.trips.group_day_trips.iterations.iteration_assets import IterationTransportCostsAsset
 
@@ -100,7 +100,6 @@ class MultiScenarioRunAsset(InMemoryAsset):
         self.parameters = first_run.parameters
         self._scoring_context_cache = {}
         self._section_structure_cache = {}
-        self._active_result: CoordinatedRunResult | None = None
         self._is_running = False
         super().__init__(
             {
@@ -126,7 +125,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 "candidate_history_policy": "physical_plan_age_per_replication_v3",
                 "behavior_evaluation_policy": "score_current_pool_v2",
                 "inner_attachment_policy": "scoring_contexts_v1",
-                "checkpoint_manifest_version": 3,
+                "checkpoint_manifest_version": 4,
                 "runs": tuple(
                     (
                         run_key,
@@ -136,33 +135,34 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 ),
             }
         )
-        self._prepare_checkpoint_resume()
 
     def get(self, *args: Any, **kwargs: Any) -> CoordinatedRunResult:
         """Resolve every run in the cohort within the current execution."""
         if self._is_running:
-            if self._active_result is not None:
-                return self._active_result
             raise RuntimeError("The coordinated scenario loop cannot call itself recursively.")
-        if kwargs.get("step_consumer") is None:
-            kwargs["step_consumer"] = lambda iteration: None
         self._is_running = True
         try:
             return super().get(*args, **kwargs)
         finally:
             self._scoring_context_cache.clear()
             self._section_structure_cache.clear()
-            if kwargs.get("step_consumer") is not None:
-                for run in self.runs.values():
-                    for state_asset in run.iteration_state_assets:
-                        self._clear_step_inputs(state_asset)
+            for run in self.runs.values():
+                for state_asset in run.iteration_state_assets:
+                    self._clear_step_inputs(state_asset)
             self._is_running = False
 
-    def create_and_get_asset(self, *, step_consumer=None, runner=None) -> CoordinatedRunResult:
-        """Let the simulation runner advance this cohort through its steps."""
-        if runner is None:
-            runner = SimulationRunner(requests=[], resolver=get_current_asset_resolver())
-        return runner._run_cohort(self, step_consumer)
+    def create_and_get_asset(self, *, step_consumer=None, requirements=None) -> CoordinatedRunResult:
+        """Advance the cohort and supply requested completed steps."""
+        if requirements is None:
+            requirements = SimulationRequirements(
+                steps=None if step_consumer is not None else frozenset(),
+                final_outputs=True, mnl_flows=True, flow_change=True,
+            )
+            if step_consumer is not None:
+                consumer = step_consumer
+                step_consumer = lambda iteration, result: consumer(iteration)
+        return self._run_steps(resolver=get_current_asset_resolver(), step_consumer=step_consumer,
+                               requirements=requirements)
 
     @staticmethod
     def _clear_step_inputs(state_asset: Any) -> None:
@@ -289,97 +289,299 @@ class MultiScenarioRunAsset(InMemoryAsset):
             for state_asset in state_assets.values():
                 state_asset.coordinated_evaluation = None
             inner_result.get("evaluations", {}).clear()
-        self._share_equal_state_tables(next_states)
         return state_assets, next_states, inner_result
 
-    @staticmethod
-    @trace_simulation_step("share identical scenario state tables")
-    def _share_equal_state_tables(states):
-        """Reuse complete, equal state tables across equivalent scenarios."""
-        for name in (
-            "time_sequence_steps", "current_plans", "current_plan_steps", "plan_id_index",
-            "destination_sequence_index", "mode_sequence_index",
-        ):
-            shared = []
-            for state in states.values():
-                table = getattr(state, name)
-                if table is None:
-                    continue
-                match = next((other for other in shared
-                              if other.schema == table.schema and other.equals(table)), None)
-                if match is None:
-                    shared.append(table)
-                else:
-                    setattr(state, name, match)
+    @trace_simulation_run
+    def _run_steps(self, *, resolver, step_consumer, requirements) -> CoordinatedRunResult:
+        """Advance and restore simulation steps for the requested outputs."""
+        required_iterations = requirements.steps
+        needs_final_outputs = requirements.final_outputs
+        needs_mnl_flows = requirements.mnl_flows
+        track_flow_change = requirements.flow_change
+        if step_consumer is None:
+            step_consumer = lambda iteration, result: None
+        resume_iteration = 0
+        if self.parameters.outputs.checkpoint_each_step:
+            resume_iteration = self._prepare_checkpoint_resume(needs_mnl_flows=needs_mnl_flows)
+            for run in self.runs.values():
+                for asset in run.iteration_state_assets:
+                    asset._checkpoint_saved = False
+                    asset._loaded_checkpoint = False
+        last_step = self.parameters.run.n_steps
+        current_state_assets = {
+            run_key: run.initial_iteration_state
+            for run_key, run in self.runs.items()
+        }
+        current_states = {
+            run_key: run.initial_iteration_state.get()
+            for run_key, run in self.runs.items()
+        }
+        for run_key, state in current_states.items():
+            run = self.runs[run_key]
+            logging.info(
+                "Coordinated run input | scenario=%s | sensitivity=%s | replication=%d | "
+                "population_sample_size=%s | steps=%d",
+                run.scenario,
+                run.sensitivity_case_id,
+                run.replication,
+                run.population.parameters.sample_size,
+                self.parameters.run.n_steps,
+            )
+            self._log_plan_distribution(
+                stage="initial state",
+                scenario=run.scenario,
+                iteration=0,
+                demand_groups=state.demand_groups,
+                plans=state.current_plans,
+                plan_steps=state.current_plan_steps,
+                level=logging.INFO,
+            )
+        diagnostics: list[dict[str, Any]] = []
+        mnl_od_mode_flows: dict[int, pl.DataFrame] | None = None
+        actual_outer_iterations = 0
+        final_states: dict[int, RunState] | None = None
+        previous_activity_flows: dict[int, pl.DataFrame] = {}
 
-        # Candidate steps, memberships and unit maps may coincide separately;
-        # compare each complete table without merging scenario histories.
-        for name in ("steps", "membership", "unit_map"):
-            shared = []
-            for state in states.values():
-                candidates = state.candidate_plan_steps
-                if not isinstance(candidates, CompactCandidateSteps):
+        for iteration in range(1, self.parameters.run.n_steps + 1):
+            with simulation_step("simulation step", phase="outer", step=iteration):
+                if iteration <= resume_iteration:
+                    manifest = json.loads(self._checkpoint_manifest_path(iteration).read_text(encoding="utf-8"))
+                    diagnostics.extend(manifest["diagnostics"])
+                    # The latest checkpoint supplies the state for continued
+                    # simulation. Earlier ones are only needed by consumers
+                    # that explicitly requested those steps.
+                    if (iteration < resume_iteration and required_iterations is not None
+                            and iteration not in required_iterations):
+                        continue
+                    state_assets = {
+                        run_key: run.iteration_state_assets[iteration - 1]
+                        for run_key, run in self.runs.items()
+                    }
+                    next_states = {run_key: asset.get() for run_key, asset in state_assets.items()}
+                    if track_flow_change:
+                        previous_activity_flows = {
+                            run_key: represented_od_mode_flows(state.current_plan_steps, include_activity=True)
+                            for run_key, state in next_states.items()
+                        }
+                    if iteration > 1:
+                        for previous_asset in current_state_assets.values():
+                            if resolver is not None:
+                                resolver.release_in_memory_asset(previous_asset)
+                            self._clear_step_inputs(previous_asset)
+                    current_states = next_states
+                    current_state_assets = state_assets
+                    actual_outer_iterations = iteration
+                    if iteration == last_step:
+                        mnl_od_mode_flows = ({
+                            int(key): pl.read_parquet(item["path"])
+                            for key, item in manifest["mnl_flows"].items()
+                        } if needs_mnl_flows else {})
+                        if needs_mnl_flows and not mnl_od_mode_flows:
+                            raise RuntimeError("Checkpoint is missing final inner-flow results.")
+                        final_states = (self._finalize_cohort(iteration, current_states, current_state_assets)
+                                        if needs_final_outputs else current_states)
+                        for run_key, state in final_states.items():
+                            state.adaptive_search_diagnostics = pl.DataFrame(
+                                [{key: value for key, value in row.items() if key != "_run_key"}
+                                 for row in diagnostics if row["_run_key"] == run_key], infer_schema_length=None,
+                            )
+                    step_result = CoordinatedRunResult(
+                        final_states_by_run_key=final_states or {},
+                        mnl_od_mode_flows_by_run_key=mnl_od_mode_flows or {},
+                        current_iteration=iteration,
+                        current_states_by_run_key=current_states,
+                    )
+                    previous_coordinator = resolver.simulation_coordinator if resolver is not None else None
+                    previous_step_result = resolver.simulation_step_result if resolver is not None else None
+                    try:
+                        if required_iterations is None or iteration in required_iterations:
+                            with (resolver.pin_in_memory_assets(list(state_assets.values()))
+                                  if resolver is not None else nullcontext()):
+                                if resolver is not None:
+                                    resolver.simulation_coordinator = self
+                                    resolver.simulation_step_result = step_result
+                                step_consumer(iteration, step_result)
+                    finally:
+                        if resolver is not None:
+                            resolver.simulation_coordinator = previous_coordinator
+                            resolver.simulation_step_result = previous_step_result
                     continue
-                table = getattr(candidates, name)
-                if table is None:
-                    continue
-                match = next((other for other in shared
-                              if other.schema == table.schema and other.equals(table)), None)
-                if match is None:
-                    shared.append(table)
-                else:
-                    state.candidate_plan_steps = replace(candidates, **{name: match})
+                if self.parameters.outputs.checkpoint_each_step:
+                    # Later states depend on this step. Invalidate their
+                    # markers before any files can be rewritten.
+                    self._invalidate_checkpoint_manifests_from(iteration)
+                state_assets, next_states, inner_result = self._advance_cohort_step(
+                    iteration, current_states,
+                    keep_inner_flows=iteration == last_step and (needs_mnl_flows or self.parameters.outputs.checkpoint_each_step),
+                    **({"track_flow_change": True} if track_flow_change else {}),
+                )
+                diagnostics.extend(inner_result["diagnostics"])
 
-    def _prepare_checkpoint_resume(self) -> int:
-        """Resume only when every scenario has the same complete cohort checkpoint."""
+                for run_key, state in next_states.items():
+                    run = self.runs[run_key]
+                    self._log_plan_distribution(
+                        stage="after behavior update",
+                        scenario=run.scenario,
+                        iteration=iteration,
+                        demand_groups=state.demand_groups,
+                        plans=state.current_plans,
+                        plan_steps=state.current_plan_steps,
+                    )
+                actual_outer_iterations = iteration
+                outer_stop_reason = (
+                    "completed_steps"
+                    if iteration == self.parameters.run.n_steps
+                    else "step_continues"
+                )
+                for run_key in self.run_keys:
+                    run = self.runs[run_key]
+                    convergence = inner_result["convergence_by_run_key"][run_key]
+                    outer_flow_change = None
+                    outer_breakdowns = {}
+                    if track_flow_change:
+                        current_flows = represented_od_mode_flows(
+                            next_states[run_key].current_plan_steps, include_activity=True,
+                        )
+                        previous_flows = previous_activity_flows.get(run_key)
+                        if previous_flows is not None:
+                            outer_flow_change = flow_change_index(previous_flows, current_flows)
+                        outer_breakdowns = {
+                            category: flow_change_breakdown(previous_flows, current_flows, category)
+                            for category in ("mode", "activity")
+                        }
+                        previous_activity_flows[run_key] = current_flows
+                    diagnostics.append(
+                        {
+                            "_run_key": run_key,
+                            "scenario": run.scenario,
+                            "sensitivity_case": run.sensitivity_case_id,
+                            "replication": run.replication,
+                            "phase": "outer",
+                            "outer_step": iteration,
+                            "search_batch": None,
+                            "search_batches": inner_result["search_batches"],
+                            "generation_effort_used": inner_result["generation_effort_used"],
+                            "activity_profile_cell_count": (
+                                inner_result["activity_profile_cell_count_by_scenario"][run_key]
+                            ),
+                            "covered_activity_profile_cell_count": (
+                                inner_result["covered_activity_profile_cell_count_by_scenario"][run_key]
+                            ),
+                            "uncovered_activity_profile_cell_count": max(
+                                0,
+                                inner_result["activity_profile_cell_count_by_scenario"][run_key]
+                                - inner_result["covered_activity_profile_cell_count_by_scenario"][run_key],
+                            ),
+                            "unique_pool_size": len(inner_result["pool"].candidate_ids),
+                            "scored_candidate_scope": inner_result["scored_candidate_scope_by_scenario"][run_key],
+                            "infeasible_candidate_count": inner_result["infeasible_counts"][run_key],
+                            "missing_cost_row_candidate_count": inner_result["missing_cost_row_counts"][run_key],
+                            "invalid_cost_row_candidate_count": inner_result["invalid_cost_row_counts"][run_key],
+                            "flow_change": convergence.flow_changes.get(run_key),
+                            "flow_change_index": outer_flow_change,
+                            "flow_change_by_mode": outer_breakdowns.get("mode"),
+                            "flow_change_by_activity": outer_breakdowns.get("activity"),
+                            "base_gap_change": convergence.base_gap_changes.get(run_key),
+                            "inner_converged": convergence.converged,
+                            "stop_reason": outer_stop_reason,
+                        }
+                    )
+
+                self._write_checkpoint_manifest(
+                    iteration,
+                    diagnostics=[row for row in diagnostics if row["outer_step"] == iteration],
+                    mnl_flows=inner_result["mnl_od_mode_flows"] if iteration == last_step else None,
+                )
+
+                # This diagnostic describes the final search estimate, before
+                # the behavioral update and its post-update transport costs.
+                if iteration == last_step:
+                    mnl_od_mode_flows = inner_result["mnl_od_mode_flows"]
+                if iteration > 1:
+                    # This step has finished using the preceding state, and
+                    # its requested outputs were reduced during that step.
+                    for run_key, previous_asset in current_state_assets.items():
+                        if resolver is not None:
+                            resolver.release_in_memory_asset(previous_asset)
+                        self._clear_step_inputs(previous_asset)
+                current_states = next_states
+                current_state_assets = state_assets
+                del inner_result
+                if iteration == last_step:
+                    if needs_final_outputs:
+                        final_states = self._finalize_cohort(
+                            iteration, current_states, current_state_assets
+                        )
+                    else:
+                        final_states = current_states
+                    for run_key, state in final_states.items():
+                        state.adaptive_search_diagnostics = pl.DataFrame(
+                            [
+                                {key: value for key, value in row.items() if key != "_run_key"}
+                                for row in diagnostics if row["_run_key"] == run_key
+                            ],
+                            infer_schema_length=None,
+                        )
+                # Result assets read the current state without recursively
+                # starting a second cohort execution.
+                step_result = CoordinatedRunResult(
+                    final_states_by_run_key=final_states or {},
+                    mnl_od_mode_flows_by_run_key=mnl_od_mode_flows or {},
+                    current_iteration=iteration,
+                    current_states_by_run_key=current_states,
+                )
+                previous_coordinator = resolver.simulation_coordinator if resolver is not None else None
+                previous_step_result = resolver.simulation_step_result if resolver is not None else None
+                try:
+                    if required_iterations is None or iteration in required_iterations:
+                        with (
+                            resolver.pin_in_memory_assets(list(state_assets.values()))
+                            if resolver is not None else nullcontext()
+                        ):
+                            if resolver is not None:
+                                resolver.simulation_coordinator = self
+                                resolver.simulation_step_result = step_result
+                            step_consumer(iteration, step_result)
+                finally:
+                    if resolver is not None:
+                        resolver.simulation_coordinator = previous_coordinator
+                        resolver.simulation_step_result = previous_step_result
+
+        if not actual_outer_iterations or mnl_od_mode_flows is None or final_states is None:
+            raise RuntimeError("The coordinated run completed no outer iterations.")
+
+        return CoordinatedRunResult(
+            final_states_by_run_key=final_states,
+            mnl_od_mode_flows_by_run_key=mnl_od_mode_flows,
+            current_iteration=actual_outer_iterations,
+        )
+
+    def _prepare_checkpoint_resume(self, *, needs_mnl_flows: bool = True) -> int:
+        """Find the last consecutive completed step shared by the cohort."""
         if not self.parameters.outputs.checkpoint_each_step:
             return 0
-
-        resume_iterations = [
-            run.iterations.get_resume_iteration(self.parameters.run.n_steps)
-            for run in self.runs.values()
-        ]
-        if (
-            not resume_iterations
-            or resume_iterations[0] is None
-            or len(set(resume_iterations)) != 1
-        ):
-            self._clear_resume_checkpoint_loaders()
-            return 0
-
-        resume_iteration = int(resume_iterations[0])
-        all_scenario_checkpoints_ready = all(
-            state_asset.resume_checkpoint_loader is not None
-            for run in self.runs.values()
-            for state_asset in run.iteration_state_assets
-            if state_asset.iteration <= resume_iteration
-        ) and all(
-            run.iterations.has_complete_checkpoints(resume_iteration)
-            for run in self.runs.values()
-        )
-        manifest_matches = False
-        if all_scenario_checkpoints_ready:
+        self._clear_resume_checkpoint_loaders()
+        resume_iteration = 0
+        for iteration in range(1, self.parameters.run.n_steps + 1):
             try:
-                manifest_matches = all(
-                    self._checkpoint_manifest_matches(iteration)
-                    for iteration in range(1, resume_iteration + 1)
+                complete = self._checkpoint_manifest_matches(iteration, needs_mnl_flows=needs_mnl_flows) and all(
+                    not asset.is_update_needed()
+                    for run in self.runs.values()
+                    for asset in run.iterations.iteration(iteration).checkpoint_assets().values()
                 )
             except (OSError, ValueError, UnicodeError, KeyError, TypeError, AttributeError):
-                manifest_matches = False
-        if not manifest_matches or not all_scenario_checkpoints_ready:
-            logging.info(
-                "Coordinated checkpoints are incomplete or belong to a different "
-                "scenario cohort; recomputing every scenario from the start "
-                "(step=%s, states_ready=%s, manifests_match=%s).",
-                resume_iteration, all_scenario_checkpoints_ready, manifest_matches,
-            )
-            self._clear_resume_checkpoint_loaders()
-            return 0
+                complete = False
+            if not complete:
+                break
+            resume_iteration = iteration
 
-        logging.info(
-            "Resuming the coordinated scenario cohort from step %s.",
-            resume_iteration,
-        )
+        for run in self.runs.values():
+            for state_asset in run.iteration_state_assets:
+                if state_asset.iteration <= resume_iteration:
+                    state_asset.resume_checkpoint_loader = run.iterations.iteration(state_asset.iteration).load_state
+
+        if resume_iteration:
+            logging.info("Resuming the coordinated scenario cohort from step %s.", resume_iteration)
         return resume_iteration
 
     def _clear_resume_checkpoint_loaders(self) -> None:
@@ -398,44 +600,26 @@ class MultiScenarioRunAsset(InMemoryAsset):
             f"{self._checkpoint_cohort_hash}_iteration_{iteration}.json"
         )
 
-    def _checkpoint_file_hashes(self, iteration: int) -> dict[str, dict[str, str]]:
-        """Fingerprint the saved files for every member of one cohort step."""
-        hashes = {}
-        for run_key, run in self.runs.items():
-            hashes[str(run_key)] = {}
-            assets = run.iterations.iteration(iteration).checkpoint_assets()
-            if self.parameters.outputs.cache_step_events:
-                # Resuming skips the step that creates these diagnostics. A
-                # file at the same path is not proof that its events match.
-                assets["transition_events"] = (
-                    run.iteration_state_assets[iteration - 1].transition_events_asset
-                )
-            for name, asset in assets.items():
-                digest = hashlib.sha256()
-                with asset.cache_path.open("rb") as file:
-                    for block in iter(lambda: file.read(1024 * 1024), b""):
-                        digest.update(block)
-                hashes[str(run_key)][name] = digest.hexdigest()
-        return hashes
-
-    def _checkpoint_manifest_matches(self, iteration: int) -> bool:
-        """Verify identity and file contents before any cohort member resumes."""
+    def _checkpoint_manifest_matches(self, iteration: int, *, needs_mnl_flows: bool = True) -> bool:
+        """Verify the cohort identity and required files before resuming."""
         manifest = json.loads(self._checkpoint_manifest_path(iteration).read_text(encoding="utf-8"))
         return (
             isinstance(manifest, dict)
-            and manifest.get("version") == 3
+            and manifest.get("version") == 4
             and manifest.get("cohort_hash") == self._checkpoint_cohort_hash
             and type(manifest.get("iteration")) is int
             and manifest.get("iteration") == iteration
-            and manifest.get("files") == self._checkpoint_file_hashes(iteration)
             and isinstance(manifest.get("diagnostics"), list)
-            and (iteration != self.parameters.run.n_steps or
+            and (not self.parameters.outputs.cache_step_events or all(
+                not run.iteration_state_assets[iteration - 1].transition_events_asset.is_update_needed()
+                for run in self.runs.values()
+            ))
+            and (not needs_mnl_flows or iteration != self.parameters.run.n_steps or
                  set(manifest.get("mnl_flows", {})) == {str(key) for key in self.runs})
-            and all(
+            and (not needs_mnl_flows or iteration != self.parameters.run.n_steps or all(
                 pathlib.Path(item["path"]).is_file()
-                and hashlib.sha256(pathlib.Path(item["path"]).read_bytes()).hexdigest() == item["sha256"]
                 for item in manifest.get("mnl_flows", {}).values()
-            )
+            ))
         )
 
     @trace_simulation_step("checkpoint manifest")
@@ -454,13 +638,12 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 os.replace(temporary, path)
             finally:
                 temporary.unlink(missing_ok=True)
-            flow_files[str(run_key)] = {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            flow_files[str(run_key)] = {"path": str(path)}
         payload = json.dumps(
             {
-                "version": 3,
+                "version": 4,
                 "cohort_hash": self._checkpoint_cohort_hash,
                 "iteration": iteration,
-                "files": self._checkpoint_file_hashes(iteration),
                 "diagnostics": diagnostics or [],
                 "mnl_flows": flow_files,
             },
@@ -474,6 +657,15 @@ class MultiScenarioRunAsset(InMemoryAsset):
             os.replace(temporary_path, manifest_path)
         finally:
             pathlib.Path(temporary_path).unlink(missing_ok=True)
+
+    def _invalidate_checkpoint_manifests_from(self, iteration: int) -> None:
+        """Invalidate this and later cohort states before recomputing a step."""
+        folder = self._checkpoint_manifest_path(1).parent
+        prefix = f"{self._checkpoint_cohort_hash}_iteration_"
+        for path in folder.glob(f"{prefix}*.json"):
+            step = path.stem.removeprefix(prefix)
+            if step.isdigit() and int(step) >= iteration:
+                path.unlink(missing_ok=True)
 
     def remove_checkpoint_manifests(self) -> None:
         """Remove this scenario cohort's completion markers and saved flows."""
@@ -519,26 +711,11 @@ class MultiScenarioRunAsset(InMemoryAsset):
             or logging.getLogger().isEnabledFor(logging.DEBUG)
         )
         adaptive = self.parameters.adaptive_search
-        generation_targets = {}
-        for scenario in self.scenarios:
-            run = self.runs[scenario]
-            state_asset = state_assets[scenario]
-            schedule_pool_asset = state_asset.activity_sequences.activity_schedule_pool
-            schedule_pool = schedule_pool_asset.get() if schedule_pool_asset is not None else None
-            transport_costs = (
-                cost_assets[scenario]
-                if cost_assets is not None
-                else state_asset.transport_costs
-            )
-            generation_targets[scenario] = build_generation_targets(
-                demand_groups=fixed_states[scenario].demand_groups,
-                current_plans=fixed_states[scenario].current_plans,
-                activity_schedule_pool=schedule_pool,
-                transport_costs=transport_costs,
-                population_segments=run.population.population_segments,
-                parameters=run.parameters,
-                iteration=iteration,
-            )
+        # Decide what each run can generate from the state at the start of
+        # this step. Every search batch uses these same targets.
+        generation_targets = self._build_generation_targets(
+            fixed_states, state_assets, cost_assets, iteration,
+        )
         scheduler = AdaptiveGenerationScheduler(
             targets_by_scenario=generation_targets,
         )
@@ -737,6 +914,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 ordered_scenarios = [scenario for members in evaluation_groups for scenario in members]
                 current_group = None
                 reusable_evaluation = None
+                reusable_infeasible_counts = None
                 reusable_completed = {}
                 flows_by_scenario = {}
                 for scenario in ordered_scenarios:
@@ -744,6 +922,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     group_index = group_by_scenario[scenario]
                     if group_index != current_group:
                         reusable_evaluation = None
+                        reusable_infeasible_counts = None
                         reusable_completed.clear()
                         current_group = group_index
                     with simulation_step("scenario evaluation", scenario=run.scenario):
@@ -868,15 +1047,17 @@ class MultiScenarioRunAsset(InMemoryAsset):
                             total_demand_units = (
                                 evaluation_demand_groups.select(DEMAND_UNIT_COLS).unique().height
                             )
-                        infeasible_plan_details = (
-                            possible_plan_utility
-                            .filter((~pl.col("is_feasible")) & (pl.col("mode_seq_id") != 0))
-                            .select(
-                                PLAN_KEY_COLS
-                                + ["missing_cost_row_count", "invalid_cost_row_count"]
+                        infeasible_plan_details = None
+                        if reusable_infeasible_counts is None or logging.getLogger().isEnabledFor(logging.DEBUG):
+                            infeasible_plan_details = (
+                                possible_plan_utility
+                                .filter((~pl.col("is_feasible")) & (pl.col("mode_seq_id") != 0))
+                                .select(
+                                    PLAN_KEY_COLS
+                                    + ["missing_cost_row_count", "invalid_cost_row_count"]
+                                )
+                                .unique()
                             )
-                            .unique()
-                        )
                         if logging.getLogger().isEnabledFor(logging.DEBUG):
                             infeasible_plan_variants = (
                                 infeasible_plan_details
@@ -898,51 +1079,15 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 .unique()
                                 .height
                             )
-                        if infeasible_plan_details.height:
-                            candidates = evaluation.candidate_plan_steps
-                            if isinstance(candidates, CompactCandidateSteps):
-                                needed = infeasible_plan_details.select(PLAN_KEY_COLS).lazy()
-                                member_keys = candidates.memberships_for_plans(needed).select(PLAN_KEY_COLS).unique()
-                                physical = candidates.physical_steps(needed).collect(engine="streaming")
-                                physical_ids = candidate_content_ids(physical, PLAN_COLUMNS)
-                                candidate_keys = (member_keys.join(physical_ids.lazy(), on=PLAN_COLUMNS)
-                                                  .collect(engine="streaming"))
-                                del needed, member_keys, physical, physical_ids
-                            else:
-                                candidate_keys = (
-                                    add_candidate_ids(candidates)
-                                    .select(PLAN_KEY_COLS + CANDIDATE_ID_COLS)
-                                    .unique()
-                                )
-                            infeasible_candidates = (
-                                candidate_keys
-                                .join(infeasible_plan_details, on=PLAN_KEY_COLS, how="inner")
-                                .group_by(CANDIDATE_ID_COLS)
-                                .agg(
-                                    missing_cost_row_count=pl.col("missing_cost_row_count").max(),
-                                    invalid_cost_row_count=pl.col("invalid_cost_row_count").max(),
-                                )
+                        if reusable_infeasible_counts is None:
+                            reusable_infeasible_counts = self._count_infeasible_candidates(
+                                infeasible_plan_details, evaluation.candidate_plan_steps,
                             )
-                            infeasible_counts[scenario] = infeasible_candidates.height
-                            missing_cost_row_counts[scenario] = (
-                                infeasible_candidates
-                                .filter(pl.col("missing_cost_row_count") > 0)
-                                .select(CANDIDATE_ID_COLS)
-                                .unique()
-                                .height
-                            )
-                            invalid_cost_row_counts[scenario] = (
-                                infeasible_candidates
-                                .filter(pl.col("invalid_cost_row_count") > 0)
-                                .select(CANDIDATE_ID_COLS)
-                                .unique()
-                                .height
-                            )
-                            del candidates, candidate_keys, infeasible_candidates
-                        else:
-                            infeasible_counts[scenario] = 0
-                            missing_cost_row_counts[scenario] = 0
-                            invalid_cost_row_counts[scenario] = 0
+                        (
+                            infeasible_counts[scenario],
+                            missing_cost_row_counts[scenario],
+                            invalid_cost_row_counts[scenario],
+                        ) = reusable_infeasible_counts
                         del infeasible_plan_details
 
                         if logging.getLogger().isEnabledFor(logging.DEBUG):
@@ -983,10 +1128,17 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 max(0, total_demand_units - non_stay_home_demand_units),
                                 non_stay_home_units_without_feasible_plans,
                             )
-                        allocation, current_steps = (None, None)
+                        allocation, current_steps, reachable_ids = (None, None, None)
                         if estimate_allocation:
                             update = run.parameters.plan_update
-                            allocation = state_asset.updater.estimate_reachable_allocation(
+                            need_reachable_ids = (
+                                (batch_index + 1 >= max_search_batches
+                                 or batch_index >= required_passes or not has_future_generation)
+                                and (not keep_inner_flows or evaluation.shared_step_details is not None)
+                                and not (update.enable_transition_distance_model
+                                         and math.isfinite(update.transition_distance_threshold))
+                            )
+                            estimate = state_asset.updater.estimate_reachable_allocation(
                                 evaluation, state.current_plans, iteration,
                                 run.parameters.behavior_change.scope_at(iteration),
                                 transport_zones=run.population.transport_zones,
@@ -1000,7 +1152,12 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 plan_embedding_dimension_weights=update.plan_embedding_dimension_weights,
                                 min_plan_persons=update.min_plan_persons,
                                 plan_pruning_start_step=update.plan_pruning_start_step,
+                                include_reachable_ids=need_reachable_ids,
                             )
+                            if need_reachable_ids:
+                                allocation, reachable_ids = estimate
+                            else:
+                                allocation = estimate
                             if logging.getLogger().isEnabledFor(logging.DEBUG):
                                 current_steps = state_asset.updater.get_current_plan_steps(
                                     allocation, evaluation.possible_plan_steps.lazy(),
@@ -1102,6 +1259,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 completed = self._compact_completed_candidate_history(
                                     evaluation, state_asset.updater, scope,
                                     keep_all_steps=keep_inner_flows,
+                                    reachable_ids=reachable_ids,
                                     rigid_activities={
                                         activity for activity, rigidity in
                                         self._activity_time_rigidity(run, state_asset, iteration).items()
@@ -1130,23 +1288,9 @@ class MultiScenarioRunAsset(InMemoryAsset):
 
                 reusable_evaluation = None
                 reusable_completed.clear()
-                final_convergence_by_run_key = {}
-                for group, run_keys in self.run_keys_by_group.items():
-                    group_flows = {
-                        run_key: flows_by_scenario[run_key]
-                        for run_key in run_keys
-                    }
-                    group_populations = {
-                        run_key: population_by_scenario[run_key]
-                        for run_key in run_keys
-                    }
-                    convergence = convergence_by_group[group].evaluate(
-                        group_flows,
-                        group_populations,
-                        base_scenario=self.base_run_key_by_group[group],
-                    )
-                    for run_key in run_keys:
-                        final_convergence_by_run_key[run_key] = convergence
+                final_convergence_by_run_key = self._evaluate_convergence(
+                    flows_by_scenario, population_by_scenario, convergence_by_group,
+                )
 
                 all_runs_converged = all(
                     convergence.converged
@@ -1330,6 +1474,80 @@ class MultiScenarioRunAsset(InMemoryAsset):
             },
         }
 
+    def _evaluate_convergence(self, flows, populations, convergence_by_group):
+        """Check each scenario group against its own reference and population."""
+        convergence_by_run = {}
+        for group, run_keys in self.run_keys_by_group.items():
+            convergence = convergence_by_group[group].evaluate(
+                {run_key: flows[run_key] for run_key in run_keys},
+                {run_key: populations[run_key] for run_key in run_keys},
+                base_scenario=self.base_run_key_by_group[group],
+            )
+            for run_key in run_keys:
+                convergence_by_run[run_key] = convergence
+        return convergence_by_run
+
+    @staticmethod
+    def _count_infeasible_candidates(infeasible_plan_details, candidates):
+        """Count distinct infeasible physical plans and their cost problems."""
+        if infeasible_plan_details.height:
+            if isinstance(candidates, CompactCandidateSteps):
+                needed = infeasible_plan_details.select(PLAN_KEY_COLS).lazy()
+                member_keys = candidates.memberships_for_plans(needed).select(PLAN_KEY_COLS).unique()
+                physical = candidates.physical_steps(needed).collect(engine="streaming")
+                physical_ids = candidate_content_ids(physical, PLAN_COLUMNS)
+                candidate_keys = (member_keys.join(physical_ids.lazy(), on=PLAN_COLUMNS)
+                                  .collect(engine="streaming"))
+                del needed, member_keys, physical, physical_ids
+            else:
+                candidate_keys = (
+                    add_candidate_ids(candidates)
+                    .select(PLAN_KEY_COLS + CANDIDATE_ID_COLS)
+                    .unique()
+                )
+            infeasible_candidates = (
+                candidate_keys
+                .join(infeasible_plan_details, on=PLAN_KEY_COLS, how="inner")
+                .group_by(CANDIDATE_ID_COLS)
+                .agg(
+                    missing_cost_row_count=pl.col("missing_cost_row_count").max(),
+                    invalid_cost_row_count=pl.col("invalid_cost_row_count").max(),
+                )
+            )
+            infeasible_count = infeasible_candidates.height
+            # Grouping above already leaves one row per physical candidate.
+            missing_cost_count = infeasible_candidates.filter(pl.col("missing_cost_row_count") > 0).height
+            invalid_cost_count = infeasible_candidates.filter(pl.col("invalid_cost_row_count") > 0).height
+        else:
+            infeasible_count = 0
+            missing_cost_count = 0
+            invalid_cost_count = 0
+        return infeasible_count, missing_cost_count, invalid_cost_count
+
+    def _build_generation_targets(self, fixed_states, state_assets, cost_assets, iteration):
+        """Find the activity and transport profiles each run can generate."""
+        targets = {}
+        for run_key in self.scenarios:
+            run = self.runs[run_key]
+            state_asset = state_assets[run_key]
+            schedule_pool_asset = state_asset.activity_sequences.activity_schedule_pool
+            schedule_pool = schedule_pool_asset.get() if schedule_pool_asset is not None else None
+            transport_costs = (
+                cost_assets[run_key]
+                if cost_assets is not None
+                else state_asset.transport_costs
+            )
+            targets[run_key] = build_generation_targets(
+                demand_groups=fixed_states[run_key].demand_groups,
+                current_plans=fixed_states[run_key].current_plans,
+                activity_schedule_pool=schedule_pool,
+                transport_costs=transport_costs,
+                population_segments=run.population.population_segments,
+                parameters=run.parameters,
+                iteration=iteration,
+            )
+        return targets
+
     def _group_candidate_evaluations(
         self, *, pool, states, state_assets, sources, cost_assets, iteration,
         scoring_setups, compact_indices, forced_contexts, restrict_scoring,
@@ -1343,8 +1561,10 @@ class MultiScenarioRunAsset(InMemoryAsset):
             source = sources[run_key]
             costs = cost_assets[run_key] if cost_assets is not None else state_asset.transport_costs
             if run_key not in scoring_setups:
+                schedule_pool = getattr(state_asset.activity_sequences, "activity_schedule_pool", None)
                 contexts = self._get_scoring_contexts(
                     run_key, state.demand_groups, costs, source.mode_sequences.population_segments,
+                    demand_identity=asset_graph_key(schedule_pool) if isinstance(schedule_pool, Asset) else None,
                 )
                 scoring_setups[run_key] = (
                     contexts, contexts.collapse_allocations(state.current_plans),
@@ -1436,34 +1656,35 @@ class MultiScenarioRunAsset(InMemoryAsset):
         return lookups
 
     @trace_simulation_step("reuse or build scoring contexts")
-    def _get_scoring_contexts(self, run_key, demand_groups, transport_costs, population_segments):
-        """Reuse grouping only when demand and profile assignments still match."""
+    def _get_scoring_contexts(
+        self, run_key, demand_groups, transport_costs, population_segments, *, demand_identity=None,
+    ):
+        """Reuse contexts only for the same demand and declared cost inputs."""
+        key = (
+            demand_identity if demand_identity is not None else ("table", id(demand_groups)),
+            asset_graph_key(transport_costs), hash_inputs({"population_segments": population_segments}),
+        ) if isinstance(transport_costs, Asset) else None
+        if key is not None:
+            for saved_key, saved_demand, saved_segments, contexts in self._scoring_context_cache.values():
+                if key == saved_key and (demand_identity is not None or saved_demand is demand_groups):
+                    self._scoring_context_cache[run_key] = (key, demand_groups, population_segments, contexts)
+                    return contexts
         assignments, _ = transport_costs.get_utility_profiles(
             demand_groups.sort(DEMAND_UNIT_COLS), population_segments,
         )
-        previous = self._scoring_context_cache.get(run_key)
-        candidates = ([previous] if previous is not None else []) + [
-            entry for key, entry in self._scoring_context_cache.items() if key != run_key
-        ]
-        for saved_demand, saved_assignments, contexts in candidates:
-            if (saved_demand.schema == demand_groups.schema
-                    and saved_assignments.schema == assignments.schema
-                    and saved_demand.equals(demand_groups)
-                    and saved_assignments.equals(assignments)):
-                self._scoring_context_cache[run_key] = (saved_demand, saved_assignments, contexts)
-                return contexts
         contexts = ScoringContexts.build(
             demand_groups, transport_costs, population_segments, assignments=assignments,
         )
-        # A clone preserves the values to compare even if a caller mutates the
-        # original DataFrame; immutable buffers remain shared until changed.
-        self._scoring_context_cache[run_key] = (demand_groups.clone(), assignments, contexts)
+        if key is not None:
+            # Retaining the inputs also prevents their object IDs being reused.
+            self._scoring_context_cache[run_key] = (key, demand_groups, population_segments, contexts)
         return contexts
 
     @staticmethod
     @trace_simulation_step("compact completed candidate history")
     def _compact_completed_candidate_history(
         evaluation, updater, scope, *, keep_all_steps, transition_parameters, rigid_activities=None,
+        reachable_ids=None,
     ):
         """Keep only plan details needed after a scenario has been scored."""
         history = evaluation.candidate_plan_steps
@@ -1478,18 +1699,23 @@ class MultiScenarioRunAsset(InMemoryAsset):
         )
         needed_ids = None
         if (not keep_all_steps or evaluation.shared_step_details is not None) and not needs_distances:
-            choices = (
-                evaluation.possible_plan_utility
-                .join(evaluation.time_sequence_steps.select("time_seq_id", "reference_time_seq_id").unique(),
-                      on="time_seq_id", how="left")
-                .with_columns(reference_time_seq_id=pl.col("reference_time_seq_id").fill_null(pl.col("time_seq_id")))
-            )
-            probabilities = updater.get_transition_probabilities(
-                evaluation.current_plans, choices.lazy(), steps, scope, **transition_parameters,
-            )
+            if reachable_ids is None:
+                choices = (
+                    evaluation.possible_plan_utility
+                    .join(evaluation.time_sequence_steps.select("time_seq_id", "reference_time_seq_id").unique(),
+                          on="time_seq_id", how="left")
+                    .with_columns(reference_time_seq_id=pl.col("reference_time_seq_id").fill_null(pl.col("time_seq_id")))
+                )
+                # Include eligible targets even if their movement probability is zero.
+                reachable_ids = updater.build_allowed_plan_transitions(
+                    evaluation.current_plans, choices.lazy(), scope,
+                    transition_utility_pruning_delta=transition_parameters["transition_utility_pruning_delta"],
+                    transition_logit_scale=transition_parameters["transition_logit_scale"],
+                    min_transition_utility_gain=transition_parameters["min_transition_utility_gain"],
+                ).select(pl.col("plan_id_trans").alias("plan_id")).unique().collect(engine="streaming")
             needed_ids = pl.concat([
                 evaluation.current_plans.select("plan_id"),
-                probabilities.select(pl.col("plan_id_trans").alias("plan_id")),
+                reachable_ids,
             ]).unique()
             if evaluation.shared_step_details is None:
                 steps = steps.join(needed_ids.lazy(), on="plan_id", how="semi")

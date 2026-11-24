@@ -1,7 +1,6 @@
 import pathlib
 import re
 import shutil
-import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,10 +16,9 @@ from ..plans.activity_schedule_pool import ActivitySchedulePoolAsset
 from ..plans.destination_sequences import DestinationSequences
 from ..plans.mode_sequence_search import ModeSequences
 from .iteration_assets import (
-    CandidatePlanStepsAsset,
+    CandidateCheckpointAsset,
     CurrentPlansAsset,
     CurrentPlanStepsAsset,
-    IterationCompleteAsset,
     PlanIdIndexAsset,
     RemainingOpportunitiesAsset,
     RngStateAsset,
@@ -35,7 +33,7 @@ class IterationState:
 
     current_plans: pl.DataFrame
     current_plan_steps: pl.DataFrame
-    candidate_plan_steps: pl.DataFrame
+    candidate_plan_steps: Any
     plan_id_index: pl.DataFrame
     destination_saturation: pl.DataFrame
     rng_state: object
@@ -136,7 +134,7 @@ class Iteration:
         missing_assets = [
             name
             for name, asset in checkpoint_assets.items()
-            if not asset.cache_path.exists()
+            if asset.assets_missing()
         ]
         if missing_assets:
             raise RuntimeError(
@@ -190,7 +188,7 @@ class Iteration:
                 iteration=iteration,
                 base_folder=base_folder,
             ),
-            "candidate_plan_steps": CandidatePlanStepsAsset(
+            "candidate_plan_steps": CandidateCheckpointAsset(
                 run_key=run_key,
                 is_weekday=is_weekday,
                 iteration=iteration,
@@ -228,12 +226,6 @@ class Iteration:
                 iteration=iteration,
                 base_folder=base_folder,
             ),
-            "completion_marker": IterationCompleteAsset(
-                run_key=run_key,
-                is_weekday=is_weekday,
-                iteration=iteration,
-                base_folder=base_folder,
-            ),
         }
 
 
@@ -241,15 +233,6 @@ class Iteration:
     def save_state(self, state: RunState, rng_state: object) -> None:
         """Persist the run state for this completed iteration."""
         iteration_state_folder = self.iterations.folder_paths["iteration-state"]
-        completion_asset = IterationCompleteAsset(
-            run_key=self.iterations.run_inputs_hash,
-            is_weekday=self.iterations.is_weekday,
-            iteration=self.iteration,
-            base_folder=iteration_state_folder,
-        )
-        # A failed rewrite must not leave an older completion marker that
-        # makes a partial checkpoint look ready to resume.
-        completion_asset.remove()
         try:
             # A rejected checkpoint can still have individually valid cache
             # markers. Force every newly computed table to replace its old
@@ -273,7 +256,7 @@ class Iteration:
                 base_folder=iteration_state_folder,
                 current_plan_steps=state.current_plan_steps,
             ).get()
-            CandidatePlanStepsAsset(
+            CandidateCheckpointAsset(
                 run_key=self.iterations.run_inputs_hash,
                 is_weekday=self.iterations.is_weekday,
                 iteration=self.iteration,
@@ -333,7 +316,6 @@ class Iteration:
                 base_folder=iteration_state_folder,
                 sequence_index=state.costs,
             ).get()
-            completion_asset.get()
         except Exception as exc:
             raise RuntimeError(
                 "Failed to save PopulationGroupDayTrips iteration state for "
@@ -381,40 +363,6 @@ class Iterations:
         self.folder_paths = {name: ensure_dir(path) for name, path in self.folder_paths.items()}
 
 
-    def get_resume_iteration(self, n_steps: int) -> int | None:
-        """Return and log the effective resume iteration for this run."""
-        resume_iteration = self._find_latest_completed_iteration()
-        if resume_iteration is not None:
-            # Later markers do not guarantee that an earlier checkpoint is
-            # present or still has all of its input-hash markers.
-            resume_iteration = next(
-                (
-                    iteration
-                    for iteration in range(min(resume_iteration, n_steps), 0, -1)
-                    if all(
-                        not asset.is_update_needed()
-                        for asset in self.iteration(iteration).checkpoint_assets().values()
-                    )
-                ),
-                None,
-            )
-
-        if resume_iteration is None:
-            logging.debug(
-                "No saved iteration found for run_key=%s is_weekday=%s. Starting from scratch.",
-                self.run_inputs_hash,
-                str(self.is_weekday),
-            )
-            return None
-
-        logging.debug(
-            "Latest saved iteration found for run_key=%s is_weekday=%s: iteration=%s",
-            self.run_inputs_hash,
-            str(self.is_weekday),
-            str(resume_iteration),
-        )
-        return resume_iteration
-
     def has_complete_checkpoints(self, n_steps: int) -> bool:
         """Check that every requested checkpoint file and identity is valid."""
         try:
@@ -439,6 +387,8 @@ class Iterations:
             "iteration-state": [
                 "*current_plans_*.parquet",
                 "*current_plan_steps_*.parquet",
+                "*candidate_checkpoint_*.parquet",
+                "*candidate_checkpoint_*.json",
                 "*plan_id_index_*.parquet",
                 "*destination_sequence_index_*.parquet",
                 "*mode_sequence_index_*.parquet",
@@ -482,15 +432,6 @@ class Iterations:
             "iteration-state",
         ]
         return {name: self.base_folder / name for name in folder_names}
-
-
-    def _find_latest_completed_iteration(self) -> int | None:
-        """Return the latest completed iteration marker available for this run."""
-        return IterationCompleteAsset.find_latest_completed_iteration(
-            base_folder=self.folder_paths["iteration-state"],
-            run_key=self.run_inputs_hash,
-            is_weekday=self.is_weekday,
-        )
 
 
     def _discard_files_after_iteration(

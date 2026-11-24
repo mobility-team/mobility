@@ -162,45 +162,6 @@ def test_candidate_evaluations_share_only_matching_inputs():
     assert coordinator._group_candidate_evaluations(**args)[:2] == [[0], [1]]
 
 
-def test_scenarios_share_only_identical_modeled_schedules():
-    first = pl.DataFrame({"time_seq_id": [1, 2], "departure_time": [8.0, 9.0]})
-    equal = first.clone()
-    changed = first.with_columns(departure_time=pl.col("departure_time") + 1.0)
-    reordered = first.reverse()
-    different_schema = first.with_columns(pl.col("time_seq_id").cast(pl.UInt32))
-    states = {
-        0: SimpleNamespace(time_sequence_steps=first),
-        1: SimpleNamespace(time_sequence_steps=equal),
-        2: SimpleNamespace(time_sequence_steps=changed),
-        3: SimpleNamespace(time_sequence_steps=reordered),
-        4: SimpleNamespace(time_sequence_steps=None),
-        5: SimpleNamespace(time_sequence_steps=different_schema),
-    }
-    for state in states.values():
-        state.current_plans = state.time_sequence_steps
-        state.current_plan_steps = state.time_sequence_steps
-        state.plan_id_index = state.time_sequence_steps
-        state.destination_sequence_index = state.time_sequence_steps
-        state.mode_sequence_index = state.time_sequence_steps
-        state.candidate_plan_steps = None
-    MultiScenarioRunAsset._share_equal_state_tables(states)
-    assert states[0].time_sequence_steps is states[1].time_sequence_steps
-    assert states[2].time_sequence_steps is changed
-    assert states[3].time_sequence_steps is reordered
-    assert states[4].time_sequence_steps is None
-    assert states[5].time_sequence_steps is different_schema
-    assert states[0].current_plan_steps is states[1].current_plan_steps
-    assert states[2].current_plan_steps is changed
-
-    # Physical steps can be shared even if scenario histories differ.
-    states[0].candidate_plan_steps = CompactCandidateSteps(first, first, ("x",), unit_map=first)
-    states[1].candidate_plan_steps = CompactCandidateSteps(equal, changed, ("x",), unit_map=equal)
-    MultiScenarioRunAsset._share_equal_state_tables(states)
-    assert states[0].candidate_plan_steps.steps is states[1].candidate_plan_steps.steps
-    assert states[0].candidate_plan_steps.unit_map is states[1].candidate_plan_steps.unit_map
-    assert states[0].candidate_plan_steps.membership is not states[1].candidate_plan_steps.membership
-
-
 def test_contexts_preserve_population_profiles_and_stable_ids():
     demand = pl.DataFrame({
         "demand_group_id": [1, 2, 3, 4, 5], "demand_subgroup_id": [0] * 5,
@@ -244,43 +205,46 @@ def test_contexts_preserve_population_profiles_and_stable_ids():
     assert contexts.collapse_allocations(allocation)["n_persons"].item() == 50.
 
 
-def test_context_reuse_checks_demand_and_profile_assignments():
+def test_context_reuse_uses_demand_and_cost_input_identity():
     demand = pl.DataFrame({
         "demand_group_id": [1, 2], "demand_subgroup_id": [0, 0],
         "home_zone_id": [10, 10], "country": ["FR", "FR"], "csp": [1, 1],
         "n_persons": [20.0, 30.0], "allowed_activities": [["home"], ["home"]],
     })
-    changed_profiles = [False]
     calls = []
 
-    def assignments(groups, _segments):
-        calls.append(True)
-        return groups.select("demand_group_id", "demand_subgroup_id").with_columns(
-            utility_profile_id=pl.when((pl.col("demand_group_id") == 2) & changed_profiles[0])
-            .then(pl.lit(1)).otherwise(pl.lit(0)).cast(pl.UInt32),
-        ), {}
+    class Costs(InMemoryAsset):
+        def __init__(self, changed):
+            super().__init__({"changed_profile": changed})
+
+        def get_utility_profiles(self, groups, _segments):
+            calls.append(True)
+            return groups.select("demand_group_id", "demand_subgroup_id").with_columns(
+                utility_profile_id=pl.when((pl.col("demand_group_id") == 2) & self.inputs["changed_profile"])
+                .then(pl.lit(1)).otherwise(pl.lit(0)).cast(pl.UInt32),
+            ), {}
 
     coordinator = object.__new__(MultiScenarioRunAsset)
     coordinator._scoring_context_cache = {}
-    costs = SimpleNamespace(get_utility_profiles=assignments)
-    original = coordinator._get_scoring_contexts(0, demand, costs, [])
-    assert coordinator._get_scoring_contexts(0, demand, costs, []) is original
-    assert coordinator._get_scoring_contexts(1, demand.clone(), costs, []) is original
-    changed_profiles[0] = True
-    different_profiles = coordinator._get_scoring_contexts(1, demand, costs, [])
-    assert different_profiles is not original
-    assert different_profiles.demand_groups.height == 2
-    changed_profiles[0] = False
-    demand.replace_column(demand.get_column_index("n_persons"), pl.Series("n_persons", [20.0, 40.0]))
-    different_demand = coordinator._get_scoring_contexts(0, demand, costs, [])
-    assert different_demand is not original
-    assert different_demand.demand_groups["n_persons"].sum() == 60.0
-    different_schema = coordinator._get_scoring_contexts(
-        0, demand.with_columns(pl.col("csp").cast(pl.Int32)), costs, [],
+    segments = []
+    original = coordinator._get_scoring_contexts(0, demand, Costs(False), segments)
+    assert coordinator._get_scoring_contexts(1, demand, Costs(False), segments) is original
+    assert len(calls) == 1
+    changed = coordinator._get_scoring_contexts(1, demand, Costs(True), segments)
+    assert changed is not original and changed.demand_groups.height == 2
+    changed_demand = demand.with_columns(n_persons=pl.col("n_persons") + 10)
+    other = coordinator._get_scoring_contexts(0, changed_demand, Costs(False), segments)
+    assert other is not original and other.demand_groups["n_persons"].sum() == 70.0
+    assert len(calls) == 3
+    by_inputs = coordinator._get_scoring_contexts(0, demand, Costs(False), segments, demand_identity="population")
+    equivalent = coordinator._get_scoring_contexts(
+        1, demand.clone(), Costs(False), [], demand_identity="population",
     )
-    assert different_schema is not different_demand
-    assert different_schema.demand_groups.schema["csp"] == pl.Int32
-    assert len(calls) == 6
+    assert equivalent is by_inputs
+    different_population = coordinator._get_scoring_contexts(
+        1, demand, Costs(False), segments, demand_identity="other-population",
+    )
+    assert different_population is not by_inputs
 
 
 def test_factored_candidates_preserve_active_history_and_reject_inconsistent_steps():
@@ -509,12 +473,23 @@ def test_reusing_scores_maps_timing_and_population_back_to_each_demand_unit():
         possible_plan_utility=pl.concat([choices, extra_choice]),
     )
     settings = {"transport_zones": None, "enable_transition_distance_model": False,
-                "transition_distance_threshold": float("inf")}
+                "transition_distance_threshold": float("inf"), "transition_utility_pruning_delta": 3.0,
+                "transition_logit_scale": 1.0, "min_transition_utility_gain": 0.0}
     reduced = MultiScenarioRunAsset._compact_completed_candidate_history(
         with_extra, PlanUpdater(), BehaviorChangeScope.NO_TRANSITIONS,
         keep_all_steps=False, transition_parameters=settings,
     )
     assert set(reduced.possible_plan_steps["plan_id"].to_list()) == {0, 1}
+    class NoRepeatedEligibility(PlanUpdater):
+        def build_allowed_plan_transitions(self, *args, **kwargs):
+            raise AssertionError("Compaction should reuse the supplied target IDs")
+
+    reused = MultiScenarioRunAsset._compact_completed_candidate_history(
+        with_extra, NoRepeatedEligibility(), BehaviorChangeScope.NO_TRANSITIONS,
+        keep_all_steps=False, transition_parameters=settings,
+        reachable_ids=pl.DataFrame({"plan_id": [0, 1]}, schema={"plan_id": pl.UInt32}),
+    )
+    assert_frame_equal(reused.possible_plan_steps.sort("plan_id"), reduced.possible_plan_steps.sort("plan_id"))
     forced_steps = MultiScenarioRunAsset._compact_completed_candidate_history(
         replace(with_extra, possible_plan_utility=with_extra.possible_plan_utility.with_columns(
             is_feasible=pl.col("mode_seq_id") != 1,

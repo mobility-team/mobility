@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import os
 import pathlib
+from typing import TYPE_CHECKING
 
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
+
+if TYPE_CHECKING:
+    from mobility.trips.group_day_trips.core.run import Run
 
 DISTANCE_BIN_BREAKS = [0.0, 1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 1e6]
 TIME_BIN_BREAKS_MINUTES = [0.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 1e9]
@@ -104,7 +108,7 @@ class ObservedCalibrationPlanSteps(FileAsset):
     def __init__(
         self,
         *,
-        run: FileAsset,
+        run: Run,
         is_weekday: bool,
     ) -> None:
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
@@ -115,7 +119,7 @@ class ObservedCalibrationPlanSteps(FileAsset):
         )
         inputs = {
             "version": 3,
-            "run": run,
+            "plan_steps": run._table_asset("plan_steps"),
             "is_weekday": is_weekday,
         }
         self.run = run

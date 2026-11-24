@@ -90,11 +90,6 @@ def test_shared_costs_keep_scenarios_and_missing_routes_separate(tmp_path, monke
     second, second_table = make_iteration_costs(tmp_path, "second", mode_name="other-road-mode")
     (tmp_path / "first.parquet").write_bytes(b"first flow")
     (tmp_path / "second.parquet").write_bytes(b"second flow")
-    # Even a digest collision must not merge different input files.
-    monkeypatch.setattr(
-        "mobility.transport.costs.path.shared_congested_costs.hashlib.file_digest",
-        lambda file, algorithm: SimpleNamespace(digest=lambda: b"same hash"),
-    )
     calls = []
 
     class FakeRunner:
@@ -127,15 +122,17 @@ def test_shared_costs_keep_scenarios_and_missing_routes_separate(tmp_path, monke
         assert len(calls) == 1
 
 
-def test_identical_flow_files_share_one_assignment(tmp_path, monkeypatch):
+def test_flow_assignments_share_only_when_inputs_match(tmp_path, monkeypatch):
     monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     monkeypatch.setattr(PathTravelCosts, "asset_for_flow_asset", lambda self, flow: SimpleNamespace(congested_costs=flow.table))
     first, first_table = make_iteration_costs(tmp_path, "first")
     second, second_table = make_iteration_costs(tmp_path, "second")
     third, third_table = make_iteration_costs(tmp_path, "third")
+    second.congestion_flows.get().inputs_hash = first.congestion_flows.get().inputs_hash
     (tmp_path / "first.parquet").write_bytes(b"same flow")
     (tmp_path / "second.parquet").write_bytes(b"same flow")
-    (tmp_path / "third.parquet").write_bytes(b"different flow")
+    # Equal file contents alone do not prove equal input identities.
+    (tmp_path / "third.parquet").write_bytes(b"same flow")
     calls = []
 
     class FakeRunner:
@@ -293,11 +290,12 @@ def test_idle_watchdog_uses_standard_r_runner(tmp_path, monkeypatch):
     assert calls == [True]
 
 
-def test_all_identical_flows_use_a_single_assignment(tmp_path, monkeypatch):
+def test_matching_flow_inputs_use_a_single_assignment(tmp_path, monkeypatch):
     monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
     monkeypatch.setattr(PathTravelCosts, "asset_for_flow_asset", lambda self, flow: SimpleNamespace(congested_costs=flow.table))
     first, first_table = make_iteration_costs(tmp_path, "first")
     second, second_table = make_iteration_costs(tmp_path, "second")
+    second.congestion_flows.get().inputs_hash = first.congestion_flows.get().inputs_hash
     (tmp_path / "first.parquet").write_bytes(b"same")
     (tmp_path / "second.parquet").write_bytes(b"same")
     calls = []

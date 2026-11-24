@@ -74,6 +74,8 @@ class AssetResolver:
         self.shared_road_worker_key = None
         self._execution_cost_consumer_stack: list[tuple] = []
         self._spill_directory: tempfile.TemporaryDirectory | None = None
+        self.simulation_coordinator = None
+        self.simulation_step_result = None
 
     def get(self, requested_asset: Asset, *args, **kwargs) -> Any:
         """Return one cached asset after preparing the files it depends on."""

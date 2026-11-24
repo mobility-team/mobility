@@ -100,6 +100,9 @@ space as well, especially for large tables.
 
 Use `population_trips.run(...)` when you need to execute or inspect one concrete run. Call `run.table("plan_steps")` to get a raw output table as a Polars DataFrame; the table stays transient. `run.results()` creates analysis helpers without running the model; each analysis requests the tables it needs. Use `population_trips.results(...)` when you want to request several indicators or tables together.
 
+`Run` is a simulation object rather than a data asset. The former `run.get()`
+method raises an error explaining how to request tables or analysis instead.
+
 Most result metrics are population-weighted. Trip counts sum the represented people attached to simulated trips. Distance, time, cost, and emissions multiply each trip quantity by the represented-person weight before aggregation. When several replications are selected, metric values are averaged across replications and standard-deviation columns describe the spread across replications.
 
 ## Common Indicators

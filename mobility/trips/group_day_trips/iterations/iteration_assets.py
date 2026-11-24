@@ -65,6 +65,79 @@ def _nested_lists_to_tuples(value: Any) -> Any:
     return value
 
 
+def _candidate_spill_paths(folder: pathlib.Path) -> dict[str, pathlib.Path]:
+    """Names for candidate files inside one temporary state directory."""
+    return {
+        "expanded": folder / "candidate_plan_steps.parquet",
+        "steps": folder / "candidate_steps.parquet",
+        "sections": folder / "candidate_sections.parquet",
+        "references": folder / "candidate_section_references.parquet",
+        "membership": folder / "candidate_membership.parquet",
+        "unit_map": folder / "candidate_unit_map.parquet",
+    }
+
+
+def _write_candidates(
+    candidates: pl.DataFrame | pl.LazyFrame | CompactCandidateSteps,
+    paths: dict[str, pathlib.Path],
+    *,
+    temporary: bool,
+    write_empty: bool = False,
+) -> dict[str, Any]:
+    """Save candidate history without expanding shared plans to every person."""
+    tables = {}
+    metadata = {"version": 1}
+    if isinstance(candidates, CompactCandidateSteps):
+        sectioned = isinstance(candidates.steps, SectionedPhysicalSteps)
+        metadata.update(format="sectioned" if sectioned else "compact", columns=list(candidates.columns),
+                        has_unit_map=candidates.unit_map is not None)
+        if sectioned:
+            tables["sections"] = candidates.steps.sections
+            tables["references"] = candidates.steps.references
+        else:
+            tables["steps"] = candidates.steps
+        tables["membership"] = candidates.membership
+        if candidates.unit_map is not None:
+            tables["unit_map"] = candidates.unit_map
+    else:
+        metadata["format"] = "expanded"
+        tables["expanded"] = candidates
+    if write_empty:
+        for name in paths:
+            tables.setdefault(name, pl.DataFrame())
+    for name, table in tables.items():
+        if temporary:
+            write_temporary_parquet(table, paths[name])
+        else:
+            (table if isinstance(table, pl.LazyFrame) else table.lazy()).sink_parquet(paths[name])
+    return metadata
+
+
+def _read_candidates(
+    paths: dict[str, pathlib.Path], metadata: dict[str, Any], *, validate_expanded: bool = False,
+) -> pl.DataFrame | CompactCandidateSteps:
+    """Restore the same candidate representation that was saved."""
+    if metadata.get("version") != 1:
+        raise ValueError("Unsupported candidate storage format; rerun the simulation.")
+    if metadata["format"] == "expanded":
+        if validate_expanded:
+            return read_cached_parquet(paths["expanded"], table_name="candidate_plan_steps",
+                                       required_schema=CandidatePlanStepsAsset.REQUIRED_SCHEMA)
+        return pl.read_parquet(paths["expanded"])
+    if metadata["format"] not in {"compact", "sectioned"}:
+        raise ValueError("Unknown candidate storage format; rerun the simulation.")
+    if metadata["format"] == "sectioned":
+        references = pl.read_parquet(paths["references"])
+        steps = SectionedPhysicalSteps(sections=pl.read_parquet(paths["sections"]), references=references,
+                                       sequence_dtype=references.schema["_first_step"])
+    else:
+        steps = pl.read_parquet(paths["steps"])
+    return CompactCandidateSteps(
+        steps=steps, membership=pl.read_parquet(paths["membership"]), columns=tuple(metadata["columns"]),
+        unit_map=pl.read_parquet(paths["unit_map"]) if metadata["has_unit_map"] else None,
+    )
+
+
 _INITIAL_STATE_TABLES = (
     "survey_plans",
     "survey_plan_steps",
@@ -81,6 +154,7 @@ _INITIAL_STATE_TABLES = (
     "current_plan_steps",
     "destination_sequence_index",
     "mode_sequence_index",
+    "time_sequence_steps",
 )
 
 
@@ -165,45 +239,38 @@ class InitialIterationStateAsset(InMemoryAsset):
         resolver = get_current_asset_resolver()
         if resolver is not None:
             with resolver.execution_cost_consumer(self):
-                state = resolver.get_in_memory_asset(
-                    self,
-                    self.create_and_get_asset,
-                    spill_to_disk=self._spill_state,
-                    load_from_disk=self._load_spilled_state,
-                )
+                state = self._resolve_value(resolver)
             resolver.consume_execution_cost_state(self)
             return state
         with asset_resolution_context() as resolver:
             with resolver.execution_cost_consumer(self):
-                state = resolver.get_in_memory_asset(
-                    self,
-                    self.create_and_get_asset,
-                    spill_to_disk=self._spill_state,
-                    load_from_disk=self._load_spilled_state,
-                )
+                state = self._resolve_value(resolver)
             resolver.consume_execution_cost_state(self)
             return state
 
     @staticmethod
-    def _spill_state(state: RunState, path: pathlib.Path) -> None:
+    def spill_execution_value(state: RunState, path: pathlib.Path) -> None:
         """Write every initial table to temporary Parquet files."""
         if path.exists():
             raise FileExistsError(f"A state spill already exists: {path}")
         temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
         try:
             none_tables = []
+            candidate_metadata = None
             for table_name in _INITIAL_STATE_TABLES:
                 table = getattr(state, table_name)
                 if table is None:
                     none_tables.append(table_name)
                 else:
-                    if isinstance(table, CompactCandidateSteps):
-                        table = table.lazy()
-                    write_temporary_parquet(table, temporary_path / f"{table_name}.parquet")
+                    if table_name == "candidate_plan_steps":
+                        candidate_metadata = _write_candidates(table, _candidate_spill_paths(temporary_path), temporary=True)
+                    else:
+                        write_temporary_parquet(table, temporary_path / f"{table_name}.parquet")
             metadata = {
                 "none_tables": none_tables,
                 "start_step": state.start_step,
                 "rng_state": state.rng_state,
+                "candidate": candidate_metadata,
             }
             write_temporary_bytes(
                 json.dumps(metadata, sort_keys=True).encode("utf-8"),
@@ -215,23 +282,24 @@ class InitialIterationStateAsset(InMemoryAsset):
             raise
 
     @staticmethod
-    def _load_spilled_state(path: pathlib.Path) -> RunState:
+    def load_execution_value(path: pathlib.Path) -> RunState:
         """Restore the initial tables from their temporary Parquet files."""
         with (path / "metadata.json").open("r", encoding="utf-8") as file:
             metadata = json.load(file)
-        state = {
-            table_name: (
-                None
-                if table_name in metadata["none_tables"]
-                else pl.read_parquet(path / f"{table_name}.parquet")
-            )
-            for table_name in _INITIAL_STATE_TABLES
-        }
+        state = {}
+        for table_name in _INITIAL_STATE_TABLES:
+            if table_name in metadata["none_tables"]:
+                state[table_name] = None
+            elif table_name == "candidate_plan_steps":
+                state[table_name] = _read_candidates(_candidate_spill_paths(path), metadata["candidate"])
+            else:
+                state[table_name] = pl.read_parquet(path / f"{table_name}.parquet")
         return RunState(
             **state,
             start_step=metadata["start_step"],
             rng_state=_nested_lists_to_tuples(metadata["rng_state"]),
         )
+
 
     def get_rng_state(self) -> object:
         """Return the random generator state held by the initial state."""
@@ -676,7 +744,7 @@ class IterationTransportCostsAsset(InMemoryAsset):
         )
 
 
-class IterationStateAsset(Asset):
+class IterationStateAsset(InMemoryAsset):
     """Transient model state after one completed behavior update iteration."""
 
     is_execution_state = True
@@ -789,21 +857,11 @@ class IterationStateAsset(Asset):
         resolver = get_current_asset_resolver()
         if resolver is not None:
             with resolver.execution_cost_consumer(self):
-                state = resolver.get_in_memory_asset(
-                    self,
-                    self.create_and_get_asset,
-                    spill_to_disk=self._spill_state,
-                    load_from_disk=self._load_spilled_state,
-                )
+                state = self._resolve_value(resolver)
         else:
             with asset_resolution_context() as resolver:
                 with resolver.execution_cost_consumer(self):
-                    state = resolver.get_in_memory_asset(
-                        self,
-                        self.create_and_get_asset,
-                        spill_to_disk=self._spill_state,
-                        load_from_disk=self._load_spilled_state,
-                    )
+                    state = self._resolve_value(resolver)
 
         self._rng_state = state.rng_state
         if self.checkpoint_callback is not None and not self._checkpoint_saved:
@@ -840,7 +898,7 @@ class IterationStateAsset(Asset):
         self.mode_sequences.previous_sequence_index = None
         return state
 
-    def _spill_state(self, state: RunState, path: pathlib.Path) -> None:
+    def spill_execution_value(self, state: RunState, path: pathlib.Path) -> None:
         """Write shared plan tables to parquet and the RNG tuple to JSON."""
         if path.exists():
             raise FileExistsError(f"A state spill already exists: {path}")
@@ -862,18 +920,10 @@ class IterationStateAsset(Asset):
                 if table is None:
                     metadata["none_tables"].append(table_name)
                 else:
-                    if isinstance(table, CompactCandidateSteps):
-                        if isinstance(table.steps, SectionedPhysicalSteps):
-                            write_temporary_parquet(table.steps.sections, temporary_path / "candidate_sections.parquet")
-                            write_temporary_parquet(table.steps.references, temporary_path / "candidate_section_references.parquet")
-                            metadata["candidate_sectioned_steps"] = True
-                        else:
-                            write_temporary_parquet(table.steps, temporary_path / "candidate_steps.parquet")
-                        write_temporary_parquet(table.membership, temporary_path / "candidate_membership.parquet")
-                        if table.unit_map is not None:
-                            write_temporary_parquet(table.unit_map, temporary_path / "candidate_unit_map.parquet")
-                            metadata["compact_candidate_unit_map"] = True
-                        metadata["compact_candidate_columns"] = table.columns
+                    if table_name == "candidate_plan_steps":
+                        metadata["candidate"] = _write_candidates(
+                            table, _candidate_spill_paths(temporary_path), temporary=True,
+                        )
                     else:
                         write_temporary_parquet(table, temporary_path / f"{table_name}.parquet")
             write_temporary_bytes(
@@ -885,7 +935,7 @@ class IterationStateAsset(Asset):
             shutil.rmtree(temporary_path, ignore_errors=True)
             raise
 
-    def _load_spilled_state(self, path: pathlib.Path) -> RunState:
+    def load_execution_value(self, path: pathlib.Path) -> RunState:
         """Restore a spilled state using invariant tables from iteration zero."""
         with (path / "metadata.json").open("r", encoding="utf-8") as file:
             metadata = json.load(file)
@@ -903,23 +953,8 @@ class IterationStateAsset(Asset):
         for table_name in table_names:
             if table_name in metadata["none_tables"]:
                 spilled_state[table_name] = None
-            elif table_name == "candidate_plan_steps" and "compact_candidate_columns" in metadata:
-                if metadata.get("candidate_sectioned_steps"):
-                    references = pl.read_parquet(path / "candidate_section_references.parquet")
-                    steps = SectionedPhysicalSteps(
-                        sections=pl.read_parquet(path / "candidate_sections.parquet"),
-                        references=references,
-                        sequence_dtype=references.schema["_first_step"],
-                    )
-                else:
-                    steps = pl.read_parquet(path / "candidate_steps.parquet")
-                spilled_state[table_name] = CompactCandidateSteps(
-                    steps=steps,
-                    membership=pl.read_parquet(path / "candidate_membership.parquet"),
-                    columns=tuple(metadata["compact_candidate_columns"]),
-                    unit_map=(pl.read_parquet(path / "candidate_unit_map.parquet")
-                              if metadata.get("compact_candidate_unit_map") else None),
-                )
+            elif table_name == "candidate_plan_steps":
+                spilled_state[table_name] = _read_candidates(_candidate_spill_paths(path), metadata["candidate"])
             else:
                 spilled_state[table_name] = pl.read_parquet(path / f"{table_name}.parquet")
         spilled_state["rng_state"] = _nested_lists_to_tuples(metadata["rng_state"])
@@ -1139,6 +1174,40 @@ class IterationStateAsset(Asset):
         get_group_day_trips_progress().finish_iteration(self.iteration)
 
         return state
+
+
+class CandidateCheckpointAsset(FileAsset):
+    """Save candidate history without expanding shared plans to every person."""
+
+    def __init__(self, *, run_key, is_weekday, iteration, base_folder, candidate_plan_steps=None):
+        self.candidate_plan_steps = candidate_plan_steps
+        inputs = {"version": 1, "run_key": run_key, "is_weekday": is_weekday, "iteration": iteration}
+        folder = pathlib.Path(base_folder)
+        paths = {
+            "metadata": folder / f"candidate_checkpoint_metadata_{iteration}.json",
+            "expanded": folder / f"candidate_checkpoint_expanded_{iteration}.parquet",
+            "steps": folder / f"candidate_checkpoint_steps_{iteration}.parquet",
+            "sections": folder / f"candidate_checkpoint_sections_{iteration}.parquet",
+            "references": folder / f"candidate_checkpoint_references_{iteration}.parquet",
+            "membership": folder / f"candidate_checkpoint_membership_{iteration}.parquet",
+            "unit_map": folder / f"candidate_checkpoint_unit_map_{iteration}.parquet",
+        }
+        super().__init__(inputs, paths)
+
+    def get_cached_asset(self):
+        with self.cache_path["metadata"].open("r", encoding="utf-8") as file:
+            metadata = json.load(file)
+        return _read_candidates(self.cache_path, metadata, validate_expanded=True)
+
+    def create_and_get_asset(self):
+        candidates = self.candidate_plan_steps
+        if candidates is None:
+            raise ValueError("Cannot save candidate history without a table.")
+        paths = {name: path for name, path in self.cache_path.items() if name != "metadata"}
+        metadata = _write_candidates(candidates, paths, temporary=False, write_empty=True)
+        with self.cache_path["metadata"].open("w", encoding="utf-8") as file:
+            json.dump(metadata, file, sort_keys=True)
+        return candidates
 
 
 class CurrentPlansAsset(FileAsset):
@@ -1377,81 +1446,3 @@ class RngStateAsset(FileAsset):
         with open(self.cache_path, "wb") as file:
             pickle.dump(self.rng_state, file, protocol=pickle.HIGHEST_PROTOCOL)
         return self.get_cached_asset()
-
-
-class IterationCompleteAsset(FileAsset):
-    """Persisted marker saying that one iteration state was fully written."""
-
-    def __init__(
-        self,
-        *,
-        run_key: str,
-        is_weekday: bool,
-        iteration: int,
-        base_folder: pathlib.Path,
-    ) -> None:
-        self.run_key = run_key
-        self.is_weekday = is_weekday
-        self.iteration = iteration
-        inputs = {
-            "version": 1,
-            "run_key": run_key,
-            "is_weekday": is_weekday,
-            "iteration": iteration,
-        }
-        cache_path = pathlib.Path(base_folder) / f"iteration_complete_{iteration}.json"
-        super().__init__(inputs, cache_path)
-
-    def get_cached_asset(self) -> dict:
-        with open(self.cache_path, "r", encoding="utf-8") as file:
-            return json.load(file)
-
-    @trace_simulation_step("iteration asset build")
-    def create_and_get_asset(self) -> dict:
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.cache_path, "w", encoding="utf-8") as file:
-            json.dump(
-                {
-                    "run_key": self.run_key,
-                    "is_weekday": self.is_weekday,
-                    "iteration": self.iteration,
-                },
-                file,
-                sort_keys=True,
-            )
-        return self.get_cached_asset()
-
-    @classmethod
-    def find_latest_completed_iteration(
-        cls,
-        *,
-        base_folder: pathlib.Path,
-        run_key: str,
-        is_weekday: bool,
-    ) -> int | None:
-        """Return the latest iteration with a completion marker."""
-        folder = pathlib.Path(base_folder)
-        if not folder.exists():
-            return None
-
-        latest_iteration = None
-        for path in folder.glob("*iteration_complete_*.json"):
-            try:
-                with open(path, "r", encoding="utf-8") as file:
-                    marker = json.load(file)
-            except (OSError, json.JSONDecodeError):
-                continue
-
-            if marker.get("run_key") != run_key or marker.get("is_weekday") != is_weekday:
-                continue
-
-            iteration = marker.get("iteration")
-            if not isinstance(iteration, int):
-                continue
-
-            if latest_iteration is None or iteration > latest_iteration:
-                latest_iteration = iteration
-
-        return latest_iteration
-
-

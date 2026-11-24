@@ -7,7 +7,7 @@ from polars.testing import assert_frame_equal
 from mobility.trips.group_day_trips.plans.compact_candidate_steps import PLAN_COLUMNS
 from mobility.trips.group_day_trips.plans.factored_plan_timing import time_factored_candidates
 from mobility.trips.group_day_trips.plans.factored_plan_scoring import (
-    SectionScoreCache, score_factored_candidates, score_factored_sections,
+    SectionScoreCache, score_factored_sections,
 )
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS
 from mobility.trips.group_day_trips.plans.plan_schedule_updater import PlanScheduleUpdater
@@ -83,8 +83,6 @@ def test_factored_timing_matches_expanded_ids_and_steps_for_shared_and_distinct_
                             activity_utility_scale=pl.col("utility_profile_id").cast(pl.Float64)))
     home = pl.DataFrame({"country": ["fr", "fr"], "csp": ["worker", "retired"],
                          "mean_home_night_per_pers": [8.0, 9.0]})
-    shared_scores = score_factored_candidates(factored, contexts, scores, home,
-                                               value_of_time_stay_home=1.0, min_activity_time_constant=1.0)
     score_keys = ["country", "csp", "utility_profile_id", "activity", "from", "to", "mode", "time"]
     direct = (reference_steps.join(contexts.select("demand_group_id", "demand_subgroup_id", "country", "csp"),
                                    on=["demand_group_id", "demand_subgroup_id"])
@@ -104,13 +102,11 @@ def test_factored_timing_matches_expanded_ids_and_steps_for_shared_and_distinct_
               .with_columns(utility=pl.col("utility") + pl.col("mean_home_night_per_pers")
                             * (pl.col("home_night_per_pers") / (pl.col("mean_home_night_per_pers") * 0.36787944117144233))
                             .log().clip(0.0))
-              .select(shared_scores.utilities.columns))
-    assert_frame_equal(shared_scores.utilities.sort(PLAN_KEY_COLS), direct.sort(PLAN_KEY_COLS),
-                       check_exact=False, rel_tol=1e-14, abs_tol=1e-14)
+              .select(PLAN_KEY_COLS + ["utility", "is_feasible", "missing_cost_row_count", "invalid_cost_row_count"]))
     section_scores = score_factored_sections(factored, contexts, scores, home, rigid_activities={"work"},
                                               value_of_time_stay_home=1.0, min_activity_time_constant=1.0)
-    assert_frame_equal(section_scores.utilities.sort(PLAN_KEY_COLS), shared_scores.utilities.sort(PLAN_KEY_COLS),
-                       check_exact=True)
+    assert_frame_equal(section_scores.utilities.sort(PLAN_KEY_COLS), direct.sort(PLAN_KEY_COLS),
+                       check_exact=False, rel_tol=1e-14, abs_tol=1e-14)
     cache = SectionScoreCache()
     first = replace(factored, context_links=factored.context_links.filter(pl.col("demand_group_id") < 3))
     score_factored_sections(first, contexts, scores, home, rigid_activities={"work"},

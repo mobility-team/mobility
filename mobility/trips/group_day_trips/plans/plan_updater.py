@@ -297,8 +297,9 @@ class PlanUpdater:
         self, evaluation: CandidatePlanEvaluation, current_plans: pl.DataFrame,
         iteration: int, scope: BehaviorChangeScope, *, transport_zones: Any,
         min_plan_persons: float = 0.0,
-        plan_pruning_start_step: int = 2, **transition_parameters: Any,
-    ) -> pl.DataFrame:
+        plan_pruning_start_step: int = 2, include_reachable_ids: bool = False,
+        **transition_parameters: Any,
+    ) -> pl.DataFrame | tuple[pl.DataFrame, pl.DataFrame | None]:
         """Estimate the next allocation without changing the outer state.
 
         Probabilities are shared by context and occupied plan. Temporary IDs
@@ -331,10 +332,13 @@ class PlanUpdater:
             allocation, _ = self.apply_transitions(
                 context_origins, probabilities, iteration, include_events=False,
             )
-            return (
+            result = (
                 allocation.drop("utility")
                 .join(evaluation.possible_plan_utility.select(PLAN_KEY_COLS + ["utility"]), on=PLAN_KEY_COLS)
             )
+            if include_reachable_ids:
+                return result, probabilities.select(pl.col("plan_id_trans").alias("plan_id")).unique()
+            return result
         contexts = evaluation.scoring_contexts
         mapping = evaluation.time_mapping.drop("demand_subgroup_id").rename(
             {"demand_group_id": "_score_context_id"}
@@ -412,12 +416,15 @@ class PlanUpdater:
             )
             allocations.append(allocation)
         allocation = pl.concat(allocations) if allocations else current_plans.head(0)
-        return (
+        result = (
             contexts.collapse_allocations(allocation)
             .drop("utility")
             .join(evaluation.possible_plan_utility.select(PLAN_KEY_COLS + ["utility"]), on=PLAN_KEY_COLS)
             .join(evaluation.plan_id_index, on=PLAN_KEY_COLS, how="left")
         )
+        # The per-unit floor uses a different origin and ID space; those IDs
+        # cannot safely be used to compact the context evaluation.
+        return (result, None) if include_reachable_ids else result
 
     @staticmethod
     def _restrict_transition_choices(
@@ -669,7 +676,6 @@ class PlanUpdater:
         # are already unique, so assign IDs directly instead of joining a
         # separately constructed index back onto millions of rows.
         mobile = modeled_utilities.sort(PLAN_KEY_COLS).with_row_index("plan_id").select(utility_columns)
-        mobile_count = mobile.height
         del modeled_utilities
         stay = (stay_home_plan.with_columns(
             min_activity_time=pl.col("mean_home_night_per_pers") * math.exp(-min_activity_time_constant),
@@ -714,14 +720,8 @@ class PlanUpdater:
         # Keep this compatibility view lazy: allocations can filter plans
         # before their physical steps are attached to scoring contexts.
         class_plans = scored_context_plans.unique(subset=PLAN_KEY_COLS, keep="first").sort(PLAN_KEY_COLS)
-        if class_plans.select(PLAN_KEY_COLS).equals(plan_id_index.head(mobile_count).select(PLAN_KEY_COLS)):
-            # Both tables describe the same sorted mobile plans; their row
-            # positions are the temporary IDs already assigned above.
-            class_plans = class_plans.with_row_index("plan_id")
-        else:
-            # An incomplete scoring input can remove plans from the utility
-            # table. Retain the general join for those unusual inputs.
-            class_plans = class_plans.join(plan_id_index, on=PLAN_KEY_COLS)
+        # Map keys to their IDs even when scoring excluded some plans.
+        class_plans = class_plans.join(plan_id_index, on=PLAN_KEY_COLS, maintain_order="left")
         del scored_context_plans
         details = SharedSectionStepDetails(
             class_plans, timing.steps.drop(PLAN_COLUMNS + ["time"]), lookup, history, plan_id_index, stay_home_plan,

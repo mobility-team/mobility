@@ -48,7 +48,6 @@ class _FakeRun:
         self.run_context = SimpleNamespace(inputs_hash=context_hash)
         self.iterations = SimpleNamespace(
             run_inputs_hash=context_hash,
-            get_resume_iteration=lambda maximum: None,
         )
         self.iteration_state_assets = []
         base = Path("cache") / ("weekday" if is_weekday else "weekend")

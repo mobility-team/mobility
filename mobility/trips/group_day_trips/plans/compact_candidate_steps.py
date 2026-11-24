@@ -55,14 +55,6 @@ class SectionedPhysicalSteps:
         )
         return cls(sections, references, steps.schema["seq_step_index"])
 
-    @property
-    def schema(self):
-        return self.sections.schema, self.references.schema, self.sequence_dtype
-
-    def equals(self, other: object) -> bool:
-        return (isinstance(other, SectionedPhysicalSteps) and self.schema == other.schema
-                and self.sections.equals(other.sections) and self.references.equals(other.references))
-
     def lazy(self, plans: pl.LazyFrame | None = None) -> pl.LazyFrame:
         """Reconstruct only the requested physical plans when possible."""
         references = self.references.lazy()

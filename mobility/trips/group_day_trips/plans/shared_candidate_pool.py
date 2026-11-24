@@ -518,88 +518,12 @@ class SharedCandidatePool:
                 candidate_frames.clear()
 
         restored_catalogue.clear()
-        candidate_frames = merged_chunks + candidate_frames
-        if candidate_frames:
-            shared_candidates = self._merge_candidate_content(candidate_frames)
-        else:
-            shared_candidates = self._empty_candidate_content()
-        # Per-scenario attachment only needs the merged rows. Drop the source
-        # frames before building those outputs, which can themselves be large.
-        candidate_frames.clear()
-        merged_chunks.clear()
-
-        if shared_candidates.height and active_candidate_id_frames:
-            active_candidate_ids = pl.concat(active_candidate_id_frames).unique()
-            shared_candidates = (
-                shared_candidates
-                .join(
-                    active_candidate_ids.with_columns(_is_active=pl.lit(True)),
-                    on=CANDIDATE_ID_COLS,
-                    how="left",
-                )
-                .with_columns(
-                    last_active_iteration=pl.when(pl.col("_is_active").fill_null(False))
-                    .then(
-                        pl.max_horizontal(
-                            pl.col("last_active_iteration").fill_null(0),
-                            pl.lit(self.iteration, dtype=pl.UInt16),
-                        )
-                    )
-                    .otherwise(pl.col("last_active_iteration"))
-                )
-                .drop("_is_active")
-            )
-            active_candidate_ids = None
-        active_candidate_id_frames.clear()
-
-        if candidate_replication_frames:
-            candidate_replications = (
-                pl.concat(candidate_replication_frames)
-                .unique()
-                .join(shared_candidates.select(CANDIDATE_ID_COLS).unique(), on=CANDIDATE_ID_COLS, how="semi")
-                .sort(["replication"] + CANDIDATE_ID_COLS)
-            )
-        else:
-            candidate_replications = shared_candidates.select(CANDIDATE_ID_COLS).head(0).with_columns(
-                replication=pl.lit(None, dtype=pl.UInt32)
-            )
-        if self.max_inactive_age is not None and replication_history_frames:
-            # Scenarios share a physical pool within a replication, but one
-            # seed's recent activity must not keep another seed's plan alive.
-            history = pl.concat(replication_history_frames).group_by(
-                ["replication"] + CANDIDATE_ID_COLS
-            ).agg(
-                pl.col("first_seen_iteration").min(),
-                pl.col("last_seen_iteration").max(),
-                pl.col("last_active_iteration").max(),
-            )
-            cutoff = max(0, self.iteration - self.max_inactive_age)
-            retained = history.filter(
-                pl.max_horizontal(
-                    "first_seen_iteration", "last_seen_iteration", "last_active_iteration"
-                ) >= cutoff
-            ).select(["replication"] + CANDIDATE_ID_COLS)
-            candidate_replications = candidate_replications.join(
-                retained, on=["replication"] + CANDIDATE_ID_COLS, how="semi"
-            )
-            shared_candidates = shared_candidates.join(
-                candidate_replications.select(CANDIDATE_ID_COLS).unique(),
-                on=CANDIDATE_ID_COLS, how="semi",
-            )
-            del history, retained
-        replication_history_frames.clear()
-        if self.max_shared_candidates is not None:
-            shared_candidates = self._limit_candidate_pool(shared_candidates)
-            candidate_replications = candidate_replications.join(
-                shared_candidates.select(CANDIDATE_ID_COLS).unique(), on=CANDIDATE_ID_COLS, how="semi"
-            )
-        candidate_replications = candidate_replications.sort(["replication"] + CANDIDATE_ID_COLS)
-        generated_candidates = (
-            pl.concat(generated_by_replication).unique()
-            if generated_by_replication else candidate_replications.head(0)
+        # Merge and prune physical plans before attaching them to runs. The
+        # helper clears its input buffers as soon as they are no longer needed.
+        shared_candidates, candidate_replications, generated_candidates = self._merge_and_select_candidates(
+            candidate_frames, merged_chunks, active_candidate_id_frames,
+            candidate_replication_frames, replication_history_frames, generated_by_replication,
         )
-        candidate_replication_frames.clear()
-        generated_by_replication.clear()
 
         candidate_steps_by_run_key: dict[int, pl.DataFrame | pl.LazyFrame] = {}
         candidate_step_parts_by_run_key = {}
@@ -808,19 +732,6 @@ class SharedCandidatePool:
                         replication=pl.lit(source.run.replication, dtype=pl.UInt32),
                     )
                     catalogue = PlanCatalogue.from_candidates(content)
-                    if candidate_catalogues:
-                        first = candidate_catalogues[0]
-                        # Share physical tables across other equal attachments.
-                        if catalogue.steps.equals(first.steps):
-                            catalogue = PlanCatalogue(
-                                plans=first.plans,
-                                steps=first.steps,
-                                variants=(
-                                    first.variants if catalogue.variants.equals(first.variants)
-                                    else catalogue.variants
-                                ),
-                                membership=catalogue.membership,
-                            )
                     if remaining_attachments[attachment_key] > 1:
                         shared_catalogues[attachment_key] = catalogue
                 candidate_catalogues.append(catalogue)
@@ -853,6 +764,101 @@ class SharedCandidatePool:
             candidate_step_parts_by_run_key=candidate_step_parts_by_run_key,
             scoring_candidate_steps_by_run_key=self.scoring_candidate_steps_by_run_key,
         )
+
+    def _merge_and_select_candidates(
+        self,
+        candidate_frames: list[pl.DataFrame],
+        merged_chunks: list[pl.DataFrame],
+        active_candidate_id_frames: list[pl.DataFrame],
+        candidate_replication_frames: list[pl.DataFrame],
+        replication_history_frames: list[pl.DataFrame],
+        generated_by_replication: list[pl.DataFrame],
+    ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+        """Merge physical plans and retain recent candidates for each replication."""
+        candidate_frames[:0] = merged_chunks
+        if candidate_frames:
+            shared_candidates = self._merge_candidate_content(candidate_frames)
+        else:
+            shared_candidates = self._empty_candidate_content()
+        # Per-scenario attachment only needs the merged rows. Drop the source
+        # frames before building those outputs, which can themselves be large.
+        candidate_frames.clear()
+        merged_chunks.clear()
+
+        if shared_candidates.height and active_candidate_id_frames:
+            active_candidate_ids = pl.concat(active_candidate_id_frames).unique()
+            shared_candidates = (
+                shared_candidates
+                .join(
+                    active_candidate_ids.with_columns(_is_active=pl.lit(True)),
+                    on=CANDIDATE_ID_COLS,
+                    how="left",
+                )
+                .with_columns(
+                    last_active_iteration=pl.when(pl.col("_is_active").fill_null(False))
+                    .then(
+                        pl.max_horizontal(
+                            pl.col("last_active_iteration").fill_null(0),
+                            pl.lit(self.iteration, dtype=pl.UInt16),
+                        )
+                    )
+                    .otherwise(pl.col("last_active_iteration"))
+                )
+                .drop("_is_active")
+            )
+            active_candidate_ids = None
+        active_candidate_id_frames.clear()
+
+        if candidate_replication_frames:
+            candidate_replications = (
+                pl.concat(candidate_replication_frames)
+                .unique()
+                .join(shared_candidates.select(CANDIDATE_ID_COLS).unique(), on=CANDIDATE_ID_COLS, how="semi")
+                .sort(["replication"] + CANDIDATE_ID_COLS)
+            )
+        else:
+            candidate_replications = shared_candidates.select(CANDIDATE_ID_COLS).head(0).with_columns(
+                replication=pl.lit(None, dtype=pl.UInt32)
+            )
+        if self.max_inactive_age is not None and replication_history_frames:
+            # Scenarios share a physical pool within a replication, but one
+            # seed's recent activity must not keep another seed's plan alive.
+            history = pl.concat(replication_history_frames).group_by(
+                ["replication"] + CANDIDATE_ID_COLS
+            ).agg(
+                pl.col("first_seen_iteration").min(),
+                pl.col("last_seen_iteration").max(),
+                pl.col("last_active_iteration").max(),
+            )
+            cutoff = max(0, self.iteration - self.max_inactive_age)
+            retained = history.filter(
+                pl.max_horizontal(
+                    "first_seen_iteration", "last_seen_iteration", "last_active_iteration"
+                ) >= cutoff
+            ).select(["replication"] + CANDIDATE_ID_COLS)
+            candidate_replications = candidate_replications.join(
+                retained, on=["replication"] + CANDIDATE_ID_COLS, how="semi"
+            )
+            shared_candidates = shared_candidates.join(
+                candidate_replications.select(CANDIDATE_ID_COLS).unique(),
+                on=CANDIDATE_ID_COLS, how="semi",
+            )
+            del history, retained
+        replication_history_frames.clear()
+        if self.max_shared_candidates is not None:
+            shared_candidates = self._limit_candidate_pool(shared_candidates)
+            candidate_replications = candidate_replications.join(
+                shared_candidates.select(CANDIDATE_ID_COLS).unique(), on=CANDIDATE_ID_COLS, how="semi"
+            )
+        candidate_replications = candidate_replications.sort(["replication"] + CANDIDATE_ID_COLS)
+        generated_candidates = (
+            pl.concat(generated_by_replication).unique()
+            if generated_by_replication else candidate_replications.head(0)
+        )
+        candidate_replication_frames.clear()
+        generated_by_replication.clear()
+
+        return shared_candidates, candidate_replications, generated_candidates
 
     @staticmethod
     def _attach_sequence_content_keys(

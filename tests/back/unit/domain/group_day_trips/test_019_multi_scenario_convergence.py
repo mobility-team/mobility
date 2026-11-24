@@ -18,9 +18,42 @@ from mobility.trips.group_day_trips.core.parameters import GroupDayTripsParamete
 from mobility.trips.group_day_trips.core.multi_scenario_run import MultiScenarioRunAsset
 from mobility.trips.group_day_trips.plans.plan_updater import CandidatePlanEvaluation, PlanUpdater
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS
+from mobility.trips.group_day_trips.plans.compact_candidate_steps import (
+    CompactCandidateSteps, MEMBERSHIP_COLUMNS, STEP_COLUMNS,
+)
 from mobility.trips.group_day_trips.core.run import RunTableAsset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.assets.resolver import asset_resolution_context
+
+
+def test_infeasible_candidate_counts_group_shared_plans_by_content():
+    """Count a plan once even when several demand groups use it."""
+    candidates = pl.DataFrame({
+        "demand_group_id": [1, 2, 3], "demand_subgroup_id": [0, 0, 0],
+        "activity_seq_id": [1, 1, 1], "time_seq_id": [1, 1, 1],
+        "dest_seq_id": [1, 1, 2], "mode_seq_id": [1, 1, 1],
+        "seq_step_index": [1, 1, 1], "activity": ["work", "work", "work"],
+        "duration_per_pers": [8.0, 8.0, 8.0], "departure_time": [8.0, 8.0, 8.0],
+        "arrival_time": [9.0, 9.0, 9.0], "next_departure_time": [17.0, 17.0, 17.0],
+        "from": [1, 1, 1], "to": [2, 2, 3], "mode": ["car", "car", "car"],
+    })
+    details = candidates.select(PLAN_KEY_COLS).with_columns(
+        missing_cost_row_count=pl.Series([1, 0, 0]),
+        invalid_cost_row_count=pl.Series([0, 0, 1]),
+    )
+
+    assert MultiScenarioRunAsset._count_infeasible_candidates(details, candidates) == (2, 1, 1)
+    assert MultiScenarioRunAsset._count_infeasible_candidates(details.head(0), candidates) == (0, 0, 0)
+
+    rows = candidates.with_columns(
+        country=pl.lit("fr"), csp=pl.lit("worker"), iteration=pl.lit(1),
+        first_seen_iteration=pl.lit(1), last_seen_iteration=pl.lit(1),
+        last_active_iteration=pl.lit(1),
+    )
+    compact = CompactCandidateSteps(
+        rows.select(STEP_COLUMNS).unique(), rows.select(MEMBERSHIP_COLUMNS).unique(), tuple(rows.columns),
+    )
+    assert MultiScenarioRunAsset._count_infeasible_candidates(details, compact) == (2, 1, 1)
 
 
 def test_inner_convergence_requires_consecutive_passes_from_every_scenario():
@@ -215,23 +248,21 @@ def test_checkpoint_resume_requires_the_complete_scenario_cohort(
             iterations=SimpleNamespace(
                 run_inputs_hash=scenario,
                 base_folder=tmp_path,
-                get_resume_iteration=lambda maximum: 1,
-                has_complete_checkpoints=lambda count: True,
+                iteration=lambda step, key=run_key: SimpleNamespace(
+                    checkpoint_assets=lambda: {"state": SimpleNamespace(
+                        is_update_needed=lambda: key >= ready_scenarios,
+                    )},
+                    load_state=lambda: None,
+                ),
             ),
             iteration_state_assets=[SimpleNamespace(iteration=1, resume_checkpoint_loader=None)],
         )
         for run_key, scenario in enumerate(["default", "project"])
     }
     coordinator = MultiScenarioRunAsset(runs)
-    monkeypatch.setattr(coordinator, "_checkpoint_file_hashes", lambda iteration: {})
-
     # A cohort marker is written only after both scenario states are saved.
     if manifest_ready:
         coordinator._write_checkpoint_manifest(1, mnl_flows={key: pl.DataFrame() for key in runs})
-    for index, run in enumerate(runs.values()):
-        run.iteration_state_assets[0].resume_checkpoint_loader = (
-            object() if index < ready_scenarios else None
-        )
     coordinator._prepare_checkpoint_resume()
 
     for run in runs.values():

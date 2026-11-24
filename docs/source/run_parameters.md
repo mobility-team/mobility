@@ -1,5 +1,38 @@
 # Run Parameters
 
+## Updating an existing model
+
+Simulation iterations are now called steps to distinguish two parts of the
+model:
+
+- A **simulation step** advances the modeled system. People can change plans,
+  scenarios and behavior-change phases can take effect, and travel costs can
+  be updated. Steps describe the model's progression; they are not currently
+  assigned a fixed duration such as one day or one year.
+- Within a step, **search batches** generate and accumulate candidate plans
+  and estimate their allocations. These inner iterations help the model explore
+  alternatives; they do not advance the simulation to another step.
+
+For example, a scenario change starting at step 3 takes effect at that step,
+regardless of how many search batches ran in steps 1 and 2.
+
+Update these parameter names:
+
+| Before | Now |
+| --- | --- |
+| `GroupDayTripsRunParameters(n_iterations=...)` | `GroupDayTripsRunParameters(n_steps=...)` |
+| `n_iter_per_cost_update` | `n_steps_per_cost_update` |
+| `BehaviorChangePhase(start_iteration=...)` | `BehaviorChangePhase(start_step=...)` |
+| `GroupDayTripsOutputParameters(cache_iteration_events=...)` | `GroupDayTripsOutputParameters(cache_step_events=...)` |
+| `n_warmup_iterations` | `n_warmup_steps` |
+| `plan_probability_pruning_min_iteration` | `plan_pruning_start_step` |
+| `plan_probability_pruning_retained_share` | `min_plan_persons` (different units) |
+
+Review the effort settings and plan pruning when updating a model: their
+defaults affect candidate sampling and simulated results. Plan pruning now
+uses `min_plan_persons` rather than a transition-probability threshold, so the
+old pruning threshold cannot be converted directly.
+
 ## Computational effort
 
 `GroupDayTripsParameters(effort="low")` is the default. Choose `"medium"` or
@@ -73,9 +106,9 @@ parameters = mobility.GroupDayTripsParameters(
 
 `simulate_weekend=False` means that only weekday runs are enabled. Set it to `True` if the study needs weekend results.
 
-During full replanning, Mobility samples three survey schedules per activity profile in each home zone by default. An activity profile is a set of allowed activities shared by demand groups. Each profile draws with replacement from its compatible schedules, using survey weights. For example, a zone with two profiles makes six draws with the default `k_activity_sequences=3`. Draws can repeat a schedule, so the number of distinct schedules can be smaller. The default `activity_support_threshold=0.02` includes an activity in a CSP's allowed set when at least 2% of its survey-weighted schedules include it. Set `k_activity_sequences=None` to use every eligible schedule.
+During full replanning, Mobility samples one survey schedule per activity profile in each home zone with the default low effort. An activity profile is a set of allowed activities shared by demand groups. Each profile draws with replacement from its compatible schedules, using survey weights. For example, a zone with two profiles makes two draws with `k_activity_sequences=1`. Draws can repeat a schedule, so the number of distinct schedules can be smaller. The default `activity_support_threshold=0.02` includes an activity in a CSP's allowed set when at least 2% of its survey-weighted schedules include it. Set `k_activity_sequences=None` to use every eligible schedule.
 
-Destination sampling makes `k_destination_sequences` draws per sampled schedule and utility profile present in the home zone (three by default). A utility profile groups demand units with identical resolved transport-cost parameters, including population-segment overrides. Each profile uses its own expected travel costs across modes to rank destinations and check the legs around each stop. Identical destination chains drawn by several profiles are stored once and shared with compatible demand units. Mode search then evaluates destination chains using each utility profile's costs.
+Destination sampling makes `k_destination_sequences` draws per sampled schedule and utility profile present in the home zone (one with the default low effort). A utility profile groups demand units with identical resolved transport-cost parameters, including population-segment overrides. Each profile uses its own expected travel costs across modes to rank destinations and check the legs around each stop. Identical destination chains drawn by several profiles are stored once and shared with compatible demand units. Mode search then evaluates destination chains using each utility profile's costs.
 
 Each activity's `activity_time_rigidity` ranges from 0 (flexible) to 1 (rigid). When a trip's modeled duration changes, the share taken from the preceding activity is `(1 + destination rigidity - origin rigidity) / 2`; the destination activity absorbs the remainder. Equally rigid activities share the change equally. Home defaults to 0; other activities default to 1 for anchors and 0 otherwise. Users can override these values in the activity parameters. This replaces the earlier `arrival_time_rigidity` parameter, whose meaning was different.
 
@@ -98,7 +131,7 @@ it applies. A no-transition step does not apply the floor.
 ## Coordinated Search Limits
 
 Each simulation step can run up to `adaptive_search.max_search_batches`
-candidate-generation and allocation batches (five by default). Each batch
+candidate-generation and allocation batches (three with the default low effort). Each batch
 requests at most one utility profile per home zone in each run. Diagnostics
 estimate the requested mode-sequence alternatives from the activity,
 destination and mode draw counts, including duplicate or infeasible draws.

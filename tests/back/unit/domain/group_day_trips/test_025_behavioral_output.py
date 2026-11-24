@@ -11,6 +11,7 @@ import pytest
 from polars.testing import assert_frame_equal
 
 from mobility.trips.group_day_trips.core.multi_scenario_run import MultiScenarioRunAsset
+from mobility.trips.group_day_trips.core.coordinated_run_result import current_coordinated_result
 from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePoolResult
 import mobility.trips.group_day_trips.core.multi_scenario_run as coordinated_module
 import mobility.trips.group_day_trips.results.simulation_runner as runner_module
@@ -21,7 +22,7 @@ from mobility.trips.group_day_trips.iterations.iterations import Iterations
 from mobility.trips.group_day_trips.iterations.iteration_assets import CurrentPlansAsset, IterationStateAsset
 import mobility.trips.group_day_trips.iterations.iteration_assets as iteration_assets_module
 from mobility.trips.group_day_trips.transitions.transition_schema import TRANSITION_EVENT_SCHEMA
-from mobility.runtime.assets.resolver import AssetResolver
+from mobility.runtime.assets.resolver import AssetResolver, asset_resolution_context
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 
 
@@ -103,8 +104,11 @@ def test_transition_history_scans_recorded_files(tmp_path):
     with pytest.raises(RuntimeError, match=r"missing.*\[2\]"):
         run._build_transitions()
     # During a live step, future event files are not expected yet.
-    run.coordinated_run_asset = SimpleNamespace(_active_result=SimpleNamespace(current_iteration=1))
-    assert run._build_transitions().collect().schema == pl.Schema(TRANSITION_EVENT_SCHEMA)
+    run.coordinated_run_asset = SimpleNamespace()
+    with asset_resolution_context() as resolver:
+        resolver.simulation_coordinator = run.coordinated_run_asset
+        resolver.simulation_step_result = SimpleNamespace(current_iteration=1)
+        assert run._build_transitions().collect().schema == pl.Schema(TRANSITION_EVENT_SCHEMA)
 
 
 def test_direct_run_get_requests_only_the_final_state(monkeypatch):
@@ -118,12 +122,15 @@ def test_direct_run_get_requests_only_the_final_state(monkeypatch):
             self.run_keys = [0]
             self._cached_result = None
             self._is_running = False
+            self.parameters = SimpleNamespace(run=SimpleNamespace(n_steps=2),
+                                              outputs=SimpleNamespace(checkpoint_each_step=False))
 
-        def get(self, *, step_consumer=None, runner=None):
-            assert step_consumer is not None
+        def get(self, *, step_consumer=None, requirements=None):
+            assert step_consumer is None
+            assert requirements.steps == frozenset()
+            assert requirements.mnl_flows is False
             for iteration in (1, 2):
                 seen.append(iteration)
-                step_consumer(iteration)
             return SimpleNamespace(final_states_by_run_key={0: expected})
 
     run = object.__new__(Run)
@@ -136,17 +143,23 @@ def test_direct_run_get_requests_only_the_final_state(monkeypatch):
         "mobility.trips.group_day_trips.core.run.is_group_day_trips_progress_active",
         lambda: True,
     )
-    assert run.get() is expected
+    assert run._execute() is expected
     assert seen == [1, 2]
     assert run.coordinated_run_asset._cached_result is None
 
 
+def test_run_get_explains_how_to_access_results():
+    run = object.__new__(Run)
+    with pytest.raises(RuntimeError, match=r"run\.table.*run\.results"):
+        run.get()
+
+
 @pytest.mark.parametrize("contents,expected_resume", [
-    ('{"version": 3, "cohort_hash": "cohort", "iteration": 1, "files": {}, "diagnostics": [], "mnl_flows": {}}', True),
-    ('{"version": 2, "cohort_hash": "other", "iteration": 1, "files": {}}', False),
-    ('{"version": 2, "cohort_hash": "cohort", "iteration": 2, "files": {}}', False),
-    ('{"version": 2, "cohort_hash": "cohort", "iteration": true, "files": {}}', False),
-    ('{"version": 2, "cohort_hash": "cohort", "iteration": 1, "files": {"bad": {}}}', False),
+    ('{"version": 4, "cohort_hash": "cohort", "iteration": 1, "diagnostics": [], "mnl_flows": {}}', True),
+    ('{"version": 4, "cohort_hash": "other", "iteration": 1, "diagnostics": [], "mnl_flows": {}}', False),
+    ('{"version": 4, "cohort_hash": "cohort", "iteration": 2, "diagnostics": [], "mnl_flows": {}}', False),
+    ('{"version": 4, "cohort_hash": "cohort", "iteration": true, "diagnostics": [], "mnl_flows": {}}', False),
+    ('{"version": 4, "cohort_hash": "cohort", "iteration": 1, "diagnostics": {}, "mnl_flows": {}}', False),
     ('{"cohort_hash":', False),
 ])
 def test_checkpoint_manifest_must_match_complete_cohort(tmp_path, contents, expected_resume):
@@ -156,7 +169,10 @@ def test_checkpoint_manifest_must_match_complete_cohort(tmp_path, contents, expe
     runs = {
         key: SimpleNamespace(
             iterations=SimpleNamespace(
-                get_resume_iteration=lambda n_steps: 1, has_complete_checkpoints=lambda n_steps: True
+                iteration=lambda step: SimpleNamespace(
+                    checkpoint_assets=lambda: {"state": SimpleNamespace(is_update_needed=lambda: False)},
+                    load_state=lambda: None,
+                )
             ),
             iteration_state_assets=[SimpleNamespace(iteration=1, resume_checkpoint_loader=loaders[key])],
         )
@@ -165,11 +181,10 @@ def test_checkpoint_manifest_must_match_complete_cohort(tmp_path, contents, expe
     coordinator = object.__new__(MultiScenarioRunAsset)
     coordinator.runs = runs
     coordinator.parameters = SimpleNamespace(
-        outputs=SimpleNamespace(checkpoint_each_step=True), run=SimpleNamespace(n_steps=2)
+        outputs=SimpleNamespace(checkpoint_each_step=True, cache_step_events=False), run=SimpleNamespace(n_steps=2)
     )
     coordinator._checkpoint_cohort_hash = "cohort"
     coordinator._checkpoint_manifest_path = lambda iteration: manifest
-    coordinator._checkpoint_file_hashes = lambda iteration: {}
     coordinator._prepare_checkpoint_resume()
     assert all(run.iteration_state_assets[0].resume_checkpoint_loader is not None
                for run in runs.values()) is expected_resume
@@ -177,14 +192,13 @@ def test_checkpoint_manifest_must_match_complete_cohort(tmp_path, contents, expe
 
 def test_checkpoint_manifest_is_published_atomically(tmp_path, monkeypatch):
     coordinator = object.__new__(MultiScenarioRunAsset)
-    coordinator.parameters = SimpleNamespace(outputs=SimpleNamespace(checkpoint_each_step=True))
+    coordinator.parameters = SimpleNamespace(outputs=SimpleNamespace(checkpoint_each_step=True, cache_step_events=False))
     coordinator._checkpoint_cohort_hash = "cohort"
     target = tmp_path / "manifest.json"
     coordinator._checkpoint_manifest_path = lambda iteration: target
-    coordinator._checkpoint_file_hashes = lambda iteration: {}
     coordinator._write_checkpoint_manifest(1)
     assert json.loads(target.read_text(encoding="utf-8")) == {
-        "version": 3, "cohort_hash": "cohort", "iteration": 1, "files": {}, "diagnostics": [], "mnl_flows": {}
+        "version": 4, "cohort_hash": "cohort", "iteration": 1, "diagnostics": [], "mnl_flows": {}
     }
 
     diagnostics = [{"flow_change_by_mode": [{"category": "car", "trips": 2.0, "flow_change_index": 0.1}]}]
@@ -204,13 +218,42 @@ def test_checkpoint_manifest_is_published_atomically(tmp_path, monkeypatch):
     assert sorted(path.name for path in tmp_path.iterdir()) == ["manifest.json", "manifest_mnl_0.parquet"]
 
 
+def test_recomputing_a_step_invalidates_later_cohort_markers(tmp_path):
+    coordinator = object.__new__(MultiScenarioRunAsset)
+    coordinator._checkpoint_cohort_hash = "cohort"
+    coordinator._checkpoint_manifest_path = lambda step: tmp_path / f"cohort_iteration_{step}.json"
+    for step in (1, 2, 3):
+        coordinator._checkpoint_manifest_path(step).write_text("{}", encoding="utf-8")
+    (tmp_path / "other_iteration_3.json").write_text("{}", encoding="utf-8")
+    coordinator._invalidate_checkpoint_manifests_from(2)
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["cohort_iteration_1.json", "other_iteration_3.json"]
+
+
+def test_resume_requires_final_inner_flows_only_when_requested(tmp_path):
+    coordinator = object.__new__(MultiScenarioRunAsset)
+    coordinator.parameters = SimpleNamespace(
+        outputs=SimpleNamespace(cache_step_events=False), run=SimpleNamespace(n_steps=1),
+    )
+    coordinator.runs = {0: object()}
+    coordinator._checkpoint_cohort_hash = "cohort"
+    manifest = tmp_path / "manifest.json"
+    coordinator._checkpoint_manifest_path = lambda step: manifest
+    manifest.write_text(json.dumps({
+        "version": 4, "cohort_hash": "cohort", "iteration": 1,
+        "diagnostics": [], "mnl_flows": {"0": {"path": str(tmp_path / "missing.parquet")}},
+    }), encoding="utf-8")
+    assert coordinator._checkpoint_manifest_matches(1, needs_mnl_flows=False)
+    assert not coordinator._checkpoint_manifest_matches(1, needs_mnl_flows=True)
+
+
 @pytest.mark.parametrize("error", [OSError("disk failure"), KeyboardInterrupt()])
-def test_interrupted_checkpoint_rewrite_removes_old_completion_marker(tmp_path, monkeypatch, error):
+def test_interrupted_checkpoint_rewrite_removes_old_input_marker(tmp_path, monkeypatch, error):
     iterations = Iterations(run_inputs_hash="run", is_weekday=True, base_folder=tmp_path)
     checkpoint = iterations.iteration(1)
-    completion = checkpoint.checkpoint_assets()["completion_marker"]
-    completion.get()
-    assert completion.cache_path.exists()
+    saved = checkpoint.checkpoint_assets()["current_plans"]
+    saved.cache_path.write_bytes(b"previous state")
+    saved.update_hash(saved.inputs_hash)
+    assert not saved.is_update_needed()
 
     def fail_after_partial_write(asset):
         asset.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,11 +264,11 @@ def test_interrupted_checkpoint_rewrite_removes_old_completion_marker(tmp_path, 
     expected = KeyboardInterrupt if isinstance(error, KeyboardInterrupt) else RuntimeError
     with pytest.raises(expected):
         checkpoint.save_state(SimpleNamespace(current_plans=pl.DataFrame()), rng_state={})
-    assert not completion.cache_path.exists()
+    assert saved.is_update_needed()
     assert not iterations.has_complete_checkpoints(1)
 
 
-def test_changed_transition_events_disable_resume_for_the_whole_cohort(tmp_path):
+def test_missing_transition_events_disable_resume_for_the_whole_cohort(tmp_path):
     coordinator = object.__new__(MultiScenarioRunAsset)
     coordinator.parameters = SimpleNamespace(
         outputs=SimpleNamespace(checkpoint_each_step=True, cache_step_events=True),
@@ -242,78 +285,73 @@ def test_changed_transition_events_disable_resume_for_the_whole_cohort(tmp_path)
         event_path.write_bytes(b"events")
         state = SimpleNamespace(
             iteration=1, resume_checkpoint_loader=lambda: None,
-            transition_events_asset=SimpleNamespace(cache_path=event_path),
+            transition_events_asset=SimpleNamespace(cache_path=event_path, is_update_needed=lambda path=event_path: not path.exists()),
         )
         states.append(state)
         checkpoint = SimpleNamespace(checkpoint_assets=lambda path=state_path: {
-            "state": SimpleNamespace(cache_path=path),
-        })
+            "state": SimpleNamespace(cache_path=path, is_update_needed=lambda: False),
+        }, load_state=lambda: None)
         coordinator.runs[key] = SimpleNamespace(
             iteration_state_assets=[state],
             iterations=SimpleNamespace(
                 iteration=lambda iteration, checkpoint=checkpoint: checkpoint,
-                get_resume_iteration=lambda n_steps: 1,
-                has_complete_checkpoints=lambda n_steps: True,
             ),
         )
 
     coordinator._write_checkpoint_manifest(1, mnl_flows={key: pl.DataFrame() for key in coordinator.runs})
     coordinator._prepare_checkpoint_resume()
     assert all(state.resume_checkpoint_loader is not None for state in states)
-    states[0].transition_events_asset.cache_path.write_bytes(b"altered")
+    states[0].transition_events_asset.cache_path.unlink()
     coordinator._prepare_checkpoint_resume()
     assert all(state.resume_checkpoint_loader is None for state in states)
 
 
-def test_incomplete_cohort_checkpoint_cannot_resume_one_scenario(tmp_path):
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text('{"version": 2, "cohort_hash": "cohort", "iteration": 1, "files": {}}', encoding="utf-8")
-    first = SimpleNamespace(iteration=1, resume_checkpoint_loader=lambda: None)
-    second = SimpleNamespace(iteration=1, resume_checkpoint_loader=None)
+@pytest.mark.parametrize("missing_kind,missing_step,expected", [
+    ("scenario", 10, 9), ("manifest", 10, 9), ("events", 7, 6),
+    ("scenario", 1, 0), ("manifest", 1, 0),
+])
+def test_resume_uses_last_complete_shared_step(tmp_path, missing_kind, missing_step, expected):
     coordinator = object.__new__(MultiScenarioRunAsset)
     coordinator.parameters = SimpleNamespace(
-        outputs=SimpleNamespace(checkpoint_each_step=True), run=SimpleNamespace(n_steps=2)
+        outputs=SimpleNamespace(checkpoint_each_step=True, cache_step_events=True),
+        run=SimpleNamespace(n_steps=10),
     )
-    coordinator.runs = {
-        key: SimpleNamespace(
-            iterations=SimpleNamespace(
-                get_resume_iteration=lambda n_steps: 1, has_complete_checkpoints=lambda n_steps: True
-            ),
-            iteration_state_assets=[state],
-        )
-        for key, state in enumerate((first, second))
-    }
     coordinator._checkpoint_cohort_hash = "cohort"
-    coordinator._checkpoint_manifest_path = lambda iteration: manifest
-    coordinator._checkpoint_file_hashes = lambda iteration: {}
-    coordinator._prepare_checkpoint_resume()
-    assert first.resume_checkpoint_loader is None
-    assert second.resume_checkpoint_loader is None
-
-
-def test_missing_checkpoint_file_disables_resume_for_entire_cohort(tmp_path):
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text('{"version": 2, "cohort_hash": "cohort", "iteration": 1, "files": {}}', encoding="utf-8")
-    states = [SimpleNamespace(iteration=1, resume_checkpoint_loader=lambda: None) for _ in range(2)]
-    coordinator = object.__new__(MultiScenarioRunAsset)
-    coordinator.parameters = SimpleNamespace(
-        outputs=SimpleNamespace(checkpoint_each_step=True), run=SimpleNamespace(n_steps=2)
-    )
-    coordinator.runs = {
-        key: SimpleNamespace(
-            iterations=SimpleNamespace(
-                get_resume_iteration=lambda n_steps: 1,
-                has_complete_checkpoints=lambda n_steps, key=key: key == 0,
+    coordinator._checkpoint_manifest_path = lambda step: tmp_path / f"{step}.json"
+    coordinator.runs = {}
+    for key in (0, 1):
+        states = [SimpleNamespace(
+            iteration=step, resume_checkpoint_loader=lambda: "stale",
+            transition_events_asset=SimpleNamespace(
+                is_update_needed=lambda step=step: missing_kind == "events" and step == missing_step,
             ),
-            iteration_state_assets=[state],
+        ) for step in range(1, 11)]
+        def checkpoint(step, key=key):
+            incomplete = missing_kind == "scenario" and key == 1 and step == missing_step
+            return SimpleNamespace(
+                checkpoint_assets=lambda: {"state": SimpleNamespace(is_update_needed=lambda: incomplete)},
+                load_state=lambda: None,
+            )
+        coordinator.runs[key] = SimpleNamespace(
+            iteration_state_assets=states, iterations=SimpleNamespace(iteration=checkpoint),
         )
-        for key, state in enumerate(states)
-    }
-    coordinator._checkpoint_cohort_hash = "cohort"
-    coordinator._checkpoint_manifest_path = lambda iteration: manifest
-    coordinator._checkpoint_file_hashes = lambda iteration: {}
-    coordinator._prepare_checkpoint_resume()
-    assert all(state.resume_checkpoint_loader is None for state in states)
+    for step in range(1, 11):
+        if missing_kind == "manifest" and step == missing_step:
+            continue
+        flows = {}
+        if step == 10:
+            for key in (0, 1):
+                path = tmp_path / f"flow-{key}.parquet"
+                path.touch()
+                flows[str(key)] = {"path": str(path)}
+        coordinator._checkpoint_manifest_path(step).write_text(json.dumps({
+            "version": 4, "cohort_hash": "cohort", "iteration": step,
+            "diagnostics": [], "mnl_flows": flows,
+        }), encoding="utf-8")
+    assert coordinator._prepare_checkpoint_resume() == expected
+    for run in coordinator.runs.values():
+        assert [state.iteration for state in run.iteration_state_assets
+                if state.resume_checkpoint_loader is not None] == list(range(1, expected + 1))
 
 
 def behavioral_state(active_people):
@@ -348,10 +386,12 @@ def test_coordinated_resume_restores_diagnostics_without_repeating_search(tmp_pa
     run = SimpleNamespace(parameters=parameters, scenario="default", sensitivity_case_id="base", replication=0,
                           initial_iteration_state=SimpleNamespace(get=lambda: initial), iteration_state_assets=assets,
                           population=SimpleNamespace(parameters=SimpleNamespace(sample_size=1)))
-    coordinator = SimpleNamespace(parameters=parameters, runs={0: run}, run_keys=[0], _active_result=None)
+    coordinator = SimpleNamespace(parameters=parameters, runs={0: run}, run_keys=[0])
+    coordinator._run_steps = lambda **kwargs: MultiScenarioRunAsset._run_steps(coordinator, **kwargs)
     coordinator._log_plan_distribution = lambda **kwargs: None
     coordinator._clear_step_inputs = lambda asset: None
     coordinator._checkpoint_manifest_path = lambda step: tmp_path / f"{step}.json"
+    coordinator._invalidate_checkpoint_manifests_from = lambda step: None
     calls = []
 
     def advance(step, states, **kwargs):
@@ -374,19 +414,86 @@ def test_coordinated_resume_restores_diagnostics_without_repeating_search(tmp_pa
     )
     monkeypatch.setattr(runner_module.SimulationRunner, "_final_requirements", lambda *args: (False, False))
     runner = runner_module.SimulationRunner(requests=[], resolver=None)
-    coordinator._prepare_checkpoint_resume = lambda: 0
-    baseline = runner._run_cohort(coordinator, lambda step: None)
+    coordinator._prepare_checkpoint_resume = lambda **kwargs: 0
+    baseline = coordinator._run_steps(resolver=None, step_consumer=lambda step, result: None,
+                                      requirements=runner._simulation_requirements(coordinator))
     baseline_diagnostics = baseline.final_states_by_run_key[0].adaptive_search_diagnostics
     assert calls == [1, 2]
 
     calls.clear()
-    coordinator._prepare_checkpoint_resume = lambda: 1
+    coordinator._prepare_checkpoint_resume = lambda **kwargs: 1
     consumed = []
-    resumed = runner._run_cohort(coordinator, consumed.append)
+    resumed = coordinator._run_steps(resolver=None, step_consumer=lambda step, result: consumed.append(step),
+                                     requirements=runner._simulation_requirements(coordinator))
     assert calls == [2]
     assert consumed == [1, 2]
     assert_frame_equal(resumed.final_states_by_run_key[0].current_plans, baseline.final_states_by_run_key[0].current_plans)
     assert_frame_equal(resumed.final_states_by_run_key[0].adaptive_search_diagnostics, baseline_diagnostics)
+
+
+@pytest.mark.parametrize("resume_step,requested,expected_loads,expected_steps", [
+    (10, set(), [10], []),
+    (7, {3, 10}, [3, 7], [3, 10]),
+])
+def test_resume_loads_only_requested_states_and_restart_state(
+    tmp_path, monkeypatch, resume_step, requested, expected_loads, expected_steps,
+):
+    parameters = GroupDayTripsParameters(run={"n_steps": 10}, outputs={"checkpoint_each_step": True})
+    loaded = {0: [], 1: []}
+    advanced = []
+    runs = {}
+    for key in (0, 1):
+        def load(step, key=key):
+            loaded[key].append(step)
+            return behavioral_state(20 + step)
+        assets = [SimpleNamespace(iteration=step, resume_checkpoint_loader=None,
+                                  get=lambda step=step, load=load: load(step)) for step in range(1, 11)]
+        runs[key] = SimpleNamespace(
+            parameters=parameters, scenario=str(key), sensitivity_case_id="base", replication=0,
+            initial_iteration_state=SimpleNamespace(get=lambda: behavioral_state(20)),
+            iteration_state_assets=assets, population=SimpleNamespace(parameters=SimpleNamespace(sample_size=1)),
+        )
+    coordinator = SimpleNamespace(parameters=parameters, runs=runs, run_keys=[0, 1])
+    coordinator._run_steps = lambda **kwargs: MultiScenarioRunAsset._run_steps(coordinator, **kwargs)
+    coordinator._prepare_checkpoint_resume = lambda **kwargs: resume_step
+    coordinator._log_plan_distribution = lambda **kwargs: None
+    coordinator._clear_step_inputs = lambda asset: None
+    coordinator._invalidate_checkpoint_manifests_from = lambda step: None
+    coordinator._checkpoint_manifest_path = lambda step: tmp_path / f"{step}.json"
+    for step in range(1, resume_step + 1):
+        coordinator._checkpoint_manifest_path(step).write_text(json.dumps({
+            "diagnostics": [{"_run_key": key, "outer_step": step} for key in runs], "mnl_flows": {},
+        }), encoding="utf-8")
+
+    def advance(step, states, **kwargs):
+        advanced.append(step)
+        assert all(states[key].current_plans.equals(behavioral_state(19 + step).current_plans) for key in runs)
+        values = {key: behavioral_state(20 + step) for key in runs}
+        convergence = SimpleNamespace(flow_changes={}, base_gap_changes={}, converged=False)
+        search = {"diagnostics": [], "search_batches": 1, "generation_effort_used": 1,
+                  "activity_profile_cell_count_by_scenario": {key: 0 for key in runs},
+                  "covered_activity_profile_cell_count_by_scenario": {key: 0 for key in runs},
+                  "pool": SimpleNamespace(candidate_ids=[1]),
+                  "scored_candidate_scope_by_scenario": {key: "all" for key in runs},
+                  "infeasible_counts": {key: 0 for key in runs},
+                  "missing_cost_row_counts": {key: 0 for key in runs},
+                  "invalid_cost_row_counts": {key: 0 for key in runs},
+                  "convergence_by_run_key": {key: convergence for key in runs}, "mnl_od_mode_flows": {}}
+        return {key: runs[key].iteration_state_assets[step - 1] for key in runs}, values, search
+
+    coordinator._advance_cohort_step = advance
+    coordinator._write_checkpoint_manifest = lambda *args, **kwargs: None
+    monkeypatch.setattr(runner_module.SimulationRunner, "_final_requirements", lambda *args: (False, False))
+    consumed = []
+    runner = runner_module.SimulationRunner(requests=[], resolver=None)
+    result = coordinator._run_steps(
+        resolver=None, step_consumer=lambda step, result: consumed.append(step),
+        requirements=runner._simulation_requirements(coordinator, required_iterations=requested),
+    )
+    assert all(steps == expected_loads for steps in loaded.values())
+    assert consumed == expected_steps
+    assert advanced == list(range(resume_step + 1, 11))
+    assert all(result.final_states_by_run_key[key].adaptive_search_diagnostics.height == 10 for key in runs)
 
 
 def test_cohort_step_uses_all_pre_step_states_before_updating_scenarios(monkeypatch):
@@ -492,11 +599,12 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
                 active_outer_step.pop()
 
     original_flow_reducer = coordinated_module.represented_od_mode_flows
-    def reduce_flows(plan_steps):
-        diagnostic_steps.append(active_outer_step[-1] if active_outer_step else None)
-        return original_flow_reducer(plan_steps)
+    def reduce_flows(plan_steps, **kwargs):
+        if not kwargs.get("include_activity"):
+            diagnostic_steps.append(active_outer_step[-1] if active_outer_step else None)
+        return original_flow_reducer(plan_steps, **kwargs)
 
-    monkeypatch.setattr(runner_module, "simulation_step", track_step)
+    monkeypatch.setattr(coordinated_module, "simulation_step", track_step)
     monkeypatch.setattr(coordinated_module, "represented_od_mode_flows", reduce_flows)
 
     for iteration in range(1, iterations + 1):
@@ -599,9 +707,10 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
     # the run or make a later request reuse a partial result.
     monkeypatch.setattr(AssetResolver, "release_in_memory_asset", lambda *args: None)
     def fail_consumer(iteration):
-        assert coordinator._active_result is not None
-        assert not hasattr(coordinator._active_result, "states_by_run_key")
-        assert coordinator._active_result.current_iteration == iteration
+        current = current_coordinated_result(coordinator)
+        assert current is not None
+        assert not hasattr(current, "states_by_run_key")
+        assert current.current_iteration == iteration
         if iteration != iterations:
             return
         if iterations > 1:
@@ -610,7 +719,7 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
 
     with pytest.raises(RuntimeError, match="result consumer failed"):
         coordinator.get(step_consumer=fail_consumer)
-    assert coordinator._active_result is None
+    assert current_coordinated_result(coordinator) is None
     assert not hasattr(coordinator, "_cached_result")
     assert not coordinator._is_running
     assert all(asset.coordinated_current_plans is None for asset in state_assets)

@@ -126,12 +126,7 @@ class ModeSequences(InMemoryAsset):
         return self._get_with_resolver(resolver, *args, **kwargs)
 
     def _get_with_resolver(self, resolver, *args, **kwargs) -> pl.DataFrame:
-        sequences = resolver.get_in_memory_asset(
-            self,
-            lambda: self.create_and_get_asset(*args, **kwargs),
-            spill_to_disk=self._spill_sequences,
-            load_from_disk=self._load_spilled_sequences,
-        )
+        sequences = self._resolve_value(resolver, *args, **kwargs)
         # Equivalent scenario assets can share the rows and indexes in the resolver.
         # Copy the auxiliary sequence count from the canonical asset too.
         canonical_asset = resolver.in_memory_assets.get(asset_graph_key(self))
@@ -140,7 +135,7 @@ class ModeSequences(InMemoryAsset):
             self.generated_mode_sequences = canonical_asset.generated_mode_sequences
         return sequences
 
-    def _spill_sequences(self, sequences: pl.DataFrame, path: pathlib.Path) -> None:
+    def spill_execution_value(self, sequences: pl.DataFrame, path: pathlib.Path) -> None:
         """Spill sampled rows and their stable index as one transient asset."""
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
@@ -158,7 +153,7 @@ class ModeSequences(InMemoryAsset):
         finally:
             shutil.rmtree(temporary_path, ignore_errors=True)
 
-    def _load_spilled_sequences(self, path: pathlib.Path) -> pl.DataFrame:
+    def load_execution_value(self, path: pathlib.Path) -> pl.DataFrame:
         """Restore sampled rows and the matching stable index."""
         index_path = path / "sequence_index.parquet"
         self.sequence_index = (

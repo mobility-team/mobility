@@ -1,5 +1,4 @@
 from typing import Any
-import hashlib
 
 import numpy as np
 import polars as pl
@@ -8,6 +7,7 @@ from mobility.trips.group_day_trips.core.performance_trace import trace_simulati
 
 from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.graph import asset_graph_key
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
 from .demand_subgroups import DEMAND_UNIT_COLS
@@ -202,6 +202,10 @@ class ActivitySequences(InMemoryAsset):
         sampled_schedules = self._sample_schedules_with_replacement(
             profile_schedules,
             zone_profiles,
+            sampling_table_key=(
+                (asset_graph_key(self.activity_schedule_pool), self.inputs["generation_request_zone_ids"])
+                if self.activity_schedule_pool is not None else None
+            ),
         )
         return (
             sampled_schedules
@@ -217,6 +221,8 @@ class ActivitySequences(InMemoryAsset):
         self,
         profile_schedules: pl.DataFrame,
         zone_profiles: pl.DataFrame,
+        *,
+        sampling_table_key: tuple | None = None,
     ) -> pl.DataFrame:
         """Draw schedules in batches for each activity profile."""
         profile_cols = ["country", "activity_profile_id"]
@@ -231,20 +237,15 @@ class ActivitySequences(InMemoryAsset):
                 .with_columns(activity_draw_id=pl.lit(0, dtype=pl.UInt32))
             )
 
-        # Reuse the joined choices only when both their values and requested
-        # zones match. The draw and its random stream remain specific to a run.
-        sorted_schedules = profile_schedules.sort(profile_cols + ["activity_seq_id", "time_seq_id"])
-        sorted_zones = zone_profiles.sort(zone_cols)
-        digest = hashlib.sha256()
-        for frame in (sorted_schedules, sorted_zones):
-            digest.update(repr(frame.schema).encode())
-            digest.update(frame.hash_rows(seed=0).to_numpy().tobytes())
-        table_key = digest.digest()
+        # Schedule-pool inputs and requested zones identify the choice table.
+        # The random draw remains specific to each run's seed.
         grouped_schedules = (
-            self.shared_sampling_tables.get(table_key)
-            if self.shared_sampling_tables is not None else None
+            self.shared_sampling_tables.get(sampling_table_key)
+            if self.shared_sampling_tables is not None and sampling_table_key is not None else None
         )
         if grouped_schedules is None:
+            sorted_schedules = profile_schedules.sort(profile_cols + ["activity_seq_id", "time_seq_id"])
+            sorted_zones = zone_profiles.sort(zone_cols)
             grouped_schedules = sorted_schedules.with_columns(
                 p_plan=pl.col("plan_weight_mass")
                 / pl.col("plan_weight_mass").sum().over(profile_cols),
@@ -257,8 +258,8 @@ class ActivitySequences(InMemoryAsset):
                 on=profile_cols,
                 how="inner",
             )
-            if self.shared_sampling_tables is not None:
-                self.shared_sampling_tables[table_key] = grouped_schedules
+            if self.shared_sampling_tables is not None and sampling_table_key is not None:
+                self.shared_sampling_tables[sampling_table_key] = grouped_schedules
         grouped_schedules = grouped_schedules.with_columns(
             context_seed=pl.struct(profile_cols).hash(seed=self.seed),
         )

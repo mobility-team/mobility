@@ -6,6 +6,7 @@ from mobility.trips.group_day_trips.core.parameters import (
     GroupDayTripsParameters,
     GroupDayTripsRunParameters,
     GroupDayTripsOutputParameters,
+    GroupDayTripsPlanUpdateParameters,
     GroupDayTripsAdaptiveSearchParameters,
     BehaviorChangePhase,
 )
@@ -67,6 +68,28 @@ def test_step_and_batch_names_keep_the_existing_settings():
         GroupDayTripsRunParameters(**{"n_iterations": 2})
     with pytest.raises(ValueError, match="either seed or seeds"):
         GroupDayTripsRunParameters(seed=2, seeds=[3])
+
+
+@pytest.mark.parametrize(
+    ("parameter_class", "old_name", "new_name", "value"),
+    [
+        (GroupDayTripsRunParameters, "n_iterations", "n_steps", 2),
+        (GroupDayTripsRunParameters, "n_iter_per_cost_update", "n_steps_per_cost_update", 1),
+        (GroupDayTripsOutputParameters, "cache_iteration_events", "cache_step_events", True),
+        (BehaviorChangePhase, "start_iteration", "start_step", 1),
+        (GroupDayTripsPlanUpdateParameters, "n_warmup_iterations", "n_warmup_steps", 1),
+        (GroupDayTripsPlanUpdateParameters, "plan_probability_pruning_min_iteration", "plan_pruning_start_step", 2),
+        (GroupDayTripsPlanUpdateParameters, "plan_probability_pruning_retained_share", "min_plan_persons", 0.9),
+    ],
+)
+def test_old_iteration_parameters_explain_the_new_name(parameter_class, old_name, new_name, value):
+    with pytest.raises(ValueError, match=f"{old_name}.*{new_name}"):
+        parameter_class(**{old_name: value})
+
+
+def test_old_iteration_parameter_is_explained_in_nested_settings():
+    with pytest.raises(ValueError, match="n_iterations.*n_steps"):
+        GroupDayTripsParameters(run={"n_iterations": 2})
 
 
 def test_calibration_bins_keep_boundaries_labels_and_missing_values():
