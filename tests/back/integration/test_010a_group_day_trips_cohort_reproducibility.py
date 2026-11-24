@@ -356,7 +356,7 @@ def test_result_and_cohort_identity_include_other_scenario_timetable(test_data, 
     with pytest.raises(RuntimeError, match="Create a new experiment"):
         old_request.get()
     with pytest.raises(RuntimeError, match="Create a new experiment"):
-        experiment.run("weekday", scenario="default").get()
+        experiment.run("weekday", scenario="default").table("plan_steps")
     after = identities()
     assert before[0] == after[0]
     assert all(old != new for old, new in zip(before[1:], after[1:]))
@@ -1589,7 +1589,7 @@ def test_direct_final_state_matches_full_cohort(test_data, monkeypatch):
 def test_directly_constructed_run_uses_same_cohort_engine(test_data):
     setup = make_setup(test_data, n_steps=1)
     reference = setup.experiment("weekday", scenarios=["default"], replication=0).run("weekday")
-    expected = reference.get()
+    expected = reference._execute()
     standalone = Run(
         population=reference.population, transport_costs=reference.transport_costs,
         activities=reference.activities, modes=reference.modes, surveys=reference.surveys,

@@ -333,6 +333,10 @@ class Run:
             "for a result table, or run.results() for analysis."
         )
 
+    def parameters_dataframe(self, recursive: bool = True):
+        """Describe the parameters used to build this run's final state."""
+        return self.final_iteration_state.parameters_dataframe(recursive=recursive)
+
     def _ensure_coordinator(self) -> None:
         """Give a directly constructed run the same engine as an experiment."""
         if self.coordinated_run_asset is None:

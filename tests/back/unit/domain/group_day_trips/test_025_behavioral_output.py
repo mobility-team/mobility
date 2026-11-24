@@ -15,7 +15,7 @@ from mobility.trips.group_day_trips.core.coordinated_run_result import current_c
 from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePoolResult
 import mobility.trips.group_day_trips.core.multi_scenario_run as coordinated_module
 import mobility.trips.group_day_trips.results.simulation_runner as runner_module
-from mobility.trips.group_day_trips.core.parameters import GroupDayTripsParameters
+from mobility.trips.group_day_trips.core.parameters import GroupDayTripsParameters, GroupDayTripsPlanUpdateParameters
 from mobility.trips.group_day_trips.core.run_state import RunState
 from mobility.trips.group_day_trips.core.run import Run
 from mobility.trips.group_day_trips.iterations.iterations import Iterations
@@ -24,6 +24,18 @@ import mobility.trips.group_day_trips.iterations.iteration_assets as iteration_a
 from mobility.trips.group_day_trips.transitions.transition_schema import TRANSITION_EVENT_SCHEMA
 from mobility.runtime.assets.resolver import AssetResolver, asset_resolution_context
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+
+
+def test_run_parameter_report_includes_upstream_settings():
+    run = object.__new__(Run)
+    settings = GroupDayTripsPlanUpdateParameters(n_warmup_steps=3)
+    run.final_iteration_state = InMemoryAsset({"upstream": InMemoryAsset({"settings": settings})})
+
+    report = run.parameters_dataframe()
+    row = report.loc[report["field_name"] == "n_warmup_steps"].iloc[0]
+    assert row["value"] == 3
+    assert row["value_source"] == "explicit"
+    assert run.parameters_dataframe(recursive=False).empty
 
 
 @pytest.mark.parametrize("coordinated", [True, False])
