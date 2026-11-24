@@ -156,7 +156,9 @@ class Run(InMemoryAsset):
         # Version changes invalidate results when candidate identity or
         # numerical calculations used by the model change.
         run_context_inputs = {
-            "version": 61 if parameters.destination_sequences.sampling_method == "utility" else 56,
+            # Stay-home utility uses the full 24 hours, including when scoring
+            # candidates through the shared-section path.
+            "version": 62 if parameters.destination_sequences.sampling_method == "utility" else 57,
             "population": population,
             "activities": activities,
             "modes": modes,
