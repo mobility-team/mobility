@@ -17,12 +17,12 @@ def select_surveys_for_population(
     }
 
     missing_countries = sorted(population_countries - survey_countries)
-    if missing_countries:
-        raise ValueError(
-            "PopulationGroupDayTrips requires at least one survey for each population country. "
-            f"Missing survey coverage for: {', '.join(missing_countries)}. "
-            f"Provided survey countries: {', '.join(sorted(survey_countries))}."
-        )
+    # if missing_countries:
+    #     raise ValueError(
+    #         "PopulationGroupDayTrips requires at least one survey for each population country. "
+    #         f"Missing survey coverage for: {', '.join(missing_countries)}. "
+    #         f"Provided survey countries: {', '.join(sorted(survey_countries))}."
+    #     )
 
     unused_countries = sorted(survey_countries - population_countries)
     if unused_countries:
