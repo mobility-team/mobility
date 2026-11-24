@@ -60,6 +60,31 @@ def test_previous_state_lifetime_accounts_for_consumed_precomputed_evaluation(mo
     assert (asset.previous_state in released) is (not coordinated)
 
 
+def test_restored_cached_state_does_not_rewrite_checkpoint(monkeypatch):
+    """A resolver may return an already restored state without running its loader again."""
+    asset = object.__new__(IterationStateAsset)
+    asset.coordinated_candidate_plan_steps = None
+    asset.coordinated_evaluation = None
+    asset.previous_state = asset.seeds = asset.activity_sequences = object()
+    asset.destination_sequences = SimpleNamespace(sequence_index=None, previous_sequence_index=None)
+    asset.mode_sequences = SimpleNamespace(sequence_index=None, previous_sequence_index=None)
+    asset.transport_costs = SimpleNamespace()
+    asset.iteration = 1
+    asset.parameters = SimpleNamespace(run=SimpleNamespace(n_steps=1))
+    asset._checkpoint_saved = False
+    asset._loaded_checkpoint = False
+    asset.resume_checkpoint_loader = lambda: None
+    writes = []
+    asset.checkpoint_callback = lambda *args: writes.append(args)
+    resolver = SimpleNamespace(execution_cost_consumer=lambda current: nullcontext(),
+        get_in_memory_asset=lambda *args, **kwargs: SimpleNamespace(rng_state=(1, 2, 3)),
+        release_in_memory_asset=lambda value: None, consume_execution_cost_state=lambda value: None)
+    monkeypatch.setattr(iteration_assets_module, "get_current_asset_resolver", lambda: resolver)
+    asset.get()
+    assert writes == []
+    assert asset._checkpoint_saved
+
+
 def test_transition_history_scans_recorded_files(tmp_path):
     """A requested transition history must not load every step at once."""
     run = object.__new__(Run)
@@ -117,7 +142,7 @@ def test_direct_run_get_requests_only_the_final_state(monkeypatch):
 
 
 @pytest.mark.parametrize("contents,expected_resume", [
-    ('{"version": 2, "cohort_hash": "cohort", "iteration": 1, "files": {}}', True),
+    ('{"version": 3, "cohort_hash": "cohort", "iteration": 1, "files": {}, "diagnostics": [], "mnl_flows": {}}', True),
     ('{"version": 2, "cohort_hash": "other", "iteration": 1, "files": {}}', False),
     ('{"version": 2, "cohort_hash": "cohort", "iteration": 2, "files": {}}', False),
     ('{"version": 2, "cohort_hash": "cohort", "iteration": true, "files": {}}', False),
@@ -159,8 +184,14 @@ def test_checkpoint_manifest_is_published_atomically(tmp_path, monkeypatch):
     coordinator._checkpoint_file_hashes = lambda iteration: {}
     coordinator._write_checkpoint_manifest(1)
     assert json.loads(target.read_text(encoding="utf-8")) == {
-        "version": 2, "cohort_hash": "cohort", "iteration": 1, "files": {}
+        "version": 3, "cohort_hash": "cohort", "iteration": 1, "files": {}, "diagnostics": [], "mnl_flows": {}
     }
+
+    diagnostics = [{"flow_change_by_mode": [{"category": "car", "trips": 2.0, "flow_change_index": 0.1}]}]
+    coordinator._write_checkpoint_manifest(1, diagnostics=diagnostics, mnl_flows={0: pl.DataFrame({"volume": [2.0]})})
+    saved = json.loads(target.read_text(encoding="utf-8"))
+    assert list(saved["diagnostics"][0]["flow_change_by_mode"][0]) == ["category", "trips", "flow_change_index"]
+    assert pl.read_parquet(saved["mnl_flows"]["0"]["path"])["volume"].to_list() == [2.0]
     original = target.read_bytes()
 
     def fail_replace(source, destination):
@@ -170,7 +201,7 @@ def test_checkpoint_manifest_is_published_atomically(tmp_path, monkeypatch):
     with pytest.raises(OSError, match="publication failed"):
         coordinator._write_checkpoint_manifest(1)
     assert target.read_bytes() == original
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["manifest.json"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["manifest.json", "manifest_mnl_0.parquet"]
 
 
 @pytest.mark.parametrize("error", [OSError("disk failure"), KeyboardInterrupt()])
@@ -226,7 +257,7 @@ def test_changed_transition_events_disable_resume_for_the_whole_cohort(tmp_path)
             ),
         )
 
-    coordinator._write_checkpoint_manifest(1)
+    coordinator._write_checkpoint_manifest(1, mnl_flows={key: pl.DataFrame() for key in coordinator.runs})
     coordinator._prepare_checkpoint_resume()
     assert all(state.resume_checkpoint_loader is not None for state in states)
     states[0].transition_events_asset.cache_path.write_bytes(b"altered")
@@ -306,6 +337,56 @@ def behavioral_state(active_people):
         destination_saturation=pl.DataFrame(), costs=pl.DataFrame(), start_step=1,
         current_plan_steps=steps,
     )
+
+
+def test_coordinated_resume_restores_diagnostics_without_repeating_search(tmp_path, monkeypatch):
+    """A saved first step supplies both state and history to the next step."""
+    parameters = GroupDayTripsParameters(run={"n_steps": 2}, outputs={"checkpoint_each_step": True})
+    initial = behavioral_state(20)
+    assets = [SimpleNamespace(iteration=i, resume_checkpoint_loader=lambda: None,
+                              get=lambda i=i: behavioral_state(20 + 10 * i)) for i in (1, 2)]
+    run = SimpleNamespace(parameters=parameters, scenario="default", sensitivity_case_id="base", replication=0,
+                          initial_iteration_state=SimpleNamespace(get=lambda: initial), iteration_state_assets=assets,
+                          population=SimpleNamespace(parameters=SimpleNamespace(sample_size=1)))
+    coordinator = SimpleNamespace(parameters=parameters, runs={0: run}, run_keys=[0], _active_result=None)
+    coordinator._log_plan_distribution = lambda **kwargs: None
+    coordinator._clear_step_inputs = lambda asset: None
+    coordinator._checkpoint_manifest_path = lambda step: tmp_path / f"{step}.json"
+    calls = []
+
+    def advance(step, states, **kwargs):
+        calls.append(step)
+        assert_frame_equal(states[0].current_plans, behavioral_state(20 + 10 * (step - 1)).current_plans)
+        state = behavioral_state(20 + 10 * step)
+        inner = {"diagnostics": [], "search_batches": 1, "generation_effort_used": 1,
+                 "activity_profile_cell_count_by_scenario": {0: 0},
+                 "covered_activity_profile_cell_count_by_scenario": {0: 0},
+                 "pool": SimpleNamespace(candidate_ids=[1]), "scored_candidate_scope_by_scenario": {0: "all"},
+                 "infeasible_counts": {0: 0}, "missing_cost_row_counts": {0: 0}, "invalid_cost_row_counts": {0: 0},
+                 "convergence_by_run_key": {0: SimpleNamespace(flow_changes={}, base_gap_changes={}, converged=False)},
+                 "mnl_od_mode_flows": {}}
+        return {0: assets[step - 1]}, {0: state}, inner
+
+    coordinator._advance_cohort_step = advance
+    coordinator._write_checkpoint_manifest = lambda step, diagnostics, mnl_flows: (
+        coordinator._checkpoint_manifest_path(step).write_text(
+            json.dumps({"diagnostics": diagnostics, "mnl_flows": {}}), encoding="utf-8")
+    )
+    monkeypatch.setattr(runner_module.SimulationRunner, "_final_requirements", lambda *args: (False, False))
+    runner = runner_module.SimulationRunner(requests=[], resolver=None)
+    coordinator._prepare_checkpoint_resume = lambda: 0
+    baseline = runner._run_cohort(coordinator, lambda step: None)
+    baseline_diagnostics = baseline.final_states_by_run_key[0].adaptive_search_diagnostics
+    assert calls == [1, 2]
+
+    calls.clear()
+    coordinator._prepare_checkpoint_resume = lambda: 1
+    consumed = []
+    resumed = runner._run_cohort(coordinator, consumed.append)
+    assert calls == [2]
+    assert consumed == [1, 2]
+    assert_frame_equal(resumed.final_states_by_run_key[0].current_plans, baseline.final_states_by_run_key[0].current_plans)
+    assert_frame_equal(resumed.final_states_by_run_key[0].adaptive_search_diagnostics, baseline_diagnostics)
 
 
 def test_cohort_step_uses_all_pre_step_states_before_updating_scenarios(monkeypatch):
@@ -486,7 +567,7 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
         }
 
     monkeypatch.setattr(coordinator, "_run_inner_loop", inner)
-    monkeypatch.setattr(coordinator, "_write_checkpoint_manifest", lambda iteration: None)
+    monkeypatch.setattr(coordinator, "_write_checkpoint_manifest", lambda iteration, **kwargs: None)
     monkeypatch.setattr(coordinator, "_log_plan_distribution", lambda **kwargs: None)
 
     def final_cost_asset(run, iteration, previous_state):
@@ -538,7 +619,7 @@ def test_outer_origins_and_final_trips_keep_behavioral_population(iterations, mo
     # execute the complete cohort again instead of returning that history.
     monkeypatch.setattr(AssetResolver, "retain_assets_shared_by_roots", lambda *args: None)
     before = len(inner_calls)
-    coordinator.get(step_consumer=lambda iteration: None)
+    coordinator.get(step_consumer=lambda iteration, **kwargs: None)
     assert not hasattr(coordinator, "_cached_result")
     later = coordinator.get()
     assert len(inner_calls) == before + 2 * iterations
@@ -588,7 +669,7 @@ def test_stable_replications_complete_the_configured_outer_iterations(monkeypatc
             }
 
         monkeypatch.setattr(coordinator, "_run_inner_loop", inner)
-        monkeypatch.setattr(coordinator, "_write_checkpoint_manifest", lambda iteration: None)
+        monkeypatch.setattr(coordinator, "_write_checkpoint_manifest", lambda iteration, **kwargs: None)
         monkeypatch.setattr(coordinator, "_log_plan_distribution", lambda **kwargs: None)
         monkeypatch.setattr(coordinator, "_final_transport_cost_asset", lambda *args: SimpleNamespace(
             get_costs_by_od=lambda metrics: pl.DataFrame(),

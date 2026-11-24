@@ -27,9 +27,9 @@ CANDIDATE_ID_COLS = ["candidate_id_1", "candidate_id_2"]
 
 
 @trace_simulation_step("hash candidate content")
-def add_candidate_ids(candidate_plan_steps: pl.DataFrame) -> pl.DataFrame:
-    """Add a stable identity for complete plan content, independent of local ids."""
-    missing = set(PLAN_KEY_COLS + PLAN_CONTENT_COLUMNS).difference(candidate_plan_steps.columns)
+def candidate_content_ids(candidate_plan_steps: pl.DataFrame, group_columns: list[str]) -> pl.DataFrame:
+    """Identify ordered plan contents once for the requested grouping."""
+    missing = set(group_columns + PLAN_CONTENT_COLUMNS).difference(candidate_plan_steps.columns)
     if missing:
         raise ValueError(
             "Candidate plan steps are missing columns needed for candidate identity: "
@@ -61,13 +61,18 @@ def add_candidate_ids(candidate_plan_steps: pl.DataFrame) -> pl.DataFrame:
         pl.col("to"),
         pl.col("mode").cast(pl.String),
     )
-    plan_content = add_ordered_key_hashes(
+    return add_ordered_key_hashes(
         normalized_steps,
-        group_cols=PLAN_KEY_COLS,
+        group_cols=group_columns,
         order_col="seq_step_index",
         step_content=step_content,
         key_prefix="candidate_id",
-    ).select(PLAN_KEY_COLS + ["candidate_id_1", "candidate_id_2"])
+    ).select(group_columns + ["candidate_id_1", "candidate_id_2"])
+
+
+def add_candidate_ids(candidate_plan_steps: pl.DataFrame) -> pl.DataFrame:
+    """Add a stable identity for complete plan content, independent of local ids."""
+    plan_content = candidate_content_ids(candidate_plan_steps, PLAN_KEY_COLS)
 
     return (
         candidate_plan_steps
@@ -99,9 +104,21 @@ def represented_od_mode_flows(current_plan_steps: pl.DataFrame, *, include_activ
 @trace_simulation_step("aggregate inner allocation flows")
 def allocation_od_mode_flows(
     allocation: pl.DataFrame, possible_plan_steps: pl.DataFrame | pl.LazyFrame, *, include_activity: bool = False,
+    shared_plan_ids: pl.DataFrame | None = None, shared_steps: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Reduce allocated plans to trip flows without building wide step rows."""
     columns = OD_MODE_COLUMNS + (["activity"] if include_activity else [])
+    if shared_plan_ids is not None and shared_steps is not None:
+        # Attach the shared physical steps only to allocated plans. Keep each
+        # allocation separate until the final sorted sum, preserving its order.
+        return (
+            allocation.lazy().filter(pl.col("mode_seq_id") != 0).select("plan_id", "n_persons")
+            .join(shared_plan_ids.lazy(), on="plan_id", how="left")
+            .join(shared_steps.lazy().select(["_timing_plan"] + columns), on="_timing_plan", how="left")
+            .group_by(columns)
+            .agg(volume=pl.col("n_persons").sort().implode().list.sum())
+            .sort(columns).collect(engine="streaming")
+        )
     return (
         allocation.lazy()
         .filter(pl.col("mode_seq_id") != 0)

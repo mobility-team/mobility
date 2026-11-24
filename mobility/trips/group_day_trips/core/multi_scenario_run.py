@@ -21,7 +21,7 @@ from mobility.runtime.assets.graph import asset_graph_key
 from mobility.runtime.assets.resolver import get_current_asset_resolver
 from mobility.runtime.assets.input_hashing import hash_inputs
 from mobility.activities.activity import (
-    resolve_activity_arrival_time_rigidity,
+    resolve_activity_time_rigidity,
     resolve_activity_parameters,
 )
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
@@ -30,11 +30,12 @@ from mobility.trips.group_day_trips.iterations.iteration_assets import Iteration
 from mobility.trips.group_day_trips.plans.activity_sequences import ActivitySequences
 from mobility.trips.group_day_trips.plans.destination_sequences import DestinationSequences, TravelOptionsCache
 from mobility.trips.group_day_trips.plans.demand_subgroups import DEMAND_UNIT_COLS
-from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps
+from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps, PLAN_COLUMNS
 from mobility.trips.group_day_trips.plans.mode_sequence_search.mode_sequences import ModeSequences
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 from mobility.trips.group_day_trips.plans.plan_schedule_updater import PlanScheduleUpdater
+from mobility.trips.group_day_trips.plans.factored_plan_scoring import SectionScoreCache
 from mobility.trips.group_day_trips.plans.scoring_contexts import (
     ScoringContexts, ScoringLookup, ScoringMemoryBudget,
 )
@@ -53,6 +54,7 @@ from mobility.trips.group_day_trips.core.multi_scenario import (
     CANDIDATE_ID_COLS,
     InnerLoopConvergence,
     add_candidate_ids,
+    candidate_content_ids,
     allocation_od_mode_flows,
     flow_change_index,
     flow_change_breakdown,
@@ -97,6 +99,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         }
         self.parameters = first_run.parameters
         self._scoring_context_cache = {}
+        self._section_structure_cache = {}
         self._active_result: CoordinatedRunResult | None = None
         self._is_running = False
         super().__init__(
@@ -123,7 +126,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 "candidate_history_policy": "physical_plan_age_per_replication_v3",
                 "behavior_evaluation_policy": "score_current_pool_v2",
                 "inner_attachment_policy": "scoring_contexts_v1",
-                "checkpoint_manifest_version": 2,
+                "checkpoint_manifest_version": 3,
                 "runs": tuple(
                     (
                         run_key,
@@ -148,6 +151,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
             return super().get(*args, **kwargs)
         finally:
             self._scoring_context_cache.clear()
+            self._section_structure_cache.clear()
             if kwargs.get("step_consumer") is not None:
                 for run in self.runs.values():
                     for state_asset in run.iteration_state_assets:
@@ -326,10 +330,10 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 else:
                     state.candidate_plan_steps = replace(candidates, **{name: match})
 
-    def _prepare_checkpoint_resume(self) -> None:
+    def _prepare_checkpoint_resume(self) -> int:
         """Resume only when every scenario has the same complete cohort checkpoint."""
         if not self.parameters.outputs.checkpoint_each_step:
-            return
+            return 0
 
         resume_iterations = [
             run.iterations.get_resume_iteration(self.parameters.run.n_steps)
@@ -341,7 +345,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
             or len(set(resume_iterations)) != 1
         ):
             self._clear_resume_checkpoint_loaders()
-            return
+            return 0
 
         resume_iteration = int(resume_iterations[0])
         all_scenario_checkpoints_ready = all(
@@ -360,20 +364,23 @@ class MultiScenarioRunAsset(InMemoryAsset):
                     self._checkpoint_manifest_matches(iteration)
                     for iteration in range(1, resume_iteration + 1)
                 )
-            except (OSError, ValueError, UnicodeError):
+            except (OSError, ValueError, UnicodeError, KeyError, TypeError, AttributeError):
                 manifest_matches = False
         if not manifest_matches or not all_scenario_checkpoints_ready:
             logging.info(
                 "Coordinated checkpoints are incomplete or belong to a different "
-                "scenario cohort; recomputing every scenario from the start."
+                "scenario cohort; recomputing every scenario from the start "
+                "(step=%s, states_ready=%s, manifests_match=%s).",
+                resume_iteration, all_scenario_checkpoints_ready, manifest_matches,
             )
             self._clear_resume_checkpoint_loaders()
-            return
+            return 0
 
         logging.info(
             "Resuming the coordinated scenario cohort from step %s.",
             resume_iteration,
         )
+        return resume_iteration
 
     def _clear_resume_checkpoint_loaders(self) -> None:
         """Prevent one scenario from resuming without its cohort partners."""
@@ -416,28 +423,47 @@ class MultiScenarioRunAsset(InMemoryAsset):
         manifest = json.loads(self._checkpoint_manifest_path(iteration).read_text(encoding="utf-8"))
         return (
             isinstance(manifest, dict)
-            and manifest.get("version") == 2
+            and manifest.get("version") == 3
             and manifest.get("cohort_hash") == self._checkpoint_cohort_hash
             and type(manifest.get("iteration")) is int
             and manifest.get("iteration") == iteration
             and manifest.get("files") == self._checkpoint_file_hashes(iteration)
+            and isinstance(manifest.get("diagnostics"), list)
+            and (iteration != self.parameters.run.n_steps or
+                 set(manifest.get("mnl_flows", {})) == {str(key) for key in self.runs})
+            and all(
+                pathlib.Path(item["path"]).is_file()
+                and hashlib.sha256(pathlib.Path(item["path"]).read_bytes()).hexdigest() == item["sha256"]
+                for item in manifest.get("mnl_flows", {}).values()
+            )
         )
 
     @trace_simulation_step("checkpoint manifest")
-    def _write_checkpoint_manifest(self, iteration: int) -> None:
+    def _write_checkpoint_manifest(self, iteration: int, diagnostics=None, mnl_flows=None) -> None:
         """Mark an outer iteration resumable only after every scenario completes."""
         if not self.parameters.outputs.checkpoint_each_step:
             return
         manifest_path = self._checkpoint_manifest_path(iteration)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        flow_files = {}
+        for run_key, flows in (mnl_flows or {}).items():
+            path = manifest_path.with_name(f"{manifest_path.stem}_mnl_{run_key}.parquet")
+            temporary = path.with_suffix(".tmp")
+            try:
+                flows.write_parquet(temporary)
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            flow_files[str(run_key)] = {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
         payload = json.dumps(
             {
-                "version": 2,
+                "version": 3,
                 "cohort_hash": self._checkpoint_cohort_hash,
                 "iteration": iteration,
                 "files": self._checkpoint_file_hashes(iteration),
+                "diagnostics": diagnostics or [],
+                "mnl_flows": flow_files,
             },
-            sort_keys=True,
         )
         fd, temporary_path = tempfile.mkstemp(
             prefix=f".{manifest_path.name}.", suffix=".tmp", dir=manifest_path.parent
@@ -450,13 +476,17 @@ class MultiScenarioRunAsset(InMemoryAsset):
             pathlib.Path(temporary_path).unlink(missing_ok=True)
 
     def remove_checkpoint_manifests(self) -> None:
-        """Remove this scenario cohort's completion markers."""
+        """Remove this scenario cohort's completion markers and saved flows."""
         manifest_folder = self._checkpoint_manifest_path(1).parent
         if manifest_folder.exists():
             for manifest_path in manifest_folder.glob(
                 f"{self._checkpoint_cohort_hash}_iteration_*.json"
             ):
                 manifest_path.unlink()
+            for flow_path in manifest_folder.glob(
+                f"{self._checkpoint_cohort_hash}_iteration_*_mnl_*.parquet"
+            ):
+                flow_path.unlink()
 
     @trace_simulation_step("inner loop")
     def _run_inner_loop(
@@ -551,7 +581,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         # Bound retained scoring lookups across the whole scenario cohort.
         scoring_memory = ScoringMemoryBudget(max_bytes=512 * 1024 * 1024)
         scoring_lookups = self._build_scoring_lookups(
-            fixed_states, state_assets, cost_assets, iteration, max_search_batches, scoring_memory,
+            fixed_states, state_assets, cost_assets, iteration, scoring_memory,
         )
         convergence_by_group = {
             group: InnerLoopConvergence(
@@ -762,7 +792,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                     state_asset,
                                     iteration,
                                 ),
-                                arrival_time_rigidity_by_activity=self._arrival_time_rigidity(
+                                activity_time_rigidity_by_activity=self._activity_time_rigidity(
                                     run,
                                     state_asset,
                                     iteration,
@@ -798,7 +828,11 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 .filter(~pl.col("is_feasible").fill_null(False))
                                 .select(DEMAND_UNIT_COLS).unique()
                             )
-                        compact_plan_indices_by_run_key[scenario] = evaluation.plan_id_index
+                        # Section evaluations use a fresh per-batch temporary
+                        # index; only the outer demand-unit index is persistent.
+                        compact_plan_indices_by_run_key[scenario] = (
+                            None if evaluation.shared_plan_ids is not None else evaluation.plan_id_index
+                        )
                         evaluation_demand_groups = (
                             evaluation.scoring_contexts.demand_groups
                             if evaluation.scoring_contexts is not None else state.demand_groups
@@ -865,11 +899,21 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 .height
                             )
                         if infeasible_plan_details.height:
-                            candidate_keys = (
-                                add_candidate_ids(evaluation.candidate_plan_steps)
-                                .select(PLAN_KEY_COLS + CANDIDATE_ID_COLS)
-                                .unique()
-                            )
+                            candidates = evaluation.candidate_plan_steps
+                            if isinstance(candidates, CompactCandidateSteps):
+                                needed = infeasible_plan_details.select(PLAN_KEY_COLS).lazy()
+                                member_keys = candidates.memberships_for_plans(needed).select(PLAN_KEY_COLS).unique()
+                                physical = candidates.physical_steps(needed).collect(engine="streaming")
+                                physical_ids = candidate_content_ids(physical, PLAN_COLUMNS)
+                                candidate_keys = (member_keys.join(physical_ids.lazy(), on=PLAN_COLUMNS)
+                                                  .collect(engine="streaming"))
+                                del needed, member_keys, physical, physical_ids
+                            else:
+                                candidate_keys = (
+                                    add_candidate_ids(candidates)
+                                    .select(PLAN_KEY_COLS + CANDIDATE_ID_COLS)
+                                    .unique()
+                                )
                             infeasible_candidates = (
                                 candidate_keys
                                 .join(infeasible_plan_details, on=PLAN_KEY_COLS, how="inner")
@@ -894,10 +938,12 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 .unique()
                                 .height
                             )
+                            del candidates, candidate_keys, infeasible_candidates
                         else:
                             infeasible_counts[scenario] = 0
                             missing_cost_row_counts[scenario] = 0
                             invalid_cost_row_counts[scenario] = 0
+                        del infeasible_plan_details
 
                         if logging.getLogger().isEnabledFor(logging.DEBUG):
                             logging.debug(
@@ -918,7 +964,9 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 iteration,
                                 batch_index + 1,
                                 run.scenario,
-                                evaluation.candidate_plan_steps.height,
+                                (evaluation.candidate_plan_steps.lazy().select(pl.len()).collect().item()
+                                 if isinstance(evaluation.candidate_plan_steps, CompactCandidateSteps)
+                                 else evaluation.candidate_plan_steps.height),
                                 possible_plan_utility.height,
                                 feasible_plans.height,
                                 non_stay_home_plans.select(PLAN_KEY_COLS).unique().height,
@@ -1027,10 +1075,12 @@ class MultiScenarioRunAsset(InMemoryAsset):
                         else:
                             flows_by_scenario[scenario] = allocation_od_mode_flows(
                                 allocation, evaluation.possible_plan_steps,
+                                shared_plan_ids=evaluation.shared_plan_ids, shared_steps=evaluation.shared_steps,
                             )
                         if track_flow_change and allocation is not None:
                             activity_flows = allocation_od_mode_flows(
                                 allocation, evaluation.possible_plan_steps, include_activity=True,
+                                shared_plan_ids=evaluation.shared_plan_ids, shared_steps=evaluation.shared_steps,
                             )
                             previous = previous_activity_flows.get(scenario)
                             batch_flow_changes[scenario] = (
@@ -1052,6 +1102,11 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                 completed = self._compact_completed_candidate_history(
                                     evaluation, state_asset.updater, scope,
                                     keep_all_steps=keep_inner_flows,
+                                    rigid_activities={
+                                        activity for activity, rigidity in
+                                        self._activity_time_rigidity(run, state_asset, iteration).items()
+                                        if rigidity == 1.0
+                                    },
                                     transition_parameters={
                                         "transport_zones": run.population.transport_zones,
                                         "transition_distance_threshold": update.transition_distance_threshold,
@@ -1068,9 +1123,10 @@ class MultiScenarioRunAsset(InMemoryAsset):
                                     reusable_completed[scope] = completed
                             evaluation = completed
                         final_evaluations[scenario] = evaluation
+                        completed = None
                         # Only the convergence summary and next-batch allocation
                         # are needed after this scenario's inner evaluation.
-                        del evaluation, possible_plan_utility, evaluation_demand_groups, allocation, current_steps
+                        del evaluation, possible_plan_utility, evaluation_demand_groups, allocation, current_steps, candidate_parts
 
                 reusable_evaluation = None
                 reusable_completed.clear()
@@ -1223,9 +1279,18 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 )
                 mnl_flows_by_scenario[scenario] = allocation_od_mode_flows(
                     allocation, evaluation.possible_plan_steps,
+                    shared_plan_ids=evaluation.shared_plan_ids, shared_steps=evaluation.shared_steps,
                 )
                 del allocation
 
+        # Retain section identities, never their scores, across cost updates.
+        # Scores belong to one fixed scenario and outer-step input set.
+        self._section_structure_cache = {
+            run_key: lookup.section_cache.sections
+            for run_key, lookup in scoring_lookups.items()
+            if lookup is not None and lookup.section_cache is not None
+            and lookup.section_cache.sections is not None
+        }
         return {
             "pool": pool,
             "time_sequence_steps": time_sequence_steps,
@@ -1315,7 +1380,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 restricted_scope, id(forced_contexts.get(run_key)) if restricted_scope is not None else None,
                 source.mode_sequences.population_segments, run.parameters.plan_update,
                 self._resolved_activity_parameters(run, state_asset, iteration),
-                self._arrival_time_rigidity(run, state_asset, iteration),
+                self._activity_time_rigidity(run, state_asset, iteration),
             )
             for previous, members in groups:
                 if previous == inputs:
@@ -1326,7 +1391,7 @@ class MultiScenarioRunAsset(InMemoryAsset):
         return [members for _, members in groups]
 
     def _build_scoring_lookups(
-        self, states, state_assets, cost_assets, iteration, max_search_batches, budget,
+        self, states, state_assets, cost_assets, iteration, budget,
     ):
         """Share step scores while their inputs are fixed and identical."""
         groups = []
@@ -1353,8 +1418,20 @@ class MultiScenarioRunAsset(InMemoryAsset):
             else:
                 groups.append((inputs, [run_key]))
         lookups = {}
+        previous_sections = getattr(self, "_section_structure_cache", {})
+        self._section_structure_cache = {}
         for _, members in groups:
-            lookup = ScoringLookup(budget) if len(members) > 1 or max_search_batches > 1 else None
+            # Even a single batch uses the compact lookup while it is being
+            # evaluated; retaining it afterwards is merely an optimization.
+            lookup = ScoringLookup(budget)
+            sections = next((previous_sections[key] for key in members if key in previous_sections), None)
+            # Leave most of the cohort budget for fresh trip and section
+            # scores. Old section identities are an optional speed cache.
+            if sections is not None and sections.estimated_size() <= budget.max_bytes // 4:
+                retained = budget.retain(None, sections)
+                if retained is not None:
+                    lookup.section_cache = SectionScoreCache(sections=retained, budget=budget)
+                    logging.debug("Reusing %d timed section identities for runs %s", retained.height, members)
             lookups.update({run_key: lookup for run_key in members})
         return lookups
 
@@ -1386,16 +1463,21 @@ class MultiScenarioRunAsset(InMemoryAsset):
     @staticmethod
     @trace_simulation_step("compact completed candidate history")
     def _compact_completed_candidate_history(
-        evaluation, updater, scope, *, keep_all_steps, transition_parameters,
+        evaluation, updater, scope, *, keep_all_steps, transition_parameters, rigid_activities=None,
     ):
         """Keep only plan details needed after a scenario has been scored."""
-        history = CompactCandidateSteps.from_frame(evaluation.candidate_plan_steps, prefer_compact=True)
+        history = evaluation.candidate_plan_steps
+        if isinstance(history, CompactCandidateSteps):
+            history = history.with_sections(rigid_activities)
+        else:
+            history = CompactCandidateSteps.from_frame(history, prefer_compact=True, rigid_activities=rigid_activities)
         steps = evaluation.possible_plan_steps.lazy()
         needs_distances = (
             transition_parameters["enable_transition_distance_model"]
             and math.isfinite(transition_parameters["transition_distance_threshold"])
         )
-        if not keep_all_steps and not needs_distances:
+        needed_ids = None
+        if (not keep_all_steps or evaluation.shared_step_details is not None) and not needs_distances:
             choices = (
                 evaluation.possible_plan_utility
                 .join(evaluation.time_sequence_steps.select("time_seq_id", "reference_time_seq_id").unique(),
@@ -1409,15 +1491,22 @@ class MultiScenarioRunAsset(InMemoryAsset):
                 evaluation.current_plans.select("plan_id"),
                 probabilities.select(pl.col("plan_id_trans").alias("plan_id")),
             ]).unique()
-            steps = steps.join(needed_ids.lazy(), on="plan_id", how="semi")
-        steps = steps.select(
-            PLAN_KEY_COLS + [
-                "plan_id", "seq_step_index", "activity", "from", "to", "mode", "distance", "time",
-                "duration_per_pers", "departure_time", "arrival_time", "next_departure_time",
-            ]
-        ).collect(engine="streaming")
+            if evaluation.shared_step_details is None:
+                steps = steps.join(needed_ids.lazy(), on="plan_id", how="semi")
+        if evaluation.shared_step_details is not None and needed_ids is not None:
+            steps = evaluation.shared_step_details.for_storage(needed_ids)
+        else:
+            steps = steps.select(
+                PLAN_KEY_COLS + [
+                    "plan_id", "seq_step_index", "activity", "from", "to", "mode", "distance", "time",
+                    "duration_per_pers", "departure_time", "arrival_time", "next_departure_time",
+                ]
+            ).collect(engine="streaming")
         return replace(
             evaluation, candidate_plan_steps=history, possible_plan_steps=steps,
+            shared_step_details=None,
+            shared_plan_ids=evaluation.shared_plan_ids if keep_all_steps else None,
+            shared_steps=evaluation.shared_steps if keep_all_steps else None,
         )
 
     @staticmethod
@@ -1640,15 +1729,15 @@ class MultiScenarioRunAsset(InMemoryAsset):
         )
 
     @staticmethod
-    def _arrival_time_rigidity(
+    def _activity_time_rigidity(
         run: Any,
         state_asset: Any,
         iteration: int,
     ) -> dict[str, float]:
         """Return schedule timing rigidity for the scenario and iteration."""
         if iteration == state_asset.iteration:
-            return state_asset.inputs["arrival_time_rigidity_by_activity"]
-        return resolve_activity_arrival_time_rigidity(
+            return state_asset.inputs["activity_time_rigidity_by_activity"]
+        return resolve_activity_time_rigidity(
             run.activities,
             iteration,
             scenario=run.scenario,

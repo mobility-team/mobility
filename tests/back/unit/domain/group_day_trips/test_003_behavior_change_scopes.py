@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
+import mobility.trips.group_day_trips.plans.plan_updater as plan_updater_module
 
 from mobility.trips.group_day_trips import (
     BehaviorChangePhase,
@@ -41,7 +42,7 @@ def test_intermediate_scoring_keeps_reachable_candidates_and_forced_contexts(sco
 
 
 @pytest.mark.parametrize("scope", list(BehaviorChangeScope))
-def test_shared_context_transitions_keep_unit_origins_and_history(scope):
+def test_shared_context_transitions_keep_unit_origins_and_history(scope, monkeypatch):
     units = pl.DataFrame({
         "demand_group_id": [1, 2, 3], "demand_subgroup_id": [0, 0, 0],
         "_score_context_id": [0, 0, 0],
@@ -102,6 +103,13 @@ def test_shared_context_transitions_keep_unit_origins_and_history(scope):
         compare_columns = [column for column in expected_context.columns if column != "utility"]
         assert_frame_equal(reachable.select(compare_columns).sort(PLAN_KEY_COLS),
                            expected_context.select(compare_columns).sort(PLAN_KEY_COLS))
+        if min_persons > 0 and iteration >= 2 and scope != BehaviorChangeScope.NO_TRANSITIONS:
+            monkeypatch.setattr(plan_updater_module, "_REACHABLE_ALLOCATION_BATCH_ROWS", 1)
+            batched = updater.estimate_reachable_allocation(
+                compact, origins, iteration, scope, min_plan_persons=min_persons, **settings,
+            )
+            assert_frame_equal(batched.select(compare_columns).sort(PLAN_KEY_COLS),
+                               expected_context.select(compare_columns).sort(PLAN_KEY_COLS), check_exact=True)
 
 
 def test_small_plan_allocations_move_to_the_same_subgroup_home():

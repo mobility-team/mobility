@@ -4,6 +4,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
+import json
 import logging
 from typing import Any
 
@@ -214,6 +215,7 @@ class SimulationRunner:
         resolver = self.resolver
         if step_consumer is None:
             step_consumer = lambda iteration: None
+        resume_iteration = 0
         if coordinator.parameters.outputs.checkpoint_each_step:
             # Runs can be executed again after their previous transient state
             # is released. A saved flag belongs to one execution, not the run
@@ -223,14 +225,14 @@ class SimulationRunner:
                 for run in coordinator.runs.values()
                 for asset in run.iteration_state_assets
             ):
-                coordinator._prepare_checkpoint_resume()
+                resume_iteration = coordinator._prepare_checkpoint_resume()
             for run in coordinator.runs.values():
                 for asset in run.iteration_state_assets:
                     asset._checkpoint_saved = False
                     asset._loaded_checkpoint = False
         last_step = coordinator.parameters.run.n_steps
         needs_final_outputs, needs_mnl_flows = self._final_requirements(self.requests, last_step)
-        track_flow_change = not self.requests or any(
+        track_flow_change = coordinator.parameters.outputs.checkpoint_each_step or not self.requests or any(
             isinstance(output, ScopedRunTable)
             and output.table_name == "adaptive_search_diagnostics"
             and (output.columns is None or any(column in output.columns for column in (
@@ -274,9 +276,56 @@ class SimulationRunner:
 
         for iteration in range(1, coordinator.parameters.run.n_steps + 1):
             with simulation_step("simulation step", phase="outer", step=iteration):
+                if iteration <= resume_iteration:
+                    state_assets = {
+                        run_key: run.iteration_state_assets[iteration - 1]
+                        for run_key, run in coordinator.runs.items()
+                    }
+                    next_states = {run_key: asset.get() for run_key, asset in state_assets.items()}
+                    manifest = json.loads(coordinator._checkpoint_manifest_path(iteration).read_text(encoding="utf-8"))
+                    diagnostics.extend(manifest["diagnostics"])
+                    if track_flow_change:
+                        previous_activity_flows = {
+                            run_key: represented_od_mode_flows(state.current_plan_steps, include_activity=True)
+                            for run_key, state in next_states.items()
+                        }
+                    if iteration > 1:
+                        for previous_asset in current_state_assets.values():
+                            if resolver is not None:
+                                resolver.release_in_memory_asset(previous_asset)
+                            coordinator._clear_step_inputs(previous_asset)
+                    current_states = next_states
+                    current_state_assets = state_assets
+                    actual_outer_iterations = iteration
+                    if iteration == last_step:
+                        mnl_od_mode_flows = {
+                            int(key): pl.read_parquet(item["path"])
+                            for key, item in manifest["mnl_flows"].items()
+                        }
+                        if needs_mnl_flows and not mnl_od_mode_flows:
+                            raise RuntimeError("Checkpoint is missing final inner-flow results.")
+                        final_states = (coordinator._finalize_cohort(iteration, current_states, current_state_assets)
+                                        if needs_final_outputs else current_states)
+                        for run_key, state in final_states.items():
+                            state.adaptive_search_diagnostics = pl.DataFrame(
+                                [{key: value for key, value in row.items() if key != "_run_key"}
+                                 for row in diagnostics if row["_run_key"] == run_key], infer_schema_length=None,
+                            )
+                    coordinator._active_result = CoordinatedRunResult(
+                        final_states_by_run_key=final_states or {},
+                        mnl_od_mode_flows_by_run_key=mnl_od_mode_flows or {},
+                        current_iteration=iteration, current_state_assets=current_state_assets,
+                    )
+                    try:
+                        with (resolver.pin_in_memory_assets(list(state_assets.values()))
+                              if resolver is not None else nullcontext()):
+                            step_consumer(iteration)
+                    finally:
+                        coordinator._active_result = None
+                    continue
                 state_assets, next_states, inner_result = coordinator._advance_cohort_step(
                     iteration, current_states,
-                    keep_inner_flows=iteration == last_step and needs_mnl_flows,
+                    keep_inner_flows=iteration == last_step and (needs_mnl_flows or coordinator.parameters.outputs.checkpoint_each_step),
                     **({"track_flow_change": True} if track_flow_change else {}),
                 )
                 diagnostics.extend(inner_result["diagnostics"])
@@ -291,7 +340,6 @@ class SimulationRunner:
                         plans=state.current_plans,
                         plan_steps=state.current_plan_steps,
                     )
-                coordinator._write_checkpoint_manifest(iteration)
                 actual_outer_iterations = iteration
                 outer_stop_reason = (
                     "completed_steps"
@@ -351,6 +399,12 @@ class SimulationRunner:
                             "stop_reason": outer_stop_reason,
                         }
                     )
+
+                coordinator._write_checkpoint_manifest(
+                    iteration,
+                    diagnostics=[row for row in diagnostics if row["outer_step"] == iteration],
+                    mnl_flows=inner_result["mnl_od_mode_flows"] if iteration == last_step else None,
+                )
 
                 # This diagnostic describes the final search estimate, before
                 # the behavioral update and its post-update transport costs.

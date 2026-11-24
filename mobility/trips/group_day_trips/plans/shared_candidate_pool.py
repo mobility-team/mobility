@@ -281,7 +281,7 @@ class SharedCandidatePool:
                         if isinstance(active_source, CompactCandidateSteps):
                             active_rows = (
                                 active_source.memberships_for_plans(active_keys)
-                                .join(active_source.steps.lazy(), on=PLAN_COLUMNS, how="inner")
+                                .join(active_source.physical_steps(active_keys), on=PLAN_COLUMNS, how="inner")
                                 .select(active_source.columns)
                                 .sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
                             )

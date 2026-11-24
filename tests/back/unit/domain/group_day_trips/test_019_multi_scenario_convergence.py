@@ -120,6 +120,20 @@ def test_inner_flows_do_not_depend_on_row_order():
     assert forward["volume"].item() == 1.0 + 2**-52
 
 
+def test_inner_flows_reuse_shared_steps_without_changing_sums():
+    allocation = pl.DataFrame({"plan_id": [1, 2, 3, 0], "mode_seq_id": [1, 1, 1, 0],
+                               "n_persons": [1.0, 2**-53, 2**-53, 20.0]})
+    references = pl.DataFrame({"plan_id": [1, 2, 3], "_timing_plan": [7, 7, 7]})
+    physical = pl.DataFrame({"_timing_plan": [7, 7], "from": [10, 20], "to": [20, 10],
+                            "mode": ["car", "walk"], "activity": ["work", "home"]})
+    expanded = references.join(physical, on="_timing_plan").drop("_timing_plan")
+    for include_activity in (False, True):
+        expected = allocation_od_mode_flows(allocation, expanded, include_activity=include_activity)
+        actual = allocation_od_mode_flows(allocation, expanded, include_activity=include_activity,
+                                          shared_plan_ids=references, shared_steps=physical)
+        assert_frame_equal(actual, expected, check_exact=True)
+
+
 def test_low_effort_defaults_keep_a_finite_inner_limit():
     """Keep the intended sampling defaults and reject an empty inner loop."""
     parameters = GroupDayTripsParameters()
@@ -213,7 +227,7 @@ def test_checkpoint_resume_requires_the_complete_scenario_cohort(
 
     # A cohort marker is written only after both scenario states are saved.
     if manifest_ready:
-        coordinator._write_checkpoint_manifest(1)
+        coordinator._write_checkpoint_manifest(1, mnl_flows={key: pl.DataFrame() for key in runs})
     for index, run in enumerate(runs.values()):
         run.iteration_state_assets[0].resume_checkpoint_loader = (
             object() if index < ready_scenarios else None

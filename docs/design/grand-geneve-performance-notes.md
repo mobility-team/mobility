@@ -2946,3 +2946,1567 @@ and 108.647. This supports the hypothesis that the cap targets attractive
 short trips, but one paired seed does not establish that it improves coverage
 of the full choice distribution. More seeds and heavier search, especially
 for work and longer-distance travel, are needed before using it as a default.
+
+### Direct home-zone survey-plan pool
+
+An experimental builder reads survey schedules and constructs one candidate
+per eligible schedule and single mode, with every origin and destination in
+the home zone. It uses no activity, destination or mode search. Schedules are
+restricted to the survey day/country and the context's allowed activities;
+every non-home activity must have positive local opportunity capacity. The
+experiment uses temporary IDs for one context and sends the resulting steps
+through the ordinary candidate evaluator. It is not a persistent simulation
+pool. Persistent sequence identities, scenario changes and behavioral scope
+still need integration before using it in a simulation.
+
+For Geneva's one-scenario initial state, 37,045 distinct weekday survey
+schedules reduce to 58 country/activity-set combinations. Counting those sets
+against all 9,898 scoring contexts, local opportunities and finite home-to-home
+mode costs takes 0.33 seconds without expanding candidate rows. It yields
+126,577,778 schedule/context pairs, 382,254,517 available-mode plan/context
+candidates and 1,487,051,202 step rows before timing feasibility. Most contexts
+have three available modes; 260 have four. These are compact counts, not
+measurements of allocating the full pool in memory.
+
+The prototype evaluated 21 selected contexts, spread across the population
+size range in each country plus one previously examined context. This is a
+diagnostic sample, not a representative estimate for Geneva. Preparing the
+schedule/activity sets once took 0.028 seconds. Building the context-specific
+rows took a median 0.008 seconds and ordinary evaluation a median 0.273 seconds
+per context, after initial data and costs were loaded. The entire probe's
+sampled Python peak RSS was 5.13 GiB, including initialization; it does not
+measure the peak of a full pool. Checking finite mode costs first removed an
+unavailable public-transport option in the three separately checked contexts;
+comparing plans by physical content showed identical utilities and allocations
+with or without the check. Reusing prepared survey schedules avoids rebuilding
+the activity sets for every context.
+
+For context 2946, the complete direct pool had 16,018 feasible alternatives
+including stay-home. Ten batches of the existing utility sampler had 31, four
+of which matched a direct plan by physical steps and had identical utility.
+For the union, counted once by physical content, generated-only alternatives
+held 0.0225% of fresh unrestricted MNL probability. Mean chosen utility rose
+from 96.31 to 114.25 and trips per represented person from 4.45 to 7.26. The
+union's OD/mode/activity flow-change index was 0.872. This comparison holds
+costs and opportunities fixed, and is not an outer-step outcome.
+
+All 21 sampled contexts had a higher best utility in the direct pool than in
+the ten-batch generated pool. Even assuming no overlap, the generated-only
+share of the combined fresh MNL was at most 0.217% in every sampled context;
+the median was 0.0136%. The median number of direct plans required to retain
+99% of fresh choice weight was 7,971 (maximum 25,825). For a hypothetical
+100-person subgroup, plans each receiving under one person held a median
+72.5% of fresh MNL weight. Dropping all such plans independently would lose
+their combined mass. Those fresh shares are not transition allocations.
+
+The actual full-replanning transition rules were also applied to a 100-person
+stay-home origin in context 2946 using the same fixed choice sets: logit scale
+0.25, revision probability 0.4, scaled utility window 1.0 and minimum gain
+0.1. The generated-only pool moved 39.99 people to one mobile plan averaging
+five trips; the union moved 40.00 people to five mobile plans averaging 9.00
+trips. Applying the one-person allocation floor to this same hypothetical
+origin removed none of those five targets. This is a single-origin sensitivity
+check, not a simulated second iteration or a congestion response.
+
+For pruning, comparing each direct plan against stay-home gives a conservative
+upper bound on its fresh MNL probability in the current fixed state. At a
+one-person threshold for 100 people, this bound identified only 37 plans out
+of 776,694 feasible plans across the 21 contexts. Treating the first score as
+a permanent upper bound would additionally require proving that later costs,
+activity values, timings and opportunities cannot improve. The experiment
+does not establish such a bound. Exhaustively adding survey schedules also
+changes the choice set: unlike sampling, it does not use survey weights to
+determine which schedules appear. High-utility plans in this experiment often
+contain many activity episodes, so the resulting trip patterns merit further
+investigation before introducing the pool by default.
+
+The source scoring context can combine demand groups with different car
+counts when their cost profile and other scoring keys match. In the first
+context, the stored representative happens to say zero cars, but its members
+include zero-, one- and two-or-more-car groups. These results should not be
+interpreted as a choice estimate solely for zero-car households.
+
+Reproduce the captures with `tests/manual/inspect_home_zone_pool.py`, the
+per-context summary with `tests/manual/analyze_home_zone_pool.py`, and the
+deduplicated union and transition check with
+`tests/manual/compare_home_zone_pool.py`. The scripts use the existing
+cache-only Geneva probe and its environment settings.
+
+The same transition check was repeated for a hypothetical 100-person stay-home
+origin in each of the 21 sampled contexts. The current Geneva utility window
+kept a median of four mobile targets (maximum nine), and the one-person floor
+removed none in that one-origin sensitivity. Each direct best utility exceeded
+the best generated utility by at least 12.75, greater than the four-utility
+transition window, so generated-only targets cannot pass that window for
+these origins. This does not establish behavior for occupied mobile origins,
+restricted replanning phases, other seeds, or after congestion. It does show why
+the large fresh-MNL tail cannot be equated directly with what the current
+behavioral transition actually retains.
+
+For the same origin and fixed choice sets, the normal transition function was
+then applied repeatedly for ten full-replanning steps, with the configured
+revision probability, gain window and one-person floor. By step ten, 99.39 of
+100 people were mobile in both cases. The generated-only pool retained one
+mobile plan averaging five trips; the combined pool retained five mobile plans
+averaging 9.05 trips. This holds the candidate sets and costs fixed throughout;
+it does not simulate candidate discovery, congestion or scenario changes.
+
+### Capping the direct pool to the top survey schedules
+
+A follow-up experiment kept at most 10, 100 or 1,000 survey schedules per
+scoring context, with each eligible single-mode plan for those schedules. It
+used the same 21 fixed-state contexts and ten-batch utility-sampling baseline
+as the previous section. Two rankings were compared:
+
+* Survey weight: sum the survey plan weights by country and schedule, as in
+  the existing schedule pool; filter activities and local opportunities first,
+  then retain the highest weights. This is not a CSP-specific ranking.
+* Home-zone utility: evaluate all eligible schedules' single-mode home-zone
+  plans in a first pass, rank each survey schedule by its best feasible mode,
+  then retain the top schedules and evaluate them normally. This is a fixed
+  initial-state ranking, not a guarantee for future scenario or cost changes.
+
+Applying a cap after local-opportunity and available-mode checks would reduce
+Geneva's theoretical 382,254,517 plan/context candidates before timing checks
+to 299,540 for k=10, 2,995,400 for k=100, or 29,953,748 for k=1,000. The
+numbers count one context and mode per candidate; the stay-home alternative
+is additional. Physical catalogue sharing can reduce storage, while infeasible
+timings can reduce the final scored choice set.
+
+In the 21 contexts, survey-weight k=10 had a median best-utility gap of 41.72
+relative to the full home-zone pool and did not beat the generated pool's best
+utility in any sampled context. Survey-weight k=100 beat the generated pool in
+18 contexts; k=1,000 did so in all 21. The first-pass utility ranking matched
+the full evaluator's score and ordering exactly in all 21 contexts for k=10,
+100 and 1,000. It requires scoring all eligible home-zone plans once, even
+though it retains only k schedules afterwards.
+
+For a stay-home origin under the current Geneva full-replanning transition
+window, utility-ranked k=10 included every target the full home-zone pool
+would retain in all 21 contexts (at most nine targets per context). This is a
+fixed-input, single-origin result, not evidence for restricted replanning,
+forced reassignment or future cost changes. In context 2946, normal repeated
+transitions on the deduplicated union of generated and utility-top-10 plans
+produced the same five mobile targets and 9.05 trips per mobile person after
+ten fixed-cost steps as the full home-zone pool. The unrestricted fresh-MNL
+weights differ: utility-top-10 retained a median 32.2% of the full pool's
+weight across the 21 contexts, top-100 65.9%, and top-1,000 92.5%.
+
+The utility first pass uses the existing per-step scorer, timing update and
+plan-utility formula. It avoids building the full modeled-time and plan index
+until after selection, then the ordinary evaluator scores the retained plans.
+A reusable index for the 54,724 existing survey timing sequences cost 0.033
+seconds and about 1.1 MB to build; one context's physical plans, utilities and
+allocations matched with and without reuse. A context-local scoring lookup can
+also be reused between first pass and final evaluation while inputs are fixed.
+The lookup is not valid across changed scenario costs or opportunity values.
+
+In one cold 21-context run, the first-pass rank took a median 0.113 seconds per
+context and the subsequent top-100 evaluation 0.054 seconds, excluding initial
+input loading, mode-availability checks and candidate construction. This is
+not a full-Geneva runtime measurement. By comparison, an uncapped evaluation
+with the survey time index reused took a median 0.184 seconds in a separate
+21-context run. Thus top-k substantially limits retained pool size but does not
+by itself eliminate the initial work of scoring every schedule. The experiment
+was run sequentially; its sampled Python peak RSS was about 5.14 GiB including
+initialization. Some analysis overlapped the cold run, so timing comparisons
+are indicative rather than controlled repetitions.
+
+The manual probe accepts `MOBILITY_HOME_POOL_TOP_K_VALUES` for survey-weight
+caps, `MOBILITY_HOME_POOL_UTILITY_K_VALUES` for the first-pass utility caps,
+and the `MOBILITY_HOME_POOL_TIME_INDEX_CACHE` and
+`MOBILITY_HOME_POOL_SCORE_CACHE` options for the fixed-input reuse experiment.
+`tests/manual/analyze_home_zone_topk.py` compares retained plans with the full
+pool and reports the tested transition targets. These remain manual experiments:
+no top-k pool or ranking has been added to production simulation state.
+
+A cold first-pass run, without a preceding full-pool evaluation, matched the
+prewarmed rankings in all 21 contexts. For utility-top-10, all 21 sets of
+feasible plan allocations also matched exactly. The cold first-pass ranking
+had a median 0.113 seconds per context, followed by a 0.059-second top-10
+normal evaluation using the just-built score lookup; the first availability
+check and candidate-row construction add work. The precomputed time index is
+reused only with the exact survey schedule table. Later scenario or congestion
+changes require fresh step scores and may change which schedules rank highest.
+
+### Full-Geneva home-zone ranking and lowest-effort simulation
+
+The direct home-zone prototype was run over all 9,898 initial scoring contexts,
+in batches of four, with eight Polars threads. It considered 382,254,517
+plan/context combinations and 1,487,051,202 step rows before timing feasibility.
+Building these batches took 39.6 s and ranking them took 637.7 s. The sampled
+Python peak during the ranking was 5.24 GiB. The 21 contexts previously checked
+against the full evaluator had no ranking differences. This is one measurement;
+it does not include later normal evaluation or establish a future utility bound.
+
+A separate experimental runner attached the selected top ten survey schedules
+per context, with their available uniform modes, to the ordinary generated pool.
+It checked four contexts against the simulation's actual initial scores before
+running. The ranking was prepared with congestion disabled; the simulation
+itself had road and opportunity congestion enabled. The prototype retains the
+initial selection while later costs change. It is not a production feature and
+its ordinary candidate-pool diagnostic does not include the directly attached
+home plans.
+
+One scenario and seed ran five full-replanning steps, revision probability 0.4,
+one activity, destination and mode draw and one search batch (one rough effort
+point per step). Input caches were reused and no memory limit was applied.
+The home-pool run took 115.4 s after the separate ranking, versus 67.2 s for a
+matching run without it. Sampled process-tree peak RSS was 7.72 versus 5.29 GiB.
+Across the five steps, the candidate-evaluation trace totaled 27.6 versus 4.2 s;
+these spans are nested within the overall runtime. The initial selection held
+2,545,362 context-step rows, represented by 912,444 distinct physical step rows
+after the run-local sequence IDs were assigned.
+
+Step wall times with the home pool were 7.5, 28.8, 17.6, 18.7 and 19.1 s;
+without it they were 3.5, 11.7, 8.8, 9.8 and 9.2 s. Two-second process-tree
+CPU samples averaged 419% and 346%, respectively, where 100% is one logical
+CPU. Initialization and final work are outside the step timings.
+
+The choice results changed substantially. At step five, the home-pool run had
+14.87 million trips versus 7.62 million in the baseline. Of those, 13.25 million
+(89%) had origin and destination in the same zone, versus 1.93 million (25%)
+in the baseline. This measure does not identify the traveler's home zone. The
+absolute difference in OD/mode/activity cells was 244% of baseline trip volume.
+This is a single seed and neither choice set is a validated reference. It does
+show that these additional alternatives change behavior much more than a mere
+performance optimization; earlier fixed-state checks found that high-utility
+home alternatives often have many activity episodes.
+
+Across the 98,980 selected context/schedule pairs, the unweighted mean was
+8.50 survey steps and the median was nine; one third had ten steps. The
+survey-weighted mean for all weekday survey schedules with steps was 3.66.
+The two figures use different weighting and populations, and neither includes
+a comparable count of stay-home days, but they show the selection's strong
+preference for longer schedules.
+
+The ranking trace showed repeated preparation of home-to-home profile costs in
+every batch. A second full-Geneva pass computed cost, distance and time for all
+required home-zone/profile pairs once, and reused those rows only for that fixed
+initial state. Batch construction and ranking together took 374.8 s, versus
+677.3 s without this reuse, approximately 45% less. The cached pass's sampled
+Python peak during ranking was 5.08 GiB versus 5.24 GiB. All 98,980 retained
+context/schedule pairs and their best utilities matched exactly between the two
+full runs; the 21 previously checked full rankings also matched. These are one
+run each. The saved costs must not be reused when profiles, scenario parameters
+or congestion costs change. Set `MOBILITY_HOME_BATCH_CACHE_COSTS=1` in the
+manual batch probe to try the reuse.
+
+The ranking and run harnesses are `tests/manual/inspect_home_zone_batched.py`
+and `tests/manual/run_home_zone_pool.py`. The latter is restricted to a fresh,
+single-scenario run using a ranking prepared for the same inputs; it is not a
+checkpoint/resume implementation.
+
+### High-effort home-zone comparison
+
+The same experiment was repeated with three activity, destination and mode draws
+and three search batches: 81 rough effort points per step. Both runs used the
+same settings as the low-effort comparison, including congestion, diagnostics,
+one scenario, one seed and five full-replanning steps.
+
+The baseline took 494.5 s and the home-pool run 648.1 s, excluding the separate
+677 s ranking. The sampled process-tree RSS peaks were 12.35 and 15.43 GiB;
+sampled mean CPU was 472% and 505%, respectively. Baseline step times were
+35.4, 96.7, 103.8, 114.7 and 119.0 s; home-pool step times were 47.2, 147.8,
+128.7, 144.5 and 155.8 s. Candidate evaluation totaled 203.1 and 305.8 s,
+respectively, within those steps.
+
+At step five, baseline and home-pool trips totaled 10.33 and 13.69 million;
+the within-zone shares were 42.5% and 78.5%. The OD/mode/activity absolute
+difference was 154.8% of the baseline's trip volume. At step one, both runs
+allocated about 936,500 people to mobile plans, but trips per mobile person
+averaged 5.92 without the pool and 9.15 with it.
+
+The pool also reduced sensitivity to effort in this single-seed comparison.
+At step five, the low-versus-high effort absolute OD/mode/activity difference
+was 143.7% of the high-effort trip volume without the pool, versus 74.8% with
+the pool. The reference volumes differ, so these percentages are not directly
+comparable as absolute errors. Dividing by the sum of the two trip totals gives
+the symmetric flow-change index: approximately 82.7% without the pool and
+35.9% with it. Lower effort sensitivity does not establish accuracy: the
+home-pool runs also shifted strongly toward long, within-zone plans.
+
+### Why the home-zone plans favor many activities
+
+The first-step fixed-state capture was analyzed further without running another
+simulation. Of 21 sampled scoring contexts, every context's fresh MNL allocation
+among mobile home-zone plans had a higher average trip count than the current
+country-and-activity-profile-weighted survey schedule sampler. The medians were
+7.51 and 3.73 trips, respectively. The best mobile plan had at least seven
+trips in every context, with a median of ten. In these samples, the median share
+of MNL mobile allocation on plans with eight or more trips was 51.4%; the
+corresponding survey sampler share was 5.8%. The survey sampler considers
+schedules compatible with allowed activities, whereas the home-zone pool also
+requires local opportunities and finite costs. The contexts were selected for
+coverage, not as a representative population sample.
+
+In context 2946 (French CSP fr-5, home zone 328), the best mobile plan scored
+127.10 compared with 66.41 for stay-home. Its nine within-zone car trips cost
+31.00 utility units in total; activity episodes contributed 99.81 and remaining
+home time contributed 58.29. The best two-trip plan scored 88.92: 23.64 from
+activity episodes, minus 6.89 travel cost, plus 72.17 for remaining home time.
+These are different survey schedules, not a controlled change in a single plan.
+
+The top nine-trip plan contains four shopping episodes totaling 3.67 hours. The
+normal activity formula scores each episode separately: together they contribute
+49.63 utility units. Scoring the same total duration as a single shopping
+episode with the same activity parameters gives 22.99, a difference of 26.64
+before changing any travel, timing or other activities. Splitting episodes is
+therefore rewarded by the existing formula in this example. Distinct shopping
+visits can have distinct value, so this observation alone does not establish what
+the correct activity model should be.
+
+Within-zone travel is not represented as a zero-length trip. The road/walk/bike
+path-cost preparation chooses five sampled buildings per zone for same-zone
+pairs, excludes pairs using the same building, routes the remaining building
+pairs and computes weighted averages. For zone 328, the captured per-leg values
+were: car 4.28 km, 5.9 minutes and 3.44 generalized cost units; bicycle 4.04 km,
+19.2 minutes and 4.32 units; walk 4.00 km, 66.8 minutes and 4.11 units. In this
+Geneva profile, the car cost is a 3.0 constant plus 4.5 per hour, with zero
+distance cost in the default scenario. Those are estimated zone averages, not
+actual route lengths between the specific activities. One scoring context can
+combine demand subgroups with different car ownership.
+
+Survey frequency affects discovery in the current sampler, not the ordinary
+utility calculation after a plan enters the choice set. Sampling weights are
+aggregated by country and allowed activity profile, not by the context's CSP.
+The top nine-trip schedule has about a 0.0095% chance in one such weighted
+schedule draw; 15 independent draws would see it at least once with probability
+about 0.14%, before destination and mode generation. The home-pool experiment
+instead inserts it directly. The schedule was observed in France, but not in
+the fr-5 survey rows; absence from a survey subsample does not establish that
+the schedule is impossible for that group.
+
+Two fixed-choice-set sensitivities help separate these effects. Both condition
+on mobile plans, use the captured feasible home-zone alternatives and use the
+Geneva logit scale of 0.25. Multiplying the mobile MNL weights by the country
+survey schedule weight changed the average trips per mobile person in the six
+checked contexts from 5.88–8.26 to
+5.51–8.18. This is a different choice model and could double-count survey
+frequency if combined naively with the current weighted sampler. In another
+calculation, all plans, travel costs, clock times and home-night utility were
+held fixed, but each non-home activity's durations were summed before applying
+the activity formula. The six averages fell to 4.32–5.44 trips; combining home
+episodes as well gave 3.85–4.89. In context 2946, the share of mobile MNL weight
+on plans with at least eight trips fell from 48.8% to 0.9% when all activity
+types were combined. Reconstructed original step utilities agreed to within
+7.2e-15. These are diagnostic counterfactuals, not proposed changes: they do not
+reschedule plans, allow for different values of distinct visits, run transitions,
+or establish model accuracy.
+
+The six detailed contexts were 2946, 1757, 5236, 6766, 7679 and 8927. Their
+one-step captures used the existing cache-only probe with congestion disabled;
+they are independent of the five-step simulation trajectories above. Reproduce
+the summaries with `tests/manual/analyze_home_zone_utility.py` and
+`tests/manual/analyze_home_zone_contexts.py` on the corresponding capture folder.
+
+### MATSim scoring and the zero-utility duration
+
+Mobility's activity-duration score uses the same logarithmic family as the
+[MATSim Charypar-Nagel score](https://www.matsim.org/files/book/partOne-latest.pdf),
+with activity-specific coefficients and opportunity terms. Both sum the scores
+of separate activity episodes. The MATSim relative formulation sets the zero
+utility duration to the typical duration multiplied by `exp(-1 / priority)`;
+its documented default priority is 1. Mobility uses mean survey duration
+multiplied by `exp(-min_activity_time_constant)`. Mobility's parameter defaults
+to 1, but the Geneva scenario sets it to 2. Thus the threshold in that scenario
+is about 13.5% of the reference duration instead of 36.8% with a coefficient
+of 1. Above the threshold, increasing the coefficient also increases the fixed
+component of the utility of every separately scored episode.
+
+The [MATSim activity scorer](https://matsim.org/doxygen/core_2scoring_2functions_2_charypar_nagel_activity_scoring_8java_source.html)
+also has a current linear penalty below the zero-utility duration; Mobility
+clips the logarithmic activity payoff to zero instead. The short-duration rule,
+time-window scoring, activity-specific coefficients and other model differences
+mean that changing Mobility's coefficient alone does not reproduce MATSim.
+MATSim's standard score does not automatically combine all repeated activities
+of one type, so a split-episode incentive is not necessarily eliminated by using
+the MATSim formula.
+
+As a fixed-choice-set sensitivity, the six detailed captures were rescored with
+the coefficient changed from 2 to 1 for both activity episodes and the residual
+home-night term. All other parameters, plan timings, travel costs and the
+captured feasible choice sets remained fixed. At logit scale 0.25, conditioning
+on mobile plans, mean trips fell from 7.26 to 3.09 for context 2946, from 7.73
+to 3.33 for 1757, from 5.88 to 2.55 for 5236, from 6.60 to 3.40 for 6766,
+from 8.26 to 4.11 for 7679 and from 6.44 to 3.21 for 8927. Their shares of
+mobile weight on eight-or-more-trip plans fell from 17–60% to 0–1.4%.
+This is not a new ranking or simulation: it does not recompute the home pool,
+stay-home probability, transitions, congestion or opportunity feedback. It
+shows strong sensitivity to this parameter, not that 1 is calibrated or that
+the split-episode effect is solved.
+
+### One shared activity-duration coefficient
+
+Seven shared coefficients, from 0.5 to 2 in steps of 0.25, were first tested
+on the same six fixed-state home-zone choice sets. Both the residual home-night
+term and stay-home utility were rescored. This is a fresh logit allocation,
+not an outer transition. For coefficient 2, the calculated mobile shares
+reproduced the captured allocations within 2.3e-16. The table compares trips
+per mobile person with the survey sampler's weighted average for the context's
+country and allowed activity profile:
+
+| Context | Country | Survey sampler | 1.0 | 1.25 | 1.5 | 2.0 |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 2946 | FR | 3.73 | 3.09 | 3.74 | 4.64 | 7.26 |
+| 1757 | FR | 3.73 | 3.33 | 4.04 | 5.00 | 7.73 |
+| 5236 | FR | 3.66 | 2.55 | 2.97 | 3.68 | 5.88 |
+| 6766 | CH | 4.09 | 3.40 | 4.08 | 4.94 | 6.60 |
+| 7679 | CH | 4.09 | 4.11 | 5.29 | 6.34 | 8.26 |
+| 8927 | CH | 4.02 | 3.21 | 3.84 | 4.74 | 6.44 |
+
+At 0.5 the six mobile averages ranged from 2.19 to 2.76, and at 0.75 they
+ranged from 2.31 to 3.24. The exhaustive home-zone choice sets and the survey
+sampler do not have identical eligibility: home-zone plans additionally need
+local opportunities and available modes. The six contexts are illustrative,
+not representative. The fresh logit allocation assigns virtually all volume to
+mobile plans at every coefficient here, so matching mobile trip counts alone
+does not establish a good model or a realistic stay-home share.
+
+Three further runs used the ordinary candidate generator, without the home-zone
+pool, at coefficients 1, 1.25 and 1.5. The coefficient-2 run is the matching
+baseline above. Each had one scenario and seed, five full-replanning steps,
+one activity, destination and mode draw and one search batch, revision 0.4,
+both congestion effects enabled, eight Polars threads and no memory limit.
+At step five:
+
+| Coefficient | Trips | People mobile | Trips per mobile person | Trips within a zone | Wall time | Peak process-tree RSS |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1.0 | 4.63 million | 78.8% | 2.51 | 20.0% | 67.0 s | 5.00 GiB |
+| 1.25 | 5.50 million | 83.6% | 2.81 | 22.2% | 72.2 s | 5.21 GiB |
+| 1.5 | 6.35 million | 86.8% | 3.12 | 24.4% | 71.9 s | 5.13 GiB |
+| 2.0 | 7.62 million | 89.1% | 3.65 | 25.3% | 67.2 s | 5.29 GiB |
+
+All runs start at stay-home and continue to change through step five; they are
+not converged or calibrated estimates. The survey averages in the table above
+are for six activity profiles, not a population-wide Geneva reference. The
+different choice sets matter: a coefficient that gives plausible trip counts
+with the low-effort sampler may favor substantially longer schedules when the
+exhaustive home-zone alternatives are included. Compare more effort levels and
+survey metrics before selecting a value.
+
+For a cache-only run, set `MOBILITY_PROBE_MIN_ACTIVITY_TIME_CONSTANT` alongside
+the existing Geneva probe options. The fixed-state sweep is in
+`tests/manual/analyze_home_zone_utility.py`; its reconstruction is limited to
+coefficients no greater than the captured coefficient of 2.
+
+### Rebuilt home-zone pool at coefficient 1.25
+
+The home-zone schedules were ranked again for coefficient 1.25, rather than
+reusing the selection made at 2. The cached-cost ranking covered all 9,898
+scoring contexts in 383.8 s, with a 5.12 GiB sampled Python peak during ranking.
+It evaluated the same 382,254,517 plan/context combinations before timing
+feasibility. The top ten schedules per context contained 98,980 pairs, of which
+14,349 (14.5%) also appeared in the coefficient-2 selection. Their mean length
+was 5.84 trips, median six, and 7.4% had at least eight trips; at coefficient
+2 the corresponding figures were 8.50, nine and 74.9%.
+
+The rebuilt pool was attached to the normal generator for a one-scenario,
+one-seed, five-step lowest-effort run. Each step had full replanning, one
+activity/destination/mode draw and one search batch, a revision probability of
+0.4, both congestion effects and no memory limit. The experimental runner
+checked four contexts against the actual initial scores; later changes do not
+re-rank the initial selection. The normal generator uses one draw per step,
+so the resulting choice set is not a high-effort reference.
+
+| Constant and pool | Step-5 trips | People mobile | Trips per mobile person | Trips within one zone | Simulation time | Peak process-tree RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1.25, normal generator | 5.50 million | 83.6% | 2.81 | 22.2% | 72.2 s | 5.21 GiB |
+| 1.25, plus home-zone pool | 6.63 million | 74.8% | 3.79 | 61.9% | 118.8 s | 6.85 GiB |
+| 2.0, plus home-zone pool | 14.87 million | 87.5% | 7.26 | 89.1% | 115.4 s | 7.72 GiB |
+
+The separate ranking is excluded from simulation times. For the coefficient-1.25
+home-pool run, step times were 6.9, 27.7, 20.6, 20.0 and 18.9 s; candidate
+evaluation took 23.8 s in total. At step one, 40% of people were mobile, with
+6.22 trips per mobile person; virtually all trips were within a zone. At step
+five, the 3.79 trips per mobile person is close to the survey sampler averages
+in the six contexts above, but those contexts are not a population-wide survey
+target. These five-step runs do not establish convergence or validity. The
+ordinary candidate-pool diagnostic excludes the separately attached home plans.
+
+### Timing reuse on consecutive real batches
+
+At coefficient 1.25, a separate capture used one scenario, two full-replanning
+steps, two activity draws, one destination draw, two mode draws and two inner
+batches. The second outer step's first batch contained 1,391,068 scored rows;
+the next batch contained all of them plus 318,631 rows. All repeated scoring
+inputs were identical in this capture. The second batch had 442,162
+context/plan combinations but only 54,357 physical plan keys. Its 1,709,699
+context steps corresponded to 208,456 physical steps, and none of these had
+conflicting timing inputs across contexts in this particular capture. Different
+travel profiles can produce different timing inputs in other scenarios.
+
+Comparing each incoming schedule against its rounded modeled timing showed
+that 420,525 of 442,162 plans had at least one changed timing or duration. This
+does not mean those timings changed between the two batches: the same incoming
+survey-based schedule was scored again under the same fixed outer-step costs.
+
+A narrow-cache prototype kept the first batch's input plan/step keys, modeled
+schedule IDs and four timed values, while taking current scores and retention
+history from the second batch. It matched the complete timed-row multisets,
+schedule mappings and catalogue from the real second batch. Three offline
+timing/indexing comparisons took 0.46–0.62 s for full recomputation and
+0.37–0.42 s with the cache, excluding first-batch work. Building that cache
+took 0.34 s and it occupied about 59.7 MiB, so it did not pay for itself for
+this two-batch step. These tests do not include scoring, transition allocations,
+flows or full-run memory.
+
+A second prototype timed a physical plan once per travel profile, then attached
+the result back to the scoring contexts. Using the three profile IDs from the
+matching initial scoring contexts gave 389,993 physical/profile step rows.
+On this capture, three full timing/indexing runs took 0.48–0.63 s; the factored
+part took 0.14–0.15 s and reattachment 0.14–0.17 s. Constructing and validating
+the factored rows from already-expanded inputs cost another 0.11 s; a future
+evaluator that carries physical rows separately could avoid some of that work.
+The reconstructed complete timed rows, mappings and catalogue matched exactly.
+This is an isolated benchmark, and profile identity, changed times, reference
+schedule collisions and the fallback for non-factored candidates still matter.
+The capture and comparison scripts are `tests/manual/capture_repeated_timing.py`,
+`analyze_repeated_timing.py`, `benchmark_repeated_timing.py` and
+`benchmark_physical_timing.py` in the same directory.
+
+### Live physical-timing experiment and activity-duration terms
+
+An opt-in, process-local prototype applied profile-aware physical timing in
+the real evaluator. It falls back to the ordinary calculation if a physical
+step and profile have conflicting timing inputs. It retains the existing
+scoring, context expansion, plan utility and transition paths. The prototype
+is `tests/manual/run_factored_timing_probe.py`; it is not a production feature.
+
+A one-scenario, one-seed Geneva comparison used five full-replanning steps,
+coefficient 1.25, two activity draws, one destination draw, two mode draws and
+two inner batches (eight effort points per step). Both runs enabled road and
+opportunity congestion, used eight Polars threads and had no memory limit.
+The baseline took 135.5 s and the factored prototype 125.4 s. Summed candidate
+evaluation spans were 24.15 and 21.54 s, and their nested modeled-timing and
+indexing spans were 7.76 and 6.52 s. Sampled process-tree peak RSS was 5.27 and
+5.16 GiB; mean sampled CPU was 376% and 403%, where 100% is one logical CPU.
+These are single runs, so the whole-run difference cannot be attributed solely
+to the change. Candidate-pool counts matched for every batch. The five
+OD/mode/activity flow tables had identical keys; the largest absolute cell
+difference was 9.1e-13 represented trips.
+
+A second, two-step run of the same setup captured state for both methods. The
+candidate ID tables, sorted allocated plan tables and random-state digests
+matched exactly at both steps. This does not establish checkpoint/resume or
+multi-scenario equivalence, nor performance at high effort.
+
+Another isolated test cached the duration-dependent logarithm by modeled time
+sequence, step, country and CSP. The 1,534,994 deduplicated scored step rows
+needed 1,534,816 distinct terms, occupying about 22 MiB. Three direct utility
+aggregations took 0.10–0.11 s; joining the precomputed terms took 0.15–0.17 s,
+excluding the 0.10 s to construct them. Results matched exactly. In this
+capture, caching those terms adds work rather than saving it; changing the
+physical representation could alter that conclusion. The diagnostic is
+`tests/manual/benchmark_activity_terms.py`.
+
+### What changes between outer steps
+
+The initial survey-derived activity and home-night reference durations are
+carried forward in the run state. They need not be recalculated on every outer
+step. Actual plan timings and activity durations depend on the plan's incoming
+schedule, modeled travel times and arrival-time rigidity; those can stay the
+same for fixed-cost modes, but can change when a congested route or scenario
+changes. The generalized travel cost can change even if travel time does not,
+for example when a scenario changes a monetary cost. Opportunity saturation
+and shadow prices affect activity utility separately from timing.
+
+As a scale check, the previously recorded lowest-effort coefficient-2 Geneva
+run with both feedbacks enabled had 4,952 destination/activity rows. Shadow
+prices changed by more than 1e-9 in 1,079 rows between steps 1 and 2, 1,469
+between steps 2 and 3 and 1,968 between steps 4 and 5. This counts table values,
+not how many evaluated candidate rows depend on them. The `k_saturation_utility`
+field changed in 2,212, 2,351 and 2,456 rows respectively. This is one older
+trajectory, not evidence for all scenarios or coefficient settings.
+
+Selective recalculation could update costs for changed mode/OD/profile keys,
+timings for plans using changed travel times, and opportunity terms for changed
+destination/activity keys. It would also need to account for parameter changes,
+new candidates, stable schedule IDs and checkpoint/resume. The existing
+`ScoringLookup` already reuses compact step scores while one outer step's
+inputs are fixed. No cross-step selective cache has been added; its bookkeeping,
+memory and end-to-end cost require measurement.
+
+### Higher-effort physical-timing comparison
+
+The live physical-timing prototype was also compared over two full-replanning
+steps with one scenario and seed, coefficient 1.25, three activity, destination
+and mode draws and three batches: 81 effort points per step. Both congestion
+effects were enabled, Polars used eight threads, state and diagnostics were
+captured and no memory limit was applied. These are single runs:
+
+| Measure | Baseline | Physical timing |
+| --- | ---: | ---: |
+| Total time | 165.9 s | 157.1 s |
+| Step times | 35.8, 105.9 s | 32.8, 100.4 s |
+| Candidate evaluation, summed | 56.44 s | 54.43 s |
+| Timing/indexing within evaluation | 22.83 s | 21.68 s |
+| Sampled process-tree peak RSS | 10.21 GiB | 9.75 GiB |
+| Sampled mean CPU | 460% | 478% |
+
+The candidate ID tables, allocated plan tables and random-state digests matched
+exactly at both steps; corresponding OD/mode/activity flow keys matched, with a
+maximum cell difference of 2.3e-13. The final batch had 13,439,326 context-step
+rows and 3,073,559 physical/profile rows. The evaluator timing difference is
+small relative to the full run and the two individual measurements do not prove
+a whole-run speedup. Since the prototype currently expands rows, checks their
+physical inputs and rejoins them, the measured saving does not justify treating
+it as a production optimization without broader scenarios and further work.
+
+### Observed changes in per-mode scoring costs
+
+A separate three-step, one-scenario, seed-0 capture used coefficient 1.25,
+two activity draws, one destination draw, two mode draws and one search batch
+per step (four effort points). Both congestion effects were enabled. It saved
+the profile/OD/mode cost rows requested by the first evaluation of each step;
+it did not capture every possible OD pair. Profile assignments matched exactly
+between the three steps, so profile IDs can be compared for this capture.
+
+| Common profile/OD/mode keys | Step 1 to 2 | Step 2 to 3 |
+| --- | ---: | ---: |
+| Walk: unchanged cost, time and distance | 7,859 / 7,859 | 10,242 / 10,242 |
+| Bicycle: unchanged cost, time and distance | 23,991 / 23,991 | 31,176 / 31,176 |
+| Walk/public transport/walk: unchanged cost, time and distance | 13,694 / 13,694 | 17,286 / 17,286 |
+| Car: changed cost and time | 32,499 / 32,499 | 48,566 / 48,566 |
+
+Many additional keys were requested in later steps, and the intersections do
+not establish what happened to unobserved keys. Car distance also changed for
+32,286 of 32,499 common keys in the first comparison, and 39,705 of 48,566 in
+the second. Destination shadow prices changed by more than 1e-9 for 591 of
+4,952 opportunity rows from step 1 to 2, and 1,126 from step 2 to 3; saturation
+utility factors changed for 1,950 and 2,371 rows, respectively. Fixed costs in
+this trajectory can change under other scenario parameters, profiles, modes or
+network changes, so this is not a universal cache key.
+
+In the 81-point baseline above, profile-cost preparation spans nested within
+candidate evaluation totaled 2.61 s of the 56.44 s evaluation spans. The
+profile-cost span does not include every downstream cost-related join; removing
+that measured span alone is therefore a limited opportunity, not a bound on
+every possible cost refactor. Timing/indexing was a larger measured component.
+Use `tests/manual/capture_scoring_changes.py` and
+`tests/manual/analyze_scoring_changes.py` to reproduce this diagnostic.
+
+### Similar plans and the existing embedding
+
+Two exploratory Geneva captures used one scenario, seed 0, both congestion
+effects, full replanning, and activity-time constant 1.25. The second outer
+step was captured after its final search batch. The smaller run used 2 activity
+draws, 1 destination draw, 2 mode draws and 2 batches (8 effort points per
+step); the larger run used 3 of each and 3 batches (81 points). These captures
+include extra file writes, so their timings are not simulation benchmarks.
+
+For each capture, 100 scoring contexts were selected across population-size
+quantiles, 50 per country. This is a diagnostic sample, not a representative
+estimate of all contexts. Only feasible mobile candidates are included. The
+analysis also matches the final allocated plans to these candidates and checks
+allocated neighbours within the same original demand unit.
+
+The existing `PlanDistance` builds 24 hourly cumulative activity/mode and
+centroid-position features. Its activity/mode values currently return to zero
+in hours where a state is absent, even if time had already accumulated in that
+state. This analysis carries each state total forward before comparing plans;
+it does not change the production transition-distance model. Changing that
+model needs separate validation and attention to saved state and cache identity.
+
+Here two plans are close when their hourly activity/mode fractions differ by at
+most the stated amount of time, and their centroid positions differ by at most
+1 km on average over the full day. Hourly aggregation can hide within-hour
+differences, and averaging over the entire day can hide large differences on a
+short trip. Neither measure compares detailed routes.
+
+| Sample | Time threshold | Candidates with a close neighbour | Allocated mobile people with a close neighbour in their demand unit |
+| --- | ---: | ---: | ---: |
+| 8-point | 15 minutes | 16.4% | 24.0% |
+| 8-point | 30 minutes | 36.2% | 44.6% |
+| 81-point | 5 minutes | 11.4% | 13.6% |
+| 81-point | 15 minutes | 41.6% | 46.0% |
+| 81-point | 30 minutes | 64.9% | 71.7% |
+
+The 8-point sample had 2,725 candidates and 16,013 allocated mobile people;
+the 81-point sample had 20,457 candidates and 14,312 allocated mobile people.
+Shares with a neighbour count both sides of each pair and do not measure how
+many plans can be removed. A greedy, utility-ordered grouping of candidates at
+30 minutes would remove 18.2% and 39.6%, respectively, but this is an
+order-dependent illustration, not evidence that the removal is valid or fast.
+
+In the larger sample, 14,560 pairs met the 30-minute threshold. Of these,
+14,388 had the same activity sequence, 6,926 the same destination sequence,
+and 4,716 the same mode sequence; only 40 had both the same destination and
+mode sequences. Requiring both leaves 77 of 20,457 candidates (0.38%) with a
+neighbour and 29.5 of 14,312 allocated mobile people (0.21%) with a neighbour
+in the same demand unit. Their activity sequences can still differ.
+
+Close plans can have substantially different utility: for all close pairs in
+the larger sample, the median absolute difference was 0.93, the 90th
+percentile 8.06, and the maximum 97.97. In the smaller sample the corresponding
+figures were 0.45, 1.95 and 7.60. For example, two car plans with distinct
+destinations had a 7.60 utility difference despite being only 0.13 km apart on
+average over the full day. Different destinations and modes must remain
+distinct for utility, OD flows and congestion. Even the same mode and
+destination sequence does not establish equivalent timing or utility.
+
+The most promising use is therefore to identify shared computations within
+families of plans, while retaining each exact alternative and its own utility
+and flows. The embedding could also help diagnose sampling diversity; this
+experiment did not measure the cost of constructing it for the full pool or
+show a simulation speedup. Use `tests/manual/capture_embedding_pool.py` and
+`tests/manual/analyze_embedding_pool.py` to reproduce the diagnostic; set
+`MOBILITY_EMBEDDING_CAPTURE_BATCH` to select the batch to capture.
+
+### Reuse of plan timing and utility components
+
+This offline census uses the earlier two-step, 8-point Geneva capture: one
+scenario, seed 0, coefficient 1.25, both congestion effects and full replanning.
+It examines outer step 2, batch 2, before and after modeled timing. The scorer
+adjusts each trip's reference departure and arrival using that trip's modeled
+travel time and destination activity rigidity; the activity duration also uses
+the following trip's adjusted departure. It does not currently propagate a
+state through independent rigidity-separated chains.
+
+The capture had 1,709,699 incoming step occurrences. There were 142,136
+distinct inputs to the per-trip timing update, and 160,981 distinct conservative
+keys containing a trip, its following trip and its reference activity end.
+The latter keys include more than the minimum necessary for some rows. These
+are counts of matching inputs, not measured runtime savings or a complete
+specification of a reusable section's stored outputs.
+
+After modeled-time deduplication, 1,534,994 context-step rows had 487,736
+distinct combinations of duration, minimum activity duration and activity
+utility scale. This key reproduces the activity term for this fixed capture;
+it does not include the plan's remaining home-night term. Activity values and
+costs can change across scenarios and outer steps.
+
+Separately, a sample of 100 population-quantile-stratified contexts from the
+81-point, step-2, batch-3 capture contained 20,457 feasible mobile plans and
+75,179 steps. There were 17,335 profile/OD/mode keys, 49,226 modeled-step keys
+(profile, activity, OD, mode and modeled times), and 55,460 adjacent pairs of
+such modeled-step keys. The capture does not contain all inputs needed to prove
+that each apparent match can share a complete scoring calculation. The sample
+is diagnostic, not representative of the whole region.
+
+A second run captured the missing reference and scoring inputs for the same
+100 contexts at that high-effort batch. Its 137,442 incoming step occurrences
+had 72,710 distinct trip-timing inputs and 88,257 conservative adjacent timing
+keys. After modeled-time deduplication, 121,435 context steps had 38,900
+distinct activity-utility inputs. This sample includes infeasible candidates;
+the earlier 75,179-step sample above contains feasible mobile plans only.
+
+For the 8-point capture, rounding **only the duration used in activity
+utility** to the nearest bin yielded the following. Modeled times, feasibility,
+travel utility and home-night utility were left unchanged. The fresh-MNL
+column is the population-weighted total variation between the original and
+perturbed plan-choice distributions at logit scale 0.25, including stay-home;
+it is not a flow or outer-convergence error. The separate captures were matched
+on all feasible plan keys and on all 960,723 corresponding modeled steps.
+
+| Duration bin | Distinct activity utility inputs | Median / 90th percentile absolute plan utility error | Weighted fresh-MNL change |
+| ---: | ---: | ---: | ---: |
+| Exact | 487,736 | 0 / 0 | 0 |
+| 1 minute | 182,316 | 0.014 / 0.069 | 0.27% |
+| 5 minutes | 109,839 | 0.072 / 0.343 | 1.33% |
+| 15 minutes | 69,115 | 0.233 / 1.048 | 4.13% |
+
+The same analysis on the 100 high-effort contexts matched all 20,457 feasible
+mobile plans and all 75,179 corresponding modeled steps. One-, five- and
+fifteen-minute duration bins gave population-weighted fresh-MNL changes of
+0.29%, 1.41% and 4.12%, respectively, within this non-representative sample.
+Their 90th-percentile absolute plan-utility errors were 0.068, 0.351 and 1.035.
+
+For comparison, linearly interpolating between neighboring duration-bin
+utility values instead of using the nearest bin reduced the 90th-percentile
+absolute plan-utility error to 0.025 with five-minute bins and 0.283 with
+15-minute bins in the 8-point capture. The corresponding high-effort sample
+values were 0.026 and 0.280. It requires two values and interpolation per
+lookup, and larger errors remain near utility clipping boundaries; this is an
+accuracy result, not proof of a speedup. The home-night term and exact timing
+remain unchanged in this experiment.
+
+Naively rounding both arrival and next departure before testing timing
+feasibility is different from rounding only the utility input. On 1,142,364
+non-final steps, one-, five- and fifteen-minute rounding made respectively
+3,055, 14,287 and 39,670 individually infeasible timing checks appear feasible.
+These counts include steps on plans that may be infeasible for other reasons;
+they are not counts of newly accepted plans. Preserve exact feasibility in an
+approximation unless a full comparison demonstrates another safe approach.
+
+Run `tests/manual/analyze_plan_component_reuse.py` on a capture from
+`capture_repeated_timing.py`, optionally supplying `--utility-capture` with the
+matching `capture_embedding_pool.py` folder. The 81-point sample is counted by
+`tests/manual/analyze_high_effort_component_reuse.py`, with its detailed
+inputs captured by `tests/manual/capture_high_effort_components.py`. These
+scripts are diagnostics, not production optimizations or end-to-end
+performance tests.
+
+### Time-grid and hierarchical scoring prototypes
+
+`tests/manual/benchmark_time_components.py` compares the current timing
+calculation with a proposed nearest-minute grid, including coarser grids of 5
+and 15 minutes. Reference clock times and travel times are rounded to the
+grid; rigidity adjustment is rounded to that grid; activity duration follows
+from modeled arrival and the next departure. The existing 0.001-hour duration
+floor remains. This is an approximation for investigation, not an adopted
+time model. It reports activity/travel step-utility differences without the
+home-night term and counts incoming plan records before modeled-ID deduplication.
+
+In the 8-point capture, 442,162 incoming plan records contained 1,709,699
+steps. The one-, five- and fifteen-minute grids had respectively 96,896,
+33,451 and 6,575 distinct trip-timing inputs. Relative to second-resolution
+timing, 1,855 / 8,772 / 24,351 input plans became timing-feasible and
+8 / 102 / 1,281 became infeasible. Among plans feasible in both calculations,
+the 90th-percentile absolute change in summed activity/travel step utility was
+0.091 / 0.466 / 1.605. This does not include the whole-day home term or later
+changes in sampling and congestion.
+
+The first trial built timing components after expanding all context-step rows,
+then joined them back. In three five-minute repetitions it took 0.56–0.59 s,
+versus 0.57–0.63 s for direct grid timing, including its own input preparation.
+This experiment demonstrates the cost of factoring already-expanded rows; it
+does not test the intended hierarchical representation.
+
+`tests/manual/benchmark_hierarchical_utility.py` instead builds a shared trip
+catalogue and arrays of plan-to-trip references and plan offsets, then scores
+without rejoining wide step tables. It includes the separately calculated
+home-night term when given matching home and utility captures. On those 1.71
+million steps and 442,162 incoming plan records, the 5-minute grid yielded
+33,451 trip components. Building the representation from the expanded capture,
+including reading and indexing it, took 0.58 s. Across five repetitions,
+direct array timing and full utility took 0.135–0.167 s, and shared components
+took 0.081–0.102 s. The compact numerical arrays were at least 63.9 MiB,
+excluding the input dataframe, construction tables, output and allocator
+overhead. Both methods agreed on feasibility; shared utility differed from the
+hybrid Polars scorer by at most 3.6e-6 in the capture. These are isolated
+measurements, not end-to-end speedups; originating references directly during
+generation may avoid rebuilding them each batch, but was not tested.
+
+A separate one-scenario, seed-0, five-step lowest-effort simulation compared
+normal timing with the 5-minute hybrid via `run_time_grid_probe.py`. Both used
+coefficient 1.25, 0.4 revision probability, full replanning and both congestion
+effects. Only the scoring-time schedule update and the travel time used by
+home-night utility were rounded; candidate generation, routing and saved
+schedule-ID schema retained their existing resolution. The comparison is thus
+not a complete grid-based model. The baseline took 65.9 s and peaked at 4.76
+GiB sampled process-tree RSS; the grid run took 67.5 s and peaked at 5.10 GiB.
+Both include flow capture and are single runs.
+
+At step 5, total trips were 5.498 million versus 5.529 million (+0.56%); the
+sum of absolute OD/mode/activity cell differences divided by baseline trips was
+36.0%. The latter rose from 4.9% at step 1 to 11.5%, 19.5% and 28.7% at
+steps 2–4. The runs can discover different candidates and follow different
+congestion trajectories after timing changes, so these are not isolated
+rounding errors and cannot be interpreted as a comparison to a higher-effort
+accuracy reference. Use `compare_time_grid_flows.py` on the captured flow
+folders to reproduce the comparison. A higher-effort full run was not started
+because this hybrid did not yet improve end-to-end performance; the isolated
+hierarchical kernel warrants a design with references built before expansion.
+
+A matching one-minute hybrid run took 73.7 s with 5.39 GiB sampled process-tree
+RSS. It produced 5.530 million trips at step 5 (+0.58% versus baseline). Its
+OD/mode/activity absolute differences over baseline were 0.74%, 2.56%, 5.81%,
+13.62% and 21.25% at steps 1–5, respectively. Like the five-minute comparison,
+these are complete evolving simulations, not a fixed-candidate rounding test;
+candidate discovery and congestion can amplify early differences.
+
+### Propagating allocation through shared components
+
+An offline comparison uses the actual post-transition allocations from the
+same second-step Geneva captures. It maps original demand units to scoring
+contexts, matches each allocation to its scored plan and checks that every
+allocated plan has captured steps. The exact-duration comparisons also check
+that each allocated modeled step agrees with the separate timing capture.
+Stay-home allocations have no road trips or non-home opportunity occupation
+and are excluded from both paths.
+
+The expanded path joins every unit/plan allocation to its step occurrences,
+then aggregates OD/mode person flows and destination/activity occupation. The
+shared path builds one OD/mode component and one activity/destination/duration
+component per distinct input, with per-plan references and occurrence counts.
+It first sums plan allocation volumes, propagates them to components and
+aggregates components to the same outputs. This is a flat component hierarchy;
+it does not yet measure reuse of longer shared subplans. Both paths use only
+columns needed for these outputs and preserve repeated occurrences in a plan.
+
+The full 81-point capture does not include modeled activity duration for all
+contexts; reconstructing it by subtracting the saved rounded clock times is not
+exact. Therefore its full-region benchmark is **OD only**, while OD and
+occupation are compared on the 100 contexts with exact scored durations. The
+8-point comparison covers all 9,898 contexts with exact durations.
+
+| Capture | Allocated unit/plans | Expanded unit/steps | Shared trip components | Shared activity components | Build | Expanded aggregation | Shared aggregation |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 81-point, full, OD only | 491,151 | 1,818,687 | 31,906 | — | 23 ms | 54–57 ms | 23–25 ms |
+| 81-point, 100 contexts, OD and occupation | 5,908 | 21,447 | 1,755 | 1,903 | 3 ms | 3.5–4.0 ms | 3.5–5.4 ms |
+| 8-point, full, OD and occupation | 252,710 | 834,228 | 20,477 | 21,549 | 16 ms | 25.7–27.4 ms | 21.2–21.5 ms |
+
+The full 81-point trip index contained 319,863 distinct plan/component
+references representing 416,087 context-plan trip occurrences; the remaining
+expansion was across demand units. It occupied about 3.93 MiB as measured by
+Polars, excluding allocations, input steps and working buffers. Fresh-process
+sampled peak RSS was 1.24 GiB for the expanded method and 1.15 GiB for the
+shared method, including capture loading and validation. These RSS peaks are
+not incremental hierarchy memory or simulation peaks. Input loading and
+matching, identical for both, took 0.23–0.24 s and is excluded from the table.
+The shared build is shown separately and would need updating when plan
+membership changes; repeated measurements reuse the same captured allocation.
+
+All OD cell keys matched. For the full 81-point OD table, the maximum absolute
+cell difference was 2.4e-10 persons, and total absolute difference was 1.13e-15
+of baseline volume. In the full 8-point occupation table, the maximum cell
+difference was 0.000385 person-hours and total absolute difference was
+3.19e-9 of occupation. The existing path casts each allocated row's weighted
+duration to Float32 before summing; multiplying the already aggregated volume
+by duration does not reproduce that per-row rounding. Both methods sum in
+stable order but have different grouping, so their outputs are not bit-identical.
+
+Reproduce with `tests/manual/benchmark_component_flows.py` in separate
+processes using `--method expanded` and `--method shared`, and compare their
+outputs with `tests/manual/compare_component_flows.py`. Use `--od-only` for the
+full 81-point embedding capture. The timings do not establish a simulation
+speedup: generating components before expansion and integrating with choice,
+congestion, scenario/profile dimensions and saved results remain untested.
+
+### Shared-prefix plan graph and profile-at-a-time scoring
+
+`tests/manual/benchmark_subplan_graph.py` builds a graph of complete candidate
+plans from the existing captured modeled steps. A prefix node references its
+parent prefix and one exact component; complete plans point to their terminal
+nodes. Plans remain distinct choices, even if they share a terminal node.
+Scoring walks the prefixes, adds activity utility and trip cost, and computes
+the home-night term at the leaf. Allocated volume is propagated back through
+the graph, and shared components produce OD/mode flows and non-home
+destination/activity occupation. The input is an already-expanded capture;
+the benchmark does not yet generate plans or update modeled timing directly
+in this representation.
+
+The first graph treats all scored component inputs, including travel cost and
+activity utility scale, as part of a component's identity. A second graph shares
+physical timing and activity/trip structure separately from scoring inputs.
+Its component key includes route feasibility and exact modeled timing. The
+prototype uses country, socioeconomic category and transport utility profile
+to attach cost and activity parameters, and checks every captured key for
+conflicting scores. That key is validated only for this scenario and fixed cost
+state; other inputs or scenarios may require additional distinctions.
+
+| Capture | Context/plan candidates | Captured step occurrences | Exact scored prefixes | Physical prefixes | Profile-specific prefix scores |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 8-point, all 9,898 contexts | 392,630 | 1,534,994 | 1,314,542 | 160,283 | 1,314,661 |
+| 81-point, 100 selected contexts | 29,432 | 121,435 | 98,159 | 95,718 | 98,159 |
+
+For the full 8-point capture, 139,115 physical components support the 160,283
+physical prefixes. Structural sharing across scoring contexts is substantial,
+but caching every profile-specific prefix score still creates about 1.31
+million score records: sharing physical structure alone does not remove the
+context-specific work. The 81-point sample consists of population-quantile
+contexts and is not representative of the full region.
+
+For that 8-point capture, the fully scored prefix graph matched all captured
+feasibility flags and feasible utilities to 4.3e-14 maximum absolute utility
+difference, including home-night utility. Graph OD flows matched the expanded
+output to 6.8e-16 of total volume in sum of absolute differences; occupation
+differed by 3.2e-9 of total occupation, mainly because the existing path casts
+each allocated unit's weighted duration to Float32 before summation. The graph
+keeps all allocated plan volumes distinct until propagation. It does not
+produce per-origin transition events or requested plan-step tables.
+
+Three repeated scoring passes on this capture took 39–52 ms using direct
+compact NumPy arrays, 63–75 ms using the fully scored prefix graph, and 43–58
+ms with the physical graph and all profile-specific prefix scores already
+built. Input preparation from expanded rows took 0.54 s, scored-prefix graph
+construction 0.19 s, physical-prefix census 0.17 s, and profile-prefix table
+construction 0.35 s; these phases overlap in the diagnostic and are not a
+production pipeline. Flow propagation through 172,129 occupied prefixes and
+aggregation took 29–30 ms per repetition. These are isolated runs on one
+capture, not end-to-end or cross-machine benchmarks.
+
+The prototype also scores one profile at a time on the physical graph and then
+discards its temporary scores. Nineteen profile groups reproduced captured
+feasibility and utility; the largest needed 107,450 prefixes and 94,098
+components at once. The selected temporary arrays and profile component table
+were at least 9.9 MiB, excluding the shared graph, source, outputs and other
+working memory. This implementation took 1.71 s because it repeatedly filters
+and joins the already-expanded input. Its process peak, about 1.92 GiB, also
+includes the earlier full-table experiments and cannot be interpreted as the
+peak of an independent streaming implementation. It demonstrates a bounded
+calculation, not a measured memory or runtime win over the current evaluator.
+
+The main architectural question is whether candidate generation can construct
+and retain physical prefixes and profile-specific cost lookups directly, so
+that the per-profile calculation does not repeatedly reconstruct them from
+expanded rows. Updated congestion, allocation, plan identity, reproducibility,
+checkpoint/resume and on-demand detailed results remain to be designed and
+measured. No minute rounding is used in this exact experiment.
+
+### Cutting captured plans into reusable sections
+
+`tests/manual/benchmark_plan_sections.py` compares exact section cuts on the
+same modeled candidate captures. It treats each captured trip and the activity
+at its destination as separate physical atoms. An activity with arrival
+rigidity exactly 1 is a standalone anchor; all remaining consecutive atoms
+between anchors form a section. Trip timing, activity duration, feasibility
+and destination remain exact. Scoring factors are kept separately by country,
+socioeconomic category and travel utility profile, and duplicate atom/profile
+scores are checked for conflicting inputs. The method only represents existing
+complete plans: it does not create alternatives by swapping sections.
+
+Three cuts were compared: `rigid` groups all consecutive non-anchor atoms
+between standalone anchors; `atomic` makes every trip and activity its own
+section; `repeated_pairs` greedily groups pairs of consecutive atoms that
+appear in at least two captured plans, without crossing an anchor boundary.
+The last is one simple pair heuristic, not an optimized search for all repeated
+subsequences. All strategies start with already-expanded modeled rows.
+
+| 8-point capture, all 9,898 contexts | Rigid | Every atom | Repeated pairs |
+| --- | ---: | ---: | ---: |
+| Candidate plans | 392,630 | 392,630 | 392,630 |
+| Distinct sections | 130,288 | 255,107 | 191,462 |
+| Plan-to-section references | 1,449,520 | 3,069,988 | 2,259,754 |
+| Section-to-atom references | 290,856 | 255,107 | 260,240 |
+| Profile/section scores | 1,017,609 | 2,103,719 | 1,548,301 |
+| Section/reference bytes, excluding component tables and scores | 19.9 MiB | 38.1 MiB | 28.8 MiB |
+| Section-cut construction | 0.18 s | 0.14 s | 1.75 s |
+| Cached section-score construction | 0.23 s | 0.23 s | 0.22 s |
+| Plan scoring, reused cached sections | 83–95 ms | 147–160 ms | 109–116 ms |
+| Allocated-volume propagation and flow aggregation | 14–15 ms | 15–18 ms | 17–18 ms |
+
+Input preparation, including reading expanded rows, indexing the atoms and
+building all-profile atom scores, took another 1.18–1.23 s. Peak process RSS
+was 2.12–2.25 GiB across the three fresh-process runs. The section/reference
+byte counts do not include atom tables, profile scores, allocations, temporary
+joins or the expanded source. Neither the timings nor these counts prove that
+the same work can be avoided in the current simulation's candidate generator.
+
+For 100 selected contexts from the 81-point capture, rigid cuts produced
+48,378 sections, 112,206 plan references and 49,635 profile/section scores;
+atomic cuts produced 117,603, 242,870 and 121,451 respectively. The sample is
+not representative of all contexts. In all six runs, complete-plan feasibility
+matched the capture and maximum feasible utility error was below 6e-14,
+including the home-night term. OD keys matched and relative absolute flow
+differences were below 7e-16. Full 8-point occupation differed by 3.2e-9 of
+total occupation because the existing expanded path rounds weighted durations
+per demand-unit row to Float32 before summing.
+
+An additional `--stream-profiles` run scores rigid sections one profile at a
+time, discarding the section scores before processing the next profile. In the
+full 8-point capture, its largest of 19 profile batches needed 86,534 section
+scores and 198,758 section/atom evaluations at once, instead of caching all
+1,017,609 profile/section scores. Its one scoring pass took 0.52 s including
+building each profile's scores, versus 0.23 s to build all cached scores plus
+83–95 ms per scoring pass in the all-profile runs. Sampled process peak RSS was
+1.63 GiB versus 2.12 GiB in the separate rigid all-profile process; both include
+the expanded capture and all common construction, so these are diagnostic
+process peaks, not peak memory for a production streaming implementation.
+Utilities, feasibility, OD flows and occupation still matched as above.
+
+On these captures, rigid cuts are the most compact of the tested section
+representations and the simple repeated-pair heuristic does not justify its
+extra construction work. The section plan scorer is a prototype and was not
+faster than the previously measured 39–52 ms direct compact-array plan score;
+the input, output and operations differ, so it is not an end-to-end comparison.
+Creating sections and profile lookups during candidate generation, rather than
+deduplicating expanded rows, remains the key untested architecture change.
+
+The same prototype additionally factors the complete ordered physical section
+sequence from context membership. In the full 8-point capture, the 392,630
+context/plan memberships refer to 47,994 distinct physical plans. Their
+1,449,520 context/section occurrences become 185,844 physical-plan/section
+references plus 392,630 context/plan memberships. These two factored index
+tables occupied 5.91 MiB, excluding section definitions, components, scores,
+allocations and temporary construction. Constructing them from the expanded
+capture took about 0.06 s. There were still 392,630 distinct profile/physical
+plan pairs, so this did not remove a plan-score calculation in this capture.
+
+The profile-at-a-time rigid scorer was also run against these factored plan
+references. It held at most 86,534 section scores per profile, reconstructed all
+captured feasibility and utilities within 3.6e-14, and propagated allocations
+through physical plans and sections to matching OD and occupation outputs. One
+pass took 0.53 s for scoring and 0.014 s for flow aggregation after construction;
+sampled process peak was 1.65 GiB. The implementation still starts from and
+retains expanded captured rows, and builds sections after the fact; these
+figures demonstrate the representation and correctness rather than the memory
+or runtime of a fully integrated, pre-expansion generator.
+
+### Prefixes inside non-rigid sections
+
+`tests/manual/benchmark_plan_sections.py --strategy prefix` starts from the
+same rigid-bounded sections as `--strategy rigid`, then shares left-to-right
+prefixes inside each section. Standalone rigid activities are single-node
+sections. A node contains one physical trip or activity token plus a link to
+its preceding prefix. A section points to its last node. Prefixes share only
+exact captured modeled inputs, and profile-specific scoring is kept separate.
+Both variants use the same captured input, Polars-based aggregation, profile
+keys, complete-plan membership, and home-night formula. Neither creates new
+plans or changes timing precision. Both begin with expanded captured rows.
+
+| Full 8-point capture | Whole rigid sections | Prefixes inside sections |
+| --- | ---: | ---: |
+| Distinct sections | 130,288 | 130,288 |
+| Physical section/atom occurrences or prefix nodes | 290,856 | 271,392 |
+| Profile-specific section/atom rows or prefix nodes | 2,412,609 | 2,242,208 |
+| Section/index build | 0.18 s | 0.35 s |
+| Build section/profile scores | 0.26 s | 0.47 s |
+| Repeated plan-score aggregation | 83–90 ms | 95–100 ms |
+| Repeated OD and occupation aggregation | 13–15 ms | 49–54 ms |
+| Sampled peak process RSS | 2.13 GiB | 2.20 GiB |
+
+The profile-specific counts describe rows used to accumulate already-computed
+atom scores, not independent evaluations of the logarithmic utility formula.
+Both methods precompute atom scores from the expanded capture. Prefixes reduce
+those rows by about 7%, but this Polars prototype uses extra joins and per-depth
+aggregation. Its prefix-node and section-leaf tables occupy about 6.17 MiB;
+its reported process peak also includes the ordinary section lists and
+temporary prefix paths used to build and validate the diagnostic. This does
+not measure an optimized production representation that stores only prefixes.
+
+The prefix flow calculation propagates volume from each complete section
+backwards through parent links, summing shared-node volumes. A separate run
+with `--prefix-flow-direct` retained the direct section/atom links for flow
+aggregation: flows then took 15–16 ms, but the prefix scoring and index build
+remained slower than whole sections. Retaining both links also uses additional
+storage. All complete-plan feasibility flags matched; maximum feasible utility
+error was below 4e-14. OD flows matched to floating-point precision and
+occupation differed by 3.2e-9 of total occupation, due mainly to the current
+per-unit Float32 weighted-duration rounding.
+
+On the selected 100-context 81-point sample, the profile-specific rows fell
+from 152,865 to 134,741. Section/index build rose from 0.019 s to 0.086 s,
+section-score construction from 0.012 s to 0.043 s, and flow aggregation from
+about 5 ms to 28–31 ms. The sample is not representative of all contexts.
+These are single diagnostic processes with three repeated aggregation passes,
+not full-simulation timings. The observed reduction does not currently justify
+this prefix implementation; a generator-native or differently implemented
+index could have different trade-offs.
+
+### Prefix flow traversal using indexed arrays
+
+The same captured prefix graph was tested with direct array propagation instead
+of one Polars join and aggregation per tree depth. On the full 8-point capture,
+processing all nodes with `numpy.add.at` took 30–34 ms for complete flow
+aggregation, per-depth `bincount` took 24–30 ms, and visiting only nonzero
+nodes with `add.at` took 21–22 ms. The original Polars tree path took 49–54 ms;
+direct whole-section links took 13–15 ms. These include allocation aggregation
+and final OD/occupation tables, not only the tree walk.
+
+An experimental Rust kernel performs one reverse pass over node arrays. Node
+IDs are depth-ordered, so each child's volume is added to its parent before
+the parent is processed, and each node contributes to its physical component.
+On the full capture, complete flow aggregation took 14.4–16.4 ms; the measured
+array traversal including conversion of the result to a Polars table took
+4.0–4.6 ms. Three passes of one fresh process are reported. The prefix index
+construction still took 0.36 s and section-score construction 0.47 s, versus
+0.18 s and 0.26 s for whole sections; the kernel does not optimize scoring,
+candidate generation or those joins. It is not integrated into production.
+
+On the 100-context 81-point sample, the Rust flow totals also matched the
+expanded baseline to floating-point precision for OD and the same small
+Float32-related occupation difference. Use `--prefix-flow-array` or compile
+`tests/manual/prefix_flow_kernel.rs` and use `--prefix-flow-rust` in
+`benchmark_plan_sections.py` to reproduce. These examples demonstrate that
+the Polars per-level overhead is not intrinsic to prefix propagation; they do
+not establish a full-run benefit or justify selecting a production language.
+
+### Sections built before scoring-context step expansion
+
+`tests/manual/capture_preexpanded_sections.py` observes the inputs and outputs
+of the existing factored-candidate path in a two-step, 8-point, one-scenario
+Geneva run. The selected second batch is captured immediately after physical
+steps and memberships have been combined with active and retained candidates,
+but before the context-to-step join. It also saves the evaluator's retained
+step-scoring lookup and outputs. Profiling and file capture make this a
+correctness dataset, not a simulation runtime benchmark.
+
+The capture contains 208,456 shared input steps, 54,357 physical candidate
+plans and 442,162 context/plan memberships. The existing join expands these
+to 1,709,699 context-step rows. There are 102,114 physical-plan/travel-profile
+pairs and 442,162 physical-plan/scoring-profile pairs. In this capture, keys
+`travel profile + OD + mode` uniquely determine travel cost, time, distance
+and route feasibility; `country + socioeconomic category + activity +
+destination` uniquely determine the activity utility parameters. These facts
+were checked against the captured retained lookup, not assumed for other
+scenarios. The prototypes reject conflicting keys instead of substituting a
+score.
+
+`benchmark_preexpanded_baseline.py` expands the captured memberships and
+steps, attaches the retained scoring lookup, updates modeled timing and
+calculates complete-plan utilities. `benchmark_preexpanded_sections.py`
+instead attaches travel profiles to physical plans, updates timing on 389,993
+physical/profile steps, cuts them into rigid-bounded sections and then scores
+sections and complete plans. Its `prefix` variant shares prefixes inside those
+sections; `rigid` stores whole sections. Both calculate the home-night term and
+map plan results back to all context memberships. Neither benchmark constructs
+the retained lookup, generates candidates, assigns new modeled schedule IDs,
+performs behavioral transitions or produces flows. The captured modeled-ID
+mapping is used only to check output against the existing evaluator.
+
+For a bounded comparison, the section scorer can process one profile at a
+time with `--stream-profiles`; it discards section scores between profiles.
+The table reports one fresh process for each method, with input file loading
+and the one-time factoring of the already-retained scoring lookup reported
+separately. Times before validation do not include the extensive comparison
+joins. A 10 ms process-RSS sampler reports peak memory before validation; these
+are prototype-process peaks, not simulation or incremental-memory bounds.
+
+| Measured step | Expanded baseline | Whole sections, streamed | Section prefixes, streamed |
+| --- | ---: | ---: | ---: |
+| Read input / factor retained lookup | 0.13 s | 0.22 s | 0.20 s |
+| Expand and attach lookup / physical timing | 0.19 s expansion and lookup | — | — |
+| Timing and feasibility | 0.27 s | 0.14 s | 0.12 s |
+| Section/index construction | — | 0.39 s | 0.55 s |
+| Section scoring, including per-profile plan totals | — | 0.98 s | 1.71 s |
+| Final plan scoring / context attachment | 0.25 s | 0.06 s | 0.07 s |
+| Measured work excluding input read/factoring | 0.71 s | 1.57 s | 2.45 s |
+| Peak process RSS before validation | 1.76 GiB | 1.23 GiB | 1.24 GiB |
+
+The prototypes timed 389,993 physical/profile steps rather than 1,709,699
+context steps and built 192,212 distinct sections with 378,974
+physical-plan/section references. The prefix variant used 463,965 prefix
+nodes. Across all profiles, whole sections processed 2,412,609 section-atom
+references and prefixes processed 2,242,208 profile-prefix references; both
+needed 2,103,719 distinct profile/atom scores. The largest streamed profile
+held 86,534 section scores at once. The repeated per-profile joins and
+aggregations dominate the section prototypes; these counts are not independent
+expensive logarithm evaluations.
+
+Both section variants matched all 442,162 captured input plans and feasibility
+flags, and their maximum feasible plan-utility difference was 3.6e-14. All
+1,709,699 context-step timing and duration values matched the existing
+evaluation. The expanded baseline also matched all captured scoring inputs and
+plan results. Equality of new schedule IDs, stable reduction order,
+checkpoint/resume, multiple scenarios and successive cost changes have not
+been demonstrated. The bounded prototypes demonstrate a memory/time trade-off
+on this capture, not a production-ready evaluator or a full-simulation speedup.
+
+#### Dense section/profile scoring census
+
+The pre-expansion capture contains 192,212 timed physical sections and 19
+scoring profiles, with 1,017,609 section/profile pairs actually requested by
+the candidates. A fully dense table has 3,652,028 slots. The prototype embeds
+the transport utility profile ID in each trip section, so restricting to that
+same ID leaves at most 2,373,857 slots. This is a property of the prototype's
+key, not evidence that travel times differ between profiles. Among 54,785
+OD/mode keys observed for more than one profile in this captured lookup, none
+had different travel times. Unobserved combinations and other scenarios have
+not been checked. Some counted slots are still unavailable because this census
+does not check whether all required activity or cost inputs exist per profile.
+
+One dense Float64 utility matrix for all 3,652,028 slots would use about
+27.9 MiB of raw values, plus eligibility and feasibility data and working
+buffers. Sharing timed sections across utility profiles with identical travel
+times could reduce the distinct physical section count; this census did not
+measure that. Different route availability or travel times still require the
+appropriate timing and feasibility state. The census does not benchmark dense
+scoring or show that filling the table is faster. `benchmark_preexpanded_sections.py --strategy rigid
+--dense-census` reproduces the counts without running the scoring comparison.
+
+#### Shared timing with sparse and dense section scoring
+
+`tests/manual/benchmark_dense_sparse_sections.py` compares sparse and dense
+section/profile tables on the pre-expansion capture. Unlike the earlier
+prototype, it groups the same physical plan across utility profiles when its
+complete ordered travel-time inputs are identical. Route availability and
+cost remain profile-specific, and a dense entry is marked unavailable if a
+profile lacks a required input or has a different travel time. Feasibility is
+not inferred from a missing score. The capture's retained scoring lookup is
+an input; the existing modeled-ID mapping is used only for verification.
+
+The 102,114 physical-plan/transport-profile pairs collapsed to 54,357 distinct
+physical-plan/timing combinations. Timing was updated for 208,456 steps rather
+than 389,993 in the prior profile-keyed timing prototype or 1,709,699 expanded
+context steps. Rigid cuts then produced 130,288 physical sections and 208,550
+physical-plan/section references. All 442,162 context/plan memberships remain
+distinct choices. This factoring was checked against all captured modeled
+clock/duration values; it does not assume other cost states or scenarios have
+identical travel times.
+
+The sparse method indexes the 1,017,609 section/profile pairs needed by the
+candidate plans, scores only their 2,103,719 distinct profile/atom pairs and
+retains the sparse scores. The dense method fills 2,475,472 section/profile
+slots and evaluates 4,847,033 profile/atom pairs, with unavailable entries
+masked. Both process profile inputs sequentially, reuse the same timed
+sections, and calculate complete-plan/home-night utility. The sparse index is
+rebuilt in this experiment; incremental maintenance when candidates are added
+has not been implemented.
+
+| Measure | Sparse | Dense |
+| --- | ---: | ---: |
+| Raw score table/index arrays, including feasibility | 16.5 MiB | 21.2 MiB |
+| Build needed-pair index | 0.13–0.15 s | not needed |
+| Initial profile scoring and plan sums | 1.84–1.87 s | 0.68–0.77 s |
+| Subsequent plan sums from retained scores | 88–125 ms | 79–150 ms |
+| Total initial work after loading, including timing and construction | 2.70–2.71 s | 1.37–1.56 s |
+| Sampled process peak RSS before verification | 1.21–1.23 GiB | 1.09–1.13 GiB |
+
+These are two fresh processes per variant, each with three cached plan-sum
+passes, on one captured 8-point batch. The total initial work excludes input
+file loading and the three extra cached-sum checks, but includes identifying
+timing equivalence, section construction, score-table filling and plan
+attachment. The prior expanded baseline for this capture took approximately
+0.71 s for its measured evaluation slice and 1.76 GiB process peak in one
+comparable run, excluding lookup construction and modeled-ID assignment.
+Process peaks include other captured input tables and are not just score-table
+memory. Sparse uses less raw score-table storage, but its repeated discovery,
+filtering and `unique` operations make this first implementation slower;
+this does not prove that an incrementally maintained sparse index would be
+slower. Dense was faster in this diagnostic, but neither variant is a measured
+full-evaluator or simulation speedup.
+
+Both variants matched all 442,162 captured input-plan feasibility flags and
+feasible utilities within 2.9e-14, and all 1,709,699 captured context-step
+timings and durations. This checks one fixed state and scoring configuration;
+modeled-ID generation, cache invalidation, added candidates, transitions,
+multiple scenarios and checkpoint/resume are not implemented or tested here.
+
+### Reusing dense sections across consecutive inner batches
+
+A new diagnostic captured two consecutive real batches in outer step 2 of the
+same Grand Geneve run, at 2 activity x 1 destination x 2 mode x 2 batch effort.
+It retained the real physical inputs, memberships and scoring lookups, including
+occupied and retained candidates. The experiment checks that timing settings,
+shared physical plan rows and all existing score lookup entries agree across
+batches before reusing anything. The second lookup adds entries; missing inputs
+are therefore marked unknown and reconsidered later, not treated as permanently
+infeasible. The cache is local to this captured outer step.
+
+| Measure | Batch 1 | Batch 2 |
+| --- | ---: | ---: |
+| Context/plan memberships | 360,161 | 442,162 |
+| Timed physical plans, total | 44,483 | 54,357 |
+| New timed physical plans with reuse | 44,483 | 9,874 |
+| Distinct sections, total | 105,318 | 130,288 |
+| New sections with reuse | 105,318 | 24,970 |
+| Section/profile slots evaluated, retained table | 2,001,042 | 1,164,340 |
+| Section/profile slots evaluated, rebuilding | 2,001,042 | 2,475,472 |
+
+One measured run per approach, in seconds, excluding capture, lookup
+construction, modeled-ID assignment and validation:
+
+| Batch 2 work | Retained dense table | Rebuilt dense table | Expanded calculation |
+| --- | ---: | ---: | ---: |
+| Identify timing and update schedules | 0.10 | 0.08 | 0.17 |
+| Build section index | 0.23 | 0.20 | � |
+| Score profiles and aggregate section utility | 1.02 | 2.21 | � |
+| Attach home utility and plan results | 0.05 | 0.04 | � |
+| Expand, attach scoring inputs and score plans | � | � | 0.30 |
+| Total measured work | 1.43 | 2.60 | 0.46 |
+
+The retained table saves work compared with this prototype's rebuild, but it
+is still slower than the expanded calculation for these inputs. Its per-batch
+section index is rebuilt from all retained timed plans, and its lookup filtering
+and per-profile joins are Python/Polars prototype work; these measurements do
+not establish the performance of a compiled or fully incremental index. The
+raw retained score, feasibility and known-state arrays occupy 23.6 MiB in batch
+2, excluding the timed plans, section index and other inputs. Process peak RSS
+is not comparable here: verifying batch 1 raises the retained process peak
+before batch 2 starts, while the expanded batches were measured separately.
+
+Both retained batches reproduce all captured context/plan feasibility flags,
+feasible utilities within 2.9e-14, and all modeled context-step times and
+durations. This is an offline experiment on one fixed cost state, not a change
+to the simulator or a full simulation benchmark. It does not evaluate persistence
+across outer steps, scenarios, or checkpoints.
+
+### High-effort consecutive batch scoring
+
+Captured all contexts in the first two actual inner batches of outer step 2,
+with one scenario and 3 activity x 3 destination x 3 mode draws, configured
+for three batches. The capture stopped after the second batch. Diagnostic I/O
+makes its wall-clock times unsuitable as production timings. Batch 1 contained
+2,493,976 context/plan memberships and 10,080,791 expanded steps; batch 2
+contained 2,917,575 memberships and 11,798,280 expanded steps.
+
+The section prototype still constructs and times physical plan-step tables
+before cutting them into sections. It retains timed plans, section IDs,
+plan-to-section references and dense scores across these two batches. It is
+not a prototype that generates candidates directly as section references.
+The second batch adds 50,187 of 353,005 timed plans and 78,233 of 536,526
+sections; 302,818 timed plans and 458,293 sections were retained from batch 1.
+All previously present physical rows and scoring lookup entries were checked
+for equality before reuse. Scores lacking inputs are not treated as valid and
+are recalculated when inputs appear.
+
+Measured slices at eight Polars threads (seconds, excluding loading, modeled-ID
+assignment, lookup construction, and validation):
+
+| Approach | Batch 1 | Batch 2 |
+| --- | ---: | ---: |
+| Expanded scoring; separate utility/aggregation stages | 3.37�4.90 | 4.06�5.47 |
+| Dense sections, rebuilding each batch | 4.38 | 5.35 |
+| Dense sections, retaining timings, references and scores | 4.29�6.94 | 3.80�3.80 |
+
+These are a few sequential runs under variable machine load, not a controlled
+end-to-end speedup measurement. Separate timings for the expanded path impose
+a materialization boundary between utility and aggregation. One batch-2 run
+spent 0.49 s expanding, 0.59 s joining scoring inputs, 1.47 s updating times
+and checking feasibility, 0.02 s calculating step utility, 1.33 s aggregating
+by plan, and 0.16 s attaching home utility. The expensive work is organizing,
+timing and aggregating plans, not the formula alone.
+
+The retained section prototype initially spent 8.7 s in batch 2 because it
+repeatedly selected and sorted atoms. Scoring the dense atom inputs and
+retaining plan-to-section references reduced this to about 3.8 s. A small Rust
+loop over already-scored section atoms and plan references matched all plans,
+but its total batch times (4.83 s at eight threads and 3.77 s at 16 in single
+runs) do not establish a useful gain over the NumPy reductions under variable
+load. The loop is a diagnostic, not production code.
+
+For the expanded batch-2 slice, one run each with 8, 16 and 22 Polars threads
+took 4.06, 3.14 and 3.02 s respectively; changing thread counts has not been
+benchmarked in a full simulation. The real evaluator has additional work:
+for example, the uninstrumented first outer step's three candidate evaluations
+were 4.14, 6.11 and 5.85 s, with materializing and indexing modeled timings
+accounting for 1.56, 2.42 and 2.38 s respectively. These are nested timings,
+not extra time to add to evaluation. Capturing batch inputs adds I/O to step 2,
+so its complete evaluation time cannot be compared directly.
+
+Each approach matched all captured feasibility flags and all modeled step
+clock/duration values. Maximum feasible utility error was below 5e-14,
+including the compiled summation; the compiled summation changes floating-point
+addition order. Results cover one captured fixed cost state; modeled-ID
+assignment, choices, candidate generation and transitions were not replaced.
+The current evidence does not decide the performance of a representation that
+generates or maintains sections directly, nor its integration cost.
+
+### Integer-minute section timing experiment
+
+`tests/manual/benchmark_minute_sections.py` evaluates the same two captured
+inner batches with integer minutes. Survey reference departure, arrival and
+next-departure times and modeled travel times are rounded to the nearest
+minute (ties to even). Each modeled departure is the reference departure minus
+the rounded rigidity adjustment; modeled arrival is that departure plus the
+rounded travel time. The next modeled departure determines activity duration,
+with zero as the minimum. Feasibility uses these same integer clock values.
+Activity utility uses minutes divided by 60 and a zero-duration activity has
+zero activity utility. Home-night utility uses the minute-based activity and
+travel totals. The per-step generalized costs and opportunity inputs remain
+those captured from the existing second-resolution simulation. Candidate
+generation, routing, transport generalized-cost construction and behavioral
+transitions are not changed; this is not yet a full minute-resolution run.
+
+In the 3 x 3 x 3, three-batch-configured capture, the second batch contained
+2,917,575 input context/plan alternatives. Relative to captured second-based
+results, 11,827 inputs changed from infeasible to feasible and 18 changed in
+the opposite direction; these count input alternatives before modeled-plan
+deduplication. Of the 2,118,390 feasible in both, the median, 90th and 99th
+percentile absolute plan-utility changes were 0.018, 0.088 and 0.222.
+
+After deduplicating modeled schedules under each timing model, fresh logit
+probabilities were aggregated to activity/destination/mode sequences (ignoring
+schedule differences) for each scoring context. Population-weighted total
+variation was 0.55% in batch 2 and 0.53% in batch 1, using coefficient 0.25
+and the same captured candidates and costs. This is not an OD-flow difference
+or a simulation-convergence estimate. The corresponding batch-2 feasible mobile
+modeled choices were 1,773,041 on the minute grid versus 1,761,813 in the
+captured second-based evaluator.
+
+The second batch retained 457,613 existing timed sections and added 78,112,
+for 535,725 in total, versus 536,526 in the second-based prototype. Both
+retained 302,818 timed physical plans and added 50,187. This prototype still
+keys timing plans by original physical plan identity and does not merge all
+possible minute-equivalent structures, so the result does not measure the
+potential reuse of a new representation built directly at minute resolution.
+Neither experiment retains sections across outer steps.
+
+In batch 2, 38 physical timed step rows had at least one clock value outside
+0�1,440 minutes; observed clocks ranged from -2 to 1,499. These include
+candidate steps that may be infeasible. A minute type must permit values
+outside the modeled day unless explicit day-boundary rules are adopted. The
+small capture ranged from -22 to 1,477. Do not silently clamp these values.
+
+For each batch, a sample of 100 input plans was independently checked with
+plain Python integer timing, feasibility and utility arithmetic. Comparisons
+to the captured model cover every candidate in both batches; the scoring
+sample is a check of the diagnostic, not proof of a full-model implementation.
+
+With eight Polars threads, repeated minute-prototype measurements varied from
+4.64 to 7.81 s for batch 1 and 3.66 to 5.92 s for batch 2; a sequential
+second-resolution run took 4.29 s and 3.71 s. This does not demonstrate a
+speedup from integer minutes. These slices include section indexing but not
+candidate generation, lookup construction, modeled-ID assignment, or result
+validation, and machine load varied. The minute prototype computes minute
+values from captured second-based inputs on every batch; an implementation
+that stores and generates minutes from the beginning would have different
+costs and has not been measured.
+
+### Two-sided activity rigidity and cross-step sections
+
+Activity timing now divides a trip's travel-time change using both the origin
+and destination activity rigidities. The origin's share is `(1 + destination -
+origin) / 2`; the destination absorbs the rest. Home defaults to zero, and
+anchors other than home default to one. Equal rigidity gives an even split.
+The utility-based destination guide and its conservative feasibility filter
+use the same rule, including the prior activity and, when available, its
+preceding trip. `activity_time_rigidity` replaces the earlier arrival-only
+parameter; old run and checkpoint identities are invalidated.
+
+An instrumented lowest-effort Geneva run captured the first inner batch in
+outer steps 1 and 2. It used one scenario, one seed, 1 activity x 1
+destination x 1 mode draw and one inner batch per step. Capture includes disk
+I/O and is not an end-to-end timing benchmark. The direct expanded scoring
+check reproduced 32,798 and 70,722 input context/plan results; all feasibility
+flags matched and feasible utility error was at most 1.5e-14.
+
+The structural diagnostic cuts immediately before a rigidity-1 activity:
+the arriving trip belongs to the preceding section and the activity belongs
+to the following section. At each activity, duration still uses both the
+incoming trip's arrival and the outgoing trip's departure, even when those
+trips are in neighboring sections. An independent expanded-row calculation
+uses retained section references to aggregate trip and activity contributions;
+it reproduced all 123,528 and 266,320 captured modeled step times and
+all 32,798 and 70,722 input-plan feasibility flags. Feasible utility error
+was at most 2.9e-14. This is a correctness check and does not yet time or
+score unique sections independently.
+
+The first capture contained 4,024 physical plans and 5,697 structural sections.
+The second contained 8,689 physical plans; mapping the first step's reference
+schedule IDs to its modeled IDs allowed all 4,024 retained plans and their
+5,697 section references to be reused, with 4,665 new structural plans and
+6,686 new sections added. A naive comparison of current time IDs and current
+reference rows found no retained plans, because the previous evaluation had
+assigned modeled schedule IDs and changed times. A cross-step structure must
+therefore keep reference identity separately from the current modeled timing;
+the experiment uses the actual captured mapping and checks retained physical
+activities, locations and modes. It stops if a modeled key maps to multiple
+prior references, so merged-reference handling remains unresolved.
+
+In a single diagnostic run, building the second-step structural index took
+about 0.038 s with reuse, including 0.013 s reference mapping, versus 0.040 s
+to rebuild from the second-step rows. These are very small, noisy index-only
+measurements. Reuse and rebuild also describe reference-time and modeled-time
+structures respectively, so they are not evidence of a full evaluation speedup.
+Retiming and scoring in the check still operate on expanded rows, and the
+index is neither integrated into the simulator nor retained through checkpoints.
+
+### Five-scenario early-divergence memory diagnostic
+
+A cache-only, two-step probe activated the carbon-tax and transit interventions
+at step 1, used full replanning, 3 activity x 3 destination x 3 mode draws,
+three search batches, one seed and eight Polars threads. Both congestion effects
+were enabled. A 24 GiB process-tree guard and 10 GiB available-memory reserve
+were used. This is a stress test, not the production intervention schedule or a
+convergence assessment. Instrumentation adds overhead. The first process was
+stopped after writing the step 2 checkpoint and before final cost calculation.
+
+The step 2 candidate pool reached 588,825 identities. During the second batch,
+after the last scenario evaluation, Python RSS was 18.06 GiB and the sum of
+reachable Polars dataframe estimates was 10.90 GiB. Before the next candidate
+pool, these were 16.48 GiB and 4.23 GiB respectively. After the completed
+behavioral update, RSS was 9.83 GiB and the dataframe estimates totaled 5.76 GiB;
+explicit Python garbage collection did not materially change either number.
+The trace recorded a 23.06 GiB Python RSS peak in step 2 between these snapshots.
+Dataframe estimates may double-count shared buffers and do not include all
+native allocations, lazy plans or other process memory, so their difference from
+RSS is not a measurement of allocator retention.
+
+A fresh process attempting to restore the completed checkpoint was stopped by
+the same guard at 24.31 GiB process-tree RSS, before finalization. The restore
+trace includes candidate checkpoint loading and rebuilding initial states. Each
+scenario's saved candidate file expands compact history to roughly 85 million
+candidate-step rows. In an isolated process, loading one 84,891,825-row file
+used 4.52 GiB of estimated dataframe memory and raised RSS from 0.07 to 5.49 GiB.
+This confirms a substantial live-data and checkpoint-expansion problem; it does
+not quantify how much of the remaining RSS is allocator retention. The traced simulation steps took approximately 16 minutes, including tracing,
+inventories and checkpoint writes. This excludes setup and final output work.
+
+A credible pre-run cost estimate needs calibration from comparable complete runs,
+separate accounting for physical candidates, context memberships, retained
+scenario evaluations and checkpoint expansion, and an uncertainty range. The
+observed candidate and memory growth changes with scenario divergence and
+replanning phases; one run cannot support a reliable estimate for 20 steps.

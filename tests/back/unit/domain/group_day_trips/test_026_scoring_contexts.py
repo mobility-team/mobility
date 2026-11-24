@@ -7,7 +7,8 @@ import polars as pl
 from polars.testing import assert_frame_equal
 import pytest
 
-from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts, ScoringMemoryBudget
+from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts, ScoringLookup, ScoringMemoryBudget
+from mobility.trips.group_day_trips.plans.factored_plan_scoring import SectionScoreCache
 from mobility.trips.group_day_trips.plans.plan_updater import CandidatePlanEvaluation, PlanUpdater
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS, add_plan_id
 from mobility.trips.group_day_trips.core.parameters import BehaviorChangeScope
@@ -56,16 +57,43 @@ def test_scoring_lookups_share_only_fixed_matching_inputs():
     cost_assets = {i: costs for i in coordinator.run_keys}
     cost_assets[5] = object()
     budget = ScoringMemoryBudget(max_bytes=1000)
-    lookups = coordinator._build_scoring_lookups(states, state_assets, cost_assets, 1, 1, budget)
+    lookups = coordinator._build_scoring_lookups(states, state_assets, cost_assets, 1, budget)
     assert lookups[0] is lookups[1] and lookups[0] is not None
-    assert all(lookups[i] is None for i in (2, 3, 4, 5, 6, 7))
-    lookups = coordinator._build_scoring_lookups(states, state_assets, cost_assets, 1, 2, budget)
+    assert len({id(lookups[i]) for i in (0, 2, 3, 4, 5, 6, 7)}) == 7
+    sections = pl.DataFrame({"_section_id": [0], "_atoms": [[1, 2]]})
+    coordinator._section_structure_cache = {0: sections}
+    fresh_budget = ScoringMemoryBudget(max_bytes=1000)
+    lookups = coordinator._build_scoring_lookups(states, state_assets, cost_assets, 1, fresh_budget)
+    assert lookups[0] is lookups[1]
+    assert lookups[0].section_cache.sections.equals(sections)
+    assert lookups[0].section_cache.scores is None
+    assert lookups[2].section_cache is None
+    assert fresh_budget.used_bytes == sections.estimated_size()
+    assert coordinator._section_structure_cache == {}
+    lookups = coordinator._build_scoring_lookups(states, state_assets, cost_assets, 1, budget)
     assert lookups[0] is lookups[1]
     assert len({id(lookups[i]) for i in (0, 2, 3, 4, 5, 6, 7)}) == 7
     cost_assets[0] = InMemoryAsset({"test": "matching costs"})
     cost_assets[1] = InMemoryAsset({"test": "matching costs"})
-    lookups = coordinator._build_scoring_lookups(states, state_assets, cost_assets, 1, 1, budget)
+    lookups = coordinator._build_scoring_lookups(states, state_assets, cost_assets, 1, budget)
     assert lookups[0] is lookups[1] and lookups[0] is not None
+
+
+def test_compact_lookup_takes_priority_over_reusable_section_scores():
+    sections = pl.DataFrame({"value": range(100)})
+    section_scores = pl.DataFrame({"value": range(100)})
+    initial_lookup = pl.DataFrame({"value": range(100)})
+    expanded_lookup = pl.DataFrame({"value": range(200)})
+    budget = ScoringMemoryBudget(max_bytes=(sections.estimated_size() + section_scores.estimated_size()
+                                            + expanded_lookup.estimated_size() - 1))
+    cache = SectionScoreCache(budget=budget)
+    cache.retain(sections, section_scores)
+    lookup = ScoringLookup(budget=budget, section_cache=cache)
+    lookup.retain(initial_lookup)
+    lookup.retain(expanded_lookup)
+    assert lookup.scores.equals(expanded_lookup)
+    assert cache.sections is None and cache.scores is None
+    assert budget.used_bytes == expanded_lookup.estimated_size()
 
 
 def test_candidate_evaluations_share_only_matching_inputs():
@@ -82,7 +110,7 @@ def test_candidate_evaluations_share_only_matching_inputs():
     state_assets = {
         key: SimpleNamespace(
             iteration=1, transport_costs=costs, updater=PlanUpdater(),
-            inputs={"resolved_activity_parameters": {"home": 1}, "arrival_time_rigidity_by_activity": {"home": 1}},
+            inputs={"resolved_activity_parameters": {"home": 1}, "activity_time_rigidity_by_activity": {"home": 1}},
         )
         for key in coordinator.scenarios
     }
@@ -110,7 +138,7 @@ def test_candidate_evaluations_share_only_matching_inputs():
     setups = {key: (contexts, table, table) for key in coordinator.scenarios}
     state_assets[3].transport_costs = object()
     state_assets[4].inputs = {
-        "resolved_activity_parameters": {"home": 2}, "arrival_time_rigidity_by_activity": {"home": 1},
+        "resolved_activity_parameters": {"home": 2}, "activity_time_rigidity_by_activity": {"home": 1},
     }
     args = dict(
         pool=pool, states=states, state_assets=state_assets, sources=sources, cost_assets=None,
@@ -286,6 +314,23 @@ def test_factored_candidates_preserve_active_history_and_reject_inconsistent_ste
     )
     actual = contexts.collapse_factored_step_rows(shared, active, previous, current)
     assert actual is not None
+    expanded, physical, memberships = contexts.collapse_factored_step_rows(
+        shared, active, previous, current, return_parts=True,
+    )
+    assert_frame_equal(expanded.sort(PLAN_KEY_COLS + ["seq_step_index"]), actual.sort(PLAN_KEY_COLS + ["seq_step_index"]))
+    assert_frame_equal(
+        memberships.join(physical, on=PLAN_COLUMNS).select(actual.columns).sort(PLAN_KEY_COLS + ["seq_step_index"]),
+        actual.sort(PLAN_KEY_COLS + ["seq_step_index"]),
+    )
+    unexpanded, physical_only, memberships_only = contexts.collapse_factored_step_rows(
+        shared, active, previous, current, return_parts=True, expand=False,
+    )
+    assert unexpanded is None
+    assert_frame_equal(
+        memberships_only.join(physical_only, on=PLAN_COLUMNS).select(actual.columns)
+        .sort(PLAN_KEY_COLS + ["seq_step_index"]),
+        actual.sort(PLAN_KEY_COLS + ["seq_step_index"]),
+    )
     keys = PLAN_KEY_COLS + ["seq_step_index"]
     assert_frame_equal(actual.sort(keys), contexts.collapse_step_rows(raw).select(actual.columns).sort(keys))
     shared_history = CompactCandidateSteps(

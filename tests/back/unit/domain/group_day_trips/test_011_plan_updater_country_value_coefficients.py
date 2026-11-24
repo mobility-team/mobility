@@ -63,7 +63,7 @@ def test_plan_steps_are_collected_when_transitions_need_them(monkeypatch, distan
         current_plans=plans, current_plan_steps=None, candidate_plan_steps=None,
         demand_groups=None, survey_plan_steps=None, transport_costs=None,
         destination_saturation=None, activity_dur=None, iteration=1,
-        resolved_activity_parameters={}, arrival_time_rigidity_by_activity={},
+        resolved_activity_parameters={}, activity_time_rigidity_by_activity={},
         destination_sequences=None, mode_sequences=None, home_night_dur=None,
         stay_home_plan=None, transport_zones=None, previous_plan_id_index=None,
         parameters=parameters, precomputed_evaluation=evaluation,

@@ -42,6 +42,7 @@ class IterationState:
     destination_sequence_index: pl.DataFrame
     mode_sequence_index: pl.DataFrame
     time_sequence_steps: pl.DataFrame | None = None
+    costs: pl.DataFrame | None = None
 
 
 class Iteration:
@@ -158,6 +159,7 @@ class Iteration:
             ].get(),
             mode_sequence_index=checkpoint_assets["mode_sequence_index"].get(),
             time_sequence_steps=checkpoint_assets["time_sequence_steps"].get(),
+            costs=checkpoint_assets["costs"].get(),
         )
 
     def checkpoint_assets(self) -> dict[str, Any]:
@@ -168,6 +170,10 @@ class Iteration:
         iteration = self.iteration
         base_folder = iteration_state_folder
         return {
+            "costs": SequenceIndexAsset(
+                run_key=run_key, is_weekday=is_weekday, iteration=iteration,
+                sequence_name="checkpoint_costs", base_folder=base_folder,
+            ),
             "time_sequence_steps": SequenceIndexAsset(
                 run_key=run_key, is_weekday=is_weekday, iteration=iteration,
                 sequence_name="time_sequence_steps", base_folder=base_folder,
@@ -319,6 +325,14 @@ class Iteration:
                 base_folder=iteration_state_folder,
                 sequence_index=state.schedule_steps,
             ).get()
+            SequenceIndexAsset(
+                run_key=self.iterations.run_inputs_hash,
+                is_weekday=self.iterations.is_weekday,
+                iteration=self.iteration,
+                sequence_name="checkpoint_costs",
+                base_folder=iteration_state_folder,
+                sequence_index=state.costs,
+            ).get()
             completion_asset.get()
         except Exception as exc:
             raise RuntimeError(
@@ -417,6 +431,7 @@ class Iterations:
                 "*destination_sequence_index_*.parquet",
                 "*mode_sequence_index_*.parquet",
                 "*time_sequence_steps_*.parquet",
+                "*checkpoint_costs_*.parquet",
                 "*remaining_opportunities_*.parquet",
                 "*rng_state_*.pkl",
                 "*iteration_complete_*.json",

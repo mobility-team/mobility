@@ -418,6 +418,11 @@ Intermediate iteration state stays in memory by default. To save compact
 restart checkpoints after each iteration, set
 `outputs=mobility.GroupDayTripsOutputParameters(checkpoint_each_step=True)`.
 These checkpoints are separate from requested result tables.
+They include each completed step's costs and search diagnostics, and the final
+inner-flow estimate. A coordinated restart restores these saved results and
+states without repeating completed searches. Checkpoints from older formats
+are not reused; they remain on disk until explicitly removed. Saving costs and
+the final flow estimate uses additional disk space and calculation time.
 
 Common run arguments:
 

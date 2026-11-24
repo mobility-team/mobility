@@ -156,7 +156,7 @@ class Run(InMemoryAsset):
         # Version changes invalidate results when candidate identity or
         # numerical calculations used by the model change.
         run_context_inputs = {
-            "version": 60 if parameters.destination_sequences.sampling_method == "utility" else 55,
+            "version": 61 if parameters.destination_sequences.sampling_method == "utility" else 56,
             "population": population,
             "activities": activities,
             "modes": modes,
@@ -192,7 +192,7 @@ class Run(InMemoryAsset):
         checkpoint_run_context = {
             **run_context_inputs,
             "parameters": checkpoint_parameters,
-            "checkpoint_version": 35 if parameters.destination_sequences.sampling_method == "utility" else 30,
+            "checkpoint_version": 37 if parameters.destination_sequences.sampling_method == "utility" else 32,
         }
         checkpoint_run_hash = hash_inputs(checkpoint_run_context)
         self.run_context = SimpleNamespace(

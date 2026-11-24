@@ -15,8 +15,12 @@ from ..transitions.transition_events import (
     build_transition_events_lazy,
 )
 from .candidate_plan_steps import CandidatePlanStepsAsset
-from .compact_candidate_steps import CompactCandidateSteps, ScoringCandidateSteps, PLAN_COLUMNS
-from .scoring_contexts import ScoringContexts, ScoringLookup
+from .compact_candidate_steps import (
+    CompactCandidateSteps, ScoringCandidateSteps, MEMBERSHIP_COLUMNS, PLAN_COLUMNS, STEP_COLUMNS, STEP_KEY_COLUMNS,
+)
+from .factored_plan_timing import time_factored_candidates
+from .factored_plan_scoring import SectionScoreCache, score_factored_sections
+from .scoring_contexts import ScoringContexts, ScoringLookup, ScoringMemoryBudget
 from .demand_subgroups import DEMAND_UNIT_COLS
 from .plan_distance import PlanDistance
 from .plan_ids import PLAN_KEY_COLS, add_plan_id
@@ -24,6 +28,61 @@ from .plan_schedule_updater import PlanScheduleUpdater
 from .time_sequences import TimeSequenceIndexCache, assign_time_sequence_ids
 from .destination_sequences import DestinationSequences
 from .mode_sequence_search import ModeSequences
+
+_REACHABLE_ALLOCATION_BATCH_ROWS = 500_000
+
+
+@dataclass(frozen=True)
+class SharedSectionStepDetails:
+    """Inputs for expanding only the scored plans needed by later steps."""
+
+    class_plans: pl.DataFrame
+    physical: pl.DataFrame
+    lookup: pl.DataFrame
+    history: pl.DataFrame
+    plan_ids: pl.DataFrame
+    stay_home: pl.DataFrame
+
+    def for_storage(self, plan_ids: pl.DataFrame) -> pl.DataFrame:
+        """Build the narrow step table needed after the current search."""
+        columns = PLAN_KEY_COLS + [
+            "plan_id", "seq_step_index", "activity", "from", "to", "mode", "distance", "time",
+            "duration_per_pers", "departure_time", "arrival_time", "next_departure_time",
+        ]
+        keys = ["country", "csp", "activity", "from", "to", "mode", "utility_profile_id"]
+        selected = self.class_plans.join(plan_ids, on="plan_id", how="semi")
+        mobile = (selected.join(self.physical, on="_timing_plan")
+                  .join(self.lookup.select(keys + ["distance", "time"]), on=keys)
+                  .select(columns))
+        stay = (self.stay_home.join(self.plan_ids, on=PLAN_KEY_COLS)
+                .join(plan_ids, on="plan_id", how="semi")
+                .with_columns(distance=pl.lit(0.0), time=pl.lit(0.0))
+                .select(columns))
+        return pl.concat([mobile, stay], how="vertical_relaxed")
+
+    def select(self, updater, plan_ids: pl.DataFrame | None = None) -> pl.LazyFrame:
+        selected = self.class_plans.lazy()
+        stay = self.stay_home
+        if plan_ids is not None:
+            selected = selected.join(plan_ids.lazy(), on="plan_id", how="semi")
+            stay = (stay.join(self.plan_ids, on=PLAN_KEY_COLS)
+                    .join(plan_ids, on="plan_id", how="semi").drop("plan_id"))
+        score_keys = ["country", "csp", "activity", "from", "to", "mode", "utility_profile_id"]
+        score_values = ["cost", "distance", "time", "is_feasible", "min_activity_time", "activity_utility_scale"]
+        history_values = ["iteration"] + CandidatePlanStepsAsset.RETENTION_COLUMNS
+        steps = (selected.join(self.physical.lazy(), on="_timing_plan")
+                 .join(self.lookup.select(score_keys + score_values).lazy(), on=score_keys)
+                 .join(self.history.select(PLAN_KEY_COLS + history_values).lazy(), on=PLAN_KEY_COLS)
+                 .with_columns(
+                     is_feasible=(pl.col("is_feasible") & (
+                         (pl.col("seq_step_index") == pl.col("seq_step_index").max().over(PLAN_KEY_COLS))
+                         | (pl.col("next_departure_time") >= pl.col("arrival_time")))).fill_null(False),
+                     utility=pl.col("activity_utility_scale")
+                     * (pl.col("duration_per_pers") / pl.col("min_activity_time")).log().clip(0.0) - pl.col("cost"),
+                 ).drop("activity_utility_scale", "utility_profile_id", "_timing_plan", "previous_time_seq_id"))
+        return updater.add_stay_home_plan_steps(
+            steps, stay, plan_id_index=self.plan_ids, plan_id_index_complete=True,
+        )[0]
 
 
 @dataclass(frozen=True)
@@ -40,6 +99,9 @@ class CandidatePlanEvaluation:
     time_mapping: pl.DataFrame | None = None
     compact_transition_evaluation: "CandidatePlanEvaluation | None" = None
     context_transition_probabilities: pl.DataFrame | None = None
+    shared_plan_ids: pl.DataFrame | None = None
+    shared_steps: pl.DataFrame | None = None
+    shared_step_details: SharedSectionStepDetails | None = None
 
 
 class PlanUpdater:
@@ -304,40 +366,52 @@ class PlanUpdater:
         ).drop("demand_subgroup_id", "plan_id_from", "plan_id_trans", "utility_prev_from").rename(
             {"demand_group_id": "_score_context_id"}
         )
-        unit_pairs = (
-            origins.select(DEMAND_UNIT_COLS + context_keys + ["utility"])
-            .rename({"utility": "utility_prev_from"})
-            .join(probabilities, on=context_keys, how="inner")
-            .drop("_score_context_id")
-        )
         target_keys = [column + "_trans" for column in PLAN_COLUMNS]
-        temporary_keys = pl.concat([
-            origins.select(PLAN_KEY_COLS),
-            unit_pairs.select(DEMAND_UNIT_COLS + target_keys).rename(
-                {column + "_trans": column for column in PLAN_COLUMNS}
-            ),
-            origins.select(DEMAND_UNIT_COLS).unique().with_columns(
-                **{column: pl.lit(0, dtype=pl.UInt32) for column in PLAN_COLUMNS}
-            ),
-        ]).unique().sort(PLAN_KEY_COLS).with_row_index("plan_id")
-        unit_origins = origins.drop("_score_context_id").join(temporary_keys, on=PLAN_KEY_COLS)
-        unit_pairs = (
-            unit_pairs.join(temporary_keys.rename({"plan_id": "plan_id_from"}), on=PLAN_KEY_COLS)
-            .join(temporary_keys.rename({
-                **{column: column + "_trans" for column in PLAN_COLUMNS}, "plan_id": "plan_id_trans"
-            }), on=DEMAND_UNIT_COLS + target_keys)
-        )
-        allocation, _ = self.apply_transitions(
-            unit_origins, unit_pairs, iteration,
-            min_plan_persons=min_plan_persons,
-            plan_pruning_start_step=plan_pruning_start_step,
-            stay_home_plans=(
-                contexts.expand_step_rows(evaluation.possible_plan_utility.filter(pl.col("mode_seq_id") == 0))
-                .drop("plan_id").join(temporary_keys.lazy(), on=PLAN_KEY_COLS)
-                .select(DEMAND_UNIT_COLS + ["plan_id", "utility"])
-            ),
-            include_events=False,
-        )
+        # A population floor is local to each demand unit. Limit the temporary
+        # transition expansion while keeping every origin of a unit together.
+        pair_counts = probabilities.group_by(context_keys).len(name="_choices")
+        units = (origins.join(pair_counts, on=context_keys, how="left")
+                 .group_by(DEMAND_UNIT_COLS).agg(pl.col("_choices").fill_null(1).sum())
+                 .sort(DEMAND_UNIT_COLS)
+                 .with_columns(_batch=((pl.col("_choices").cast(pl.UInt64).cum_sum()
+                                        - pl.col("_choices")) // _REACHABLE_ALLOCATION_BATCH_ROWS))
+                 .select(DEMAND_UNIT_COLS + ["_batch"]))
+        origin_batches = origins.join(units, on=DEMAND_UNIT_COLS).partition_by("_batch", maintain_order=True)
+        home = contexts.expand_step_rows(evaluation.possible_plan_utility.filter(pl.col("mode_seq_id") == 0))
+        allocations = []
+        for origin_batch in origin_batches:
+            origin_batch = origin_batch.drop("_batch")
+            batch_contexts = origin_batch.select(context_keys).unique()
+            batch_probabilities = probabilities.join(batch_contexts, on=context_keys, how="semi")
+            unit_pairs = (origin_batch.select(DEMAND_UNIT_COLS + context_keys + ["utility"])
+                          .rename({"utility": "utility_prev_from"})
+                          .join(batch_probabilities, on=context_keys, how="inner").drop("_score_context_id"))
+            temporary_keys = pl.concat([
+                origin_batch.select(PLAN_KEY_COLS),
+                unit_pairs.select(DEMAND_UNIT_COLS + target_keys).rename(
+                    {column + "_trans": column for column in PLAN_COLUMNS}
+                ),
+                origin_batch.select(DEMAND_UNIT_COLS).unique().with_columns(
+                    **{column: pl.lit(0, dtype=pl.UInt32) for column in PLAN_COLUMNS}
+                ),
+            ]).unique().sort(PLAN_KEY_COLS).with_row_index("plan_id")
+            unit_origins = origin_batch.drop("_score_context_id").join(temporary_keys, on=PLAN_KEY_COLS)
+            unit_pairs = (
+                unit_pairs.join(temporary_keys.rename({"plan_id": "plan_id_from"}), on=PLAN_KEY_COLS)
+                .join(temporary_keys.rename({
+                    **{column: column + "_trans" for column in PLAN_COLUMNS}, "plan_id": "plan_id_trans"
+                }), on=DEMAND_UNIT_COLS + target_keys)
+            )
+            allocation, _ = self.apply_transitions(
+                unit_origins, unit_pairs, iteration,
+                min_plan_persons=min_plan_persons,
+                plan_pruning_start_step=plan_pruning_start_step,
+                stay_home_plans=(home.drop("plan_id").join(temporary_keys.lazy(), on=PLAN_KEY_COLS)
+                                 .select(DEMAND_UNIT_COLS + ["plan_id", "utility"])),
+                include_events=False,
+            )
+            allocations.append(allocation)
+        allocation = pl.concat(allocations) if allocations else current_plans.head(0)
         return (
             contexts.collapse_allocations(allocation)
             .drop("utility")
@@ -412,7 +486,7 @@ class PlanUpdater:
         activity_dur: pl.DataFrame,
         iteration: int,
         resolved_activity_parameters: dict[str, Any],
-        arrival_time_rigidity_by_activity: dict[str, float],
+        activity_time_rigidity_by_activity: dict[str, float],
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
         home_night_dur: pl.DataFrame,
@@ -440,7 +514,7 @@ class PlanUpdater:
             transport_zones=transport_zones,
             iteration=iteration,
             resolved_activity_parameters=resolved_activity_parameters,
-            arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
+            activity_time_rigidity_by_activity=activity_time_rigidity_by_activity,
             destination_sequences=destination_sequences,
             mode_sequences=mode_sequences,
             previous_plan_id_index=previous_plan_id_index,
@@ -536,6 +610,132 @@ class PlanUpdater:
 
         return current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index, evaluation.time_sequence_steps
 
+    @trace_simulation_step("evaluate shared sections")
+    def _evaluate_shared_sections(
+        self, *, physical: pl.DataFrame, memberships: pl.DataFrame, contexts: ScoringContexts,
+        current_plans: pl.DataFrame, stay_home_plan: pl.DataFrame, schedule_steps: pl.DataFrame,
+        home_night_dur: pl.DataFrame, home_value: float, min_activity_time_constant: float,
+        rigidity: dict[str, float], enabled: bool,
+        scoring_lookup: ScoringLookup, time_index_cache: TimeSequenceIndexCache | None,
+        needed_score_keys: pl.DataFrame | None = None,
+    ) -> CandidatePlanEvaluation | None:
+        """Score timed sections once before expanding them to scoring contexts.
+
+        Return None when the compact scoring lookup does not cover every step;
+        the normal evaluator then handles those incomplete candidate inputs.
+        """
+        physical = physical.filter(pl.col("mode_seq_id") != 0).select(STEP_COLUMNS)
+        memberships = memberships.filter(pl.col("mode_seq_id") != 0).select(MEMBERSHIP_COLUMNS)
+        if physical.is_empty() or memberships.is_empty() or scoring_lookup.scores is None:
+            return None
+        profiles = contexts.demand_groups.select(DEMAND_UNIT_COLS + ["country", "csp", "utility_profile_id"])
+        score_keys = ["country", "csp", "activity", "from", "to", "mode", "utility_profile_id"]
+        lookup = scoring_lookup.scores
+        if needed_score_keys is None:
+            classes = (memberships.select(PLAN_KEY_COLS).join(profiles, on=DEMAND_UNIT_COLS)
+                       .select(PLAN_COLUMNS + ["country", "csp", "utility_profile_id"]).unique())
+            needed = classes.join(physical, on=PLAN_COLUMNS).select(score_keys).unique()
+        else:
+            needed = needed_score_keys
+        if needed.join(lookup.select(score_keys), on=score_keys, how="anti", nulls_equal=True).height:
+            return None
+        travel = lookup.select("utility_profile_id", "from", "to", "mode", "time").unique()
+        timing = time_factored_candidates(
+            physical, memberships, profiles, travel, schedule_steps,
+            activity_time_rigidity_by_activity=rigidity, enabled=enabled,
+            index_cache=time_index_cache, schedule_updater=self.schedule_updater,
+        )
+        if scoring_lookup.section_cache is None:
+            scoring_lookup.section_cache = SectionScoreCache(budget=scoring_lookup.budget)
+        scored = score_factored_sections(
+            timing, profiles, lookup, home_night_dur,
+            rigid_activities={name for name, value in rigidity.items() if value == 1.0},
+            value_of_time_stay_home=home_value, min_activity_time_constant=min_activity_time_constant,
+            cache=scoring_lookup.section_cache,
+        )
+        modeled_utilities = scored.utilities
+        scored_context_plans = scored.context_plans
+        # Section references and profile scores are no longer needed by this
+        # evaluation; the optional cache holds only what fits its budget.
+        del scored
+        time_mapping = scored_context_plans.select(
+            DEMAND_UNIT_COLS + ["activity_seq_id", "previous_time_seq_id", "dest_seq_id", "mode_seq_id", "time_seq_id"]
+        )
+        utility_columns = DEMAND_UNIT_COLS + [
+            "activity_seq_id", "time_seq_id", "mode_seq_id", "dest_seq_id", "utility", "is_feasible",
+            "missing_cost_row_count", "invalid_cost_row_count", "plan_id",
+        ]
+        # IDs are temporary within this evaluation. The scored mobile plans
+        # are already unique, so assign IDs directly instead of joining a
+        # separately constructed index back onto millions of rows.
+        mobile = modeled_utilities.sort(PLAN_KEY_COLS).with_row_index("plan_id").select(utility_columns)
+        mobile_count = mobile.height
+        del modeled_utilities
+        stay = (stay_home_plan.with_columns(
+            min_activity_time=pl.col("mean_home_night_per_pers") * math.exp(-min_activity_time_constant),
+        ).with_columns(
+            utility=home_value * pl.col("mean_home_night_per_pers")
+            * (pl.col("mean_home_night_per_pers") / pl.col("min_activity_time")).log().clip(0.0),
+            is_feasible=pl.lit(True), missing_cost_row_count=pl.lit(0, dtype=pl.UInt32),
+            invalid_cost_row_count=pl.lit(0, dtype=pl.UInt32),
+        ).sort(PLAN_KEY_COLS).with_row_index("plan_id", offset=mobile.height).select(utility_columns))
+        plan_id_index = pl.concat([
+            mobile.select(PLAN_KEY_COLS + ["plan_id"]), stay.select(PLAN_KEY_COLS + ["plan_id"]),
+        ])
+        utilities = pl.concat([mobile, stay], how="vertical_relaxed")
+        del mobile, stay
+
+        origin_keys = DEMAND_UNIT_COLS + [
+            "activity_seq_id", "previous_time_seq_id", "dest_seq_id", "mode_seq_id",
+        ]
+        current = (current_plans.rename({"time_seq_id": "previous_time_seq_id"})
+                   .join(time_mapping, on=origin_keys, how="left")
+                   .with_columns(time_seq_id=pl.col("time_seq_id").fill_null(pl.col("previous_time_seq_id")))
+                   .group_by(PLAN_KEY_COLS)
+                   .agg(n_persons=pl.col("n_persons").sort().implode().list.sum(), utility=pl.col("utility").first())
+                   .join(plan_id_index, on=PLAN_KEY_COLS, how="left"))
+        if current["plan_id"].null_count():
+            return None
+        history = (memberships.rename({"time_seq_id": "previous_time_seq_id"})
+                   .join(time_mapping, on=origin_keys, how="inner")
+                   .group_by(PLAN_KEY_COLS).agg(
+                       pl.col("country").first(), pl.col("csp").first(), pl.col("iteration").min(),
+                       pl.col("first_seen_iteration").min(), pl.col("last_seen_iteration").max(),
+                       pl.col("last_active_iteration").max(),
+                   ).select(MEMBERSHIP_COLUMNS))
+        modeled_physical = timing.steps.select(STEP_COLUMNS).unique()
+        if modeled_physical.select(STEP_KEY_COLUMNS).n_unique() != modeled_physical.height:
+            return None
+        candidates = CompactCandidateSteps(
+            steps=modeled_physical, membership=history,
+            columns=tuple(CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS),
+        )
+
+        # Keep this compatibility view lazy: allocations can filter plans
+        # before their physical steps are attached to scoring contexts.
+        class_plans = scored_context_plans.unique(subset=PLAN_KEY_COLS, keep="first").sort(PLAN_KEY_COLS)
+        if class_plans.select(PLAN_KEY_COLS).equals(plan_id_index.head(mobile_count).select(PLAN_KEY_COLS)):
+            # Both tables describe the same sorted mobile plans; their row
+            # positions are the temporary IDs already assigned above.
+            class_plans = class_plans.with_row_index("plan_id")
+        else:
+            # An incomplete scoring input can remove plans from the utility
+            # table. Retain the general join for those unusual inputs.
+            class_plans = class_plans.join(plan_id_index, on=PLAN_KEY_COLS)
+        del scored_context_plans
+        details = SharedSectionStepDetails(
+            class_plans, timing.steps.drop(PLAN_COLUMNS + ["time"]), lookup, history, plan_id_index, stay_home_plan,
+        )
+        steps = details.select(self)
+        return CandidatePlanEvaluation(
+            candidate_plan_steps=candidates, possible_plan_steps=steps, possible_plan_utility=utilities,
+            plan_id_index=plan_id_index, current_plans=current, time_sequence_steps=timing.time_sequence_steps,
+            scoring_contexts=contexts, time_mapping=time_mapping,
+            shared_plan_ids=class_plans.select("plan_id", "_timing_plan"),
+            shared_steps=timing.steps.select("_timing_plan", "from", "to", "mode", "activity"),
+            shared_step_details=details,
+        )
+
     @trace_simulation_step("candidate evaluation")
     def evaluate_candidate_pool(
         self,
@@ -556,7 +756,7 @@ class PlanUpdater:
         transport_zones: Any,
         iteration: int,
         resolved_activity_parameters: dict[str, Any],
-        arrival_time_rigidity_by_activity: dict[str, float],
+        activity_time_rigidity_by_activity: dict[str, float],
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
         previous_plan_id_index: pl.DataFrame,
@@ -582,6 +782,14 @@ class PlanUpdater:
             else candidate_plan_steps
         )
         compact_candidates = None
+        factored_parts = None
+        can_score_sections = (
+            compact_contexts and scoring_lookup is not None
+            and type(self.schedule_updater) is PlanScheduleUpdater
+            and not parameters.outputs.cache_step_events
+            and not (parameters.plan_update.enable_transition_distance_model
+                     and math.isfinite(parameters.plan_update.transition_distance_threshold))
+        )
         context_filter = None
         if compact_contexts and reachable_scoring_scope is not None:
             compact_current_plans = (
@@ -596,16 +804,19 @@ class PlanUpdater:
             compact_contexts and factored_candidate_steps is not None
             and (candidate_plan_steps is None or isinstance(candidate_plan_steps, CompactCandidateSteps))
         ):
-            compact_candidates = scoring_contexts.collapse_factored_step_rows(
+            collapsed = scoring_contexts.collapse_factored_step_rows(
                 factored_candidate_steps, shared_active_plan_steps, candidate_plan_steps, current_plans,
-                context_filter=context_filter,
+                context_filter=context_filter, return_parts=True, expand=not can_score_sections,
             )
+            if collapsed is not None:
+                compact_candidates, physical_candidates, candidate_memberships = collapsed
+                factored_parts = (physical_candidates, candidate_memberships)
         if isinstance(candidate_memory, CompactCandidateSteps):
             candidate_memory = candidate_memory.lazy()
         candidate_parts = [candidate_memory.lazy()] if candidate_memory is not None else []
-        if compact_candidates is None and shared_active_plan_steps is not None and shared_active_plan_steps.height:
+        if factored_parts is None and shared_active_plan_steps is not None and shared_active_plan_steps.height:
             candidate_parts.append(shared_active_plan_steps.lazy())
-        if compact_candidates is None and shared_candidate_plan_steps is not None and candidate_plan_steps is not None:
+        if factored_parts is None and shared_candidate_plan_steps is not None and candidate_plan_steps is not None:
             # Inner timing updates may have replaced the occupied keys. Preserve
             # the real outer origins so they can be rescored and remapped here.
             active_keys = current_plans.lazy().select(PLAN_KEY_COLS)
@@ -614,7 +825,7 @@ class PlanUpdater:
                 # Otherwise the compact history is expanded for every unit.
                 active_candidates = (
                     candidate_plan_steps.memberships_for_plans(active_keys)
-                    .join(candidate_plan_steps.steps.lazy(), on=PLAN_COLUMNS, how="inner")
+                    .join(candidate_plan_steps.physical_steps(active_keys), on=PLAN_COLUMNS, how="inner")
                     .select(candidate_plan_steps.columns)
                 )
             else:
@@ -622,15 +833,15 @@ class PlanUpdater:
                     active_keys, on=PLAN_KEY_COLS, how="semi",
                 )
             candidate_parts.append(active_candidates)
-        if compact_candidates is None and len(candidate_parts) > 1:
+        if factored_parts is None and len(candidate_parts) > 1:
             candidate_memory = pl.concat(candidate_parts, how="vertical_relaxed").unique(
                 subset=CandidatePlanStepsAsset.DEDUPE_COLUMNS, keep="last"
             )
         if compact_contexts:
-            candidate_memory = (
-                compact_candidates if compact_candidates is not None
-                else scoring_contexts.collapse_step_rows(candidate_memory)
-            )
+            if factored_parts is None:
+                candidate_memory = scoring_contexts.collapse_step_rows(candidate_memory)
+            elif compact_candidates is not None:
+                candidate_memory = compact_candidates
             log_memory_checkpoint(
                 f"plan_updater:iteration:{iteration}:scoring_context_candidates",
                 candidate_steps=candidate_memory,
@@ -644,16 +855,69 @@ class PlanUpdater:
                 else scoring_contexts.collapse_stay_home(stay_home_plan)
             )
             demand_groups = scoring_contexts.demand_groups
-            # These are temporary context ids, separate from persistent unit plan ids.
-            # Reuse the compact index between batches; the outer update creates
-            # its persistent demand-unit index separately.
+            # Context ids are temporary; the outer update creates persistent
+            # demand-unit plan ids separately.
             previous_plan_id_index = compact_plan_id_index
             current_plan_steps = None
-            if reachable_scoring_scope is not None and compact_candidates is None:
+            if reachable_scoring_scope is not None and factored_parts is None:
                 candidate_memory = self._reachable_scoring_candidates(
                     candidate_memory, current_plans, survey_plan_steps,
                     reachable_scoring_scope, forced_scoring_contexts,
                 )
+        if factored_parts is not None and can_score_sections:
+            physical, memberships = factored_parts
+            _, utility_profiles = transport_costs.get_utility_profiles(
+                demand_groups, mode_sequences.population_segments,
+            )
+            score_keys = ["country", "csp", "activity", "from", "to", "mode", "utility_profile_id"]
+            # Equivalent contexts share the same trip inputs. Join each
+            # physical plan to its distinct profiles, not to every context.
+            classes = (memberships.filter(pl.col("mode_seq_id") != 0).select(PLAN_KEY_COLS)
+                       .join(scoring_contexts.demand_groups.select(
+                           DEMAND_UNIT_COLS + ["country", "csp", "utility_profile_id"]), on=DEMAND_UNIT_COLS)
+                       .select(PLAN_COLUMNS + ["country", "csp", "utility_profile_id"]).unique())
+            score_inputs = (classes.join(physical.select(PLAN_COLUMNS + ["activity", "from", "to", "mode"])
+                                         .unique(), on=PLAN_COLUMNS)
+                            .select(score_keys).unique())
+            del classes
+            compact_scores = self.compute_plan_steps_candidates_utility(
+                candidates=None, compact_score_inputs=score_inputs, utility_profiles=utility_profiles,
+                transport_costs=transport_costs,
+                population_segments=mode_sequences.population_segments,
+                destination_saturation=destination_saturation, activity_dur=activity_dur,
+                transport_zones=transport_zones, resolved_activity_parameters=resolved_activity_parameters,
+                min_activity_time_constant=parameters.plan_update.min_activity_time_constant,
+                allow_missing_costs_for_current_plans=True,
+                use_destination_shadow_prices=parameters.plan_update.use_destination_shadow_prices,
+                scoring_lookup=scoring_lookup,
+            )
+            active_lookup = scoring_lookup
+            if scoring_lookup.scores is None:
+                # The lookup is needed now even when it is too large to keep
+                # between batches. Do not retain its section scores either.
+                active_lookup = ScoringLookup(
+                    budget=ScoringMemoryBudget(max_bytes=0),
+                    scores=compact_scores.collect(engine="streaming"),
+                )
+            section_evaluation = self._evaluate_shared_sections(
+                physical=physical, memberships=memberships, contexts=scoring_contexts,
+                current_plans=current_plans, stay_home_plan=stay_home_plan, schedule_steps=survey_plan_steps,
+                home_night_dur=home_night_dur,
+                home_value=resolved_activity_parameters["home"].value_of_time_stay_home,
+                min_activity_time_constant=parameters.plan_update.min_activity_time_constant,
+                rigidity=activity_time_rigidity_by_activity,
+                enabled=parameters.plan_update.update_plan_timings_from_modeled_travel_times,
+                scoring_lookup=active_lookup,
+                time_index_cache=time_index_cache, needed_score_keys=score_inputs,
+            )
+            if section_evaluation is not None:
+                return section_evaluation
+            # An incomplete lookup or conflicting modeled plan needs the
+            # established expanded evaluator. Expand only in that case.
+            compact_candidates = (memberships.join(physical, on=PLAN_COLUMNS)
+                                  .select(CandidatePlanStepsAsset.STRUCTURAL_COLUMNS
+                                          + CandidatePlanStepsAsset.RETENTION_COLUMNS))
+            candidate_memory = compact_candidates
         possible_plan_steps = self.get_possible_plan_steps(
             current_plans,
             current_plan_steps,
@@ -667,7 +931,7 @@ class PlanUpdater:
             transport_zones,
             iteration,
             resolved_activity_parameters,
-            arrival_time_rigidity_by_activity,
+            activity_time_rigidity_by_activity,
             parameters.plan_update.min_activity_time_constant,
             destination_sequences,
             mode_sequences,
@@ -688,6 +952,12 @@ class PlanUpdater:
             possible_plan_steps=possible_plan_steps,
         )
         scored_steps = possible_plan_steps.collect(engine="streaming")
+        share_physical_timing = (
+            compact_candidates is not None and scoring_contexts is not None
+            and scored_steps.height > 0
+            and "utility_profile_id" in scoring_contexts.demand_groups.columns
+            and type(self.schedule_updater) is PlanScheduleUpdater
+        )
         del possible_plan_steps, candidate_memory, compact_candidates, candidate_parts
         with simulation_step("check candidate coverage"):
             # Input schedules can acquire a different identity after modeled
@@ -700,26 +970,71 @@ class PlanUpdater:
             iteration,
         )
         del observed_plans
-        possible_plan_steps = self.schedule_updater.update_plan_timings(
-            scored_steps.lazy(),
-            arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
-            enabled=parameters.plan_update.update_plan_timings_from_modeled_travel_times,
-        )
-
         # Timing changes create new schedule identities. Remap the current
         # distribution too, so transition origins still match the scored plans.
         with simulation_step("materialize and index modeled timings"):
-            timed_scored_steps = possible_plan_steps.collect(engine="streaming")
-            # The materialized steps replace this query. Release its input
-            # tables before indexing, where both can otherwise be live at once.
-            del possible_plan_steps, scored_steps
-            log_memory_checkpoint(
-                f"plan_updater:iteration:{iteration}:timed_scored_steps", scored_steps=timed_scored_steps,
-            )
-            timed_steps, time_sequence_steps, time_mapping = assign_time_sequence_ids(
-                timed_scored_steps, survey_plan_steps, index_cache=time_index_cache,
-            )
-            del timed_scored_steps
+            if share_physical_timing:
+                # Contexts with the same physical plan and travel times have
+                # the same timing, even if their activity scores differ.
+                profiles = scoring_contexts.demand_groups.select(DEMAND_UNIT_COLS + ["utility_profile_id"])
+                physical, memberships = factored_parts
+                physical = physical.filter(pl.col("mode_seq_id") != 0).select(STEP_COLUMNS)
+                memberships = memberships.filter(pl.col("mode_seq_id") != 0).select(PLAN_KEY_COLS)
+                expected_count = (memberships.select(PLAN_COLUMNS)
+                                  .join(physical.group_by(PLAN_COLUMNS).len(), on=PLAN_COLUMNS)
+                                  .select(pl.col("len").sum()).item())
+                if expected_count != scored_steps.height:
+                    # A scoring join can omit individual steps. Such a partial
+                    # schedule must retain the existing context-level timing.
+                    share_physical_timing = False
+            if share_physical_timing:
+                if scoring_lookup is not None and scoring_lookup.scores is not None:
+                    travel = scoring_lookup.scores.select("utility_profile_id", "from", "to", "mode", "time").unique()
+                else:
+                    travel = (scored_steps.select(DEMAND_UNIT_COLS + ["from", "to", "mode", "time"])
+                              .join(profiles, on=DEMAND_UNIT_COLS)
+                              .select("utility_profile_id", "from", "to", "mode", "time").unique())
+                factored = time_factored_candidates(
+                    physical, memberships, profiles, travel, survey_plan_steps,
+                    activity_time_rigidity_by_activity=activity_time_rigidity_by_activity,
+                    enabled=parameters.plan_update.update_plan_timings_from_modeled_travel_times,
+                    index_cache=time_index_cache,
+                    schedule_updater=self.schedule_updater,
+                )
+                context_mapping = factored.context_mapping
+                time_mapping = context_mapping.drop("_timing_plan")
+                time_sequence_steps = factored.time_sequence_steps
+                time_columns = ["departure_time", "arrival_time", "next_departure_time", "duration_per_pers"]
+                timing_values = factored.steps.select(
+                    ["_timing_plan", "seq_step_index"]
+                    + [pl.col(name).alias("_modeled_" + name) for name in time_columns]
+                )
+                origin_keys = DEMAND_UNIT_COLS + [
+                    "activity_seq_id", "previous_time_seq_id", "dest_seq_id", "mode_seq_id",
+                ]
+                timed_steps = (scored_steps.rename({"time_seq_id": "previous_time_seq_id"})
+                               .join(context_mapping, on=origin_keys, how="inner")
+                               .join(timing_values, on=["_timing_plan", "seq_step_index"], how="inner")
+                               .drop(["previous_time_seq_id", "_timing_plan"] + time_columns)
+                               .rename({"_modeled_" + name: name for name in time_columns}))
+                if timed_steps.height != scored_steps.height:
+                    raise ValueError("A scoring context lost candidate steps while attaching shared timings.")
+                del scored_steps, physical, memberships, travel, factored, timing_values
+            else:
+                possible_plan_steps = self.schedule_updater.update_plan_timings(
+                    scored_steps.lazy(),
+                    activity_time_rigidity_by_activity=activity_time_rigidity_by_activity,
+                    enabled=parameters.plan_update.update_plan_timings_from_modeled_travel_times,
+                )
+                timed_scored_steps = possible_plan_steps.collect(engine="streaming")
+                del possible_plan_steps, scored_steps
+                log_memory_checkpoint(
+                    f"plan_updater:iteration:{iteration}:timed_scored_steps", scored_steps=timed_scored_steps,
+                )
+                timed_steps, time_sequence_steps, time_mapping = assign_time_sequence_ids(
+                    timed_scored_steps, survey_plan_steps, index_cache=time_index_cache,
+                )
+                del timed_scored_steps
             # A person cannot leave an intermediate activity before arriving.
             # Check the indexed, second-rounded times so plans merged under one
             # schedule ID have the same feasibility. The final home step has
@@ -957,7 +1272,7 @@ class PlanUpdater:
         transport_zones,
         iteration: int,
         resolved_activity_parameters: dict[str, Any],
-        arrival_time_rigidity_by_activity: dict[str, float],
+        activity_time_rigidity_by_activity: dict[str, float],
         min_activity_time_constant,
         destination_sequences: DestinationSequences,
         mode_sequences: ModeSequences,
@@ -998,7 +1313,7 @@ class PlanUpdater:
                 min_activity_time_constant=min_activity_time_constant,
                 parameters=parameters,
                 iteration=iteration,
-                arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
+                activity_time_rigidity_by_activity=activity_time_rigidity_by_activity,
             )
 
             aggregated_candidates = CandidatePlanStepsAsset.build_candidate_memory(
@@ -1039,7 +1354,7 @@ class PlanUpdater:
     def _prune_shared_candidate_contexts(
         self,
         *,
-        candidates: pl.LazyFrame,
+        candidates: pl.LazyFrame | None,
         transport_costs,
         utility_profiles,
         destination_saturation: pl.DataFrame,
@@ -1050,7 +1365,7 @@ class PlanUpdater:
         min_activity_time_constant: float,
         parameters: Any,
         iteration: int,
-        arrival_time_rigidity_by_activity: dict[str, float],
+        activity_time_rigidity_by_activity: dict[str, float],
     ) -> pl.DataFrame:
         """Apply the existing transition utility window before demand-unit expansion."""
         scope = parameters.behavior_change.scope_at(iteration)
@@ -1089,7 +1404,7 @@ class PlanUpdater:
         )
         scored_steps = self.schedule_updater.update_plan_timings(
             scored_steps,
-            arrival_time_rigidity_by_activity=arrival_time_rigidity_by_activity,
+            activity_time_rigidity_by_activity=activity_time_rigidity_by_activity,
             enabled=parameters.plan_update.update_plan_timings_from_modeled_travel_times,
         )
         candidate_utilities = (
@@ -1206,6 +1521,7 @@ class PlanUpdater:
         allow_missing_costs_for_current_plans: bool,
         use_destination_shadow_prices: bool = False,
         scoring_lookup: ScoringLookup | None = None,
+        compact_score_inputs: pl.DataFrame | None = None,
     ) -> pl.LazyFrame:
         """Score plan-step candidates under current costs and destination saturation."""
 
@@ -1220,9 +1536,9 @@ class PlanUpdater:
                 demand_groups, population_segments or [],
             )
             cost_join_columns = ["utility_profile_id", "from", "to", "mode"]
-        candidate_cost_inputs = candidates.with_columns(
+        candidate_cost_inputs = (candidates.with_columns(
             activity=pl.col("activity").cast(activity_dur.schema["activity"])
-        )
+        ) if candidates is not None else compact_score_inputs.lazy())
         if profile_assignments is not None:
             candidate_cost_inputs = candidate_cost_inputs.join(
                 profile_assignments.lazy(),
@@ -1252,6 +1568,8 @@ class PlanUpdater:
             )
         compact_inputs = compact_inputs.collect(engine="streaming")
         if previous_scores is not None and compact_inputs.is_empty():
+            if compact_score_inputs is not None:
+                return previous_scores.lazy()
             return candidate_cost_inputs.select(
                 candidate_columns + (["utility_profile_id"] if "utility_profile_id" in score_columns else [])
             ).join(
@@ -1400,6 +1718,8 @@ class PlanUpdater:
         if scoring_lookup is not None:
             scoring_lookup.retain(compact_scores)
         log_memory_checkpoint("plan_updater:compact_scores", compact_scores=compact_scores)
+        if compact_score_inputs is not None:
+            return compact_scores.lazy()
         return candidate_cost_inputs.select(
             candidate_columns + (["utility_profile_id"] if "utility_profile_id" in score_columns else [])
         ).join(

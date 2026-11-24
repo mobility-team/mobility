@@ -12,7 +12,7 @@ class PlanScheduleUpdater:
         self,
         possible_plan_steps: pl.LazyFrame,
         *,
-        arrival_time_rigidity_by_activity: dict[str, float],
+        activity_time_rigidity_by_activity: dict[str, float],
         enabled: bool,
     ) -> pl.LazyFrame:
         """Return iteration-local plan timings updated from modeled travel times."""
@@ -26,13 +26,13 @@ class PlanScheduleUpdater:
         rigidity_lookup = (
             pl.DataFrame(
                 {
-                    "activity": list(arrival_time_rigidity_by_activity.keys()),
-                    "arrival_time_rigidity": list(arrival_time_rigidity_by_activity.values()),
+                    "activity": list(activity_time_rigidity_by_activity.keys()),
+                    "activity_time_rigidity": list(activity_time_rigidity_by_activity.values()),
                 }
             )
             .with_columns(
                 activity=pl.col("activity").cast(activity_dtype),
-                arrival_time_rigidity=pl.col("arrival_time_rigidity").cast(pl.Float64),
+                activity_time_rigidity=pl.col("activity_time_rigidity").cast(pl.Float64),
             )
             .lazy()
         )
@@ -42,20 +42,24 @@ class PlanScheduleUpdater:
         return (
             possible_plan_steps
             .join(rigidity_lookup, on="activity", how="left")
+            .sort(PLAN_KEY_COLS + ["seq_step_index"])
             .with_columns(
                 reference_travel_time=(pl.col("arrival_time") - pl.col("departure_time")).clip(0.0, 24.0),
+                previous_rigidity=pl.col("activity_time_rigidity").shift(1).over(PLAN_KEY_COLS)
+                .fill_null(activity_time_rigidity_by_activity.get("home", 0.0)),
             )
             .with_columns(
                 travel_time_delta=pl.col("time") - pl.col("reference_travel_time"),
+                departure_share=(1.0 + pl.col("activity_time_rigidity") - pl.col("previous_rigidity")) / 2.0,
             )
             .with_columns(
                 departure_time=(
                     pl.col("departure_time")
-                    - pl.col("arrival_time_rigidity") * pl.col("travel_time_delta")
+                    - pl.col("departure_share") * pl.col("travel_time_delta")
                 ).cast(time_dtype),
                 arrival_time=(
                     pl.col("arrival_time")
-                    + (1.0 - pl.col("arrival_time_rigidity")) * pl.col("travel_time_delta")
+                    + (1.0 - pl.col("departure_share")) * pl.col("travel_time_delta")
                 ).cast(time_dtype),
             )
             .sort(PLAN_KEY_COLS + ["seq_step_index"])
@@ -81,5 +85,6 @@ class PlanScheduleUpdater:
                     .cast(duration_dtype)
                 )
             )
-            .drop(["arrival_time_rigidity", "reference_travel_time", "travel_time_delta"])
+            .drop(["activity_time_rigidity", "previous_rigidity", "departure_share",
+                   "reference_travel_time", "travel_time_delta"])
         )

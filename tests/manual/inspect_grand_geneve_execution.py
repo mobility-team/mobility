@@ -95,6 +95,8 @@ class CurrentStepNames(ast.NodeTransformer):
         }
         for keyword in node.keywords:
             keyword.arg = self.names.get(keyword.arg, keyword.arg)
+            if keyword.arg == "gtfs_sources_folder" and "MOBILITY_PROBE_GTFS_SOURCES" in os.environ:
+                keyword.value = ast.Constant(value=os.environ["MOBILITY_PROBE_GTFS_SOURCES"])
             if keyword.arg in overrides and overrides[keyword.arg] in os.environ:
                 keyword.value = ast.Constant(value=int(os.environ[overrides[keyword.arg]]))
             if keyword.arg == "additional_gtfs_files" and os.environ.get("MOBILITY_PROBE_REAL_GTFS") != "1":
@@ -115,6 +117,22 @@ class CurrentStepNames(ast.NodeTransformer):
         if name == "GroupDayTripsOutputParameters" and "MOBILITY_PROBE_CHECKPOINT_DIR" in os.environ:
             node.keywords = [keyword for keyword in node.keywords if keyword.arg != "checkpoint_each_step"]
             node.keywords.append(ast.keyword(arg="checkpoint_each_step", value=ast.Constant(value=True)))
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "by_scenario_and_step"
+            and os.environ.get("MOBILITY_PROBE_INTERVENTIONS_FROM_START") == "1"
+        ):
+            for keyword in node.keywords:
+                if keyword.arg in {"carbon_tax", "ljls", "l272", "mouettes"} and isinstance(keyword.value, ast.Dict):
+                    pairs = list(zip(keyword.value.keys, keyword.value.values))
+                    intervention = next((value for key, value in pairs
+                                         if isinstance(key, ast.Constant) and key.value == 5), None)
+                    if intervention is not None:
+                        pairs = [(key, value) for key, value in pairs
+                                 if not isinstance(key, ast.Constant) or key.value not in (1, 5)]
+                        pairs.insert(0, (ast.Constant(value=1), intervention))
+                        keyword.value.keys = [key for key, _ in pairs]
+                        keyword.value.values = [value for _, value in pairs]
         if (
             isinstance(node.func, ast.Attribute)
             and node.func.attr == "by_scenario_and_step"
@@ -360,7 +378,7 @@ if (os.environ.get("MOBILITY_PROBE_COMPARE_SCENARIO_EVALUATIONS") == "1"
                 and kwargs.get("shared_active_plan_steps") is None
                 and kwargs.get("reachable_scoring_scope") is None
                 and kwargs["resolved_activity_parameters"] == previous[2]
-                and kwargs["arrival_time_rigidity_by_activity"] == previous[3]
+                and kwargs["activity_time_rigidity_by_activity"] == previous[3]
                 and kwargs["parameters"].plan_update == previous[4]):
             print("SCENARIO_EVALUATION_REUSED", key, labels.get("scenario"), flush=True)
             return evaluation_results_by_batch[key]
@@ -369,7 +387,7 @@ if (os.environ.get("MOBILITY_PROBE_COMPARE_SCENARIO_EVALUATIONS") == "1"
             evaluation_results_by_batch[key] = result
             evaluation_inputs_by_batch[key] = (
                 signature[0], frames, kwargs["resolved_activity_parameters"],
-                kwargs["arrival_time_rigidity_by_activity"], kwargs["parameters"].plan_update,
+                kwargs["activity_time_rigidity_by_activity"], kwargs["parameters"].plan_update,
             )
         return result
 
@@ -748,6 +766,8 @@ def report_live_state(coordinator, iteration, states, **kwargs):
         candidates = state.candidate_plan_steps
         if isinstance(candidates, CompactCandidateSteps):
             sizes["candidate_steps"] = candidates.steps.estimated_size()
+            print("CANDIDATE_STEP_REPRESENTATION", iteration, coordinator.runs[run_key].scenario,
+                  type(candidates.steps).__name__, flush=True)
             sizes["candidate_membership"] = candidates.membership.estimated_size()
             if candidates.unit_map is not None:
                 sizes["candidate_unit_map"] = candidates.unit_map.estimated_size()
@@ -797,6 +817,14 @@ def report_live_state(coordinator, iteration, states, **kwargs):
                      "resolver_values": assets_by_type}
         (work / f"memory-inventory-step-{iteration}.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
         print("MEMORY_INVENTORY", iteration, len(frames), "frames", flush=True)
+    if iteration in globals().get("inventory_steps", set()):
+        snapshot_memory("after completed step", iteration)
+        if os.environ.get("MOBILITY_PROBE_MEMORY_COLLECT") == "1":
+            unreachable = gc.collect()
+            print("MEMORY_GC", iteration, "unreachable", unreachable, flush=True)
+            snapshot_memory("after Python garbage collection", iteration)
+        if os.environ.get("MOBILITY_PROBE_MEMORY_STOP_AFTER") == str(iteration):
+            raise RuntimeError("Stopped after the requested memory diagnostic step")
     return assets, next_states, search
 
 
@@ -827,6 +855,60 @@ coordinator_module.prepare_shared_congested_costs = trace_simulation_step(
 )(coordinator_module.prepare_shared_congested_costs)
 work = Path(tempfile.mkdtemp(prefix="mobility-grand-geneve-probe-"))
 print("PROBE_FILES", str(work), flush=True)
+if "MOBILITY_PROBE_MEMORY_STEPS" in os.environ:
+    inventory_steps = {int(value) for value in os.environ["MOBILITY_PROBE_MEMORY_STEPS"].split(",")}
+
+    def snapshot_memory(label, step):
+        """Record reachable frames and process memory without altering the model."""
+        frames = []
+        for obj in gc.get_objects():
+            if isinstance(obj, pl.DataFrame):
+                frames.append({"bytes": obj.estimated_size(), "rows": obj.height, "columns": obj.columns})
+        frames.sort(key=lambda frame: -frame["bytes"])
+        process = psutil.Process()
+        memory = process.memory_info()
+        tree_rss = memory.rss
+        for child in process.children(recursive=True):
+            try:
+                tree_rss += child.memory_info().rss
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        record = {
+            "label": label, "step": step, "rss": memory.rss,
+            "private": getattr(memory, "private", None), "tree_rss": tree_rss,
+            "frame_count": len(frames), "estimated_frame_bytes": sum(frame["bytes"] for frame in frames),
+            "largest_frames": frames[:60],
+        }
+        with (work / "memory-inventory.jsonl").open("a", encoding="utf-8") as file:
+            file.write(json.dumps(record) + "\n")
+        print("MEMORY_SNAPSHOT", step, label, memory.rss, record["estimated_frame_bytes"], flush=True)
+
+    original_build_pool = SharedCandidatePool.build
+    def measured_pool(pool):
+        if pool.iteration in inventory_steps:
+            snapshot_memory("before candidate pool", pool.iteration)
+        result = original_build_pool(pool)
+        if pool.iteration in inventory_steps:
+            snapshot_memory("after candidate pool", pool.iteration)
+        return result
+    SharedCandidatePool.build = measured_pool
+
+    original_evaluate_candidates = PlanUpdater.evaluate_candidate_pool
+    def measured_evaluation(updater, **kwargs):
+        step = kwargs.get("iteration")
+        if step in inventory_steps:
+            snapshot_memory("before scenario evaluation", step)
+        result = original_evaluate_candidates(updater, **kwargs)
+        if step in inventory_steps:
+            snapshot_memory("after scenario evaluation", step)
+        return result
+    PlanUpdater.evaluate_candidate_pool = measured_evaluation
+
+    if os.environ.get("MOBILITY_PROBE_MEMORY_STOP_BEFORE_FINAL") == "1":
+        def measured_finalize(coordinator, iteration, states, assets):
+            snapshot_memory("before finalization after restore", iteration)
+            raise RuntimeError("Stopped after measuring restored state")
+        MultiScenarioRunAsset._finalize_cohort = measured_finalize
 if os.environ.get("MOBILITY_PROBE_REAL_GTFS") == "1":
     # Keep a stable probe-only path: the router's cache identity includes the
     # feed paths, and a new folder on every run would invalidate its caches.
@@ -845,6 +927,10 @@ namespace = {"__file__": str(source_path), "__name__": "grand_geneve_probe"}
 exec(compile(tree, str(source_path), "exec"), namespace)
 
 model = namespace["pop_group_day_trips"]
+if "MOBILITY_PROBE_MIN_ACTIVITY_TIME_CONSTANT" in os.environ:
+    model.parameters.plan_update.min_activity_time_constant = float(
+        os.environ["MOBILITY_PROBE_MIN_ACTIVITY_TIME_CONSTANT"]
+    )
 if os.environ.get("MOBILITY_PROBE_NO_ROAD_CONGESTION") == "1":
     model.parameters.run.n_steps_per_cost_update = 0
 if os.environ.get("MOBILITY_PROBE_NO_OPPORTUNITY_CONGESTION") == "1":
@@ -1051,10 +1137,12 @@ print("PROBE_SETTINGS", {
     "mode_sequences": model.parameters.mode_sequences.k_mode_sequences,
     "max_batches": model.parameters.adaptive_search.max_search_batches,
     "min_plan_persons": model.parameters.plan_update.min_plan_persons,
+    "min_activity_time_constant": model.parameters.plan_update.min_activity_time_constant,
     "revision_probability": model.parameters.plan_update.transition_revision_probability,
     "road_congestion": os.environ.get("MOBILITY_PROBE_NO_ROAD_CONGESTION") != "1",
     "opportunity_congestion": os.environ.get("MOBILITY_PROBE_NO_OPPORTUNITY_CONGESTION") != "1",
     "real_scenario_gtfs": os.environ.get("MOBILITY_PROBE_REAL_GTFS") == "1",
+    "interventions_from_start": os.environ.get("MOBILITY_PROBE_INTERVENTIONS_FROM_START") == "1",
     "build_local_transit": os.environ.get("MOBILITY_PROBE_BUILD_LOCAL_TRANSIT") == "1",
     "temporary_disk_limit_gb": float(os.environ["MOBILITY_PROBE_TEMP_GB"])
     if "MOBILITY_PROBE_TEMP_GB" in os.environ else None,

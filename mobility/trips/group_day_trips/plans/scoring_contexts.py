@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 import logging
-from typing import Callable
+from typing import Any, Callable
 
 import polars as pl
 
@@ -42,11 +42,16 @@ class ScoringLookup:
 
     budget: ScoringMemoryBudget
     scores: pl.DataFrame | None = None
+    section_cache: Any | None = None
 
     def retain(self, scores: pl.DataFrame) -> None:
         """Retain a lookup only while all scenarios fit the shared budget."""
-        # A later batch can recompute scores that do not fit in the budget.
         self.scores = self.budget.retain(self.scores, scores)
+        if self.scores is None and self.section_cache is not None:
+            # The compact trip lookup is needed to avoid expanding every plan.
+            # Section scores can be recalculated; prefer retaining the lookup.
+            self.section_cache.clear()
+            self.scores = self.budget.retain(None, scores)
 
 
 @dataclass(frozen=True)
@@ -110,12 +115,15 @@ class ScoringContexts:
         previous: CompactCandidateSteps | None,
         current_plans: pl.DataFrame,
         *, context_filter: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
-    ) -> pl.DataFrame | None:
+        return_parts: bool = False,
+        expand: bool = True,
+    ) -> pl.DataFrame | tuple[pl.DataFrame | None, pl.DataFrame, pl.DataFrame] | None:
         """Group plan membership before attaching shared physical steps.
 
         Active plans have the same precedence as the row-based merge. Return
         None if a plan has different physical steps or membership data that
-        cannot be represented once per plan.
+        cannot be represented once per plan. With expand=False, return the
+        physical steps and memberships without joining them into context rows.
         """
         memberships = [shared.membership]
         physical = [shared.steps]
@@ -136,9 +144,7 @@ class ScoringContexts:
             physical.append(active_steps)
         if previous is not None:
             active_members = previous.memberships_for_plans(current_plans.lazy()).collect(engine="streaming")
-            active_steps = previous.steps.join(
-                active_members.select(PLAN_COLUMNS).unique(), on=PLAN_COLUMNS, how="semi"
-            )
+            active_steps = previous.physical_steps(active_members.lazy()).collect(engine="streaming")
             memberships.append(active_members.lazy())
             physical.append(active_steps)
         steps = pl.concat(physical, how="vertical_relaxed").unique()
@@ -173,11 +179,14 @@ class ScoringContexts:
             return None
         if context_filter is not None:
             grouped = context_filter(grouped)
-        return (
-            grouped.drop("_country_count", "_csp_count")
-            .join(steps, on=PLAN_COLUMNS, how="inner")
+        grouped = grouped.drop("_country_count", "_csp_count")
+        if not expand:
+            return None, steps, grouped
+        expanded = (
+            grouped.join(steps, on=PLAN_COLUMNS, how="inner")
             .select(CandidatePlanStepsAsset.STRUCTURAL_COLUMNS + CandidatePlanStepsAsset.RETENTION_COLUMNS)
         )
+        return (expanded, steps, grouped) if return_parts else expanded
 
     @trace_simulation_step("compact current allocations")
     def collapse_allocations(self, plans: pl.DataFrame) -> pl.DataFrame:

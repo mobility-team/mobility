@@ -22,7 +22,7 @@ from mobility.runtime.assets.resolver import (
 )
 from mobility.runtime.assets.graph import asset_graph_key
 from mobility.activities.activity import (
-    resolve_activity_arrival_time_rigidity,
+    resolve_activity_time_rigidity,
     resolve_activity_parameters,
 )
 from mobility.runtime.parameter_values import SensitivityCase
@@ -40,7 +40,7 @@ from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from ..plans.candidate_plan_steps import CandidatePlanStepsAsset
-from ..plans.compact_candidate_steps import CompactCandidateSteps
+from ..plans.compact_candidate_steps import CompactCandidateSteps, SectionedPhysicalSteps
 from ..plans.plan_ids import PLAN_KEY_SCHEMA, PLAN_STEP_KEY_SCHEMA
 
 
@@ -734,7 +734,7 @@ class IterationStateAsset(Asset):
         self.coordinated_time_sequence_steps: pl.DataFrame | None = None
         inputs = {
             # State identity includes the shared search and full cohort.
-            "version": 41,
+            "version": 42,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
@@ -753,7 +753,7 @@ class IterationStateAsset(Asset):
                 scenario=scenario,
                 sensitivity_case=sensitivity_case,
             ),
-            "arrival_time_rigidity_by_activity": resolve_activity_arrival_time_rigidity(
+            "activity_time_rigidity_by_activity": resolve_activity_time_rigidity(
                 activities,
                 iteration,
                 scenario=scenario,
@@ -807,7 +807,7 @@ class IterationStateAsset(Asset):
 
         self._rng_state = state.rng_state
         if self.checkpoint_callback is not None and not self._checkpoint_saved:
-            if self._loaded_checkpoint:
+            if self._loaded_checkpoint or getattr(self, "resume_checkpoint_loader", None) is not None:
                 self._checkpoint_saved = True
             else:
                 self.checkpoint_callback(self.iteration, state, self._rng_state)
@@ -863,7 +863,12 @@ class IterationStateAsset(Asset):
                     metadata["none_tables"].append(table_name)
                 else:
                     if isinstance(table, CompactCandidateSteps):
-                        write_temporary_parquet(table.steps, temporary_path / "candidate_steps.parquet")
+                        if isinstance(table.steps, SectionedPhysicalSteps):
+                            write_temporary_parquet(table.steps.sections, temporary_path / "candidate_sections.parquet")
+                            write_temporary_parquet(table.steps.references, temporary_path / "candidate_section_references.parquet")
+                            metadata["candidate_sectioned_steps"] = True
+                        else:
+                            write_temporary_parquet(table.steps, temporary_path / "candidate_steps.parquet")
                         write_temporary_parquet(table.membership, temporary_path / "candidate_membership.parquet")
                         if table.unit_map is not None:
                             write_temporary_parquet(table.unit_map, temporary_path / "candidate_unit_map.parquet")
@@ -899,8 +904,17 @@ class IterationStateAsset(Asset):
             if table_name in metadata["none_tables"]:
                 spilled_state[table_name] = None
             elif table_name == "candidate_plan_steps" and "compact_candidate_columns" in metadata:
+                if metadata.get("candidate_sectioned_steps"):
+                    references = pl.read_parquet(path / "candidate_section_references.parquet")
+                    steps = SectionedPhysicalSteps(
+                        sections=pl.read_parquet(path / "candidate_sections.parquet"),
+                        references=references,
+                        sequence_dtype=references.schema["_first_step"],
+                    )
+                else:
+                    steps = pl.read_parquet(path / "candidate_steps.parquet")
                 spilled_state[table_name] = CompactCandidateSteps(
-                    steps=pl.read_parquet(path / "candidate_steps.parquet"),
+                    steps=steps,
                     membership=pl.read_parquet(path / "candidate_membership.parquet"),
                     columns=tuple(metadata["compact_candidate_columns"]),
                     unit_map=(pl.read_parquet(path / "candidate_unit_map.parquet")
@@ -936,7 +950,8 @@ class IterationStateAsset(Asset):
             candidate_plan_steps=candidates,
             plan_id_index=value("plan_id_index"),
             destination_saturation=value("destination_saturation"),
-            costs=self.transport_costs.get_costs_by_od(["cost", "distance"]),
+            costs=(compact_state.costs if not isinstance(compact_state, dict) and getattr(compact_state, "costs", None) is not None
+                   else self.transport_costs.get_costs_by_od(["cost", "distance"])),
             start_step=self.iteration + 1,
             current_plan_steps=value("current_plan_steps"),
             rng_state=self._rng_state,
@@ -1002,7 +1017,7 @@ class IterationStateAsset(Asset):
                 "updating plan choices",
             )
             resolved_activity_parameters = self.inputs["resolved_activity_parameters"]
-            arrival_time_rigidity_by_activity = self.inputs["arrival_time_rigidity_by_activity"]
+            activity_time_rigidity_by_activity = self.inputs["activity_time_rigidity_by_activity"]
             current_plans_before_transition = (
                 previous.current_plans
                 if self.coordinated_current_plans is None
@@ -1050,7 +1065,7 @@ class IterationStateAsset(Asset):
                 previous.activity_dur,
                 self.iteration,
                 resolved_activity_parameters,
-                arrival_time_rigidity_by_activity,
+                activity_time_rigidity_by_activity,
                 self.destination_sequences,
                 self.mode_sequences,
                 previous.home_night_dur,

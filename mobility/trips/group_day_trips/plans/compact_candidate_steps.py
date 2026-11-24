@@ -1,6 +1,6 @@
 """Keep candidate steps separate from the demand units that can use them."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import polars as pl
 
@@ -22,6 +22,64 @@ MEMBERSHIP_COLUMNS = PLAN_KEY_COLS + [
 
 
 @dataclass(frozen=True)
+class SectionedPhysicalSteps:
+    """Store identical ordered physical sections once across candidate plans.
+
+    These sections contain the exact modeled steps, including their times.
+    They are a lossless storage representation, not a cache of scores across
+    changed costs. Section IDs are local to this table.
+    """
+
+    sections: pl.DataFrame
+    references: pl.DataFrame
+    sequence_dtype: pl.DataType
+
+    @classmethod
+    def from_steps(cls, steps: pl.DataFrame, rigid_activities: set[str]) -> "SectionedPhysicalSteps":
+        """Cut after rigid activities and index equal ordered step sequences."""
+        step_values = [name for name in STEP_COLUMNS if name not in PLAN_COLUMNS + ["seq_step_index"]]
+        rows = (
+            steps.sort(PLAN_COLUMNS + ["seq_step_index"])
+            .with_columns(_rigid=pl.col("activity").cast(pl.String).is_in(sorted(rigid_activities)))
+            .with_columns(_boundary=pl.col("_rigid").shift(1).over(PLAN_COLUMNS).fill_null(False))
+            .with_columns(_section=pl.col("_boundary").cast(pl.UInt32).cum_sum().over(PLAN_COLUMNS))
+            .with_columns(_first_step=pl.col("seq_step_index").min().over(PLAN_COLUMNS + ["_section"]))
+            .with_columns(_offset=(pl.col("seq_step_index") - pl.col("_first_step")).cast(steps.schema["seq_step_index"]))
+        )
+        grouped = rows.group_by(PLAN_COLUMNS + ["_section"], maintain_order=True).agg(
+            pl.col("_first_step").first(), pl.struct(["_offset"] + step_values).alias("_steps"),
+        )
+        sections = grouped.select("_steps").unique(maintain_order=True).with_row_index("_section_id")
+        references = grouped.join(sections, on="_steps", maintain_order="left").select(
+            PLAN_COLUMNS + ["_section", "_first_step", "_section_id"]
+        )
+        return cls(sections, references, steps.schema["seq_step_index"])
+
+    @property
+    def schema(self):
+        return self.sections.schema, self.references.schema, self.sequence_dtype
+
+    def equals(self, other: object) -> bool:
+        return (isinstance(other, SectionedPhysicalSteps) and self.schema == other.schema
+                and self.sections.equals(other.sections) and self.references.equals(other.references))
+
+    def lazy(self, plans: pl.LazyFrame | None = None) -> pl.LazyFrame:
+        """Reconstruct only the requested physical plans when possible."""
+        references = self.references.lazy()
+        if plans is not None:
+            references = references.join(plans.select(PLAN_COLUMNS).unique(), on=PLAN_COLUMNS, how="semi")
+        return (
+            references.join(self.sections.lazy(), on="_section_id", how="inner")
+            .explode("_steps").unnest("_steps")
+            .with_columns(seq_step_index=(pl.col("_first_step") + pl.col("_offset")).cast(self.sequence_dtype))
+            .select(STEP_COLUMNS)
+        )
+
+    def estimated_size(self) -> int:
+        return self.sections.estimated_size() + self.references.estimated_size()
+
+
+@dataclass(frozen=True)
 class ScoringCandidateSteps:
     """Shared physical steps and lazy demand-unit memberships in an inner batch."""
 
@@ -33,10 +91,24 @@ class ScoringCandidateSteps:
 class CompactCandidateSteps:
     """A plan-step table and one membership row per demand unit and plan."""
 
-    steps: pl.DataFrame
+    steps: pl.DataFrame | SectionedPhysicalSteps
     membership: pl.DataFrame
     columns: tuple[str, ...]
     unit_map: pl.DataFrame | None = None
+
+    def with_sections(self, rigid_activities: set[str] | None) -> "CompactCandidateSteps":
+        """Store physical steps as sections when that reduces retained size."""
+        if rigid_activities is None or isinstance(self.steps, SectionedPhysicalSteps) or self.steps.height < 50_000:
+            return self
+        sectioned = SectionedPhysicalSteps.from_steps(self.steps, rigid_activities)
+        return replace(self, steps=sectioned) if sectioned.estimated_size() < self.steps.estimated_size() * 0.9 else self
+
+    def physical_steps(self, plans: pl.LazyFrame | None = None) -> pl.LazyFrame:
+        """Expose all physical steps or only those needed for selected plans."""
+        if isinstance(self.steps, SectionedPhysicalSteps):
+            return self.steps.lazy(plans)
+        result = self.steps.lazy()
+        return result if plans is None else result.join(plans.select(PLAN_COLUMNS).unique(), on=PLAN_COLUMNS, how="semi")
 
     def memberships(self) -> pl.LazyFrame:
         """Expand shared context history only when demand-unit rows are needed."""
@@ -71,7 +143,7 @@ class CompactCandidateSteps:
         """Reconstruct candidate rows only when an operation needs them."""
         return (
             self.memberships()
-            .join(self.steps.lazy(), on=PLAN_COLUMNS, how="inner")
+            .join(self.physical_steps(), on=PLAN_COLUMNS, how="inner")
             .select(self.columns)
             .sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS)
         )
@@ -83,6 +155,7 @@ class CompactCandidateSteps:
     @classmethod
     def from_frame(
         cls, frame: pl.DataFrame, *, prefer_compact: bool = False,
+        rigid_activities: set[str] | None = None,
     ) -> "CompactCandidateSteps | pl.DataFrame":
         """Compact losslessly, optionally anticipating later membership expansion."""
         if frame.is_empty():
@@ -107,4 +180,5 @@ class CompactCandidateSteps:
         if actual_counts.join(step_counts, on=PLAN_COLUMNS).filter(pl.col("actual") != pl.col("expected")).height:
             return frame
         compact = cls(steps=steps, membership=membership, columns=tuple(frame.columns))
+        compact = compact.with_sections(rigid_activities)
         return compact if prefer_compact or compact.estimated_size() < frame.estimated_size() else frame

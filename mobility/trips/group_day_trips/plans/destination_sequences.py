@@ -158,7 +158,7 @@ class DestinationSequences(InMemoryAsset):
             else None
         )
         inputs = {
-            "version": (26 if parameters is not None and parameters.destination_sequences.sampling_method == "utility"
+            "version": (27 if parameters is not None and parameters.destination_sequences.sampling_method == "utility"
                         else 24),
             "is_weekday": is_weekday,
             "iteration": iteration,
@@ -650,7 +650,7 @@ class DestinationSequences(InMemoryAsset):
         anchors = {activity.name: getattr(activity, "is_anchor", False) for activity in self.activities or []}
         rigidity = {}
         for name, parameters in self.resolved_activity_parameters.items():
-            value = getattr(parameters, "arrival_time_rigidity", None)
+            value = getattr(parameters, "activity_time_rigidity", None)
             rigidity[name] = float(value if value is not None else anchors.get(name, False))
         return rigidity
 
@@ -1038,17 +1038,20 @@ class DestinationSequences(InMemoryAsset):
 
     @staticmethod
     def _filter_impossible_timing(
-        choices: pl.LazyFrame, arrival_rigidity: dict[str, float], update_timings: bool,
+        choices: pl.LazyFrame, activity_rigidity: dict[str, float], update_timings: bool,
     ) -> pl.LazyFrame:
         """Drop a stop only when even its fastest two legs cannot fit."""
-        rigidity = pl.col("activity").cast(pl.String).replace_strict(arrival_rigidity, default=0.0)
-        next_rigidity = pl.col("_next_activity").cast(pl.String).replace_strict(arrival_rigidity, default=0.0)
+        rigidity = pl.col("activity").cast(pl.String).replace_strict(activity_rigidity, default=0.0)
+        previous_rigidity = pl.col("_previous_activity").cast(pl.String).replace_strict(activity_rigidity, default=0.0)
+        next_rigidity = pl.col("_next_activity").cast(pl.String).replace_strict(activity_rigidity, default=0.0)
+        incoming_share = (1.0 + rigidity - previous_rigidity) / 2.0
+        onward_share = (1.0 + next_rigidity - rigidity) / 2.0
         incoming_reference = (pl.col("arrival_time") - pl.col("departure_time")).clip(0.0, 24.0)
         onward_reference = (pl.col("_next_arrival") - pl.col("_next_departure")).clip(0.0, 24.0)
-        earliest_arrival = pl.col("arrival_time") + float(update_timings) * (1.0 - rigidity) * (
+        earliest_arrival = pl.col("arrival_time") + float(update_timings) * (1.0 - incoming_share) * (
             pl.col("candidate_fastest_time") - incoming_reference
         )
-        latest_departure = pl.col("_next_departure") - float(update_timings) * next_rigidity * (
+        latest_departure = pl.col("_next_departure") - float(update_timings) * onward_share * (
             pl.col("onward_fastest_time") - onward_reference
         )
         # Final modeled schedules are rounded to seconds. Keep a generous
@@ -1089,7 +1092,7 @@ class DestinationSequences(InMemoryAsset):
         min_activity_time_constant: float = 0.0,
         logit_scale: float = 1.0,
         mean_durations: dict[str, float] | None = None,
-        arrival_rigidity: dict[str, float] | None = None,
+        activity_rigidity: dict[str, float] | None = None,
         use_next_timing: bool = False,
         update_timings: bool = True,
         filter_infeasible: bool = False,
@@ -1100,6 +1103,11 @@ class DestinationSequences(InMemoryAsset):
         model_previous_arrival: bool = False,
     ) -> tuple[pl.LazyFrame, pl.LazyFrame, pl.LazyFrame, pl.LazyFrame]:
         """Sample destinations while checking both legs around the candidate zone."""
+        if utility_values is not None:
+            schema = steps_lf.collect_schema()
+            missing = [name for name in ("_previous_activity", "_previous_previous_activity") if name not in schema]
+            if missing:
+                steps_lf = steps_lf.with_columns(*[pl.lit("home").alias(name) for name in missing])
         active_probability = destination_probability_lf.join(
             steps_lf.select(["from", "activity"]).unique(),
             on=["from", "activity"],
@@ -1123,7 +1131,7 @@ class DestinationSequences(InMemoryAsset):
             ["from", "activity"] + [column for column in onward_left_on if column != "to"]
         ))
         if utility_values is not None:
-            context_columns += ["departure_time", "arrival_time", "next_departure_time"]
+            context_columns += ["departure_time", "arrival_time", "next_departure_time", "_previous_activity"]
             if use_next_timing:
                 context_columns += ["_next_activity", "_next_departure", "_next_arrival",
                                     "_next_next_departure", "_next_is_direct"]
@@ -1131,7 +1139,9 @@ class DestinationSequences(InMemoryAsset):
                 context_columns += ["_previous_activity", "_previous_arrival", "_previous_is_anchor",
                                     "_previous_is_first", "_home_night_reference"]
                 if model_previous_arrival:
-                    context_columns += ["_previous_departure", "_previous_origin", "_previous_origin_known"]
+                    context_columns += ["_previous_departure", "_previous_origin", "_previous_origin_known",
+                                        "_previous_previous_activity"]
+        context_columns = list(dict.fromkeys(context_columns))
         choice_contexts = steps_lf.select(context_columns).unique()
         if utility_values is not None:
             # These values depend on the schedule, not the destination. Build
@@ -1145,8 +1155,8 @@ class DestinationSequences(InMemoryAsset):
                 _sampling_activity_value=pl.col("activity").cast(pl.String)
                 .replace_strict(utility_values, default=0.0),
                 _sampling_rigidity=(
-                    pl.col("activity").cast(pl.String).replace_strict(arrival_rigidity, default=0.0)
-                    if arrival_rigidity else pl.lit(0.0)
+                    pl.col("activity").cast(pl.String).replace_strict(activity_rigidity, default=0.0)
+                    if activity_rigidity else pl.lit(0.0)
                 ),
                 _sampling_incoming_reference=(pl.col("arrival_time") - pl.col("departure_time")).clip(0.0, 24.0),
             )
@@ -1169,7 +1179,7 @@ class DestinationSequences(InMemoryAsset):
             # The fastest mode on each leg gives the widest possible activity
             # window, even if those two modes cannot form a usable chain.
             weighted_choices = DestinationSequences._filter_impossible_timing(
-                weighted_choices, arrival_rigidity or {}, update_timings,
+                weighted_choices, activity_rigidity or {}, update_timings,
             )
         if utility_values is None:
             weighted_choices = weighted_choices.with_columns(
@@ -1226,11 +1236,13 @@ class DestinationSequences(InMemoryAsset):
             minimum_duration = typical_duration * math.exp(-min_activity_time_constant)
             activity_value = pl.col("_sampling_activity_value")
             rigidity = pl.col("_sampling_rigidity")
+            previous_rigidity = pl.col("_previous_activity").cast(pl.String).replace_strict(activity_rigidity or {}, default=0.0)
+            incoming_share = (1.0 + rigidity - previous_rigidity) / 2.0
             incoming_reference = pl.col("_sampling_incoming_reference")
             alternatives = []
             for incoming in ("fastest", "cheapest"):
                 incoming_delta = pl.col(f"candidate_{incoming}_time") - incoming_reference
-                arrival = (pl.col("arrival_time") + (1.0 - rigidity) * (
+                arrival = (pl.col("arrival_time") + (1.0 - incoming_share) * (
                     incoming_delta
                 )) if update_timings else pl.col("arrival_time")
                 previous_delta = pl.lit(0.0)
@@ -1241,7 +1253,7 @@ class DestinationSequences(InMemoryAsset):
                         .replace_strict(mean_durations, default=None).fill_null(previous_reference)
                         if mean_durations else previous_reference
                     ).clip(0.001)
-                    previous_duration = (previous_reference - float(update_timings) * rigidity * incoming_delta).clip(0.001)
+                    previous_duration = (previous_reference - float(update_timings) * incoming_share * incoming_delta).clip(0.001)
                     previous_value = (pl.col("_previous_activity").cast(pl.String)
                                       .replace_strict(utility_values, default=0.0))
                     previous_location_known = (
@@ -1258,21 +1270,21 @@ class DestinationSequences(InMemoryAsset):
                         min_activity_time_constant,
                     )
                     if model_previous_arrival:
-                        previous_rigidity = (
-                            pl.col("_previous_activity").cast(pl.String)
-                            .replace_strict(arrival_rigidity or {}, default=0.0)
+                        before_previous_rigidity = pl.col("_previous_previous_activity").cast(pl.String).replace_strict(
+                            activity_rigidity or {}, default=0.0,
                         )
+                        preceding_share = (1.0 + previous_rigidity - before_previous_rigidity) / 2.0
                         previous_travel_reference = (
                             pl.col("_previous_arrival") - pl.col("_previous_departure")
                         ).clip(0.0, 24.0)
                         modeled_previous = []
                         for preceding in ("fastest", "cheapest"):
                             preceding_time = pl.col(f"_preceding_{preceding}_time")
-                            preceding_arrival = pl.col("_previous_arrival") + (1.0 - previous_rigidity) * (
+                            preceding_arrival = pl.col("_previous_arrival") + (1.0 - preceding_share) * (
                                 preceding_time - previous_travel_reference
                             )
                             modeled_duration = (
-                                pl.col("departure_time") - rigidity * incoming_delta - preceding_arrival
+                                pl.col("departure_time") - incoming_share * incoming_delta - preceding_arrival
                             ).clip(0.001)
                             modeled_previous.append(
                                 DestinationSequences._activity_utility_delta(
@@ -1288,7 +1300,7 @@ class DestinationSequences(InMemoryAsset):
                     home_reference = pl.col("_home_night_reference").clip(0.001)
                     home_typical = pl.lit(mean_home_duration) if mean_home_duration is not None else home_reference
                     home_typical = home_typical.clip(0.001)
-                    home_duration = (home_reference - float(update_timings) * rigidity * incoming_delta).clip(0.001)
+                    home_duration = (home_reference - float(update_timings) * incoming_share * incoming_delta).clip(0.001)
                     home_delta = DestinationSequences._activity_utility_delta(
                         home_reference, home_duration, home_typical, pl.lit(home_value),
                         min_activity_time_constant,
@@ -1297,14 +1309,15 @@ class DestinationSequences(InMemoryAsset):
                 for onward in (("fastest", "cheapest") if use_next_timing else ("cheapest",)):
                     if use_next_timing:
                         next_rigidity = (pl.col("_next_activity").cast(pl.String)
-                                         .replace_strict(arrival_rigidity or {}, default=0.0))
+                                         .replace_strict(activity_rigidity or {}, default=0.0))
+                        onward_share = (1.0 + next_rigidity - rigidity) / 2.0
                         next_reference = (pl.col("_next_arrival") - pl.col("_next_departure")).clip(0.0, 24.0)
                         departure = pl.when(pl.col("_next_is_direct") & pl.lit(update_timings)).then(
-                            pl.col("_next_departure") - next_rigidity * (
+                            pl.col("_next_departure") - onward_share * (
                                 pl.col(f"onward_{onward}_time") - next_reference
                             )
                         ).otherwise(pl.col("next_departure_time"))
-                        next_arrival = pl.col("_next_arrival") + float(update_timings) * (1.0 - next_rigidity) * (
+                        next_arrival = pl.col("_next_arrival") + float(update_timings) * (1.0 - onward_share) * (
                             pl.col(f"onward_{onward}_time") - next_reference
                         )
                         next_reference_duration = (pl.col("_next_next_departure") - pl.col("_next_arrival")).clip(0.001)
@@ -1499,6 +1512,7 @@ class DestinationSequences(InMemoryAsset):
                 _next_next_departure=pl.col("next_departure_time").shift(-1).over(schedule_keys),
                 _next_anchor=pl.col("is_anchor").shift(-1).over(schedule_keys).fill_null(False),
                 _previous_activity=pl.col("activity").shift(1).over(schedule_keys).fill_null("home"),
+                _previous_previous_activity=pl.col("activity").shift(2).over(schedule_keys).fill_null("home"),
                 _previous_departure=pl.col("departure_time").shift(1).over(schedule_keys).fill_null(0.0),
                 _previous_arrival=pl.col("arrival_time").shift(1).over(schedule_keys).fill_null(0.0),
                 _previous_is_anchor=pl.col("is_anchor").shift(1).over(schedule_keys).fill_null(False),
@@ -1584,8 +1598,6 @@ class DestinationSequences(InMemoryAsset):
                 rigidity = self._sampling_rigidity() if utility_sampling else {}
                 score_previous = (
                     utility_sampling and self.parameters.plan_update.update_plan_timings_from_modeled_travel_times
-                    and any(rigidity.get(str(activity), 0.0) != 0.0
-                            for activity in non_home_anchor_steps["activity"].unique().to_list())
                 )
                 # The first trip changes home-night time; there is no earlier
                 # trip whose arrival or travel cost needs to be estimated.
@@ -1611,7 +1623,7 @@ class DestinationSequences(InMemoryAsset):
                     min_activity_time_constant=self.parameters.plan_update.min_activity_time_constant,
                     logit_scale=self.parameters.plan_update.transition_logit_scale,
                     mean_durations=mean_durations,
-                    arrival_rigidity=rigidity if utility_sampling else None,
+                    activity_rigidity=rigidity if utility_sampling else None,
                     # If no next stop is directly modeled, its timing cannot
                     # affect the choice. The cheapest onward cost is enough.
                     use_next_timing=utility_sampling and non_home_anchor_steps["_next_is_direct"].any(),
@@ -1686,7 +1698,7 @@ class DestinationSequences(InMemoryAsset):
         if utility_sampling:
             result = result.join(
                 sequences.select(schedule_keys + ["seq_step_index", "_next_activity", "_next_departure",
-                    "_next_arrival", "_next_next_departure", "_next_is_direct", "_previous_activity",
+                    "_next_arrival", "_next_next_departure", "_next_is_direct", "_previous_activity", "_previous_previous_activity",
                     "_previous_departure", "_previous_arrival", "_previous_is_anchor", "_previous_is_first",
                     "_home_night_reference"]),
                 on=schedule_keys + ["seq_step_index"],
@@ -1821,8 +1833,6 @@ class DestinationSequences(InMemoryAsset):
             rigidity = self._sampling_rigidity() if utility_sampling else {}
             score_previous = (
                 utility_sampling and self.parameters.plan_update.update_plan_timings_from_modeled_travel_times
-                and any(rigidity.get(str(activity), 0.0) != 0.0 for activity in
-                        sequence_step.filter(pl.col("is_anchor").not_())["activity"].unique().to_list())
             )
             model_previous = score_previous and not sequence_step.filter(
                 pl.col("is_anchor").not_()
@@ -1852,7 +1862,7 @@ class DestinationSequences(InMemoryAsset):
                 min_activity_time_constant=self.parameters.plan_update.min_activity_time_constant,
                 logit_scale=self.parameters.plan_update.transition_logit_scale,
                 mean_durations=mean_durations,
-                arrival_rigidity=rigidity if utility_sampling else None,
+                activity_rigidity=rigidity if utility_sampling else None,
                 use_next_timing=utility_sampling,
                 update_timings=self.parameters.plan_update.update_plan_timings_from_modeled_travel_times,
                 filter_infeasible=utility_sampling,

@@ -223,7 +223,7 @@ def test_utility_sampling_values_the_next_anchor_and_its_timing():
         onward_left_on=["to", "anchor_to"], onward_right_on=["anchor_from", "anchor_to_cost"],
         onward_cost_col="cost_to_anchor", alpha=0.5, sequence_context_columns=["home_zone_id"],
         seed=3, output_cols=["activity_draw_id", "to"], utility_values={"shopping": 1.0, "work": 100.0},
-        mean_durations={"shopping": 1.0, "work": 8.0}, arrival_rigidity={"shopping": 0.0, "work": 0.0},
+        mean_durations={"shopping": 1.0, "work": 8.0}, activity_rigidity={"shopping": 0.0, "work": 0.0},
         min_activity_time_constant=2.0, logit_scale=1.0, use_next_timing=True,
     )
     sampled = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
@@ -254,8 +254,8 @@ def test_utility_sampling_filters_only_proven_timing_conflicts():
     })
     origin = pl.DataFrame({
         "candidate_from": [1, 1], "candidate_to": [2, 3], "cost_to_candidate": [1.0, 1.0],
-        "candidate_fastest_cost": [1.0, 1.0], "candidate_fastest_time": [0.5, 1.0],
-        "candidate_cheapest_cost": [1.0, 1.0], "candidate_cheapest_time": [0.5, 1.0],
+        "candidate_fastest_cost": [1.0, 1.0], "candidate_fastest_time": [0.5, 1.25],
+        "candidate_cheapest_cost": [1.0, 1.0], "candidate_cheapest_time": [0.5, 1.25],
         "candidate_has_unknown_time": [False, False],
     })
     onward = pl.DataFrame({
@@ -270,7 +270,7 @@ def test_utility_sampling_filters_only_proven_timing_conflicts():
         onward_left_on=["to", "anchor_to"], onward_right_on=["anchor_from", "anchor_to_cost"],
         onward_cost_col="cost_to_anchor", alpha=0.5, sequence_context_columns=["home_zone_id"],
         seed=3, output_cols=["to"], utility_values={"shopping": 1.0, "work": 1.0},
-        arrival_rigidity={"shopping": 0.0, "work": 0.0}, min_activity_time_constant=1.0,
+        activity_rigidity={"shopping": 0.0, "work": 0.0}, min_activity_time_constant=1.0,
         use_next_timing=True, filter_infeasible=True,
     )
     assert DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()["to"].to_list() == [2]
@@ -282,12 +282,12 @@ def test_utility_sampling_filters_only_proven_timing_conflicts():
     args["steps_lf"] = steps.with_columns(_next_is_direct=pl.lit(False)).lazy()
     assert DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()["to"].to_list() == [3]
     args["steps_lf"] = steps.lazy()
-    args["arrival_rigidity"] = {"shopping": 1.0, "work": 0.0}
+    args["activity_rigidity"] = {"shopping": 1.0, "work": 0.0}
     assert DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()["to"].to_list() == [3]
     # A rounding-sized overlap must be left to the final second-level check.
-    args["arrival_rigidity"] = {"shopping": 0.0, "work": 0.0}
+    args["activity_rigidity"] = {"shopping": 0.0, "work": 0.0}
     args["origin_cost_lf"] = origin.with_columns(
-        pl.when(pl.col("candidate_to") == 3).then(0.7503).otherwise(pl.col("candidate_fastest_time"))
+        pl.when(pl.col("candidate_to") == 3).then(1.0003).otherwise(pl.col("candidate_fastest_time"))
         .alias("candidate_fastest_time")
     ).lazy()
     assert DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()["to"].to_list() == [3]
@@ -323,7 +323,7 @@ def test_utility_sampling_accounts_for_previous_activity_and_home_time():
         onward_left_on=["to", "anchor_to"], onward_right_on=["anchor_from", "anchor_to_cost"],
         onward_cost_col="cost_to_anchor", alpha=0.5, sequence_context_columns=["home_zone_id"],
         seed=3, output_cols=["activity_draw_id", "to"], utility_values={"shopping": 20.0, "work": 1.0},
-        mean_durations={"shopping": 2.0, "work": 8.0}, arrival_rigidity={"work": 1.0},
+        mean_durations={"shopping": 2.0, "work": 8.0}, activity_rigidity={"work": 1.0},
         min_activity_time_constant=2.0, logit_scale=1.0, use_previous_timing=True,
         mean_home_duration=8.0, home_value=20.0,
     )
@@ -369,7 +369,7 @@ def test_utility_sampling_uses_known_preceding_trip_for_previous_activity():
         onward_left_on=["to", "anchor_to"], onward_right_on=["anchor_from", "anchor_to_cost"],
         onward_cost_col="cost_to_anchor", alpha=0.5, sequence_context_columns=["home_zone_id"],
         seed=3, output_cols=["activity_draw_id", "to"], utility_values={"shopping": 2.0, "work": 1.0},
-        mean_durations={"shopping": 2.0, "work": 8.0}, arrival_rigidity={"shopping": 0.0, "work": 1.0},
+        mean_durations={"shopping": 2.0, "work": 8.0}, activity_rigidity={"shopping": 0.0, "work": 1.0},
         min_activity_time_constant=2.0, logit_scale=0.5, use_previous_timing=True,
     )
     reference = DestinationSequences._sample_sequence_aware_destinations(**args)[3].collect()
@@ -483,7 +483,7 @@ def test_previous_activity_utility_change_matches_full_schedule_timing(rigidity)
         "next_departure_time": [8.0, 17.0], "duration_per_pers": [1.0, 8.5], "time": [0.5, 1.0],
     })
     modeled = PlanScheduleUpdater().update_plan_timings(
-        steps.lazy(), arrival_time_rigidity_by_activity={"shopping": 0.0, "work": rigidity}, enabled=True,
+        steps.lazy(), activity_time_rigidity_by_activity={"shopping": 0.0, "work": rigidity}, enabled=True,
     ).collect()
     actual_duration = modeled.filter(pl.col("activity") == "shopping")["duration_per_pers"].item()
     actual_delta = 20.0 * 2.0 * (
@@ -491,7 +491,7 @@ def test_previous_activity_utility_change_matches_full_schedule_timing(rigidity)
         - max(0.0, math.log(1.0 / (2.0 * math.exp(-2.0))))
     )
     predicted = pl.select(DestinationSequences._activity_utility_delta(
-        pl.lit(1.0), pl.lit(1.0 - rigidity * 0.5), pl.lit(2.0), pl.lit(20.0), 2.0,
+        pl.lit(1.0), pl.lit(1.0 - (1.0 + rigidity) / 2.0 * 0.5), pl.lit(2.0), pl.lit(20.0), 2.0,
     )).item()
     assert predicted == pytest.approx(actual_delta)
 
@@ -506,7 +506,7 @@ def test_first_departure_home_utility_change_matches_full_plan(rigidity):
         "next_departure_time": [17.0, 24.0], "duration_per_pers": [8.0, 6.0], "time": [1.5, 1.0],
     })
     modeled = PlanScheduleUpdater().update_plan_timings(
-        steps.lazy(), arrival_time_rigidity_by_activity={"work": rigidity, "home": 0.0}, enabled=True,
+        steps.lazy(), activity_time_rigidity_by_activity={"work": rigidity, "home": 0.0}, enabled=True,
     ).collect()
     actual_home = 24.0 - modeled["duration_per_pers"].sum() - modeled["time"].sum()
     actual_delta = 2.0 * 8.0 * (
@@ -514,7 +514,7 @@ def test_first_departure_home_utility_change_matches_full_plan(rigidity):
         - max(0.0, math.log(8.0 / (8.0 * math.exp(-1.0))))
     )
     predicted = pl.select(DestinationSequences._activity_utility_delta(
-        pl.lit(8.0), pl.lit(8.0 - rigidity * 0.5), pl.lit(8.0), pl.lit(2.0), 1.0,
+        pl.lit(8.0), pl.lit(8.0 - (1.0 + rigidity) / 2.0 * 0.5), pl.lit(8.0), pl.lit(2.0), 1.0,
     )).item()
     assert predicted == pytest.approx(actual_delta)
 

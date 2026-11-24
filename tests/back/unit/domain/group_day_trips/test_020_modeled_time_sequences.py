@@ -12,7 +12,7 @@ from polars.testing import assert_frame_equal
 
 import mobility.trips.group_day_trips.plans.time_sequences as time_sequences
 import mobility.trips.group_day_trips.plans.shared_candidate_pool as shared_pool_module
-from mobility.trips.group_day_trips.core.multi_scenario import CANDIDATE_ID_COLS, add_candidate_ids
+from mobility.trips.group_day_trips.core.multi_scenario import CANDIDATE_ID_COLS, add_candidate_ids, candidate_content_ids
 from mobility.trips.group_day_trips.plans.shared_candidate_pool import SharedCandidatePool, ScenarioCandidateSource
 from mobility.trips.group_day_trips.plans.candidate_plan_steps import CandidatePlanStepsAsset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
@@ -21,8 +21,11 @@ from mobility.trips.group_day_trips.plans.time_sequences import TimeSequenceInde
 from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS, add_plan_id
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 from mobility.trips.group_day_trips.plans.plan_catalogue import PlanCatalogue
-from mobility.trips.group_day_trips.plans.compact_candidate_steps import CompactCandidateSteps, PLAN_COLUMNS
-from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts
+from mobility.trips.group_day_trips.plans.compact_candidate_steps import (
+    CompactCandidateSteps, SectionedPhysicalSteps, ScoringCandidateSteps,
+    MEMBERSHIP_COLUMNS, PLAN_COLUMNS, STEP_COLUMNS,
+)
+from mobility.trips.group_day_trips.plans.scoring_contexts import ScoringContexts, ScoringLookup, ScoringMemoryBudget
 from mobility.trips.group_day_trips.core.parameters import GroupDayTripsParameters, BehaviorChangeScope
 from mobility.trips.group_day_trips.core.run_state import RunState
 from mobility.trips.group_day_trips.iterations.iteration_assets import InitialIterationStateAsset, IterationStateAsset
@@ -48,6 +51,18 @@ def _plan_steps():
         iteration=pl.lit(1, dtype=pl.UInt16), first_seen_iteration=pl.lit(1, dtype=pl.UInt16),
         last_seen_iteration=pl.lit(1, dtype=pl.UInt16), last_active_iteration=pl.lit(None, dtype=pl.UInt16),
     ).with_columns(pl.Series("from", [1, 2], dtype=pl.Int32), pl.Series("to", [2, 1], dtype=pl.Int32))
+
+
+def test_physical_candidate_ids_match_ids_repeated_across_contexts():
+    first = _plan_steps()
+    second = first.with_columns(mode_seq_id=pl.lit(2, dtype=pl.UInt32), mode=pl.lit("walk"))
+    rows = pl.concat([first, second, first.with_columns(demand_group_id=pl.lit(2, dtype=pl.UInt32)),
+                      second.with_columns(demand_group_id=pl.lit(2, dtype=pl.UInt32))])
+    expanded = add_candidate_ids(rows).select(PLAN_KEY_COLS + CANDIDATE_ID_COLS).unique()
+    physical = rows.select(STEP_COLUMNS).unique()
+    shared = (rows.select(PLAN_KEY_COLS).unique()
+              .join(candidate_content_ids(physical, PLAN_COLUMNS), on=PLAN_COLUMNS))
+    assert_frame_equal(shared.sort(PLAN_KEY_COLS), expanded.sort(PLAN_KEY_COLS), check_exact=True)
 
 
 def test_time_index_reuse_matches_rebuilding_and_rejects_a_different_catalogue(monkeypatch):
@@ -238,14 +253,55 @@ def test_compact_outer_candidates_keep_inconsistent_rows_without_loss():
     assert CompactCandidateSteps.from_frame(incomplete, prefer_compact=True) is incomplete
 
 
+def test_physical_sections_share_equal_parts_without_losing_plan_steps():
+    first = _plan_steps().select(
+        PLAN_COLUMNS + ["seq_step_index", "activity", "from", "to", "mode", "duration_per_pers",
+                        "departure_time", "arrival_time", "next_departure_time"]
+    )
+    second = first.with_columns(
+        mode_seq_id=pl.lit(2, dtype=pl.UInt32),
+        mode=pl.when(pl.col("activity") == "home").then(pl.lit("walk")).otherwise(pl.col("mode")),
+    )
+    physical = pl.concat([first, second]).sort(PLAN_COLUMNS + ["seq_step_index"])
+    sectioned = SectionedPhysicalSteps.from_steps(physical, {"work"})
+    assert sectioned.sections.height == 3
+    assert sectioned.references.height == 4
+    assert_frame_equal(sectioned.lazy().collect().sort(PLAN_COLUMNS + ["seq_step_index"]), physical, check_exact=True)
+    selected = physical.filter(pl.col("mode_seq_id") == 2)
+    assert_frame_equal(
+        sectioned.lazy(selected.lazy()).collect().sort(PLAN_COLUMNS + ["seq_step_index"]), selected, check_exact=True,
+    )
+
+
+def test_large_candidate_history_uses_sections_when_they_save_space():
+    variants = pl.DataFrame({"mode_seq_id": range(25_000)}, schema={"mode_seq_id": pl.UInt32})
+    expanded = _plan_steps().drop("mode_seq_id").join(variants, how="cross")
+    compact = CompactCandidateSteps.from_frame(expanded, prefer_compact=True, rigid_activities={"work"})
+    assert isinstance(compact, CompactCandidateSteps)
+    assert isinstance(compact.steps, SectionedPhysicalSteps)
+    assert compact.steps.sections.height == 2
+    assert_frame_equal(
+        compact.lazy().collect().sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS),
+        expanded.sort(CandidatePlanStepsAsset.DEDUPE_COLUMNS), check_exact=True,
+    )
+
+
 @pytest.mark.parametrize("shared_context", [False, True])
-def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path, monkeypatch, shared_context):
+@pytest.mark.parametrize("sectioned", [False, True])
+def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path, monkeypatch, shared_context, sectioned):
     expanded = pl.concat([
         _plan_steps().with_columns(demand_group_id=pl.lit(index, dtype=pl.UInt32))
         for index in range(30)
     ])
     compact = CompactCandidateSteps.from_frame(expanded)
     assert isinstance(compact, CompactCandidateSteps)
+    if sectioned:
+        sections = SectionedPhysicalSteps.from_steps(compact.steps, {"work"})
+        assert_frame_equal(
+            sections.lazy().collect().sort(PLAN_COLUMNS + ["seq_step_index"]),
+            compact.steps.sort(PLAN_COLUMNS + ["seq_step_index"]), check_exact=True,
+        )
+        compact = replace(compact, steps=sections)
     if shared_context:
         compact = CompactCandidateSteps(
             steps=compact.steps,
@@ -274,7 +330,9 @@ def test_compact_outer_candidates_survive_state_spill_and_restore(tmp_path, monk
     asset._spill_state(initial, tmp_path / "state")
     with pytest.raises(FileExistsError):
         asset._spill_state(initial, tmp_path / "state")
-    assert (tmp_path / "state" / "candidate_steps.parquet").exists()
+    assert (tmp_path / "state" / "candidate_steps.parquet").exists() is not sectioned
+    assert (tmp_path / "state" / "candidate_sections.parquet").exists() is sectioned
+    assert (tmp_path / "state" / "candidate_section_references.parquet").exists() is sectioned
     assert (tmp_path / "state" / "candidate_membership.parquet").exists()
     assert (tmp_path / "state" / "candidate_unit_map.parquet").exists() == shared_context
     assert not (tmp_path / "state" / "candidate_plan_steps.parquet").exists()
@@ -684,7 +742,7 @@ def test_evaluation_remaps_current_plans_after_modeled_travel_changes_timings(mo
         home_night_dur=pl.DataFrame({"country": ["fr"], "csp": ["worker"], "mean_home_night_per_pers": [10.0]}),
         stay_home_plan=stay_home, transport_zones=None, iteration=1,
         resolved_activity_parameters={"home": SimpleNamespace(value_of_time_stay_home=1.0)},
-        arrival_time_rigidity_by_activity={"work": 0.0, "home": 0.0},
+        activity_time_rigidity_by_activity={"work": 0.0, "home": 0.0},
         destination_sequences=None, mode_sequences=None, previous_plan_id_index=index,
         parameters=GroupDayTripsParameters(plan_update={"update_plan_timings_from_modeled_travel_times": True}),
     )
@@ -724,7 +782,8 @@ def test_modeled_plan_history_merges_when_schedules_converge(monkeypatch):
         n_persons=pl.lit(100.0), utility=pl.lit(0.0),
     )
     contexts = ScoringContexts(
-        demand_groups=pl.DataFrame({"demand_group_id": [1], "demand_subgroup_id": [0]}),
+        demand_groups=pl.DataFrame({"demand_group_id": [1], "demand_subgroup_id": [0], "utility_profile_id": [1],
+                                   "country": ["fr"], "csp": ["worker"]}),
         unit_map=pl.DataFrame({"demand_group_id": [1], "demand_subgroup_id": [0], "_score_context_id": [1]}),
     )
     updater = PlanUpdater()
@@ -749,7 +808,7 @@ def test_modeled_plan_history_merges_when_schedules_converge(monkeypatch):
             "country": ["fr"], "csp": ["worker"], "mean_home_night_per_pers": [10.0],
         }), stay_home_plan=stay_home, transport_zones=None, iteration=1,
         resolved_activity_parameters={"home": SimpleNamespace(value_of_time_stay_home=1.0)},
-        arrival_time_rigidity_by_activity={"work": 0.0, "home": 0.0},
+        activity_time_rigidity_by_activity={"work": 0.0, "home": 0.0},
         destination_sequences=None, mode_sequences=SimpleNamespace(population_segments=[]),
         previous_plan_id_index=index, parameters=parameters, compact_contexts=True,
         scoring_contexts=contexts,
@@ -757,10 +816,12 @@ def test_modeled_plan_history_merges_when_schedules_converge(monkeypatch):
     # Two distinct reference schedules can become the same modeled schedule.
     # Their histories must collapse to one result.
     other_schedule = _schedule().with_columns(
-        pl.col("arrival_time") + 0.25, time_seq_id=pl.lit(2, dtype=pl.UInt32),
+        pl.col("departure_time") - 0.25, pl.col("arrival_time") + 0.25,
+        time_seq_id=pl.lit(2, dtype=pl.UInt32),
     )
     other_plan = first.with_columns(
-        pl.col("arrival_time") + 0.25, time_seq_id=pl.lit(2, dtype=pl.UInt32),
+        pl.col("departure_time") - 0.25, pl.col("arrival_time") + 0.25,
+        time_seq_id=pl.lit(2, dtype=pl.UInt32),
         iteration=pl.lit(2, dtype=pl.UInt16),
         first_seen_iteration=pl.lit(2, dtype=pl.UInt16),
         last_seen_iteration=pl.lit(2, dtype=pl.UInt16),
@@ -773,6 +834,81 @@ def test_modeled_plan_history_merges_when_schedules_converge(monkeypatch):
         **args, shared_candidate_plan_steps=pl.concat([occupied, other_plan, added]),
         survey_plan_steps=pl.concat([_schedule(), other_schedule]),
     )
+    combined = pl.concat([occupied, other_plan, added])
+    factored = ScoringCandidateSteps(
+        steps=combined.select(STEP_COLUMNS).unique(),
+        membership=combined.select(MEMBERSHIP_COLUMNS).unique().lazy(),
+    )
+    shared_timing = updater.evaluate_candidate_pool(
+        **args, shared_candidate_plan_steps=combined, factored_candidate_steps=factored,
+        survey_plan_steps=pl.concat([_schedule(), other_schedule]),
+    )
+    assert_frame_equal(
+        shared_timing.possible_plan_utility.sort(PLAN_KEY_COLS), collision.possible_plan_utility.sort(PLAN_KEY_COLS),
+        check_exact=True,
+    )
+    assert_frame_equal(
+        shared_timing.candidate_plan_steps.sort(PLAN_KEY_COLS + ["seq_step_index"]),
+        collision.candidate_plan_steps.sort(PLAN_KEY_COLS + ["seq_step_index"]),
+        check_exact=True, check_column_order=False,
+    )
+    _, physical, membership = contexts.collapse_factored_step_rows(
+        factored, None, None, current, return_parts=True,
+    )
+    score_rows = (score(None, None, combined).collect()
+                  .with_columns(utility_profile_id=pl.lit(1, dtype=pl.Int64))
+                  .select("country", "csp", "activity", "from", "to", "mode", "utility_profile_id",
+                          "cost", "time", "distance", "is_feasible", "_missing_cost_row", "_invalid_cost_row",
+                          "min_activity_time", "activity_utility_scale").unique())
+    lookup = ScoringLookup(ScoringMemoryBudget(100_000_000))
+    lookup.retain(score_rows)
+    section_evaluation = updater._evaluate_shared_sections(
+        physical=physical, memberships=membership, contexts=contexts,
+        current_plans=contexts.collapse_allocations(current),
+        stay_home_plan=contexts.collapse_stay_home(stay_home),
+        schedule_steps=pl.concat([_schedule(), other_schedule]), home_night_dur=args["home_night_dur"],
+        home_value=1.0, min_activity_time_constant=parameters.plan_update.min_activity_time_constant,
+        rigidity={"work": 0.0, "home": 0.0}, enabled=True,
+        scoring_lookup=lookup, time_index_cache=None,
+    )
+    assert section_evaluation is not None
+    assert_frame_equal(section_evaluation.possible_plan_utility.sort(PLAN_KEY_COLS),
+                       collision.possible_plan_utility.sort(PLAN_KEY_COLS), check_exact=True,
+                       check_column_order=False)
+    assert_frame_equal(section_evaluation.candidate_plan_steps.lazy().collect().sort(PLAN_KEY_COLS + ["seq_step_index"]),
+                       collision.candidate_plan_steps.sort(PLAN_KEY_COLS + ["seq_step_index"]), check_exact=True,
+                       check_column_order=False)
+    assert_frame_equal(section_evaluation.possible_plan_steps.collect().sort(PLAN_KEY_COLS + ["seq_step_index"]),
+                       collision.possible_plan_steps.collect().sort(PLAN_KEY_COLS + ["seq_step_index"]),
+                       check_exact=True, check_column_order=False)
+    all_steps = section_evaluation.possible_plan_steps.collect()
+    selected_ids = (section_evaluation.possible_plan_utility.sort("mode_seq_id")
+                    .select("plan_id").gather_every(2))
+    selected_steps = section_evaluation.shared_step_details.select(updater, selected_ids).collect()
+    assert_frame_equal(selected_steps.sort(PLAN_KEY_COLS + ["seq_step_index"]),
+                       all_steps.join(selected_ids, on="plan_id", how="semi")
+                       .sort(PLAN_KEY_COLS + ["seq_step_index"]),
+                       check_exact=True, check_column_order=False)
+    stored = section_evaluation.shared_step_details.for_storage(selected_ids)
+    assert_frame_equal(stored.sort(PLAN_KEY_COLS + ["seq_step_index"]),
+                       selected_steps.select(stored.columns).sort(PLAN_KEY_COLS + ["seq_step_index"]),
+                       check_exact=True)
+    # A lookup that cannot be retained should still be used for this batch,
+    # without falling back to the expanded candidate evaluator.
+    monkeypatch.setattr(updater, "compute_plan_steps_candidates_utility", lambda **kwargs: score_rows.lazy())
+    monkeypatch.setattr(updater, "get_possible_plan_steps",
+                        lambda *args, **kwargs: pytest.fail("Unexpected expanded candidate evaluation"))
+    transport = SimpleNamespace(get_utility_profiles=lambda *args: (pl.DataFrame(), {}))
+    small_lookup = ScoringLookup(ScoringMemoryBudget(0))
+    temporary = updater.evaluate_candidate_pool(
+        **{**args, "transport_costs": transport}, shared_candidate_plan_steps=combined,
+        factored_candidate_steps=factored, scoring_lookup=small_lookup,
+        survey_plan_steps=pl.concat([_schedule(), other_schedule]),
+    )
+    assert small_lookup.scores is None
+    assert_frame_equal(temporary.possible_plan_utility.sort(PLAN_KEY_COLS),
+                       section_evaluation.possible_plan_utility.sort(PLAN_KEY_COLS), check_exact=True,
+                       check_column_order=False)
     assert collision.possible_plan_utility.filter(pl.col("mode_seq_id") != 0).height == 2
     merged = collision.candidate_plan_steps.filter(pl.col("dest_seq_id") == 1)
     assert merged["iteration"].unique().to_list() == [1]

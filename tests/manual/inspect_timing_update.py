@@ -57,21 +57,24 @@ try:
         steps.lazy(), **settings
     ).collect(engine="streaming"))
     rigidity = pl.DataFrame({
-        "activity": list(settings["arrival_time_rigidity_by_activity"]),
-        "arrival_time_rigidity": list(settings["arrival_time_rigidity_by_activity"].values()),
+        "activity": list(settings["activity_time_rigidity_by_activity"]),
+        "activity_time_rigidity": list(settings["activity_time_rigidity_by_activity"].values()),
     }).with_columns(activity=pl.col("activity").cast(steps.schema["activity"]))
     time_dtype = steps.schema["departure_time"]
     duration_dtype = steps.schema["duration_per_pers"]
     current = measure("join rigidity", lambda: steps.join(rigidity, on="activity", how="left"))
+    current = measure("sort plans", lambda: current.sort(PLAN_KEY_COLS + ["seq_step_index"]))
     current = measure("adjust times", lambda: current.with_columns(
         reference_travel_time=(pl.col("arrival_time") - pl.col("departure_time")).clip(0.0, 24.0),
+        previous_rigidity=pl.col("activity_time_rigidity").shift(1).over(PLAN_KEY_COLS)
+        .fill_null(settings["activity_time_rigidity_by_activity"].get("home", 0.0)),
     ).with_columns(
         travel_time_delta=pl.col("time") - pl.col("reference_travel_time"),
+        departure_share=(1.0 + pl.col("activity_time_rigidity") - pl.col("previous_rigidity")) / 2.0,
     ).with_columns(
-        departure_time=(pl.col("departure_time") - pl.col("arrival_time_rigidity") * pl.col("travel_time_delta")).cast(time_dtype),
-        arrival_time=(pl.col("arrival_time") + (1.0 - pl.col("arrival_time_rigidity")) * pl.col("travel_time_delta")).cast(time_dtype),
+        departure_time=(pl.col("departure_time") - pl.col("departure_share") * pl.col("travel_time_delta")).cast(time_dtype),
+        arrival_time=(pl.col("arrival_time") + (1.0 - pl.col("departure_share")) * pl.col("travel_time_delta")).cast(time_dtype),
     ))
-    current = measure("sort plans", lambda: current.sort(PLAN_KEY_COLS + ["seq_step_index"]))
     sorted_steps = current
     current = measure("next departure window", lambda: current.with_columns(
         next_departure_time=pl.col("departure_time").shift(-1).over(PLAN_KEY_COLS)
@@ -81,7 +84,7 @@ try:
     current = measure("activity duration", lambda: current.with_columns(
         duration_per_pers=pl.when(raw_duration < updater.MIN_ACTIVITY_DURATION_HOURS)
         .then(pl.lit(updater.MIN_ACTIVITY_DURATION_HOURS)).otherwise(raw_duration).cast(duration_dtype),
-    ).drop(["arrival_time_rigidity", "reference_travel_time", "travel_time_delta"]))
+    ).drop(["activity_time_rigidity", "previous_rigidity", "departure_share", "reference_travel_time", "travel_time_delta"]))
     print("SAME_SCHEMA_AND_ROWS", current.schema == expected.schema and current.equals(expected), flush=True)
     # Adjacent rows belong to the same plan only when every sorted key agrees.
     # This avoids grouping a second time after the global plan-key sort.
@@ -93,7 +96,7 @@ try:
     ).with_columns(
         duration_per_pers=pl.when(raw_duration < updater.MIN_ACTIVITY_DURATION_HOURS)
         .then(pl.lit(updater.MIN_ACTIVITY_DURATION_HOURS)).otherwise(raw_duration).cast(duration_dtype),
-    ).drop(["arrival_time_rigidity", "reference_travel_time", "travel_time_delta"]))
+    ).drop(["activity_time_rigidity", "previous_rigidity", "departure_share", "reference_travel_time", "travel_time_delta"]))
     print("ADJACENT_SAME_SCHEMA_AND_ROWS", adjacent.schema == expected.schema and adjacent.equals(expected), flush=True)
 finally:
     stop.set()
