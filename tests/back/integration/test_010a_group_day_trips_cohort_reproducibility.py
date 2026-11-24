@@ -1717,13 +1717,14 @@ def test_cohort_checkpoint_continuation_preserves_random_path(test_data, monkeyp
     assert all(asset._loaded_checkpoint for member in resumed_run.coordinated_run_asset.runs.values()
                for asset in member.iteration_state_assets)
     assert_frame_equal(actual, baseline, check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
-    assert len(observed) == 4
-    for (ids, states), (other_ids, other_states) in zip(observed[:2], observed[2:]):
-        assert ids == other_ids
+    # A resumed step loads its state directly; it does not regenerate the
+    # shared candidate pool or call the normal step-advancement method.
+    assert len(observed) == 2
+    for step, (_, states) in enumerate(observed, start=1):
         for key, (rng, plans) in states.items():
-            other_rng, other_plans = other_states[key]
-            assert rng == other_rng
-            assert_frame_equal(plans.sort(plans.columns), other_plans.sort(other_plans.columns),
+            restored = resumed_run.coordinated_run_asset.runs[key].iterations.iteration(step).load_state()
+            assert rng == restored.rng_state
+            assert_frame_equal(plans.sort(plans.columns), restored.current_plans.sort(plans.columns),
                                check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
 
     # A marker from this cohort cannot authorize a different scenario set.
@@ -1782,8 +1783,10 @@ def test_cohort_checkpoint_continuation_preserves_random_path(test_data, monkeyp
     extended_metric.hash_path = tmp_path / "extended-metric.inputs-hash"
     extended_values = extended_metric.get()
     assert_frame_equal(extended_values, baseline, check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
-    assert len(observed) == 7
-    for (ids, states), (other_ids, other_states) in zip(observed[:2], observed[5:]):
+    # The short run computes step 1, and the extended run restores step 1
+    # before computing step 2. Neither resumed step regenerates candidates.
+    assert len(observed) == 4
+    for (ids, states), (other_ids, other_states) in zip(observed[:2], observed[2:]):
         assert ids == other_ids
         for key, (rng, plans) in states.items():
             other_rng, other_plans = other_states[key]
