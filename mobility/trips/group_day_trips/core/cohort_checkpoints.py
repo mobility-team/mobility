@@ -135,4 +135,3 @@ class CohortCheckpoints:
                 f"{self._checkpoint_cohort_hash}_iteration_*_mnl_*.parquet"
             ):
                 flow_path.unlink()
-
