@@ -977,12 +977,14 @@ def test_modeled_plan_history_merges_when_schedules_converge(monkeypatch):
                         lambda *args, **kwargs: pytest.fail("Unexpected expanded candidate evaluation"))
     transport = SimpleNamespace(get_utility_profiles=lambda *args: (pl.DataFrame(), {}))
     small_lookup = ScoringLookup(ScoringMemoryBudget(0))
+    unretained_cache = WholePlanCache(WholePlanMemoryBudget())
     temporary = updater.evaluate_candidate_pool(
         **{**args, "transport_costs": transport}, shared_candidate_plan_steps=combined,
-        factored_candidate_steps=factored, scoring_lookup=small_lookup,
+        factored_candidate_steps=factored, scoring_lookup=small_lookup, whole_plan_cache=unretained_cache,
         survey_plan_steps=pl.concat([_schedule(), other_schedule]),
     )
     assert small_lookup.scores is None
+    assert unretained_cache.state is None and unretained_cache.budget.used_bytes == 0
     # In an all-hit batch, old alternatives stay available downstream without
     # expanding their physical steps into new scoring requests.
     requested_rows = []

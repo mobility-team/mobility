@@ -938,6 +938,8 @@ class PlanUpdater:
             elif scoring_lookup.scores is None:
                 # The lookup is needed now even when it is too large to keep
                 # between batches. Do not retain its section scores either.
+                if whole_plan_cache is not None:
+                    whole_plan_cache.retain(None)
                 active_lookup = ScoringLookup(
                     budget=ScoringMemoryBudget(max_bytes=0),
                     scores=compact_scores.collect(engine="streaming"),
@@ -952,7 +954,8 @@ class PlanUpdater:
                 enabled=parameters.plan_update.update_plan_timings_from_modeled_travel_times,
                 scoring_lookup=active_lookup,
                 time_index_cache=time_index_cache, needed_score_keys=score_inputs,
-                whole_plan_cache=whole_plan_cache, prepared_reuse=prepared_reuse,
+                whole_plan_cache=whole_plan_cache if scoring_lookup.scores is not None else None,
+                prepared_reuse=prepared_reuse,
             ) if active_lookup is not None else None
             if section_evaluation is not None:
                 return section_evaluation
