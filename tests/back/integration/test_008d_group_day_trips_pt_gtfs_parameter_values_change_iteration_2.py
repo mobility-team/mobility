@@ -109,8 +109,8 @@ def _build_gtfs_zip(
     return str(gtfs_zip)
 
 
-def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files, gtfs_sources_folder: str):
-    car_mode = mobility.CarMode(transport_zones)
+def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files, gtfs_sources_folder: str, *, congestion=False):
+    car_mode = mobility.CarMode(transport_zones, congestion=congestion)
     walk_mode = mobility.WalkMode(transport_zones)
     bicycle_mode = mobility.BicycleMode(transport_zones)
     mode_registry = mobility.ModeRegistry([car_mode, walk_mode, bicycle_mode])
@@ -139,6 +139,53 @@ def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files
         ),
     )
     return [car_mode, walk_mode, bicycle_mode, public_transport_mode]
+
+
+def test_cohort_restart_with_public_transport_and_congestion(test_data, gtfs_sources_folder, monkeypatch, tmp_path):
+    """Resuming a shared cohort keeps its allocations and random state with both networks."""
+    from polars.testing import assert_frame_equal
+    from mobility.trips.group_day_trips.iterations.iterations import Iterations
+
+    class IsolatedIterations(Iterations):
+        def __init__(self, *, run_inputs_hash, is_weekday, base_folder):
+            super().__init__(run_inputs_hash=run_inputs_hash, is_weekday=is_weekday, base_folder=tmp_path / "states")
+
+    monkeypatch.setattr("mobility.trips.group_day_trips.core.run.Iterations", IsolatedIterations)
+    monkeypatch.setattr(GTFSRouter, "get_gtfs_files", lambda self, stops: [])
+    zones = mobility.TransportZones(local_admin_unit_id=test_data["transport_zones_local_admin_unit_id"],
+                                    radius=test_data["transport_zones_radius"])
+    feed = _build_gtfs_zip(zones, output_name="restart-test-line.zip", segment_travel_time=300.0)
+    population = mobility.Population(zones, sample_size=test_data["population_sample_size"])
+    setup = PopulationGroupDayTrips(
+        population=population,
+        modes=_build_modes(zones, [feed], gtfs_sources_folder, congestion=True),
+        activities=[HomeActivity(), WorkActivity(), OtherActivity(population=population)],
+        surveys=[EMPMobilitySurvey()], scenarios=mobility.Scenarios([mobility.Scenario(name="project")]),
+        parameters=GroupDayTripsParameters(
+            run=GroupDayTripsRunParameters(n_steps=2, n_steps_per_cost_update=1),
+            outputs=GroupDayTripsOutputParameters(checkpoint_each_step=True),
+            mode_sequences=GroupDayTripsModeSequenceParameters(mode_sequence_search_parallel=False),
+        ),
+    )
+    first = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
+    first_run = first.run("weekday")
+    first_run._execute()
+    coordinator = first_run.coordinated_run_asset
+    expected = {key: run.iterations.iteration(2).load_state() for key, run in coordinator.runs.items()}
+    coordinator._checkpoint_manifest_path(2).unlink()
+    resumed = setup.experiment("weekday", scenarios=["default", "project"], replication=0).run("weekday")
+    assert resumed.coordinated_run_asset._prepare_checkpoint_resume() == 1
+    resumed._execute()
+    # Identical scenarios can share the same in-memory state asset.
+    assert any(run.iteration_state_assets[0]._loaded_checkpoint
+               for run in resumed.coordinated_run_asset.runs.values())
+    for key, run in resumed.coordinated_run_asset.runs.items():
+        assert not run.iteration_state_assets[1]._loaded_checkpoint
+        actual = run.iterations.iteration(2).load_state()
+        assert actual.rng_state == expected[key].rng_state
+        assert_frame_equal(actual.current_plans.sort(actual.current_plans.columns),
+                           expected[key].current_plans.sort(expected[key].current_plans.columns),
+                           check_exact=False, rel_tol=1e-12, abs_tol=1e-9)
 
 
 def _read_cppr_graph_edges(graph_path: str | pathlib.Path, output_path: pathlib.Path) -> pl.DataFrame:
