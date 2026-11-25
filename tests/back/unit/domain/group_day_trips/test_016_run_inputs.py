@@ -58,7 +58,7 @@ def test_run_inputs_keep_context_objects_out_of_direct_dependencies(tmp_path, mo
     monkeypatch.setattr(
         run_module,
         "Iterations",
-        lambda **kwargs: SimpleNamespace(folder_paths={}),
+        lambda **kwargs: SimpleNamespace(folder_paths={}, run_inputs_hash=kwargs["run_inputs_hash"]),
     )
     monkeypatch.setattr(
         run_module,
@@ -110,6 +110,20 @@ def test_run_inputs_keep_context_objects_out_of_direct_dependencies(tmp_path, mo
         "run_context_hash": run.run_context.inputs_hash,
         "final_iteration_state": final_state,
     })
+
+    # A member's own inputs can stay fixed while another member changes the
+    # shared candidate pool. The old checkpoint must remain at a distinct path.
+    run_args = dict(
+        population=population, transport_costs=transport_costs,
+        activities=[activity], modes=[mode], surveys=[survey],
+        survey_plan_assets=survey_plan_assets, parameters=parameters,
+        is_weekday=True, scenario="default",
+    )
+    before = Run(**run_args, cohort_state_identity="original")
+    changed = Run(**run_args, cohort_state_identity="changed")
+    restored = Run(**run_args, cohort_state_identity="original")
+    assert before.iterations.run_inputs_hash != changed.iterations.run_inputs_hash
+    assert before.iterations.run_inputs_hash == restored.iterations.run_inputs_hash
 
 
 def test_initial_state_inputs_keep_full_modes_out_of_dependencies(tmp_path, monkeypatch):

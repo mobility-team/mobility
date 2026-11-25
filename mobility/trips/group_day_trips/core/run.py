@@ -195,6 +195,8 @@ class Run:
         checkpoint_run_context = {
             **run_context_inputs,
             "parameters": checkpoint_parameters,
+            # Other cohort members can change this run's shared candidates.
+            "cohort_state_identity": cohort_state_identity,
             # Compact candidate checkpoints use a different set of files.
             "checkpoint_version": 38 if parameters.destination_sequences.sampling_method == "utility" else 33,
         }

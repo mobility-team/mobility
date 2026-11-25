@@ -339,6 +339,7 @@ def test_result_and_cohort_identity_include_other_scenario_timetable(test_data, 
         metric = result.metrics.trip_count(by_variable="mode")
         return (
             run.run_context.inputs_hash,
+            run.iterations.run_inputs_hash,
             run.coordinated_run_asset.inputs_hash,
             run.coordinated_run_asset._checkpoint_cohort_hash,
             metric.inputs_hash,
@@ -407,7 +408,8 @@ def test_result_and_cohort_identity_include_other_scenario_road(test_data, tmp_p
         run = experiment.run("weekday", scenario="default")
         metric = experiment.results(scenarios=["default"]).metrics.trip_count(by_variable="mode")
         return (
-            run.run_context.inputs_hash, run.coordinated_run_asset._checkpoint_cohort_hash,
+            run.run_context.inputs_hash, run.iterations.run_inputs_hash,
+            run.coordinated_run_asset._checkpoint_cohort_hash,
             metric.inputs_hash, run.iteration_state_assets[0].inputs_hash,
             run.iteration_transport_cost_assets[1].congestion_flows.inputs_hash,
         )
