@@ -365,6 +365,18 @@ def _titled_results(tmp_path: Path):
     )
 
 
+def test_scenario_gap_uses_the_selected_modes(tmp_path):
+    """The displayed car distance and its paired gap use the same trips."""
+    results = _results(tmp_path, scenarios=["default", "test"])
+    values = results.metrics.travel_distance(
+        modes=["car"], reference=("scenario", "default"),
+    ).get()
+    assert values.height == 1
+    row = values.row(0, named=True)
+    assert row["gap"] == pytest.approx(6.0)
+    assert row["travel_distance"] - row["travel_distance_reference"] == pytest.approx(6.0)
+
+
 @pytest.fixture(autouse=True)
 def _project_data_folder(tmp_path, monkeypatch):
     """Point result assets at each test's temporary folder."""

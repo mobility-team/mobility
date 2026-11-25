@@ -310,10 +310,6 @@ class GroupDayTripsResultMetrics:
                 metric_column = self._metric_column(spec.quantity, normalize_by)
                 zone_columns = self._zone_columns(by_zone)
                 zone_column = zone_columns[0] if len(zone_columns) == 1 else None
-                needs_unfiltered_pairs = (
-                    reference_kind == "scenario" and reference_view == "gap" and modes is not None
-                )
-
                 def compute_lane(iteration):
                     selected_step = "last" if self.results.uses_last_iteration(steps) else iteration
                     values = self._metric_by_replication(
@@ -330,18 +326,6 @@ class GroupDayTripsResultMetrics:
                         csp=csp,
                         modes=modes,
                     )
-                    paired_values = None
-                    if needs_unfiltered_pairs:
-                        # Preserve the existing paired-gap calculation, which
-                        # uses all modes even when displayed values are filtered.
-                        paired_values = self._metric_by_replication(
-                            quantity=spec.quantity, quantity_column=spec.quantity_column,
-                            metric_column=spec.quantity, group_columns=group_columns,
-                            zone_column=zone_column, normalize_by=None,
-                            normalize_scope=normalize_scope,
-                            inner_zone_residents_only=inner_zone_residents_only,
-                            iterations=selected_step, home_zone_ids=home_zone_ids, csp=csp,
-                        )
                     population = None
                     if normalize_by == "person_count":
                         population = self._population(
@@ -359,19 +343,10 @@ class GroupDayTripsResultMetrics:
                             metric_column=metric_column, normalize_by=normalize_by,
                             normalize_scope=normalize_scope, iterations=selected_step,
                         )
-                    return MetricLaneResult(values, population, paired_values, reference_values)
+                    return MetricLaneResult(values, population, None, reference_values)
 
                 def finish_lanes(parts):
                     populations = None
-                    paired_values = None
-                    if needs_unfiltered_pairs:
-                        paired_values = pl.concat(
-                            [part.paired_values for part in parts], how="vertical_relaxed"
-                        )
-                        paired_values = complete_missing_replication_groups(
-                            paired_values.lazy(), group_columns=group_columns,
-                            value_column=spec.quantity,
-                        ).collect(engine="streaming")
                     if normalize_by == "person_count":
                         populations = pl.concat([part.population for part in parts], how="vertical_relaxed")
                     if reference_kind == "external":
@@ -398,8 +373,6 @@ class GroupDayTripsResultMetrics:
                         )
                         .sort(output_columns)
                     )
-                    if needs_unfiltered_pairs:
-                        per_replication = paired_values
                     if normalize_by == "metric_total":
                         denominator_columns = self._denominator_columns(
                             normalize_scope=normalize_scope, zone_column=zone_column,
@@ -1366,6 +1339,7 @@ class GroupDayTripsResultMetrics:
                     iterations=iterations,
                     home_zone_ids=home_zone_ids,
                     csp=csp,
+                    modes=modes,
                 )
                 values = self._with_scenario_reference(
                     values,
