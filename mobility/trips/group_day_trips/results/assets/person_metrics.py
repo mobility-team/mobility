@@ -130,11 +130,14 @@ def complete_missing_replication_groups(
     *,
     group_columns: list[str],
     value_column: str,
+    scope: pl.LazyFrame | None = None,
 ) -> pl.LazyFrame:
     """Fill missing seed/group rows with zero before averaging over seeds."""
+    scope_index = (values if scope is None else scope).select(SCOPE_COLUMNS).unique()
     if not group_columns:
-        return values
-    scope_index = values.select(SCOPE_COLUMNS).unique()
+        return scope_index.join(values, on=SCOPE_COLUMNS, how="left").with_columns(
+            pl.col(value_column).fill_null(0.0)
+        )
     group_index_columns = RESULT_COLUMNS + list(group_columns)
     group_index = values.select(group_index_columns).unique()
     full_index = scope_index.join(group_index, on=RESULT_COLUMNS, how="inner")

@@ -20,6 +20,7 @@ class MetricLaneResult:
     population: pl.DataFrame | None = None
     paired_values: pl.DataFrame | None = None
     reference_values: pl.DataFrame | None = None
+    scope: pl.DataFrame | None = None
 
 
 class Metric(FileAsset):

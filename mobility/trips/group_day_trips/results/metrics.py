@@ -104,6 +104,21 @@ class GroupDayTripsResultMetrics:
         self.results = results
         self._transport_zone_maps = None
 
+    def _replication_scope(self, iterations):
+        """Include selected runs even when no trips survive a filter."""
+        resolver = get_current_asset_resolver()
+        coordinator = getattr(resolver, "result_coordinator", None) if resolver else None
+        rows = [
+            {"scenario": context.scenario, "sensitivity_case": context.sensitivity_case_id,
+             "day_type": context.day_type, "step": step, "replication": context.replication}
+            for context in self.results.run_contexts
+            if coordinator is None or context.run.coordinated_run_asset is coordinator
+            for step in self.results.selected_iterations(iterations)
+        ]
+        return pl.DataFrame(rows).with_columns(
+            pl.col("step", "replication").cast(pl.Int32)
+        ).lazy()
+
     def _table(
         self,
         table_name: str,
@@ -343,7 +358,8 @@ class GroupDayTripsResultMetrics:
                             metric_column=metric_column, normalize_by=normalize_by,
                             normalize_scope=normalize_scope, iterations=selected_step,
                         )
-                    return MetricLaneResult(values, population, None, reference_values)
+                    scope = self._replication_scope(selected_step).collect()
+                    return MetricLaneResult(values, population, None, reference_values, scope)
 
                 def finish_lanes(parts):
                     populations = None
@@ -362,6 +378,7 @@ class GroupDayTripsResultMetrics:
                     per_replication = complete_missing_replication_groups(
                         per_replication.lazy(), group_columns=group_columns,
                         value_column=spec.quantity,
+                        scope=pl.concat([part.scope for part in parts]).lazy(),
                     ).collect(engine="streaming")
                     output_columns = RESULT_COLUMNS + group_columns
                     values = (
@@ -2185,6 +2202,7 @@ class GroupDayTripsResultMetrics:
                 complete_missing_replication_groups,
                 group_columns=group_columns,
                 value_column="value",
+                scope=self._replication_scope(iterations),
             )
             .group_by(output_columns)
             .agg(
@@ -2295,6 +2313,7 @@ class GroupDayTripsResultMetrics:
                 complete_missing_replication_groups,
                 group_columns=group_columns,
                 value_column=value_column,
+                scope=self._replication_scope(iterations),
             )
             .collect(engine="streaming")
         )
@@ -2345,6 +2364,7 @@ class GroupDayTripsResultMetrics:
                 complete_missing_replication_groups,
                 group_columns=group_columns,
                 value_column=output_column,
+                scope=self._replication_scope(iterations),
             )
             .collect(engine="streaming")
         )
@@ -2446,6 +2466,7 @@ class GroupDayTripsResultMetrics:
                 complete_missing_replication_groups,
                 group_columns=group_columns,
                 value_column="value",
+                scope=self._replication_scope(iterations),
             )
             .group_by(output_columns)
             .agg(
@@ -2486,6 +2507,7 @@ class GroupDayTripsResultMetrics:
                 complete_missing_replication_groups,
                 group_columns=group_columns,
                 value_column=output_column,
+                scope=self._replication_scope(iterations),
             )
             .collect(engine="streaming")
         )

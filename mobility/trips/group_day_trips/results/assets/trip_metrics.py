@@ -98,6 +98,7 @@ class TripCountMetric(InMemoryAsset):
             per_replication,
             group_columns=self.group_columns,
             value_column="value",
+            scope=demand_groups.select(SCOPE_COLUMNS).unique(),
         )
         if self.per_person:
             per_replication = self._divide_by_population(per_replication, demand_groups)

@@ -377,6 +377,19 @@ def test_scenario_gap_uses_the_selected_modes(tmp_path):
     assert row["travel_distance"] - row["travel_distance_reference"] == pytest.approx(6.0)
 
 
+@pytest.mark.parametrize("grouped", [False, True])
+def test_metric_counts_replication_with_no_matching_trips(tmp_path, grouped):
+    results = _results(tmp_path)
+    for context in results.run_contexts:
+        if context.replication == 1:
+            context.run.frames["plan_steps"] = context.run.frames["plan_steps"].filter(
+                pl.col("mode") != "car"
+            )
+    metric = results.metrics.trip_count(modes=["car"], by_variable="mode" if grouped else None).get()
+    assert metric["trip_count"].to_list() == [1.0]
+    assert metric["n_replications"].to_list() == [2]
+
+
 @pytest.fixture(autouse=True)
 def _project_data_folder(tmp_path, monkeypatch):
     """Point result assets at each test's temporary folder."""
