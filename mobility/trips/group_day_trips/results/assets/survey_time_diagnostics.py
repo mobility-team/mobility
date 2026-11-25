@@ -10,6 +10,16 @@ from .person_metrics import RESULT_COLUMNS, SCOPE_COLUMNS
 from .scoped_tables import release_scoped_run_tables
 
 
+def _complete_replication_bins(values: pl.DataFrame, dimensions: list[str], columns: list[str]) -> pl.LazyFrame:
+    """Include zero-valued bins for seeds where another seed has that bin."""
+    data = values.lazy()
+    scopes = data.select(SCOPE_COLUMNS + ["source"]).unique()
+    bins = data.select(RESULT_COLUMNS + ["source"] + dimensions).unique()
+    return (scopes.join(bins, on=RESULT_COLUMNS + ["source"], how="inner")
+            .join(data, on=SCOPE_COLUMNS + ["source"] + dimensions, how="left")
+            .with_columns(pl.col(columns).fill_null(0.0)))
+
+
 class ActivityDurationDistribution(InMemoryAsset):
     """Compute model-vs-survey activity duration distributions."""
 
@@ -128,7 +138,10 @@ class ActivityDurationDistribution(InMemoryAsset):
             "duration_label",
         ]
         return (
-            distribution.lazy()
+            _complete_replication_bins(
+                distribution, [column for column in output_columns if column not in RESULT_COLUMNS + ["source"]],
+                ["weighted_visits", "person_hours", "probability"],
+            )
             .group_by(output_columns)
             .agg(
                 pl.col("weighted_visits").mean().alias("weighted_visits"),
@@ -259,8 +272,9 @@ class ActivityTimeSeries(InMemoryAsset):
         """Average activity occupancy across seeds."""
         output_columns = RESULT_COLUMNS + ["source", "time_bin_start", "time_label", "label"]
         return (
-            per_replication
-            .lazy()
+            _complete_replication_bins(
+                per_replication, ["time_bin_start", "time_label", "label"], ["n_persons"]
+            )
             .group_by(output_columns)
             .agg(
                 pl.col("n_persons").mean().alias("n_persons"),

@@ -24,6 +24,7 @@ from mobility.trips.group_day_trips.core.group_day_trips import PopulationGroupD
 from mobility.trips.group_day_trips.results import GroupDayTripsResults
 from mobility.trips.group_day_trips.results.metrics import GroupDayTripsResultMetrics
 from mobility.trips.group_day_trips.results.assets.metric import Metric
+from mobility.trips.group_day_trips.results.assets.survey_time_diagnostics import ActivityTimeSeries, ActivityDurationDistribution
 from mobility.trips.group_day_trips.results.result_table import ResultTable
 from mobility.trips.group_day_trips.results.simulation_runner import SimulationRunner
 from mobility.trips.group_day_trips.sensitivity import GroupDayTripsSensitivityAnalysis
@@ -388,6 +389,25 @@ def test_metric_counts_replication_with_no_matching_trips(tmp_path, grouped):
     metric = results.metrics.trip_count(modes=["car"], by_variable="mode" if grouped else None).get()
     assert metric["trip_count"].to_list() == [1.0]
     assert metric["n_replications"].to_list() == [2]
+
+
+def test_activity_bins_include_missing_replications():
+    scope = {"scenario": ["default"] * 3, "sensitivity_case": ["base"] * 3,
+             "day_type": ["weekday"] * 3, "step": [1] * 3,
+             "source": ["model"] * 3, "replication": [0, 0, 1]}
+    series = pl.DataFrame({**scope, "time_bin_start": [8.0] * 3, "time_label": ["8"] * 3,
+                           "label": ["work", "home", "home"], "n_persons": [10.0, 90.0, 100.0]})
+    result = ActivityTimeSeries.combine_replications(series)
+    assert result.filter(pl.col("label") == "work")["n_persons"].item() == 5.0
+    assert result["n_persons"].sum() == 100.0
+    durations = pl.DataFrame({**scope, "activity": ["work"] * 3,
+        "duration_bin_start": [1.0, 2.0, 2.0], "duration_bin_end": [2.0, 3.0, 3.0],
+        "duration_bin_mid": [1.5, 2.5, 2.5], "duration_label": ["1-2", "2-3", "2-3"],
+        "weighted_visits": [1.0, 1.0, 2.0], "person_hours": [1.0, 2.0, 4.0],
+        "probability": [0.5, 0.5, 1.0]})
+    result = ActivityDurationDistribution.combine_replications(durations)
+    assert result["probability"].sum() == pytest.approx(1.0)
+    assert result.filter(pl.col("duration_label") == "1-2")["probability"].item() == 0.25
 
 
 @pytest.fixture(autouse=True)
