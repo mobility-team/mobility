@@ -34,7 +34,7 @@ class MobilitySurveyPlans(FileAsset):
         folder_path = pathlib.Path(plan_steps.cache_path).parent
         cache_path = folder_path / "group_day_trip_plans.parquet"
         inputs = {
-            "version": 2,
+            "version": 3,
             "plan_steps": plan_steps,
         }
         super().__init__(inputs, cache_path)
@@ -43,8 +43,9 @@ class MobilitySurveyPlans(FileAsset):
         """Read the cached plan-level survey table from disk.
 
         Returns:
-            A one-row-per-plan dataframe containing survey metadata,
-            sequence identifiers, segment keys, and ``p_plan``.
+            A one-row-per-plan-and-segment dataframe containing survey
+            metadata, sequence identifiers, raw ``plan_weight_mass``, and the
+            segment-normalized ``p_plan``.
         """
         return pl.read_parquet(self.cache_path)
 
@@ -52,8 +53,8 @@ class MobilitySurveyPlans(FileAsset):
         """Build and cache the plan-level survey table.
 
         Returns:
-            A plan-level dataframe with one row per survey plan and a
-            segment-specific sampling probability ``p_plan``.
+            A plan-level dataframe with one row per survey plan and segment,
+            including both raw weight mass and segment-specific ``p_plan``.
         """
         plan_steps = self.plan_steps.get()
         survey_name = self.plan_steps.survey.inputs["parameters"].survey_name
@@ -99,7 +100,18 @@ class MobilitySurveyPlans(FileAsset):
                 p_plan=pl.col("plan_weight_mass")
                 / pl.col("plan_weight_mass").sum().over(["is_weekday", "city_category", "csp", "n_cars"])
             )
-            .select(["activity_seq_id", "time_seq_id", "is_weekday", "city_category", "csp", "n_cars", "p_plan"])
+            .select(
+                [
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "is_weekday",
+                    "city_category",
+                    "csp",
+                    "n_cars",
+                    "plan_weight_mass",
+                    "p_plan",
+                ]
+            )
         )
 
         plans = plans.join(

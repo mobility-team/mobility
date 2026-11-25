@@ -82,9 +82,21 @@ class FileAsset(Asset):
         
         resolver = get_current_asset_resolver()
         if resolver is not None:
+            if getattr(self, "is_execution_scoped_cost_asset", False):
+                return resolver.get_execution_scoped_file_asset(
+                    self,
+                    *args,
+                    **kwargs,
+                )
             return resolver.get(self, *args, **kwargs)
 
         with asset_resolution_context() as resolver:
+            if getattr(self, "is_execution_scoped_cost_asset", False):
+                return resolver.get_execution_scoped_file_asset(
+                    self,
+                    *args,
+                    **kwargs,
+                )
             return resolver.get(self, *args, **kwargs)
         
 

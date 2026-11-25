@@ -2,13 +2,6 @@ import polars as pl
 import pytest
 
 from mobility.runtime.assets.cache_schema import validate_cached_table
-from mobility.trips.group_day_trips.core.run_state import RunState
-from mobility.trips.group_day_trips.iterations.iteration_assets import (
-    DEMAND_GROUPS_SCHEMA,
-    _read_run_state,
-    _state_cache_paths,
-    _write_run_state,
-)
 from mobility.runtime.population_segments import PopulationSegment
 from mobility.trips.group_day_trips.plans.candidate_plan_steps import CandidatePlanStepsAsset
 from mobility.trips.group_day_trips.plans.demand_subgroups import (
@@ -207,7 +200,11 @@ def test_validate_cached_table_reports_schema_diff(tmp_path):
         validate_cached_table(
             table,
             table_name="demand_groups",
-            required_schema=DEMAND_GROUPS_SCHEMA,
+            required_schema={
+                "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
+                "n_persons": pl.Float64,
+            },
             cache_path=tmp_path / "demand_groups.parquet",
         )
 
@@ -236,23 +233,17 @@ def test_validate_cached_table_reports_wrong_dtype(tmp_path):
         validate_cached_table(
             table,
             table_name="demand_groups",
-            required_schema=DEMAND_GROUPS_SCHEMA,
+            required_schema={
+                "demand_group_id": pl.UInt32,
+                "demand_subgroup_id": pl.UInt32,
+                "n_persons": pl.Float64,
+            },
             cache_path=tmp_path / "demand_groups.parquet",
         )
 
     message = str(error.value)
     assert "Wrong column types:" in message
     assert "- demand_group_id: expected UInt32, found Int64" in message
-
-
-def test_read_run_state_rejects_old_cached_schema(tmp_path):
-    cache_path = _state_cache_paths(tmp_path, 0)
-    state = _minimal_run_state()
-    _write_run_state(cache_path, state, rng_state=("rng",))
-    state.demand_groups.drop("demand_subgroup_id").write_parquet(cache_path["demand_groups"])
-
-    with pytest.raises(RuntimeError, match="demand_subgroup_id"):
-        _read_run_state(cache_path, start_iteration=1)
 
 
 def test_candidate_plan_steps_asset_rejects_old_cached_schema(tmp_path):
@@ -267,90 +258,6 @@ def test_candidate_plan_steps_asset_rejects_old_cached_schema(tmp_path):
 
     with pytest.raises(RuntimeError, match="candidate_plan_steps"):
         asset.get_cached_asset()
-
-
-def _minimal_run_state() -> RunState:
-    demand_groups = pl.DataFrame(
-        {
-            "demand_group_id": [1],
-            "demand_subgroup_id": [0],
-            "n_persons": [20.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "demand_subgroup_id": pl.UInt32,
-            "n_persons": pl.Float64,
-        },
-    )
-    current_plans = pl.DataFrame(
-        {
-            "demand_group_id": [1],
-            "demand_subgroup_id": [0],
-            "activity_seq_id": [0],
-            "time_seq_id": [0],
-            "dest_seq_id": [0],
-            "mode_seq_id": [0],
-            "plan_id": [0],
-            "n_persons": [20.0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "demand_subgroup_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "time_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "plan_id": pl.UInt32,
-            "n_persons": pl.Float64,
-        },
-    )
-    current_plan_steps = pl.DataFrame(
-        {
-            "demand_group_id": [1],
-            "demand_subgroup_id": [0],
-            "activity_seq_id": [0],
-            "time_seq_id": [0],
-            "dest_seq_id": [0],
-            "mode_seq_id": [0],
-            "seq_step_index": [0],
-        },
-        schema={
-            "demand_group_id": pl.UInt32,
-            "demand_subgroup_id": pl.UInt32,
-            "activity_seq_id": pl.UInt32,
-            "time_seq_id": pl.UInt32,
-            "dest_seq_id": pl.UInt32,
-            "mode_seq_id": pl.UInt32,
-            "seq_step_index": pl.UInt8,
-        },
-    )
-    plan_id_index = current_plans.select(
-        [
-            "demand_group_id",
-            "demand_subgroup_id",
-            "activity_seq_id",
-            "time_seq_id",
-            "dest_seq_id",
-            "mode_seq_id",
-            "plan_id",
-        ]
-    )
-    return RunState(
-        survey_plans=pl.DataFrame(),
-        survey_plan_steps=pl.DataFrame(),
-        demand_groups=demand_groups,
-        activity_dur=pl.DataFrame(),
-        home_night_dur=pl.DataFrame(),
-        stay_home_plan=current_plan_steps,
-        opportunities=pl.DataFrame(),
-        current_plans=current_plans,
-        candidate_plan_steps=_candidate_plan_steps(),
-        plan_id_index=plan_id_index,
-        destination_saturation=pl.DataFrame(),
-        costs=pl.DataFrame(),
-        start_iteration=1,
-        current_plan_steps=current_plan_steps,
-    )
 
 
 def _candidate_plan_steps() -> pl.DataFrame:

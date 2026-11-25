@@ -1,9 +1,11 @@
 from types import SimpleNamespace
 
+import pandas as pd
 import polars as pl
 from pydantic import BaseModel
 
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.resolver import asset_resolution_context
 from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.costs.road_flow_manager import RoadFlowManager
 
@@ -21,6 +23,28 @@ class _FakeModeParameters(BaseModel):
     name: str
     congestion: bool
     persons_per_vehicle: float = 2.0
+
+
+def test_vehicle_flows_have_stable_values_and_order(project_dir):
+    flows = pl.DataFrame({
+        "from": [2, 1, 1, 1, 1],
+        "to": [3, 2, 2, 2, 2],
+        "mode": ["car", "car", "car", "car", "car"],
+        "flow_volume": [3.0, 1e16, 1.0, 1.0, 2.0],
+    })
+    result = []
+    for index, rows in enumerate([flows, flows.reverse()]):
+        person_flows = _PersonODFlowsAsset(source_key=str(index), flows=rows)
+        vehicle_flows = VehicleODFlowsAsset(
+            person_od_flows_by_mode=person_flows,
+            road_flow_parameters=[{"mode_name": "car", "vehicles_per_person": 1.0}],
+        )
+        with asset_resolution_context():
+            result.append(pl.read_parquet(vehicle_flows.get()))
+
+    assert result[0].equals(result[1])
+    assert result[0].select("from", "to").rows() == [(1, 2), (2, 3)]
+    assert result[0]["vehicle_volume"].to_list() == [1e16 + 4.0, 3.0]
 
 
 def _make_mode(*, name: str, congestion: bool, persons_per_vehicle: float = 2.0):
@@ -58,7 +82,6 @@ def test_vehicle_od_flows_share_when_upstream_person_flows_are_the_same(project_
     )
 
     assert first_vehicle_flows.inputs_hash == second_vehicle_flows.inputs_hash
-    assert first_vehicle_flows.cache_path == second_vehicle_flows.cache_path
 
 
 def test_vehicle_od_flows_do_not_share_by_flow_content_only(project_dir):
@@ -83,7 +106,6 @@ def test_vehicle_od_flows_do_not_share_by_flow_content_only(project_dir):
     )
 
     assert baseline_vehicle_flows.inputs_hash != project_vehicle_flows.inputs_hash
-    assert baseline_vehicle_flows.cache_path != project_vehicle_flows.cache_path
 
 
 def test_road_flow_manager_uses_one_shared_road_flow_asset_for_car_and_carpool(
@@ -108,8 +130,9 @@ def test_road_flow_manager_uses_one_shared_road_flow_asset_for_car_and_carpool(
         ),
     )
 
-    road_flow_asset = RoadFlowManager(transport_costs).build(person_flows)
+    with asset_resolution_context():
+        road_flow_asset = RoadFlowManager(transport_costs).build(person_flows)
+        road_flows = pd.read_parquet(road_flow_asset.get())
 
     assert road_flow_asset is not None
-    road_flows = road_flow_asset.get_cached_asset()
     assert road_flows["vehicle_volume"].tolist() == [12.0]

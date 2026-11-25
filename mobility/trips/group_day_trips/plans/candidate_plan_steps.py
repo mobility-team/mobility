@@ -1,9 +1,15 @@
+import logging
 import pathlib
+from collections.abc import Callable
 
 import polars as pl
 
 from mobility.runtime.assets.cache_schema import read_cached_parquet
 from mobility.runtime.assets.file_asset import FileAsset
+from .activity_profiles import (
+    get_schedules_by_activity_profile,
+    get_survey_schedule_activities,
+)
 from .demand_subgroups import DEMAND_UNIT_COLS
 from .plan_ids import PLAN_STEP_KEY_SCHEMA
 
@@ -65,7 +71,7 @@ class CandidatePlanStepsAsset(FileAsset):
     ) -> None:
         self.candidate_plan_steps = candidate_plan_steps
         inputs = {
-            "version": 2,
+            "version": 3,
             "run_key": run_key,
             "is_weekday": is_weekday,
             "iteration": iteration,
@@ -84,7 +90,10 @@ class CandidatePlanStepsAsset(FileAsset):
         if self.candidate_plan_steps is None:
             raise ValueError("Cannot save candidate plan steps without a dataframe.")
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.candidate_plan_steps.write_parquet(self.cache_path)
+        if isinstance(self.candidate_plan_steps, pl.DataFrame):
+            self.candidate_plan_steps.write_parquet(self.cache_path)
+        else:
+            self.candidate_plan_steps.lazy().sink_parquet(self.cache_path)
         return self.get_cached_asset()
 
     @classmethod
@@ -95,9 +104,11 @@ class CandidatePlanStepsAsset(FileAsset):
         mode_sequences,
         survey_plan_steps: pl.DataFrame,
         demand_groups: pl.DataFrame,
+        profile_assignments: pl.DataFrame,
+        candidate_pruner: Callable[[pl.LazyFrame], pl.DataFrame] | None = None,
+        compact_for_shared_pool: bool = False,
     ) -> pl.LazyFrame:
         """Build structural plan-step candidates generated at one iteration."""
-
         survey_plan_steps = (
             survey_plan_steps
             .select(
@@ -113,17 +124,267 @@ class CandidatePlanStepsAsset(FileAsset):
                 ]
             )
         )
+        mode_rows = mode_sequences.get()
+        destination_rows = destination_sequences.get()
+        return cls._attach_candidates_to_demand_units(
+            mode_rows=mode_rows,
+            destination_rows=destination_rows,
+            survey_plan_steps=survey_plan_steps,
+            demand_groups=demand_groups,
+            profile_assignments=profile_assignments,
+            candidate_pruner=candidate_pruner,
+            stage="candidate generation",
+            compact_for_shared_pool=compact_for_shared_pool,
+        )
+
+    @classmethod
+    def _attach_candidates_to_demand_units(
+        cls,
+        *,
+        mode_rows: pl.DataFrame,
+        destination_rows: pl.DataFrame,
+        survey_plan_steps: pl.DataFrame,
+        demand_groups: pl.DataFrame,
+        profile_assignments: pl.DataFrame,
+        candidate_pruner: Callable[[pl.LazyFrame], pl.DataFrame] | None,
+        stage: str,
+        compact_for_shared_pool: bool = False,
+    ) -> pl.LazyFrame:
+        """Attach completed shared plans to eligible demand units."""
+        if "allowed_activities" not in demand_groups.columns:
+            raise ValueError(
+                "Shared plan generation needs each demand unit's activity support set. "
+                "Start a new run so the initial state includes allowed_activities."
+            )
+
+        units = (
+            demand_groups
+            .select(
+                DEMAND_UNIT_COLS
+                + ["country", "csp", "home_zone_id", "allowed_activities"]
+            )
+            .join(profile_assignments, on=DEMAND_UNIT_COLS)
+            .with_columns(
+                activity_profile_id=pl.col("allowed_activities").list.join("|")
+            )
+        )
+        schedule_activities = get_survey_schedule_activities(survey_plan_steps)
+        schedules = (
+            destination_rows
+            .select(["home_zone_id", "activity_seq_id", "time_seq_id"])
+            .unique()
+            .join(
+                units.select(["country", "home_zone_id"]).unique(),
+                on="home_zone_id",
+                how="inner",
+            )
+            .with_columns(plan_weight_mass=pl.lit(1.0))
+            .join(schedule_activities, on=["activity_seq_id", "time_seq_id"], how="inner")
+        )
+        eligible_schedules = get_schedules_by_activity_profile(
+            schedules=schedules,
+            profiles=units.select(
+                ["country", "activity_profile_id", "allowed_activities"]
+            ),
+        ).select(["country", "activity_profile_id", "activity_seq_id", "time_seq_id"])
+
+        # Score one compact row set per distinct CSP, activity, and utility context.
+        # Give each compact utility context a temporary demand-unit key for scoring.
+        scoring_contexts = (
+            units
+            .select(
+                [
+                    "country",
+                    "csp",
+                    "home_zone_id",
+                    "activity_profile_id",
+                    "utility_profile_id",
+                ]
+            )
+            .unique()
+            .sort(
+                [
+                    "country",
+                    "csp",
+                    "home_zone_id",
+                    "activity_profile_id",
+                    "utility_profile_id",
+                ]
+            )
+            .with_row_index("_score_context_id")
+            .with_columns(
+                _score_context_id=pl.col("_score_context_id").cast(pl.UInt32),
+                demand_group_id=pl.col("_score_context_id").cast(pl.UInt32),
+                demand_subgroup_id=pl.lit(0, dtype=pl.UInt32),
+            )
+        )
+        debug_enabled = logging.getLogger().isEnabledFor(logging.DEBUG)
+        if not compact_for_shared_pool or debug_enabled:
+            context_to_units = (
+                units
+                .join(
+                    scoring_contexts.select(
+                        [
+                            "country",
+                            "csp",
+                            "home_zone_id",
+                            "activity_profile_id",
+                            "utility_profile_id",
+                            "_score_context_id",
+                        ]
+                    ),
+                    on=[
+                        "country",
+                        "csp",
+                        "home_zone_id",
+                        "activity_profile_id",
+                        "utility_profile_id",
+                    ],
+                    how="inner",
+                )
+                .select(["_score_context_id"] + DEMAND_UNIT_COLS)
+                .unique()
+            )
+
+        if debug_enabled:
+            input_demand_units = demand_groups.select(DEMAND_UNIT_COLS).unique().height
+            profiled_demand_units = units.select(DEMAND_UNIT_COLS).unique().height
+            # Count compatible contexts before joining full plan-step rows. These
+            # small key tables show whether coverage is lost at sequence matching,
+            # activity eligibility, or expansion back to population demand units.
+            sequence_contexts = (
+                mode_rows
+                .select(
+                    [
+                        "home_zone_id",
+                        "utility_profile_id",
+                        "activity_seq_id",
+                        "time_seq_id",
+                    ]
+                )
+                .unique()
+                .join(
+                    scoring_contexts.select(
+                        [
+                            "home_zone_id",
+                            "utility_profile_id",
+                            "country",
+                            "activity_profile_id",
+                            "_score_context_id",
+                        ]
+                    ),
+                    on=["home_zone_id", "utility_profile_id"],
+                    how="inner",
+                )
+            )
+            eligible_contexts = (
+                sequence_contexts
+                .join(
+                    eligible_schedules,
+                    on=[
+                        "country",
+                        "activity_profile_id",
+                        "activity_seq_id",
+                        "time_seq_id",
+                    ],
+                    how="inner",
+                )
+                .select("_score_context_id")
+                .unique()
+            )
+            demand_units_with_candidates = (
+                context_to_units
+                .join(eligible_contexts, on="_score_context_id", how="inner")
+                .select(DEMAND_UNIT_COLS)
+                .unique()
+                .height
+            )
+            total_demand_units = profiled_demand_units
+            contexts_with_sequences = sequence_contexts.select("_score_context_id").unique().height
+            contexts_with_eligible_schedules = eligible_contexts.height
+            logging.debug(
+                "Plan attachment contexts | stage=%s | demand_units=%d | "
+                "demand_units_without_utility_profile=%d | scoring_contexts=%d | "
+                "contexts_with_sequences=%d | "
+                "contexts_with_eligible_schedules=%d | demand_units_with_candidates=%d | "
+                "demand_units_without_candidates=%d",
+                stage,
+                input_demand_units,
+                max(0, input_demand_units - profiled_demand_units),
+                scoring_contexts.height,
+                contexts_with_sequences,
+                contexts_with_eligible_schedules,
+                demand_units_with_candidates,
+                max(0, total_demand_units - demand_units_with_candidates),
+            )
+
+        plan_steps = (
+            mode_rows.lazy()
+            .join(
+                destination_rows.lazy(),
+                on=[
+                    "home_zone_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "dest_seq_id",
+                    "seq_step_index",
+                ],
+            )
+            .join(
+                survey_plan_steps.lazy(),
+                on=["activity_seq_id", "time_seq_id", "seq_step_index"],
+            )
+        )
+        context_steps = (
+            plan_steps
+            .join(
+                scoring_contexts.lazy(),
+                on=["home_zone_id", "utility_profile_id"],
+                how="inner",
+            )
+            .join(
+                eligible_schedules.lazy(),
+                on=["country", "activity_profile_id", "activity_seq_id", "time_seq_id"],
+                how="inner",
+            )
+        )
+        if candidate_pruner is not None:
+            retained_context_plans = candidate_pruner(context_steps)
+            context_steps = context_steps.join(
+                retained_context_plans.lazy(),
+                on=[
+                    "_score_context_id",
+                    "activity_seq_id",
+                    "time_seq_id",
+                    "dest_seq_id",
+                    "mode_seq_id",
+                ],
+                how="inner",
+            )
+
+        if compact_for_shared_pool:
+            # The shared catalogue contains plan content, not ownership by a
+            # demand unit. Eligibility has already been checked above; attach
+            # the merged plans to actual units only after the catalogue is built.
+            return (
+                context_steps
+                .with_columns(
+                    demand_group_id=pl.lit(0, dtype=pl.UInt32),
+                    demand_subgroup_id=pl.lit(0, dtype=pl.UInt32),
+                )
+                .select(cls.STRUCTURAL_COLUMNS)
+                .unique(subset=cls.DEDUPE_COLUMNS, keep="first", maintain_order=True)
+            )
+
         return (
-            mode_sequences.get_cached_asset().lazy()
+            context_steps
+            .drop(DEMAND_UNIT_COLS)
             .join(
-                destination_sequences.get_cached_asset().lazy(),
-                on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id", "seq_step_index"],
+                context_to_units.lazy(),
+                on="_score_context_id",
+                how="inner",
             )
-            .join(survey_plan_steps.lazy(), on=["activity_seq_id", "time_seq_id", "seq_step_index"])
-            .join(
-                demand_groups.select(DEMAND_UNIT_COLS + ["country", "csp"]).lazy(),
-                on=DEMAND_UNIT_COLS,
-            )
+            .drop("_score_context_id")
             .select(cls.STRUCTURAL_COLUMNS)
         )
 
@@ -138,8 +399,10 @@ class CandidatePlanStepsAsset(FileAsset):
         current_plans: pl.DataFrame,
         previous_candidate_plan_steps: pl.DataFrame | None,
         current_iteration: int,
-        n_warmup_iterations: int,
+        n_warmup_steps: int,
         max_inactive_age: int,
+        profile_assignments: pl.DataFrame,
+        candidate_pruner: Callable[[pl.LazyFrame], pl.DataFrame] | None = None,
     ) -> pl.LazyFrame:
         """Merge new iteration candidates into the cumulative structural candidate memory."""
         candidate_sets = []
@@ -172,6 +435,8 @@ class CandidatePlanStepsAsset(FileAsset):
                 mode_sequences=mode_sequences,
                 survey_plan_steps=survey_plan_steps,
                 demand_groups=demand_groups,
+                profile_assignments=profile_assignments,
+                candidate_pruner=candidate_pruner,
             )
             .with_columns(
                 first_seen_iteration=pl.lit(current_iteration).cast(pl.UInt16),
@@ -202,7 +467,7 @@ class CandidatePlanStepsAsset(FileAsset):
             )
             .rename({"from_": "from"})
         )
-        if current_iteration <= n_warmup_iterations:
+        if current_iteration <= n_warmup_steps:
             return candidate_memory
 
         age_reference = pl.max_horizontal(

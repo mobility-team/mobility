@@ -4,6 +4,7 @@ from typing import Annotated, List
 
 from pydantic import Field
 from mobility.runtime.parameter_values import ParameterValue, SensitivityValue
+from mobility.runtime.validation_types import UnitIntervalFloat
 
 from mobility.activities.activity import Activity, ActivityParameters
 
@@ -47,6 +48,18 @@ class HomeActivity(Activity):
 
 class HomeParameters(ActivityParameters):
     """Parameters specific to the home activity."""
+
+    activity_time_rigidity: Annotated[
+        UnitIntervalFloat | ParameterValue | SensitivityValue | None,
+        Field(
+            default=0.0,
+            title="Activity time rigidity",
+            description=(
+                "How strongly time at home is protected from changes in travel "
+                "time. The default is flexible (0)."
+            ),
+        ),
+    ]
 
     value_of_time: Annotated[
         float | ParameterValue | SensitivityValue,

@@ -79,7 +79,7 @@ class OtherActivity(Activity):
                 pl.scan_parquet(self.inputs["population"].get()["population_groups"])
                 .group_by(["transport_zone_id"])
                 .agg(
-                    n_opp=pl.col("weight").sum()
+                    n_opp=pl.col("weight").cast(pl.Float64).sort().implode().list.sum()
                 )
                 .collect(engine="streaming")
                 .rename({"transport_zone_id": "to"})

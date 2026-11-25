@@ -30,6 +30,7 @@ def clean_env(monkeypatch):
         "MOBILITY_R_CPU_CHECK_INTERVAL_SECONDS",
         "MOBILITY_PACKAGE_DATA_FOLDER",
         "MOBILITY_PROJECT_DATA_FOLDER",
+        "POLARS_TEMP_DIR",
         "MIMALLOC_PURGE_DELAY",
         "_RJEM_MALLOC_CONF",
     ]:

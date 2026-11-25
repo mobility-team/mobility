@@ -5,8 +5,6 @@ import polars as pl
 
 from mobility.runtime.logging_levels import TRACE_LEVEL, is_trace_enabled
 
-from ..demand_subgroups import DEMAND_UNIT_COLS
-
 
 def log_location_chain_diagnostics(
     *,
@@ -89,7 +87,7 @@ def _grouped_invalid_chains(
     return (
         trip_chain_lengths
         .join(invalid_unique_chains.select("dest_seq_id"), on="dest_seq_id", how="inner")
-        .sort(["dest_seq_id"] + DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"])
+        .sort(["dest_seq_id", "home_zone_id", "activity_seq_id", "time_seq_id"])
     )
 
 
@@ -99,13 +97,15 @@ def _invalid_destination_steps(
     grouped_invalid_chains: pl.DataFrame,
 ) -> pl.DataFrame:
     """Return the raw destination rows behind invalid location chains."""
-    invalid_chain_keys = grouped_invalid_chains.select(DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"])
+    context_columns = ["home_zone_id", "utility_profile_id"]
+    join_columns = context_columns + ["activity_seq_id", "time_seq_id", "dest_seq_id"]
+    invalid_chain_keys = grouped_invalid_chains.select(join_columns)
     return (
         destination_steps
         .join(
             invalid_chain_keys,
-            on=DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "dest_seq_id"],
+            on=join_columns,
             how="inner",
         )
-        .sort(["dest_seq_id"] + DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id", "seq_step_index"])
+        .sort(join_columns + ["seq_step_index"])
     )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,16 +16,23 @@ class BehaviorChangeScope(str, Enum):
 
 
 class BehaviorChangePhase(BaseModel):
-    """Behavior-change phase applied from ``start_iteration`` onward."""
+    """Behavior-change phase applied from ``start_step`` onward."""
 
     model_config = ConfigDict(extra="forbid")
 
-    start_iteration: Annotated[
+    @model_validator(mode="before")
+    @classmethod
+    def explain_renamed_start_iteration(cls, data):
+        if isinstance(data, dict) and "start_iteration" in data:
+            raise ValueError("`start_iteration` was renamed to `start_step` in BehaviorChangePhase.")
+        return data
+
+    start_step: Annotated[
         int,
         Field(
             ge=1,
-            title="Start iteration",
-            description="First simulation iteration where this behavior-change phase applies.",
+            title="Start step",
+            description="First simulation step where this behavior-change phase applies.",
         ),
     ]
     scope: Annotated[
@@ -40,8 +47,10 @@ class BehaviorChangePhase(BaseModel):
                 "destination plus mode sequences. `mode_replanning` keeps each "
                 "currently occupied non-stay-home motive and destination "
                 "sequence fixed and resamples mode sequences only. "
-                "`no_transitions` keeps each plan fixed and only refreshes its "
-                "costs and utility. Stay-home is frozen in restricted phases."
+                "`no_transitions` refreshes costs and utility without sampling "
+                "new plans or changing feasible occupied plans. An infeasible "
+                "plan can move to an existing feasible alternative or stay home. "
+                "Stay-home is frozen in restricted phases."
             ),
         ),
     ]
@@ -52,27 +61,39 @@ class GroupDayTripsRunParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    n_iterations: Annotated[
+    @model_validator(mode="before")
+    @classmethod
+    def explain_renamed_iteration_settings(cls, data):
+        if isinstance(data, dict):
+            for old, new in (
+                ("n_iterations", "n_steps"),
+                ("n_iter_per_cost_update", "n_steps_per_cost_update"),
+            ):
+                if old in data:
+                    raise ValueError(f"`{old}` was renamed to `{new}` in GroupDayTripsRunParameters.")
+        return data
+
+    n_steps: Annotated[
         int,
         Field(
             default=1,
             ge=1,
-            title="Number of iterations",
+            title="Number of simulation steps",
             description=(
-                "Number of simulation iterations used to compute the population "
+                "Number of simulation steps used to compute the population "
                 "trips."
             ),
         ),
     ]
-    n_iter_per_cost_update: Annotated[
+    n_steps_per_cost_update: Annotated[
         int,
         Field(
             default=3,
             ge=0,
             title="Travel costs update period",
             description=(
-                "The simulation updates travel costs every n_iter_per_cost_update "
-                "iterations. Set it to zero to ignore congestion feedback."
+                "The simulation updates travel costs every n_steps_per_cost_update "
+                "steps. Set it to zero to ignore congestion feedback."
             ),
         ),
     ]
@@ -103,10 +124,20 @@ class GroupDayTripsRunParameters(BaseModel):
         ),
     ]
 
+    @model_validator(mode="before")
+    @classmethod
+    def infer_replications_from_seeds(cls, data):
+        """A supplied list of seeds defines the number of runs unless specified."""
+        if isinstance(data, dict) and data.get("seeds") is not None and "n_replications" not in data:
+            data = {**data, "n_replications": len(data["seeds"])}
+        return data
+
     @model_validator(mode="after")
     def validate_replication_seeds(self) -> "GroupDayTripsRunParameters":
         """Validate single-run and multi-run seed settings."""
         if self.seeds is not None:
+            if self.seed != 0:
+                raise ValueError("Use either seed or seeds, not both.")
             if len(self.seeds) != self.n_replications:
                 raise ValueError(
                     "GroupDayTripsRunParameters.seeds should contain one seed per replication."
@@ -188,26 +219,45 @@ class GroupDayTripsPeriodParameters(BaseModel):
 
 
 class GroupDayTripsOutputParameters(BaseModel):
-    """Settings for optional cached outputs from the iteration loop."""
+    """Settings for optional saved simulation outputs."""
 
     model_config = ConfigDict(extra="forbid")
 
-    cache_iteration_events: Annotated[
+    @model_validator(mode="before")
+    @classmethod
+    def explain_renamed_iteration_events(cls, data):
+        if isinstance(data, dict) and "cache_iteration_events" in data:
+            raise ValueError("`cache_iteration_events` was renamed to `cache_step_events` in GroupDayTripsOutputParameters.")
+        return data
+
+    cache_step_events: Annotated[
         bool,
         Field(
             default=False,
-            title="Cache iteration events",
+            title="Cache step events",
             description=(
                 "Whether to cache detailed transition events for each model "
-                "iteration and include them in the final transitions output. "
-                "Core iteration state is always cached."
+                "step and include them in the final transitions output."
+            ),
+        ),
+    ]
+    checkpoint_each_step: Annotated[
+        bool,
+        Field(
+            default=False,
+            title="Save step checkpoints",
+            description=(
+                "Whether to save the minimal changing state after each step "
+                "so a later run can resume from the latest completed step. "
+                "When disabled, intermediate run states stay in memory and are "
+                "not saved as restart points."
             ),
         ),
     ]
 
 
 class GroupDayTripsBehaviorChangeParameters(BaseModel):
-    """Per-iteration behavior-change policy."""
+    """Behavior-change policy for simulation steps."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -217,8 +267,8 @@ class GroupDayTripsBehaviorChangeParameters(BaseModel):
             default=None,
             title="Behavior change phases",
             description=(
-                "Optional per-iteration adaptation policy. If omitted, all "
-                "iterations use full replanning."
+                "Optional adaptation policy for each step. If omitted, all "
+                "steps use full replanning."
             ),
         ),
     ]
@@ -229,14 +279,14 @@ class GroupDayTripsBehaviorChangeParameters(BaseModel):
         if self.phases is None:
             return self
 
-        start_iterations = [phase.start_iteration for phase in self.phases]
+        start_iterations = [phase.start_step for phase in self.phases]
         if start_iterations != sorted(start_iterations):
             raise ValueError(
-                "GroupDayTripsBehaviorChangeParameters.phases must be sorted by start_iteration."
+                "GroupDayTripsBehaviorChangeParameters.phases must be sorted by start_step."
             )
         if len(start_iterations) != len(set(start_iterations)):
             raise ValueError(
-                "GroupDayTripsBehaviorChangeParameters.phases cannot define the same start_iteration twice."
+                "GroupDayTripsBehaviorChangeParameters.phases cannot define the same start_step twice."
             )
         return self
 
@@ -247,7 +297,7 @@ class GroupDayTripsBehaviorChangeParameters(BaseModel):
 
         active_phase = None
         for phase in self.phases:
-            if phase.start_iteration > iteration:
+            if phase.start_step > iteration:
                 break
             active_phase = phase
 
@@ -266,10 +316,25 @@ class GroupDayTripsActivitySequenceParameters(BaseModel):
         Field(
             default=3,
             ge=1,
-            title="Number of activity-sequence seeds",
+            title="Number of schedule draws",
             description=(
-                "Maximum number of timed survey activity-sequence seeds sampled "
-                "without replacement per demand group during full replanning."
+                "Number of timed survey schedule draws per activity profile in "
+                "each home zone during full replanning. Each profile draws with "
+                "replacement from its compatible schedules, using survey weights. "
+                "Set to None to keep every eligible schedule."
+            ),
+        ),
+    ]
+    activity_support_threshold: Annotated[
+        float,
+        Field(
+            default=0.02,
+            ge=0.0,
+            le=1.0,
+            title="Activity support threshold",
+            description=(
+                "Minimum survey-weighted share of a CSP that must take part in an "
+                "activity for that activity to be included in its allowed set."
             ),
         ),
     ]
@@ -280,17 +345,25 @@ class GroupDayTripsDestinationSequenceParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    use_destination_plan_search: Annotated[
-        bool,
+    sampling_method: Literal["radiation", "utility"] = Field(
+        default="radiation",
+        title="Destination sampling method",
+        description="Use radiation or an approximate utility based on the fastest and cheapest travel options.",
+    )
+
+    k_destination_sequences: Annotated[
+        int,
         Field(
-            default=False,
-            title="Use destination plan search",
+            default=3,
+            ge=1,
+            title="Destination sequences per activity sequence",
             description=(
-                "Whether to use the bounded Rust top-k search to choose complete "
-                "destination plans. The default keeps the existing step-by-step sampler."
+                "Number of destination sequence draws generated for each sampled "
+                "activity sequence and utility profile present in its home zone."
             ),
         ),
     ]
+
     alpha: Annotated[
         float,
         Field(
@@ -300,21 +373,12 @@ class GroupDayTripsDestinationSequenceParameters(BaseModel):
             description="Weight of the chain cost used to penalize intermediate destination options.",
         ),
     ]
-    k_destination_sequences: Annotated[
-        int,
-        Field(
-            default=3,
-            ge=1,
-            title="Number of destination sequences",
-            description="Number of destination-chain sequences generated per admitted activity sequence.",
-        ),
-    ]
     refresh_active_mode_alternatives: Annotated[
         bool,
         Field(
             default=False,
             title="Refresh active mode alternatives",
-            description="Whether to append active destination chains to the iteration candidates.",
+            description="Whether to append active destination chains to the step's candidates.",
         ),
     ]
     dest_prob_cutoff: Annotated[
@@ -383,10 +447,8 @@ class GroupDayTripsDemandGroupParameters(BaseModel):
             title="Maximum persons per demand subgroup",
             description=(
                 "Optional maximum represented persons per demand subgroup. "
-                "Large demand groups are split into deterministic subgroups "
-                "before activity, destination, and mode sampling, so one "
-                "large group can keep several sampled alternatives instead of "
-                "placing all represented persons on the same sampled plan."
+                "Large groups are split into deterministic subgroups so plan "
+                "choice can allocate their members across the shared candidates."
             ),
         ),
     ]
@@ -397,13 +459,32 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    n_warmup_iterations: Annotated[
+    @model_validator(mode="before")
+    @classmethod
+    def explain_renamed_step_settings(cls, data):
+        if isinstance(data, dict):
+            if "n_warmup_iterations" in data:
+                raise ValueError("`n_warmup_iterations` was renamed to `n_warmup_steps`.")
+            if "plan_probability_pruning_min_iteration" in data:
+                raise ValueError(
+                    "`plan_probability_pruning_min_iteration` was replaced by "
+                    "`plan_pruning_start_step`; review `min_plan_persons` because pruning now "
+                    "uses the number of represented people rather than transition probability."
+                )
+            if "plan_probability_pruning_retained_share" in data:
+                raise ValueError(
+                    "`plan_probability_pruning_retained_share` was replaced by `min_plan_persons`; "
+                    "the new setting uses the number of represented people rather than a probability share."
+                )
+        return data
+
+    n_warmup_steps: Annotated[
         int,
         Field(
             default=1,
             ge=0,
-            title="Candidate memory warm-up iterations",
-            description="Number of first iterations where inactive candidate plans are not removed.",
+            title="Candidate memory warm-up steps",
+            description="Number of initial steps where inactive candidate plans are not removed.",
         ),
     ]
     max_inactive_age: Annotated[
@@ -412,7 +493,10 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
             default=2,
             ge=0,
             title="Maximum inactive candidate-plan age",
-            description="Number of iterations an inactive candidate plan can stay in memory.",
+            description=(
+                "Number of steps an unused physical plan stays in the shared pool. "
+                "Generation or use in any scenario refreshes it for that replication."
+            ),
         ),
     ]
     min_activity_time_constant: Annotated[
@@ -429,7 +513,15 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
         Field(
             default=False,
             title="Update plan timings from modeled travel times",
-            description="Whether to adjust plan timings with modeled travel times at each iteration.",
+            description="Whether to adjust plan timings with modeled travel times at each step.",
+        ),
+    ]
+    enable_opportunity_congestion: Annotated[
+        bool,
+        Field(
+            default=True,
+            title="Enable opportunity congestion",
+            description="Whether destination occupation affects activity utility and destination sampling.",
         ),
     ]
     use_destination_shadow_prices: Annotated[
@@ -464,7 +556,7 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
             ge=0.0,
             le=1.0,
             title="Transition revision probability",
-            description="Share of persons who reconsider their plan at each iteration.",
+            description="Share of persons who reconsider their plan at each step.",
         ),
     ]
     transition_logit_scale: Annotated[
@@ -474,8 +566,8 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
             ge=0.0,
             title="Plan choice logit scale",
             description=(
-                "Scale applied to plan utilities when ranking destination plans "
-                "and choosing a new plan."
+                "Scale applied to plan utilities when calculating transition "
+                "probabilities and choosing a new plan."
             ),
         ),
     ]
@@ -514,31 +606,127 @@ class GroupDayTripsPlanUpdateParameters(BaseModel):
             description="Optional weights used when computing distances between plans.",
         ),
     ]
-    plan_probability_pruning_retained_share: Annotated[
+    min_plan_persons: Annotated[
         float,
         Field(
             default=1.0,
-            gt=0.0,
-            le=1.0,
-            title="Current-plan retained probability share",
-            description="Share of transition probability kept as separate target plans.",
+            ge=0.0,
+            title="Minimum persons per plan",
+            description="Allocations below this number per demand subgroup and plan are moved to stay home. Set to zero to disable.",
         ),
     ]
-    plan_probability_pruning_min_iteration: Annotated[
+    plan_pruning_start_step: Annotated[
         int,
         Field(
             default=2,
             ge=1,
-            title="Current-plan probability pruning start iteration",
-            description="First iteration where low-probability target plans may be merged.",
+            title="Plan pruning start step",
+            description="First step where small plan allocations are moved to stay home.",
         ),
     ]
 
 
+class GroupDayTripsAdaptiveSearchParameters(BaseModel):
+    """Convergence tolerances and safety limits for coordinated scenarios."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_search_batches: Annotated[
+        int,
+        Field(
+            default=5,
+            ge=1,
+            title="Maximum search batches",
+            description="Hard limit on candidate generation and allocation batches per inner loop.",
+        ),
+    ]
+    max_shared_candidates: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            title="Maximum shared candidate pool size",
+            description=(
+                "Optional maximum number of distinct complete plans in the shared "
+                "pool. Plans active in the current allocation are protected, so "
+                "the limit must fit those plans. None keeps every unique plan."
+            ),
+        ),
+    ]
+    inner_flow_tolerance: Annotated[
+        float,
+        Field(
+            default=0.01,
+            gt=0.0,
+            title="Inner OD-mode flow tolerance",
+            description=(
+                "Maximum normalized root-sum-square change in one scenario's "
+                "OD-mode flows for an inner batch to pass."
+            ),
+        ),
+    ]
+    inner_base_gap_tolerance: Annotated[
+        float,
+        Field(
+            default=0.01,
+            gt=0.0,
+            title="Inner scenario-to-base gap tolerance",
+            description=(
+                "Maximum normalized change in a scenario-to-base OD-mode flow "
+                "gap for an inner batch to pass."
+            ),
+        ),
+    ]
+    inner_consecutive_passes: Annotated[
+        int,
+        Field(
+            default=2,
+            ge=1,
+            title="Consecutive passing inner batches",
+            description="Number of consecutive passing batches needed for inner-loop convergence.",
+        ),
+    ]
 class GroupDayTripsParameters(BaseModel):
     """Root settings for the grouped day-trips model."""
 
     model_config = ConfigDict(extra="forbid")
+
+    effort: Literal["low", "medium", "high"] = Field(default="low", exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_effort(cls, data):
+        """Fill omitted search settings from the chosen computational budget."""
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        presets = {
+            "low": (1, 1, 1, 3, 1),
+            "medium": (3, 3, 3, 5, 3),
+            "high": (6, 5, 5, 8, 5),
+        }
+        effort = data.get("effort", "low")
+        if effort not in presets:
+            return data  # Let Pydantic report the invalid value.
+        activity, destination, mode, batches, replications = presets[effort]
+        defaults = {
+            "activity_sequences": {"k_activity_sequences": activity},
+            "destination_sequences": {"k_destination_sequences": destination},
+            "mode_sequences": {"k_mode_sequences": mode},
+            "adaptive_search": {"max_search_batches": batches},
+            "run": {"n_replications": replications},
+        }
+        for name, preset in defaults.items():
+            supplied = data.get(name, {})
+            if isinstance(supplied, BaseModel):
+                supplied = supplied.model_dump(exclude_unset=True)
+            if not isinstance(supplied, dict):
+                continue
+            supplied = dict(supplied)
+            if name == "run" and supplied.get("seeds") is not None and "n_replications" not in supplied:
+                supplied["n_replications"] = len(supplied["seeds"])
+            data[name] = {**preset, **supplied}
+        return data
 
     run: Annotated[
         GroupDayTripsRunParameters,
@@ -575,6 +763,10 @@ class GroupDayTripsParameters(BaseModel):
     plan_update: Annotated[
         GroupDayTripsPlanUpdateParameters,
         Field(default_factory=GroupDayTripsPlanUpdateParameters),
+    ]
+    adaptive_search: Annotated[
+        GroupDayTripsAdaptiveSearchParameters,
+        Field(default_factory=GroupDayTripsAdaptiveSearchParameters),
     ]
 
     def with_replication(self, replication: int) -> "GroupDayTripsParameters":

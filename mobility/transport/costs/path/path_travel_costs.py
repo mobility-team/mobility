@@ -9,12 +9,18 @@ from importlib import resources
 from mobility.transport.graphs.core.path_graph import PathGraph
 from mobility.transport.costs.travel_costs_asset import TravelCostsBase
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.graph import asset_graph_key
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.resolver import (
+    asset_resolution_context,
+    get_current_asset_resolver,
+)
 from mobility.runtime.parameter_values import (
     SensitivityCase,
     resolve_parameter_values,
 )
 from mobility.runtime.r_integration.r_script_runner import RScriptRunner
+from mobility.runtime.temporary import check_temporary_disk_limit, temporary_file_writer
 from mobility.spatial.transport_zones import TransportZones
 from mobility.transport.costs.parameters.path_routing_parameters import PathRoutingParameters
 from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityParameters
@@ -30,6 +36,10 @@ from typing import List
 
 class PathTravelCostsTable(TravelCostsBase, FileAsset):
     """Single path travel-cost table for one routing graph."""
+
+    # The resolver can release its in-memory value when the last consumer is
+    # finished. Existing file caches remain available to other executions.
+    is_execution_scoped_cost_asset = True
 
     def __init__(
         self,
@@ -67,8 +77,12 @@ class PathTravelCostsTable(TravelCostsBase, FileAsset):
 
     def get_cached_asset(self) -> pd.DataFrame:
         """Return the cached OD travel-cost table."""
-        logging.debug("Travel costs already prepared. Reusing the file : %s", str(self.cache_path))
-        return pd.read_parquet(self.cache_path)
+        resolver = get_current_asset_resolver()
+        path = self.cache_path
+        if resolver is not None:
+            path = resolver.execution_cost_output_paths.get(asset_graph_key(self), path)
+        logging.debug("Travel costs already prepared. Reusing the file : %s", str(path))
+        return pd.read_parquet(path)
 
     def create_and_get_asset(self) -> pd.DataFrame:
         """Compute this OD travel-cost table from its routing graph."""
@@ -84,17 +98,44 @@ class PathTravelCostsTable(TravelCostsBase, FileAsset):
                 'prepare_travel_costs.R'
             )
         )
-        script.run(
-            args=[
-                str(self.transport_zones.cache_path),
-                str(self.routing_graph.get()),
-                self.backend,
-                "" if self.cch_graph is None else str(self.cch_graph.get()),
-                str(self.routing_parameters.max_beeline_distance),
-                str(self.cache_path),
-            ]
+        resolver = get_current_asset_resolver()
+        output_path = (
+            resolver.temporary_asset_path(self, suffix="-path-costs.parquet")
+            if resolver is not None else self.cache_path
         )
-        return pd.read_parquet(self.cache_path)
+        try:
+            script.run(
+                args=[
+                    str(self.transport_zones.cache_path),
+                    str(self.routing_graph.get()),
+                    self.backend,
+                    "" if self.cch_graph is None else str(self.cch_graph.get()),
+                    str(self.routing_parameters.max_beeline_distance),
+                    str(output_path),
+                ]
+            )
+            if resolver is not None:
+                # R controls this write, so check its size after it finishes.
+                check_temporary_disk_limit()
+            values = pd.read_parquet(output_path)
+            if resolver is not None:
+                resolver.execution_cost_output_paths[asset_graph_key(self)] = output_path
+            return values
+        except BaseException:
+            if resolver is not None:
+                output_path.unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def spill_execution_value(value: pd.DataFrame, path: pathlib.Path) -> None:
+        """Spill a shared pandas cost table while preserving Parquet storage."""
+        with temporary_file_writer(path) as file:
+            value.to_parquet(file, index=False)
+
+    @staticmethod
+    def load_execution_value(path: pathlib.Path) -> pd.DataFrame:
+        """Restore a shared path-cost table from its run-local spill."""
+        return pd.read_parquet(path)
 
 
 class PathTravelCosts(TravelCostsBase, InMemoryAsset):
@@ -105,6 +146,10 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
     tables use the current congested graph weights with a reusable CCH topology.
     Only the selected table is built when callers ask for costs.
     """
+
+    # This selector creates its FileAsset table lazily, so the planner uses the
+    # marker to give that table the selector's planned lifetime.
+    is_execution_scoped_cost_asset = True
 
     def __init__(
             self,
@@ -308,26 +353,51 @@ class PathTravelCosts(TravelCostsBase, InMemoryAsset):
     def congested_costs(self, value):
         self._congested_costs = value
 
+    def planned_execution_cost_tables(self) -> list[PathTravelCostsTable]:
+        """List lazy route tables so the run planner can count their consumers."""
+        tables = []
+        if self.contracted_path_graph is not None:
+            tables.append(self.freeflow_costs)
+        if self.congested_path_graph is not None and self.cch_path_graph is not None:
+            tables.append(self.congested_costs)
+        return tables
+
     def get(self, congestion: bool = False, road_flow_asset: VehicleODFlowsAsset | None = None) -> pd.DataFrame:
         if congestion and self._handles_congestion() is False:
-            return self.freeflow_costs.get()
+            return self._get_cost_table(self.freeflow_costs)
 
         if congestion and road_flow_asset is not None:
             asset = self.asset_for_road_flows(road_flow_asset)
             if asset is not None:
-                return asset.get()
+                return self._get_cost_table(asset.congested_costs)
 
         # A congested cost table only differs from free-flow costs when it is
         # tied to an explicit road-flow asset.
         if self.default_congestion:
-            return self.congested_costs.get()
-        return self.freeflow_costs.get()
+            return self._get_cost_table(self.congested_costs)
+        return self._get_cost_table(self.freeflow_costs)
+
+    def _get_cost_table(self, cost_table: PathTravelCostsTable) -> pd.DataFrame:
+        """Resolve the selected table under its path selector's planned lifetime."""
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            resolver.inherit_execution_cost_uses(self, cost_table)
+            return cost_table.get()
+
+        with asset_resolution_context() as resolver:
+            resolver.inherit_execution_cost_uses(self, cost_table)
+            return cost_table.get()
     
     def get_congested_graph_path(self, flow_asset=None) -> pathlib.Path:
         """Return the graph path backing the current congested cost view."""
-        if flow_asset is not None:
-            return self.asset_for_flow_asset(flow_asset).congested_path_graph.get()
-        return self.congested_path_graph.get()
+        graph = (self.asset_for_flow_asset(flow_asset).congested_path_graph
+                 if flow_asset is not None else self.congested_path_graph)
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            path = resolver.congested_graph_paths.get(asset_graph_key(graph))
+            if path is not None:
+                return path
+        return graph.get()
 
     def asset_for_road_flows(self, road_flow_asset: VehicleODFlowsAsset | None):
         if road_flow_asset is None:

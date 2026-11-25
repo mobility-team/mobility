@@ -235,12 +235,12 @@ class ModelTripCountLoss:
         """Return the persisted trip-count loss history."""
         if self.history_store is None:
             raise ValueError("No model trip-count loss history is attached to this instance.")
-        return self.history_store.get().select(["iteration", "trip_count_loss"])
+        return self.history_store.get().select(["step", "trip_count_loss"])
 
     def history_row(self, *, iteration: int, plan_steps) -> dict[str, float]:
         """Build one persisted trip-count loss row for a given iteration state."""
         return {
-            "iteration": iteration,
+            "step": iteration,
             "trip_count_loss": self.total_loss(plan_steps=plan_steps),
         }
 

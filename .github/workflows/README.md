@@ -43,14 +43,14 @@ To update an action pin, resolve the tag to a commit SHA from the action reposit
 
 ```shell
 git ls-remote https://github.com/actions/checkout.git refs/tags/v4
-git ls-remote https://github.com/actions/upload-artifact.git refs/tags/v4
-git ls-remote https://github.com/actions/download-artifact.git refs/tags/v4
+git ls-remote https://github.com/actions/upload-artifact.git refs/tags/v7
+git ls-remote https://github.com/actions/download-artifact.git refs/tags/v8
 git ls-remote https://github.com/softprops/action-gh-release.git refs/tags/v2
 git ls-remote https://github.com/pypa/gh-action-pypi-publish.git refs/tags/v1.14.0
 git ls-remote https://github.com/codecov/codecov-action.git refs/tags/v5
-git ls-remote https://github.com/docker/setup-buildx-action.git refs/tags/v3
+git ls-remote https://github.com/docker/setup-buildx-action.git refs/tags/v4
 git ls-remote https://github.com/docker/login-action.git refs/tags/v3
-git ls-remote https://github.com/docker/build-push-action.git refs/tags/v6
+git ls-remote https://github.com/docker/build-push-action.git refs/tags/v7
 git ls-remote https://github.com/actions/setup-python.git refs/tags/v5
 git ls-remote https://github.com/mamba-org/setup-micromamba.git refs/tags/v1
 git ls-remote https://github.com/r-lib/actions.git refs/tags/v2

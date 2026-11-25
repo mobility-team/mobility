@@ -1,7 +1,34 @@
 import polars as pl
 import pytest
+from types import SimpleNamespace
 
+from mobility.activities import OtherActivity
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.trips.group_day_trips.plans.plan_initializer import PlanInitializer
+
+
+def test_initial_population_grouping_preserves_sorted_sums_and_labels(tmp_path):
+    groups = pl.DataFrame({
+        "local_admin_unit_id": ["a", "a", "a", "b", "b"],
+        "transport_zone_id": [1, 1, 1, 2, 2],
+        "country": ["fr", "fr", "fr", "ch", "ch"],
+        "socio_pro_category": ["worker", "worker", "worker", None, None],
+        "n_cars": ["1", "1", "1", "0", "0"],
+        "weight": [1e16, 1.0, 1.0, 1.0, 2.0],
+    })
+    cities = pl.DataFrame({"local_admin_unit_id": ["a", "b"], "city_category": ["urban", "rural"]})
+    path = tmp_path / "population.parquet"
+    groups.write_parquet(path)
+    keys = ["country", "home_zone_id", "city_category", "csp", "n_cars"]
+    expected = (
+        groups.lazy().rename({"transport_zone_id": "home_zone_id", "socio_pro_category": "csp", "weight": "n_persons"})
+        .with_columns(home_zone_id=pl.col("home_zone_id").cast(pl.Int32))
+        .join(cities.lazy(), on="local_admin_unit_id")
+        .group_by(keys).agg(pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum())
+        .sort(keys).collect(engine="streaming")
+    )
+    actual = PlanInitializer._aggregate_population_groups(path, cities).sort(keys)
+    assert actual.equals(expected)
 
 
 def test_population_weighted_survey_summaries_use_one_asset_with_correct_aggregations():
@@ -65,3 +92,94 @@ def test_population_weighted_survey_summaries_use_one_asset_with_correct_aggrega
     assert activity_demand_by_activity["shopping"] == pytest.approx((1.0 * 4.0 + 1.0 * 4.0) / 10.0)
     assert activity_demand_by_activity["other"] == pytest.approx((1.0 * 4.0) / 10.0)
     assert activity_demand_by_activity["home"] == pytest.approx((16.0 * 6.0 + 17.0 * 4.0) / 10.0)
+
+
+def test_survey_summaries_are_stable_when_input_rows_are_reordered():
+    steps = pl.DataFrame({
+        "country": ["fr"] * 8, "home_zone_id": [1] * 8,
+        "city_category": ["urban"] * 8, "csp": ["A"] * 8,
+        "n_cars": ["1"] * 8, "activity_seq_id": [1, 1, 2, 2, 3, 3, 4, 4],
+        "time_seq_id": [1, 1, 2, 2, 3, 3, 4, 4],
+        "seq_step_index": [0, 1] * 4, "activity": ["work", "home"] * 4,
+        "duration_per_pers": [3.0, 1.0, 4.0, 1.0, 5.0, 1.0, 6.0, 1.0],
+        "n_persons": [1e12, 1e12, 0.0001, 0.0001, 0.0001, 0.0001, 0.0002, 0.0002],
+    })
+    groups = pl.DataFrame({
+        "country": ["fr"] * 4, "home_zone_id": [1, 2, 3, 4],
+        "city_category": ["urban"] * 4, "csp": ["A"] * 4,
+        "n_cars": ["1"] * 4, "n_persons": [1e12, 0.0001, 0.0001, 0.0002],
+    })
+    initializer = PlanInitializer()
+    forward = initializer.get_survey_duration_summaries(steps.lazy(), groups)
+    reverse = initializer.get_survey_duration_summaries(steps.reverse().lazy(), groups.reverse())
+
+    for left, right in zip(forward, reverse):
+        keys = [name for name in left.columns if name not in {
+            "mean_duration_per_pers", "mean_home_night_per_pers", "duration_per_pers"
+        }]
+        assert left.sort(keys).equals(right.sort(keys))
+
+    # Survey and population country enums may contain different domains.
+    # Their labels must still match and their weighted sums must stay exact.
+    enum_steps = steps.with_columns(
+        country=pl.col("country").cast(pl.Enum(["fr", "ch"])),
+        csp=pl.col("csp").cast(pl.Enum(["A", "B"])),
+        activity=pl.col("activity").cast(pl.Enum(["home", "work"])),
+    )
+    enum_groups = groups.with_columns(country=pl.col("country").cast(pl.Enum(["fr"])))
+    compact = initializer.get_survey_duration_summaries(enum_steps.lazy(), enum_groups)
+    for left, right in zip(forward, compact):
+        keys = [name for name in left.columns if name not in {
+            "mean_duration_per_pers", "mean_home_night_per_pers", "duration_per_pers"
+        }]
+        assert left.with_columns(pl.col(keys).cast(pl.String)).sort(keys).equals(
+            right.with_columns(pl.col(keys).cast(pl.String)).sort(keys)
+        )
+
+
+def test_opportunity_capacities_are_stable_when_input_rows_are_reordered():
+    groups = pl.DataFrame({
+        "country": ["fr"] * 4,
+        "n_persons": [1e12, 0.0001, 0.0001, 0.0002],
+    })
+    demand = pl.DataFrame({
+        "country": ["fr"],
+        "activity": pl.Series(["work"], dtype=pl.Enum(["work"])),
+        "duration_per_pers": [2.0],
+    })
+    parameters = SimpleNamespace(
+        sink_saturation_coeff=1.0, destination_soft_capacity_factor=1.0,
+        destination_sampling_overload_gamma=1.0, destination_sampling_min_attraction_factor=0.0,
+    )
+    opportunities = pl.DataFrame({"to": [1, 2, 3, 4], "n_opp": [1e12, 0.0001, 0.0001, 0.0002]})
+
+    def calculate(group_rows, opportunity_rows):
+        activity = SimpleNamespace(
+            name="work", has_opportunities=True, inputs={"parameters": parameters},
+            get_opportunities=lambda _: opportunity_rows,
+        )
+        return PlanInitializer().get_opportunities(demand, group_rows, [activity], None).sort("to")
+
+    assert calculate(groups, opportunities).equals(calculate(groups.reverse(), opportunities.reverse()))
+
+
+def test_population_opportunities_are_stable_when_input_rows_are_reordered(tmp_path):
+    class PopulationSource(InMemoryAsset):
+        def __init__(self, path):
+            super().__init__({"path": str(path)})
+            self.path = path
+
+        def get(self):
+            return {"population_groups": self.path}
+
+    population = pl.DataFrame({
+        "transport_zone_id": [1, 1, 1, 1],
+        "weight": [1e12, 0.0001, 0.0001, 0.0002],
+    })
+    values = []
+    for index, rows in enumerate((population, population.reverse())):
+        path = tmp_path / f"population-{index}.parquet"
+        rows.write_parquet(path)
+        source = PopulationSource(path)
+        values.append(OtherActivity(population=source).get_opportunities(None))
+    assert values[0].equals(values[1])

@@ -4,27 +4,20 @@ import polars as pl
 
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.transport.modes.choice.compute_subtour_mode_probabilities import modes_list_to_dict
-from mobility.trips.group_day_trips.plans.demand_subgroups import DEMAND_UNIT_COLS
-
 from .models import ModeSearchInputs
 
 
 def build_location_chains(destination_steps: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Build grouped trip chains and one unique location chain per destination sequence."""
-    if "utility_profile_id" not in destination_steps.columns:
-        destination_steps = destination_steps.with_columns(
-            utility_profile_id=pl.lit(0, dtype=pl.UInt32)
-        )
+    context_columns = ["home_zone_id", "utility_profile_id"]
     trip_chains = (
         destination_steps
         .group_by(
-            DEMAND_UNIT_COLS
-            + ["utility_profile_id", "activity_seq_id", "time_seq_id", "dest_seq_id"]
+            context_columns + ["activity_seq_id", "time_seq_id", "dest_seq_id"]
         )
         .agg(locations=pl.col("from").sort_by("seq_step_index"))
         .sort(
-            DEMAND_UNIT_COLS
-            + ["utility_profile_id", "activity_seq_id", "time_seq_id", "dest_seq_id"]
+            context_columns + ["activity_seq_id", "time_seq_id", "dest_seq_id"]
         )
     )
     _validate_location_chains(trip_chains)
@@ -39,11 +32,7 @@ def build_location_chains(destination_steps: pl.DataFrame) -> tuple[pl.DataFrame
 
 def _validate_location_chains(trip_chains: pl.DataFrame) -> None:
     """Fail loudly when destination chains are structurally invalid."""
-    with_location_key = trip_chains.with_columns(
-        location_count=pl.col("locations").list.len(),
-        location_key=pl.col("locations").cast(pl.List(pl.String)).list.join("-"),
-    )
-    one_location_chains = with_location_key.filter(pl.col("location_count") < 2)
+    one_location_chains = trip_chains.filter(pl.col("locations").list.len() < 2)
     if one_location_chains.height > 0:
         raise ValueError(
             "Mode sequence search received destination chains with fewer than two locations. "
@@ -52,17 +41,17 @@ def _validate_location_chains(trip_chains: pl.DataFrame) -> None:
         )
 
     conflicting_destination_sequences = (
-        with_location_key
+        trip_chains
         .group_by(["utility_profile_id", "dest_seq_id"])
-        .agg(n_location_chains=pl.col("location_key").n_unique())
+        .agg(n_location_chains=pl.col("locations").n_unique())
         .filter(pl.col("n_location_chains") > 1)
     )
     if conflicting_destination_sequences.height > 0:
         sample_ids = conflicting_destination_sequences["dest_seq_id"].head(20).to_list()
         sample_chains = (
-            with_location_key
+            trip_chains
             .filter(pl.col("dest_seq_id").is_in(sample_ids))
-            .sort(["dest_seq_id"] + DEMAND_UNIT_COLS + ["activity_seq_id", "time_seq_id"])
+            .sort(["dest_seq_id", "home_zone_id", "activity_seq_id", "time_seq_id"])
             .head(50)
             .to_dicts()
         )
@@ -73,6 +62,19 @@ def _validate_location_chains(trip_chains: pl.DataFrame) -> None:
         )
 
 
+def location_chain_legs(chains: pl.DataFrame) -> pl.DataFrame:
+    """List searched legs by profile, including each chain's return home."""
+    return (
+        chains.select(
+            "utility_profile_id",
+            pl.col("locations").alias("from"),
+            pl.concat_list(
+                pl.col("locations").list.slice(1), pl.col("locations").list.first(),
+            ).alias("to"),
+        )
+        .explode(["from", "to"])
+        .unique()
+    )
 def build_search_inputs(
     transport_costs: Any,
     *,

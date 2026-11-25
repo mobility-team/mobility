@@ -24,6 +24,7 @@ def add_plan_id(
     frame: pl.DataFrame | pl.LazyFrame,
     *,
     previous_index: pl.DataFrame | None,
+    additional_keys: pl.DataFrame | None = None,
 ) -> tuple[pl.DataFrame | pl.LazyFrame, pl.DataFrame]:
     """Annotate one stable plan_id per unique full plan state.
 
@@ -35,4 +36,4 @@ def add_plan_id(
         key_cols=PLAN_KEY_COLS,
         index_col="plan_id",
         first_new_id=0,
-    ).extend(frame, previous_index)
+    ).extend(frame, previous_index, additional_keys=additional_keys)

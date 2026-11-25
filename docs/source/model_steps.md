@@ -20,19 +20,19 @@ Mobility prepares:
 - observed mobility patterns from surveys,
 - transport costs between zones for each mode.
 
-More concretely, Mobility first generates activity-motive sequences for residents of each transport zone. These sequences depend on the resident profile, including socio-professional category, household car ownership, household size, and urban setting. Mobility also estimates the activity-time needs attached to each step of the sequence.
+More concretely, Mobility derives each demand group's allowed activity set from survey-weighted participation by socio-professional category (CSP), with a country-level fallback when no CSP activity passes the support threshold. It pools compatible survey schedules by home zone, then associates a schedule with a demand group when all its non-home activities are allowed. Activity durations are estimated separately for each group.
 
 At the same time, Mobility computes available opportunities by motive and by zone. Raw opportunity proxies, such as jobs or shops, are normalized within each activity and converted into `opportunity_capacity`. In this model, an opportunity is available activity time. Work opportunities are the amount of work activity that can be assigned to a destination.
 
 ## First Plans
 
-For each population group, Mobility builds daily activity plans.
+Mobility builds a shared set of daily plan candidates and then attaches compatible candidates to demand groups.
 
 The model combines:
 
-- the activity sequence,
-- possible destinations,
-- possible mode sequences,
+- survey-weighted activity schedules sampled for a home zone,
+- one sampled destination sequence for each schedule and home zone,
+- candidate mode sequences searched for each home zone and utility profile,
 - travel costs,
 - available opportunities.
 
@@ -104,32 +104,26 @@ activity_utility_scale
 
 The plan utility is the sum of step utilities, plus a home-night utility term. Transition probabilities are then computed from current and candidate plan utilities, with optional pruning, revision probability, and transition-distance friction.
 
-## Iterations
+## Simulation steps and search batches
 
-The model then runs several iterations.
+The model advances through the configured simulation steps. Scenario changes
+and behavior-change phases can start at a chosen step. At each step, Mobility:
 
-At each iteration, it can:
+1. Resolves the active scenario and updates travel costs when scheduled.
+2. Generates candidate schedules, destinations and modes in search batches.
+   Each batch adds alternatives to the shared candidate pool, using the state
+   and costs fixed at the start of the step.
+3. Scores eligible plans for each demand group and estimates allocations.
+   Search ends when it reaches its batch limit, converges, or has no more
+   generation work.
+4. Applies the allowed plan changes and updates destination occupation and
+   diagnostics for the next step.
 
-- update transport costs,
-- update destination choices,
-- update mode choices,
-- update opportunity saturation,
-- store indicators and diagnostics.
-
-Scenario changes can start at specific iterations. This lets a reference state settle before a project change is applied.
-
-The loop can be read in this order:
-
-1. Compute generalized transport costs for each motive, origin, and destination. The first iteration starts without congestion.
-2. Compute destination-choice probabilities from the motive, trip origin, home zone, and generalized costs.
-3. Sample a destination sequence for each activity sequence, home zone, and socio-professional category.
-4. Search candidate mode sequences for the resulting trip sequence. The number of candidates is controlled by `GroupDayTripsModeSequenceParameters.k_mode_sequences`, which defaults to 3.
-5. Compute flows by origin-destination pair and by mode, then refresh generalized costs. Congestion can be applied at this step when the mode and parameters allow it.
-6. Select the share of people whose plan should change. This depends on destination opportunity saturation, possible comparative improvements, and a random change share.
-7. Update the remaining opportunities at destinations.
-8. Repeat the procedure for the people whose plans are still open to change.
-
-This iterative structure is why model outputs should be read with diagnostics. A scenario comparison is easier to interpret when the iteration metrics show that the model has behaved consistently for the study question.
+Search batches explore alternatives within a simulation step; they do not
+advance the modeled system. For the sampling and stopping settings, see
+[run parameters](run_parameters.md). Read the resulting step diagnostics
+alongside scenario comparisons to check whether the model behaves consistently
+for the study question.
 
 ## Results
 
@@ -141,6 +135,6 @@ At the end of a run, Mobility can compute indicators such as:
 - modal shares,
 - greenhouse gas emissions,
 - zone flows,
-- diagnostics by iteration.
+- diagnostics by simulation step.
 
 Use these outputs to compare scenarios and check whether the model result is stable at the precision needed for the study question. When observed data is available, use it for calibration, validation, or reasonableness checks before treating scenario differences as evidence.

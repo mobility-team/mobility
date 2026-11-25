@@ -65,8 +65,8 @@ def test_008_group_day_trips_can_be_computed(test_data, gtfs_sources_folder):
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=1,
-                n_iter_per_cost_update=0,
+                n_steps=1,
+                n_steps_per_cost_update=0,
             ),
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
@@ -80,6 +80,6 @@ def test_008_group_day_trips_can_be_computed(test_data, gtfs_sources_folder):
         ),
     )
 
-    plan_steps = group_day_trips.run("weekday").get()["plan_steps"].collect()
+    plan_steps = group_day_trips.run("weekday").table("plan_steps")
 
     assert plan_steps.height > 0

@@ -1,6 +1,8 @@
 import argparse
 import os
+import sys
 import polars as pl
+from mobility.runtime.temporary import TemporaryDiskLimitExceeded
 
 from concurrent.futures import ProcessPoolExecutor
 from mobility.transport.modes.choice.compute_subtour_mode_probs_parallel_utilities import process_batch_parallel, process_batch_serial, worker_init, chunked
@@ -147,12 +149,16 @@ if __name__ == "__main__":
     parser.add_argument("--tmp_path")
     args = parser.parse_args()
 
-    compute_subtour_mode_probabilities_parallel(
-        args.k_sequences,
-        args.location_chains_path,
-        args.costs_path,
-        args.leg_modes_path,
-        args.modes_path,
-        args.tmp_path
-    )
+    try:
+        compute_subtour_mode_probabilities_parallel(
+            args.k_sequences,
+            args.location_chains_path,
+            args.costs_path,
+            args.leg_modes_path,
+            args.modes_path,
+            args.tmp_path
+        )
+    except TemporaryDiskLimitExceeded as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(75)
     

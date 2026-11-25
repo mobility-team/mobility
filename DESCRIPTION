@@ -21,6 +21,7 @@ Imports:
     jsonlite,
     log4r,
     lubridate,
+    mizu (>= 0.1.1),
     nngeo,
     osmdata,
     remotes,

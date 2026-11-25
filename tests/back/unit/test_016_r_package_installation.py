@@ -19,6 +19,7 @@ def test_cpp_routing_cch_declares_minimum_r_universe_version(monkeypatch):
     config.install_r_packages(True, False, "auto")
 
     packages = json.loads(captured["args"][0])
+    assert {"source": "CRAN", "name": "mizu"} in packages
     cpp_routing = next(
         package for package in packages if package.get("name") == "cppRoutingCCH"
     )

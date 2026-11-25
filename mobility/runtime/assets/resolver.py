@@ -17,7 +17,7 @@ from mobility.runtime.assets.graph import (
     is_file_asset,
 )
 from mobility.runtime.project_cache import record_file_asset_use
-from mobility.runtime.temporary import temporary_folder
+from mobility.runtime.temporary import temporary_folder, write_temporary_parquet
 
 
 _current_asset_resolver: ContextVar["AssetResolver | None"] = ContextVar(
@@ -64,8 +64,18 @@ class AssetResolver:
         self.in_memory_assets: dict[tuple, Asset] = {}
         self.shared_asset_keys: set[tuple] = set()
         self.spilled_asset_keys: set[tuple] = set()
+        self.pinned_asset_keys: set[tuple] = set()
         self._temporary_value_paths: dict[tuple, pathlib.Path] = {}
+        self.execution_cost_assets: dict[tuple, Asset] = {}
+        self.execution_cost_consumers: dict[tuple, set[tuple]] = {}
+        self.execution_cost_output_paths: dict[tuple, pathlib.Path] = {}
+        self.congested_graph_paths: dict[tuple, pathlib.Path] = {}
+        self.shared_road_worker = None
+        self.shared_road_worker_key = None
+        self._execution_cost_consumer_stack: list[tuple] = []
         self._spill_directory: tempfile.TemporaryDirectory | None = None
+        self.simulation_coordinator = None
+        self.simulation_step_result = None
 
     def get(self, requested_asset: Asset, *args, **kwargs) -> Any:
         """Return one cached asset after preparing the files it depends on."""
@@ -77,6 +87,27 @@ class AssetResolver:
         if rebuilt_value is not _REQUESTED_ASSET_WAS_NOT_REBUILT:
             return rebuilt_value
         return requested_asset.get_cached_asset(*args, **kwargs)
+
+    def get_execution_scoped_file_asset(
+        self,
+        asset: Asset,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Read a cost FileAsset once, then keep its value only for this run."""
+        self._register_current_execution_cost_use(asset)
+
+        def compute():
+            # The file may be a valid cache shared with another execution.
+            # Releasing this resolver's value must not remove that cache.
+            return self.get(asset, *args, **kwargs)
+
+        return self.get_in_memory_asset(
+            asset,
+            compute,
+            spill_to_disk=getattr(asset, "spill_execution_value", None),
+            load_from_disk=getattr(asset, "load_execution_value", None),
+        )
 
     def prepare_requested_asset(
         self,
@@ -167,7 +198,7 @@ class AssetResolver:
                     self._temporary_value_paths[asset_key] = spill_path
             elif spill_path is not None and isinstance(value, pl.DataFrame):
                 try:
-                    value.write_parquet(spill_path)
+                    write_temporary_parquet(value, spill_path)
                 except OSError:
                     logging.warning(
                         "Could not spill shared %s table to temporary disk; "
@@ -186,12 +217,25 @@ class AssetResolver:
     def release_in_memory_asset(self, asset: Asset) -> None:
         """Release a transient value while keeping any shared disk spill."""
         asset_key = asset_graph_key(asset)
+        if asset_key in self.pinned_asset_keys:
+            return
         if (
             asset_key not in self.shared_asset_keys
             or asset_key in self.spilled_asset_keys
         ):
             self.in_memory_values.pop(asset_key, None)
             self.in_memory_assets.pop(asset_key, None)
+
+    @contextmanager
+    def pin_in_memory_assets(self, assets: list[Asset]) -> Iterator[None]:
+        """Keep current values live until all step consumers have finished."""
+        keys = {asset_graph_key(asset) for asset in assets}
+        added = keys - self.pinned_asset_keys
+        self.pinned_asset_keys.update(added)
+        try:
+            yield
+        finally:
+            self.pinned_asset_keys.difference_update(added)
 
     def release_transient_values(self) -> None:
         """Release resolved values, keeping only shared values that could not spill."""
@@ -200,15 +244,65 @@ class AssetResolver:
 
     def close(self) -> None:
         """Remove temporary files used to spill shared transient assets."""
-        if self._spill_directory is not None:
-            self._spill_directory.cleanup()
-            self._spill_directory = None
+        try:
+            if self.shared_road_worker is not None:
+                self.shared_road_worker.close()
+        finally:
+            self.shared_road_worker = None
+            self.shared_road_worker_key = None
+            if self._spill_directory is not None:
+                self._spill_directory.cleanup()
+                self._spill_directory = None
+            self.execution_cost_output_paths.clear()
+            self.congested_graph_paths.clear()
+
+    @contextmanager
+    def execution_cost_consumer(self, consumer: Asset) -> Iterator[None]:
+        """Track cost assets used while one iteration state is being built."""
+        consumer_key = ("state", asset_graph_key(consumer))
+        self._execution_cost_consumer_stack.append(consumer_key)
+        try:
+            yield
+        finally:
+            self._execution_cost_consumer_stack.pop()
+
+    def inherit_execution_cost_uses(self, parent: Asset, child: Asset) -> None:
+        """Give a lazily-created route-cost table its parent's planned lifetime."""
+        parent_key = asset_graph_key(parent)
+        child_key = asset_graph_key(child)
+        self.execution_cost_assets[child_key] = child
+        consumers = self.execution_cost_consumers.get(parent_key)
+        if consumers:
+            self.execution_cost_consumers.setdefault(child_key, set()).update(consumers)
+        elif self._execution_cost_consumer_stack:
+            self.execution_cost_consumers.setdefault(child_key, set()).add(
+                self._execution_cost_consumer_stack[-1]
+            )
+        if len(self.execution_cost_consumers.get(child_key, ())) > 1:
+            self.shared_asset_keys.add(child_key)
+
+    def consume_execution_cost_state(self, state_asset: Asset) -> None:
+        """Release cost values whose last planned iteration has completed."""
+        self._consume_execution_cost_use(("state", asset_graph_key(state_asset)))
+
+    def consume_execution_cost_root(self, root_asset: Asset) -> None:
+        """Release cost values after a requested cost output has been built."""
+        self._consume_execution_cost_use(("output", asset_graph_key(root_asset)))
 
     def _spill_path(self, asset: Asset, *, suffix: str) -> pathlib.Path:
         """Return this execution's temporary file path for one shared asset."""
         if self._spill_directory is None:
             self._spill_directory = tempfile.TemporaryDirectory(
                 prefix="mobility-shared-assets-", dir=temporary_folder()
+            )
+        filename = f"{asset.__class__.__name__}-{asset.inputs_hash}{suffix}"
+        return pathlib.Path(self._spill_directory.name) / filename
+
+    def temporary_asset_path(self, asset: Asset, *, suffix: str) -> pathlib.Path:
+        """Return a path for a temporary file needed by an external tool."""
+        if self._spill_directory is None:
+            self._spill_directory = tempfile.TemporaryDirectory(
+                prefix="mobility-run-assets-", dir=temporary_folder()
             )
         filename = f"{asset.__class__.__name__}-{asset.inputs_hash}{suffix}"
         return pathlib.Path(self._spill_directory.name) / filename
@@ -224,6 +318,35 @@ class AssetResolver:
                 file_assets_only=False,
                 include_node_data=False,
             )
+
+            # Costs may be reused across several iteration states inside one
+            # result root, even when they appear in only one metric output.
+            for state_asset in graph.nodes:
+                if not getattr(state_asset, "is_execution_state", False):
+                    continue
+                cost_asset = getattr(
+                    state_asset,
+                    "transport_costs",
+                    getattr(state_asset, "initial_transport_costs", None),
+                )
+                if cost_asset is None:
+                    continue
+                consumer_key = ("state", asset_graph_key(state_asset))
+                self._register_execution_cost_dependencies(
+                    cost_asset,
+                    consumer_key,
+                )
+
+            # Final plan-step tables and explicit cost requests use the full
+            # cost table after their iteration state has completed.
+            output_cost_assets = getattr(root_asset, "execution_cost_assets", ())
+            if output_cost_assets:
+                consumer_key = ("output", asset_graph_key(root_asset))
+                for cost_asset in output_cost_assets:
+                    self._register_execution_cost_dependencies(
+                        cost_asset,
+                        consumer_key,
+                    )
 
             # Iteration results are consumed in order. A state that only feeds
             # the next state should stay live for that handoff, not spill just
@@ -243,7 +366,10 @@ class AssetResolver:
             seen_for_root = {
                 asset_graph_key(asset)
                 for asset in graph.nodes
-                if not is_file_asset(asset)
+                if (
+                    not is_file_asset(asset)
+                    or getattr(asset, "is_execution_scoped_cost_asset", False)
+                )
                 and not getattr(asset, "is_execution_state", False)
                 and not getattr(asset, "is_streaming_output", False)
             }
@@ -260,6 +386,103 @@ class AssetResolver:
             for asset_key, children in state_children.items()
             if len(children) > 1
         )
+        self.shared_asset_keys.update(
+            asset_key
+            for asset_key, consumers in self.execution_cost_consumers.items()
+            if len(consumers) > 1
+        )
+
+    def _register_execution_cost_dependencies(
+        self,
+        root_asset: Asset,
+        consumer_key: tuple,
+    ) -> None:
+        """Register cost nodes and their lazy output tables for one consumer."""
+        for cost_asset in self._execution_cost_nodes(root_asset):
+            self._register_execution_cost_use(cost_asset, consumer_key)
+            planned_tables = getattr(
+                cost_asset,
+                "planned_execution_cost_tables",
+                None,
+            )
+            if planned_tables is None:
+                continue
+            for table in planned_tables():
+                self._register_execution_cost_use(table, consumer_key)
+
+    @staticmethod
+    def _execution_cost_nodes(root_asset: Asset) -> set[Asset]:
+        """Collect run-cost assets without walking into earlier iteration states."""
+        graph = build_asset_graph(
+            root_asset,
+            include_root=True,
+            file_assets_only=False,
+            include_node_data=False,
+        )
+        nodes = set()
+        visited = set()
+        pending = [root_asset]
+        while pending:
+            asset = pending.pop()
+            asset_key = asset_graph_key(asset)
+            if asset_key in visited:
+                continue
+            visited.add(asset_key)
+            if asset is not root_asset and getattr(asset, "is_execution_state", False):
+                continue
+            if getattr(asset, "is_execution_scoped_cost_asset", False):
+                nodes.add(asset)
+            pending.extend(graph.predecessors(asset))
+        return nodes
+
+    def _register_current_execution_cost_use(self, asset: Asset) -> None:
+        if self._execution_cost_consumer_stack:
+            self._register_execution_cost_use(
+                asset,
+                self._execution_cost_consumer_stack[-1],
+            )
+        else:
+            self.execution_cost_assets[asset_graph_key(asset)] = asset
+
+    def _register_execution_cost_use(
+        self,
+        asset: Asset,
+        consumer_key: tuple,
+    ) -> None:
+        asset_key = asset_graph_key(asset)
+        self.execution_cost_assets[asset_key] = asset
+        consumers = self.execution_cost_consumers.setdefault(asset_key, set())
+        consumers.add(consumer_key)
+        if len(consumers) > 1:
+            self.shared_asset_keys.add(asset_key)
+
+    def _consume_execution_cost_use(self, consumer_key: tuple) -> None:
+        for asset_key, consumers in tuple(self.execution_cost_consumers.items()):
+            if consumer_key not in consumers:
+                continue
+            consumers.remove(consumer_key)
+            asset = self.execution_cost_assets[asset_key]
+            if consumers:
+                # Shared values can leave RAM after this iteration. The spill
+                # remains available to the later scenario or output that needs it.
+                self.release_in_memory_asset(asset)
+            else:
+                self._discard_execution_cost_asset(asset_key)
+                self.execution_cost_consumers.pop(asset_key, None)
+
+    def _discard_execution_cost_asset(self, asset_key: tuple) -> None:
+        self.execution_cost_assets.pop(asset_key, None)
+        self.in_memory_values.pop(asset_key, None)
+        self.in_memory_assets.pop(asset_key, None)
+        self.spilled_asset_keys.discard(asset_key)
+        self.shared_asset_keys.discard(asset_key)
+        self.prepared_asset_keys.discard(asset_key)
+        spill_path = self._temporary_value_paths.pop(asset_key, None)
+        if spill_path is not None and spill_path.exists():
+            spill_path.unlink()
+        output_path = self.execution_cost_output_paths.pop(asset_key, None)
+        if output_path is not None:
+            output_path.unlink(missing_ok=True)
 
     def _prepare_dependency_graph(
         self,
@@ -370,7 +593,10 @@ class AssetResolver:
         elif cache_path is not None:
             pathlib.Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
         value = asset.create_and_get_asset(*args, **kwargs)
-        asset.update_hash(asset.inputs_hash)
+        # An execution-owned cost file is not the persistent cache identified
+        # by this asset's hash marker.
+        if asset_graph_key(asset) not in self.execution_cost_output_paths:
+            asset.update_hash(asset.inputs_hash)
         logging.debug(
             "Asset %s (%s) is ready.",
             asset.__class__.__name__,

@@ -28,7 +28,9 @@ class CongestedPathGraph(FileAsset):
         ):
         
         inputs = {
-            "version": "1",
+            # Flow-dependent graphs from older simulation runs can contain
+            # stale assignments even when their former asset key matches.
+            "version": "2" if vehicle_flows is not None else "1",
             "mode_name": modified_graph.mode_name,
             "modified_graph": modified_graph,
             "cch_graph": cch_graph,

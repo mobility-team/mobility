@@ -1,10 +1,19 @@
 import json
+import os
 import pickle
+import subprocess
+import sys
+import time
 from types import SimpleNamespace
 
 import polars as pl
+import psutil
 import pytest
-from mobility.trips.group_day_trips.plans.mode_sequence_search.prepare import build_location_chains
+from mobility.runtime.temporary import TemporaryDiskLimitExceeded
+from mobility.transport.modes.choice.compute_subtour_mode_probs_parallel_utilities import process_batch_serial
+from mobility.trips.group_day_trips.plans.mode_sequence_search.prepare import (
+    build_location_chains, location_chain_legs,
+)
 from mobility.trips.group_day_trips.plans.mode_sequence_search.search_python import (
     run_python_mode_sequence_search,
     run_python_mode_sequence_search_subprocess,
@@ -20,6 +29,20 @@ class _DummyLive:
 
     def __exit__(self, exc_type, exc, tb):
         return False
+
+
+def test_mode_search_output_respects_temporary_disk_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setenv("MOBILITY_TEMPORARY_DISK_LIMIT_BYTES", "1")
+    folder = tmp_path / "temporary" / "mobility-mode-search-test" / "tmp_results"
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(
+        "mobility.transport.modes.choice.compute_subtour_mode_probs_parallel_utilities.run_top_k_search",
+        lambda *args, **kwargs: pl.DataFrame({"value": [1]}),
+    )
+    with pytest.raises(TemporaryDiskLimitExceeded):
+        process_batch_serial([(1, [1, 2])], 0, {}, {}, {}, {}, {}, {}, {}, 1, folder)
+    assert not list(folder.iterdir())
 
 
 class _DummyProcess:
@@ -48,6 +71,8 @@ def _mode_sequence_parameters(
 def test_build_location_chains_fails_on_one_location_chain():
     destination_steps = pl.DataFrame(
         {
+            "home_zone_id": [100],
+            "utility_profile_id": [0],
             "demand_group_id": [1],
             "demand_subgroup_id": [0],
             "activity_seq_id": [10],
@@ -57,6 +82,8 @@ def test_build_location_chains_fails_on_one_location_chain():
             "from": [100],
         },
         schema={
+            "home_zone_id": pl.Int32,
+            "utility_profile_id": pl.UInt32,
             "demand_group_id": pl.UInt32,
             "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
@@ -74,6 +101,8 @@ def test_build_location_chains_fails_on_one_location_chain():
 def test_build_location_chains_fails_when_destination_sequence_id_has_multiple_location_chains():
     destination_steps = pl.DataFrame(
         {
+            "home_zone_id": [100, 100, 300, 300],
+            "utility_profile_id": [0, 0, 0, 0],
             "demand_group_id": [1, 1, 2, 2],
             "demand_subgroup_id": [0, 0, 0, 0],
             "activity_seq_id": [10, 10, 10, 10],
@@ -83,6 +112,8 @@ def test_build_location_chains_fails_when_destination_sequence_id_has_multiple_l
             "from": [100, 200, 300, 400],
         },
         schema={
+            "home_zone_id": pl.Int32,
+            "utility_profile_id": pl.UInt32,
             "demand_group_id": pl.UInt32,
             "demand_subgroup_id": pl.UInt32,
             "activity_seq_id": pl.UInt32,
@@ -100,6 +131,7 @@ def test_build_location_chains_fails_when_destination_sequence_id_has_multiple_l
 def test_same_destination_sequence_can_have_one_chain_per_utility_profile():
     destination_steps = pl.DataFrame(
         {
+            "home_zone_id": [100, 100, 100, 100],
             "demand_group_id": [1, 1, 2, 2],
             "demand_subgroup_id": [0, 0, 0, 0],
             "utility_profile_id": [0, 0, 1, 1],
@@ -180,6 +212,88 @@ def test_run_python_mode_sequence_search_subprocess_serializes_inputs_for_worker
     assert len(created_processes) == 1
 
 
+def test_interrupted_mode_search_stops_workers_before_removing_files(monkeypatch, tmp_path):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    monkeypatch.setattr(
+        "mobility.trips.group_day_trips.plans.mode_sequence_search.search_python.Live",
+        lambda *args, **kwargs: _DummyLive(),
+    )
+    marker = tmp_path / "worker.pid"
+    original_popen = subprocess.Popen
+    created = []
+    parent_script = (
+        "import pathlib, subprocess, sys, time; "
+        "worker=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        "pathlib.Path(sys.argv[1]).write_text(str(worker.pid)); time.sleep(60)"
+    )
+
+    class InterruptibleProcess:
+        def __init__(self):
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            self.process = original_popen([sys.executable, "-c", parent_script, str(marker)], creationflags=flags)
+            self.pid = self.process.pid
+            self.interrupted = False
+            self.worker = None
+
+        def wait(self, timeout=None):
+            if not self.interrupted:
+                self.interrupted = True
+                deadline = time.monotonic() + 10
+                worker_pid = ""
+                while not worker_pid and time.monotonic() < deadline:
+                    if marker.exists():
+                        worker_pid = marker.read_text().strip()
+                    time.sleep(0.05)
+                if not worker_pid:
+                    raise RuntimeError("The test worker did not start.")
+                self.worker = psutil.Process(int(worker_pid))
+                raise KeyboardInterrupt()
+            return self.process.wait(timeout=timeout)
+
+        def poll(self):
+            return self.process.poll()
+
+        def terminate(self):
+            self.process.terminate()
+
+        def kill(self):
+            self.process.kill()
+
+    def start_process(*args, **kwargs):
+        process = InterruptibleProcess()
+        created.append(process)
+        return process
+
+    monkeypatch.setattr(
+        "mobility.trips.group_day_trips.plans.mode_sequence_search.search_python.subprocess.Popen",
+        start_process,
+    )
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run_python_mode_sequence_search(
+                iteration=1,
+                parameters=_mode_sequence_parameters(k_mode_sequences=1),
+                unique_destination_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
+                leg_mode_costs=pl.DataFrame({"from": [1], "to": [2], "mode_id": [0], "cost": [1.0]}),
+                modes_by_name={"walk": {"vehicle": None, "multimodal": False, "return_mode": None, "is_return_mode": False}},
+                is_return_mode_by_id={0: False},
+            )
+        assert created[0].poll() is not None
+        worker = created[0].worker
+        assert not worker.is_running() or worker.status() == psutil.STATUS_ZOMBIE
+        assert not list((tmp_path / "temporary").glob("mobility-mode-search-*"))
+    finally:
+        for process in created:
+            if process.worker is not None:
+                try:
+                    process.worker.kill()
+                except (psutil.NoSuchProcess, psutil.ZombieProcess):
+                    pass
+            if process.poll() is None:
+                process.kill()
+                process.process.wait(timeout=5)
+
+
 def test_run_python_mode_sequence_search_serial_backend_filters_return_modes(monkeypatch, tmp_path):
     captured = {}
     expected = pl.DataFrame(
@@ -218,7 +332,6 @@ def test_run_python_mode_sequence_search_serial_backend_filters_return_modes(mon
             k_mode_sequences=4,
             mode_sequence_search_parallel=False,
         ),
-        working_folder=tmp_path,
         unique_destination_chains=pl.DataFrame({"dest_seq_id": [1], "locations": [[1, 2]]}),
         leg_mode_costs=pl.DataFrame(
             {
@@ -415,7 +528,6 @@ def test_python_and_rust_mode_sequence_backends_match_on_same_inputs(tmp_path):
             k_mode_sequences=3,
             mode_sequence_search_parallel=False,
         ),
-        working_folder=tmp_path,
         unique_destination_chains=unique_destination_chains,
         leg_mode_costs=leg_mode_costs,
         modes_by_name=modes_by_name,
@@ -434,3 +546,47 @@ def test_python_and_rust_mode_sequence_backends_match_on_same_inputs(tmp_path):
 
     sort_cols = ["dest_seq_id", "mode_seq_index", "seq_step_index", "location", "mode_index"]
     assert python_rows.sort(sort_cols).to_dict(as_series=False) == rust_rows.sort(sort_cols).to_dict(as_series=False)
+    filtered_costs = leg_mode_costs.with_columns(utility_profile_id=pl.lit(0, dtype=pl.UInt32)).join(
+        location_chain_legs(unique_destination_chains.with_columns(utility_profile_id=pl.lit(0, dtype=pl.UInt32))),
+        on=["utility_profile_id", "from", "to"], how="semi",
+    ).drop("utility_profile_id")
+    filtered_python_rows = run_python_mode_sequence_search(
+        iteration=1,
+        parameters=_mode_sequence_parameters(k_mode_sequences=3, mode_sequence_search_parallel=False),
+        unique_destination_chains=unique_destination_chains,
+        leg_mode_costs=filtered_costs,
+        modes_by_name=modes_by_name,
+        is_return_mode_by_id={0: False, 1: False},
+    )
+    assert filtered_python_rows.sort(sort_cols).equals(python_rows.sort(sort_cols))
+
+
+def test_mode_search_uses_only_chain_legs_for_each_profile():
+    """Filtering retains return legs and gives the same actual search results."""
+    chains = pl.DataFrame({
+        "utility_profile_id": [0, 1], "dest_seq_id": [1, 2],
+        "locations": [[1, 2, 3], [1, 3]],
+    })
+    costs = pl.DataFrame([
+        {"utility_profile_id": profile, "from": origin, "to": destination,
+         "mode_id": mode, "cost": float(origin + destination + mode + profile)}
+        for profile in (0, 1) for origin in (1, 2, 3, 4)
+        for destination in (1, 2, 3, 4) for mode in (0, 1)
+    ])
+    filtered = costs.join(location_chain_legs(chains), on=["utility_profile_id", "from", "to"], how="semi")
+    assert filtered.height == 10  # Three legs for profile 0 and two for profile 1, with two modes.
+    assert (0, 3, 1) in set(filtered.select("utility_profile_id", "from", "to").iter_rows())
+    assert (1, 3, 1) in set(filtered.select("utility_profile_id", "from", "to").iter_rows())
+    modes = {
+        name: {"vehicle": None, "multimodal": False, "is_return_mode": False, "return_mode": None}
+        for name in ("walk", "bike")
+    }
+    args = dict(
+        unique_destination_chains=chains, needs_vehicle_by_id={0: False, 1: False},
+        return_mode_id_by_id={0: None, 1: None}, is_return_mode_by_id={0: False, 1: False},
+        modes_by_name=modes, mode_name_by_id={0: "walk", 1: "bike"}, k_mode_sequences=3,
+    )
+    full = run_rust_mode_sequence_search(**args, leg_mode_costs=costs)
+    reduced = run_rust_mode_sequence_search(**args, leg_mode_costs=filtered)
+    keys = ["utility_profile_id", "dest_seq_id", "mode_seq_index", "seq_step_index"]
+    assert full.sort(keys).equals(reduced.sort(keys))

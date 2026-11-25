@@ -1,13 +1,24 @@
-import pathlib
 from typing import Any
+
+import pathlib
+import shutil
+import tempfile
 
 import polars as pl
 
-from mobility.runtime.assets.cache_schema import read_cached_parquet
-from mobility.runtime.assets.file_asset import FileAsset
+from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
+
+from mobility.runtime.assets.asset import Asset
+from mobility.runtime.assets.graph import asset_graph_key
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.resolver import (
+    asset_resolution_context,
+    get_current_asset_resolver,
+)
+from mobility.runtime.temporary import write_temporary_bytes, write_temporary_parquet
 from mobility.trips.group_day_trips.core.memory_logging import log_memory_checkpoint
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
-from mobility.trips.group_day_trips.plans.plan_ids import PLAN_STEP_KEY_SCHEMA
+from mobility.trips.group_day_trips.plans.demand_subgroups import DEMAND_UNIT_COLS
 
 from ..stable_key_index import StableKeyIndex
 from .assemble import (
@@ -16,26 +27,16 @@ from .assemble import (
     finalize_mode_sequence_rows,
 )
 from .debug_logs import log_location_chain_diagnostics
-from .prepare import build_location_chains, build_search_inputs
+from .prepare import build_location_chains, build_search_inputs, location_chain_legs
 from .search_python import run_python_mode_sequence_search
 from .search_rust import run_rust_mode_sequence_search
 
 
-class ModeSequences(FileAsset):
-    """Persist candidate mode sequences for one PopulationGroupDayTrips iteration.
+class ModeSequences(InMemoryAsset):
+    """Generate mode candidates by home zone and utility profile.
 
-    This asset takes already-spatialized destination chains and enriches them with
-    feasible travel mode sequences. For each unique destination sequence, it runs
-    the configured mode-sequence search backend, then joins the resulting long-form
-    mode choices back onto every matching demand-group/activity/time chain.
-
-    The persisted output is a row-per-step table keyed by:
-    - `demand_group_id`
-    - `activity_seq_id`
-    - `time_seq_id`
-    - `dest_seq_id`
-    - `mode_seq_id`
-    - `seq_step_index`
+    Destination chains are shared by home zone. Search runs for each utility
+    profile present in that zone; complete plans are attached to demand units later.
 
     Each `mode_seq_id` is a stable sequence index derived from the ordered
     step-level mode choices. This allows downstream plan-update code to treat a
@@ -47,12 +48,18 @@ class ModeSequences(FileAsset):
        costs and destination steps.
     2. Run either the Rust or Python mode-sequence search backend on the unique
        destination chains.
-    3. Assemble the long-form search rows into persisted output with stable
-       `mode_seq_id` values and the expected storage schema.
+    3. Assemble the long-form search rows with stable `mode_seq_id` values and
+       the expected schema.
     """
 
     REQUIRED_SCHEMA = {
-        **PLAN_STEP_KEY_SCHEMA,
+        "home_zone_id": pl.Int32,
+        "utility_profile_id": pl.UInt32,
+        "activity_seq_id": pl.UInt32,
+        "time_seq_id": pl.UInt32,
+        "dest_seq_id": pl.UInt32,
+        "mode_seq_id": pl.UInt32,
+        "seq_step_index": pl.UInt8,
     }
 
     def __init__(
@@ -60,68 +67,152 @@ class ModeSequences(FileAsset):
         *,
         is_weekday: bool,
         iteration: int,
-        base_folder: pathlib.Path,
-        previous_mode_sequences: FileAsset | None = None,
-        destination_sequences: FileAsset,
+        previous_state: Asset | None = None,
+        destination_sequences: Asset,
+        generation_requests: pl.DataFrame | None = None,
         transport_costs: Any,
         population_segments: list[Any] | None = None,
-        working_folder: pathlib.Path,
         parameters: Any,
     ) -> None:
-        self.previous_mode_sequences = previous_mode_sequences
+        self.previous_state = previous_state
+        self.previous_sequence_index: pl.DataFrame | None = None
         self.destination_sequences = destination_sequences
+        self.generation_requests = generation_requests
         self.transport_costs = transport_costs
         self.population_segments = population_segments or []
-        self.working_folder = working_folder
         self.parameters = parameters
+        self.generated_mode_sequences = 0
+        self.sequence_index: pl.DataFrame | None = None
+        generation_request_profile_pairs = (
+            tuple(
+                tuple(row)
+                for row in generation_requests
+                .select("home_zone_id", "utility_profile_id")
+                .unique()
+                .sort("home_zone_id", "utility_profile_id")
+                .iter_rows()
+            )
+            if generation_requests is not None
+            else None
+        )
         inputs = {
-            "version": 6,
+            "version": 12,
             "is_weekday": is_weekday,
             "iteration": iteration,
-            "previous_mode_sequences": previous_mode_sequences,
+            "previous_state": previous_state,
             "destination_sequences": destination_sequences,
+            "generation_request_profile_pairs": generation_request_profile_pairs,
             "transport_costs": transport_costs,
             "population_segments": self.population_segments,
             "mode_sequence_parameters": (
                 parameters.mode_sequences if parameters is not None else None
             ),
         }
-        cache_path = {
-            "sequences": pathlib.Path(base_folder) / f"mode_sequences_{iteration}.parquet",
-            "index": pathlib.Path(base_folder) / f"mode_sequence_index_{iteration}.parquet",
-        }
-        super().__init__(inputs, cache_path)
-
-    def get_cached_asset(self) -> pl.DataFrame:
-        """Return cached mode sequences for one iteration."""
-        return read_cached_parquet(
-            self.cache_path["sequences"],
-            table_name="mode_sequences",
-            required_schema=self.REQUIRED_SCHEMA,
-        )
+        super().__init__(inputs)
 
     def get_index(self) -> pl.DataFrame:
-        """Return the mode-sequence index cached with this iteration."""
-        return pl.read_parquet(self.cache_path["index"])
+        """Return the mode-sequence index built with this iteration."""
+        self.get()
+        if self.sequence_index is None:
+            raise RuntimeError("Mode sequences have no sequence index.")
+        return self.sequence_index
 
+    def get(self, *args, **kwargs) -> pl.DataFrame:
+        """Return mode sequences and spill their stable index together."""
+        resolver = get_current_asset_resolver()
+        if resolver is None:
+            with asset_resolution_context() as resolver:
+                return self._get_with_resolver(resolver, *args, **kwargs)
+        return self._get_with_resolver(resolver, *args, **kwargs)
+
+    def _get_with_resolver(self, resolver, *args, **kwargs) -> pl.DataFrame:
+        sequences = self._resolve_value(resolver, *args, **kwargs)
+        # Equivalent scenario assets can share the rows and indexes in the resolver.
+        # Copy the auxiliary sequence count from the canonical asset too.
+        canonical_asset = resolver.in_memory_assets.get(asset_graph_key(self))
+        if canonical_asset is not None and canonical_asset is not self:
+            self.sequence_index = canonical_asset.sequence_index
+            self.generated_mode_sequences = canonical_asset.generated_mode_sequences
+        return sequences
+
+    def spill_execution_value(self, sequences: pl.DataFrame, path: pathlib.Path) -> None:
+        """Spill sampled rows and their stable index as one transient asset."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
+        try:
+            write_temporary_parquet(sequences, temporary_path / "sequences.parquet")
+            if self.sequence_index is not None:
+                write_temporary_parquet(self.sequence_index, temporary_path / "sequence_index.parquet")
+            write_temporary_bytes(
+                str(self.generated_mode_sequences).encode("utf-8"),
+                temporary_path / "generated_mode_sequences.txt",
+            )
+            if path.exists():
+                raise FileExistsError(f"A sequence spill already exists at {path}.")
+            temporary_path.rename(path)
+        finally:
+            shutil.rmtree(temporary_path, ignore_errors=True)
+
+    def load_execution_value(self, path: pathlib.Path) -> pl.DataFrame:
+        """Restore sampled rows and the matching stable index."""
+        index_path = path / "sequence_index.parquet"
+        self.sequence_index = (
+            pl.read_parquet(index_path)
+            if index_path.exists()
+            else None
+        )
+        generated_count_path = path / "generated_mode_sequences.txt"
+        self.generated_mode_sequences = (
+            int(generated_count_path.read_text(encoding="utf-8"))
+            if generated_count_path.exists()
+            else 0
+        )
+        return pl.read_parquet(path / "sequences.parquet")
+
+    @trace_simulation_step("mode search")
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Compute and persist mode sequences for one iteration."""
+        """Compute mode sequences for one iteration."""
         get_group_day_trips_progress().iteration_step(self.iteration, "mode sequences")
-        working_folder = self.working_folder
-        destination_steps = self.destination_sequences.get_cached_asset()
+        destination_steps = self.destination_sequences.get()
+        self.previous_sequence_index = (
+            self.previous_state.get().mode_sequence_index
+            if self.previous_state is not None
+            else None
+        )
         demand_groups = getattr(self.destination_sequences, "demand_groups", None)
+        if demand_groups is None and self.destination_sequences.previous_state is not None:
+            demand_groups = self.destination_sequences.previous_state.get().demand_groups
 
         log_memory_checkpoint(
             f"mode_sequences:iteration:{self.iteration}:destination_chains",
             destination_chains=destination_steps,
         )
 
+        if destination_steps.height == 0:
+            self.generated_mode_sequences = 0
+            empty_keys = pl.DataFrame(
+                schema={"mode_sequence_key_1": pl.UInt64, "mode_sequence_key_2": pl.UInt64}
+            )
+            _, self.sequence_index = StableKeyIndex(
+                key_cols=["mode_sequence_key_1", "mode_sequence_key_2"],
+                index_col="mode_seq_id",
+                first_new_id=1,
+            ).extend(
+                empty_keys,
+                previous_index=self.previous_sequence_index,
+            )
+            return pl.DataFrame(
+                schema={
+                    **self.REQUIRED_SCHEMA,
+                    "mode": pl.String,
+                    "iteration": pl.UInt16,
+                }
+            )
+
         use_rust_search = self.parameters.mode_sequences.use_rust_mode_sequence_search
 
         if demand_groups is None:
-            profile_assignments = destination_steps.select(
-                ["demand_group_id", "demand_subgroup_id"]
-            ).unique().with_columns(
+            zone_profiles = destination_steps.select("home_zone_id").unique().with_columns(
                 utility_profile_id=pl.lit(0, dtype=pl.UInt32)
             )
             utility_profiles = None
@@ -132,9 +223,35 @@ class ModeSequences(FileAsset):
                     self.population_segments,
                 )
             )
+            zone_profiles = (
+                profile_assignments
+                .join(
+                    demand_groups.select(DEMAND_UNIT_COLS + ["home_zone_id"]),
+                    on=DEMAND_UNIT_COLS,
+                )
+                .select(["home_zone_id", "utility_profile_id"])
+                .unique()
+            )
+        if self.generation_requests is not None:
+            requested_profiles = self.generation_requests.select(
+                "home_zone_id", "utility_profile_id"
+            ).unique()
+            zone_profiles = zone_profiles.join(
+                requested_profiles,
+                on=["home_zone_id", "utility_profile_id"],
+                how="semi",
+            )
+            if utility_profiles is not None:
+                requested_ids = set(zone_profiles["utility_profile_id"].unique().to_list())
+                utility_profiles = {
+                    profile_id: values
+                    for profile_id, values in utility_profiles.items()
+                    if profile_id in requested_ids
+                }
         destination_steps = destination_steps.join(
-            profile_assignments,
-            on=["demand_group_id", "demand_subgroup_id"],
+            zone_profiles,
+            on="home_zone_id",
+            how="inner",
         )
         trip_chains, unique_destination_chains = build_location_chains(destination_steps)
 
@@ -153,6 +270,30 @@ class ModeSequences(FileAsset):
             unique_destination_chains=unique_destination_chains,
         )
 
+        if unique_destination_chains.height == 0:
+            self.generated_mode_sequences = 0
+            empty_keys = pl.DataFrame(
+                schema={"mode_sequence_key_1": pl.UInt64, "mode_sequence_key_2": pl.UInt64}
+            )
+            _, self.sequence_index = StableKeyIndex(
+                key_cols=["mode_sequence_key_1", "mode_sequence_key_2"],
+                index_col="mode_seq_id",
+                first_new_id=1,
+            ).extend(
+                empty_keys,
+                previous_index=self.previous_sequence_index,
+            )
+            return pl.DataFrame(
+                schema={
+                    **self.REQUIRED_SCHEMA,
+                    "mode": pl.String,
+                    "iteration": pl.UInt16,
+                }
+            )
+
+        search_k = self.parameters.mode_sequences.k_mode_sequences
+        # Search only looks up adjacent locations, including the return home.
+        needed_legs = location_chain_legs(unique_destination_chains)
         if utility_profiles is None:
             profile_costs = self.transport_costs.get_costs_by_od_and_mode(
                 ["cost"],
@@ -163,6 +304,9 @@ class ModeSequences(FileAsset):
                 utility_profiles,
                 ["cost"],
             )
+        profile_costs = profile_costs.join(
+            needed_legs, on=["utility_profile_id", "from", "to"], how="semi",
+        )
         search_inputs = build_search_inputs(
             self.transport_costs,
             leg_mode_costs=profile_costs,
@@ -177,7 +321,7 @@ class ModeSequences(FileAsset):
                 is_return_mode_by_id=search_inputs.is_return_mode_by_id,
                 modes_by_name=search_inputs.modes_by_name,
                 mode_name_by_id=search_inputs.mode_name_by_id,
-                k_mode_sequences=self.parameters.mode_sequences.k_mode_sequences,
+                k_mode_sequences=search_k,
             )
         else:
             # The legacy Python backend still receives one profile at a time.
@@ -194,8 +338,13 @@ class ModeSequences(FileAsset):
                 ).drop("utility_profile_id")
                 profile_rows = run_python_mode_sequence_search(
                     iteration=self.iteration,
-                    parameters=self.parameters,
-                    working_folder=working_folder,
+                    parameters=self.parameters.model_copy(
+                        update={
+                            "mode_sequences": self.parameters.mode_sequences.model_copy(
+                                update={"k_mode_sequences": search_k}
+                            )
+                        }
+                    ),
                     unique_destination_chains=profile_chains,
                     leg_mode_costs=profile_leg_costs,
                     modes_by_name=search_inputs.modes_by_name,
@@ -220,14 +369,16 @@ class ModeSequences(FileAsset):
         )
 
         sequence_keys = build_mode_sequence_keys(search_rows)
-        sequence_keys, _ = StableKeyIndex(
-            key_cols=["mode_sequence_key"],
+        self.generated_mode_sequences = sequence_keys.height
+        sequence_keys, self.sequence_index = StableKeyIndex(
+            key_cols=["mode_sequence_key_1", "mode_sequence_key_2"],
             index_col="mode_seq_id",
             first_new_id=1,
-        ).extend_and_cache(
+        ).extend(
             sequence_keys,
-            previous_asset=self.previous_mode_sequences,
-            index_path=self.cache_path["index"],
+            previous_index=(
+                self.previous_sequence_index
+            ),
         )
 
         final_rows = finalize_mode_sequence_rows(
@@ -242,6 +393,4 @@ class ModeSequences(FileAsset):
             mode_sequences=final_rows,
         )
 
-        self.cache_path["sequences"].parent.mkdir(parents=True, exist_ok=True)
-        final_rows.write_parquet(self.cache_path["sequences"])
-        return self.get_cached_asset()
+        return final_rows

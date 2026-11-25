@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import logging
-import os
-import pathlib
 
 import polars as pl
 
-from mobility.runtime.assets.file_asset import FileAsset
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 from mobility.runtime.parameter_values import SensitivityCase
 from mobility.runtime.population_segments import (
@@ -19,8 +16,12 @@ from mobility.transport.costs.road_flow_manager import RoadFlowManager
 from mobility.transport.costs.travel_costs_asset import TravelCostsBase
 
 
-class TransportCosts(FileAsset):
+class TransportCosts(InMemoryAsset):
     """Canonical multimodal transport-cost asset for one run state."""
+
+    # The planner keeps this table in memory or spills it to run-local disk only
+    # when another scenario or output still needs it.
+    is_execution_scoped_cost_asset = True
 
     def __init__(
         self,
@@ -45,12 +46,7 @@ class TransportCosts(FileAsset):
         inputs["congestion"] = bool(congestion)
         inputs["road_flow_asset"] = road_flow_asset
 
-        cache_path = (
-            pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
-            / "transport_costs"
-            / "transport_costs.parquet"
-        )
-        super().__init__(inputs, cache_path)
+        super().__init__(inputs)
 
     def for_iteration(
         self,
@@ -110,25 +106,13 @@ class TransportCosts(FileAsset):
             road_flow_asset=road_flow_asset,
         )
 
-    def get_cached_asset(self) -> pl.DataFrame:
-        """Return the persisted canonical full-detail cost table.
-
-        Returns:
-            The cached multimodal cost table for this asset variant.
-        """
-        logging.debug("Transport costs already prepared. Reusing the file : %s", str(self.cache_path))
-        return pl.read_parquet(self.cache_path)
-
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Build and persist the canonical full-detail cost table.
+        """Build the canonical full-detail cost table in memory.
 
         Returns:
-            The newly built multimodal cost table for this asset variant.
+            The multimodal cost table for this asset variant.
         """
-        costs = self._build_full_detail_costs()
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        costs.write_parquet(self.cache_path)
-        return costs
+        return self._build_full_detail_costs()
 
     def _build_full_detail_costs(self) -> pl.DataFrame:
         """Build the canonical OD-by-mode cost table."""
@@ -195,47 +179,49 @@ class TransportCosts(FileAsset):
 
         profile_ids: dict[tuple[str, ...], int] = {}
         profile_id_by_memberships: dict[tuple[str, ...], int] = {}
+        profile_id_by_segment_list: dict[tuple[str, ...], int] = {}
         profiles: dict[int, list[InMemoryAsset]] = {}
-        assignments = []
-        rows = demand_groups.select(sorted(required)).iter_rows(named=True)
-        for row in rows:
-            memberships_key = tuple(sorted(set(row["population_segments"] or [])))
-            profile_id = profile_id_by_memberships.get(memberships_key)
+        # Resolve each membership once, retaining first-seen profile IDs.
+        # Keep the demand-unit columns in Polars instead of building a Python
+        # dictionary for every row.
+        ids = []
+        for members in demand_groups["population_segments"].to_list():
+            segment_list = tuple(members or ())
+            profile_id = profile_id_by_segment_list.get(segment_list)
             if profile_id is None:
-                resolved_assets = [
-                    self._resolved_generalized_cost(
-                        mode.inputs["generalized_cost"],
-                        memberships=set(memberships_key),
-                        population_segments=population_segments,
-                    )
-                    for mode in self.modes
-                ]
-                profile_key = tuple(asset.inputs_hash for asset in resolved_assets)
-                profile_id = profile_ids.get(profile_key)
+                memberships_key = tuple(sorted(set(segment_list)))
+                profile_id = profile_id_by_memberships.get(memberships_key)
                 if profile_id is None:
-                    profile_id = len(profile_ids)
-                    profile_ids[profile_key] = profile_id
-                    profiles[profile_id] = resolved_assets
-                profile_id_by_memberships[memberships_key] = profile_id
-            assignments.append(
-                {
-                    "demand_group_id": row["demand_group_id"],
-                    "demand_subgroup_id": row["demand_subgroup_id"],
-                    "utility_profile_id": profile_id,
-                }
-            )
-
-        assignment_schema = {
-            "demand_group_id": pl.UInt32,
-            "demand_subgroup_id": pl.UInt32,
-            "utility_profile_id": pl.UInt32,
-        }
-        return pl.DataFrame(assignments, schema=assignment_schema), profiles
+                    resolved_assets = [
+                        self._resolved_generalized_cost(
+                            mode.inputs["generalized_cost"],
+                            memberships=set(memberships_key),
+                            population_segments=population_segments,
+                        )
+                        for mode in self.modes
+                    ]
+                    profile_key = tuple(asset.inputs_hash for asset in resolved_assets)
+                    profile_id = profile_ids.get(profile_key)
+                    if profile_id is None:
+                        profile_id = len(profile_ids)
+                        profile_ids[profile_key] = profile_id
+                        profiles[profile_id] = resolved_assets
+                    profile_id_by_memberships[memberships_key] = profile_id
+                profile_id_by_segment_list[segment_list] = profile_id
+            ids.append(profile_id)
+        assignments = demand_groups.select(
+            pl.col("demand_group_id").cast(pl.UInt32),
+            pl.col("demand_subgroup_id").cast(pl.UInt32),
+        ).with_columns(utility_profile_id=pl.Series(ids, dtype=pl.UInt32))
+        return assignments, profiles
 
     def get_profile_costs_by_od_and_mode(
         self,
         profiles: dict[int, list[InMemoryAsset]],
         metrics: list[str],
+        *,
+        default_costs: pl.DataFrame | None = None,
+        od_pairs: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
         """Compute OD-by-mode costs once for every distinct utility profile."""
         profile_costs = []
@@ -248,10 +234,16 @@ class TransportCosts(FileAsset):
             )
             for mode in self.modes
         ]
-        default_costs = self.get_costs_by_od_and_mode(
-            metrics,
-            detail_distances=False,
-        )
+        if default_costs is None:
+            default_costs = self.get_costs_by_od_and_mode(
+                metrics,
+                detail_distances=False,
+            )
+        if od_pairs is not None:
+            # Profiles need costs only for ODs used by their current candidates.
+            # Filter before copying the default table for each profile.
+            all_pairs = od_pairs.select("from", "to").unique()
+            default_costs = default_costs.join(all_pairs, on=["from", "to"], how="semi")
 
         # Cache by generalized-cost asset, not by population profile. Profiles
         # that inherit one mode's default coefficients reuse its existing OD
@@ -266,6 +258,10 @@ class TransportCosts(FileAsset):
             )
         }
         for profile_id, generalized_costs in profiles.items():
+            profile_pairs = (
+                od_pairs.filter(pl.col("utility_profile_id") == profile_id).select("from", "to").unique()
+                if od_pairs is not None else None
+            )
             for mode, generalized_cost in zip(self.modes, generalized_costs):
                 costs = costs_by_generalized_cost.get(generalized_cost.inputs_hash)
                 if costs is None:
@@ -277,7 +273,11 @@ class TransportCosts(FileAsset):
                             road_flow_asset=self.inputs["road_flow_asset"],
                         )
                     )
+                    if od_pairs is not None:
+                        costs = costs.join(all_pairs, on=["from", "to"], how="semi")
                     costs_by_generalized_cost[generalized_cost.inputs_hash] = costs
+                if profile_pairs is not None:
+                    costs = costs.join(profile_pairs, on=["from", "to"], how="semi")
                 profile_costs.append(
                     costs.with_columns(
                         utility_profile_id=pl.lit(profile_id, dtype=pl.UInt32),
@@ -354,7 +354,7 @@ class TransportCosts(FileAsset):
             An OD-by-mode table with the requested metrics.
         """
         metrics = list(metrics)
-        costs = FileAsset.get(self)
+        costs = InMemoryAsset.get(self)
 
         dist_cols = [col for col in costs.columns if col.endswith("_distance")]
         selected_metrics = [metric for metric in metrics if metric != "ghg_emissions"]
@@ -385,7 +385,11 @@ class TransportCosts(FileAsset):
             An OD-only expected generalized-cost table.
         """
         costs = self.get_costs_by_od_and_mode(metrics, detail_distances=False)
-        costs = costs.with_columns((pl.col("cost").neg().exp()).alias("prob"))
+        # Subtract the cheapest mode before exponentiating. The common shift
+        # cancels out when normalizing, even for very large finite costs.
+        costs = costs.with_columns(
+            (pl.col("cost").min().over("from", "to") - pl.col("cost")).exp().alias("prob")
+        )
         costs = costs.with_columns(
             (pl.col("prob") / pl.col("prob").sum().over(["from", "to"])).alias("prob")
         )
@@ -404,11 +408,11 @@ class TransportCosts(FileAsset):
         Returns:
             An OD-by-mode probability table.
         """
-        costs = FileAsset.get(self)
+        costs = InMemoryAsset.get(self)
 
         prob = (
             costs
-            .with_columns(exp_u=pl.col("cost").neg().exp())
+            .with_columns(exp_u=(pl.col("cost").min().over("from", "to") - pl.col("cost")).exp())
             .with_columns(prob=pl.col("exp_u") / pl.col("exp_u").sum().over(["from", "to"]))
             .sort(["prob"], descending=True)
             .with_columns(

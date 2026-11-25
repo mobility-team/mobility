@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import inspect
 import logging
 import math
 import os
 import re
 import tempfile
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -18,12 +20,17 @@ import plotly.graph_objects as go
 import polars as pl
 from plotly.subplots import make_subplots
 
+from mobility.runtime.temporary import check_temporary_disk_limit
 from mobility.runtime.temporary import temporary_folder as mobility_temporary_folder
 from mobility.reports import TransportZoneMaps
 from mobility.reports.theme import MOBILITY_COLORS, apply_report_layout
+from mobility.runtime.assets.resolver import (
+    asset_resolution_context,
+    get_current_asset_resolver,
+)
 
-from ..iterations import Iterations
 from ..evaluation.car_traffic_evaluation import CarTrafficEvaluation
+from ..evaluation.calibration_plan_steps import left_closed_bins
 from ..evaluation.public_transport_network_evaluation import (
     PublicTransportNetworkEvaluation,
 )
@@ -32,6 +39,29 @@ from ..evaluation.travel_costs_evaluation import TravelCostsEvaluation
 
 if TYPE_CHECKING:
     from .results import RunResults
+
+
+def _with_iteration_resolver(method):
+    """Share selected step tables for one iteration-analysis request."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with asset_resolution_context(get_current_asset_resolver()) as resolver:
+            scope = getattr(resolver, "iteration_analysis_scope", None)
+            if scope is not None:
+                return method(self, *args, **kwargs)
+            arguments = inspect.signature(method).bind(self, *args, **kwargs)
+            arguments.apply_defaults()
+            scope = {"arguments": arguments.arguments, "tables": {}}
+            resolver.iteration_analysis_scope = scope
+            try:
+                return method(self, *args, **kwargs)
+            finally:
+                for tables in scope["tables"].values():
+                    for table in tables.values():
+                        table.close()
+                del resolver.iteration_analysis_scope
+
+    return wrapped
 
 
 class RunMetrics:
@@ -142,8 +172,8 @@ class RunMetrics:
                 .rename({"home_zone_id": "transport_zone_id"})
                 .join(transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]), on=["transport_zone_id"])
                 .with_columns(
-                    time_bin=(pl.col("time") * 60.0).cut([0.0, 5.0, 10, 20, 30.0, 45.0, 60.0, 1e6], left_closed=True),
-                    distance_bin=pl.col("distance").cut([0.0, 1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 1e6], left_closed=True),
+                    time_bin=left_closed_bins(pl.col("time") * 60.0, [0.0, 5.0, 10, 20, 30.0, 45.0, 60.0, 1e6]).cast(pl.Categorical),
+                    distance_bin=left_closed_bins(pl.col("distance"), [0.0, 1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 1e6]).cast(pl.Categorical),
                 )
                 .group_by(variable)
                 .agg(
@@ -162,9 +192,8 @@ class RunMetrics:
                 aggregated = aggregated.with_columns(pl.col(variable).cast(pl.String()))
             return aggregated.collect(engine="streaming")
 
-        with pl.StringCache():
-            trip_count = aggregate(self.results.plan_steps)
-            trip_count_ref = aggregate(ref_plan_steps)
+        trip_count = aggregate(self.results.plan_steps)
+        trip_count_ref = aggregate(ref_plan_steps)
 
         comparison = trip_count.join(
             trip_count_ref,
@@ -1495,30 +1524,68 @@ class RunMetrics:
 
         metric_per_person = metric + "_per_person"
 
+        reference_run = self._resolve_comparison_run(compare_with) if compare_with is not None else None
+        deferred_reference = (
+            reference_run is not None
+            and (reference_run is compare_with or getattr(compare_with, "_defer_run_tables", False))
+            and callable(getattr(reference_run, "_resolve_run_tables", None))
+            and not any(name in getattr(compare_with, "__dict__", {}) for name in ("costs", "demand_groups"))
+        )
+        shared_tables = None
+        if getattr(self.results, "_defer_run_tables", False):
+            current_run = self.results.run
+            if (deferred_reference
+                    and current_run.coordinated_run_asset is not None
+                    and current_run.coordinated_run_asset is reference_run.coordinated_run_asset):
+                shared_tables = current_run._resolve_cohort_run_tables(
+                    [current_run, reference_run], ["plan_steps", "costs", "demand_groups"],
+                )
+                tables = {
+                    name: shared_tables[(current_run.coordinated_run_key, name)]
+                    for name in ("plan_steps", "costs", "demand_groups")
+                }
+            else:
+                tables = current_run._resolve_run_tables({
+                    "plan_steps": None, "costs": None, "demand_groups": None,
+                })
+            plan_steps = tables["plan_steps"].lazy()
+            costs = tables["costs"].lazy()
+            demand_groups = tables["demand_groups"].lazy()
+        else:
+            plan_steps = self.results.plan_steps
+            costs = self.results.costs
+            demand_groups = self.results.demand_groups
+
         metric_per_groups_and_transport_zones = (
-            self.results.plan_steps.filter(pl.col("activity_seq_id") != 0)
+            plan_steps.filter(pl.col("activity_seq_id") != 0)
             .rename({"home_zone_id": "transport_zone_id"})
-            .join(self.results.costs, on=["from", "to", "mode"])
+            .join(costs, on=["from", "to", "mode"])
             .group_by(["transport_zone_id", "csp", "n_cars"])
             .agg(metric=(pl.col(metric) * pl.col("n_persons")).sum())
             .join(transport_zones_df.select(["transport_zone_id", "local_admin_unit_id"]), on=["transport_zone_id"])
-            .join(self.results.demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
+            .join(demand_groups.rename({"home_zone_id": "transport_zone_id"}), on=["transport_zone_id", "csp", "n_cars"])
             .with_columns(metric_per_person=pl.col("metric") / pl.col("n_persons"))
             .rename({"metric": metric, "metric_per_person": metric_per_person})
             .collect(engine="streaming")
         )
 
         if compare_with is not None:
-            comparison = self._resolve_run_context(compare_with, include_costs=True)
-            reference_run = comparison["run"]
-            plan_steps_path = reference_run.cache_path.get("plan_steps")
-            if plan_steps_path is None:
-                raise TypeError("compare_with run needs `cache_path['plan_steps']`.")
-            if Path(plan_steps_path).exists() is False and callable(getattr(reference_run, "get", None)):
-                reference_run.get()
-            plan_steps_comp = pl.scan_parquet(plan_steps_path)
-            costs_comp = comparison["costs"]
-            demand_groups_comp = comparison["demand_groups"]
+            if shared_tables is not None:
+                plan_steps_comp = shared_tables[(reference_run.coordinated_run_key, "plan_steps")].lazy()
+                costs_comp = shared_tables[(reference_run.coordinated_run_key, "costs")]
+                demand_groups_comp = shared_tables[(reference_run.coordinated_run_key, "demand_groups")]
+            elif deferred_reference:
+                reference_tables = reference_run._resolve_run_tables({
+                    "plan_steps": None, "costs": None, "demand_groups": None,
+                })
+                plan_steps_comp = reference_tables["plan_steps"].lazy()
+                costs_comp = reference_tables["costs"]
+                demand_groups_comp = reference_tables["demand_groups"]
+            else:
+                comparison = self._resolve_run_context(compare_with, include_costs=True)
+                plan_steps_comp = reference_run._table_asset("plan_steps").get().lazy()
+                costs_comp = comparison["costs"]
+                demand_groups_comp = comparison["demand_groups"]
             if isinstance(costs_comp, pl.DataFrame):
                 costs_comp = costs_comp.lazy()
             if isinstance(demand_groups_comp, pl.DataFrame):
@@ -1608,7 +1675,8 @@ class RunMetrics:
     def cost_per_person(self, *args, **kwargs):
         return self.metric_per_person("cost", *args, **kwargs)
 
-    def modal_share_evolution_by_iteration(
+    @_with_iteration_resolver
+    def modal_share_evolution_by_step(
         self,
         iterations: list[int] | range | None = None,
         modes: list[str] | None = None,
@@ -1667,7 +1735,8 @@ class RunMetrics:
             return evolution, fig
         return evolution
 
-    def modal_share_delta_evolution_by_iteration(
+    @_with_iteration_resolver
+    def modal_share_delta_evolution_by_step(
         self,
         compare_with: Any,
         iterations: list[int] | range | None = None,
@@ -1739,7 +1808,7 @@ class RunMetrics:
                         "modal_share": "modal_share_reference",
                     }
                 ),
-                on=["iteration", "mode", "mode_label"],
+                on=["step", "mode", "mode_label"],
                 how="inner",
             )
             .with_columns(
@@ -1748,7 +1817,7 @@ class RunMetrics:
             )
             .select(
                 [
-                    "iteration",
+                    "step",
                     "mode",
                     "mode_label",
                     "n_trips",
@@ -1796,12 +1865,12 @@ class RunMetrics:
         """Return the iterations used by modal-share evolution plots."""
         if iterations is None:
             run_parameters = getattr(self.results.parameters, "run", None)
-            n_iterations = getattr(run_parameters, "n_iterations", None)
-            if n_iterations is None:
+            n_steps = getattr(run_parameters, "n_steps", None)
+            if n_steps is None:
                 raise ValueError(
-                    "iterations should be provided when results.parameters.run has no n_iterations."
+                    "iterations should be provided when results.parameters.run has no n_steps."
                 )
-            iterations = range(1, int(n_iterations) + 1)
+            iterations = range(1, int(n_steps) + 1)
 
         iterations = [int(iteration) for iteration in iterations]
         if not iterations:
@@ -1858,7 +1927,7 @@ class RunMetrics:
                 demand_groups=demand_groups,
                 aggregate_public_transport=aggregate_public_transport,
                 inner_zones_only=inner_zones_only,
-            ).with_columns(iteration=pl.lit(iteration))
+            ).with_columns(step=pl.lit(iteration))
             for iteration in iterations
         ]
         return pl.concat(iteration_tables, how="vertical_relaxed")
@@ -1873,7 +1942,7 @@ class RunMetrics:
         """Add missing iteration-mode rows with zero shares."""
         iteration_mode_grid = pl.DataFrame(
             {
-                "iteration": [
+                "step": [
                     iteration
                     for iteration in iterations
                     for _mode in modes
@@ -1892,7 +1961,7 @@ class RunMetrics:
         )
         return (
             iteration_mode_grid
-            .join(modal_share, on=["iteration", "mode"], how="left")
+            .join(modal_share, on=["step", "mode"], how="left")
             .with_columns(
                 pl.col("n_trips").fill_null(0.0),
                 pl.col("modal_share").fill_null(0.0),
@@ -1901,8 +1970,8 @@ class RunMetrics:
                     return_dtype=pl.String,
                 ),
             )
-            .sort(["iteration", "mode_order"])
-            .select(["iteration", "mode", "mode_label", "n_trips", "modal_share"])
+            .sort(["step", "mode_order"])
+            .select(["step", "mode", "mode_label", "n_trips", "modal_share"])
         )
 
     def _modal_share_for_iteration(
@@ -1970,13 +2039,13 @@ class RunMetrics:
         color_map = self._mode_label_color_map(mode_labels)
         figure_kwargs = {
             "data_frame": modal_share.to_pandas(),
-            "x": "iteration",
+            "x": "step",
             "y": "modal_share",
             "color": "mode_label",
             "color_discrete_map": color_map,
             "category_orders": {"mode_label": mode_labels},
             "labels": {
-                "iteration": "Iteration",
+                "step": "Iteration",
                 "modal_share": "Modal share",
                 "mode_label": "Mode",
             },
@@ -2019,14 +2088,14 @@ class RunMetrics:
         color_map = self._mode_label_color_map(mode_labels)
         fig = px.line(
             modal_share_delta.to_pandas(),
-            x="iteration",
+            x="step",
             y="modal_share_delta",
             color="mode_label",
             markers=True,
             color_discrete_map=color_map,
             category_orders={"mode_label": mode_labels},
             labels={
-                "iteration": "Iteration",
+                "step": "Iteration",
                 "modal_share_delta": "Modal share difference",
                 "mode_label": "Mode",
             },
@@ -2069,13 +2138,13 @@ class RunMetrics:
         """Save a modal-share evolution chart as SVG."""
         output_path.parent.mkdir(parents=True, exist_ok=True)
         share_df = modal_share.to_pandas()
-        iterations = sorted(share_df["iteration"].unique().tolist())
+        iterations = sorted(share_df["step"].unique().tolist())
         mode_labels = share_df["mode_label"].drop_duplicates().tolist()
         color_map = self._mode_label_color_map(mode_labels)
         pivot = (
             share_df
             .pivot_table(
-                index="iteration",
+                index="step",
                 columns="mode_label",
                 values="modal_share",
                 aggfunc="sum",
@@ -2151,13 +2220,13 @@ class RunMetrics:
         """Save a modal-share-delta line chart as SVG."""
         output_path.parent.mkdir(parents=True, exist_ok=True)
         delta_df = modal_share_delta.to_pandas()
-        iterations = sorted(delta_df["iteration"].unique().tolist())
+        iterations = sorted(delta_df["step"].unique().tolist())
         mode_labels = delta_df["mode_label"].drop_duplicates().tolist()
         color_map = self._mode_label_color_map(mode_labels)
         pivot = (
             delta_df
             .pivot_table(
-                index="iteration",
+                index="step",
                 columns="mode_label",
                 values="modal_share_delta",
                 aggfunc="sum",
@@ -2203,7 +2272,8 @@ class RunMetrics:
         fig.savefig(output_path, format="svg")
         plt.close(fig)
 
-    def plot_delta_by_iteration(
+    @_with_iteration_resolver
+    def plot_delta_by_step(
         self,
         compare_with: Any | None,
         iteration: int,
@@ -2250,7 +2320,10 @@ class RunMetrics:
                 compare_with=compare_with,
                 reference_run=reference_run,
             )
-            current_costs = self.results.costs if value == "ghg_emissions" else pl.DataFrame()
+            if value == "ghg_emissions" and getattr(self.results, "_defer_run_tables", False):
+                current_costs = self._iteration_analysis_table(self.results.run, "costs", iteration)
+            else:
+                current_costs = self.results.costs if value == "ghg_emissions" else pl.DataFrame()
             reference_costs = (
                 self._resolve_comparison_costs(
                     compare_with=compare_with,
@@ -2259,7 +2332,7 @@ class RunMetrics:
                 if value == "ghg_emissions"
                 else pl.DataFrame()
             )
-            delta = self._delta_value_by_iteration(
+            delta = self._delta_value_by_step(
                 reference_run=reference_run,
                 reference_demand_groups=reference_demand_groups,
                 current_costs=current_costs,
@@ -2272,7 +2345,7 @@ class RunMetrics:
             )
             global_delta = None
         else:
-            delta, global_delta = self._paired_delta_by_iteration(
+            delta, global_delta = self._paired_delta_by_step(
                 paired_runs=paired_runs,
                 iteration=iteration,
                 value=value,
@@ -2290,7 +2363,7 @@ class RunMetrics:
         fig = None
         if plot or save_to_file or return_figure:
             if global_delta is None:
-                global_delta = self._global_plot_delta_by_iteration(
+                global_delta = self._global_plot_delta_by_step(
                     reference_run=reference_run,
                     reference_demand_groups=reference_demand_groups,
                     current_costs=current_costs,
@@ -2358,7 +2431,7 @@ class RunMetrics:
             return delta, fig
         return delta
 
-    def _delta_value_by_iteration(
+    def _delta_value_by_step(
         self,
         *,
         reference_run: Any,
@@ -2372,7 +2445,7 @@ class RunMetrics:
         relative_delta: bool,
     ) -> pl.DataFrame:
         """Return current, reference and delta values by transport zone."""
-        return self._delta_value_between_runs_by_iteration(
+        return self._delta_value_between_runs_by_step(
             current_run=self.results.run,
             current_demand_groups=self.results.demand_groups,
             reference_run=reference_run,
@@ -2386,7 +2459,7 @@ class RunMetrics:
             relative_delta=relative_delta,
         )
 
-    def _delta_value_between_runs_by_iteration(
+    def _delta_value_between_runs_by_step(
         self,
         *,
         current_run: Any,
@@ -2625,7 +2698,7 @@ class RunMetrics:
         iteration: int,
     ) -> pl.DataFrame:
         """Compute weighted mean plan utility by home transport zone."""
-        current_plans = self._saved_iteration_state(run, iteration).current_plans.lazy()
+        current_plans = self._saved_iteration_plans(run, iteration).lazy()
         current_plans = self._join_home_zone(current_plans, demand_groups)
         required_columns = {"home_zone_id", "utility", "n_persons"}
         missing_columns = required_columns.difference(current_plans.collect_schema().names())
@@ -2731,7 +2804,7 @@ class RunMetrics:
             .rename({"home_zone_id": "transport_zone_id"})
         )
 
-    def _global_plot_delta_by_iteration(
+    def _global_plot_delta_by_step(
         self,
         *,
         reference_run: Any,
@@ -2746,7 +2819,7 @@ class RunMetrics:
         relative_delta: bool,
     ) -> float:
         """Return the global delta shown on a generic delta map."""
-        return self._global_plot_delta_between_runs_by_iteration(
+        return self._global_plot_delta_between_runs_by_step(
             current_run=self.results.run,
             current_demand_groups=self.results.demand_groups,
             reference_run=reference_run,
@@ -2761,7 +2834,7 @@ class RunMetrics:
             relative_delta=relative_delta,
         )
 
-    def _global_plot_delta_between_runs_by_iteration(
+    def _global_plot_delta_between_runs_by_step(
         self,
         *,
         current_run: Any,
@@ -2780,7 +2853,7 @@ class RunMetrics:
         """Return a global delta between two run contexts."""
         if value in {"modal_share", "n_trips"}:
             value_type = "modal_share_delta" if value == "modal_share" else "n_trips_delta"
-            absolute_delta = self._global_delta_between_runs_by_iteration(
+            absolute_delta = self._global_delta_between_runs_by_step(
                 current_run=current_run,
                 current_demand_groups=current_demand_groups,
                 reference_run=reference_run,
@@ -2839,7 +2912,7 @@ class RunMetrics:
     ) -> float:
         """Compute a global value for one saved iteration."""
         if value == "mean_utility":
-            current_plans = self._saved_iteration_state(run, iteration).current_plans.lazy()
+            current_plans = self._saved_iteration_plans(run, iteration).lazy()
             current_plans = self._join_home_zone(current_plans, demand_groups)
             required_columns = {"home_zone_id", "utility", "n_persons"}
             missing_columns = required_columns.difference(current_plans.collect_schema().names())
@@ -3016,7 +3089,8 @@ class RunMetrics:
             value_label = f"Global average: {global_value:.2f} km/pers."
         return f"Iteration {iteration}\n{scope_label}\n{value_label}"
 
-    def plot_metric_by_iteration(
+    @_with_iteration_resolver
+    def plot_metric_by_step(
         self,
         iteration: int,
         quantity: Literal[
@@ -3072,7 +3146,7 @@ class RunMetrics:
 
         frame_title = None
         if plot or save_to_file or return_figure:
-            global_value = self._global_metric_by_iteration(
+            global_value = self._global_metric_by_step(
                 run=self.results.run,
                 demand_groups=self.results.demand_groups,
                 iteration=iteration,
@@ -3130,7 +3204,8 @@ class RunMetrics:
             return metric, fig
         return metric
 
-    def modal_share_by_iteration(
+    @_with_iteration_resolver
+    def modal_share_by_step(
         self,
         iteration: int,
         mode: str = "car",
@@ -3228,7 +3303,7 @@ class RunMetrics:
             return modal_share, fig
         return modal_share
 
-    def _paired_delta_by_iteration(
+    def _paired_delta_by_step(
         self,
         *,
         paired_runs: list[tuple[Any, Any]],
@@ -3265,7 +3340,7 @@ class RunMetrics:
                 else pl.DataFrame()
             )
             pair_deltas.append(
-                self._delta_value_between_runs_by_iteration(
+                self._delta_value_between_runs_by_step(
                     current_run=current_context["run"],
                     current_demand_groups=current_context["demand_groups"],
                     reference_run=reference_context["run"],
@@ -3280,7 +3355,7 @@ class RunMetrics:
                 ).with_columns(pair_id=pl.lit(pair_id))
             )
             global_deltas.append(
-                self._global_plot_delta_between_runs_by_iteration(
+                self._global_plot_delta_between_runs_by_step(
                     current_run=current_context["run"],
                     current_demand_groups=current_context["demand_groups"],
                     reference_run=reference_context["run"],
@@ -3312,7 +3387,8 @@ class RunMetrics:
         )
         return paired_delta, float(sum(global_deltas) / len(global_deltas))
 
-    def modal_share_delta_by_iteration(
+    @_with_iteration_resolver
+    def modal_share_delta_by_step(
         self,
         compare_with: Any,
         iteration: int,
@@ -3406,7 +3482,7 @@ class RunMetrics:
         )
         frame_title = None
         if plot or save_to_file or return_figure:
-            global_delta = self._global_delta_by_iteration(
+            global_delta = self._global_delta_by_step(
                 reference_run=reference_run,
                 reference_demand_groups=reference_demand_groups,
                 iteration=iteration,
@@ -3512,14 +3588,15 @@ class RunMetrics:
 
         return modal_share_delta
 
-    def car_modal_share_delta_by_iteration(
+    @_with_iteration_resolver
+    def car_modal_share_delta_by_step(
         self,
         compare_with: Any,
         iteration: int,
         **kwargs,
     ) -> pl.DataFrame | tuple[pl.DataFrame, go.Figure]:
         """Compare car modal share with another scenario for one saved iteration."""
-        result = self.modal_share_delta_by_iteration(
+        result = self.modal_share_delta_by_step(
             compare_with,
             iteration,
             mode="car",
@@ -3530,7 +3607,8 @@ class RunMetrics:
             return self._car_modal_share_delta_columns(modal_share_delta), fig
         return self._car_modal_share_delta_columns(result)
 
-    def modal_share_delta_gifs_by_iteration(
+    @_with_iteration_resolver
+    def modal_share_delta_gifs_by_step(
         self,
         compare_with: Any,
         modes: list[str],
@@ -3585,10 +3663,10 @@ class RunMetrics:
                 f"{safe_mode_name}-{value_settings['save_name']}-iterations-"
                 f"{min(iterations)}-{max(iterations)}-map.gif"
             )
-            with tempfile.TemporaryDirectory(prefix=f"{safe_mode_name}-modal-share-delta-", dir=mobility_temporary_folder()) as temporary_folder:
+            with tempfile.TemporaryDirectory(prefix=f"mobility-map-frames-{safe_mode_name}-", dir=mobility_temporary_folder()) as temporary_folder:
                 frame_paths = []
                 for frame_index, iteration in enumerate(iterations):
-                    modal_share_delta = self.modal_share_delta_by_iteration(
+                    modal_share_delta = self.modal_share_delta_by_step(
                         compare_with,
                         iteration=iteration,
                         mode=mode,
@@ -3596,7 +3674,7 @@ class RunMetrics:
                         value_type=value_type,
                         plot=False,
                     )
-                    global_delta = self._global_delta_by_iteration(
+                    global_delta = self._global_delta_by_step(
                         reference_run=reference_run,
                         reference_demand_groups=reference_demand_groups,
                         iteration=iteration,
@@ -3621,6 +3699,9 @@ class RunMetrics:
                         max_labels=max_labels,
                         simplify_tolerance=simplify_tolerance,
                     )
+                    # The renderer writes its own file, so check as soon as it
+                    # returns and let the temporary folder clean up on failure.
+                    check_temporary_disk_limit()
                     frame_paths.append(frame_path)
                 self._write_gif(frame_paths, gif_path, duration_ms=duration_ms)
             gif_paths[mode] = gif_path
@@ -3740,7 +3821,7 @@ class RunMetrics:
         scope_value = getattr(scope, "value", str(scope))
         return scope_value.replace("_", " ").capitalize()
 
-    def _global_modal_share_delta_by_iteration(
+    def _global_modal_share_delta_by_step(
         self,
         *,
         reference_run: Any,
@@ -3751,7 +3832,7 @@ class RunMetrics:
         inner_zones_only: bool,
     ) -> float:
         """Return the global modal-share delta for one mode."""
-        return self._global_modal_share_delta_between_runs_by_iteration(
+        return self._global_modal_share_delta_between_runs_by_step(
             current_run=self.results.run,
             current_demand_groups=self.results.demand_groups,
             reference_run=reference_run,
@@ -3762,7 +3843,7 @@ class RunMetrics:
             inner_zones_only=inner_zones_only,
         )
 
-    def _global_modal_share_delta_between_runs_by_iteration(
+    def _global_modal_share_delta_between_runs_by_step(
         self,
         *,
         current_run: Any,
@@ -3793,7 +3874,7 @@ class RunMetrics:
         )
         return current_share - reference_share
 
-    def _global_delta_by_iteration(
+    def _global_delta_by_step(
         self,
         *,
         reference_run: Any,
@@ -3805,7 +3886,7 @@ class RunMetrics:
         value_type: Literal["modal_share_delta", "n_trips_delta"],
     ) -> float:
         """Return the global delta shown on one GIF frame."""
-        return self._global_delta_between_runs_by_iteration(
+        return self._global_delta_between_runs_by_step(
             current_run=self.results.run,
             current_demand_groups=self.results.demand_groups,
             reference_run=reference_run,
@@ -3817,7 +3898,7 @@ class RunMetrics:
             value_type=value_type,
         )
 
-    def _global_delta_between_runs_by_iteration(
+    def _global_delta_between_runs_by_step(
         self,
         *,
         current_run: Any,
@@ -3832,7 +3913,7 @@ class RunMetrics:
     ) -> float:
         """Return a modal-share or trip-count delta between two run contexts."""
         if value_type == "modal_share_delta":
-            return self._global_modal_share_delta_between_runs_by_iteration(
+            return self._global_modal_share_delta_between_runs_by_step(
                 current_run=current_run,
                 current_demand_groups=current_demand_groups,
                 reference_run=reference_run,
@@ -3861,7 +3942,7 @@ class RunMetrics:
         )
         return current_n_trips - reference_n_trips
 
-    def _global_metric_by_iteration(
+    def _global_metric_by_step(
         self,
         *,
         run: Any,
@@ -4307,21 +4388,71 @@ class RunMetrics:
         )
 
     def _saved_iteration_plan_steps(self, run: Any, iteration: int) -> pl.DataFrame:
-        """Load current plan steps saved for one run iteration."""
-        return self._saved_iteration_state(run, iteration).current_plan_steps
+        """Request one step's plan steps through its cohort runner."""
+        return self._iteration_analysis_table(run, "plan_steps", iteration)
 
-    def _saved_iteration_state(self, run: Any, iteration: int) -> Any:
-        """Load the full saved state for one run iteration."""
-        if not hasattr(run, "cache_path") or "plan_steps" not in run.cache_path:
-            raise TypeError("Iteration metrics need a group-day-trips run.")
-        if not hasattr(run, "inputs_hash"):
-            raise TypeError("Iteration metrics need a run with an input hash.")
+    def _saved_iteration_plans(self, run: Any, iteration: int) -> pl.DataFrame:
+        """Request one step's allocations through its cohort runner."""
+        return self._iteration_analysis_table(run, "plans", iteration)
 
-        return Iterations(
-            run_inputs_hash=run.inputs_hash,
-            is_weekday=getattr(run, "is_weekday", self.results.is_weekday),
-            base_folder=Path(run.cache_path["plan_steps"]).parent,
-        ).iteration(iteration).load_state()
+    def _iteration_analysis_table(self, run: Any, table_name: str, iteration: int) -> pl.DataFrame:
+        """Read a selected table, batching related runs and steps for this analysis."""
+        resolver = get_current_asset_resolver()
+        scope = getattr(resolver, "iteration_analysis_scope", None) if resolver is not None else None
+        if scope is None or not callable(getattr(run, "_resolve_diagnostic_step_tables", None)):
+            return run.iteration_table(table_name, iteration).collect(engine="streaming")
+
+        arguments = scope["arguments"]
+        if "iterations" in arguments:
+            iterations = self._modal_share_evolution_iterations(arguments["iterations"])
+        else:
+            iterations = [int(arguments.get("iteration", iteration))]
+        if iteration not in iterations:
+            raise ValueError(f"Iteration {iteration} was not requested for this analysis.")
+
+        run._ensure_coordinator()
+        coordinator = run.coordinated_run_asset
+        include_final_costs = (
+            arguments.get("value") == "ghg_emissions"
+            and table_name in {"plan_steps", "costs"}
+        )
+        cache_key = (id(coordinator), table_name)
+        if cache_key not in scope["tables"]:
+            if arguments.get("paired_runs") is not None:
+                candidates = [item for pair in arguments["paired_runs"] for item in pair]
+            else:
+                candidates = [self.results.run]
+                if arguments.get("compare_with") is not None:
+                    candidates.append(arguments["compare_with"])
+            runs = []
+            for candidate in candidates:
+                candidate = self._resolve_comparison_run(candidate)
+                if not callable(getattr(candidate, "_resolve_diagnostic_step_tables", None)):
+                    continue
+                candidate._ensure_coordinator()
+                if candidate.coordinated_run_asset is coordinator and not any(candidate is other for other in runs):
+                    runs.append(candidate)
+            if not any(run is other for other in runs):
+                runs.append(run)
+            for member in runs:
+                if any(step > member.parameters.run.n_steps for step in iterations):
+                    raise ValueError("An iteration exceeds the run's number of steps.")
+            if include_final_costs:
+                step_tables, cost_tables = run._resolve_diagnostic_step_tables(
+                    runs, "plan_steps", sorted(set(iterations)), include_final_costs=True,
+                )
+                scope["tables"][(id(coordinator), "plan_steps")] = step_tables
+                scope["tables"][(id(coordinator), "costs")] = cost_tables
+            else:
+                scope["tables"][cache_key] = run._resolve_diagnostic_step_tables(
+                    runs, table_name, sorted(set(iterations)),
+                )
+
+        table = scope["tables"][cache_key][run.coordinated_run_key]
+        selected = table if table_name == "costs" else table.filter(pl.col("step") == iteration)
+        return selected.collect().drop(
+            ["scenario", "sensitivity_case", "day_type", "replication", "step"], strict=False,
+        )
 
     def _join_home_zone(
         self,
@@ -4377,7 +4508,11 @@ class RunMetrics:
 
     def _resolve_comparison_run(self, compare_with: Any) -> Any:
         """Return the day-type run used as the reference scenario."""
-        if hasattr(compare_with, "run") and hasattr(compare_with.run, "cache_path"):
+        if hasattr(compare_with, "first_run"):
+            reference_run = compare_with.first_run
+        elif hasattr(compare_with, "run") and callable(
+            getattr(compare_with.run, "table", None)
+        ):
             reference_run = compare_with.run
         elif callable(getattr(compare_with, "run", None)):
             day_type = "weekday" if self.results.is_weekday else "weekend"
@@ -4385,7 +4520,7 @@ class RunMetrics:
         else:
             reference_run = compare_with
 
-        if not hasattr(reference_run, "cache_path"):
+        if not callable(getattr(reference_run, "table", None)):
             raise TypeError(
                 "compare_with should be a group-day-trips run, results object, "
                 "or PopulationGroupDayTrips setup."
@@ -4402,18 +4537,12 @@ class RunMetrics:
         reference_run: Any,
     ) -> pl.DataFrame | pl.LazyFrame:
         """Return demand groups for the reference scenario."""
-        if hasattr(compare_with, "demand_groups"):
-            return compare_with.demand_groups
+        missing = object()
+        demand_groups = getattr(compare_with, "demand_groups", missing)
+        if demand_groups is not missing:
+            return demand_groups
 
-        demand_groups_path = reference_run.cache_path.get("demand_groups")
-        if demand_groups_path is None:
-            raise TypeError("compare_with run needs `cache_path['demand_groups']`.")
-        demand_groups_path = Path(demand_groups_path)
-        if demand_groups_path.exists() is False and callable(getattr(reference_run, "get", None)):
-            reference_run.get()
-        if demand_groups_path.exists() is False:
-            raise FileNotFoundError(f"Could not find reference demand groups: {demand_groups_path}.")
-        return pl.scan_parquet(demand_groups_path)
+        return reference_run._table_asset("demand_groups").get().lazy()
 
     def _resolve_comparison_costs(
         self,
@@ -4422,22 +4551,21 @@ class RunMetrics:
         reference_run: Any,
     ) -> pl.DataFrame | pl.LazyFrame:
         """Return costs for the reference scenario."""
-        if hasattr(compare_with, "costs"):
-            return compare_with.costs
+        resolver = get_current_asset_resolver()
+        scope = getattr(resolver, "iteration_analysis_scope", None) if resolver is not None else None
+        if (scope is not None and scope["arguments"].get("value") == "ghg_emissions"
+                and (reference_run is compare_with or getattr(compare_with, "_defer_run_tables", False))
+                and "costs" not in getattr(compare_with, "__dict__", {})
+                and callable(getattr(reference_run, "_resolve_diagnostic_step_tables", None))):
+            return self._iteration_analysis_table(
+                reference_run, "costs", int(scope["arguments"]["iteration"])
+            ).lazy()
+        missing = object()
+        costs = getattr(compare_with, "costs", missing)
+        if costs is not missing:
+            return costs
 
-        costs_path = reference_run.cache_path.get("costs")
-        if costs_path is None:
-            prefix = "weekday" if self.results.is_weekday else "weekend"
-            costs_path = reference_run.cache_path.get(f"{prefix}_costs")
-        if costs_path is None:
-            raise TypeError("compare_with run needs `cache_path['costs']`.")
-
-        costs_path = Path(costs_path)
-        if costs_path.exists() is False and callable(getattr(reference_run, "get", None)):
-            reference_run.get()
-        if costs_path.exists() is False:
-            raise FileNotFoundError(f"Could not find reference costs: {costs_path}.")
-        return pl.scan_parquet(costs_path)
+        return reference_run._table_asset("costs").get().lazy()
 
     def _transport_zone_ids(self) -> pl.DataFrame:
         """Return all transport-zone ids from the results geography."""

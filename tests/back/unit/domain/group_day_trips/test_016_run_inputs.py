@@ -3,8 +3,10 @@ from types import SimpleNamespace
 from pydantic import BaseModel
 
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.asset import Asset
 from mobility.runtime.assets.graph import build_asset_graph
 from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.input_hashing import hash_inputs
 from mobility.trips.group_day_trips.iterations import iteration_assets
 from mobility.trips.group_day_trips.core import run as run_module
 from mobility.trips.group_day_trips.core.parameters import (
@@ -56,7 +58,7 @@ def test_run_inputs_keep_context_objects_out_of_direct_dependencies(tmp_path, mo
     monkeypatch.setattr(
         run_module,
         "Iterations",
-        lambda **kwargs: SimpleNamespace(folder_paths={}),
+        lambda **kwargs: SimpleNamespace(folder_paths={}, run_inputs_hash=kwargs["run_inputs_hash"]),
     )
     monkeypatch.setattr(
         run_module,
@@ -81,7 +83,7 @@ def test_run_inputs_keep_context_objects_out_of_direct_dependencies(tmp_path, mo
     survey_plan_assets = _MemoryAsset("survey-plan-assets")
     transport_costs = _MemoryAsset("transport-costs")
     parameters = GroupDayTripsParameters(
-        run=GroupDayTripsRunParameters(n_iterations=1),
+        run=GroupDayTripsRunParameters(n_steps=1),
     )
 
     run = Run(
@@ -101,12 +103,27 @@ def test_run_inputs_keep_context_objects_out_of_direct_dependencies(tmp_path, mo
     assert run.modes == [mode]
     assert run.surveys == [survey]
     assert run.survey_plan_assets is survey_plan_assets
-    assert set(run.inputs) == {"version", "run_context_hash", "final_iteration_state"}
+    assert not isinstance(run, Asset)
+    assert run.final_iteration_state is final_state
+    assert run.inputs_hash == hash_inputs({
+        "version": 23,
+        "run_context_hash": run.run_context.inputs_hash,
+        "final_iteration_state": final_state,
+    })
 
-    graph = build_asset_graph(run)
-    direct_parents = set(graph.predecessors(run))
-
-    assert direct_parents == {final_state}
+    # A member's own inputs can stay fixed while another member changes the
+    # shared candidate pool. The old checkpoint must remain at a distinct path.
+    run_args = dict(
+        population=population, transport_costs=transport_costs,
+        activities=[activity], modes=[mode], surveys=[survey],
+        survey_plan_assets=survey_plan_assets, parameters=parameters,
+        is_weekday=True, scenario="default",
+    )
+    before = Run(**run_args, cohort_state_identity="original")
+    changed = Run(**run_args, cohort_state_identity="changed")
+    restored = Run(**run_args, cohort_state_identity="original")
+    assert before.iterations.run_inputs_hash != changed.iterations.run_inputs_hash
+    assert before.iterations.run_inputs_hash == restored.iterations.run_inputs_hash
 
 
 def test_initial_state_inputs_keep_full_modes_out_of_dependencies(tmp_path, monkeypatch):
@@ -128,7 +145,6 @@ def test_initial_state_inputs_keep_full_modes_out_of_dependencies(tmp_path, monk
 
     initial_state = iteration_assets.InitialIterationStateAsset(
         is_weekday=True,
-        base_folder=tmp_path,
         population=_MemoryAsset("population"),
         survey_plan_assets=_MemoryAsset("survey-plan-assets"),
         activities=[

@@ -241,6 +241,9 @@ def active_project_ref_version() -> str | None:
 
 def record_file_asset_use(asset: Any) -> None:
     """Record one FileAsset in the project cache registry."""
+    if getattr(asset, "is_execution_scoped_cost_asset", False):
+        return
+
     project_folder = os.environ.get("MOBILITY_PROJECT_DATA_FOLDER")
     if not project_folder:
         return

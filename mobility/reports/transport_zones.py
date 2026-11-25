@@ -744,8 +744,8 @@ def opportunity_density_map(
 ) -> go.Figure:
     """Create a report map of opportunity density by transport zone.
 
-    The model run should expose its grouped opportunity table through
-    ``model_run.cache_path["opportunities"]``.
+    The model run should provide its grouped opportunity table through
+    ``model_run.table("opportunities")``.
     """
     return TransportZoneMaps(
         transport_zones=transport_zones,
@@ -1598,28 +1598,14 @@ def _model_opportunities_by_zone(
     activity_name: str,
 ) -> pd.DataFrame:
     """Read model opportunity capacity from a group-day-trips run."""
-    if not hasattr(model_run, "cache_path") or "opportunities" not in model_run.cache_path:
+    get_table = getattr(model_run, "table", None)
+    if not callable(get_table):
         raise TypeError(
             "Opportunity density needs a group-day-trips run with "
-            "`cache_path['opportunities']`."
+            "a `table('opportunities')` method."
         )
 
-    opportunities_path = Path(model_run.cache_path["opportunities"])
-    if not opportunities_path.exists():
-        if not callable(getattr(model_run, "get", None)):
-            raise FileNotFoundError(
-                "Could not find the model opportunities file: "
-                f"{opportunities_path}."
-            )
-        model_run.get()
-
-    if not opportunities_path.exists():
-        raise FileNotFoundError(
-            "Could not find the model opportunities file after running the model: "
-            f"{opportunities_path}."
-        )
-
-    opportunities = pl.read_parquet(opportunities_path)
+    opportunities = get_table("opportunities")
     columns = set(opportunities.columns)
     if "opportunity_capacity" not in columns:
         raise ValueError(

@@ -15,12 +15,43 @@ from mobility.transport.graphs.modified.modifiers import speed_modifier
 from mobility.transport.modes.bicycle import BicycleMode
 from mobility.transport.modes.car import CarMode
 from mobility.transport.modes.core.osm_capacity_parameters import OSMCapacityParameters
+from mobility.trips.group_day_trips.core.run import _road_geometry_hashes
 
 
-def test_speed_modifier_parameters_resolve_by_scenario_and_iteration():
+def test_road_geometry_changes_invalidate_modifier_and_run_identity(tmp_path):
+    geometry = tmp_path / "roads.shp"
+    attributes = tmp_path / "roads.dbf"
+    geometry.write_bytes(b"geometry")
+    attributes.write_bytes(b"first attributes")
+    modifier = speed_modifier.NewRoadModifier(geometry)
+    mode = InMemoryAsset({"modifier": modifier})
+    first = _road_geometry_hashes([mode], "default", None, 2)
+    assert modifier.for_iteration(1) is modifier
+
+    attributes.write_bytes(b"changed attributes")
+    changed = modifier.for_iteration(1)
+    assert changed.inputs_hash != modifier.inputs_hash
+    assert _road_geometry_hashes([mode], "default", None, 2) != first
+    assert changed.for_iteration(1) is changed
+
+
+def test_road_geometry_identity_selects_only_relevant_scenario(tmp_path):
+    geometry = tmp_path / "project.geojson"
+    geometry.write_text("first", encoding="utf-8")
+    missing = tmp_path / "other.geojson"
+    modifier = speed_modifier.NewRoadModifier(ParameterValue.by_scenario(
+        default=str(geometry), project=str(geometry), other=str(missing),
+    ))
+    mode = InMemoryAsset({"modifier": modifier})
+    actual = _road_geometry_hashes([mode], "project", None, 1)
+    assert list(actual) == [str(geometry)]
+    assert str(missing) not in actual
+
+
+def test_speed_modifier_parameters_resolve_by_scenario_and_step():
     """Resolve every user-facing modifier value before it reaches the R script."""
     def project_value(default, changed):
-        return ParameterValue.by_scenario_and_iteration(
+        return ParameterValue.by_scenario_and_step(
             default=default,
             road_project={1: default, 3: changed},
         )
@@ -109,6 +140,7 @@ def test_speed_modifier_changes_are_listed_in_the_scenario_manifest():
 def test_path_travel_costs_rebuild_the_graph_chain_for_resolved_modifiers(
     monkeypatch,
     congestion,
+    tmp_path,
 ):
     """Bind every downstream graph to the modifier selected for an iteration."""
 
@@ -151,7 +183,7 @@ def test_path_travel_costs_rebuild_the_graph_chain_for_resolved_modifiers(
         FakePathGraph,
     )
 
-    max_speed = ParameterValue.by_scenario_and_iteration(
+    max_speed = ParameterValue.by_scenario_and_step(
         default=30.0,
         road_project={1: 30.0, 3: 20.0},
     )
@@ -208,6 +240,18 @@ def test_path_travel_costs_rebuild_the_graph_chain_for_resolved_modifiers(
         resolved_mode.inputs["generalized_cost"].inputs["travel_costs"]
         is resolved_travel_costs
     )
+
+    # A file can change without any parameter value changing. The selected
+    # graph and its downstream costs must still get fresh identities.
+    geometry = tmp_path / "roads.geojson"
+    geometry.write_text("first", encoding="utf-8")
+    mode.inputs["travel_costs"].inputs["speed_modifiers"] = [
+        speed_modifier.NewRoadModifier(geometry)
+    ]
+    before = mode.for_iteration(1).inputs["travel_costs"].modified_path_graph.inputs_hash
+    geometry.write_text("second", encoding="utf-8")
+    after = mode.for_iteration(1).inputs["travel_costs"].modified_path_graph.inputs_hash
+    assert before != after
 
 
 def test_speed_modifier_parameter_models_keep_scalar_defaults():

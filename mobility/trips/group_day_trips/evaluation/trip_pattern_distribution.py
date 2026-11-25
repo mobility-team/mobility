@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import os
 import pathlib
+from typing import TYPE_CHECKING
 
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
 
 from .calibration_plan_steps import distance_bin_expr
+
+if TYPE_CHECKING:
+    from mobility.trips.group_day_trips.core.run import Run
 
 
 def get_survey_immobility_probabilities(surveys, *, is_weekday: bool) -> pl.DataFrame:
@@ -211,7 +215,7 @@ class PopulationWeightedTripPatternDistribution(FileAsset):
 class ObservedTripPatternDistribution(FileAsset):
     """Persist the observed final trip-pattern distribution."""
 
-    def __init__(self, *, run: FileAsset, is_weekday: bool) -> None:
+    def __init__(self, *, run: Run, is_weekday: bool) -> None:
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
         cache_path = (
             project_folder
@@ -220,7 +224,7 @@ class ObservedTripPatternDistribution(FileAsset):
         )
         inputs = {
             "version": 1,
-            "run": run,
+            "plan_steps": run._table_asset("plan_steps"),
             "is_weekday": is_weekday,
         }
         self.run = run
@@ -231,6 +235,8 @@ class ObservedTripPatternDistribution(FileAsset):
         return pl.scan_parquet(self.cache_path)
 
     def create_and_get_asset(self) -> pl.LazyFrame:
-        distribution = build_trip_pattern_distribution(self.run.get_cached_asset()["plan_steps"])
+        distribution = build_trip_pattern_distribution(
+            self.run._table_asset("plan_steps").get().lazy()
+        )
         distribution.write_parquet(self.cache_path)
         return self.get_cached_asset()

@@ -1,24 +1,33 @@
 from __future__ import annotations
 
-import os
-import pathlib
-
 import numpy as np
 import polars as pl
 
-from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.asset import Asset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
 
 from .person_metrics import RESULT_COLUMNS, SCOPE_COLUMNS
+from .scoped_tables import release_scoped_run_tables
 
 
-class ActivityDurationDistribution(FileAsset):
-    """Persist model-vs-survey activity duration distributions."""
+def _complete_replication_bins(values: pl.DataFrame, dimensions: list[str], columns: list[str]) -> pl.LazyFrame:
+    """Include zero-valued bins for seeds where another seed has that bin."""
+    data = values.lazy()
+    scopes = data.select(SCOPE_COLUMNS + ["source"]).unique()
+    bins = data.select(RESULT_COLUMNS + ["source"] + dimensions).unique()
+    return (scopes.join(bins, on=RESULT_COLUMNS + ["source"], how="inner")
+            .join(data, on=SCOPE_COLUMNS + ["source"] + dimensions, how="left")
+            .with_columns(pl.col(columns).fill_null(0.0)))
+
+
+class ActivityDurationDistribution(InMemoryAsset):
+    """Compute model-vs-survey activity duration distributions."""
 
     def __init__(
         self,
         *,
-        plan_steps: FileAsset,
-        reference_plan_steps: FileAsset | None = None,
+        plan_steps: list[Asset],
+        reference_plan_steps: Asset | None = None,
         scenarios: list[str],
         day_type: str,
         iterations: list[int],
@@ -28,7 +37,7 @@ class ActivityDurationDistribution(FileAsset):
         if bin_width_minutes <= 0:
             raise ValueError("bin_width_minutes must be positive.")
 
-        self.plan_steps = plan_steps
+        self.plan_steps = list(plan_steps)
         self.reference_plan_steps = reference_plan_steps
         self.scenarios = list(scenarios)
         self.day_type = day_type
@@ -36,44 +45,47 @@ class ActivityDurationDistribution(FileAsset):
         self.replications = list(replications)
         self.bin_width_minutes = bin_width_minutes
 
-        project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
-        cache_path = (
-            project_folder
-            / "group_day_trips"
-            / "results"
-            / f"activity_duration_distribution_{bin_width_minutes}min.parquet"
-        )
         super().__init__(
             {
-                "version": 1,
-                "plan_steps": plan_steps,
+                "version": 2,
+                "plan_steps": tuple(self.plan_steps),
                 "reference_plan_steps": reference_plan_steps,
                 "scenarios": tuple(scenarios),
                 "day_type": day_type,
                 "iterations": tuple(iterations),
                 "replications": tuple(replications),
                 "bin_width_minutes": bin_width_minutes,
-            },
-            cache_path,
+            }
         )
 
-    def get_cached_asset(self) -> pl.DataFrame:
-        """Return the cached distribution table."""
-        return pl.read_parquet(self.cache_path)
-
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Build and cache the distribution table."""
-        duration_tables = [_activity_duration_samples(self.plan_steps.get(), source="model")]
+        """Build the distribution table for the requested result scope."""
+        if len(self.plan_steps) != len(self.iterations):
+            raise ValueError("Activity-duration metrics need one plan-step asset per iteration.")
+        results = []
+        for iteration, plan_steps_asset in zip(self.iterations, self.plan_steps):
+            try:
+                results.append(self.combine_replications(
+                    self.iteration_by_replication(iteration, plan_steps_asset)
+                ))
+            finally:
+                release_scoped_run_tables(iteration)
+        return pl.concat(results, how="vertical_relaxed")
+
+    def iteration_by_replication(self, iteration: int, plan_steps_asset: Asset) -> pl.DataFrame:
+        """Reduce model and optional survey samples for one selected step."""
+        duration_tables = [_activity_duration_samples(plan_steps_asset.get(), source="model")]
         if self.reference_plan_steps is not None:
             survey_steps = _with_result_scope(
-                self.reference_plan_steps.get(),
-                scenarios=self.scenarios,
-                day_type=self.day_type,
-                iterations=self.iterations,
-                replications=self.replications,
+                self.reference_plan_steps.get(), scenarios=self.scenarios,
+                day_type=self.day_type, iterations=[iteration], replications=self.replications,
             )
             duration_tables.append(_activity_duration_samples(survey_steps, source="survey"))
         durations = pl.concat(duration_tables, how="vertical_relaxed")
+        return self.distribution_by_replication(durations)
+
+    def distribution_by_replication(self, durations: pl.DataFrame) -> pl.DataFrame:
+        """Reduce duration samples to bins for each seed."""
         bin_width_hours = self.bin_width_minutes / 60.0
         distribution = (
             durations.lazy()
@@ -109,6 +121,14 @@ class ActivityDurationDistribution(FileAsset):
                 / pl.col("weighted_visits").sum().over(SCOPE_COLUMNS + ["source", "activity"])
             )
         )
+        # The samples are already materialized. The streaming executor has
+        # intermittently failed on this grouped string aggregation, so use
+        # Polars' in-memory engine for this one reduction.
+        return distribution.collect(engine="in-memory")
+
+    @staticmethod
+    def combine_replications(distribution: pl.DataFrame) -> pl.DataFrame:
+        """Average the per-seed duration bins."""
         output_columns = RESULT_COLUMNS + [
             "source",
             "activity",
@@ -117,8 +137,11 @@ class ActivityDurationDistribution(FileAsset):
             "duration_bin_mid",
             "duration_label",
         ]
-        result = (
-            distribution
+        return (
+            _complete_replication_bins(
+                distribution, [column for column in output_columns if column not in RESULT_COLUMNS + ["source"]],
+                ["weighted_visits", "person_hours", "probability"],
+            )
             .group_by(output_columns)
             .agg(
                 pl.col("weighted_visits").mean().alias("weighted_visits"),
@@ -131,20 +154,16 @@ class ActivityDurationDistribution(FileAsset):
             .collect(engine="streaming")
         )
 
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        result.write_parquet(self.cache_path)
-        return result
 
-
-class ActivityTimeSeries(FileAsset):
-    """Persist model-vs-survey activity occupancy over time."""
+class ActivityTimeSeries(InMemoryAsset):
+    """Compute model-vs-survey activity occupancy over time."""
 
     def __init__(
         self,
         *,
-        plan_steps: FileAsset,
-        demand_groups: FileAsset,
-        reference_plan_steps: FileAsset | None = None,
+        plan_steps: list[Asset],
+        demand_groups: list[Asset],
+        reference_plan_steps: Asset | None = None,
         scenarios: list[str],
         day_type: str,
         iterations: list[int],
@@ -154,8 +173,8 @@ class ActivityTimeSeries(FileAsset):
         if interval_minutes <= 0 or 1440 % interval_minutes != 0:
             raise ValueError("interval_minutes must be a positive divisor of 1440.")
 
-        self.plan_steps = plan_steps
-        self.demand_groups = demand_groups
+        self.plan_steps = list(plan_steps)
+        self.demand_groups = list(demand_groups)
         self.reference_plan_steps = reference_plan_steps
         self.scenarios = list(scenarios)
         self.day_type = day_type
@@ -163,42 +182,71 @@ class ActivityTimeSeries(FileAsset):
         self.replications = list(replications)
         self.interval_minutes = interval_minutes
 
-        project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
-        cache_path = (
-            project_folder
-            / "group_day_trips"
-            / "results"
-            / f"activity_time_series_{interval_minutes}min.parquet"
-        )
         super().__init__(
             {
-                "version": 1,
-                "plan_steps": plan_steps,
-                "demand_groups": demand_groups,
+                "version": 2,
+                "plan_steps": tuple(self.plan_steps),
+                "demand_groups": tuple(self.demand_groups),
                 "reference_plan_steps": reference_plan_steps,
                 "scenarios": tuple(scenarios),
                 "day_type": day_type,
                 "iterations": tuple(iterations),
                 "replications": tuple(replications),
                 "interval_minutes": interval_minutes,
-            },
-            cache_path,
+            }
         )
 
-    def get_cached_asset(self) -> pl.DataFrame:
-        """Return the cached time series table."""
-        return pl.read_parquet(self.cache_path)
-
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Build and cache the time series table."""
+        """Build the time series table for the requested result scope."""
+        if len(self.plan_steps) != len(self.iterations):
+            raise ValueError("Activity time-series metrics need one plan-step asset per iteration.")
+        if len(self.demand_groups) != len(self.iterations):
+            raise ValueError("Activity time-series metrics need one demand-group asset per iteration.")
+        results = []
+        for iteration, plan_steps_asset, demand_groups_asset in zip(
+            self.iterations,
+            self.plan_steps,
+            self.demand_groups,
+        ):
+            try:
+                results.append(
+                    self._iteration_series(
+                        iteration=iteration,
+                        plan_steps_asset=plan_steps_asset,
+                        demand_groups_asset=demand_groups_asset,
+                    )
+                )
+            finally:
+                release_scoped_run_tables(iteration)
+        return pl.concat(results, how="vertical_relaxed")
+
+    def _iteration_series(
+        self,
+        *,
+        iteration: int,
+        plan_steps_asset: Asset,
+        demand_groups_asset: Asset,
+    ) -> pl.DataFrame:
+        """Aggregate one iteration before another run state is loaded."""
+        return self.combine_replications(
+            self.series_by_replication(
+                iteration=iteration, plan_steps_asset=plan_steps_asset,
+                demand_groups_asset=demand_groups_asset,
+            )
+        )
+
+    def series_by_replication(
+        self, *, iteration: int, plan_steps_asset: Asset, demand_groups_asset: Asset,
+    ) -> pl.DataFrame:
+        """Keep one activity time series per seed for the final reduction."""
         bins = _time_bins(interval_minutes=self.interval_minutes)
         total_population = (
-            self.demand_groups.get()
+            demand_groups_asset.get()
             .group_by(SCOPE_COLUMNS)
             .agg(total_population=pl.col("n_persons").cast(pl.Float64).sum())
         )
         model_series = _add_residual_home_time(
-            _time_series_from_plan_steps(self.plan_steps.get(), interval_minutes=self.interval_minutes),
+            _time_series_from_plan_steps(plan_steps_asset.get(), interval_minutes=self.interval_minutes),
             bins=bins,
             total_population=total_population,
         ).with_columns(source=pl.lit("model"))
@@ -208,7 +256,7 @@ class ActivityTimeSeries(FileAsset):
                 self.reference_plan_steps.get(),
                 scenarios=self.scenarios,
                 day_type=self.day_type,
-                iterations=self.iterations,
+                iterations=[iteration],
                 replications=self.replications,
             )
             survey_series = _add_residual_home_time(
@@ -217,11 +265,16 @@ class ActivityTimeSeries(FileAsset):
                 total_population=total_population,
             ).with_columns(source=pl.lit("survey"))
             series_tables.append(survey_series)
-        per_replication = pl.concat(series_tables, how="vertical_relaxed")
+        return pl.concat(series_tables, how="vertical_relaxed")
+
+    @staticmethod
+    def combine_replications(per_replication: pl.DataFrame) -> pl.DataFrame:
+        """Average activity occupancy across seeds."""
         output_columns = RESULT_COLUMNS + ["source", "time_bin_start", "time_label", "label"]
-        result = (
-            per_replication
-            .lazy()
+        return (
+            _complete_replication_bins(
+                per_replication, ["time_bin_start", "time_label", "label"], ["n_persons"]
+            )
             .group_by(output_columns)
             .agg(
                 pl.col("n_persons").mean().alias("n_persons"),
@@ -231,10 +284,6 @@ class ActivityTimeSeries(FileAsset):
             .sort(output_columns)
             .collect(engine="streaming")
         )
-
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        result.write_parquet(self.cache_path)
-        return result
 
 
 def _with_result_scope(
@@ -255,7 +304,7 @@ def _with_result_scope(
                         scenario=pl.lit(scenario, dtype=pl.String),
                         sensitivity_case=pl.lit("base", dtype=pl.String),
                         day_type=pl.lit(day_type, dtype=pl.String),
-                        iteration=pl.lit(iteration, dtype=pl.Int32),
+                        step=pl.lit(iteration, dtype=pl.Int32),
                         replication=pl.lit(replication, dtype=pl.Int64),
                     )
                 )

@@ -96,13 +96,13 @@ class ModelEntropy:
         """Return the persisted entropy history extracted from iteration diagnostics."""
         if self.history_store is None:
             raise ValueError("No model entropy history is attached to this ModelEntropy instance.")
-        return self.history_store.get().select(["iteration", "observed_entropy"])
+        return self.history_store.get().select(["step", "observed_entropy"])
 
     def history_row(self, *, iteration: int, plan_steps) -> dict[str, float]:
         """Build one persisted entropy-history row for a given iteration state."""
         observed_entropy = self.observed_entropy(plan_steps=plan_steps)
         return {
-            "iteration": iteration,
+            "step": iteration,
             "observed_entropy": observed_entropy,
         }
 

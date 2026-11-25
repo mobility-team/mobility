@@ -18,3 +18,19 @@ def test_setup_project_data_folder_default_accepts(tmp_home, fake_input_yes):
     default_project = base / "projects"
     assert default_project.exists()
     assert os.environ["MOBILITY_PROJECT_DATA_FOLDER"] == str(default_project)
+
+
+def test_polars_scratch_follows_project_and_respects_user_override(tmp_path, monkeypatch):
+    """Polars scratch stays in the project unless the user chose a location."""
+    monkeypatch.delenv("MOBILITY_PROJECT_DATA_FOLDER", raising=False)
+    monkeypatch.delenv("POLARS_TEMP_DIR", raising=False)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    setup_project_data_folder_path(first)
+    assert Path(os.environ["POLARS_TEMP_DIR"]) == first / "temporary"
+    setup_project_data_folder_path(second)
+    assert Path(os.environ["POLARS_TEMP_DIR"]) == second / "temporary"
+    custom = tmp_path / "custom"
+    monkeypatch.setenv("POLARS_TEMP_DIR", str(custom))
+    setup_project_data_folder_path(first)
+    assert Path(os.environ["POLARS_TEMP_DIR"]) == custom

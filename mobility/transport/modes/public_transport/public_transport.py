@@ -9,6 +9,7 @@ from mobility.transport.modes.core.mode_registry import ModeRegistry
 from mobility.transport.modes.public_transport.public_transport_graph import PublicTransportRoutingParameters
 from mobility.transport.modes.public_transport.public_transport_travel_costs import PublicTransportTravelCosts
 from mobility.transport.modes.public_transport.public_transport_generalized_cost import PublicTransportGeneralizedCost
+from mobility.transport.modes.public_transport.gtfs.gtfs_data import GTFSData
 from mobility.transport.modes.core.modal_transfer import (
     IntermodalTransfer,
     default_intermodal_transfer_for_mode,
@@ -198,7 +199,13 @@ class PublicTransportMode(TransportMode):
             and resolved_first_leg_mode is self.first_leg_mode
             and resolved_last_leg_mode is self.last_leg_mode
         ):
-            return self
+            router = (self.inputs["travel_costs"].inputs["intermodal_graph"]
+                      .inputs["public_transport_graph"].inputs["gtfs_router"])
+            if all(
+                GTFSData.file_sha256(path) == fingerprint
+                for path, fingerprint in router.inputs["additional_gtfs_hashes"].items()
+            ):
+                return self
 
         travel_costs = self.inputs["travel_costs"]
 

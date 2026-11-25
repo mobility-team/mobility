@@ -38,8 +38,8 @@ def test_010_group_day_trips_results_are_reproducible(test_data):
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=1,
-                n_iter_per_cost_update=0,
+                n_steps=1,
+                n_steps_per_cost_update=0,
                 seed=0,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
@@ -65,8 +65,8 @@ def test_010_group_day_trips_results_are_reproducible(test_data):
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=1,
-                n_iter_per_cost_update=0,
+                n_steps=1,
+                n_steps_per_cost_update=0,
                 seed=0,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(

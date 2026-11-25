@@ -294,7 +294,7 @@ def test_001_work_flows_use_country_priority_order_for_duplicates(tmp_path, monk
         countries=["fr", "ch"],
         local_admin_unit_ids=["fr-1"],
         country_priority_order=["ch", "fr"],
-    ).create_and_get_asset()
+    ).get()
 
     assert french_data.flows.selected_local_admin_unit_ids == ["fr-1"]
     assert swiss_data.flows.selected_local_admin_unit_ids == ["fr-1"]
@@ -346,7 +346,7 @@ def test_001_study_flows_use_country_priority_order_for_duplicates(tmp_path, mon
         countries=["fr", "ch"],
         local_admin_unit_ids=["fr-1"],
         country_priority_order=["ch", "fr"],
-    ).create_and_get_asset()
+    ).get()
 
     assert flows.to_dict("records") == [
         {
@@ -429,7 +429,7 @@ def test_001_shopping_opportunities_create_and_get_asset_filters_invalid_rows(tm
     shopping = ShoppingOpportunities(
         countries=["fr"],
         local_admin_unit_ids=["fr-1"],
-    ).create_and_get_asset()
+    ).get()
 
     assert french_data.opportunities.selected_local_admin_unit_ids == ["fr-1"]
     assert shopping["local_admin_unit_id"].tolist() == ["fr-1"]

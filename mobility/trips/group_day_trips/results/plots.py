@@ -238,7 +238,7 @@ def plot_metric_over_iterations(
             trace_values = (
                 scenario_values
                 .filter(pl.col(dimension_column) == dimension)
-                .sort("iteration")
+                .sort("step")
             )
             if has_dimensions and len(selected_scenarios) == 1:
                 trace_name = _dimension_label(dimension)
@@ -253,7 +253,7 @@ def plot_metric_over_iterations(
                 color = _scenario_color(scenario_index)
                 dash = "solid"
 
-            iterations = trace_values["iteration"].to_list()
+            iterations = trace_values["step"].to_list()
             metric_values = trace_values[metric].to_list()
             if std_column in trace_values.columns:
                 metric_std = trace_values[std_column].to_list()
@@ -299,7 +299,7 @@ def plot_metric_over_iterations(
             "yanchor": "top",
             "pad": {"b": 6},
         },
-        xaxis_title="Iteration",
+        xaxis_title="Simulation step",
         yaxis_title=metric.replace("_", " "),
         showlegend=True,
         margin={"l": 70, "r": 45, "t": 92, "b": 80},

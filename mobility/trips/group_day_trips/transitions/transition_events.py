@@ -1,4 +1,6 @@
+import os
 import pathlib
+import tempfile
 
 import polars as pl
 
@@ -12,7 +14,7 @@ from .transition_schema import TRANSITION_EVENT_COLUMNS, TRANSITION_EVENT_SCHEMA
 def build_transition_events_lazy(transitions: pl.LazyFrame, *, iteration: int) -> pl.LazyFrame:
     """Build the core transition-event table from raw plan-to-plan transitions."""
     return transitions.with_columns(
-        iteration=pl.lit(iteration).cast(pl.UInt32),
+        step=pl.lit(iteration).cast(pl.UInt32),
         utility_from=pl.col("utility_from_updated"),
         utility_to=pl.col("utility_trans"),
         utility_prev_from=pl.col("utility_prev_from"),
@@ -23,7 +25,7 @@ def build_transition_events_lazy(transitions: pl.LazyFrame, *, iteration: int) -
         is_self_transition=pl.col("plan_id") == pl.col("plan_id_trans"),
     ).select(
         [
-            "iteration",
+            "step",
             "demand_group_id",
             "demand_subgroup_id",
             "activity_seq_id",
@@ -34,6 +36,10 @@ def build_transition_events_lazy(transitions: pl.LazyFrame, *, iteration: int) -
             "time_seq_id_trans",
             "dest_seq_id_trans",
             "mode_seq_id_trans",
+            "chosen_activity_seq_id",
+            "chosen_time_seq_id",
+            "chosen_dest_seq_id",
+            "chosen_mode_seq_id",
             "n_persons_moved",
             "utility_prev_from",
             "utility_prev_to",
@@ -161,10 +167,10 @@ class TransitionEventsAsset(FileAsset):
     ) -> None:
         self.transition_events = transition_events
         inputs = {
-            "version": 2,
+            "version": 3,
             "run_key": run_key,
             "is_weekday": is_weekday,
-            "iteration": iteration,
+            "step": iteration,
         }
         cache_path = pathlib.Path(base_folder) / f"transition_events_{iteration}.parquet"
         super().__init__(inputs, cache_path)
@@ -180,6 +186,13 @@ class TransitionEventsAsset(FileAsset):
         if self.transition_events is None:
             raise ValueError("Cannot save transition events without a lazy query.")
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.cache_path.unlink(missing_ok=True)
-        self.transition_events.sink_parquet(self.cache_path)
+        fd, temporary_path = tempfile.mkstemp(
+            prefix=f".{self.cache_path.name}.", suffix=".tmp", dir=self.cache_path.parent,
+        )
+        os.close(fd)
+        try:
+            self.transition_events.sink_parquet(temporary_path)
+            os.replace(temporary_path, self.cache_path)
+        finally:
+            pathlib.Path(temporary_path).unlink(missing_ok=True)
         return self.cache_path

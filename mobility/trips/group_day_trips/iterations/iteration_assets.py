@@ -3,14 +3,26 @@ import logging
 import pathlib
 import pickle
 import random
+import shutil
+import tempfile
 from typing import Any
 
 import polars as pl
 
-from mobility.runtime.assets.cache_schema import read_cached_parquet, validate_cached_table
+from mobility.trips.group_day_trips.core.performance_trace import trace_simulation_step
+
+from mobility.runtime.assets.asset import Asset
+from mobility.runtime.assets.cache_schema import read_cached_parquet
 from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.temporary import write_temporary_bytes, write_temporary_parquet
+from mobility.runtime.assets.resolver import (
+    asset_resolution_context,
+    get_current_asset_resolver,
+)
+from mobility.runtime.assets.graph import asset_graph_key
 from mobility.activities.activity import (
-    resolve_activity_arrival_time_rigidity,
+    resolve_activity_time_rigidity,
     resolve_activity_parameters,
 )
 from mobility.runtime.parameter_values import SensitivityCase
@@ -28,31 +40,10 @@ from mobility.transport.costs.od_flows_asset import VehicleODFlowsAsset
 from mobility.transport.modes.core.mode_values import get_mode_values
 from mobility.trips.group_day_trips.core.progress import get_group_day_trips_progress
 from ..plans.candidate_plan_steps import CandidatePlanStepsAsset
-from ..plans.demand_subgroups import DEMAND_UNIT_SCHEMA
+from ..plans.compact_candidate_steps import CompactCandidateSteps, SectionedPhysicalSteps
 from ..plans.plan_ids import PLAN_KEY_SCHEMA, PLAN_STEP_KEY_SCHEMA
 
 
-STATE_TABLE_NAMES = [
-    "survey_plans",
-    "survey_plan_steps",
-    "demand_groups",
-    "activity_dur",
-    "home_night_dur",
-    "stay_home_plan",
-    "opportunities",
-    "current_plans",
-    "current_plan_steps",
-    "candidate_plan_steps",
-    "plan_id_index",
-    "destination_saturation",
-    "costs",
-]
-
-
-DEMAND_GROUPS_SCHEMA = {
-    **DEMAND_UNIT_SCHEMA,
-    "n_persons": pl.Float64,
-}
 CURRENT_PLANS_SCHEMA = {
     **PLAN_KEY_SCHEMA,
     "plan_id": pl.UInt32,
@@ -65,109 +56,122 @@ PLAN_ID_INDEX_SCHEMA = {
     **PLAN_KEY_SCHEMA,
     "plan_id": pl.UInt32,
 }
-RUN_STATE_TABLE_SCHEMAS = {
-    "demand_groups": DEMAND_GROUPS_SCHEMA,
-    "stay_home_plan": CURRENT_PLAN_STEPS_SCHEMA,
-    "current_plans": CURRENT_PLANS_SCHEMA,
-    "current_plan_steps": CURRENT_PLAN_STEPS_SCHEMA,
-    "candidate_plan_steps": CandidatePlanStepsAsset.REQUIRED_SCHEMA,
-    "plan_id_index": PLAN_ID_INDEX_SCHEMA,
-}
 
 
-def _state_cache_paths(base_folder: pathlib.Path, iteration: int) -> dict[str, pathlib.Path]:
-    """Return the parquet and pickle paths used by one cached run state."""
-    folder = pathlib.Path(base_folder) / "iteration-state-cache"
-    paths = {
-        table_name: folder / f"{table_name}_{iteration}.parquet"
-        for table_name in STATE_TABLE_NAMES
+def _nested_lists_to_tuples(value: Any) -> Any:
+    """Restore the tuple structure expected by ``random.Random.setstate``."""
+    if isinstance(value, list):
+        return tuple(_nested_lists_to_tuples(item) for item in value)
+    return value
+
+
+def _candidate_spill_paths(folder: pathlib.Path) -> dict[str, pathlib.Path]:
+    """Names for candidate files inside one temporary state directory."""
+    return {
+        "expanded": folder / "candidate_plan_steps.parquet",
+        "steps": folder / "candidate_steps.parquet",
+        "sections": folder / "candidate_sections.parquet",
+        "references": folder / "candidate_section_references.parquet",
+        "membership": folder / "candidate_membership.parquet",
+        "unit_map": folder / "candidate_unit_map.parquet",
     }
-    paths["rng_state"] = folder / f"rng_state_{iteration}.pkl"
-    paths["metadata"] = folder / f"metadata_{iteration}.json"
-    return paths
 
 
-def _write_run_state(cache_path: dict[str, pathlib.Path], state: RunState, rng_state: object) -> None:
-    """Write a run state to parquet files and keep None table flags in metadata."""
-    cache_path["metadata"].parent.mkdir(parents=True, exist_ok=True)
-    metadata = {
-        "current_plan_steps_is_none": state.current_plan_steps is None,
-        "candidate_plan_steps_is_none": state.candidate_plan_steps is None,
-    }
-    for table_name in STATE_TABLE_NAMES:
-        table = getattr(state, table_name)
-        if table is None:
-            table = pl.DataFrame()
-        table.write_parquet(cache_path[table_name])
+def _write_candidates(
+    candidates: pl.DataFrame | pl.LazyFrame | CompactCandidateSteps,
+    paths: dict[str, pathlib.Path],
+    *,
+    temporary: bool,
+    write_empty: bool = False,
+) -> dict[str, Any]:
+    """Save candidate history without expanding shared plans to every person."""
+    tables = {}
+    metadata = {"version": 1}
+    if isinstance(candidates, CompactCandidateSteps):
+        sectioned = isinstance(candidates.steps, SectionedPhysicalSteps)
+        metadata.update(format="sectioned" if sectioned else "compact", columns=list(candidates.columns),
+                        has_unit_map=candidates.unit_map is not None)
+        if sectioned:
+            tables["sections"] = candidates.steps.sections
+            tables["references"] = candidates.steps.references
+        else:
+            tables["steps"] = candidates.steps
+        tables["membership"] = candidates.membership
+        if candidates.unit_map is not None:
+            tables["unit_map"] = candidates.unit_map
+    else:
+        metadata["format"] = "expanded"
+        tables["expanded"] = candidates
+    if write_empty:
+        for name in paths:
+            tables.setdefault(name, pl.DataFrame())
+    for name, table in tables.items():
+        if temporary:
+            write_temporary_parquet(table, paths[name])
+        else:
+            (table if isinstance(table, pl.LazyFrame) else table.lazy()).sink_parquet(paths[name])
+    return metadata
 
-    with open(cache_path["rng_state"], "wb") as file:
-        pickle.dump(rng_state, file, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(cache_path["metadata"], "w", encoding="utf-8") as file:
-        json.dump(metadata, file, sort_keys=True)
 
-
-def _read_run_state(cache_path: dict[str, pathlib.Path], *, start_iteration: int) -> RunState:
-    """Read a cached run state from parquet files."""
-    with open(cache_path["metadata"], "r", encoding="utf-8") as file:
-        metadata = json.load(file)
-
-    tables = {
-        table_name: pl.read_parquet(cache_path[table_name])
-        for table_name in STATE_TABLE_NAMES
-    }
-    if metadata.get("current_plan_steps_is_none", False):
-        tables["current_plan_steps"] = None
-    if metadata.get("candidate_plan_steps_is_none", False):
-        tables["candidate_plan_steps"] = None
-
-    for table_name, required_schema in RUN_STATE_TABLE_SCHEMAS.items():
-        table = tables[table_name]
-        if table is None:
-            continue
-        validate_cached_table(
-            table,
-            table_name=table_name,
-            required_schema=required_schema,
-            cache_path=cache_path[table_name],
-        )
-
-    return RunState(
-        survey_plans=tables["survey_plans"],
-        survey_plan_steps=tables["survey_plan_steps"],
-        demand_groups=tables["demand_groups"],
-        activity_dur=tables["activity_dur"],
-        home_night_dur=tables["home_night_dur"],
-        stay_home_plan=tables["stay_home_plan"],
-        opportunities=tables["opportunities"],
-        current_plans=tables["current_plans"],
-        candidate_plan_steps=tables["candidate_plan_steps"],
-        plan_id_index=tables["plan_id_index"],
-        destination_saturation=tables["destination_saturation"],
-        costs=tables["costs"],
-        start_iteration=start_iteration,
-        current_plan_steps=tables["current_plan_steps"],
+def _read_candidates(
+    paths: dict[str, pathlib.Path], metadata: dict[str, Any], *, validate_expanded: bool = False,
+) -> pl.DataFrame | CompactCandidateSteps:
+    """Restore the same candidate representation that was saved."""
+    if metadata.get("version") != 1:
+        raise ValueError("Unsupported candidate storage format; rerun the simulation.")
+    if metadata["format"] == "expanded":
+        if validate_expanded:
+            return read_cached_parquet(paths["expanded"], table_name="candidate_plan_steps",
+                                       required_schema=CandidatePlanStepsAsset.REQUIRED_SCHEMA)
+        return pl.read_parquet(paths["expanded"])
+    if metadata["format"] not in {"compact", "sectioned"}:
+        raise ValueError("Unknown candidate storage format; rerun the simulation.")
+    if metadata["format"] == "sectioned":
+        references = pl.read_parquet(paths["references"])
+        steps = SectionedPhysicalSteps(sections=pl.read_parquet(paths["sections"]), references=references,
+                                       sequence_dtype=references.schema["_first_step"])
+    else:
+        steps = pl.read_parquet(paths["steps"])
+    return CompactCandidateSteps(
+        steps=steps, membership=pl.read_parquet(paths["membership"]), columns=tuple(metadata["columns"]),
+        unit_map=pl.read_parquet(paths["unit_map"]) if metadata["has_unit_map"] else None,
     )
 
 
-def _read_rng_state(cache_path: dict[str, pathlib.Path]) -> object:
-    """Read the random generator state saved with one cached run state."""
-    with open(cache_path["rng_state"], "rb") as file:
-        return pickle.load(file)
+_INITIAL_STATE_TABLES = (
+    "survey_plans",
+    "survey_plan_steps",
+    "demand_groups",
+    "activity_dur",
+    "home_night_dur",
+    "stay_home_plan",
+    "opportunities",
+    "current_plans",
+    "candidate_plan_steps",
+    "plan_id_index",
+    "destination_saturation",
+    "costs",
+    "current_plan_steps",
+    "destination_sequence_index",
+    "mode_sequence_index",
+    "time_sequence_steps",
+)
 
 
-class InitialIterationStateAsset(FileAsset):
-    """Cached model state before the first behavior update iteration.
+class InitialIterationStateAsset(InMemoryAsset):
+    """Model state before the first behavior update iteration.
 
     This asset prepares the survey-derived inputs, the stay-home starting plan,
     the initial destination opportunities, the initial transport costs, and the
     random generator state. It is the root of the iteration-state cache chain.
     """
 
+    is_execution_state = True
+
     def __init__(
         self,
         *,
         is_weekday: bool,
-        base_folder: pathlib.Path,
         population: Any,
         survey_plan_assets: Any,
         activities: list[Any],
@@ -198,7 +202,7 @@ class InitialIterationStateAsset(FileAsset):
             sensitivity_case=sensitivity_case,
         )
         inputs = {
-            "version": 6,
+            "version": 10,
             "is_weekday": is_weekday,
             "sensitivity_case": sensitivity_case,
             "population": population,
@@ -224,21 +228,86 @@ class InitialIterationStateAsset(FileAsset):
             "mode_values": get_mode_values(modes, "stay_home"),
             "run_seed": parameters.run.seed,
             "demand_group_parameters": parameters.demand_groups,
+            "activity_support_threshold": parameters.activity_sequences.activity_support_threshold,
             "min_activity_time_constant": parameters.plan_update.min_activity_time_constant,
             "initial_transport_costs": initial_transport_costs,
         }
-        super().__init__(inputs, _state_cache_paths(base_folder, 0))
+        super().__init__(inputs)
 
-    def get_cached_asset(self) -> RunState:
-        """Return the cached state before iteration 1."""
-        return _read_run_state(self.cache_path, start_iteration=1)
+    def get(self) -> RunState:
+        """Return the initial state, spilling it when later roots reuse it."""
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            with resolver.execution_cost_consumer(self):
+                state = self._resolve_value(resolver)
+            resolver.consume_execution_cost_state(self)
+            return state
+        with asset_resolution_context() as resolver:
+            with resolver.execution_cost_consumer(self):
+                state = self._resolve_value(resolver)
+            resolver.consume_execution_cost_state(self)
+            return state
+
+    @staticmethod
+    def spill_execution_value(state: RunState, path: pathlib.Path) -> None:
+        """Write every initial table to temporary Parquet files."""
+        if path.exists():
+            raise FileExistsError(f"A state spill already exists: {path}")
+        temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
+        try:
+            none_tables = []
+            candidate_metadata = None
+            for table_name in _INITIAL_STATE_TABLES:
+                table = getattr(state, table_name)
+                if table is None:
+                    none_tables.append(table_name)
+                else:
+                    if table_name == "candidate_plan_steps":
+                        candidate_metadata = _write_candidates(table, _candidate_spill_paths(temporary_path), temporary=True)
+                    else:
+                        write_temporary_parquet(table, temporary_path / f"{table_name}.parquet")
+            metadata = {
+                "none_tables": none_tables,
+                "start_step": state.start_step,
+                "rng_state": state.rng_state,
+                "candidate": candidate_metadata,
+            }
+            write_temporary_bytes(
+                json.dumps(metadata, sort_keys=True).encode("utf-8"),
+                temporary_path / "metadata.json",
+            )
+            temporary_path.rename(path)
+        except BaseException:
+            shutil.rmtree(temporary_path, ignore_errors=True)
+            raise
+
+    @staticmethod
+    def load_execution_value(path: pathlib.Path) -> RunState:
+        """Restore the initial tables from their temporary Parquet files."""
+        with (path / "metadata.json").open("r", encoding="utf-8") as file:
+            metadata = json.load(file)
+        state = {}
+        for table_name in _INITIAL_STATE_TABLES:
+            if table_name in metadata["none_tables"]:
+                state[table_name] = None
+            elif table_name == "candidate_plan_steps":
+                state[table_name] = _read_candidates(_candidate_spill_paths(path), metadata["candidate"])
+            else:
+                state[table_name] = pl.read_parquet(path / f"{table_name}.parquet")
+        return RunState(
+            **state,
+            start_step=metadata["start_step"],
+            rng_state=_nested_lists_to_tuples(metadata["rng_state"]),
+        )
+
 
     def get_rng_state(self) -> object:
-        """Return the cached random generator state."""
-        return _read_rng_state(self.cache_path)
+        """Return the random generator state held by the initial state."""
+        return self.get().rng_state
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> RunState:
-        """Build and cache the starting state for the iteration loop."""
+        """Build the starting state for the iteration loop."""
         logging.debug("Building initial group-day-trips iteration state...")
         get_group_day_trips_progress().step("Building initial population state")
         survey_plans, survey_plan_steps, demand_groups = self.initializer.get_survey_plan_data(
@@ -280,15 +349,15 @@ class InitialIterationStateAsset(FileAsset):
             plan_id_index=plan_id_index,
             destination_saturation=opportunities.clone(),
             costs=self.initial_transport_costs.get_costs_by_od(["cost", "distance"]),
-            start_iteration=1,
+            start_step=1,
+            rng_state=rng.getstate(),
         )
-        _write_run_state(self.cache_path, state, rng.getstate())
         logging.debug("Initial group-day-trips iteration state is ready.")
         return state
 
 
-class IterationSeedsAsset(FileAsset):
-    """Cached random seeds consumed by one model iteration.
+class IterationSeedsAsset(InMemoryAsset):
+    """Random seeds consumed by one model iteration.
 
     The old run loop drew two random seeds per iteration. This asset keeps the
     same rule while making the draws part of the cache DAG.
@@ -297,75 +366,64 @@ class IterationSeedsAsset(FileAsset):
     def __init__(
         self,
         *,
-        previous_state: FileAsset,
+        previous_state: Asset,
         iteration: int,
-        base_folder: pathlib.Path,
+        batch_index: int = 0,
     ) -> None:
         self.previous_state = previous_state
         self.iteration = iteration
+        self.batch_index = batch_index
         inputs = {
-            "version": 1,
+            "version": 2,
             "previous_state": previous_state,
             "iteration": iteration,
+            "batch_index": batch_index,
         }
-        cache_path = pathlib.Path(base_folder) / "iteration-seeds" / f"iteration_seeds_{iteration}.pkl"
-        super().__init__(inputs, cache_path)
+        super().__init__(inputs)
 
-    def get_cached_asset(self) -> dict[str, object]:
-        """Return the cached activity and destination seeds for one iteration."""
-        with open(self.cache_path, "rb") as file:
-            return pickle.load(file)
-
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> dict[str, object]:
-        """Draw and cache the stochastic seeds used by one iteration."""
+        """Draw the stochastic seeds used by one iteration."""
         logging.debug("Drawing stochastic seeds for iteration %s...", str(self.iteration))
         get_group_day_trips_progress().iteration_step(self.iteration, "drawing random seeds")
         self.previous_state.get()
         rng = random.Random()
         rng.setstate(self.previous_state.get_rng_state())
+        activity_seed = destination_seed = None
+        for _ in range(self.batch_index + 1):
+            activity_seed = rng.getrandbits(64)
+            destination_seed = rng.getrandbits(64)
         seeds = {
-            "activity_sequences": rng.getrandbits(64),
-            "destination_sequences": rng.getrandbits(64),
+            "activity_sequences": activity_seed,
+            "destination_sequences": destination_seed,
             "rng_state_after_sampling": rng.getstate(),
         }
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.cache_path, "wb") as file:
-            pickle.dump(seeds, file, protocol=pickle.HIGHEST_PROTOCOL)
         logging.debug("Stochastic seeds for iteration %s are ready.", str(self.iteration))
         return seeds
 
 
-class PersonODFlowsByModeAsset(FileAsset):
-    """Cached person OD flows by mode after one completed iteration."""
+class PersonODFlowsByModeAsset(InMemoryAsset):
+    """Person OD flows by mode after one completed iteration."""
 
     def __init__(
         self,
         *,
         source_iteration: int,
-        base_folder: pathlib.Path,
-        previous_state: FileAsset,
+        previous_state: Asset,
     ) -> None:
         self.source_iteration = int(source_iteration)
         self.iteration = self.source_iteration
         self.previous_state = previous_state
         inputs = {
-            "version": 1,
+            "version": 3,
             "source_iteration": int(source_iteration),
             "previous_state": previous_state,
         }
-        cache_path = (
-            pathlib.Path(base_folder)
-            / "person-od-flows"
-            / f"person_od_flows_by_mode_{source_iteration}.parquet"
-        )
-        super().__init__(inputs, cache_path)
+        super().__init__(inputs)
 
-    def get_cached_asset(self) -> pl.DataFrame:
-        """Return person OD flows by mode."""
-        return pl.read_parquet(self.cache_path)
-
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Aggregate the current plan steps into person OD flows by mode."""
+        """Aggregate current plan steps into person OD flows by mode."""
         previous = self.previous_state.get()
         if previous.current_plan_steps is None:
             flows = pl.DataFrame(
@@ -386,11 +444,12 @@ class PersonODFlowsByModeAsset(FileAsset):
                     mode=pl.col("mode").cast(pl.String),
                 )
                 .group_by(["from", "to", "mode"])
-                .agg(flow_volume=pl.col("n_persons").sum().cast(pl.Float64))
+                # A different plan-row order must not change the sum sent to
+                # traffic assignment through floating-point rounding.
+                .agg(flow_volume=pl.col("n_persons").cast(pl.Float64).sort().implode().list.sum())
+                .sort(["from", "to", "mode"])
             )
 
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        flows.write_parquet(self.cache_path)
         logging.debug(
             "Person OD flows by mode after iteration %s are ready.",
             str(self.source_iteration),
@@ -398,8 +457,8 @@ class PersonODFlowsByModeAsset(FileAsset):
         return flows
 
 
-class CongestionFlowsAsset(FileAsset):
-    """Cached vehicle flows used to update congested costs after one iteration.
+class CongestionFlowsAsset(InMemoryAsset):
+    """Vehicle flows used to update congested costs after one iteration.
 
     The inputs are the previous iteration state and the road flow conversion
     settings. This means two scenario runs that share the same upstream state
@@ -411,16 +470,15 @@ class CongestionFlowsAsset(FileAsset):
         *,
         is_weekday: bool,
         iteration: int,
-        base_folder: pathlib.Path,
-        previous_state: FileAsset | None,
+        previous_state: Asset | None,
         transport_costs: Any,
-        n_iter_per_cost_update: int,
+        n_steps_per_cost_update: int,
     ) -> None:
         self.is_weekday = is_weekday
         self.iteration = iteration
         self.previous_state = previous_state
         self.transport_costs = transport_costs
-        self.n_iter_per_cost_update = int(n_iter_per_cost_update)
+        self.n_steps_per_cost_update = int(n_steps_per_cost_update)
         self.road_flow_parameters = (
             transport_costs.road_flows.road_flow_parameters()
             if transport_costs.has_enabled_congestion()
@@ -430,10 +488,10 @@ class CongestionFlowsAsset(FileAsset):
             previous_state is not None
             and iteration > 1
             and bool(self.road_flow_parameters)
-            and self.n_iter_per_cost_update > 0
+            and self.n_steps_per_cost_update > 0
             and transport_costs.should_recompute_congested_costs(
                 iteration - 1,
-                self.n_iter_per_cost_update,
+                self.n_steps_per_cost_update,
             )
         )
         self.previous_congestion_flows = (
@@ -442,7 +500,7 @@ class CongestionFlowsAsset(FileAsset):
                 previous_state is not None
                 and iteration > 1
                 and bool(self.road_flow_parameters)
-                and self.n_iter_per_cost_update > 0
+                and self.n_steps_per_cost_update > 0
                 and not self.should_update_costs
             )
             else None
@@ -450,7 +508,6 @@ class CongestionFlowsAsset(FileAsset):
         self.person_od_flows_by_mode = (
             PersonODFlowsByModeAsset(
                 source_iteration=iteration - 1,
-                base_folder=base_folder,
                 previous_state=previous_state,
             )
             if self.should_update_costs
@@ -463,12 +520,11 @@ class CongestionFlowsAsset(FileAsset):
             "previous_congestion_flows": self.previous_congestion_flows,
             "person_od_flows_by_mode": self.person_od_flows_by_mode,
             "road_flow_parameters": self.road_flow_parameters,
-            "n_iter_per_cost_update": int(n_iter_per_cost_update),
+            "n_steps_per_cost_update": int(n_steps_per_cost_update),
         }
-        cache_path = pathlib.Path(base_folder) / "congestion-flows" / f"congestion_flows_{iteration}.json"
-        super().__init__(inputs, cache_path)
+        super().__init__(inputs)
 
-    def _previous_congestion_flows(self, previous_state: FileAsset | None) -> FileAsset | None:
+    def _previous_congestion_flows(self, previous_state: Asset | None) -> Asset | None:
         """Return the previous iteration congestion-flow asset when it exists."""
         if previous_state is None:
             return None
@@ -476,31 +532,10 @@ class CongestionFlowsAsset(FileAsset):
         previous_transport_costs = previous_state.inputs.get("transport_costs")
         return getattr(previous_transport_costs, "congestion_flows", None)
 
-    def get_cached_asset(self) -> VehicleODFlowsAsset | None:
-        """Return the cached road flow asset, or None when no update is due."""
-        with open(self.cache_path, "r", encoding="utf-8") as file:
-            metadata = json.load(file)
-
-        if metadata.get("has_road_flow_asset", False) is False:
-            return None
-
-        if metadata.get("source") == "previous":
-            if self.previous_congestion_flows is None:
-                return None
-            return self.previous_congestion_flows.get_cached_asset()
-
-        if self.person_od_flows_by_mode is None:
-            return None
-
-        return VehicleODFlowsAsset(
-            person_od_flows_by_mode=self.person_od_flows_by_mode,
-            road_flow_parameters=self.road_flow_parameters,
-        )
-
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> VehicleODFlowsAsset | None:
-        """Aggregate plan-step flows and cache the matching road vehicle flows."""
+        """Build road vehicle flows from the matching iteration state."""
         road_flow_asset = None
-        source = None
 
         if self.should_update_costs:
             logging.debug(
@@ -514,10 +549,8 @@ class CongestionFlowsAsset(FileAsset):
             road_flow_asset = self.transport_costs.build_road_flow_asset(
                 self.person_od_flows_by_mode,
             )
-            source = "current"
         elif self.previous_congestion_flows is not None:
             road_flow_asset = self.previous_congestion_flows.get()
-            source = "previous" if road_flow_asset is not None else None
             logging.debug(
                 "Reusing congestion flows before iteration %s.",
                 str(self.iteration),
@@ -528,21 +561,6 @@ class CongestionFlowsAsset(FileAsset):
                 str(self.iteration),
             )
 
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.cache_path, "w", encoding="utf-8") as file:
-            json.dump(
-                {
-                    "has_road_flow_asset": road_flow_asset is not None,
-                    "source": source,
-                    "mode_names": (
-                        [parameters["mode_name"] for parameters in self.road_flow_parameters]
-                        if road_flow_asset is not None
-                        else []
-                    ),
-                },
-                file,
-                sort_keys=True,
-            )
         logging.debug(
             "Congestion-flow asset for iteration %s is ready.",
             str(self.iteration),
@@ -550,8 +568,8 @@ class CongestionFlowsAsset(FileAsset):
         return road_flow_asset
 
 
-class IterationTransportCostsAsset(FileAsset):
-    """Cached full transport costs used by one model iteration.
+class IterationTransportCostsAsset(InMemoryAsset):
+    """Full transport costs used by one model iteration.
 
     This asset is the DAG edge between iteration states and congestion-sensitive
     transport costs. It resolves mode parameters for the current iteration, then
@@ -559,16 +577,17 @@ class IterationTransportCostsAsset(FileAsset):
     congestion update is due.
     """
 
+    is_execution_scoped_cost_asset = True
+
     def __init__(
         self,
         *,
         is_weekday: bool,
         iteration: int,
-        base_folder: pathlib.Path,
         transport_costs: Any,
         scenario: str,
-        previous_state: FileAsset | None,
-        n_iter_per_cost_update: int,
+        previous_state: Asset | None,
+        n_steps_per_cost_update: int,
         sensitivity_case: SensitivityCase | None = None,
     ) -> None:
         self.is_weekday = is_weekday
@@ -581,10 +600,9 @@ class IterationTransportCostsAsset(FileAsset):
         self.congestion_flows = CongestionFlowsAsset(
             is_weekday=is_weekday,
             iteration=iteration,
-            base_folder=base_folder,
             previous_state=previous_state,
             transport_costs=self.transport_costs,
-            n_iter_per_cost_update=n_iter_per_cost_update,
+            n_steps_per_cost_update=n_steps_per_cost_update,
         )
         self.modes = self.transport_costs.modes
         self._profile_costs_cache = None
@@ -597,27 +615,33 @@ class IterationTransportCostsAsset(FileAsset):
             "transport_costs": self.transport_costs,
             "congestion_flows": self.congestion_flows,
         }
-        cache_path = pathlib.Path(base_folder) / "iteration-transport-costs" / f"transport_costs_{iteration}.parquet"
-        super().__init__(inputs, cache_path)
+        super().__init__(inputs)
 
-    def get_cached_asset(self) -> pl.DataFrame:
-        """Return the full OD-by-mode transport-cost table for this iteration."""
-        return pl.read_parquet(self.cache_path)
-
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
-        """Build and cache transport costs for this iteration."""
+        """Build the full OD-by-mode transport-cost table for this iteration."""
         logging.debug(
             "Building transport costs for group-day-trips iteration %s...",
             str(self.iteration),
         )
         get_group_day_trips_progress().iteration_step(self.iteration, "preparing transport costs")
         road_flow_asset = self.congestion_flows.get()
-        effective_transport_costs = self.transport_costs.asset_for_road_flows(
-            road_flow_asset
-        )
-        costs = effective_transport_costs.get()
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        costs.write_parquet(self.cache_path)
+        if road_flow_asset is None:
+            costs = self.transport_costs.get()
+        else:
+            effective_transport_costs = self.transport_costs.asset_for_road_flows(
+                road_flow_asset
+            )
+            costs = effective_transport_costs._build_full_detail_costs()
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            resolver.release_in_memory_asset(self.congestion_flows)
+            if self.congestion_flows.person_od_flows_by_mode is not None:
+                resolver.release_in_memory_asset(
+                    self.congestion_flows.person_od_flows_by_mode
+                )
+            if road_flow_asset is not None:
+                resolver.release_in_memory_asset(road_flow_asset)
         logging.debug(
             "Transport costs for group-day-trips iteration %s are ready.",
             str(self.iteration),
@@ -648,10 +672,14 @@ class IterationTransportCostsAsset(FileAsset):
         available_columns = [column for column in columns if column in costs.columns]
         return costs.select(available_columns)
 
+    @trace_simulation_step("expected OD transport costs")
     def get_costs_by_od(self, metrics: list) -> pl.DataFrame:
         """Aggregate cached costs to the OD-only view used by destination choice."""
         costs = self.get_costs_by_od_and_mode(metrics, detail_distances=False)
-        costs = costs.with_columns((pl.col("cost").neg().exp()).alias("prob"))
+        # Keep the mode weights well scaled for highly congested OD pairs.
+        costs = costs.with_columns(
+            (pl.col("cost").min().over("from", "to") - pl.col("cost")).exp().alias("prob")
+        )
         costs = costs.with_columns(
             (pl.col("prob") / pl.col("prob").sum().over(["from", "to"])).alias("prob")
         )
@@ -665,20 +693,49 @@ class IterationTransportCostsAsset(FileAsset):
             population_segments,
         )
 
-    def get_profile_costs_by_od_and_mode(self, profiles, metrics):
+    def release_profile_costs(self):
+        """Release profile tables after this iteration has used them."""
+        self._profile_costs_cache = None
+        self._profile_costs_cache_key = None
+
+    @trace_simulation_step("profile transport costs")
+    def get_profile_costs_by_od_and_mode(self, profiles, metrics, *, od_pairs=None):
         """Return profile-specific costs with this iteration's congestion state."""
         cache_key = tuple(
             (profile_id, tuple(asset.inputs_hash for asset in assets))
             for profile_id, assets in sorted(profiles.items())
         )
+        if od_pairs is not None:
+            if self._profile_costs_cache_key == cache_key and self._profile_costs_cache is not None:
+                return self._profile_costs_cache.select(
+                    ["from", "to", "mode", "utility_profile_id"] + list(metrics)
+                ).join(od_pairs, on=["utility_profile_id", "from", "to"], how="semi")
+            road_flows = self.congestion_flows.get()
+            effective_transport_costs = self.transport_costs.asset_for_road_flows(road_flows)
+            default_costs = (
+                self.get_costs_by_od_and_mode(["cost", "distance", "time"])
+                if road_flows is not None else None
+            )
+            return effective_transport_costs.get_profile_costs_by_od_and_mode(
+                profiles, metrics, default_costs=default_costs, od_pairs=od_pairs,
+            )
         if self._profile_costs_cache_key != cache_key:
+            road_flows = self.congestion_flows.get()
             effective_transport_costs = self.transport_costs.asset_for_road_flows(
-                self.congestion_flows.get()
+                road_flows
+            )
+            # With explicit road flows, this asset's full table was built from
+            # the same effective costs. Reuse it instead of building it again
+            # when resolving the default modes of each utility profile.
+            default_costs = (
+                self.get_costs_by_od_and_mode(["cost", "distance", "time"])
+                if road_flows is not None else None
             )
             self._profile_costs_cache = (
                 effective_transport_costs.get_profile_costs_by_od_and_mode(
                     profiles,
                     ["cost", "distance", "time"],
+                    default_costs=default_costs,
                 )
             )
             self._profile_costs_cache_key = cache_key
@@ -687,8 +744,10 @@ class IterationTransportCostsAsset(FileAsset):
         )
 
 
-class IterationStateAsset(FileAsset):
-    """Cached model state after one completed behavior update iteration."""
+class IterationStateAsset(InMemoryAsset):
+    """Transient model state after one completed behavior update iteration."""
+
+    is_execution_state = True
 
     def __init__(
         self,
@@ -696,7 +755,8 @@ class IterationStateAsset(FileAsset):
         is_weekday: bool,
         iteration: int,
         base_folder: pathlib.Path,
-        previous_state: FileAsset,
+        previous_state: Asset,
+        initial_state: InitialIterationStateAsset,
         seeds: IterationSeedsAsset,
         activity_sequences: ActivitySequences,
         destination_sequences: DestinationSequences,
@@ -707,10 +767,12 @@ class IterationStateAsset(FileAsset):
         modes: list[Any],
         parameters: Any,
         scenario: str,
-        cache_iteration_events: bool,
+        cache_step_events: bool,
         sensitivity_case: SensitivityCase | None = None,
+        cohort_state_identity: object = None,
     ) -> None:
         self.previous_state = previous_state
+        self.initial_state = initial_state
         self.seeds = seeds
         self.activity_sequences = activity_sequences
         self.destination_sequences = destination_sequences
@@ -722,14 +784,30 @@ class IterationStateAsset(FileAsset):
         self.parameters = parameters
         self.scenario = scenario
         self.sensitivity_case = sensitivity_case
-        self.cache_iteration_events = cache_iteration_events
+        self.cache_step_events = cache_step_events
         self.updater = PlanUpdater()
+        self.checkpoint_callback = None
+        self.resume_checkpoint_loader = None
+        self._rng_state = None
+        self._loaded_checkpoint = False
+        self._checkpoint_saved = False
+        self.coordinated_candidate_plan_steps: pl.DataFrame | pl.LazyFrame | None = None
+        self.coordinated_evaluation = None
+        self.coordinated_current_plans: pl.DataFrame | None = None
+        self.coordinated_current_plan_steps: pl.DataFrame | None = None
+        self.coordinated_plan_id_index: pl.DataFrame | None = None
+        self.coordinated_destination_sequence_index: pl.DataFrame | None = None
+        self.coordinated_mode_sequence_index: pl.DataFrame | None = None
+        self.coordinated_rng_state: object | None = None
+        self.coordinated_time_sequence_steps: pl.DataFrame | None = None
         inputs = {
-            "version": 4,
+            # State identity includes the shared search and full cohort.
+            "version": 42,
             "is_weekday": is_weekday,
             "iteration": iteration,
             "sensitivity_case": sensitivity_case,
             "previous_state": previous_state,
+            "initial_state": initial_state,
             "seeds": seeds,
             "activity_sequences": activity_sequences,
             "destination_sequences": destination_sequences,
@@ -743,100 +821,393 @@ class IterationStateAsset(FileAsset):
                 scenario=scenario,
                 sensitivity_case=sensitivity_case,
             ),
-            "arrival_time_rigidity_by_activity": resolve_activity_arrival_time_rigidity(
+            "activity_time_rigidity_by_activity": resolve_activity_time_rigidity(
                 activities,
                 iteration,
                 scenario=scenario,
                 sensitivity_case=sensitivity_case,
             ),
             "plan_update_parameters": parameters.plan_update,
+            # Shared candidate search affects each completed state, and hence
+            # the road flows and congestion graphs built from that state.
+            "adaptive_search_parameters": parameters.adaptive_search,
+            "cohort_state_identity": cohort_state_identity,
             "behavior_change_scope": parameters.behavior_change.scope_at(iteration),
-            "cache_iteration_events": cache_iteration_events,
+            "cache_step_events": cache_step_events,
         }
         self.iteration = iteration
-        super().__init__(inputs, _state_cache_paths(base_folder, iteration))
-        self.transition_events_asset = TransitionEventsAsset(
-            run_key=self.inputs_hash,
-            is_weekday=is_weekday,
-            iteration=iteration,
-            base_folder=pathlib.Path(base_folder) / "transition-events",
+        super().__init__(inputs)
+        self.transition_events_asset = (
+            TransitionEventsAsset(
+                run_key=self.inputs_hash,
+                is_weekday=is_weekday,
+                iteration=iteration,
+                base_folder=pathlib.Path(base_folder) / "transition-events",
+            )
+            if cache_step_events
+            else None
         )
-        if cache_iteration_events:
-            self.cache_path["transition_events"] = self.transition_events_asset.cache_path
 
-    def get_cached_asset(self) -> RunState:
-        """Return the cached state after this iteration."""
-        return _read_run_state(self.cache_path, start_iteration=self.iteration + 1)
+    def get(self) -> RunState:
+        """Return this state, spilling shared intermediates to temporary disk."""
+        coordinated = (
+            self.coordinated_candidate_plan_steps is not None
+            or self.coordinated_evaluation is not None
+        )
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            with resolver.execution_cost_consumer(self):
+                state = self._resolve_value(resolver)
+        else:
+            with asset_resolution_context() as resolver:
+                with resolver.execution_cost_consumer(self):
+                    state = self._resolve_value(resolver)
+
+        self._rng_state = state.rng_state
+        if self.checkpoint_callback is not None and not self._checkpoint_saved:
+            if self._loaded_checkpoint or getattr(self, "resume_checkpoint_loader", None) is not None:
+                self._checkpoint_saved = True
+            else:
+                self.checkpoint_callback(self.iteration, state, self._rng_state)
+                self._checkpoint_saved = True
+
+        # Release the prior state after this state has consumed it. This also
+        # runs when the current state was restored from a spill or checkpoint.
+        active_resolver = get_current_asset_resolver()
+        if active_resolver is not None:
+            if not coordinated:
+                active_resolver.release_in_memory_asset(self.previous_state)
+            for asset in (
+                self.seeds,
+                self.activity_sequences,
+                self.destination_sequences,
+                self.mode_sequences,
+            ):
+                active_resolver.release_in_memory_asset(asset)
+            if self.iteration < self.parameters.run.n_steps:
+                active_resolver.release_in_memory_asset(self.transport_costs)
+            active_resolver.consume_execution_cost_state(self)
+        # The iteration assets themselves stay in the run graph. Their cached
+        # OD tables must not stay alive for every completed iteration too.
+        release_profile_costs = getattr(self.transport_costs, "release_profile_costs", None)
+        if release_profile_costs is not None:
+            release_profile_costs()
+        self.destination_sequences.sequence_index = None
+        self.destination_sequences.previous_sequence_index = None
+        self.mode_sequences.sequence_index = None
+        self.mode_sequences.previous_sequence_index = None
+        return state
+
+    def spill_execution_value(self, state: RunState, path: pathlib.Path) -> None:
+        """Write shared plan tables to parquet and the RNG tuple to JSON."""
+        if path.exists():
+            raise FileExistsError(f"A state spill already exists: {path}")
+        temporary_path = pathlib.Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
+        table_names = [
+            "current_plans",
+            "current_plan_steps",
+            "candidate_plan_steps",
+            "plan_id_index",
+            "destination_saturation",
+            "destination_sequence_index",
+            "mode_sequence_index",
+            "time_sequence_steps",
+        ]
+        try:
+            metadata = {"none_tables": [], "rng_state": state.rng_state}
+            for table_name in table_names:
+                table = getattr(state, table_name)
+                if table is None:
+                    metadata["none_tables"].append(table_name)
+                else:
+                    if table_name == "candidate_plan_steps":
+                        metadata["candidate"] = _write_candidates(
+                            table, _candidate_spill_paths(temporary_path), temporary=True,
+                        )
+                    else:
+                        write_temporary_parquet(table, temporary_path / f"{table_name}.parquet")
+            write_temporary_bytes(
+                json.dumps(metadata, sort_keys=True).encode("utf-8"),
+                temporary_path / "metadata.json",
+            )
+            temporary_path.rename(path)
+        except BaseException:
+            shutil.rmtree(temporary_path, ignore_errors=True)
+            raise
+
+    def load_execution_value(self, path: pathlib.Path) -> RunState:
+        """Restore a spilled state using invariant tables from iteration zero."""
+        with (path / "metadata.json").open("r", encoding="utf-8") as file:
+            metadata = json.load(file)
+        table_names = [
+            "current_plans",
+            "current_plan_steps",
+            "candidate_plan_steps",
+            "plan_id_index",
+            "destination_saturation",
+            "destination_sequence_index",
+            "mode_sequence_index",
+            "time_sequence_steps",
+        ]
+        spilled_state = {}
+        for table_name in table_names:
+            if table_name in metadata["none_tables"]:
+                spilled_state[table_name] = None
+            elif table_name == "candidate_plan_steps":
+                spilled_state[table_name] = _read_candidates(_candidate_spill_paths(path), metadata["candidate"])
+            else:
+                spilled_state[table_name] = pl.read_parquet(path / f"{table_name}.parquet")
+        spilled_state["rng_state"] = _nested_lists_to_tuples(metadata["rng_state"])
+        return self._restore_compact_state(spilled_state)
+
+    def _restore_compact_state(self, compact_state: Any) -> RunState:
+        """Combine changing iteration tables with invariant tables from the start."""
+        initial = self.initial_state.get()
+
+        def value(name: str) -> Any:
+            if isinstance(compact_state, dict):
+                return compact_state[name]
+            return getattr(compact_state, name)
+
+        self._rng_state = value("rng_state")
+        candidates = value("candidate_plan_steps")
+        if candidates is not None and not isinstance(candidates, CompactCandidateSteps):
+            candidates = CompactCandidateSteps.from_frame(candidates)
+        return RunState(
+            survey_plans=initial.survey_plans,
+            survey_plan_steps=initial.survey_plan_steps,
+            demand_groups=initial.demand_groups,
+            activity_dur=initial.activity_dur,
+            home_night_dur=initial.home_night_dur,
+            stay_home_plan=initial.stay_home_plan,
+            opportunities=initial.opportunities,
+            current_plans=value("current_plans"),
+            candidate_plan_steps=candidates,
+            plan_id_index=value("plan_id_index"),
+            destination_saturation=value("destination_saturation"),
+            costs=(compact_state.costs if not isinstance(compact_state, dict) and getattr(compact_state, "costs", None) is not None
+                   else self.transport_costs.get_costs_by_od(["cost", "distance"])),
+            start_step=self.iteration + 1,
+            current_plan_steps=value("current_plan_steps"),
+            rng_state=self._rng_state,
+            destination_sequence_index=value("destination_sequence_index"),
+            mode_sequence_index=value("mode_sequence_index"),
+            time_sequence_steps=value("time_sequence_steps"),
+        )
 
     def get_rng_state(self) -> object:
         """Return the random generator state after this iteration's sampling."""
-        return _read_rng_state(self.cache_path)
+        if self._rng_state is None:
+            state = self.get()
+            self._rng_state = state.rng_state
+        if self._rng_state is None:
+            raise RuntimeError(
+                f"Iteration {self.iteration} has not been computed in this execution."
+            )
+        return self._rng_state
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> RunState:
-        """Run one model iteration and cache the resulting state."""
-        logging.debug("Starting group-day-trips iteration %s...", str(self.iteration))
-        get_group_day_trips_progress().iteration_step(self.iteration, "updating plan choices")
-        previous = self.previous_state.get()
-        seeds = self.seeds.get()
-        logging.debug("Preparing sampled alternatives for iteration %s...", str(self.iteration))
-        self.activity_sequences.get()
-        self.destination_sequences.get()
-        self.mode_sequences.get()
+        """Load a saved checkpoint or run one iteration in memory."""
+        transition_events = None
+        checkpoint = None
+        if self.resume_checkpoint_loader is not None:
+            try:
+                checkpoint = self.resume_checkpoint_loader()
+            except (FileNotFoundError, RuntimeError) as exc:
+                # Once a cohort has started from checkpoints, silently
+                # recomputing only one member could change its shared search.
+                raise RuntimeError(
+                    f"Could not restore the checkpoint for step {self.iteration}; "
+                    "the cohort cannot safely continue from this saved state."
+                ) from exc
 
-        logging.debug("Updating plan choices for iteration %s...", str(self.iteration))
-        resolved_activity_parameters = self.inputs["resolved_activity_parameters"]
-        arrival_time_rigidity_by_activity = self.inputs["arrival_time_rigidity_by_activity"]
-        current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index = self.updater.get_new_plans(
-            previous.current_plans,
-            previous.current_plan_steps,
-            previous.candidate_plan_steps,
-            previous.demand_groups,
-            previous.survey_plan_steps,
-            self.transport_costs,
-            previous.destination_saturation,
-            previous.activity_dur,
-            self.iteration,
-            resolved_activity_parameters,
-            arrival_time_rigidity_by_activity,
-            self.destination_sequences,
-            self.mode_sequences,
-            previous.home_night_dur,
-            previous.stay_home_plan,
-            self.population.transport_zones,
-            previous.plan_id_index,
-            self.parameters,
-        )
-        costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
-        destination_saturation = self.updater.get_destination_saturation(
-            current_plan_steps,
-            previous.opportunities,
-            resolved_activity_parameters,
-        )
-        state = RunState(
-            survey_plans=previous.survey_plans,
-            survey_plan_steps=previous.survey_plan_steps,
-            demand_groups=previous.demand_groups,
-            activity_dur=previous.activity_dur,
-            home_night_dur=previous.home_night_dur,
-            stay_home_plan=previous.stay_home_plan,
-            opportunities=previous.opportunities,
-            current_plans=current_plans,
-            candidate_plan_steps=candidate_plan_steps,
-            plan_id_index=plan_id_index,
-            destination_saturation=destination_saturation,
-            costs=costs,
-            start_iteration=self.iteration + 1,
-            current_plan_steps=current_plan_steps,
-        )
-        _write_run_state(self.cache_path, state, seeds["rng_state_after_sampling"])
+        # Checkpoints contain only the changing plan state. Read invariant
+        # tables from the initial state so a restart can skip earlier updates.
+        if checkpoint is not None:
+            logging.debug(
+                "Restoring group-day-trips iteration %s from checkpoint...",
+                self.iteration,
+            )
+            get_group_day_trips_progress().iteration_step(
+                self.iteration,
+                "restoring saved state",
+            )
+            state = self._restore_compact_state(checkpoint)
+            self._loaded_checkpoint = True
+            logging.debug("Restored iteration %s from its checkpoint.", self.iteration)
+        else:
+            previous = self.previous_state.get()
+            logging.debug("Starting group-day-trips iteration %s...", str(self.iteration))
+            seeds = self.seeds.get()
+            logging.debug("Preparing sampled alternatives for iteration %s...", str(self.iteration))
+            if self.coordinated_candidate_plan_steps is None and self.coordinated_evaluation is None:
+                self.activity_sequences.get()
+                self.destination_sequences.get()
+                self.mode_sequences.get()
 
-        if transition_events is not None and self.cache_iteration_events:
+            logging.debug("Updating plan choices for iteration %s...", str(self.iteration))
+            get_group_day_trips_progress().iteration_step(
+                self.iteration,
+                "updating plan choices",
+            )
+            resolved_activity_parameters = self.inputs["resolved_activity_parameters"]
+            activity_time_rigidity_by_activity = self.inputs["activity_time_rigidity_by_activity"]
+            current_plans_before_transition = (
+                previous.current_plans
+                if self.coordinated_current_plans is None
+                else self.coordinated_current_plans
+            )
+            current_plan_steps_before_transition = (
+                previous.current_plan_steps
+                if self.coordinated_current_plan_steps is None
+                else self.coordinated_current_plan_steps
+            )
+            previous_plan_id_index = (
+                previous.plan_id_index if self.coordinated_plan_id_index is None
+                else self.coordinated_plan_id_index
+            )
+            precomputed_evaluation = (
+                None if self.coordinated_evaluation is None else
+                self.updater.expand_context_evaluation(
+                    self.coordinated_evaluation, current_plans_before_transition, previous_plan_id_index,
+                    self.parameters.behavior_change.scope_at(self.iteration),
+                    share_transition_probabilities=True,
+                    transition_parameters={
+                        "transport_zones": self.population.transport_zones,
+                        "transition_distance_threshold": self.parameters.plan_update.transition_distance_threshold,
+                        "enable_transition_distance_model": self.parameters.plan_update.enable_transition_distance_model,
+                        "transition_revision_probability": self.parameters.plan_update.transition_revision_probability,
+                        "transition_logit_scale": self.parameters.plan_update.transition_logit_scale,
+                        "transition_utility_pruning_delta": self.parameters.plan_update.transition_utility_pruning_delta,
+                        "min_transition_utility_gain": self.parameters.plan_update.min_transition_utility_gain,
+                        "transition_distance_friction": self.parameters.plan_update.transition_distance_friction,
+                        "plan_embedding_dimension_weights": self.parameters.plan_update.plan_embedding_dimension_weights,
+                    },
+                )
+            )
+            # The expanded evaluation owns the inputs needed by this update;
+            # the compact search evaluation has no further consumer here.
+            self.coordinated_evaluation = None
+            current_plans, current_plan_steps, candidate_plan_steps, transition_events, plan_id_index, time_sequence_steps = self.updater.get_new_plans(
+                current_plans_before_transition,
+                current_plan_steps_before_transition,
+                previous.candidate_plan_steps,
+                previous.demand_groups,
+                previous.schedule_steps if self.coordinated_time_sequence_steps is None else self.coordinated_time_sequence_steps,
+                self.transport_costs,
+                previous.destination_saturation,
+                previous.activity_dur,
+                self.iteration,
+                resolved_activity_parameters,
+                activity_time_rigidity_by_activity,
+                self.destination_sequences,
+                self.mode_sequences,
+                previous.home_night_dur,
+                previous.stay_home_plan,
+                self.population.transport_zones,
+                previous_plan_id_index,
+                self.parameters,
+                shared_candidate_plan_steps=self.coordinated_candidate_plan_steps,
+                precomputed_evaluation=precomputed_evaluation,
+            )
+            # Do not retain scoring and timing tables while compacting the
+            # returned candidates for the next simulation step.
+            del precomputed_evaluation
+            costs = self.transport_costs.get_costs_by_od(["cost", "distance"])
+            destination_saturation = self.updater.get_destination_saturation(
+                current_plan_steps,
+                previous.opportunities,
+                resolved_activity_parameters,
+                enable_opportunity_congestion=self.parameters.plan_update.enable_opportunity_congestion,
+            )
+            state = RunState(
+                survey_plans=previous.survey_plans,
+                survey_plan_steps=previous.survey_plan_steps,
+                demand_groups=previous.demand_groups,
+                activity_dur=previous.activity_dur,
+                home_night_dur=previous.home_night_dur,
+                stay_home_plan=previous.stay_home_plan,
+                opportunities=previous.opportunities,
+                current_plans=current_plans,
+                candidate_plan_steps=(
+                    None if candidate_plan_steps is None
+                    else candidate_plan_steps if isinstance(candidate_plan_steps, CompactCandidateSteps)
+                    else CompactCandidateSteps.from_frame(candidate_plan_steps)
+                ),
+                plan_id_index=plan_id_index,
+                time_sequence_steps=time_sequence_steps,
+                destination_saturation=destination_saturation,
+                costs=costs,
+                start_step=self.iteration + 1,
+                current_plan_steps=current_plan_steps,
+                rng_state=(
+                    seeds["rng_state_after_sampling"]
+                    if self.coordinated_rng_state is None
+                    else self.coordinated_rng_state
+                ),
+                destination_sequence_index=(
+                    self.destination_sequences.sequence_index
+                    if self.coordinated_destination_sequence_index is None
+                    else self.coordinated_destination_sequence_index
+                ),
+                mode_sequence_index=(
+                    self.mode_sequences.sequence_index
+                    if self.coordinated_mode_sequence_index is None
+                    else self.coordinated_mode_sequence_index
+                ),
+            )
+            self._rng_state = state.rng_state
+
+        if transition_events is not None and self.cache_step_events:
+            if self.transition_events_asset is None:
+                raise RuntimeError("Transition event persistence was not planned.")
             self.transition_events_asset.transition_events = transition_events
+            # A recomputed step must replace an old or rejected event file.
+            self.transition_events_asset.hash_path.unlink(missing_ok=True)
+            resolver = get_current_asset_resolver()
+            if resolver is not None:
+                resolver.prepared_asset_keys.discard(asset_graph_key(self.transition_events_asset))
             self.transition_events_asset.get()
 
         logging.debug("Group-day-trips iteration %s is ready.", str(self.iteration))
         get_group_day_trips_progress().finish_iteration(self.iteration)
+
         return state
+
+
+class CandidateCheckpointAsset(FileAsset):
+    """Save candidate history without expanding shared plans to every person."""
+
+    def __init__(self, *, run_key, is_weekday, iteration, base_folder, candidate_plan_steps=None):
+        self.candidate_plan_steps = candidate_plan_steps
+        inputs = {"version": 1, "run_key": run_key, "is_weekday": is_weekday, "iteration": iteration}
+        folder = pathlib.Path(base_folder)
+        paths = {
+            "metadata": folder / f"candidate_checkpoint_metadata_{iteration}.json",
+            "expanded": folder / f"candidate_checkpoint_expanded_{iteration}.parquet",
+            "steps": folder / f"candidate_checkpoint_steps_{iteration}.parquet",
+            "sections": folder / f"candidate_checkpoint_sections_{iteration}.parquet",
+            "references": folder / f"candidate_checkpoint_references_{iteration}.parquet",
+            "membership": folder / f"candidate_checkpoint_membership_{iteration}.parquet",
+            "unit_map": folder / f"candidate_checkpoint_unit_map_{iteration}.parquet",
+        }
+        super().__init__(inputs, paths)
+
+    def get_cached_asset(self):
+        with self.cache_path["metadata"].open("r", encoding="utf-8") as file:
+            metadata = json.load(file)
+        return _read_candidates(self.cache_path, metadata, validate_expanded=True)
+
+    def create_and_get_asset(self):
+        candidates = self.candidate_plan_steps
+        if candidates is None:
+            raise ValueError("Cannot save candidate history without a table.")
+        paths = {name: path for name, path in self.cache_path.items() if name != "metadata"}
+        metadata = _write_candidates(candidates, paths, temporary=False, write_empty=True)
+        with self.cache_path["metadata"].open("w", encoding="utf-8") as file:
+            json.dump(metadata, file, sort_keys=True)
+        return candidates
 
 
 class CurrentPlansAsset(FileAsset):
@@ -870,6 +1241,7 @@ class CurrentPlansAsset(FileAsset):
             required_schema=self.REQUIRED_SCHEMA,
         )
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.current_plans is None:
             raise ValueError("Cannot save current plans without a dataframe.")
@@ -909,6 +1281,7 @@ class CurrentPlanStepsAsset(FileAsset):
             required_schema=self.REQUIRED_SCHEMA,
         )
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.current_plan_steps is None:
             raise ValueError("Cannot save current plan steps without a dataframe.")
@@ -953,11 +1326,51 @@ class PlanIdIndexAsset(FileAsset):
             required_schema=self.REQUIRED_SCHEMA,
         )
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.plan_id_index is None:
             raise ValueError("Cannot save the plan-id index without a dataframe.")
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.plan_id_index.write_parquet(self.cache_path)
+        return self.get_cached_asset()
+
+
+class SequenceIndexAsset(FileAsset):
+    """Persist one compact stable sequence index for restart checkpoints."""
+
+    def __init__(
+        self,
+        *,
+        run_key: str,
+        is_weekday: bool,
+        iteration: int,
+        sequence_name: str,
+        base_folder: pathlib.Path,
+        sequence_index: pl.DataFrame | None = None,
+    ) -> None:
+        self.sequence_name = sequence_name
+        self.sequence_index = sequence_index
+        inputs = {
+            "version": 1,
+            "run_key": run_key,
+            "is_weekday": is_weekday,
+            "iteration": iteration,
+            "sequence_name": sequence_name,
+        }
+        cache_path = pathlib.Path(base_folder) / f"{sequence_name}_{iteration}.parquet"
+        super().__init__(inputs, cache_path)
+
+    def get_cached_asset(self) -> pl.DataFrame:
+        return pl.read_parquet(self.cache_path)
+
+    @trace_simulation_step("iteration asset build")
+    def create_and_get_asset(self) -> pl.DataFrame:
+        if self.sequence_index is None:
+            raise ValueError(
+                f"Cannot save {self.sequence_name} without a dataframe."
+            )
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self.sequence_index.write_parquet(self.cache_path)
         return self.get_cached_asset()
 
 
@@ -990,6 +1403,7 @@ class RemainingOpportunitiesAsset(FileAsset):
     def get_cached_asset(self) -> pl.DataFrame:
         return pl.read_parquet(self.cache_path)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self) -> pl.DataFrame:
         if self.destination_saturation is None:
             raise ValueError("Cannot save destination saturation without a dataframe.")
@@ -1024,6 +1438,7 @@ class RngStateAsset(FileAsset):
         with open(self.cache_path, "rb") as file:
             return pickle.load(file)
 
+    @trace_simulation_step("iteration asset build")
     def create_and_get_asset(self):
         if self.rng_state is None:
             raise ValueError("Cannot save RNG state without a value.")
@@ -1031,80 +1446,3 @@ class RngStateAsset(FileAsset):
         with open(self.cache_path, "wb") as file:
             pickle.dump(self.rng_state, file, protocol=pickle.HIGHEST_PROTOCOL)
         return self.get_cached_asset()
-
-
-class IterationCompleteAsset(FileAsset):
-    """Persisted marker saying that one iteration state was fully written."""
-
-    def __init__(
-        self,
-        *,
-        run_key: str,
-        is_weekday: bool,
-        iteration: int,
-        base_folder: pathlib.Path,
-    ) -> None:
-        self.run_key = run_key
-        self.is_weekday = is_weekday
-        self.iteration = iteration
-        inputs = {
-            "version": 1,
-            "run_key": run_key,
-            "is_weekday": is_weekday,
-            "iteration": iteration,
-        }
-        cache_path = pathlib.Path(base_folder) / f"iteration_complete_{iteration}.json"
-        super().__init__(inputs, cache_path)
-
-    def get_cached_asset(self) -> dict:
-        with open(self.cache_path, "r", encoding="utf-8") as file:
-            return json.load(file)
-
-    def create_and_get_asset(self) -> dict:
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.cache_path, "w", encoding="utf-8") as file:
-            json.dump(
-                {
-                    "run_key": self.run_key,
-                    "is_weekday": self.is_weekday,
-                    "iteration": self.iteration,
-                },
-                file,
-                sort_keys=True,
-            )
-        return self.get_cached_asset()
-
-    @classmethod
-    def find_latest_completed_iteration(
-        cls,
-        *,
-        base_folder: pathlib.Path,
-        run_key: str,
-        is_weekday: bool,
-    ) -> int | None:
-        """Return the latest iteration with a completion marker."""
-        folder = pathlib.Path(base_folder)
-        if not folder.exists():
-            return None
-
-        latest_iteration = None
-        for path in folder.glob("*iteration_complete_*.json"):
-            try:
-                with open(path, "r", encoding="utf-8") as file:
-                    marker = json.load(file)
-            except (OSError, json.JSONDecodeError):
-                continue
-
-            if marker.get("run_key") != run_key or marker.get("is_weekday") != is_weekday:
-                continue
-
-            iteration = marker.get("iteration")
-            if not isinstance(iteration, int):
-                continue
-
-            if latest_iteration is None or iteration > latest_iteration:
-                latest_iteration = iteration
-
-        return latest_iteration
-
-

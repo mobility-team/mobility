@@ -2,24 +2,35 @@ from __future__ import annotations
 
 import os
 import pathlib
+from typing import TYPE_CHECKING
 
 import polars as pl
 
 from mobility.runtime.assets.file_asset import FileAsset
+
+if TYPE_CHECKING:
+    from mobility.trips.group_day_trips.core.run import Run
 
 DISTANCE_BIN_BREAKS = [0.0, 1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 1e6]
 TIME_BIN_BREAKS_MINUTES = [0.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 1e9]
 CALIBRATION_PLAN_STEP_COLUMNS = ["activity", "distance_bin", "time_bin", "mode", "distance", "time", "n_persons"]
 
 
+def left_closed_bins(values: pl.Expr, breaks: list[float]) -> pl.Expr:
+    """Keep the existing interval labels and treat NaN like a missing value."""
+    boundaries = ["-inf", *(str(int(value)) if float(value).is_integer() else str(value) for value in breaks), "inf"]
+    labels = [f"[{left}, {right})" for left, right in zip(boundaries, boundaries[1:])]
+    return values.fill_nan(None).bin_intervals(breaks, labels=labels, right_closed=False)
+
+
 def distance_bin_expr(column: str = "distance") -> pl.Expr:
     """Return the canonical distance-bin expression shared by calibration diagnostics."""
-    return pl.col(column).cast(pl.Float64).cut(DISTANCE_BIN_BREAKS, left_closed=True).cast(pl.String)
+    return left_closed_bins(pl.col(column).cast(pl.Float64), DISTANCE_BIN_BREAKS).cast(pl.String)
 
 
 def time_bin_expr(column: str = "time") -> pl.Expr:
     """Return the canonical travel-time-bin expression shared by calibration diagnostics."""
-    return (pl.col(column).cast(pl.Float64) * 60.0).cut(TIME_BIN_BREAKS_MINUTES, left_closed=True).cast(pl.String)
+    return left_closed_bins(pl.col(column).cast(pl.Float64) * 60.0, TIME_BIN_BREAKS_MINUTES).cast(pl.String)
 
 
 def to_calibration_plan_steps(
@@ -97,7 +108,7 @@ class ObservedCalibrationPlanSteps(FileAsset):
     def __init__(
         self,
         *,
-        run: FileAsset,
+        run: Run,
         is_weekday: bool,
     ) -> None:
         project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
@@ -108,7 +119,7 @@ class ObservedCalibrationPlanSteps(FileAsset):
         )
         inputs = {
             "version": 3,
-            "run": run,
+            "plan_steps": run._table_asset("plan_steps"),
             "is_weekday": is_weekday,
         }
         self.run = run
@@ -120,7 +131,7 @@ class ObservedCalibrationPlanSteps(FileAsset):
 
     def create_and_get_asset(self) -> pl.LazyFrame:
         standardized = to_calibration_plan_steps(
-            self.run.get_cached_asset()["plan_steps"]
+            self.run._table_asset("plan_steps").get().lazy()
         ).collect(engine="streaming")
         standardized.write_parquet(self.cache_path)
         return self.get_cached_asset()

@@ -7,6 +7,7 @@ import pickle
 
 import polars as pl
 import numpy as np
+from mobility.runtime.temporary import write_temporary_parquet
 
 
 CUMULATIVE_PROB_THRESHOLD = 0.98
@@ -134,12 +135,7 @@ def process_batch_parallel(batch_of_locations, debug=False):
         
         mode_sequences = [ms for ms in mode_sequences if ms is not None]
         
-        ( 
-            pl.concat(mode_sequences)
-            .write_parquet(
-                tmp_path / (shortuuid.uuid() + ".parquet")
-            )
-        )
+        write_temporary_parquet(pl.concat(mode_sequences), tmp_path / (shortuuid.uuid() + ".parquet"))
         
     except Exception:
         logging.exception("Error when running run_top_k_search.")
@@ -182,12 +178,7 @@ def process_batch_serial(
         
         mode_sequences = [ms for ms in mode_sequences if ms is not None]
         
-        ( 
-            pl.concat(mode_sequences)
-            .write_parquet(
-                tmp_path / (shortuuid.uuid() + ".parquet")
-            )
-        )
+        write_temporary_parquet(pl.concat(mode_sequences), tmp_path / (shortuuid.uuid() + ".parquet"))
         
     except Exception:
         logging.exception("Error when running run_top_k_search.")

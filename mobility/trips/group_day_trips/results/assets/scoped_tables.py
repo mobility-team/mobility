@@ -1,25 +1,60 @@
 from __future__ import annotations
 
-import os
-import pathlib
-import hashlib
-from typing import TYPE_CHECKING, Any
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import polars as pl
 
-from mobility.runtime.assets.file_asset import FileAsset
+from mobility.runtime.assets.in_memory_asset import InMemoryAsset
+from mobility.runtime.assets.resolver import get_current_asset_resolver
 
 if TYPE_CHECKING:
     from mobility.trips.group_day_trips.results import (
         GroupDayTripsResults,
-        ResultRun,
     )
 
 IterationSelector = str | int | list[int] | range
 
 
-class ScopedRunTable(FileAsset):
-    """Persist one run output table with scenario, day type, iteration, and replication."""
+def release_scoped_run_tables(
+    iteration: int,
+    requested_tables: Sequence["ScopedRunTable"] = (),
+) -> None:
+    """Release large run tables once one iteration's result has been reduced."""
+    resolver = get_current_asset_resolver()
+    if resolver is None:
+        return
+
+    scoped_tables = {
+        asset.inputs_hash: asset
+        for asset in tuple(resolver.in_memory_assets.values())
+        if isinstance(asset, ScopedRunTable)
+    }
+    scoped_tables.update({asset.inputs_hash: asset for asset in requested_tables})
+
+    for asset in scoped_tables.values():
+        if iteration not in asset.selected_iterations:
+            continue
+
+        resolver.release_in_memory_asset(asset)
+        # Demand groups are invariant across iterations and are reused by every
+        # metric. Keep their small table in this resolver until the runner ends.
+        if asset.table_name == "demand_groups":
+            continue
+        for run_index, output_assets in enumerate(asset.run_output_assets):
+            if asset.uses_last_iteration:
+                output_index = 0
+            else:
+                run_iterations = asset.selected_iterations_by_run[run_index]
+                if iteration not in run_iterations:
+                    continue
+                output_index = run_iterations.index(iteration)
+            if output_index < len(output_assets):
+                resolver.release_in_memory_asset(output_assets[output_index])
+
+
+class ScopedRunTable(InMemoryAsset):
+    """Assemble one requested table across scenarios and replications."""
 
     def __init__(
         self,
@@ -28,6 +63,7 @@ class ScopedRunTable(FileAsset):
         table_name: str,
         iterations: IterationSelector = "last",
         columns: list[str] | tuple[str, ...] | None = None,
+        strict_columns: bool = False,
     ) -> None:
         run_contexts = results.run_contexts
         if not run_contexts:
@@ -37,39 +73,77 @@ class ScopedRunTable(FileAsset):
         self.run_contexts = list(run_contexts)
         self.table_name = table_name
         self.columns = None if columns is None else tuple(dict.fromkeys(columns))
+        self.strict_columns = strict_columns
         self.iterations = results._validate_iterations(iterations)
         self.selected_iterations = results.selected_iterations(iterations)
-        self.uses_last_iteration = self.iterations == "last"
+        self.uses_last_iteration = results.uses_last_iteration(iterations)
+        self.last_iterations_by_run = [
+            int(run_context.run.parameters.run.n_steps)
+            for run_context in self.run_contexts
+        ]
+        self.selected_iterations_by_run = []
+        for last_iteration in self.last_iterations_by_run:
+            if self.iterations == "last":
+                run_iterations = [last_iteration]
+            elif self.iterations == "all":
+                run_iterations = list(range(1, last_iteration + 1))
+            else:
+                run_iterations = [
+                    iteration
+                    for iteration in self.iterations
+                    if iteration <= last_iteration
+                ]
+            self.selected_iterations_by_run.append(run_iterations)
 
-        project_folder = pathlib.Path(os.environ["MOBILITY_PROJECT_DATA_FOLDER"])
-        if self.uses_last_iteration:
-            iteration_suffix = "last"
-        else:
-            iteration_suffix = "-".join(str(iteration) for iteration in self.selected_iterations)
-        if self.columns is None:
-            column_suffix = "all-columns"
-        else:
-            column_key = "|".join(self.columns).encode("utf-8")
-            column_suffix = f"cols-{hashlib.md5(column_key).hexdigest()[:8]}"
-        cache_path = (
-            project_folder
-            / "group_day_trips"
-            / "results"
-            / f"{table_name}_{iteration_suffix}_{column_suffix}.parquet"
-        )
+        if not any(self.selected_iterations_by_run):
+            raise ValueError(
+                "None of the selected runs completed the requested outer iteration(s): "
+                f"{self.selected_iterations}."
+            )
+        self.run_output_assets = []
+        for run_index, run_context in enumerate(self.run_contexts):
+            run_iterations = self.selected_iterations_by_run[run_index]
+            if self.table_name in {"plans", "iteration_metrics"}:
+                output_assets = [
+                    run_context.run._table_asset(
+                        self.table_name,
+                        iteration=iteration,
+                    )
+                    for iteration in run_iterations
+                ]
+            elif self.table_name == "demand_groups":
+                output_assets = [run_context.run._table_asset("demand_groups")]
+            elif self.uses_last_iteration:
+                output_assets = [run_context.run._table_asset(self.table_name)]
+            elif self.table_name in {"plan_steps", "costs"}:
+                output_assets = [
+                    run_context.run._table_asset(
+                        self.table_name,
+                        iteration=iteration,
+                    )
+                    for iteration in run_iterations
+                ]
+            else:
+                raise ValueError(
+                    f'iterations={self.iterations!r} is not available for '
+                    f"`{self.table_name}`."
+                )
+            self.run_output_assets.append(output_assets)
+
         inputs = {
-            "version": 4,
+            "version": 9,
             "table_name": table_name,
             "iterations": tuple(self.selected_iterations),
+            "iterations_by_run": tuple(
+                tuple(iterations)
+                for iterations in self.selected_iterations_by_run
+            ),
             "uses_last_iteration": self.uses_last_iteration,
             "columns": self.columns,
-            # Result tables only need to know which completed run outputs they
-            # summarize. Keeping the full Run assets out of the hash inputs
-            # avoids walking every simulation iteration asset before reading an
-            # already-finalized result table.
             "run_outputs": tuple(
-                self._run_output_descriptor(run_context)
-                for run_context in self.run_contexts
+                asset
+                for output_assets in self.run_output_assets
+                for asset in output_assets
             ),
             "scope": tuple(
                 (
@@ -81,230 +155,136 @@ class ScopedRunTable(FileAsset):
                 for run_context in self.run_contexts
             ),
         }
-        super().__init__(inputs, cache_path)
+        if strict_columns:
+            inputs["strict_columns"] = True
+        super().__init__(inputs)
 
-    @staticmethod
-    def _run_output_descriptor(run_context: "ResultRun") -> dict[str, Any]:
-        """Return the compact run identity needed by result-table caches."""
-        run = run_context.run
-        cache_path = getattr(run, "cache_path", {})
-        if isinstance(cache_path, dict):
-            output_paths = {
-                name: str(path)
-                for name, path in sorted(cache_path.items())
-            }
-        else:
-            output_paths = {"default": str(cache_path)}
+    @property
+    def planned_outputs(self) -> tuple:
+        """Return the concrete run output assets used by this table request."""
+        return tuple(
+            asset
+            for output_assets in self.run_output_assets
+            for asset in output_assets
+        )
 
-        return {
-            "run_hash": str(getattr(run, "inputs_hash", "")),
-            "scenario": str(run_context.scenario),
-            "sensitivity_case": str(run_context.sensitivity_case_id),
-            "day_type": str(run_context.day_type),
-            "replication": str(run_context.replication),
-            "output_paths": output_paths,
-        }
+    def get(self):
+        """Return a transient result table, or an internal scan during execution."""
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            coordinator = getattr(resolver, "result_coordinator", None)
+            if coordinator is not None:
+                # Lane-scoped reads must not reuse a table cached for another
+                # seed. The runner consumes these views before the step ends.
+                resolver.lane_scoped_tables.append(self)
+                return pl.concat([
+                    self.compute_iteration(iteration, coordinator=coordinator)
+                    for iteration in self.selected_iterations
+                ], how="vertical_relaxed")
+            return super().get()
+        return self.results.get_all(table=self)["table"]
 
-    def get_cached_asset(self) -> pl.LazyFrame:
-        """Return the cached scoped table as a lazy parquet scan."""
-        return pl.scan_parquet(self.cache_path)
+    def compute_iteration(self, iteration: int, *, coordinator=None) -> pl.LazyFrame:
+        """Build scoped rows for one step, optionally for one replication lane."""
+        if iteration not in self.selected_iterations:
+            raise ValueError(
+                f"Iteration {iteration} is not selected for {self.table_name}."
+            )
 
-    def create_and_get_asset(self) -> pl.LazyFrame:
-        """Build and cache the scoped table."""
-        if not self.uses_last_iteration:
-            return self._create_saved_iteration_asset()
-
-        scoped_tables: list[pl.LazyFrame] = []
-        for run_context in self.run_contexts:
-            self._ensure_run_output_available(run_context, self.table_name)
-            cached = run_context.run.get_cached_asset()
-            if self.table_name not in cached:
-                raise KeyError(
-                    f"Run output table `{self.table_name}` is not available. "
-                    f"Available tables: {sorted(cached)}."
-                )
-
-            table = cached[self.table_name]
-            if isinstance(table, pl.DataFrame):
-                table = table.lazy()
-            if self.table_name == "iteration_metrics":
-                table = table.filter(pl.col("iteration") == self.results.last_iteration)
-                iteration_expr = pl.col("iteration").cast(pl.Int32)
+        scoped_tables = []
+        for run_index, (run_context, output_assets) in enumerate(
+            zip(self.run_contexts, self.run_output_assets)
+        ):
+            if coordinator is not None and run_context.run.coordinated_run_asset is not coordinator:
+                continue
+            if not self.uses_last_iteration and iteration not in self.selected_iterations_by_run[run_index]:
+                continue
+            if self.table_name == "demand_groups":
+                output_asset = output_assets[0]
             else:
-                iteration_expr = pl.lit(self.results.last_iteration, dtype=pl.Int32)
+                output_index = (
+                    0
+                    if self.uses_last_iteration
+                    else self.selected_iterations_by_run[run_index].index(iteration)
+                )
+                output_asset = output_assets[output_index]
+
+            # Resolve the actual stopping point only during execution, inside
+            # the runner's shared resolver. Later requested iterations are empty.
+            last_iteration = self.results._last_iteration_for_run(run_context.run)
+            empty_iteration = not self.uses_last_iteration and iteration > last_iteration
+            if output_asset.iteration is not None and (
+                empty_iteration or self.uses_last_iteration
+            ):
+                output_asset = run_context.run._table_asset(
+                    self.table_name, iteration=last_iteration
+                )
+            active_coordinator = getattr(run_context.run, "coordinated_run_asset", None)
+            if (
+                self.table_name == "transitions"
+                and active_coordinator is not None
+                and getattr(active_coordinator, "_is_running", False)
+            ):
+                # Transition events are already saved per step when enabled.
+                # Scan them directly instead of collecting their full history.
+                run_context.run._execute()
+                transitions = run_context.run._build_transitions()
+                table = transitions.lazy() if isinstance(transitions, pl.DataFrame) else transitions
+            else:
+                table = output_asset.get().lazy()
+            if empty_iteration:
+                table = table.limit(0)
+            if self.table_name in {"iteration_metrics", "transitions"}:
+                iteration_expr = pl.col("step").cast(pl.Int32)
+            elif self.table_name == "adaptive_search_diagnostics":
+                iteration_expr = pl.col("outer_step").fill_null(
+                    last_iteration
+                ).cast(pl.Int32)
+            else:
+                output_iteration = (
+                    last_iteration
+                    if self.uses_last_iteration
+                    else iteration
+                )
+                iteration_expr = pl.lit(output_iteration, dtype=pl.Int32)
             scoped_tables.append(
                 self._select_columns(
                     table.with_columns(
                         scenario=pl.lit(run_context.scenario, dtype=pl.String),
                         sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
                         day_type=pl.lit(run_context.day_type, dtype=pl.String),
-                        iteration=iteration_expr,
+                        step=iteration_expr,
                         replication=pl.lit(run_context.replication, dtype=pl.Int32),
                     )
                 )
             )
 
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        pl.concat(scoped_tables, how="vertical_relaxed").collect(engine="streaming").write_parquet(
-            self.cache_path
-        )
-        return self.get_cached_asset()
+        return pl.concat(scoped_tables, how="vertical_relaxed")
 
-    def _create_saved_iteration_asset(self) -> pl.LazyFrame:
-        """Build and cache a table for selected saved iterations."""
-        if self.table_name == "plan_steps":
-            scoped_tables = self._iteration_plan_steps()
-        elif self.table_name == "costs":
-            scoped_tables = self._iteration_costs()
-        elif self.table_name == "demand_groups":
-            scoped_tables = self._iteration_demand_groups()
-        elif self.table_name == "iteration_metrics":
-            scoped_tables = self._iteration_metrics()
-        else:
-            raise ValueError(
-                f'iterations={self.iterations!r} is not available for '
-                f"`{self.table_name}` yet. Saved iteration artifacts currently "
-                "support plan_steps, costs, demand_groups, and iteration_metrics."
-            )
+    def create_and_get_asset(self) -> pl.LazyFrame:
+        """Build the requested scoped table without persisting the raw table."""
+        resolver = get_current_asset_resolver()
+        if resolver is not None:
+            resolver.retain_assets_shared_by_roots(list(self.planned_outputs))
 
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        pl.concat(scoped_tables, how="vertical_relaxed").collect(engine="streaming").write_parquet(
-            self.cache_path
-        )
-        return self.get_cached_asset()
-
-    def _iteration_plan_steps(self) -> list[pl.LazyFrame]:
-        """Return selected saved current plan steps with result scope columns."""
-        scoped_tables = []
-        for run_context in self.run_contexts:
-            for iteration in self.selected_iterations:
-                current_plan_steps = self._iteration_table_for_run(
-                    run_context,
-                    table_name="plan_steps",
-                    iteration=iteration,
-                )
-                scoped_tables.append(
-                    self._select_columns(
-                        current_plan_steps.with_columns(
-                            scenario=pl.lit(run_context.scenario, dtype=pl.String),
-                            sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
-                            day_type=pl.lit(run_context.day_type, dtype=pl.String),
-                            replication=pl.lit(run_context.replication, dtype=pl.Int32),
-                            iteration=pl.lit(iteration, dtype=pl.Int32),
-                        )
-                    )
-                )
-        return scoped_tables
-
-    def _iteration_costs(self) -> list[pl.LazyFrame]:
-        """Return selected saved transport costs with result scope columns."""
-        scoped_tables = []
-        for run_context in self.run_contexts:
-            for iteration in self.selected_iterations:
-                costs = self._iteration_table_for_run(
-                    run_context,
-                    table_name="costs",
-                    iteration=iteration,
-                )
-                scoped_tables.append(
-                    self._select_columns(
-                        costs.with_columns(
-                            scenario=pl.lit(run_context.scenario, dtype=pl.String),
-                            sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
-                            day_type=pl.lit(run_context.day_type, dtype=pl.String),
-                            replication=pl.lit(run_context.replication, dtype=pl.Int32),
-                            iteration=pl.lit(iteration, dtype=pl.Int32),
-                        )
-                    )
-                )
-        return scoped_tables
-
-    def _iteration_table_for_run(
-        self,
-        run_context: "ResultRun",
-        *,
-        table_name: str,
-        iteration: int,
-    ) -> pl.LazyFrame:
-        """Return one saved iteration table for a run."""
-        run = run_context.run
-        if not callable(getattr(run, "iteration_table", None)):
-            raise TypeError(
-                "Iteration-scoped result tables need runs exposing "
-                "`iteration_table(table_name, iteration)`."
-            )
-
-        table = run.iteration_table(table_name, iteration)
-        if isinstance(table, pl.DataFrame):
-            return table.lazy()
-        return table
-
-    def _iteration_demand_groups(self) -> list[pl.LazyFrame]:
-        """Return demand groups repeated for each selected iteration."""
-        scoped_tables = []
-        for run_context in self.run_contexts:
-            self._ensure_run_output_available(run_context, "demand_groups")
-            cached = run_context.run.get_cached_asset()
-            if "demand_groups" not in cached:
-                raise KeyError("Run output table `demand_groups` is not available.")
-            table = cached["demand_groups"]
-            if isinstance(table, pl.DataFrame):
-                table = table.lazy()
-            for iteration in self.selected_iterations:
-                scoped_tables.append(
-                    self._select_columns(
-                        table.with_columns(
-                            scenario=pl.lit(run_context.scenario, dtype=pl.String),
-                            sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
-                            day_type=pl.lit(run_context.day_type, dtype=pl.String),
-                            replication=pl.lit(run_context.replication, dtype=pl.Int32),
-                            iteration=pl.lit(iteration, dtype=pl.Int32),
-                        )
-                    )
-                )
-        return scoped_tables
-
-    def _iteration_metrics(self) -> list[pl.LazyFrame]:
-        """Return iteration diagnostics filtered to the selected iterations."""
-        scoped_tables = []
-        for run_context in self.run_contexts:
-            self._ensure_run_output_available(run_context, "iteration_metrics")
-            cached = run_context.run.get_cached_asset()
-            if "iteration_metrics" not in cached:
-                raise KeyError("Run output table `iteration_metrics` is not available.")
-            table = cached["iteration_metrics"]
-            if isinstance(table, pl.DataFrame):
-                table = table.lazy()
-            scoped_tables.append(
-                self._select_columns(
-                    table
-                    .filter(pl.col("iteration").is_in(self.selected_iterations))
-                    .with_columns(
-                        scenario=pl.lit(run_context.scenario, dtype=pl.String),
-                        sensitivity_case=pl.lit(run_context.sensitivity_case_id, dtype=pl.String),
-                        day_type=pl.lit(run_context.day_type, dtype=pl.String),
-                        replication=pl.lit(run_context.replication, dtype=pl.Int32),
-                        iteration=pl.col("iteration").cast(pl.Int32),
-                    )
-                )
-            )
-        return scoped_tables
+        scoped_tables = [
+            self.compute_iteration(iteration)
+            for iteration in self.selected_iterations
+        ]
+        return pl.concat(scoped_tables, how="vertical_relaxed")
 
     def _select_columns(self, table: pl.LazyFrame) -> pl.LazyFrame:
         """Return only requested columns when this scoped table is projected."""
         if self.columns is None:
             return table
         schema = table.collect_schema().names()
+        if self.strict_columns:
+            missing = [column for column in self.columns if column not in schema]
+            if missing:
+                raise ValueError(
+                    f"Columns not available in {self.table_name}: {missing}. "
+                    f"Available columns: {schema}."
+                )
         columns = [column for column in self.columns if column in schema]
         return table.select(columns)
-
-    @staticmethod
-    def _ensure_run_output_available(run_context: "ResultRun", table_name: str) -> None:
-        """Materialize a run only when the requested final output is missing."""
-        run = run_context.run
-        cache_path = getattr(run, "cache_path", {})
-        if isinstance(cache_path, dict) and table_name in cache_path:
-            if pathlib.Path(cache_path[table_name]).exists():
-                return
-        run.get()
 

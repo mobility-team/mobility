@@ -70,13 +70,13 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data, gtf
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=2,
-                n_iter_per_cost_update=0,
+                n_steps=2,
+                n_steps_per_cost_update=0,
                 seed=0,
             ),
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
             outputs=GroupDayTripsOutputParameters(
-                cache_iteration_events=True,
+                cache_step_events=True,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
                 dest_prob_cutoff=0.9,
@@ -95,7 +95,7 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data, gtf
         activities=[
             HomeActivity(),
             WorkActivity(
-                value_of_time=mobility.ParameterValue.by_iteration(
+                value_of_time=mobility.ParameterValue.by_step(
                     {1: 5.0, 2: 50.0},
                 ),
             ),
@@ -104,13 +104,13 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data, gtf
         surveys=[emp],
         parameters=GroupDayTripsParameters(
             run=GroupDayTripsRunParameters(
-                n_iterations=2,
-                n_iter_per_cost_update=0,
+                n_steps=2,
+                n_steps_per_cost_update=0,
                 seed=0,
             ),
             periods=GroupDayTripsPeriodParameters(simulate_weekend=False),
             outputs=GroupDayTripsOutputParameters(
-                cache_iteration_events=True,
+                cache_step_events=True,
             ),
             destination_sequences=GroupDayTripsDestinationSequenceParameters(
                 dest_prob_cutoff=0.9,
@@ -127,26 +127,22 @@ def test_008c_group_day_trips_parameter_values_change_iteration_2(test_data, gtf
     dynamic_run = dynamic.run("weekday")
 
     assert dynamic_run.initial_iteration_state.inputs_hash == static_run.initial_iteration_state.inputs_hash
-    assert dynamic_run.iteration_state_assets[0].inputs_hash == static_run.iteration_state_assets[0].inputs_hash
+    # The coordinated run identity includes the full scenario and its future
+    # parameter values, even when their first-step values are identical.
+    assert dynamic_run.iteration_state_assets[0].inputs_hash != static_run.iteration_state_assets[0].inputs_hash
     assert dynamic_run.iteration_state_assets[1].inputs_hash != static_run.iteration_state_assets[1].inputs_hash
 
-    static_plan_steps = static_run.get()["plan_steps"].collect()
-    static_iteration_1_state_path = static_run.iteration_state_assets[0].cache_path["current_plans"]
-    static_iteration_1_state_mtime = static_iteration_1_state_path.stat().st_mtime
-
-    dynamic_plan_steps = dynamic_run.get()["plan_steps"].collect()
-    static_transitions = static_run.get()["transitions"].collect()
-    dynamic_transitions = dynamic_run.get()["transitions"].collect()
+    static_plan_steps = static_run.table("plan_steps")
+    dynamic_plan_steps = dynamic_run.table("plan_steps")
+    static_transitions = static_run.table("transitions")
+    dynamic_transitions = dynamic_run.table("transitions")
 
     assert static_plan_steps.height > 0
     assert dynamic_plan_steps.height > 0
     assert static_transitions.height > 0
     assert dynamic_transitions.height > 0
-    assert dynamic_run.iteration_state_assets[0].cache_path["current_plans"] == static_iteration_1_state_path
-    assert dynamic_run.iteration_state_assets[0].cache_path["current_plans"].stat().st_mtime == static_iteration_1_state_mtime
-
-    static_iter_2 = static_transitions.filter(pl.col("iteration") == 2)
-    dynamic_iter_2 = dynamic_transitions.filter(pl.col("iteration") == 2)
+    static_iter_2 = static_transitions.filter(pl.col("step") == 2)
+    dynamic_iter_2 = dynamic_transitions.filter(pl.col("step") == 2)
 
     assert static_iter_2.height > 0
     assert dynamic_iter_2.height > 0
