@@ -223,7 +223,7 @@ def test_checkpoint_manifest_is_published_atomically(tmp_path, monkeypatch):
     def fail_replace(source, destination):
         raise OSError("publication failed")
 
-    monkeypatch.setattr("mobility.trips.group_day_trips.core.multi_scenario_run.os.replace", fail_replace)
+    monkeypatch.setattr("mobility.trips.group_day_trips.core.cohort_checkpoints.os.replace", fail_replace)
     with pytest.raises(OSError, match="publication failed"):
         coordinator._write_checkpoint_manifest(1)
     assert target.read_bytes() == original
