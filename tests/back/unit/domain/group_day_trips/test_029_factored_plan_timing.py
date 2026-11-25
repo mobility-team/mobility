@@ -143,6 +143,87 @@ def test_factored_timing_matches_expanded_ids_and_steps_for_shared_and_distinct_
                        check_exact=True)
 
 
+    # A complete-plan cache is owned by one run, not by a shared trip lookup.
+    from mobility.trips.group_day_trips.plans.whole_plan_cache import (
+        WholePlanCache, WholePlanMemoryBudget, make_state, prepare_reuse, run_reuse,
+    )
+    profile_contexts = contexts.select("demand_group_id", "demand_subgroup_id", "country", "csp", "utility_profile_id")
+    def classes_for(members):
+        return (members.join(profile_contexts, on=["demand_group_id", "demand_subgroup_id"])
+                .select(PLAN_COLUMNS + ["country", "csp", "utility_profile_id"]).unique())
+    def make_complete_state(timing, scored):
+        return make_state(physical, scores, timing, scored, home_night_dur=home, home_value=1.0,
+                          min_activity_time_constant=1.0, rigidity=rigidity, enabled=True)
+    def prepare(state, members, *, home_values=home, rigid=rigidity, enabled=True):
+        return prepare_reuse(state, classes_for(members), physical, scores, factored.time_sequence_steps, home_values,
+                             1.0, 1.0, rigid, enabled)
+    complete = make_complete_state(factored, section_scores)
+    budget = WholePlanMemoryBudget(max_bytes=10_000_000)
+    first_run = WholePlanCache(budget)
+    first_run.retain(complete)
+    second_run = WholePlanCache(budget)
+    assert first_run.state is not None and second_run.state is None
+    assert prepare(complete, memberships, home_values=home.with_columns(
+        mean_home_night_per_pers=pl.col("mean_home_night_per_pers") + 1.0)) is None
+    assert prepare(complete, memberships, rigid={"home": 0.0, "work": 0.0}) is None
+    assert prepare(complete, memberships, enabled=False) is None
+    changed_schedule = factored.time_sequence_steps.with_columns(
+        duration_per_pers=pl.col("duration_per_pers") + 1.0)
+    assert prepare_reuse(complete, classes_for(memberships), physical, scores, changed_schedule, home,
+                         1.0, 1.0, rigidity, True) is None
+    changed_physical = physical.with_columns(duration_per_pers=pl.col("duration_per_pers") + 1.0)
+    assert prepare_reuse(complete, classes_for(memberships), changed_physical, scores, factored.time_sequence_steps, home,
+                         1.0, 1.0, rigidity, True) is None
+    assert prepare_reuse(complete, classes_for(memberships), physical,
+                         scores.with_columns(cost=pl.col("cost") + 1.0), factored.time_sequence_steps, home,
+                         1.0, 1.0, rigidity, True) is None
+    # Disjoint keys use the existing cold path instead of attempting an empty ID maximum.
+    disjoint = memberships.with_columns(dest_seq_id=pl.lit(99, dtype=pl.UInt32))
+    assert prepare(complete, disjoint) is None
+    # A shrinking, fully cached pool needs no new timing or scoring and must not revive removed alternatives.
+    smaller = memberships.filter(pl.col("demand_group_id") == 1)
+    prepared = prepare(complete, smaller)
+    assert prepared is not None and prepared[1].is_empty()
+    result = run_reuse(complete, physical, smaller, profile_contexts, scores, factored.time_sequence_steps,
+                       home, 1.0, 1.0, rigidity, True, None, None, PlanScheduleUpdater(), prepared)
+    assert result is not None
+    _, reused_smaller, next_state = result
+    expected_smaller = section_scores.utilities.filter(pl.col("demand_group_id") == 1)
+    assert_frame_equal(reused_smaller.utilities.sort(PLAN_KEY_COLS), expected_smaller.sort(PLAN_KEY_COLS), check_exact=True)
+    assert next_state["scores"].height == 1
+    # A partial hit scores only the missing profile and remaps the whole current pool.
+    first_scores = score_factored_sections(first, contexts, scores, home, rigid_activities={"work"},
+                                           value_of_time_stay_home=1.0, min_activity_time_constant=1.0)
+    partial_state = make_complete_state(first, first_scores)
+    prepared = prepare(partial_state, memberships)
+    assert prepared is not None and prepared[0].height == 2 and prepared[1].height == 1
+    result = run_reuse(partial_state, physical, memberships, profile_contexts, scores, factored.time_sequence_steps,
+                       home, 1.0, 1.0, rigidity, True, None, None, PlanScheduleUpdater(), prepared)
+    assert result is not None
+    _, reused_full, _ = result
+    assert_frame_equal(reused_full.utilities.sort(PLAN_KEY_COLS), section_scores.utilities.sort(PLAN_KEY_COLS), check_exact=True)
+    # Replacing and dropping entries updates a budget shared across scenarios.
+    used = budget.used_bytes
+    assert used > 0
+    too_small = WholePlanCache(WholePlanMemoryBudget(max_bytes=1))
+    too_small.retain(complete)
+    assert too_small.state is None and too_small.budget.used_bytes == 0
+    second_run.retain(complete)
+    assert budget.used_bytes == used * 2
+    first_run.retain(None)
+    assert budget.used_bytes == used and first_run.state is None
+    second_run.retain(None)
+    assert budget.used_bytes == 0
+    limited_budget = WholePlanMemoryBudget(max_bytes=used)
+    retained_run, rejected_run = WholePlanCache(limited_budget), WholePlanCache(limited_budget)
+    retained_run.retain(complete)
+    rejected_run.retain(complete)
+    assert retained_run.state is not None and rejected_run.state is None
+    retained_run.retain(None)
+    rejected_run.retain(complete)
+    assert rejected_run.state is not None and limited_budget.used_bytes == used
+
+
 def test_factored_timing_rejects_missing_context_profiles():
     physical = pl.DataFrame({
         "activity_seq_id": [1], "time_seq_id": [1], "dest_seq_id": [1], "mode_seq_id": [1],

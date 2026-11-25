@@ -1896,3 +1896,52 @@ def test_filtered_sensitivity_and_cached_metric_keep_full_cohort(test_data, monk
     }
     assert all(members == expected_members for members, _, _ in records)
     assert records[0][1:] == records[1][1:] == records[2][1:]
+
+
+def test_whole_plan_reuse_is_reproducible_after_behavior_change(test_data, monkeypatch):
+    """Reuse remains scenario-local and reproducible when destination replanning starts."""
+    import mobility.trips.group_day_trips.core.multi_scenario_run as coordinator_module
+    from mobility.trips.group_day_trips.plans.whole_plan_cache import WholePlanMemoryBudget
+
+    setup = make_setup(test_data, n_steps=2)
+    setup.parameters.destination_sequences.sampling_method = "utility"
+    setup.parameters.behavior_change.phases = [
+        BehaviorChangePhase(start_step=2, scope=BehaviorChangeScope.DESTINATION_REPLANNING)
+    ]
+    setup.parameters.adaptive_search.max_search_batches = 2
+    states = []
+    reuse_calls = []
+    current_step = [None]
+    advance = MultiScenarioRunAsset._advance_cohort_step
+    reuse = plan_updater_module.run_reuse
+
+    def record_reuse(*args, **kwargs):
+        result = reuse(*args, **kwargs)
+        if result is not None:
+            reuse_calls.append(current_step[0])
+        return result
+
+    def record_state(coordinator, iteration, current_states, **kwargs):
+        current_step[0] = iteration
+        assets, next_states, search = advance(coordinator, iteration, current_states, **kwargs)
+        states.append({key: (state.rng_state, state.current_plans.clone()) for key, state in next_states.items()})
+        return assets, next_states, search
+
+    monkeypatch.setattr(plan_updater_module, "run_reuse", record_reuse)
+    monkeypatch.setattr(MultiScenarioRunAsset, "_advance_cohort_step", record_state)
+    for enabled in (False, True, True):
+        monkeypatch.setattr(coordinator_module, "WholePlanMemoryBudget",
+                            lambda: WholePlanMemoryBudget(max_bytes=3 * 1024**3 if enabled else 0))
+        experiment = setup.experiment("weekday", scenarios=["default", "project"], replication=0)
+        with asset_resolution_context():
+            experiment.run("weekday").coordinated_run_asset.get(step_consumer=lambda step: None)
+    assert 2 in reuse_calls, "Reuse must run after the behavior-change phase starts."
+    assert len(states) == 6
+    # Current ordering is stable on this small case; other datasets may draw
+    # differently while remaining reproducible under the same implementation.
+    for baseline, first, second in zip(states[:2], states[2:4], states[4:]):
+        assert baseline.keys() == first.keys() == second.keys()
+        for key in baseline:
+            for left, right in ((baseline[key], first[key]), (first[key], second[key])):
+                assert left[0] == right[0]
+                assert_frame_equal(left[1].sort(left[1].columns), right[1].sort(right[1].columns), check_exact=True)

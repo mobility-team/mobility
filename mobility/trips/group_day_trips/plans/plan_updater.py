@@ -20,6 +20,7 @@ from .compact_candidate_steps import (
 )
 from .factored_plan_timing import time_factored_candidates
 from .factored_plan_scoring import SectionScoreCache, score_factored_sections
+from .whole_plan_cache import WholePlanCache, make_state, prepare_reuse, run_reuse
 from .destination_saturation import get_destination_saturation, ensure_destination_saturation_columns
 from .scoring_contexts import ScoringContexts, ScoringLookup, ScoringMemoryBudget
 from .demand_subgroups import DEMAND_UNIT_COLS
@@ -626,6 +627,8 @@ class PlanUpdater:
         rigidity: dict[str, float], enabled: bool,
         scoring_lookup: ScoringLookup, time_index_cache: TimeSequenceIndexCache | None,
         needed_score_keys: pl.DataFrame | None = None,
+        whole_plan_cache: WholePlanCache | None = None,
+        prepared_reuse: tuple | None = None,
     ) -> CandidatePlanEvaluation | None:
         """Score timed sections once before expanding them to scoring contexts.
 
@@ -647,20 +650,43 @@ class PlanUpdater:
             needed = needed_score_keys
         if needed.join(lookup.select(score_keys), on=score_keys, how="anti", nulls_equal=True).height:
             return None
-        travel = lookup.select("utility_profile_id", "from", "to", "mode", "time").unique()
-        timing = time_factored_candidates(
-            physical, memberships, profiles, travel, schedule_steps,
-            activity_time_rigidity_by_activity=rigidity, enabled=enabled,
-            index_cache=time_index_cache, schedule_updater=self.schedule_updater,
-        )
         if scoring_lookup.section_cache is None:
             scoring_lookup.section_cache = SectionScoreCache(budget=scoring_lookup.budget)
-        scored = score_factored_sections(
-            timing, profiles, lookup, home_night_dur,
-            rigid_activities={name for name, value in rigidity.items() if value == 1.0},
-            value_of_time_stay_home=home_value, min_activity_time_constant=min_activity_time_constant,
-            cache=scoring_lookup.section_cache,
-        )
+        previous = whole_plan_cache.state if whole_plan_cache is not None else None
+        reuse_result = None
+        if previous is not None and prepared_reuse is not None:
+            reuse_result = run_reuse(
+                previous, physical, memberships, profiles, lookup, schedule_steps,
+                home_night_dur, home_value, min_activity_time_constant, rigidity, enabled,
+                scoring_lookup.section_cache, time_index_cache, self.schedule_updater, prepared_reuse,
+            )
+            if reuse_result is None:
+                # The lookup may contain only the newly requested keys. Let the
+                # established evaluator rebuild the full set on failure.
+                whole_plan_cache.retain(None)
+                return None
+        if reuse_result is not None:
+            timing, scored, next_state = reuse_result
+            whole_plan_cache.retain(next_state)
+        else:
+            travel = lookup.select("utility_profile_id", "from", "to", "mode", "time").unique()
+            timing = time_factored_candidates(
+                physical, memberships, profiles, travel, schedule_steps,
+                activity_time_rigidity_by_activity=rigidity, enabled=enabled,
+                index_cache=time_index_cache, schedule_updater=self.schedule_updater,
+            )
+            scored = score_factored_sections(
+                timing, profiles, lookup, home_night_dur,
+                rigid_activities={name for name, value in rigidity.items() if value == 1.0},
+                value_of_time_stay_home=home_value, min_activity_time_constant=min_activity_time_constant,
+                cache=scoring_lookup.section_cache,
+            )
+            if whole_plan_cache is not None:
+                whole_plan_cache.retain(make_state(
+                    physical, lookup, timing, scored, home_night_dur=home_night_dur,
+                    home_value=home_value, min_activity_time_constant=min_activity_time_constant,
+                    rigidity=rigidity, enabled=enabled,
+                ))
         modeled_utilities = scored.utilities
         scored_context_plans = scored.context_plans
         # Section references and profile scores are no longer needed by this
@@ -768,6 +794,7 @@ class PlanUpdater:
         compact_stay_home: pl.DataFrame | None = None,
         compact_plan_id_index: pl.DataFrame | None = None,
         scoring_lookup: ScoringLookup | None = None,
+        whole_plan_cache: WholePlanCache | None = None,
         time_index_cache: TimeSequenceIndexCache | None = None,
         reachable_scoring_scope: BehaviorChangeScope | None = None,
         forced_scoring_contexts: pl.DataFrame | None = None,
@@ -877,7 +904,17 @@ class PlanUpdater:
                        .join(scoring_contexts.demand_groups.select(
                            DEMAND_UNIT_COLS + ["country", "csp", "utility_profile_id"]), on=DEMAND_UNIT_COLS)
                        .select(PLAN_COLUMNS + ["country", "csp", "utility_profile_id"]).unique())
-            score_inputs = (classes.join(physical.select(PLAN_COLUMNS + ["activity", "from", "to", "mode"])
+            prepared_reuse = None
+            if whole_plan_cache is not None and whole_plan_cache.state is not None:
+                prepared_reuse = prepare_reuse(
+                    whole_plan_cache.state, classes, physical.filter(pl.col("mode_seq_id") != 0),
+                    scoring_lookup.scores, survey_plan_steps, home_night_dur,
+                    resolved_activity_parameters["home"].value_of_time_stay_home,
+                    parameters.plan_update.min_activity_time_constant, activity_time_rigidity_by_activity,
+                    parameters.plan_update.update_plan_timings_from_modeled_travel_times,
+                )
+            score_classes = prepared_reuse[1] if prepared_reuse is not None else classes
+            score_inputs = (score_classes.join(physical.select(PLAN_COLUMNS + ["activity", "from", "to", "mode"])
                                          .unique(), on=PLAN_COLUMNS)
                             .select(score_keys).unique())
             del classes
@@ -893,7 +930,12 @@ class PlanUpdater:
                 scoring_lookup=scoring_lookup,
             )
             active_lookup = scoring_lookup
-            if scoring_lookup.scores is None:
+            if scoring_lookup.scores is None and prepared_reuse is not None:
+                # A miss-only lookup cannot supply the full fallback evaluator.
+                # Rebuild all inputs through the established expanded path.
+                whole_plan_cache.retain(None)
+                active_lookup = None
+            elif scoring_lookup.scores is None:
                 # The lookup is needed now even when it is too large to keep
                 # between batches. Do not retain its section scores either.
                 active_lookup = ScoringLookup(
@@ -910,7 +952,8 @@ class PlanUpdater:
                 enabled=parameters.plan_update.update_plan_timings_from_modeled_travel_times,
                 scoring_lookup=active_lookup,
                 time_index_cache=time_index_cache, needed_score_keys=score_inputs,
-            )
+                whole_plan_cache=whole_plan_cache, prepared_reuse=prepared_reuse,
+            ) if active_lookup is not None else None
             if section_evaluation is not None:
                 return section_evaluation
             # An incomplete lookup or conflicting modeled plan needs the
