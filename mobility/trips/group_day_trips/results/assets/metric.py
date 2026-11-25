@@ -55,7 +55,9 @@ class Metric(FileAsset):
         self._has_precomputed_value = False
         self._precomputed_value: pl.DataFrame | pl.LazyFrame | None = None
         inputs = {
-            "version": 5,
+            # Result reductions include empty seeds and normalize each seed
+            # before averaging, so older metric files must be recomputed.
+            "version": 6,
             "name": name,
             "dependencies": tuple(dependencies),
             "query": query,
