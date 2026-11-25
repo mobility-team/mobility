@@ -73,7 +73,7 @@ od_vertex_map <- as.data.table(read_parquet(od_vertex_map_fp))
       "-transport_zones_buildings.parquet"
     )
   )
-  
+
   buildings <- as.data.table(read_parquet(buildings_fp))
   info(logger, paste0("Loaded ", format(nrow(buildings), big.mark = ","), " representative building rows."))
   buildings[, building_id := 1:.N]
@@ -183,11 +183,11 @@ for (i in seq_along(flow_paths)) {
     target_max_vehicles_per_od_endpoint = target_max_vehicles_per_od_endpoint
   )
   info(logger, paste0("Generated ", format(nrow(vertex_pairs), big.mark = ","), " vertex-pair rows."))
-  
+
   od_flows <- merge(od_flows, vertex_pairs, by.x = c("from", "to"), by.y = c("tz_id_from", "tz_id_to"))
   od_flows[, vehicle_volume := vehicle_volume*weight]
   info(logger, paste0("Expanded OD flows to ", format(nrow(od_flows), big.mark = ","), " weighted vertex-flow rows."))
-  
+
   # Retain only the largest flows accounting for the requested total-volume share
   # and upscale them to match the total volume
   info(logger, "Sorting vertex-flow rows by decreasing vehicle volume...")
@@ -201,12 +201,12 @@ for (i in seq_along(flow_paths)) {
   od_flows[, vehicle_volume := vehicle_volume/congestion_assignment_retained_volume_share*congestion_flows_scaling_factor]
   od_flows[, flow_rank := NULL]
   info(logger, paste0("Retained ", format(nrow(od_flows), big.mark = ","), " vertex-flow rows after volume-share filtering."))
-  
+
   # R objects can be modified by native code; give each scenario a clean graph.
   scenario_graph <- unserialize(serialize(cppr_graph, NULL))
   # Assign traffic
   info(logger, "Assigning traffic with CCH queries...")
-  
+
   traffic <- assign_traffic(
     scenario_graph,
     from = od_flows$vertex_id_from,
@@ -220,7 +220,7 @@ for (i in seq_along(flow_paths)) {
     verbose = TRUE
   )
   info(logger, "Traffic assignment complete; routing the affected OD pairs...")
-  
+
   # Update travel times
   scenario_graph$data$dist <- traffic$data$cost
 
@@ -233,7 +233,7 @@ for (i in seq_along(flow_paths)) {
     write_parquet(od_vertex_map, file.path(dirname(dirname(graph_fp)), paste0(graph_hash, "-od-vertex-map.parquet")))
     file.create(graph_fp)
   }
-  
+
   # Route this assignment immediately without saving a congested graph.
   metric <- cpp_cch_customize(cch, scenario_graph$data$dist)
   path_values <- get_path_values_pair(
