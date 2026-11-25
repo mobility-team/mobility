@@ -17,6 +17,7 @@ class FactoredSectionScores:
 
     utilities: pl.DataFrame
     context_plans: pl.DataFrame
+    class_utilities: pl.DataFrame | None = None
 
 
 @dataclass
@@ -67,6 +68,7 @@ def score_factored_sections(
     value_of_time_stay_home: float,
     min_activity_time_constant: float,
     cache: SectionScoreCache | None = None,
+    map_contexts: bool = True,
 ) -> FactoredSectionScores:
     """Score equal timed sections once per activity and transport profile.
 
@@ -171,8 +173,16 @@ def score_factored_sections(
         .with_columns(utility=pl.col("utility") + value_of_time_stay_home * pl.col("mean_home_night_per_pers")
                       * (pl.col("home_night_per_pers") / pl.col("min_activity_time")).log().clip(0.0))
         .select(profile_key + ["utility", "is_feasible", "missing_cost_row_count", "invalid_cost_row_count"]))
+    if not map_contexts:
+        return FactoredSectionScores(pl.DataFrame(), pl.DataFrame(), class_utility)
     del class_parts, score_parts, plan_scores, plan_home_night, classes, section_scores, plan_sections
     del profile_classes, profile_scores, batch
+    utilities = map_class_utilities(class_utility, context_plans, profile_columns)
+    return FactoredSectionScores(utilities, context_plans, class_utility)
+
+
+def map_class_utilities(class_utility, context_plans, profile_columns):
+    """Map scored timing plans to their current contexts."""
     with simulation_step("join scoring contexts"):
         # Every scoring context has one profile, so modeled-plan collisions can
         # be resolved within each profile without building one large wide join.
@@ -201,4 +211,4 @@ def score_factored_sections(
                                      .select(PLAN_KEY_COLS + utility_columns)
                                      .unique(subset=PLAN_KEY_COLS, keep="first", maintain_order=True))
         utilities = pl.concat(utility_parts)
-    return FactoredSectionScores(utilities, context_plans)
+    return utilities

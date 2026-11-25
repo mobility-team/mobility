@@ -921,6 +921,34 @@ def test_modeled_plan_history_merges_when_schedules_converge(monkeypatch):
         scoring_lookup=lookup, time_index_cache=None,
     )
     assert section_evaluation is not None
+    # Two scenarios can share trip scores while retaining different complete
+    # plan scores. In particular, home-night values must remain run-local.
+    from mobility.trips.group_day_trips.plans.whole_plan_cache import WholePlanCache, WholePlanMemoryBudget, prepare_reuse
+    budget = WholePlanMemoryBudget()
+    cache_a, cache_b = WholePlanCache(budget), WholePlanCache(budget)
+    shared_args = dict(physical=physical, memberships=membership, contexts=contexts,
+        current_plans=contexts.collapse_allocations(current),
+        stay_home_plan=contexts.collapse_stay_home(stay_home),
+        schedule_steps=pl.concat([_schedule(), other_schedule]), home_value=1.0,
+        min_activity_time_constant=parameters.plan_update.min_activity_time_constant,
+        rigidity={"work": 0.0, "home": 0.0}, enabled=True, scoring_lookup=lookup, time_index_cache=None)
+    original_home = args["home_night_dur"]
+    changed_home = original_home.with_columns(mean_home_night_per_pers=pl.col("mean_home_night_per_pers") + 1.0)
+    scenario_a = updater._evaluate_shared_sections(**shared_args, home_night_dur=original_home, whole_plan_cache=cache_a)
+    scenario_b = updater._evaluate_shared_sections(**shared_args, home_night_dur=changed_home, whole_plan_cache=cache_b)
+    assert cache_a.state is not None and cache_b.state is not None
+    assert not scenario_a.possible_plan_utility.sort(PLAN_KEY_COLS).equals(
+        scenario_b.possible_plan_utility.sort(PLAN_KEY_COLS))
+    profiles = contexts.demand_groups.select("demand_group_id", "demand_subgroup_id", "country", "csp", "utility_profile_id")
+    classes = (membership.select(PLAN_KEY_COLS).join(profiles, on=["demand_group_id", "demand_subgroup_id"])
+               .select(PLAN_COLUMNS + ["country", "csp", "utility_profile_id"]).unique())
+    prepared_b = prepare_reuse(cache_b.state, classes, physical, lookup.scores, scenario_b.time_sequence_steps, changed_home, 1.0,
+                               parameters.plan_update.min_activity_time_constant, {"work": 0.0, "home": 0.0}, True)
+    assert prepared_b is not None and prepared_b[1].is_empty()
+    reused_b = updater._evaluate_shared_sections(**{**shared_args, "schedule_steps": scenario_b.time_sequence_steps},
+                                                  home_night_dur=changed_home, whole_plan_cache=cache_b, prepared_reuse=prepared_b)
+    assert_frame_equal(reused_b.possible_plan_utility.sort(PLAN_KEY_COLS),
+                       scenario_b.possible_plan_utility.sort(PLAN_KEY_COLS), check_exact=True)
     assert_frame_equal(section_evaluation.possible_plan_utility.sort(PLAN_KEY_COLS),
                        collision.possible_plan_utility.sort(PLAN_KEY_COLS), check_exact=True,
                        check_column_order=False)
@@ -949,12 +977,32 @@ def test_modeled_plan_history_merges_when_schedules_converge(monkeypatch):
                         lambda *args, **kwargs: pytest.fail("Unexpected expanded candidate evaluation"))
     transport = SimpleNamespace(get_utility_profiles=lambda *args: (pl.DataFrame(), {}))
     small_lookup = ScoringLookup(ScoringMemoryBudget(0))
+    unretained_cache = WholePlanCache(WholePlanMemoryBudget())
     temporary = updater.evaluate_candidate_pool(
         **{**args, "transport_costs": transport}, shared_candidate_plan_steps=combined,
-        factored_candidate_steps=factored, scoring_lookup=small_lookup,
+        factored_candidate_steps=factored, scoring_lookup=small_lookup, whole_plan_cache=unretained_cache,
         survey_plan_steps=pl.concat([_schedule(), other_schedule]),
     )
     assert small_lookup.scores is None
+    assert unretained_cache.state is None and unretained_cache.budget.used_bytes == 0
+    # In an all-hit batch, old alternatives stay available downstream without
+    # expanding their physical steps into new scoring requests.
+    requested_rows = []
+    def record_score_inputs(**kwargs):
+        requested_rows.append(kwargs["compact_score_inputs"].height)
+        return score_rows.lazy()
+    monkeypatch.setattr(updater, "compute_plan_steps_candidates_utility", record_score_inputs)
+    warm_lookup = ScoringLookup(ScoringMemoryBudget(100_000_000))
+    warm_lookup.retain(score_rows)
+    warm_cache = WholePlanCache(WholePlanMemoryBudget())
+    warm_args = dict(**{**args, "transport_costs": transport}, shared_candidate_plan_steps=combined,
+                     factored_candidate_steps=factored, scoring_lookup=warm_lookup, whole_plan_cache=warm_cache)
+    first_batch = updater.evaluate_candidate_pool(**warm_args, survey_plan_steps=pl.concat([_schedule(), other_schedule]))
+    assert warm_cache.state is not None
+    repeated_batch = updater.evaluate_candidate_pool(**warm_args, survey_plan_steps=first_batch.time_sequence_steps)
+    assert requested_rows[0] > 0 and requested_rows[1] == 0
+    assert_frame_equal(repeated_batch.possible_plan_utility.sort(PLAN_KEY_COLS),
+                       first_batch.possible_plan_utility.sort(PLAN_KEY_COLS), check_exact=True)
     assert_frame_equal(temporary.possible_plan_utility.sort(PLAN_KEY_COLS),
                        section_evaluation.possible_plan_utility.sort(PLAN_KEY_COLS), check_exact=True,
                        check_column_order=False)

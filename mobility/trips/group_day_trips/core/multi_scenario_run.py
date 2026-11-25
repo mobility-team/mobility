@@ -33,6 +33,7 @@ from mobility.trips.group_day_trips.plans.plan_ids import PLAN_KEY_COLS
 from mobility.trips.group_day_trips.plans.plan_updater import PlanUpdater
 from mobility.trips.group_day_trips.plans.plan_schedule_updater import PlanScheduleUpdater
 from mobility.trips.group_day_trips.plans.factored_plan_scoring import SectionScoreCache
+from mobility.trips.group_day_trips.plans.whole_plan_cache import WholePlanCache, WholePlanMemoryBudget
 from mobility.trips.group_day_trips.plans.scoring_contexts import (
     ScoringContexts, ScoringLookup, ScoringMemoryBudget,
 )
@@ -634,6 +635,13 @@ class MultiScenarioRunAsset(CohortCheckpoints, InMemoryAsset):
         scoring_lookups = self._build_scoring_lookups(
             fixed_states, state_assets, cost_assets, iteration, scoring_memory,
         )
+        # A cache belongs to one scenario and only this outer step. Share its
+        # memory limit across the cohort, separately from the trip lookup.
+        whole_plan_memory = WholePlanMemoryBudget()
+        whole_plan_caches = {
+            run_key: WholePlanCache(whole_plan_memory) if max_search_batches > 1 else None
+            for run_key in self.run_keys
+        }
         convergence_by_group = {
             group: InnerLoopConvergence(
                 flow_tolerance=flow_tolerance,
@@ -860,6 +868,7 @@ class MultiScenarioRunAsset(CohortCheckpoints, InMemoryAsset):
                                 compact_stay_home=scoring_setup[2],
                                 compact_plan_id_index=compact_plan_indices_by_run_key.get(scenario),
                                 scoring_lookup=scoring_lookups[scenario],
+                                whole_plan_cache=whole_plan_caches[scenario],
                                 time_index_cache=time_index_caches[scenario],
                                 reachable_scoring_scope=scope if restrict_scoring else None,
                                 forced_scoring_contexts=forced_scoring_contexts.get(scenario),
