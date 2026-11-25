@@ -410,6 +410,16 @@ def test_activity_bins_include_missing_replications():
     assert result.filter(pl.col("duration_label") == "1-2")["probability"].item() == 0.25
 
 
+def test_metric_shares_are_averaged_after_normalizing_each_seed(tmp_path):
+    results = _results(tmp_path)
+    table = results.metrics.travel_distance(
+        by_variable="mode", normalize_by="metric_total", normalize_scope="study_area"
+    ).get()
+    car = table.filter(pl.col("mode") == "car").row(0, named=True)
+    assert car["travel_distance_share"] == pytest.approx((20 / 25 + 40 / 47) / 2)
+    assert car["travel_distance_share_std"] == pytest.approx(abs(20 / 25 - 40 / 47) / 2**0.5)
+
+
 @pytest.fixture(autouse=True)
 def _project_data_folder(tmp_path, monkeypatch):
     """Point result assets at each test's temporary folder."""

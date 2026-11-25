@@ -381,63 +381,33 @@ class GroupDayTripsResultMetrics:
                         scope=pl.concat([part.scope for part in parts]).lazy(),
                     ).collect(engine="streaming")
                     output_columns = RESULT_COLUMNS + group_columns
-                    values = (
-                        per_replication.group_by(output_columns)
-                        .agg(
-                            pl.col(spec.quantity).mean(),
-                            pl.col(spec.quantity).std().alias(f"{spec.quantity}_std"),
-                            pl.col("replication").n_unique().cast(pl.UInt32).alias("n_replications"),
-                        )
-                        .sort(output_columns)
-                    )
                     if normalize_by == "metric_total":
                         denominator_columns = self._denominator_columns(
                             normalize_scope=normalize_scope, zone_column=zone_column,
                         )
-                        values = self._with_metric_total_share(
-                            values, denominator_columns=denominator_columns,
+                        per_replication = self._with_metric_total_share_by_replication(
+                            per_replication, denominator_columns=denominator_columns,
                             group_columns=group_columns, value_column=spec.quantity,
                             output_column=metric_column,
                         )
-                        if reference_kind == "scenario" and reference_view == "gap":
-                            per_replication = self._with_metric_total_share_by_replication(
-                                per_replication, denominator_columns=denominator_columns,
-                                group_columns=group_columns, value_column=spec.quantity,
-                                output_column=metric_column,
-                            )
                     elif normalize_by == "person_count":
                         population_dimensions = [zone_column] if normalize_scope == "zone" else []
-                        population_keys = RESULT_COLUMNS + population_dimensions
-                        population = populations.group_by(population_keys).agg(
-                            pl.col("n_persons").mean()
-                        )
                         if population_dimensions:
-                            values = values.with_columns(pl.col(zone_column).cast(pl.String))
-                        values = (
-                            values.join(population, on=population_keys, how="left")
+                            per_replication = per_replication.with_columns(pl.col(zone_column).cast(pl.String))
+                        per_replication = (
+                            per_replication.join(populations, on=SCOPE_COLUMNS + population_dimensions, how="left")
                             .with_columns(
                                 (pl.col(spec.quantity) / pl.col("n_persons").clip(1e-12)).alias(metric_column),
-                                (pl.col(f"{spec.quantity}_std") / pl.col("n_persons").clip(1e-12))
-                                .alias(f"{metric_column}_std"),
                             )
-                            .select(output_columns + [metric_column, f"{metric_column}_std", "n_replications"])
-                            .sort(output_columns)
+                            .select(SCOPE_COLUMNS + group_columns + [metric_column])
                         )
-                        if reference_kind == "scenario" and reference_view == "gap":
-                            if population_dimensions:
-                                per_replication = per_replication.with_columns(
-                                    pl.col(zone_column).cast(pl.String)
-                                )
-                            per_replication = (
-                                per_replication.join(
-                                    populations, on=SCOPE_COLUMNS + population_dimensions, how="left"
-                                )
-                                .with_columns(
-                                    (pl.col(spec.quantity) / pl.col("n_persons").clip(1e-12))
-                                    .alias(metric_column)
-                                )
-                                .select(SCOPE_COLUMNS + group_columns + [metric_column])
-                            )
+                    values = (
+                        per_replication.group_by(output_columns)
+                        .agg(pl.col(metric_column).mean(),
+                             pl.col(metric_column).std().alias(f"{metric_column}_std"),
+                             pl.col("replication").n_unique().cast(pl.UInt32).alias("n_replications"))
+                        .sort(output_columns)
+                    )
                     if reference_kind == "scenario":
                         if reference_view == "gap":
                             return self._with_scenario_reference(
@@ -1340,6 +1310,19 @@ class GroupDayTripsResultMetrics:
                     value_column=quantity,
                     output_column=metric_column,
                 )
+
+        if normalize_by is not None:
+            normalized = self._metric_by_replication(
+                quantity=quantity, quantity_column=quantity_column, metric_column=metric_column,
+                group_columns=group_columns, zone_column=zone_column, normalize_by=normalize_by,
+                normalize_scope=normalize_scope, inner_zone_residents_only=inner_zone_residents_only,
+                iterations=iterations, home_zone_ids=home_zone_ids, csp=csp, modes=modes,
+            )
+            values = normalized.group_by(RESULT_COLUMNS + group_columns).agg(
+                pl.col(metric_column).mean(),
+                pl.col(metric_column).std().alias(f"{metric_column}_std"),
+                pl.col("replication").n_unique().cast(pl.UInt32).alias("n_replications"),
+            ).sort(RESULT_COLUMNS + group_columns)
 
         if reference_kind == "scenario":
             reference_scenario = self._reference_scenario(reference)
