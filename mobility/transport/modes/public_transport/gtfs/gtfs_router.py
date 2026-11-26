@@ -43,6 +43,8 @@ class GTFSRouter(FileAsset):
         ) = None,
         expected_agencies: list[str] | None = None,
         gtfs_feed_priority: list[str] | None = None,
+        gtfs_exclusions: dict[str, dict[str, list[str]]] | None = None,
+        gtfs_max_calendar_distance_years: int | None = 1,
     ) -> None:
         """Reuse saved timetables only when sources and additional files are unchanged."""
         additional_hashes = {}
@@ -85,6 +87,11 @@ class GTFSRouter(FileAsset):
             "additional_gtfs_files": additional_gtfs_files,
             "expected_agencies": expected_agencies,
             "gtfs_feed_priority": gtfs_feed_priority or [],
+            "gtfs_exclusions": {
+                source: {kind: sorted(set(ids)) for kind, ids in sorted(scopes.items())}
+                for source, scopes in sorted((gtfs_exclusions or {}).items())
+            },
+            "gtfs_max_calendar_distance_years": gtfs_max_calendar_distance_years,
             "additional_gtfs_hashes": additional_hashes,
         }
 
@@ -137,6 +144,8 @@ class GTFSRouter(FileAsset):
             service_end_date=self.gtfs_sources.gtfs_service_end_date if self.gtfs_sources else None,
             source_ids=source_ids,
             feed_priority=self.inputs["gtfs_feed_priority"],
+            exclusions=self.inputs["gtfs_exclusions"],
+            max_calendar_distance_years=self.inputs["gtfs_max_calendar_distance_years"],
         ).prepare()
         for source in metadata["sources"]:
             asset = source_assets.get(source["path"])

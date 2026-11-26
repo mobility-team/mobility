@@ -69,6 +69,8 @@ class PublicTransportGraph(FileAsset):
             additional_gtfs_files=parameters.additional_gtfs_files,
             expected_agencies=parameters.expected_agencies,
             gtfs_feed_priority=parameters.gtfs_feed_priority,
+            gtfs_exclusions=parameters.gtfs_exclusions,
+            gtfs_max_calendar_distance_years=parameters.gtfs_max_calendar_distance_years,
         )
 
         # R needs routing settings; source assets stay in the router.
@@ -213,6 +215,14 @@ class PublicTransportRoutingParameters(PublicTransportRoutingSettings):
         list[str],
         Field(default_factory=list, description="Ordered overlapping feed IDs, highest priority first."),
     ]
+    gtfs_exclusions: dict[str, dict[str, list[str]]] = Field(
+        default_factory=dict,
+        description="Original trip, service and route IDs to remove from each GTFS source.",
+    )
+    gtfs_max_calendar_distance_years: int | None = Field(
+        default=1, ge=0,
+        description="Maximum calendar date distance in years from the study window; None disables the limit.",
+    )
     excluded_gtfs_sources: Annotated[
         list[str],
         Field(default_factory=list, description="Feeds deliberately omitted, as provider:resource_id."),
@@ -267,6 +277,14 @@ class PublicTransportRoutingParameters(PublicTransportRoutingSettings):
 
     @model_validator(mode="after")
     def validate_sources(self) -> "PublicTransportRoutingParameters":
+        for source, scopes in self.gtfs_exclusions.items():
+            if not source or not scopes or set(scopes) - {"trips", "services", "routes"}:
+                raise ValueError("gtfs_exclusions requires a source and trips, services or routes lists.")
+            for ids in scopes.values():
+                if not ids or any(not item for item in ids):
+                    raise ValueError("gtfs_exclusions lists must contain nonempty IDs.")
+            if source in self.excluded_gtfs_sources:
+                raise ValueError(f"GTFS source {source!r} is also excluded entirely.")
         if len(self.gtfs_feed_priority) != len(set(self.gtfs_feed_priority)):
             raise ValueError("gtfs_feed_priority must not contain duplicate feed IDs.")
         if self.additional_gtfs_files == []:

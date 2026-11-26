@@ -47,6 +47,8 @@ class GTFSTimetable:
         service_end_date: str | None = None,
         source_ids: dict[str, str] | None = None,
         feed_priority: list[str] | None = None,
+        exclusions: dict[str, dict[str, list[str]]] | None = None,
+        max_calendar_distance_years: int | None = 1,
     ) -> None:
         self.paths = paths
         self.transport_zones = transport_zones
@@ -55,9 +57,14 @@ class GTFSTimetable:
         self.service_end = dt.date.fromisoformat(service_end_date) if service_end_date else None
         self.source_ids = source_ids or {}
         self.feed_priority = feed_priority or []
+        self.exclusions = exclusions or {}
+        self.max_calendar_distance_years = max_calendar_distance_years
         if len(self.feed_priority) != len(set(self.feed_priority)):
             raise ValueError("gtfs_feed_priority must not contain duplicate feed IDs.")
         known = {self.source_ids.get(str(path), str(path)) for path in paths}
+        unknown_exclusions = set(self.exclusions) - known
+        if unknown_exclusions:
+            raise ValueError(f"Unknown gtfs_exclusions sources: {sorted(unknown_exclusions)}")
         unknown = set(self.feed_priority) - known
         if unknown:
             raise ValueError(f"Unknown gtfs_feed_priority IDs: {sorted(unknown)}. Use IDs from the overlap error.")
@@ -335,13 +342,19 @@ class GTFSTimetable:
             try:
                 # Check the small calendars before extracting the larger trip tables.
                 with tempfile.TemporaryDirectory(prefix="mobility-gtfs-", dir=temporary_folder()) as directory:
-                    reader = GTFSFeed(path, Path(directory))
-                    reader.extract(("calendar", "calendar_dates"))
+                    source_id = self.source_ids.get(str(path), str(path))
+                    reader = GTFSFeed(path, Path(directory), self.exclusions.get(source_id), source_id)
+                    tables_to_read = ("calendar", "calendar_dates")
+                    if reader.exclusions:
+                        tables_to_read += ("trips", "routes")
+                    reader.extract(tables_to_read)
+                    reader.prepare_exclusions()
                     source = {"path": str(path), "sha256": None}
+                    source.update(reader.exclusion_diagnostics)
                     sources.append(source)
 
                     calendar, exceptions = reader.read_calendars()
-                    services_by_date = self.get_service_dates(calendar, exceptions)
+                    services_by_date = self.get_service_dates(calendar, exceptions, reader)
                     active_dates = [date for date, services in services_by_date.items() if services]
                     if not any(date.weekday() == 1 for date in active_dates):
                         source.update(
@@ -356,13 +369,29 @@ class GTFSTimetable:
                         )
                         continue
 
+                    if self.service_start and self.service_end and self.max_calendar_distance_years is not None:
+                        earliest = pd.Timestamp(self.service_start) - pd.DateOffset(years=self.max_calendar_distance_years)
+                        latest = pd.Timestamp(self.service_end) + pd.DateOffset(years=self.max_calendar_distance_years)
+                        for frame, columns in ((calendar, ("start_date", "end_date")), (exceptions, ("date",))):
+                            for column in columns:
+                                if column in frame:
+                                    outside = frame[column].lt(earliest) | frame[column].gt(latest)
+                                    if outside.any():
+                                        values = frame.loc[outside, column].dt.strftime("%Y-%m-%d").tolist()[:10]
+                                        reader.problem(
+                                            f"Calendar {column} outside {earliest:%Y-%m-%d} to {latest:%Y-%m-%d}: {values}. "
+                                            "Adjust gtfs_max_calendar_distance_years or set it to None if the dates are intentional",
+                                            "services", frame.loc[outside, "service_id"],
+                                        )
+
                     logging.info("Preparing GTFS %s", path)
                     fingerprint = reader.extract()
                     source["sha256"] = fingerprint
-                    if fingerprint in seen:
+                    identity = (fingerprint, repr(reader.exclusions))
+                    if identity in seen:
                         source["status"] = "duplicate"
                         continue
-                    seen.add(fingerprint)
+                    seen.add(identity)
                     feed = reader.read(boundary, calendar, exceptions)
                     if feed is None:
                         source["status"] = "no usable trips in area"
@@ -417,7 +446,7 @@ class GTFSTimetable:
         }
         return tables, sources
 
-    def get_service_dates(self, calendar: pd.DataFrame, exceptions: pd.DataFrame) -> dict:
+    def get_service_dates(self, calendar: pd.DataFrame, exceptions: pd.DataFrame, reader=None) -> dict:
         """Apply weekly service and exceptions within the requested window."""
         calendar, exceptions = calendar.copy(), exceptions.copy()
         if not exceptions.empty:
@@ -428,6 +457,8 @@ class GTFSTimetable:
             conflicts = exceptions.loc[exceptions.duplicated(["service_id", "date"], keep=False)]
             if not conflicts.empty:
                 row = conflicts.iloc[0]
+                if reader is not None:
+                    reader.problem(f"Service {row.service_id!r} is both added and cancelled on {row.date:%Y-%m-%d}", "services", conflicts.service_id)
                 raise ValueError(
                     f"Service {row.service_id!r} is both added and cancelled on {row.date:%Y-%m-%d}. "
                     "The feed contains conflicting calendar exceptions in the study window."
