@@ -33,11 +33,66 @@ class GTFSFeed:
         "frequencies",
     )
 
-    def __init__(self, path: str | Path, folder: Path) -> None:
+    def __init__(self, path: str | Path, folder: Path, exclusions=None, source_id=None) -> None:
         self.path = Path(path)
         self.folder = folder
         self.diagnostics: dict[str, int] = {}
         self.agency_inventory = ""
+        self.exclusions = exclusions or {}
+        self.source_id = source_id or str(path)
+        self.removed_trips = set()
+        self.exclusion_diagnostics = {}
+
+    def prepare_exclusions(self):
+        """Resolve original IDs before validating calendars or filtering trips."""
+        if not self.exclusions:
+            return
+        unknown = set(self.exclusions) - {"trips", "services", "routes"}
+        if unknown:
+            raise ValueError(f"Unknown gtfs_exclusions categories: {sorted(unknown)}")
+        for name, values in self.exclusions.items():
+            if not isinstance(values, list) or any(not isinstance(v, str) or not v for v in values):
+                raise ValueError(f"gtfs_exclusions {name} must be a list of nonempty strings")
+        trips = self.read_table("trips", ("trip_id", "route_id", "service_id"),
+                                columns=("trip_id", "route_id", "service_id"))
+        routes = self.read_table("routes", ("route_id",), columns=("route_id",))
+        calendars = [self.read_table(name, columns=("service_id",)) for name in ("calendar", "calendar_dates")]
+        known = {"trips": set(trips.trip_id), "routes": set(routes.route_id),
+                 "services": set().union(*(set(table.get("service_id", [])) for table in calendars))}
+        for name, values in self.exclusions.items():
+            missing = set(values) - known[name]
+            if missing:
+                raise ValueError(f"Unknown {name} in gtfs_exclusions: {sorted(missing)}")
+        removed = trips.loc[
+            trips.trip_id.isin(self.exclusions.get("trips", []))
+            | trips.route_id.isin(self.exclusions.get("routes", []))
+            | trips.service_id.isin(self.exclusions.get("services", []))
+        ]
+        self.removed_trips = set(removed.trip_id)
+        self.exclusion_diagnostics = {
+            "excluded_trip_ids": ",".join(sorted(self.removed_trips)),
+            "excluded_trip_count": len(self.removed_trips),
+            "excluded_services": ",".join(sorted(self.exclusions.get("services", []))),
+            "excluded_routes": ",".join(sorted(self.exclusions.get("routes", []))),
+        }
+
+    def problem(self, message, category, ids):
+        """Identify records that can be explicitly removed, without guessing a repair."""
+        ids = sorted(set(str(value) for value in ids if str(value)))
+        if ids:
+            example = {self.source_id: {category: ids[:10]}}
+            message += (f"; affected {category}: {ids[:10]}"
+                        f". To remove these records and their dependent trips, add {example!r} to gtfs_exclusions."
+                        " Review the lost service first.")
+            if len(ids) > 10:
+                message += f" Showing 10 of {len(ids)} IDs."
+        raise ValueError(message)
+
+    @staticmethod
+    def calendar_dates(values):
+        """Reject dates outside pandas' nanosecond range before building service dates."""
+        in_range = values.str.match(r"^\d{8}$") & values.ge("16770922") & values.le("22620411")
+        return pd.to_datetime(values.where(in_range), format="%Y%m%d", errors="coerce")
 
     def read(self, boundary: BaseGeometry, calendar: pd.DataFrame, exceptions: pd.DataFrame) -> dict[str, pd.DataFrame] | None:
         """Return trips with two local stop visits, or None if none can be retained."""
@@ -59,14 +114,15 @@ class GTFSFeed:
             ("trip_id", "route_id", "service_id"),
             columns=("trip_id", "route_id", "service_id"),
         )
+        trips = trips.loc[~trips.trip_id.isin(self.removed_trips)].copy()
         if trips.trip_id.duplicated().any():
-            raise ValueError("Duplicate trip_id in trips.txt")
+            self.problem("Duplicate trip_id in trips.txt", "trips", trips.loc[trips.trip_id.duplicated(False), "trip_id"])
 
         times = self.read_stop_times(stops.stop_id.tolist())
         if times.empty:
             return None
         if not set(times.trip_id.unique()).issubset(trips.trip_id.to_numpy()):
-            raise ValueError("stop_times.txt references unknown trips")
+            raise ValueError("stop_times.txt references unknown trips; repair the feed before excluding records")
 
         times, diagnostics = self.clean_stop_times(times)
         starts = times.groupby("trip_id").departure_time.first()
@@ -94,6 +150,11 @@ class GTFSFeed:
                 "to_trip_id",
             ),
         )
+        for column, excluded in (("from_trip_id", self.removed_trips), ("to_trip_id", self.removed_trips),
+                                 ("from_route_id", self.exclusions.get("routes", [])),
+                                 ("to_route_id", self.exclusions.get("routes", []))):
+            if column in transfers:
+                transfers = transfers.loc[~transfers[column].isin(excluded)].copy()
         self.diagnostics = diagnostics
         return dict(
             agency=agency,
@@ -206,6 +267,8 @@ class GTFSFeed:
         scan = scan.select([column for column in columns if column in needed]).with_columns(
             pl.all().str.strip_chars_end()
         )
+        if self.removed_trips:
+            scan = scan.filter(~pl.col("trip_id").is_in(sorted(self.removed_trips)))
 
         # Keep the original endpoints for interpolation and frequency offsets.
         local_trips = (
@@ -229,12 +292,16 @@ class GTFSFeed:
             pl.from_pandas(times.stop_sequence).cast(pl.Float64, strict=False).to_numpy()
         )
         if times.stop_sequence.isna().any():
-            raise ValueError("Invalid stop_sequence")
+            self.problem("Invalid stop_sequence", "trips", times.loc[times.stop_sequence.isna(), "trip_id"])
         times = times.sort_values(["trip_id", "stop_sequence"])
         if times.duplicated(["trip_id", "stop_sequence"]).any():
-            raise ValueError("Duplicate stop_sequence within a trip")
+            self.problem("Duplicate stop_sequence within a trip", "trips", times.loc[times.duplicated(["trip_id", "stop_sequence"], keep=False), "trip_id"])
         for col in ("arrival_time", "departure_time"):
-            times[col] = self.time_seconds(times[col])
+            try:
+                times[col] = self.time_seconds(times[col])
+            except ValueError:
+                bad = ~times[col].str.match(r"^(\d+:[0-5]\d:[0-5]\d)?$")
+                self.problem(f"Invalid {col}; expected HH:MM:SS", "trips", times.loc[bad, "trip_id"])
         for col in ("pickup_type", "drop_off_type"):
             if col not in times:
                 times[col] = 0
@@ -247,7 +314,7 @@ class GTFSFeed:
                 .to_numpy()
             )
             if not times[col].isin([0, 1, 2, 3]).all():
-                raise ValueError(f"Invalid {col}")
+                self.problem(f"Invalid {col}", "trips", times.loc[~times[col].isin([0, 1, 2, 3]), "trip_id"])
 
         # Missing intermediate times are estimated by sequence position. Never
         # convert blanks to midnight or extrapolate beyond timed endpoints.
@@ -337,7 +404,7 @@ class GTFSFeed:
             return trips, times
 
         if "exact_times" in frequencies and not frequencies.exact_times.isin(["", "0", "1"]).all():
-            raise ValueError("Invalid frequencies.txt exact_times")
+            self.problem("Invalid frequencies.txt exact_times", "trips", frequencies.loc[~frequencies.exact_times.isin(["", "0", "1"]), "trip_id"])
         if "exact_times" not in frequencies or frequencies.exact_times.isin(["", "0"]).any():
             logging.warning(
                 "Approximating frequency-based service by regular departures in %s", self.path
@@ -346,18 +413,27 @@ class GTFSFeed:
         # Validate intervals before generating departures. Sorting is only used
         # for validation; original period order keeps generated IDs stable.
         for column in ("start_time", "end_time"):
+            valid = frequencies[column].str.match(r"^\d+:[0-5]\d:[0-5]\d$")
+            if not valid.all():
+                self.problem(f"Invalid frequency {column}", "trips", frequencies.loc[~valid, "trip_id"])
             frequencies[column] = self.time_seconds(frequencies[column]).astype("int64")
-        frequencies["headway_secs"] = frequencies.headway_secs.astype("int64")
+        headways = pd.to_numeric(frequencies.headway_secs, errors="coerce")
+        valid = headways.notna() & (headways % 1 == 0)
+        if not valid.all():
+            self.problem("Invalid frequency headway_secs", "trips", frequencies.loc[~valid, "trip_id"])
+        frequencies["headway_secs"] = headways.astype("int64")
         if "exact_times" not in frequencies:
             frequencies["exact_times"] = "0"
         frequencies["exact_times"] = frequencies["exact_times"].replace("", "0")
         if (frequencies.headway_secs <= 0).any() or (
             frequencies.end_time <= frequencies.start_time
         ).any():
-            raise ValueError("Invalid frequency interval")
+            bad = (frequencies.headway_secs <= 0) | (frequencies.end_time <= frequencies.start_time)
+            self.problem("Invalid frequency interval", "trips", frequencies.loc[bad, "trip_id"])
         ordered = frequencies.sort_values(["trip_id", "start_time"])
         if (ordered.groupby("trip_id").end_time.shift() > ordered.start_time).any():
-            raise ValueError("Overlapping frequency intervals")
+            bad = ordered.groupby("trip_id").end_time.shift() > ordered.start_time
+            self.problem("Overlapping frequency intervals", "trips", ordered.loc[bad, "trip_id"])
 
         departures = (
             pl.from_pandas(frequencies)
@@ -413,6 +489,10 @@ class GTFSFeed:
             "calendar_dates",
             columns=("service_id", "date", "exception_type"),
         )
+        had_calendar = not calendar.empty or not exceptions.empty
+        for frame in (calendar, exceptions):
+            if "service_id" in frame:
+                frame.drop(frame.index[frame.service_id.isin(self.exclusions.get("services", []))], inplace=True)
         for name, frame, required in (
             ("calendar", calendar, set(calendar_columns)),
             ("calendar_dates", exceptions, {"service_id", "date", "exception_type"}),
@@ -420,28 +500,38 @@ class GTFSFeed:
             if not frame.empty and not required.issubset(frame.columns):
                 raise ValueError(f"Invalid {name}.txt columns")
         if calendar.empty and exceptions.empty:
+            if had_calendar and self.exclusions.get("services"):
+                return calendar, exceptions
             raise ValueError("No service calendar")
         weekdays = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
         if not calendar.empty:
             for column in ("start_date", "end_date"):
-                calendar[column] = pd.to_datetime(calendar[column], format="%Y%m%d", errors="raise")
+                dates = self.calendar_dates(calendar[column])
+                if dates.isna().any():
+                    bad = calendar.loc[dates.isna()]
+                    self.problem(f"Invalid or out-of-range calendar {column}: {bad[column].tolist()[:10]}", "services", bad.service_id)
+                calendar[column] = dates
                 if calendar[column].isna().any():
                     raise ValueError(f"Missing calendar {column}")
             if (calendar.end_date < calendar.start_date).any():
-                raise ValueError("Calendar end date precedes start date")
+                self.problem("Calendar end date precedes start date", "services", calendar.loc[calendar.end_date < calendar.start_date, "service_id"])
             if calendar.service_id.duplicated().any():
-                raise ValueError("Duplicate service_id in calendar.txt")
+                self.problem("Duplicate service_id in calendar.txt", "services", calendar.loc[calendar.service_id.duplicated(False), "service_id"])
             for weekday in weekdays:
-                calendar[weekday] = pd.to_numeric(calendar[weekday], errors="raise")
+                calendar[weekday] = pd.to_numeric(calendar[weekday], errors="coerce")
                 if not calendar[weekday].isin([0, 1]).all():
-                    raise ValueError(f"Invalid calendar {weekday} flag")
+                    self.problem(f"Invalid calendar {weekday} flag", "services", calendar.loc[~calendar[weekday].isin([0, 1]), "service_id"])
         if not exceptions.empty:
-            exceptions["date"] = pd.to_datetime(exceptions.date, format="%Y%m%d", errors="raise")
+            dates = self.calendar_dates(exceptions.date)
+            if dates.isna().any():
+                bad = exceptions.loc[dates.isna()]
+                self.problem(f"Invalid or out-of-range calendar exception date: {bad.date.tolist()[:10]}", "services", bad.service_id)
+            exceptions["date"] = dates
             if exceptions.date.isna().any():
                 raise ValueError("Missing calendar exception date")
-            exceptions["exception_type"] = pd.to_numeric(exceptions.exception_type, errors="raise")
+            exceptions["exception_type"] = pd.to_numeric(exceptions.exception_type, errors="coerce")
             if not exceptions.exception_type.isin([1, 2]).all():
-                raise ValueError("Invalid calendar exception_type")
+                self.problem("Invalid calendar exception_type", "services", exceptions.loc[~exceptions.exception_type.isin([1, 2]), "service_id"])
             exceptions = exceptions.drop_duplicates()
         return calendar, exceptions
 
@@ -467,7 +557,7 @@ class GTFSFeed:
         )
         routes = routes.loc[routes.route_id.isin(trips.route_id.unique())].copy()
         if not trips.route_id.isin(routes.route_id).all():
-            raise ValueError("trips.txt references unknown routes")
+            self.problem("trips.txt references unknown routes", "trips", trips.loc[~trips.route_id.isin(routes.route_id), "trip_id"])
         agency = self.read_table(
             "agency",
             ("agency_name",),
@@ -490,6 +580,8 @@ class GTFSFeed:
             ("agency", agency, "agency_id"),
         ):
             if frame[key].eq("").any() or frame[key].duplicated().any():
+                if name == "routes" and not frame[key].eq("").any():
+                    self.problem("Empty or duplicate route_id in routes.txt", "routes", frame.loc[frame[key].duplicated(False), key])
                 raise ValueError(f"Empty or duplicate {key} in {name}.txt")
         if "agency_id" not in routes or routes.agency_id.eq("").any():
             if len(agency) != 1:
@@ -517,6 +609,6 @@ class GTFSFeed:
         )
         declared = set(calendar.get("service_id", [])) | set(exceptions.get("service_id", []))
         if not set(trips.service_id.unique()).issubset(declared):
-            raise ValueError("Trips reference services without a calendar")
+            self.problem("Trips reference services without a calendar", "trips", trips.loc[~trips.service_id.isin(declared), "trip_id"])
 
         return agency, routes, calendar, exceptions

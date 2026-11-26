@@ -18,6 +18,38 @@ The snapshot also records each feed's service dates, allowing Mobility to skip f
 
 If an archive is missing, Mobility stops and lists the affected feeds. You can omit a feed deliberately by adding its ID to `excluded_gtfs_sources`. To refresh a snapshot or replace an incompatible one, choose a new sources folder.
 
+## Exclude parts of a feed
+
+When an error identifies a problematic original trip, service or route, you can
+exclude it while keeping the rest of the feed. For example:
+
+```python
+routing_parameters = mobility.PublicTransportRoutingParameters(
+    gtfs_reference_date="2026-09-01",
+    gtfs_sources_folder="inputs/gtfs_sources",
+    gtfs_exclusions={
+        "transport_data_gouv:example": {
+            "services": ["bad-service"],
+            "routes": ["bad-route"],
+            "trips": ["bad-trip"],
+        },
+    },
+)
+```
+
+These IDs are illustrative. Use the source and original IDs from the error or
+feed, not the numbered prefixes in the output timetable. For an additional GTFS
+file, use the path shown in the error as the source. The source must be selected
+for the study area and service window. Unknown sources and IDs produce an error.
+
+Excluding a service or route removes all its trips; excluding a trip removes
+all rows with that trip ID. Related stop times, frequencies and specific
+transfer rules are also removed. Review the lost service before excluding it:
+removing a service can change the selected Tuesday and the modeled network.
+The source report records the excluded trip count and IDs. Changes to exclusions
+rebuild the timetable, but do not modify the source ZIP or frozen snapshot.
+Some archive or table errors cannot be resolved by excluding individual records.
+
 ## Choose service dates
 
 By default, Mobility looks at the 28 days starting on the reference date and selects the Tuesday with the most scheduled stop visits, taking calendar exceptions into account. This describes the level of service, not passenger demand. Set both `gtfs_service_start_date` and `gtfs_service_end_date` to use another window, or set both to the same Tuesday to model that particular day.

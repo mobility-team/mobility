@@ -52,6 +52,84 @@ def frequency(start="08:00:00", end="09:00:00", headway=600, exact="0"):
     return f"trip_id,start_time,end_time,headway_secs,exact_times\nt,{start},{end},{headway},{exact}\n"
 
 
+@pytest.mark.parametrize("scope", ["trips", "services", "routes"])
+def test_exclusions_remove_only_requested_service(tmp_path, feed_files, zones, route_types, scope):
+    feed_files["routes"] += "q,a,Other,3\n"
+    feed_files["trips"] += "q,other,u\n"
+    feed_files["stop_times"] += "u,09:00:00,09:00:00,a,1\nu,09:10:00,09:10:00,b,2\n"
+    feed_files["calendar"] += "other,0,1,0,0,0,0,0,20260908,20260915\n"
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    item = {"trips": "t", "services": "s", "routes": "r"}[scope]
+    tables, metadata = GTFSTimetable([path], zones, route_types,
+        exclusions={str(path): {scope: [item]}}).prepare()
+    assert tables["trips"].trip_id.tolist() == ["1-u"]
+    assert metadata["sources"][0]["excluded_trip_count"] == 1
+
+
+def test_exclude_service_before_parsing_invalid_calendar(tmp_path, feed_files, zones, route_types):
+    feed_files["calendar"] += "bad,0,1,0,0,0,0,0,20260908,52020430\n"
+    feed_files["trips"] += "r,bad,badtrip\n"
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    with pytest.raises(ValueError, match="bad.*gtfs_exclusions"):
+        GTFSTimetable([path], zones, route_types).prepare()
+    tables, _ = GTFSTimetable([path], zones, route_types,
+        exclusions={str(path): {"services": ["bad"]}}).prepare()
+    assert tables["trips"].trip_id.tolist() == ["1-t"]
+
+
+def test_exclude_duplicate_trip_id_and_reject_unknown_id(tmp_path, feed_files, zones, route_types):
+    feed_files["trips"] += "r,s,t\nr,s,u\n"
+    feed_files["stop_times"] += "u,09:00:00,09:00:00,a,1\nu,09:10:00,09:10:00,b,2\n"
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    with pytest.raises(ValueError, match="Duplicate trip_id.*gtfs_exclusions"):
+        GTFSTimetable([path], zones, route_types).prepare()
+    tables, _ = GTFSTimetable([path], zones, route_types,
+        exclusions={str(path): {"trips": ["t"]}}).prepare()
+    assert tables["trips"].trip_id.tolist() == ["1-u"]
+    with pytest.raises(ValueError, match="Unknown trips"):
+        GTFSTimetable([path], zones, route_types,
+            exclusions={str(path): {"trips": ["typo"]}}).prepare()
+
+
+def test_exclusions_remove_trip_and_route_transfer_rules(tmp_path, feed_files, zones, route_types):
+    feed_files["routes"] += "q,a,Other,3\n"
+    feed_files["trips"] += "q,s,u\n"
+    feed_files["stop_times"] += "u,09:00:00,09:00:00,a,1\nu,09:10:00,09:10:00,b,2\n"
+    feed_files["transfers"] = (
+        "from_stop_id,to_stop_id,transfer_type,from_trip_id,from_route_id\n"
+        "a,b,3,t,\na,b,3,,r\n"
+    )
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    tables, _ = GTFSTimetable([path], zones, route_types,
+        exclusions={str(path): {"routes": ["r"]}}).prepare()
+    assert tables["trips"].trip_id.tolist() == ["1-u"]
+    assert (tables["transfers"].specificity < 0).all()
+
+
+def test_exclusions_change_router_cache_identity(tmp_path, feed_files, monkeypatch):
+    monkeypatch.setenv("MOBILITY_PROJECT_DATA_FOLDER", str(tmp_path))
+    path = str(write_feed(tmp_path / "feed.zip", feed_files))
+    baseline = GTFSRouter("zones", None, additional_gtfs_files=[path])
+    first = GTFSRouter("zones", None, additional_gtfs_files=[path],
+                       gtfs_exclusions={path: {"trips": ["a", "b"]}})
+    reordered = GTFSRouter("zones", None, additional_gtfs_files=[path],
+                           gtfs_exclusions={path: {"trips": ["b", "a"]}})
+    assert first.inputs_hash != baseline.inputs_hash
+    assert first.inputs_hash == reordered.inputs_hash
+
+
+def test_invalid_frequency_suggests_and_excludes_its_trip(tmp_path, feed_files, zones, route_types):
+    feed_files["trips"] += "r,s,u\n"
+    feed_files["stop_times"] += "u,09:00:00,09:00:00,a,1\nu,09:10:00,09:10:00,b,2\n"
+    feed_files["frequencies"] = "trip_id,start_time,end_time,headway_secs\nt,08:00:00,09:00:00,0\n"
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    with pytest.raises(ValueError, match="Invalid frequency interval.*'t'.*gtfs_exclusions"):
+        GTFSTimetable([path], zones, route_types).prepare()
+    tables, _ = GTFSTimetable([path], zones, route_types,
+        exclusions={str(path): {"trips": ["t"]}}).prepare()
+    assert tables["trips"].trip_id.tolist() == ["1-u"]
+
+
 @pytest.mark.parametrize("failure", ["trips", "calendar"])
 @pytest.mark.parametrize("provider_source", [True, False])
 def test_feed_errors_identify_the_source(tmp_path, feed_files, zones, route_types, failure, provider_source):
