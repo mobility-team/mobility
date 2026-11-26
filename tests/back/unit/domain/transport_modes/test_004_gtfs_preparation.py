@@ -144,6 +144,52 @@ def test_calendar_distance_limit_can_be_adjusted_or_disabled(tmp_path, feed_file
         assert tables["trips"].trip_id.tolist() == ["1-t"]
 
 
+@pytest.mark.parametrize("frequency_row, reason", [
+    ("t,08:00:00,09:00:00,600,2", "exact_times"),
+    ("t,bad,09:00:00,600,1", "start_time"),
+    ("t,08:00:00,09:00:00,bad,1", "headway_secs"),
+    ("t,08:00:00,09:00:00,600,1\nt,08:30:00,09:30:00,600,1", "Overlapping frequency"),
+])
+def test_frequency_errors_identify_the_original_trip(tmp_path, feed_files, zones, route_types, frequency_row, reason):
+    feed_files["frequencies"] = "trip_id,start_time,end_time,headway_secs,exact_times\n" + frequency_row + "\n"
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    with pytest.raises(ValueError) as error:
+        GTFSTimetable([path], zones, route_types, source_ids={str(path): "fixture:feed"}).prepare()
+    assert reason in str(error.value)
+    assert "'trips': ['t']" in str(error.value)
+    assert "fixture:feed" in str(error.value)
+
+
+@pytest.mark.parametrize("exception, reason", [
+    ("s,52020430,1", "exception date"),
+    ("s,20260908,3", "exception_type"),
+])
+def test_invalid_calendar_exceptions_identify_service(tmp_path, feed_files, zones, route_types, exception, reason):
+    feed_files["calendar_dates"] = "service_id,date,exception_type\n" + exception + "\n"
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    with pytest.raises(ValueError) as error:
+        GTFSTimetable([path], zones, route_types).prepare()
+    assert reason in str(error.value)
+    assert "'services': ['s']" in str(error.value)
+
+
+def test_invalid_exclusion_source_or_category_fails(tmp_path, feed_files, zones, route_types):
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    with pytest.raises(ValueError, match="Unknown gtfs_exclusions sources"):
+        GTFSTimetable([path], zones, route_types, exclusions={"unknown": {"trips": ["t"]}})
+    with pytest.raises(ValueError, match="Unknown gtfs_exclusions categories"):
+        GTFSTimetable([path], zones, route_types, exclusions={str(path): {"stops": ["a"]}}).prepare()
+
+
+def test_duplicate_routes_suggest_exclusion(tmp_path, feed_files, zones, route_types):
+    feed_files["routes"] += "r,a,Duplicate,3\n"
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    with pytest.raises(ValueError) as error:
+        GTFSTimetable([path], zones, route_types).prepare()
+    assert "duplicate route_id" in str(error.value)
+    assert "'routes': ['r']" in str(error.value)
+
+
 @pytest.mark.parametrize("failure", ["trips", "calendar"])
 @pytest.mark.parametrize("provider_source", [True, False])
 def test_feed_errors_identify_the_source(tmp_path, feed_files, zones, route_types, failure, provider_source):
