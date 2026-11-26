@@ -399,6 +399,13 @@ class GTFSTimetable:
                             )
                 feeds.append(feed)
             except (ValueError, zipfile.BadZipFile) as error:
+                source_id = self.source_ids.get(str(path))
+                if source_id is not None:
+                    raise ValueError(
+                        f"Cannot prepare GTFS source {source_id} ({path}): {error}\n"
+                        "To omit this feed, create a new snapshot with "
+                        f"{source_id!r} added to excluded_gtfs_sources."
+                    ) from error
                 raise ValueError(f"Cannot prepare GTFS {path}: {error}") from error
 
         if not feeds:

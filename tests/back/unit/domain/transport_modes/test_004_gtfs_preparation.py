@@ -52,6 +52,31 @@ def frequency(start="08:00:00", end="09:00:00", headway=600, exact="0"):
     return f"trip_id,start_time,end_time,headway_secs,exact_times\nt,{start},{end},{headway},{exact}\n"
 
 
+@pytest.mark.parametrize("failure", ["trips", "calendar"])
+@pytest.mark.parametrize("provider_source", [True, False])
+def test_feed_errors_identify_the_source(tmp_path, feed_files, zones, route_types, failure, provider_source):
+    if failure == "trips":
+        feed_files["trips"] += "r,s,t\n"
+        expected = "Duplicate trip_id in trips.txt"
+    else:
+        feed_files["calendar"] = feed_files["calendar"].replace("20260908", "invalid")
+        expected = "invalid"
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    ids = {str(path): "fixture:broken"} if provider_source else {}
+
+    with pytest.raises(ValueError) as error:
+        GTFSTimetable([path], zones, route_types, source_ids=ids).prepare()
+
+    message = str(error.value)
+    assert str(path) in message
+    assert expected in message
+    if provider_source:
+        assert "fixture:broken" in message
+        assert "added to excluded_gtfs_sources" in message
+    else:
+        assert "excluded_gtfs_sources" not in message
+
+
 def test_spatiotemporal_overlap_requires_priority_and_reports_feeds(tmp_path, feed_files, zones, route_types):
     other = dict(feed_files)
     other["agency"] = other["agency"].replace("Test,", "Another operator,")
