@@ -134,6 +134,8 @@ def _build_modes(transport_zones: mobility.TransportZones, additional_gtfs_files
             # These resources have no archive before the test's reference date.
             excluded_gtfs_sources=["transport_data_gouv:83830", "transport_data_gouv:84253"],
             additional_gtfs_files=additional_gtfs_files,
+            # The synthetic builder intentionally uses a 2000–2100 calendar.
+            gtfs_max_calendar_distance_years=None,
             max_traveltime=10.0,
             max_perceived_time=10.0,
         ),
