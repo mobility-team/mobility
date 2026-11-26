@@ -18,6 +18,12 @@ The snapshot also records each feed's service dates, allowing Mobility to skip f
 
 If an archive is missing, Mobility stops and lists the affected feeds. You can omit a feed deliberately by adding its ID to `excluded_gtfs_sources`. To refresh a snapshot or replace an incompatible one, choose a new sources folder.
 
+For feeds with Tuesday service in the study window, calendar dates must by
+default fall within one year before its start and one year after its end. When
+a feed intentionally uses a wider range (including generated feeds), set
+`gtfs_max_calendar_distance_years` to a larger number, or to `None` to disable
+this check. Invalid dates and dates outside pandas' supported range still fail.
+
 ## Exclude parts of a feed
 
 When an error identifies a problematic original trip, service or route, you can

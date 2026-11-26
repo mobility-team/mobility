@@ -116,6 +116,9 @@ def test_exclusions_change_router_cache_identity(tmp_path, feed_files, monkeypat
                            gtfs_exclusions={path: {"trips": ["b", "a"]}})
     assert first.inputs_hash != baseline.inputs_hash
     assert first.inputs_hash == reordered.inputs_hash
+    relaxed = GTFSRouter("zones", None, additional_gtfs_files=[path],
+                         gtfs_max_calendar_distance_years=None)
+    assert relaxed.inputs_hash != baseline.inputs_hash
 
 
 def test_invalid_frequency_suggests_and_excludes_its_trip(tmp_path, feed_files, zones, route_types):
@@ -128,6 +131,17 @@ def test_invalid_frequency_suggests_and_excludes_its_trip(tmp_path, feed_files, 
     tables, _ = GTFSTimetable([path], zones, route_types,
         exclusions={str(path): {"trips": ["t"]}}).prepare()
     assert tables["trips"].trip_id.tolist() == ["1-u"]
+
+
+def test_calendar_distance_limit_can_be_adjusted_or_disabled(tmp_path, feed_files, zones, route_types):
+    feed_files["calendar"] = feed_files["calendar"].replace("20260915", "20500915")
+    path = write_feed(tmp_path / "feed.zip", feed_files)
+    args = ([path], zones, route_types, "2026-09-01", "2026-09-28")
+    with pytest.raises(ValueError, match="2050-09-15.*gtfs_max_calendar_distance_years.*services.*'s'"):
+        GTFSTimetable(*args).prepare()
+    for limit in (None, 25):
+        tables, _ = GTFSTimetable(*args, max_calendar_distance_years=limit).prepare()
+        assert tables["trips"].trip_id.tolist() == ["1-t"]
 
 
 @pytest.mark.parametrize("failure", ["trips", "calendar"])

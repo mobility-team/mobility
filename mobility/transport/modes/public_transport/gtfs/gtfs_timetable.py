@@ -48,6 +48,7 @@ class GTFSTimetable:
         source_ids: dict[str, str] | None = None,
         feed_priority: list[str] | None = None,
         exclusions: dict[str, dict[str, list[str]]] | None = None,
+        max_calendar_distance_years: int | None = 1,
     ) -> None:
         self.paths = paths
         self.transport_zones = transport_zones
@@ -57,6 +58,7 @@ class GTFSTimetable:
         self.source_ids = source_ids or {}
         self.feed_priority = feed_priority or []
         self.exclusions = exclusions or {}
+        self.max_calendar_distance_years = max_calendar_distance_years
         if len(self.feed_priority) != len(set(self.feed_priority)):
             raise ValueError("gtfs_feed_priority must not contain duplicate feed IDs.")
         known = {self.source_ids.get(str(path), str(path)) for path in paths}
@@ -366,6 +368,21 @@ class GTFSTimetable:
                             "no Tuesday service in the study window",
                         )
                         continue
+
+                    if self.service_start and self.service_end and self.max_calendar_distance_years is not None:
+                        earliest = pd.Timestamp(self.service_start) - pd.DateOffset(years=self.max_calendar_distance_years)
+                        latest = pd.Timestamp(self.service_end) + pd.DateOffset(years=self.max_calendar_distance_years)
+                        for frame, columns in ((calendar, ("start_date", "end_date")), (exceptions, ("date",))):
+                            for column in columns:
+                                if column in frame:
+                                    outside = frame[column].lt(earliest) | frame[column].gt(latest)
+                                    if outside.any():
+                                        values = frame.loc[outside, column].dt.strftime("%Y-%m-%d").tolist()[:10]
+                                        reader.problem(
+                                            f"Calendar {column} outside {earliest:%Y-%m-%d} to {latest:%Y-%m-%d}: {values}. "
+                                            "Adjust gtfs_max_calendar_distance_years or set it to None if the dates are intentional",
+                                            "services", frame.loc[outside, "service_id"],
+                                        )
 
                     logging.info("Preparing GTFS %s", path)
                     fingerprint = reader.extract()

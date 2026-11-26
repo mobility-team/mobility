@@ -70,6 +70,7 @@ class PublicTransportGraph(FileAsset):
             expected_agencies=parameters.expected_agencies,
             gtfs_feed_priority=parameters.gtfs_feed_priority,
             gtfs_exclusions=parameters.gtfs_exclusions,
+            gtfs_max_calendar_distance_years=parameters.gtfs_max_calendar_distance_years,
         )
 
         # R needs routing settings; source assets stay in the router.
@@ -217,6 +218,10 @@ class PublicTransportRoutingParameters(PublicTransportRoutingSettings):
     gtfs_exclusions: dict[str, dict[str, list[str]]] = Field(
         default_factory=dict,
         description="Original trip, service and route IDs to remove from each GTFS source.",
+    )
+    gtfs_max_calendar_distance_years: int | None = Field(
+        default=1, ge=0,
+        description="Maximum calendar date distance in years from the study window; None disables the limit.",
     )
     excluded_gtfs_sources: Annotated[
         list[str],
